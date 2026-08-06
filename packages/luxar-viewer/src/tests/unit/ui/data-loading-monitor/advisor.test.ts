@@ -17,7 +17,6 @@ const baseMetrics: LoaderMetrics = {
   path: '/test',
   queries: 0,
   loads: 0,
-  evictions: 0,
   errors: 0,
   elementsLoaded: 0,
   bytesLoaded: 0,
@@ -25,7 +24,6 @@ const baseMetrics: LoaderMetrics = {
   avgQueryTime: 0,
   avgLoadTime: 0,
   memoryUsed: 0,
-  memoryLimit: 1_000_000,
 };
 
 function makeEvent(overrides: Partial<MonitorEvent> = {}): MonitorEvent {
@@ -93,52 +91,15 @@ describe('LoadingAdvisor', () => {
       expect(rec?.severity).toBe('error');
     });
 
-    it('emits high-memory recommendation when usage > 80 %', () => {
-      advisor.analyzeMetrics({
-        ...baseMetrics,
-        memoryUsed: 850_000,
-        memoryLimit: 1_000_000,
-      });
-      const rec = advisor.getRecommendations().find((r) => r.id === 'high-memory');
-      expect(rec).toBeDefined();
-      expect(rec?.severity).toBe('warning');
-    });
-
-    it('escalates high-memory to error when usage > 90 %', () => {
-      advisor.analyzeMetrics({
-        ...baseMetrics,
-        memoryUsed: 950_000,
-        memoryLimit: 1_000_000,
-      });
-      const rec = advisor.getRecommendations().find((r) => r.id === 'high-memory');
-      expect(rec?.severity).toBe('error');
-    });
-
-    it('does NOT emit high-memory when memoryLimit is 0 (no per-loader cap)', () => {
-      // Spatial-index loaders populate memoryUsed (resident bytes) but leave
-      // memoryLimit at 0. Without the limit>0 guard, memoryUsed/0 = Infinity
-      // would fire a spurious warning on every load.
-      advisor.analyzeMetrics({
-        ...baseMetrics,
-        memoryUsed: 64 * 1024 * 1024,
-        memoryLimit: 0,
-      });
-      expect(advisor.getRecommendations().find((r) => r.id === 'high-memory')).toBeUndefined();
-    });
-
     it('emits low-efficiency when spatial index efficiency is below threshold', () => {
       advisor.analyzeMetrics({
         ...baseMetrics,
         spatialIndex: {
-          gridShape: [1],
-          gridOrigin: [0],
-          cellSize: [1],
           occupiedCells: 1,
           totalCells: 1,
           avgCellsPerQuery: 1,
           avgElementsPerCell: 1,
           queryEfficiency: 0.1,
-          rangesInCache: 0,
         },
       });
       const rec = advisor.getRecommendations().find((r) => r.id === 'low-efficiency');
@@ -150,15 +111,11 @@ describe('LoadingAdvisor', () => {
       advisor.analyzeMetrics({
         ...baseMetrics,
         spatialIndex: {
-          gridShape: [1],
-          gridOrigin: [0],
-          cellSize: [1],
           occupiedCells: 1,
           totalCells: 1,
           avgCellsPerQuery: 1,
           avgElementsPerCell: 1,
           queryEfficiency: 0.9,
-          rangesInCache: 0,
         },
       });
       expect(advisor.getRecommendations().find((r) => r.id === 'low-efficiency')).toBeUndefined();
@@ -184,33 +141,6 @@ describe('LoadingAdvisor', () => {
         advisor.analyzeEvent(makeEvent({ type: 'load', data: {} }));
       }
       expect(advisor.getRecommendations().find((r) => r.id === 'high-errors')).toBeUndefined();
-    });
-  });
-
-  describe('memory pressure (eviction frequency)', () => {
-    it('emits memory-pressure when > 5 evictions in 10s', () => {
-      const now = Date.now();
-      for (let i = 0; i < 6; i++) {
-        advisor.analyzeEvent({
-          type: 'evict',
-          loader: 'point-spatial-index',
-          timestamp: now - i * 100,
-          data: {},
-        });
-      }
-      const rec = advisor.getRecommendations().find((r) => r.id === 'memory-pressure');
-      expect(rec).toBeDefined();
-      expect(rec?.severity).toBe('warning');
-    });
-
-    it('does not trip on a single eviction', () => {
-      advisor.analyzeEvent({
-        type: 'evict',
-        loader: 'point-spatial-index',
-        timestamp: Date.now(),
-        data: {},
-      });
-      expect(advisor.getRecommendations().find((r) => r.id === 'memory-pressure')).toBeUndefined();
     });
   });
 
@@ -331,15 +261,11 @@ describe('LoadingAdvisor', () => {
         ...baseMetrics,
         avgQueryTime: 0,
         spatialIndex: {
-          gridShape: [1],
-          gridOrigin: [0],
-          cellSize: [1],
           occupiedCells: 1,
           totalCells: 1,
           avgCellsPerQuery: 1,
           avgElementsPerCell: 1,
           queryEfficiency: 0.1,
-          rangesInCache: 0,
         },
       }); // low-efficiency (info)
 
@@ -362,15 +288,11 @@ describe('LoadingAdvisor', () => {
       advisor.analyzeMetrics({
         ...baseMetrics,
         spatialIndex: {
-          gridShape: [1],
-          gridOrigin: [0],
-          cellSize: [1],
           occupiedCells: 1,
           totalCells: 1,
           avgCellsPerQuery: 1,
           avgElementsPerCell: 1,
           queryEfficiency: 0.1,
-          rangesInCache: 0,
         },
       });
       expect(advisor.hasWarnings()).toBe(false);

@@ -7,9 +7,8 @@
 The GLSL3 sources have moved to live next to each geometry's material wrapper
 (`../materials/point/shader-glsl.ts`, `../materials/line/shader-glsl.ts`,
 `../materials/gsplat/shader-glsl.ts`). This barrel preserves the historical
-import path `rendering/shaders` so external harnesses can keep importing
-shader strings under one stable spelling regardless of future re-orgs of the
-materials tree.
+import path `rendering/shaders` as one stable spelling for the shader strings,
+insulated from future re-orgs of the materials tree.
 
 Per the project's "Keep GLSL shaders as reference" rule (see `CLAUDE.md` /
 project memory), the GLSL3 strings are never deleted and the parity check
@@ -42,12 +41,13 @@ The canonical consumers import directly from `../materials/<kind>/shader-glsl.ts
 - `../materials/line/material-glsl.ts` — same for the line pair.
 - `../materials/gsplat/material-glsl.ts` — same for the gsplat pair.
 
-This barrel's re-exports exist as a stable spelling for out-of-tree consumers
-and regression harnesses (e.g. `src/tests/unit/rendering/shader-hot-path.test.ts`,
-`src/tests/e2e/tsl-shader-parity.spec.ts`) that compare these GLSL3 sources
-against their TSL `NodeMaterial` counterparts. Removing or renaming the
-barrel would force those harnesses to track the materials tree's internal
-layout.
+Nothing imports this barrel today. In-tree consumers take the canonical
+`../materials/<kind>/shader-glsl.ts` paths directly (e.g. the parity harness
+`src/tests/unit/rendering/shader-hot-path.test.ts`), and it is not reachable
+from outside the repo either — the published package exposes only
+`src/index.ts` (see `exports` / `files` in `package.json`). It is kept
+deliberately, and `knip`-ignored, as the stable spelling for the six GLSL3
+constants; delete it if you would rather have one fewer re-export hop.
 
 Picking shaders are not re-exported here — they live under
 `../picking/<kind>/shaders.ts` and are not part of the visual-material parity

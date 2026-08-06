@@ -149,7 +149,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 export PATH="$HOME/.local/bin:$PATH"
 
 # 3. Verify the environment end to end
-python3 scripts/test_hpc_setup.py
+python3 scripts/check_hpc_setup.py
 
 # 4. Build the CUDA extension ON A GPU NODE via Slurm
 make build-cuda SLURM=1                                    # auto-detect modules

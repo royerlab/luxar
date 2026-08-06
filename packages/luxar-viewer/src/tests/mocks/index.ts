@@ -13,8 +13,6 @@
 export * from './webgl.mock';
 export * from './browser-apis.mock';
 export * from './opfs.mock';
-export * from './three.mock';
-export { OrbitControls } from './orbit-controls.mock';
 
 // Convenience imports
 import { installWebGLMock } from './webgl.mock';

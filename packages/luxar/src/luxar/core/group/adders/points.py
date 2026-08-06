@@ -15,7 +15,6 @@ from typing import (
     List,
     Optional,
     Sequence,
-    Tuple,
     Union,
     cast,
 )
@@ -55,7 +54,6 @@ def add_points_impl(
     image_labels: Optional[Any] = None,
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
-    grid_shape: Optional[Tuple[int, ...]] = None,
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     partition: Any = None,
@@ -140,7 +138,6 @@ def add_points_impl(
                     image_labels=image_labels,
                     parent=parent,
                     extend_to_all=extend_to_all,
-                    grid_shape=grid_shape,
                     spec=substitutive_spec,
                     additive_lod=additive_lod,
                     **attrs,
@@ -222,7 +219,6 @@ def add_points_impl(
                     labels=labels,
                     parent=parent,
                     extend_to_all=extend_to_all,
-                    grid_shape=grid_shape,
                     max_elements=max_elements,
                     additive_lod=additive_lod,
                     **attrs,
@@ -314,7 +310,6 @@ def add_points_impl(
                         labels=labels,
                         parent=parent,
                         extend_to_all=extend_to_all,
-                        grid_shape=grid_shape,
                         method=additive_spec["method"],
                         counts=additive_spec["counts"],
                         radii_for_energy=radii_arr,
@@ -352,7 +347,6 @@ def add_points_impl(
             scalars=scalars,
             labels=labels,
             image_labels=image_labels,
-            grid_shape=grid_shape,
             **attrs,
         )
 
@@ -394,7 +388,6 @@ def add_points_partition_wrapper_impl(
     labels: Any,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
-    grid_shape: Optional[Tuple[int, ...]],
     max_elements: int,
     additive_lod: Any = None,
     **attrs: Any,
@@ -429,7 +422,6 @@ def add_points_partition_wrapper_impl(
             # image_labels banned alongside partition= (see add_points entry)
             image_labels=None,
             extend_to_all=extend_to_all,
-            grid_shape=grid_shape,
             # dim_order / fill already applied to pos_arr upstream — do
             # not re-apply in the per-part recursion.
             dim_order=None,
@@ -471,7 +463,6 @@ def add_points_multi_lod_wrapper_impl(
     labels: Any,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
-    grid_shape: Optional[Tuple[int, ...]],
     method: str,
     counts: Any = None,
     radii_for_energy: Optional[np.ndarray] = None,
@@ -559,8 +550,6 @@ def add_points_multi_lod_wrapper_impl(
     metadata = writer.write_points_multi_lod(
         path,
         level_slices,
-        method=method,
-        grid_shape=grid_shape,
         extend_to_all=extend_to_all,
         **attrs,
     )
@@ -592,7 +581,6 @@ def add_points_substitutive_lod_wrapper_impl(
     image_labels: Any,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
-    grid_shape: Optional[Tuple[int, ...]],
     spec: Dict[str, Any],
     additive_lod: Any = None,
     **attrs: Any,
@@ -715,7 +703,6 @@ def add_points_substitutive_lod_wrapper_impl(
             image_labels=image_labels,
             parent=parent,
             extend_to_all=extend_to_all,
-            grid_shape=grid_shape,
             partition=False,
             # Forward the ladder: a cloud too small to coarsen is not
             # necessarily too small to stream, and dropping it here was how the
@@ -801,7 +788,6 @@ def add_points_substitutive_lod_wrapper_impl(
         labels=labels,
         image_labels=image_labels,
         extend_to_all=extend_to_all,
-        grid_shape=grid_shape,
         dim_order=None,
         fill=None,
         partition=False,

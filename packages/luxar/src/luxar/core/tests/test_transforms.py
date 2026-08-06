@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.transforms import (
+from luxar.core.transforms import (
     compose,
     from_list,
     identity,
@@ -485,7 +485,7 @@ class TestTransformUtilities:
 
     def test_aliases(self) -> None:
         """Test function aliases."""
-        from luxar.transforms import rotation, scaling, translation
+        from luxar.core.transforms import rotation, scaling, translation
 
         assert np.allclose(translation(1, 2, 3), translate(1, 2, 3))
         assert np.allclose(scaling(2, 2, 2), scale(2, 2, 2))

@@ -337,6 +337,32 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
     }
     fit_config = load_fit_config(ctx.preset, ctx.config, cli_overrides)
 
+    # Progressive mode disables relocation by design (see fit_progressive_gsplats:
+    # each pass seeds at residual peaks, no measured quality benefit). The general
+    # single-pass fit carries enable_dynamic_ops=True as its default, so it must
+    # not leak in here and silently flip relocation ON for a progressive fit. This
+    # single choke point covers every progressive CLI path (non-tiled, tiled,
+    # tile-workers). Direct Python callers of fit_progressive_gaussian_splats can
+    # still pass enable_dynamic_ops themselves.
+    if ctx.progressive:
+        # Only warn if the user EXPLICITLY set the key (in --config YAML); the
+        # inherited single-pass default is dropped silently. Mirrors the
+        # "⚠ --seeds is ignored ..." notices. Guarded so a bad/parse-time YAML
+        # never breaks the fit over a status notice.
+        if ctx.config is not None:
+            try:
+                from luxar.cli.gsplat_config import _load_yaml_config
+
+                raw_yaml = _load_yaml_config(ctx.config)
+                if "enable_dynamic_ops" in raw_yaml:
+                    aprint(
+                        "⚠ enable_dynamic_ops is ignored with --progressive; "
+                        "progressive passes disable relocation by design."
+                    )
+            except Exception:
+                pass
+        fit_config.pop("enable_dynamic_ops", None)
+
     if ctx.preset:
         aprint(f"Preset: {ctx.preset}")
     if ctx.config:

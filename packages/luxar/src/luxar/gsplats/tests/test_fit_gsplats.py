@@ -920,3 +920,18 @@ class TestReconstructionQuality:
         # This isn't guaranteed in all cases, but is a reasonable expectation
         # for this test case with well-separated blobs
         assert len(result_many.amplitudes) > len(result_few.amplitudes)  # More splats
+
+
+def test_progressive_enable_dynamic_ops_default_is_false():
+    """Progressive relocation is OFF by default, and the caller's value is
+    honoured (previously the param was accepted then hardcoded off).
+
+    Lives here rather than in test_progressive_fitting.py so it runs in the
+    ``-m 'not slow'`` CI selection (that module is slow-marked wholesale).
+    """
+    import inspect
+
+    from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+
+    sig = inspect.signature(fit_progressive_gaussian_splats)
+    assert sig.parameters["enable_dynamic_ops"].default is False

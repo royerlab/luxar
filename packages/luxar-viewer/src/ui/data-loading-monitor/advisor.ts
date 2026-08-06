@@ -47,10 +47,6 @@ export class LoadingAdvisor {
           this.addSlowLoadRecommendation(event);
         }
         break;
-
-      case 'evict':
-        this.checkMemoryPressure();
-        break;
     }
   }
 
@@ -63,17 +59,6 @@ export class LoadingAdvisor {
     // Check query performance
     if (metrics.avgQueryTime > this.thresholds.highQueryTime) {
       this.addHighQueryTimeRecommendation(metrics);
-    }
-
-    // Check memory usage. Guard on a positive limit: spatial-index loaders
-    // populate `memoryUsed` (resident accumulator bytes) but have no per-loader
-    // cap, so `memoryLimit` stays 0. Without this guard `used / 0` would be
-    // Infinity and fire a spurious high-memory warning on every load.
-    if (
-      metrics.memoryLimit > 0 &&
-      metrics.memoryUsed / metrics.memoryLimit > this.thresholds.highMemoryUsage
-    ) {
-      this.addHighMemoryRecommendation(metrics);
     }
 
     // Check spatial index efficiency
@@ -144,27 +129,6 @@ export class LoadingAdvisor {
   }
 
   /**
-   * Add high memory recommendation
-   */
-  private addHighMemoryRecommendation(metrics: LoaderMetrics): void {
-    const usage = (metrics.memoryUsed / metrics.memoryLimit) * 100;
-
-    const rec: Recommendation = {
-      id: 'high-memory',
-      severity: usage > 90 ? 'error' : 'warning',
-      category: 'memory',
-      title: 'High Memory Usage',
-      message: `Using ${usage.toFixed(1)}% of available memory`,
-      suggestion: 'Consider reducing cache size or enabling more aggressive eviction',
-      metric: 'memoryUsage',
-      value: usage,
-      threshold: this.thresholds.highMemoryUsage * 100,
-    };
-
-    this.recommendations.set(rec.id, rec);
-  }
-
-  /**
    * Add low efficiency recommendation
    */
   private addLowEfficiencyRecommendation(metrics: LoaderMetrics): void {
@@ -206,28 +170,6 @@ export class LoadingAdvisor {
         metric: 'errorRate',
         value: errorRate,
         threshold: this.thresholds.highErrorRate,
-      };
-
-      this.recommendations.set(rec.id, rec);
-    }
-  }
-
-  /**
-   * Check memory pressure
-   */
-  private checkMemoryPressure(): void {
-    const recentEvictions = this.eventHistory.filter(
-      (e) => e.type === 'evict' && e.timestamp > Date.now() - 10000
-    ).length;
-
-    if (recentEvictions > 5) {
-      const rec: Recommendation = {
-        id: 'memory-pressure',
-        severity: 'warning',
-        category: 'memory',
-        title: 'Frequent Cache Evictions',
-        message: `${recentEvictions} evictions in last 10 seconds`,
-        suggestion: 'Memory pressure detected - consider increasing cache limit',
       };
 
       this.recommendations.set(rec.id, rec);

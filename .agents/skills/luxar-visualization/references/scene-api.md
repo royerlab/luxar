@@ -58,7 +58,7 @@ scene.add_points(
     labels=None, image_labels=None,
     parent=None,                 # a Group, for hierarchy
     extend_to_all=None,          # broadcast across listed non-displayed dims
-    grid_shape=None, dim_order=None, fill=None,
+    dim_order=None, fill=None,
     **attrs,                     # opacity, intensity, gamma, blending_mode,
 )                                #   colormap, layer, visible, transform
 ```
