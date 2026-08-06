@@ -133,3 +133,20 @@ luxar gsplat batch-fit merge     # Merge completed tiles into a single dataset (
 luxar gsplat batch-fit validate  # Validate tile integrity (--fix deletes corrupt/stale tiles)
 luxar gsplat batch-fit cancel    # Cancel all Slurm jobs for a batch run
 ```
+
+## `luxar mesh`
+
+Bring classical triangle-surface files into Luxar. The reader is NumPy + stdlib only,
+so this works on a bare `pip install luxar` with no extras.
+
+```bash
+luxar mesh import            # Import a classical mesh file (PLY / OBJ / STL / glTF / GLB) → a .luxar.zarr scene
+```
+
+Vertices are welded and polygons fan-triangulated on the way in, because STL is always
+a triangle soup and glTF often is; an unwelded surface defeats per-vertex normals and
+makes picking report a different vertex per triangle for the same corner. Pass
+`--no-weld` to keep the file's exact vertex list.
+
+Draco- and meshopt-compressed glTF is refused by name rather than decoded — run the
+file through `gltf-transform` first.
