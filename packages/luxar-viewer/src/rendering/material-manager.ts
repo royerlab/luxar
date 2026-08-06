@@ -117,7 +117,7 @@ export type LuxarMegaShaderMaterial = MegaShaderMaterial | MegaShaderTSLMaterial
 
 /**
  * Manages all materials in the scene with lifecycle tracking and
- * global camera-uniform updates. Supports points, lines, and gsplats.
+ * global camera-uniform updates. Supports points, lines, gsplats and mesh.
  *
  * ALL visual materials are PER NODE (each carries the node's own
  * element texture — `uPointTex` / `uLineTex` / `uSplatTex`) and are never
@@ -139,7 +139,7 @@ export class MaterialManager {
    * Materials whose `dispose` event we have already wired a listener for.
    * Separate from `registeredMaterials` because `register()` /
    * `getXMaterial()` can be called repeatedly with the same instance
-   * (cache hits, clones re-registered explicitly), and a second
+   * (a re-`register()`, or a clone re-registered explicitly), and a second
    * `addEventListener('dispose', ...)` would silently stack listeners on
    * THREE's EventDispatcher.
    */
