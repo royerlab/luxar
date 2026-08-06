@@ -217,6 +217,11 @@ exclude = [
     # Multiscale-decomposition research demos are source-tree-only (kept for
     # development; not part of the installed package surface).
     "**/gsplats/multiscale/demos/**",
+    # gsplats/demos and gsplats/seeds/demos are the same category: standalone
+    # research/dev scripts (not in the public `luxar demo` registry, and they
+    # execute a fit at import time), so they stay source-tree-only too.
+    "**/gsplats/demos/**",
+    "**/gsplats/seeds/demos/**",
 ]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
@@ -281,20 +286,20 @@ dependencies = [
 # run locally before every push. `test-cov` (what CI runs) deselects `slow` so
 # the 1-core GitHub runner stays well under the job timeout; the heavy CPU-fitting
 # tests (content-fit CLI, tiled/progressive fitting) still run locally and their
-# code stays covered by fast unit tests (coverage holds at ~85% ≥ the 80% gate).
+# code stays covered by fast unit tests (coverage holds at ~87% ≥ the 80% gate).
 [tool.hatch.envs.default.scripts]
-test = "pytest {args:packages/luxar/src/luxar}"
-test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
-test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
+test = "pytest {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
+test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
+test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
 # `scripts/benchmarks` is listed explicitly: a broad `benchmarks/` entry in
 # .gitignore makes ruff's directory walk skip it, but pre-commit still formats
 # those tracked files, so it must be covered here to keep them in sync.
 format = [
-    "ruff format packages/luxar/src scripts scripts/benchmarks",
-    "ruff check --fix packages/luxar/src scripts scripts/benchmarks"
+    "ruff format packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
+    "ruff check --fix packages/luxar/src scripts scripts/benchmarks stats hatch_build.py"
 ]
 lint = [
-    "ruff check packages/luxar/src scripts scripts/benchmarks",
+    "ruff check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     "mypy packages/luxar/src/luxar"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
@@ -515,7 +520,7 @@ ignore_errors = true
 # Linting configuration is in [tool.ruff] section above
 
 [tool.pytest.ini_options]
-testpaths = ["packages/luxar/src/luxar"]
+testpaths = ["packages/luxar/src/luxar", "packages/luxar/examples/tests", "stats"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -535,18 +540,14 @@ markers = [
 data_file = "coverage/python/.coverage"
 source = ["packages/luxar/src/luxar"]
 omit = [
-    "*/tests/*",
-    "*/__init__.py",
-    "*/demos/*",
-    "*/utils/demos.py",
-    "*/utils/download.py",
-    "*/utils/paths.py",
-    "*/utils/_umap_utils.py",
-    "*/gsplats/batch/*",
-    "*/gsplats/gpu_profile.py",
-    "*/gsplats/demos/*",
-    "*/gsplats/models/gsplats/cuda/*",
-    "*/gsplats/models/gsplats/metal/*",
+    "*/tests/*",                              # test code, not shipped logic
+    "*/__init__.py",                          # re-export shims
+    "*/demos/*",                              # demo scripts (import-smoke-tested; main() bodies aren't a coverage target)
+    "*/utils/demos.py",                       # demo path/registry helpers
+    "*/utils/_umap_utils.py",                 # vendored UMAP helper
+    "*/gsplats/demos/*",                      # research demos (run-on-import; compile-smoke-tested only)
+    "*/gsplats/models/gsplats/cuda/*",        # hardware-gated CUDA extension
+    "*/gsplats/models/gsplats/metal/*",       # hardware-gated Metal extension
 ]
 
 [tool.coverage.report]

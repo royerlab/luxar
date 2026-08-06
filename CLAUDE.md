@@ -169,7 +169,7 @@ export PATH="$HOME/.local/bin:$PATH"   # Add to ~/.bashrc to persist
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
 # 3. Verify the environment works
-python scripts/test_hpc_setup.py
+python scripts/check_hpc_setup.py
 
 # 4. Build the CUDA extension on a GPU node via Slurm
 make build-cuda SLURM=1                           # Auto-detect CUDA + GCC modules
