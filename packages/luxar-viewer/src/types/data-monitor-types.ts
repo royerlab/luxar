@@ -57,12 +57,10 @@ export interface MonitorEvent {
     cells?: number;
     latency?: number;
     memory?: number;
-    cacheKey?: string;
     error?: string;
     // Spatial-specific data
     queryPosition?: readonly number[];
     queryTolerance?: readonly number[];
-    gridBounds?: { min: readonly number[]; max: readonly number[] };
   };
 }
 
@@ -152,7 +150,6 @@ export interface SpatialIndexMetrics {
   avgCellsPerQuery: number;
   avgElementsPerCell: number;
   queryEfficiency: number; // Points loaded / points in query region
-  lastQueryBounds?: { min: number[]; max: number[] };
 }
 
 /**

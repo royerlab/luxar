@@ -64,7 +64,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
   let siCellsPerQueryWeighted = 0;
   let siPointsPerCellWeighted = 0;
   let siEfficiencyWeighted = 0;
-  let firstSpatialIndex: NonNullable<LoaderMetrics['spatialIndex']> | undefined;
+  let hasSpatialIndex = false;
   let firstOptimization: LoaderMetrics['optimization'] | undefined;
 
   for (const m of inner) {
@@ -81,7 +81,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
 
     if (m.spatialIndex) {
       const si = m.spatialIndex;
-      if (!firstSpatialIndex) firstSpatialIndex = si;
+      hasSpatialIndex = true;
       siCells += si.occupiedCells;
       siTotalCells += si.totalCells;
       siCellsPerQueryWeighted += si.avgCellsPerQuery * m.queries;
@@ -96,7 +96,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
   out.avgQueryTime = out.queries > 0 ? queryTimeWeighted / out.queries : 0;
   out.avgLoadTime = out.loads > 0 ? loadTimeWeighted / out.loads : 0;
 
-  if (firstSpatialIndex) {
+  if (hasSpatialIndex) {
     out.spatialIndex = {
       occupiedCells: siCells,
       totalCells: siTotalCells,

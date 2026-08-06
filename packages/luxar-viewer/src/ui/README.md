@@ -472,15 +472,15 @@ See the "Refinement layer" section at the end of
    - Per-tier hit-rate statistics (S-cache / L0 / L1 / L2) plus the effective demand hit-rate
    - Per-tier eviction and I/O counts
 
-3. **Performance Tab**
-   - Collapsible hierarchical timing tree (`data-loading-monitor/timing-panel.ts`)
-   - Query latency tracking
-   - Load time analysis
-   - Bandwidth utilization
-
-4. **Memory Tab**
+3. **Memory Tab**
    - GPU buffer-pool stats (allocations / reuses / evictions, per data type)
    - Element-accumulator capacity and growth stats (rendered by `renderMemoryContent`)
+
+4. **Performance Tab**
+   - Collapsible hierarchical timing tree (`data-loading-monitor/timing-panel.ts`):
+     per-step and per-geometry-type view-update timings, rows over the frame
+     budget highlighted
+   - A "Profiler not connected" empty state until a profiler is attached
 
 5. **Insights Tab**
    - Smart recommendations from LoadingAdvisor
@@ -551,7 +551,7 @@ interface MonitorConfig {
 
 - **Zero Configuration**: Automatic integration with scene loading
 - **Real-time Insights**: Immediate visibility into loading performance
-- **Smart Recommendations**: AI-powered optimization suggestions
+- **Smart Recommendations**: LoadingAdvisor suggestions for optimization
 - **Performance Optimized**: Minimal overhead with intelligent batching
 - **Developer Friendly**: Clean API and comprehensive documentation
 
