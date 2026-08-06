@@ -25,18 +25,19 @@ from luxar.utils.demos import (
 )
 
 
-def _sorted_per_axis(points: np.ndarray) -> np.ndarray:
-    """Sort each column of an (N, 3) array independently.
+def _max_nearest_neighbor_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """Largest distance from a point of ``a`` to its nearest point in ``b``.
 
     Comparing two point sets row-by-row needs them in the same order, and the
-    compiler reorders points along a Hilbert curve. Sorting whole rows is not
-    an option: the trajectory has point pairs closer together than one
-    quantization step, so their order can flip and pair up rows that are
-    hundreds of units apart. Sorting each axis on its own cannot do that — a
-    rank swap only ever exchanges two values that are within quantization
-    distance of each other.
+    compiler reorders points along a Hilbert curve. Matching whole points to
+    their nearest counterpart recovers the correspondence without relying on
+    order — and unlike a per-axis comparison it keeps each point's three
+    coordinates tied together.
     """
-    return np.sort(points, axis=0)
+    d = np.linalg.norm(
+        a[:, None, :].astype(np.float64) - b[None, :, :].astype(np.float64), axis=-1
+    )
+    return float(d.min(axis=1).max())
 
 
 class TestCreateLorenzAttractor:
@@ -94,13 +95,14 @@ class TestCreateLorenzAttractor:
             )
 
             # Same trajectory, scaled up for visibility exactly as the builder
-            # does. Compared per axis (see _sorted_per_axis); the tolerance
-            # covers the uint16 position quantization, whose step is ~0.006
-            # over this extent.
+            # does. Matched point-to-point (see _max_nearest_neighbor_distance);
+            # the tolerance covers the uint16 position quantization, whose step
+            # is ~0.006 over this extent. Both directions, so neither set may
+            # contain a point the other lacks.
             expected = lorenz_trajectory(500, seed=42) * 100.0 - 50.0
-            np.testing.assert_allclose(
-                _sorted_per_axis(written), _sorted_per_axis(expected), atol=0.05
-            )
+            assert written.shape == expected.shape
+            assert _max_nearest_neighbor_distance(written, expected) < 0.05
+            assert _max_nearest_neighbor_distance(expected, written) < 0.05
 
     def test_has_colors_and_radii(self) -> None:
         """Test that colors and radii are included."""

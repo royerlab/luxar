@@ -6,7 +6,7 @@ This folder contains self-contained demo scripts that showcase Luxar's capabilit
 
 These demos are:
 - **Didactic**: Easy to understand and learn from
-- **Self-contained**: All generation code in one file
+- **Self-contained**: The code that makes the demo distinctive lives in one file
 - **Complete**: Generate → Serve → View → Cleanup workflow
 - **Copy-pasteable**: Can be used as templates for your own visualizations
 
@@ -950,7 +950,7 @@ from arbol import aprint, asection
 from luxar import LuxarZarrCompiler, Dimension, Dimensions
 
 def generate_my_data(output_path: Path, **params) -> None:
-    """Generate the dataset - ALL CODE IN THIS FUNCTION.
+    """Generate the dataset - THE INTERESTING CODE IS IN THIS FUNCTION.
 
     Args:
         output_path: Where to write zarr
@@ -958,7 +958,8 @@ def generate_my_data(output_path: Path, **params) -> None:
     """
     with asection("Generating Data"):
         # 1. Generate positions, colors, radii, etc.
-        # ALL generation logic here - no external functions!
+        # The generation logic that makes this demo what it is goes here;
+        # for plumbing, reach for the shared helpers in §6.
         positions = ...
         colors = ...
 
