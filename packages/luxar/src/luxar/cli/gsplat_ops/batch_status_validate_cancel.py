@@ -76,7 +76,7 @@ def _staging_attempt_live(token: str) -> bool | None:
     return None  # unrecognized token — keep, to be safe
 
 
-def run_batch_status_cmd(*, output_dir: Path, verbose: bool) -> None:
+def run_batch_status_cmd(*, output_dir: Path) -> None:
     """Run ``batch-fit status`` command implementation."""
     try:
         from luxar.gsplats.batch.manifest import load_manifest
@@ -87,7 +87,7 @@ def run_batch_status_cmd(*, output_dir: Path, verbose: bool) -> None:
 
         manifest = load_manifest(output_dir)
         status = check_batch_status(output_dir)
-        aprint(format_status_report(status, manifest, verbose=verbose))
+        aprint(format_status_report(status, manifest))
 
     except typer.Exit:
         raise

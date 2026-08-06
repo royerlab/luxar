@@ -42,7 +42,7 @@ This module hosts:
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
 
 from arbol import aprint
 
@@ -534,6 +534,115 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
         "coverage_fractions": explicit_coverage,
         "coarsen_dims": coarsen_dims,
         "max_aspect": max_aspect,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Shared additive-LOD axis resolver (Points + Lines)
+# ─────────────────────────────────────────────────────────────────────
+#
+# Points and Lines share the exact same ``additive_lod=`` kwarg vocabulary
+# (both order elements/polylines and slice into cumulative levels). Keep ONE
+# implementation here so the per-geometry resolvers
+# (``resolve_additive_axis_points`` / ``resolve_additive_axis_lines``) can never
+# drift.
+
+#: Defaults for ``additive_lod=True`` / ``additive_lod=dict()``. This is the
+#: only place the values are written: ``points.DEFAULT_METHOD`` /
+#: ``lines.DEFAULT_METHOD`` (and their ``DEFAULT_N_LODS``) alias these, so the
+#: per-geometry function defaults and the resolver can't drift apart.
+DEFAULT_ADDITIVE_METHOD: Literal["random"] = "random"
+DEFAULT_ADDITIVE_N_LODS: int = 4
+
+
+def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
+    """Normalize the ``additive_lod=`` kwarg into a spec dict (or ``None``).
+
+    Geometry-agnostic — ``geometry`` ("Points"/"Lines") only flavours the
+    "unrecognized keys" error message. See
+    :func:`resolve_additive_axis_points` / :func:`resolve_additive_axis_lines`
+    for the full value vocabulary.
+    """
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        return {
+            "method": DEFAULT_ADDITIVE_METHOD,
+            "n_lods": DEFAULT_ADDITIVE_N_LODS,
+            "counts": None,
+            "seed": None,
+            "salience_kind": "size",
+        }
+    if not isinstance(spec, dict):
+        raise TypeError(
+            f"additive_lod must be None, bool, or dict; got {type(spec).__name__}"
+        )
+    kwargs = dict(spec)
+    # ``recompute`` is gsplats-only; tolerate but don't act on it.
+    kwargs.pop("recompute", None)
+
+    method = kwargs.pop("method", DEFAULT_ADDITIVE_METHOD)
+    if method not in (
+        "random",
+        "salience",
+        "spatial-uniform",
+        "poisson-disk",
+    ):
+        raise ValueError(
+            "method must be one of 'random' / 'salience' / 'spatial-uniform' "
+            f"/ 'poisson-disk'; got {method!r}"
+        )
+
+    n_lods = int(kwargs.pop("n_lods", DEFAULT_ADDITIVE_N_LODS))
+    if n_lods < 1:
+        raise ValueError(f"n_lods must be >= 1, got {n_lods}")
+
+    # Accept ``breakpoints`` as an alias for ``counts`` (the energy:
+    # vocabulary reads more naturally as "breakpoints") — but only one.
+    counts = kwargs.pop("counts", None)
+    breakpoints = kwargs.pop("breakpoints", None)
+    if counts is not None and breakpoints is not None:
+        raise ValueError(
+            "additive_lod: pass either 'counts' OR 'breakpoints', not both"
+        )
+    if breakpoints is not None:
+        counts = breakpoints
+    if counts is not None and not isinstance(counts, str):
+        counts = [int(c) for c in counts]
+    if counts is not None:
+        # Validate everything size-independent here, at resolve time. Under a
+        # substitutive ladder the resolved spec is handed to a kind=lod group
+        # whose wrapper is created BEFORE its children are written, so deferring
+        # this to the children's writes would raise only after that group
+        # exists on disk — leaving a partial group (and a duplicate-name error
+        # on retry). Same messages as the write path's re-validation.
+        from ....utils.lod_breakpoints import validate_element_breakpoints
+
+        validate_element_breakpoints(counts)
+
+    seed = kwargs.pop("seed", None)
+    if seed is not None:
+        seed = int(seed)
+
+    salience_kind = kwargs.pop("salience_kind", "size")
+    if salience_kind not in ("size", "energy"):
+        raise ValueError(
+            f"salience_kind must be 'size' or 'energy'; got {salience_kind!r}"
+        )
+
+    if kwargs:
+        raise ValueError(
+            f"additive_lod for {geometry}: unrecognized keys "
+            f"{sorted(kwargs)}. Valid keys: method, n_lods, counts, "
+            f"breakpoints, seed, salience_kind, recompute."
+        )
+
+    return {
+        "method": method,
+        "n_lods": n_lods,
+        "counts": counts,
+        "seed": seed,
+        "salience_kind": salience_kind,
     }
 
 

@@ -267,13 +267,6 @@
   color: var(--luxar-text-primary);
 }
 
-.luxar-data-monitor__timeline-controls {
-  display: flex;
-  gap: var(--luxar-spacing-4);
-  margin-top: var(--luxar-spacing-4);
-  align-items: center;
-}
-
 .luxar-debug-console__message-count,
 .luxar-debug-console__filter-status {
   font-size: var(--luxar-text-xs);
@@ -749,15 +742,6 @@
   color: var(--luxar-text-secondary);
 }
 
-/* ========== Performance Timeline ========== */
-
-.luxar-timeline-canvas {
-  width: 100%;
-  height: 200px;
-  border-radius: var(--luxar-radius-sm);
-  background: var(--luxar-bg-tertiary);
-}
-
 /* ========== Secondary Metrics Bar ========== */
 
 .luxar-secondary-metrics {
@@ -880,10 +864,6 @@
 
 [data-theme='light'] .luxar-progress-bar__track {
   background: rgba(0, 0, 0, 0.1);
-}
-
-[data-theme='light'] .luxar-timeline-canvas {
-  background: rgba(0, 0, 0, 0.03);
 }
 
 /* ========== Scene Graph Tree ========== */
