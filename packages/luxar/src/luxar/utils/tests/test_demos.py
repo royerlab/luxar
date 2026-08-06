@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.demos.demo_lorenz import lorenz_trajectory
 from luxar.encoding import ArrayDecoder
 from luxar.utils.demos import (
     _safe_extract_zip_member,
@@ -22,6 +23,21 @@ from luxar.utils.demos import (
     create_random_spheres,
     create_time_series_demo,
 )
+
+
+def _max_nearest_neighbor_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """Largest distance from a point of ``a`` to its nearest point in ``b``.
+
+    Comparing two point sets row-by-row needs them in the same order, and the
+    compiler reorders points along a Hilbert curve. Matching whole points to
+    their nearest counterpart recovers the correspondence without relying on
+    order — and unlike a per-axis comparison it keeps each point's three
+    coordinates tied together.
+    """
+    d = np.linalg.norm(
+        a[:, None, :].astype(np.float64) - b[None, :, :].astype(np.float64), axis=-1
+    )
+    return float(d.min(axis=1).max())
 
 
 class TestCreateLorenzAttractor:
@@ -62,6 +78,31 @@ class TestCreateLorenzAttractor:
             pos1 = store1["LorenzAttractor"]["positions"][:]
             pos2 = store2["LorenzAttractor"]["positions"][:]
             np.testing.assert_array_almost_equal(pos1, pos2)
+
+    def test_positions_come_from_the_demo_integrator(self) -> None:
+        """The fixture and ``luxar demo run lorenz`` share one integrator.
+
+        Guards the dedup: if either side re-inlines or re-parameterises the
+        Lorenz integration, the two stop agreeing and this fails.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "lorenz.luxar.zarr"
+            create_lorenz_attractor(store_path, n_points=500, seed=42)
+
+            store = zarr.open(store_path, mode="r")
+            written = ArrayDecoder().decode(
+                store["LorenzAttractor"]["positions"], store
+            )
+
+            # Same trajectory, scaled up for visibility exactly as the builder
+            # does. Matched point-to-point (see _max_nearest_neighbor_distance);
+            # the tolerance covers the uint16 position quantization, whose step
+            # is ~0.006 over this extent. Both directions, so neither set may
+            # contain a point the other lacks.
+            expected = lorenz_trajectory(500, seed=42) * 100.0 - 50.0
+            assert written.shape == expected.shape
+            assert _max_nearest_neighbor_distance(written, expected) < 0.05
+            assert _max_nearest_neighbor_distance(expected, written) < 0.05
 
     def test_has_colors_and_radii(self) -> None:
         """Test that colors and radii are included."""
