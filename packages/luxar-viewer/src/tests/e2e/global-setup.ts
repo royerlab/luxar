@@ -2,9 +2,10 @@
  * Global Setup for Playwright E2E Tests
  *
  * This file runs BEFORE any tests and verifies pre-conditions:
- * 1. Required example datasets exist
- * 2. Servers can be reached
- * 3. Basic environment checks
+ * 1. Servers can be reached, and belong to THIS checkout
+ * 2. Required example datasets exist (warn — many specs do not need them)
+ * 3. Generated zarr fixtures exist and are served (throw — 18 specs hard-depend on them)
+ * 4. Basic environment checks
  */
 
 import type { FullConfig } from '@playwright/test';
@@ -16,6 +17,10 @@ import {
   assertHTTPResource,
   requireE2EServerMetadata,
 } from '../../../tools/e2e-server-identity';
+import {
+  FIXTURES_REPO_RELATIVE_PATH,
+  parseGeneratedFixtureNames,
+} from '../../../tools/fixture-manifest';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
 // global is undefined at module load. Reconstruct it from `import.meta.url`.
@@ -34,6 +39,48 @@ const REQUIRED_DATASETS = [
   // discrete frame dim) — the S-cache's target configuration.
   'progressive_timelapse_example.luxar.zarr',
 ];
+
+/**
+ * Fail with an actionable message when the generated zarr fixtures are absent or unserved.
+ *
+ * Two distinct failure modes, checked separately because their fixes differ:
+ *
+ *  1. **Never generated** — a clean checkout on which vitest has never run. Every fixture is
+ *     missing from disk, so every name is reported and the fix is the generator.
+ *  2. **Generated but unreachable** — the data server is rooted somewhere other than the
+ *     repository, so the specs' `/packages/luxar-viewer/tests/fixtures/...` URLs 404 even
+ *     though the files exist. One HTTP probe settles this; probing all ~47 would add 47
+ *     round-trips to every run to re-answer the same question about the serving root.
+ */
+async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string): Promise<void> {
+  const fixturesDir = path.join(projectRoot, FIXTURES_REPO_RELATIVE_PATH);
+  const expected = parseGeneratedFixtureNames(path.join(fixturesDir, 'generate_test_data.py'));
+  const missing = expected.filter((name) => !fs.existsSync(path.join(fixturesDir, name)));
+
+  if (missing.length > 0) {
+    const shown = missing.slice(0, 10).map((name) => `   - ${name}`);
+    const elided =
+      missing.length > shown.length ? `   … and ${missing.length - shown.length} more` : '';
+    throw new Error(
+      `${missing.length}/${expected.length} generated zarr fixtures are missing from ${fixturesDir}:\n` +
+        [...shown, elided].filter(Boolean).join('\n') +
+        '\n\nGenerate them with:\n' +
+        '  pnpm test:generate-fixtures\n' +
+        '(`pnpm test` does this automatically; Playwright deliberately does not, because the ' +
+        'generator takes 1-2 minutes.)'
+    );
+  }
+
+  // The serving-root probe. `assertHTTPResource` names the URL, which is the diagnostic:
+  // seeing the full `/packages/luxar-viewer/tests/fixtures/...` path 404 is what tells you
+  // the data server is rooted at the wrong directory.
+  const probeURL = new URL(
+    `/${FIXTURES_REPO_RELATIVE_PATH}/${encodeURIComponent(expected[0])}/`,
+    dataBaseURL
+  ).toString();
+  await assertHTTPResource(`Generated fixture ${expected[0]}`, probeURL);
+  console.log(`✅ ${expected.length} generated zarr fixtures present and served`);
+}
 
 export default async function globalSetup(config: FullConfig) {
   console.log('\n🔍 Running pre-flight checks...\n');
@@ -101,7 +148,20 @@ export default async function globalSetup(config: FullConfig) {
     }
   }
 
-  // Check 3: Verify we can write to test output directory
+  // Check 3: Generated zarr fixtures.
+  //
+  // THROW rather than warn, unlike the example datasets above. 18 specs read
+  // `tests/fixtures/`, and a missing fixture there is not a degraded run — the spec
+  // navigates to a 404 and dies on its own 45 s content-wait with no indication that the
+  // cause was a fixture that was never generated. Examples warn because many specs do not
+  // need them; fixtures are a hard dependency of every spec that names one.
+  //
+  // Deliberately NOT auto-generated the way the vitest global setup does it: that
+  // generator takes 1-2 minutes, and silently spending that inside a Playwright global
+  // setup is a worse failure mode than an actionable error.
+  await assertGeneratedFixtures(projectRoot, serverMetadata.dataBaseURL);
+
+  // Check 4: Verify we can write to test output directory
   const testResultsDir = path.join(__dirname, '../../../test-results');
 
   try {

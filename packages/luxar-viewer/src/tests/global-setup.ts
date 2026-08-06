@@ -9,10 +9,11 @@
  * If any fixtures are missing, runs the generator script automatically.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
+import { existsSync, readdirSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { parseGeneratedFixtureNames } from '../../tools/fixture-manifest';
 
 // Use import.meta.url for reliable path resolution in vitest global setup
 const THIS_DIR = resolve(fileURLToPath(import.meta.url), '..');
@@ -41,50 +42,7 @@ const FIXTURE_INPUT_SOURCE_DIRS = [
   resolve(PROJECT_ROOT, 'packages/luxar/src/luxar/io'),
 ];
 
-/**
- * Parse fixture names from generate_test_data.py — the single source of truth.
- *
- * Reads the declarative `FIXTURE_NAMES: list[str] = [...]` constant at the
- * top of the Python generator (audit C1 viewer-integration-fixtures fix).
- * Previously this regex matched scattered `FIXTURES_DIR / "..."` usages,
- * which silently broke if a generator function switched to single quotes,
- * f-strings, or path concatenation. Targeting a single canonical
- * declaration is robust to those variations.
- *
- * The Python script asserts at the end of main() that every name in
- * FIXTURE_NAMES was actually produced — keeping the manifest and the
- * generators in sync.
- */
-function parseGeneratedFixtureNames(): string[] {
-  const source = readFileSync(GENERATOR_PATH, 'utf-8');
-  // Match the FIXTURE_NAMES list declaration. The body captures
-  // everything between the [ and ] including newlines; we then pull out
-  // each "..." or '...' literal ending in .zarr.
-  const listMatch = /FIXTURE_NAMES\s*(?::[^=]*)?=\s*\[([^\]]+)\]/.exec(source);
-  if (!listMatch) {
-    throw new Error(
-      `[test-setup] FIXTURE_NAMES declaration not found in ${GENERATOR_PATH}. ` +
-        'Expected a top-level `FIXTURE_NAMES: list[str] = [...]` block. ' +
-        'Update generate_test_data.py to declare the manifest, or update this parser.'
-    );
-  }
-  const body = listMatch[1];
-  const re = /['"]([^'"]+\.zarr)['"]/g;
-  const names = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(body)) !== null) {
-    names.add(m[1]);
-  }
-  if (names.size === 0) {
-    throw new Error(
-      `[test-setup] FIXTURE_NAMES list in ${GENERATOR_PATH} is empty or unparseable. ` +
-        'Expected `.zarr`-terminated string literals.'
-    );
-  }
-  return [...names].sort();
-}
-
-const EXPECTED_FIXTURES = parseGeneratedFixtureNames();
+const EXPECTED_FIXTURES = parseGeneratedFixtureNames(GENERATOR_PATH);
 
 function runPythonGenerator(command: string, label: string): void {
   try {
