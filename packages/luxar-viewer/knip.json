@@ -22,7 +22,6 @@
     "src/tests/test-config.ts"
   ],
   "ignoreBinaries": ["hatch"],
-  "ignoreDependencies": ["glob"],
   "ignoreExportsUsedInFile": true,
   "tags": ["-internal"]
 }
