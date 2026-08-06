@@ -64,7 +64,7 @@ class Lines(DataNode):
         if metadata:
             n_vertices = metadata.get("n_vertices", 0)
             n_segments = metadata.get("n_segments", 0)
-            line_type = metadata.get("line_type", "unknown")
+            line_type = metadata.get("original_line_type", "unknown")
             n_dims = metadata.get("ndim", 3)
             aprint(
                 f"✓ Lines node '{name}' created with {n_vertices:,} vertices, "
@@ -88,10 +88,7 @@ class Lines(DataNode):
     @property
     def line_type(self) -> LineType:
         """Get original line type (user-specified)."""
-        # Support both old 'line_type' and new 'original_line_type' keys
-        result = self._metadata.get(
-            "original_line_type", self._metadata.get("line_type", "polyline")
-        )
+        result = self._metadata.get("original_line_type", "polyline")
         return cast(LineType, result)
 
     @property
