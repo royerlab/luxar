@@ -213,7 +213,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_demo_lorenz_") as tmpdir:
         output_path = Path(tmpdir) / "lorenz.luxar.zarr"
 
-        # Generate the dataset (all code in this file!)
+        # Generate the dataset (the integrator lives in this file)
         generate_lorenz_attractor(output_path, n_points=n_points)
 
         aprint("")

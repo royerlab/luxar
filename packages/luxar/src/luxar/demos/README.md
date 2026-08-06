@@ -997,7 +997,7 @@ being demonstrated — stays in the file. Plumbing does not: use the shared
 helpers in §6 (downloading, caching, argv parsing, HSV→RGB, viewer launching,
 optional-dependency gating, precomputed-data loading) rather than hand-rolling
 them, and share heavier scaffolding through a `_*_common.py` module as the
-interop and graph demos do.
+interop demos do with `_interop_common.py`.
 
 ✅ **GOOD**:
 ```python

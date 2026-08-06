@@ -13,7 +13,7 @@ models/
 ├── gsplats/                 # Core model and rendering
 │   ├── gsplat_model.py      # GaussianSplatModel (nn.Module)
 │   ├── rendering_core.py    # Rendering engine (2D/3D fast paths, nD generic)
-│   ├── rendering_wrappers.py # NumPy/PyTorch/batched wrappers
+│   ├── rendering_wrappers.py # NumPy/PyTorch wrappers
 │   ├── cuda/                # CUDA backend (NVIDIA GPUs)
 │   └── metal/               # Metal backend (Apple Silicon)
 └── utils/                   # Numerical utilities

@@ -124,7 +124,7 @@ gsplats/
 ├── __init__.py              # Package exports
 ├── gsplat_model.py          # GaussianSplatModel (PyTorch nn.Module)
 ├── rendering_core.py        # Core rendering engine (2D/3D fast paths, nD generic)
-├── rendering_wrappers.py    # NumPy/PyTorch/batched wrappers
+├── rendering_wrappers.py    # NumPy/PyTorch wrappers
 ├── README.md                # This file
 ├── cuda/                    # CUDA backend (NVIDIA GPUs)
 ├── metal/                   # Metal backend (Apple Silicon)

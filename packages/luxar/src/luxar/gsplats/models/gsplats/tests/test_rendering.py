@@ -459,11 +459,11 @@ class TestRenderGaussiansFullNumpy:
         np.testing.assert_allclose(result_numpy, result_torch, atol=1e-6, rtol=1e-6)
 
 
-class TestBatchedRendering:
-    """Test batched rendering implementation."""
+class TestRenderGaussiansCore:
+    """Test the core render_gaussians entry point on raw tensors."""
 
-    def test_batched_rendering_2d(self, multi_2d_params) -> None:
-        """Test batched rendering in 2D."""
+    def test_core_rendering_2d(self, multi_2d_params) -> None:
+        """Test 2D rendering straight through the core engine."""
         params = multi_2d_params
 
         result = render_gaussians(
@@ -482,12 +482,12 @@ class TestBatchedRendering:
         assert np.all(result_np >= 0)
         assert np.sum(result_np) > 0
 
-    def test_batched_vs_sequential_consistency(self, multi_2d_params) -> None:
-        """Test that batched rendering matches sequential version."""
+    def test_core_matches_wrapper(self, multi_2d_params) -> None:
+        """The core engine and the GSplatData wrapper agree."""
         params = multi_2d_params
 
-        # Render with batched implementation
-        result_batched = render_gaussians(
+        # Render straight through the core engine
+        result_core = render_gaussians(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -496,16 +496,14 @@ class TestBatchedRendering:
         )
 
         # Render with wrapper (uses GSplatData)
-        result_sequential = render_gaussians_pytorch(
+        result_wrapper = render_gaussians_pytorch(
             shape=params["shape"],
             result=params["result"],
             truncate=3.0,
         )
 
         # Results should be very similar
-        torch.testing.assert_close(
-            result_batched, result_sequential, atol=1e-4, rtol=1e-3
-        )
+        torch.testing.assert_close(result_core, result_wrapper, atol=1e-4, rtol=1e-3)
 
     def test_amplitude_aware_culling(self, multi_2d_params) -> None:
         """Test amplitude-aware culling feature."""
@@ -558,8 +556,8 @@ class TestBatchedRendering:
         assert result.shape == shape
         assert torch.all(result == 0)
 
-    def test_single_splat_batched(self, simple_2d_params) -> None:
-        """Test batched rendering with single splat."""
+    def test_single_splat(self, simple_2d_params) -> None:
+        """Test core rendering with a single splat."""
         params = simple_2d_params
 
         result = render_gaussians(
