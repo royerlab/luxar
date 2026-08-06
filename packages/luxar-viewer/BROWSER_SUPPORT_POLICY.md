@@ -85,8 +85,7 @@ physical GPU backend:
   through its internal WebGL2 backend.
 
 Branch on `apiSurface` to pick method signatures and resource layout rules
-(readback shape, row padding, render target behavior). It is also the value to
-use for telemetry or UI messaging about which renderer Luxar constructed.
+(readback shape, row padding, render target behavior).
 
 ## Runtime detection
 

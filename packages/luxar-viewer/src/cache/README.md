@@ -415,9 +415,13 @@ Main class implementing zarrita's `AsyncReadable` interface.
 
 ```typescript
 new MultiLevelCachingStore(baseUrl: string, options?: {
-  l1MaxSize?: number;      // L1 size in bytes (default: 100MB)
-  l2MaxSize?: number;      // L2 size in bytes (default: 2GB)
-  debug?: boolean;         // Enable debug logging (default: false)
+  l1MaxSize?: number;             // L1 size in bytes (default: 100MB)
+  l2MaxSize?: number;             // L2 size in bytes (default: 2GB)
+  debug?: boolean;                // Enable debug logging (default: false)
+  noCache?: boolean;              // Disable both tiers, e.g. `?no-cache` (default: false)
+  clearCache?: boolean;           // Clear caches on init, e.g. `?clear-cache` (default: false)
+  opfsWriteConcurrency?: number;  // L2 write-queue concurrency (default: config.cache.opfsWriteConcurrency)
+  opfsWriteQueueMax?: number;     // L2 write-queue max depth (default: config.cache.opfsWriteQueueMax)
 })
 ```
 

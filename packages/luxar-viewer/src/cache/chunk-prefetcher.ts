@@ -122,15 +122,12 @@ export class ChunkPrefetcher {
   }
 
   /**
-   * Add a key to the queue. Returns true if the key was added (i.e.
-   * not already queued or in-flight).
+   * Add a key to the queue, unless it is already queued or in flight.
    */
-  private addToQueue(key: string): boolean {
-    if (this.inFlight.has(key)) return false;
-    if (this.queue.has(key)) return false;
+  private addToQueue(key: string): void {
+    if (this.inFlight.has(key) || this.queue.has(key)) return;
     this.queue.add(key);
     this.log(`  Enqueued: ${key}`);
-    return true;
   }
 
   /**
