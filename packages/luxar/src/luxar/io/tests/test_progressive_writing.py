@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.compiler import LuxarZarrCompiler
-from luxar.dimensions import Dimensions
+from luxar.core.dimensions import Dimensions
 from luxar.encoding import ArrayDecoder
+from luxar.io.compiler import LuxarZarrCompiler
 from luxar.io.reader import LuxarScene
 
 
