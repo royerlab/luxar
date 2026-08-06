@@ -99,7 +99,7 @@ rendering/
 │   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
 │
 ├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
-│   └── index.ts                        # Stable re-export path for out-of-tree consumers
+│   └── index.ts                        # Stable re-export spelling; no importer today (knip-ignored)
 │
 ├── index.ts                            # Public-API barrel
 └── README.md                           # This documentation

@@ -219,5 +219,5 @@ control.
 | `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption); `linear` or `log` track                     |
 | `absorption-range.ts`                      | `absorptionSliderRange` / `formatAbsorption` — κ track bounds (fixed log span, widened onto authored κ) + readout format         |
 | `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)                                                       |
-| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                                                                |
+| `../layers.ts`                             | Public entrypoint — re-exports `LayersPanel`                                                                                     |
 | `../../styles/components/layers-panel.css` | Themed CSS styles                                                                                                                |
