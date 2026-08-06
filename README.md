@@ -60,7 +60,7 @@ is the slow exception).
 
 | Feature | Description |
 |---------|-------------|
-| **[Four geometries](#geometry-types)** | Points, lines, Gaussian splats and triangle meshes share one attribute model — nD positions, per-element colors and opacity (plus a size for the three per-element types; a triangle takes its extent from its own vertices) |
+| **[Four geometries](#geometry-types)** | Points, lines, Gaussian splats and triangle meshes share one attribute model — nD positions, colors and opacity (points, lines and splats add a per-element size; a triangle takes its extent from its own vertices) |
 | **[n-Dimensional](#n-dimensional-visualization)** | 3D, 4D, 5D and beyond: named axes with physical units, radius-based slicing, keyboard navigation, per-axis transforms |
 | **Massive scale** | 100K to 10M+ primitives at interactive frame rates, with level-of-detail and progressive streaming from local files or remote servers |
 | **[Volume rendering](#volume-rendering-with-gaussian-splats)** | Image volumes fitted to oriented Gaussians — gigabytes of voxels become megabytes of streamable, GPU-native geometry, timelapses included |
@@ -482,8 +482,10 @@ scene.add_mesh(
 
 Two differences from the other three worth knowing up front. A mesh has **no
 per-element size** — a triangle's extent comes from its own vertices, so it adds
-no padding to scene bounds. And it defaults to `blending_mode="opaque"` rather
-than `additive`, which is what makes it depth-correct without sorting.
+no padding to scene bounds. And it renders with `opaque` blending by default
+rather than `additive`, which is what makes it depth-correct without sorting.
+That default is applied at load time rather than written into the node, so an
+unset `blending_mode` can still be inherited from an ancestor group.
 
 Normals are optional: omit them and the shader derives a flat per-face normal
 from screen-space derivatives. `normal_dims` is required whenever you *do* pass

@@ -89,11 +89,12 @@ index of the visible child as `activeLevel`, `-1` when none), and
 count).
 
 For lines, the `hasColormap` flag is read structurally from
-`material.defines.USE_COLORMAP` so the result is identical whether the mesh is
-running on the GLSL `ShaderMaterial` or the TSL `NodeMaterial` backend.
+`material.defines.USE_COLORMAP` so the result is identical whether the line mesh
+is running on the GLSL `ShaderMaterial` or the TSL `NodeMaterial` backend.
 
 The returned `DebugState` carries `totalPoints`, `totalGSplats`, `totalLines`,
-`totalElements` (their sum), the per-mesh arrays, `lodGroups`, `partitions`, an
+`totalTriangles`, `totalElements` (their sum), the per-node arrays
+(`pointClouds`, `gsplatMeshes`, `lineMeshes`, `meshNodes`), `lodGroups`, `partitions`, an
 optional `gpuPool` byte-stats block, `dimensions`, and a nested `camera`
 (`{position, fov}`) plus flat `cameraPosition` / `cameraFov` mirrors kept for
 back-compat.

@@ -82,12 +82,13 @@ import type { EncodingName } from '../../types/format-contract';
  * `.zarray` + `.zattrs` and nothing else. Optional entries are `undefined` when
  * the node's presence flags say the array is absent.
  *
- * The label/image-label CSR arrays are included even though nothing fetches them yet.
- * Picking itself has landed (`rendering/picking/mesh/`) and returns the vertex ordinal
- * that indexes this CSR, but the step that turns that ordinal into a label string is
- * still unwritten. They are part of the node's declared footprint either way, so
- * budgeting them from the start means the ceiling does not silently loosen when the
- * label read does arrive.
+ * The label/image-label CSR arrays are included even though *this* loader never
+ * fetches them. Picking has landed (`rendering/picking/mesh/`) and returns the vertex
+ * ordinal that indexes this CSR, and the read itself lives outside this package — the
+ * shared lazy `data/loaders/picking/label-loader.ts` the Points/Lines/GSplats hover path
+ * already uses, which resolves a label only once something is hovered. The arrays are
+ * part of the node's declared footprint regardless, so budgeting them here keeps the
+ * ceiling over the whole node rather than over the subset this loader happens to pull.
  */
 export interface MeshArrayHandles {
   vertices: zarr.Array<zarr.DataType, zarr.Readable>;

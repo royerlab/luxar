@@ -14,11 +14,12 @@ class TestPackageDescription:
         assert "points visualization" not in docstring
 
     def test_docstring_mentions_multiple_geometry_types(self) -> None:
-        """The package docstring should mention points, lines, and Gaussian splats."""
+        """The docstring should mention points, lines, Gaussian splats and meshes."""
         docstring = (luxar.__doc__ or "").lower()
         assert "points" in docstring or "point" in docstring
         assert "lines" in docstring or "line" in docstring
         assert "gaussian splat" in docstring or "splat" in docstring
+        assert "mesh" in docstring
 
     def test_all_geometry_classes_exported(self) -> None:
         """All four geometry types must be importable from the top-level package."""
