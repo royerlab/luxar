@@ -50,9 +50,9 @@
 //! `ndim`, `num_vertices` and `num_faces` are trusted, and are `debug_assert`ed
 //! rather than checked — matching the convention every sibling kernel used
 //! (e.g. the former `compact_by_mask` / `count_visible`). The loader is required
-//! to reconcile the declared shapes with
-//! the materialized array lengths before calling (`MESH_NODE_SPEC.md` §3.5
-//! Stage 2), so a mismatch is a caller bug, not untrusted input.
+//! to reconcile the declared shapes with the materialized array lengths before
+//! calling (`MESH_NODE_SPEC.md` §3.5 Stage 2), so a mismatch is a caller bug,
+//! not untrusted input.
 //!
 //! Be aware that the two backends fail *differently* when that contract is
 //! broken, which matters when reading a bug report: Rust bounds-checks slice

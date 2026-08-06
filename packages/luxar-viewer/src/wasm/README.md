@@ -104,7 +104,7 @@ target for large interactive scenes. WASM is recommended for:
 
 - nD point visibility and effective-radius queries over large chunks
 - line clipping/projection in 4D+ scenes
-- GSplat attenuation and Cholesky submatrix extraction
+- GSplat nD→3D projection (attenuation, visibility, marginal Cholesky, compaction)
 - quantization/LUT/log decoding for large arrays
 
 Run the benchmark suite on the target machine to measure real speedups:
