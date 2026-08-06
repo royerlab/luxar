@@ -838,7 +838,7 @@ Node (base class)
 
 Tests are located in `core/tests/`:
 - `test_compositing.py` - Partition/LOD wrapper compositing primitives
-- `test_datanode_types.py` - DataNode types: Lines and GSplats
+- `test_datanode_types.py` - DataNode types: cross-type parity matrix, Lines and GSplats
 - `test_dim_order.py` - dim_order dimension mapping on add_points / add_lines / add_gsplats
 - `test_dimension_metadata.py` - Dimension functionality (current Dimension class)
 - `test_dimensions.py` - Scene-level dimensions
