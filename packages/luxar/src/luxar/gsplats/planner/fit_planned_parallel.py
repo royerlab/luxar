@@ -123,6 +123,9 @@ def fit_planned_parallel(
         The injection seam for testing (see :func:`_default_worker_cmd_builder`).
     keep_boxes : bool, default False
         Keep the per-box temp outputs after a successful merge.
+    verbose : bool, default True
+        Emit the section header and per-box progress lines. ``False``
+        (``fit --quiet``) suppresses progress output; failures still raise.
 
     Returns
     -------
