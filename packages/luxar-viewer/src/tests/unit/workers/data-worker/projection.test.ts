@@ -24,7 +24,7 @@ interface WasmStubs {
   interpolate_colors_batch: ReturnType<typeof vi.fn>;
   interpolate_scalars_batch: ReturnType<typeof vi.fn>;
   calculate_segment_lengths: ReturnType<typeof vi.fn>;
-  compute_cap_suppression: ReturnType<typeof vi.fn>;
+  compute_joint_codes: ReturnType<typeof vi.fn>;
   project_gsplats_nd_to_3d: ReturnType<typeof vi.fn>;
   decode_broadcasted: ReturnType<typeof vi.fn>;
 }
@@ -49,7 +49,7 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
     interpolate_colors_batch: vi.fn(real.interpolate_colors_batch.bind(real)),
     interpolate_scalars_batch: vi.fn(real.interpolate_scalars_batch.bind(real)),
     calculate_segment_lengths: vi.fn(real.calculate_segment_lengths.bind(real)),
-    compute_cap_suppression: vi.fn(real.compute_cap_suppression.bind(real)),
+    compute_joint_codes: vi.fn(real.compute_joint_codes.bind(real)),
     project_gsplats_nd_to_3d: vi.fn(real.project_gsplats_nd_to_3d.bind(real)),
     decode_broadcasted: vi.fn(real.decode_broadcasted.bind(real)),
   };
@@ -211,18 +211,21 @@ describe('projectLinesTo3D — happy paths', () => {
       segmentCount: 4,
     })) as {
       visibleSegmentCount: number;
-      startCapSuppression: Float32Array;
-      endCapSuppression: Float32Array;
+      startJointCode: Float32Array;
+      endJointCode: Float32Array;
     };
 
     expect(result.visibleSegmentCount).toBe(4);
-    // Free start of the first segment and free end of the last keep the cap;
-    // all six interior endpoints are fully suppressed.
-    expect(Array.from(result.startCapSuppression)).toEqual([0, 1, 1, 1]);
-    expect(Array.from(result.endCapSuppression)).toEqual([1, 1, 1, 0]);
+    // Free start of the first segment and free end of the last stay JOINT_FREE_END;
+    // each interior endpoint names its partner slot, with the sign saying which
+    // of the partner's endpoints is the shared one (+(slot+1) = the partner's
+    // start, -(slot+3) = its end). End-to-end through the real projection, so
+    // this pins that the slots are VISIBLE-stream indices.
+    expect(Array.from(result.startJointCode)).toEqual([0, -3, -4, -5]);
+    expect(Array.from(result.endJointCode)).toEqual([2, 3, 4, 0]);
   });
 
-  it('#780 a right-angle polyline keeps the cap at the corner (quads genuinely overlap there)', async () => {
+  it('#790 a right-angle polyline still reports the joint (the shader measures the angle)', async () => {
     const { mod } = await loadWorker();
     const ndim = 3;
     // v0 (0,0,0) -> v1 (1,0,0) -> v2 (1,1,0): one 90-degree turn at v1.
@@ -242,17 +245,21 @@ describe('projectLinesTo3D — happy paths', () => {
       },
       ndim,
       segmentCount: 2,
-    })) as { startCapSuppression: Float32Array; endCapSuppression: Float32Array };
+    })) as { startJointCode: Float32Array; endJointCode: Float32Array };
 
-    // Corner keeps the full cap — behaviour identical to before the fix.
-    expect(result.endCapSuppression[0]).toBe(0);
-    expect(result.startCapSuppression[1]).toBe(0);
+    // The kernel is purely topological: a 90-degree corner is still a degree-2
+    // joint and still names its partner. Whether it is mitered — and how much
+    // cap it keeps — is decided by the vertex stage from the SCREEN-space angle,
+    // which is what makes it camera-aware (#795).
+    expect(result.endJointCode[0]).toBe(2); // joins slot 1 at its start
+    expect(result.startJointCode[1]).toBe(-3); // joins slot 0 at its end
   });
 
-  it('#780 an nD-clipped endpoint still reports full suppression', async () => {
-    // A 4D polyline where the slice cuts the second segment mid-way: the cut
-    // end is not a real endpoint, so it must stay fully suppressed (the
-    // pre-existing clipped-flag contract, preserved by the new kernel).
+  it('#780 an nD-clipped endpoint reports JOINT_CLIPPED', async () => {
+    // A 4D polyline where the slice cuts the second segment mid-way: the cut end
+    // is not a real endpoint, so no neighbour will ever arrive there — the cap
+    // must be suppressed entirely (the pre-existing clipped contract, carried
+    // over as a sentinel).
     const { mod } = await loadWorker();
     const ndim = 4;
     // dim 3 is the hidden/slicing axis. v0,v1 at w=0; v2 at w=10.
@@ -274,16 +281,16 @@ describe('projectLinesTo3D — happy paths', () => {
       segmentCount: 2,
     })) as {
       visibleSegmentCount: number;
-      startCapSuppression: Float32Array;
-      endCapSuppression: Float32Array;
+      startJointCode: Float32Array;
+      endJointCode: Float32Array;
     };
 
     expect(result.visibleSegmentCount).toBe(2);
-    // Segment 1 is cut by the slice → its end is clipped → suppression 1.
-    expect(result.endCapSuppression[1]).toBe(1);
-    // v1 is still a genuine straight-through joint reached by both segments.
-    expect(result.endCapSuppression[0]).toBeCloseTo(1, 6);
-    expect(result.startCapSuppression[1]).toBeCloseTo(1, 6);
+    // Segment 1 is cut by the slice → its end is JOINT_CLIPPED.
+    expect(result.endJointCode[1]).toBe(-1);
+    // v1 is still a genuine joint reached by both segments.
+    expect(result.endJointCode[0]).toBe(2); // joins slot 1 at its start
+    expect(result.startJointCode[1]).toBe(-3); // joins slot 0 at its end
   });
 
   it('scalars=null returns empty startScalars/endScalars and does not call interpolate_scalars_batch for scalars', async () => {

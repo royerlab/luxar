@@ -909,7 +909,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       };
     },
     (size) => {
-      // compute_cap_suppression - per-endpoint cap suppression. Built as one
+      // compute_joint_codes - per-endpoint cap suppression. Built as one
       // long polyline (segment i joins i-1 and i+1) so the joint-detection
       // path is exercised, not just the clipped-flag fast path.
       const visibility = new Uint8Array(size);
@@ -940,15 +940,13 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
 
       const tsTime = measureTime(
         () => {
-          tsModule.compute_cap_suppression(
+          tsModule.compute_joint_codes(
             segs,
             visibility,
             t1Params,
             t2Params,
             size,
             numVertices,
-            startPos,
-            endPos,
             tsStartSup,
             tsEndSup
           );
@@ -959,15 +957,13 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
 
       const wasmTime = measureTime(
         () => {
-          wasmModule!.compute_cap_suppression(
+          wasmModule!.compute_joint_codes(
             segs,
             visibility,
             t1Params,
             t2Params,
             size,
             numVertices,
-            startPos,
-            endPos,
             wasmStartSup,
             wasmEndSup
           );
@@ -977,7 +973,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       );
 
       return {
-        name: 'compute_cap_suppression',
+        name: 'compute_joint_codes',
         category: 'LINES CLIPPING',
         tsTime,
         wasmTime,

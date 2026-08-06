@@ -64,7 +64,7 @@ masks. The TypeScript side then slices the buffer down to the returned count.
 `debug_assert!` is used on the output lengths of some kernels
 (`clip_segments_batch`, `calculate_segment_lengths`) to catch sizing bugs in
 dev builds without paying for the check in release; others
-(`compute_cap_suppression`, the `interpolate_*` kernels) have none, so an
+(`compute_joint_codes`, the `interpolate_*` kernels) have none, so an
 undersized output buffer there aborts with no message.
 
 ### Hot-loop optimisation patterns
@@ -118,7 +118,7 @@ E: both OUT, same side       → invisible
 | `interpolate_scalars_batch`     | Same compaction for per-vertex scalar attributes (widths, sharpness, …).                                                                                                                                   |
 | `interpolate_colors_batch`      | RGB version with the inner loop unrolled across the three channels.                                                                                                                                        |
 | `calculate_segment_lengths`     | Euclidean 3D length per visible segment (for LOD / dash patterns).                                                                                                                                         |
-| `compute_cap_suppression`       | Per-endpoint cap suppression in [0, 1] per visible segment: 1 for a slice-clipped endpoint or a straight-through interior joint, 0 for a free end / branch point / sharp bend, cos(turn angle) in between. |
+| `compute_joint_codes`           | Per-endpoint joint code per visible segment: `0` free end, `-1` slice-clipped, `-2` degree-≥​3 hub, `+(slot+1)` / `-(slot+3)` naming the partner segment's storage slot and which of its endpoints is shared. Purely topological — no positions, no angle. |
 
 The batch path replaces the `HashSet<u32>` of display dims with a fixed-size
 `[bool; 16]` lookup. `dv.abs() < 1e-7` short-circuits the

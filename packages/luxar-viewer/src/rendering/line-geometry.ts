@@ -22,7 +22,7 @@
  *   | 1     | endPos.xyz, endWidth                                     |
  *   | 2     | startColor.rgb, startSharpness                           |
  *   | 3     | endColor.rgb, endSharpness                               |
- *   | 4     | segmentLength, startCapSuppression, endCapSuppression, 0 |
+ *   | 4     | segmentLength, startJointCode, endJointCode, 0            |
  *   | 5     | startScalar (0.0), endScalar (0.0), alphas (1.0, 1.0)    |
  *
  * texel5.xy are the colormap scalars and texel5.zw the per-endpoint
@@ -41,10 +41,10 @@
  *
  * All source arrays consumed by the texel writer arrive as the worker
  * projection's Float32 output (`ProcessedLinesData` — endpoint
- * interpolation always emits Float32), the per-endpoint cap suppression
- * included: it is a continuous [0, 1] scalar, not a flag, so it needs no
- * widening allocation (the interleaved era paid one
- * `new Float32Array(uint8)` per update back when it was a 0/1 byte).
+ * interpolation always emits Float32), the per-endpoint joint codes
+ * included: a code is a small exact integer (a sentinel, or a storage slot
+ * offset by 1 or 3 with the sign carrying which of the partner's endpoints
+ * is the shared one), so Float32 holds it exactly and no widening is needed.
  *
  * Mirrors `point-geometry.ts` / `gsplat-geometry.ts` so the geometry
  * types share one storage model; the geometry-agnostic helpers live in
@@ -115,8 +115,8 @@ export function createLineQuadGeometry(): THREE.InstancedBufferGeometry {
 
 /**
  * The per-segment arrays the texel writer consumes — the worker
- * projection's Float32 endpoint output (see the module header; the
- * cap-suppression scalars arrive Float32 too, no widening needed).
+ * projection's Float32 endpoint output (see the module header; the joint
+ * codes arrive Float32 too, holding small exact integers).
  */
 export interface LineTexelSource {
   /** Segment start positions (count × 3). */
@@ -138,13 +138,15 @@ export interface LineTexelSource {
   /** 3D segment lengths (count) — cap-ramp math. */
   segmentLengths: Float32Array;
   /**
-   * How much of the shader's endpoint cap dimming to suppress at the start
-   * endpoint (count, [0, 1] — 1 = no dimming). See
-   * `wasm/rust/src/lines_clipping.rs::compute_cap_suppression`.
+   * Per-endpoint joint code for the start endpoint (count): `0` free end,
+   * `-1` slice-clipped, `-2` degree->=3 hub, `+(slot + 1)` joins storage slot
+   * `slot` at that segment's START, `-(slot + 3)` at its END. Drives the
+   * vertex stage's join geometry and its cap. See
+   * `wasm/rust/src/lines_clipping.rs::compute_joint_codes`.
    */
-  startCapSuppression: Float32Array;
-  /** Same for the end endpoint (count, [0, 1] — 1 = no dimming). */
-  endCapSuppression: Float32Array;
+  startJointCode: Float32Array;
+  /** Same for the end endpoint. */
+  endJointCode: Float32Array;
   /**
    * Colormap scalars per endpoint (count each). Absent ⇒ texel5.xy are
    * written 0.0 (the no-scalar identity — written unconditionally so a
@@ -206,60 +208,25 @@ export function getLineTexture(geometry: THREE.BufferGeometry): THREE.DataTextur
   return getElementTexture(geometry);
 }
 
-function samePosition3(a: Float32Array, ai: number, b: Float32Array, bi: number): boolean {
-  return a[ai] === b[bi] && a[ai + 1] === b[bi + 1] && a[ai + 2] === b[bi + 2];
-}
-
 /**
- * Capacity clamping keeps a prefix of the projected segment stream. When the
- * boundary lands between two adjacent polyline segments, cap suppression was
- * computed while both still existed, so the retained endpoint stays lifted
- * (a bright hard stub) even though its partner is not drawn. Detect that
- * adjacent split from the compacted endpoint positions + positive suppression
- * on both sides and restore the retained endpoint's soft cap in the texture.
+ * Capacity clamping keeps only a PREFIX of the projected segment stream, so a
+ * joint code emitted for the whole stream can name a partner that was never
+ * written. Rewrite any such code to the free-end sentinel: the retained
+ * endpoint then draws its soft cap instead of dereferencing a texel that holds
+ * either nothing or a previous pool tenant's data.
  *
- * This is intentionally boundary-local and allocation-free: arbitrary indexed
- * neighbours can appear anywhere in the stream and their source indices are no
- * longer present in `ProcessedLinesData`, while the normal polyline path emits
- * adjacent segments. The per-node overflow path already warns; this repairs
- * the common visible artifact without an O(N) topology table on every commit.
+ * This replaces a boundary-local heuristic that inferred the same situation
+ * from matching endpoint POSITIONS on either side of the cut. The code makes it
+ * exact and O(1) per segment inside the writer's existing single pass: a
+ * partner is either in the written prefix or it is not. It also covers the case
+ * the heuristic explicitly could not — arbitrary indexed neighbours anywhere in
+ * the stream, not just the pair straddling the boundary.
  */
-function softenCapacitySplitCap(arr: Float32Array, src: LineTexelSource, written: number): void {
-  if (
-    written <= 0 ||
-    written >= src.segmentLengths.length ||
-    src.startPositions.length < (written + 1) * 3 ||
-    src.endPositions.length < (written + 1) * 3 ||
-    src.startCapSuppression.length <= written ||
-    src.endCapSuppression.length <= written
-  ) {
-    return;
-  }
-
-  const kept = written - 1;
-  const omitted = written;
-  const keptP = kept * 3;
-  const omittedP = omitted * 3;
-  const texel = kept * LINE_FLOATS_PER_SEGMENT;
-
-  if (
-    src.startCapSuppression[kept] > 0 &&
-    ((src.startCapSuppression[omitted] > 0 &&
-      samePosition3(src.startPositions, keptP, src.startPositions, omittedP)) ||
-      (src.endCapSuppression[omitted] > 0 &&
-        samePosition3(src.startPositions, keptP, src.endPositions, omittedP)))
-  ) {
-    arr[texel + 17] = 0.0;
-  }
-  if (
-    src.endCapSuppression[kept] > 0 &&
-    ((src.startCapSuppression[omitted] > 0 &&
-      samePosition3(src.endPositions, keptP, src.startPositions, omittedP)) ||
-      (src.endCapSuppression[omitted] > 0 &&
-        samePosition3(src.endPositions, keptP, src.endPositions, omittedP)))
-  ) {
-    arr[texel + 18] = 0.0;
-  }
+function clampJointCode(code: number, written: number): number {
+  // Sentinels (0, -1, -2) carry no slot and always pass through.
+  if (code === 0 || code === -1 || code === -2) return code;
+  const slot = code > 0 ? code - 1 : -code - 3;
+  return slot < written ? code : 0;
 }
 
 /**
@@ -298,8 +265,8 @@ export function writeLineTexels(
     startSharpness,
     endSharpness,
     segmentLengths,
-    startCapSuppression,
-    endCapSuppression,
+    startJointCode,
+    endJointCode,
     startScalars,
     endScalars,
     startAlphas,
@@ -318,8 +285,8 @@ export function writeLineTexels(
     startSharpness.length < n ||
     endSharpness.length < n ||
     segmentLengths.length < n ||
-    startCapSuppression.length < n ||
-    endCapSuppression.length < n ||
+    startJointCode.length < n ||
+    endJointCode.length < n ||
     (startScalars !== undefined && startScalars.length < n) ||
     (endScalars !== undefined && endScalars.length < n) ||
     (startAlphas !== undefined && startAlphas.length < n) ||
@@ -331,8 +298,8 @@ export function writeLineTexels(
         `startColors=${startColors.length}, endColors=${endColors.length}, ` +
         `startWidths=${startWidths.length}, endWidths=${endWidths.length}, ` +
         `startSharpness=${startSharpness.length}, endSharpness=${endSharpness.length}, ` +
-        `segmentLengths=${segmentLengths.length}, startCapSuppression=${startCapSuppression.length}, ` +
-        `endCapSuppression=${endCapSuppression.length}, startScalars=${startScalars?.length ?? 'absent'}, ` +
+        `segmentLengths=${segmentLengths.length}, startJointCode=${startJointCode.length}, ` +
+        `endJointCode=${endJointCode.length}, startScalars=${startScalars?.length ?? 'absent'}, ` +
         `endScalars=${endScalars?.length ?? 'absent'}, startAlphas=${startAlphas?.length ?? 'absent'}, ` +
         `endAlphas=${endAlphas?.length ?? 'absent'})`
     );
@@ -362,12 +329,20 @@ export function writeLineTexels(
     arr[o + 13] = endColors[p3 + 1];
     arr[o + 14] = endColors[p3 + 2];
     arr[o + 15] = endSharpness[i];
-    // texel 4: segmentLength, startCapSuppression, endCapSuppression. The .w slot is
+    // texel 4: segmentLength, startJointCode, endJointCode. The .w slot is
     // zero-filled (cheap, keeps reused pool texels deterministic even
     // though nothing reads it yet).
+    //
+    // The joint codes are clamped against the WRITTEN count so a code can
+    // never name an unwritten slot. On an append the prefix keeps codes
+    // clamped against the smaller previous count, which is safe in the one
+    // direction that matters: the clamp is monotone in `n`, so a slot that
+    // was in range stays in range, and a prefix joint that was dropped
+    // merely keeps its soft cap (the pre-existing behaviour) rather than
+    // dereferencing anything.
     arr[o + 16] = segmentLengths[i];
-    arr[o + 17] = startCapSuppression[i];
-    arr[o + 18] = endCapSuppression[i];
+    arr[o + 17] = clampJointCode(startJointCode[i], n);
+    arr[o + 18] = clampJointCode(endJointCode[i], n);
     arr[o + 19] = 0.0;
     // texel 5: startScalar, endScalar, per-endpoint opacity alphas.
     // ALL FOUR written UNCONDITIONALLY — pool textures are reused, so
@@ -379,7 +354,6 @@ export function writeLineTexels(
     arr[o + 22] = hasAlphas ? startAlphas[i] : 1.0;
     arr[o + 23] = hasAlphas ? endAlphas[i] : 1.0;
   }
-  if (from < n) softenCapacitySplitCap(arr, src, n);
   // Ranged upload: only the [from, n) rows just written go to the GPU, not
   // the full capacity-sized image (pool slack rows past n never re-upload;
   // on an append, prefix rows [0, from) stay on the GPU untouched).

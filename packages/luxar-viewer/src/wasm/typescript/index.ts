@@ -51,7 +51,10 @@ export {
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
-  compute_cap_suppression,
+  compute_joint_codes,
+  JOINT_FREE_END,
+  JOINT_CLIPPED,
+  JOINT_HUB,
 } from './lines-clipping';
 export { mesh_vertex_visibility_mask, compact_visible_faces } from './mesh-culling';
 
@@ -89,7 +92,7 @@ import {
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
-  compute_cap_suppression,
+  compute_joint_codes,
 } from './lines-clipping';
 import { mesh_vertex_visibility_mask, compact_visible_faces } from './mesh-culling';
 
@@ -128,7 +131,7 @@ export class TypeScriptFallback implements WasmModule {
   interpolate_scalars_batch = interpolate_scalars_batch;
   interpolate_colors_batch = interpolate_colors_batch;
   calculate_segment_lengths = calculate_segment_lengths;
-  compute_cap_suppression = compute_cap_suppression;
+  compute_joint_codes = compute_joint_codes;
   mesh_vertex_visibility_mask = mesh_vertex_visibility_mask;
   compact_visible_faces = compact_visible_faces;
 }

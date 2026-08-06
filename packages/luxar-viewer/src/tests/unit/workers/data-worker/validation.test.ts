@@ -23,7 +23,7 @@ async function loadWorker(): Promise<WorkerModule> {
     interpolate_colors_batch: vi.fn(),
     interpolate_scalars_batch: vi.fn(),
     calculate_segment_lengths: vi.fn(),
-    compute_cap_suppression: vi.fn(),
+    compute_joint_codes: vi.fn(),
     decode_quantized_u8: vi.fn(),
     decode_quantized_u16: vi.fn(),
     decode_log_scalar_u8: vi.fn(),

@@ -1235,131 +1235,74 @@ describe('WASM vs TypeScript Comparison', () => {
       }
     );
 
-    it.skipIf(!wasmFilesExist)('compute_cap_suppression should match', () => {
-      // A 4-segment chain that exercises every branch of the kernel in one
-      // shot: a straight-through joint, a FRACTIONAL 45-degree bend, a
-      // genuinely clipped endpoint (t2 < 1), and a culled neighbour.
-      //   v0 -> v1 -> v2 (straight, +x), v2 -> v3 (45° towards +y, its far
-      //   end slice-trimmed at t2 = 0.6), v3 -> v4 (culled)
-      // The 45° joint pins a real fractional value (cos 45° ≈ 0.7071) on
-      // BOTH backends — a Rust build that quantised the scalar to a boolean
-      // would pass a 0/1-only fixture but fails here.
-      const d = Math.SQRT1_2;
-      const segments = new Uint32Array([0, 1, 1, 2, 2, 3, 3, 4]);
-      const visibility = new Uint8Array([1, 1, 1, 0]);
-      const t1Params = new Float32Array([0.0, 0.0, 0.0, 0.0]);
-      const t2Params = new Float32Array([1.0, 1.0, 0.6, 1.0]);
-      const startPositions = new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]);
-      // Segment 2 heads 45° off +x; its stored end is the clipped position
-      // at t = 0.6 along the way to v3 (direction is unchanged by the trim).
-      const endPositions = new Float32Array([1, 0, 0, 2, 0, 0, 2 + 0.6 * d, 0.6 * d, 0]);
+    it.skipIf(!wasmFilesExist)('compute_joint_codes should match', () => {
+      // One chain that exercises every branch of the kernel: a straight-through
+      // joint, an end-to-end (opposing orientation) joint, a degree->=3 hub, a
+      // slice-trimmed endpoint, a culled neighbour, and a self-registering
+      // degenerate segment.
+      //
+      // Note what is NOT here any more: the old fixture pinned cos(45 deg) to
+      // catch a backend that quantised the angle scalar, and a separate case
+      // pinned huge coordinates because the direction loop's f32 squared length
+      // overflowed to infinity in Rust while the TS mirror accumulated in f64 —
+      // a real divergence, since TS is the PRODUCTION backend above 16
+      // dimensions. Both are MOOT: the kernel reads no positions and computes no
+      // angle, so its output is integer index arithmetic and the two backends
+      // agree by construction rather than by careful matching of float order.
+      //
+      //   slots 0,1: v0 -> v1 -> v2   straight-through joint at v1
+      //   slot   2:  v4 -> v3         END-to-END with slot 3 at v3
+      //   slot   3:  v5 -> v3         (so both report the partner's END)
+      //   slot   4:  v6 -> v7         start trimmed (t1 > 0)
+      //   culled:    v7 -> v8         invisible, must not anchor a joint
+      //   slot   5:  v9 -> v9         degenerate: must not name itself
+      const segments = new Uint32Array([0, 1, 1, 2, 4, 3, 5, 3, 6, 7, 7, 8, 9, 9]);
+      const visibility = new Uint8Array([1, 1, 1, 1, 1, 0, 1]);
+      const t1Params = new Float32Array([0, 0, 0, 0, 0.25, 0, 0]);
+      const t2Params = new Float32Array([1, 1, 1, 1, 1, 1, 1]);
 
-      const tsStart = new Float32Array(3);
-      const tsEnd = new Float32Array(3);
-      const wasmStart = new Float32Array(3);
-      const wasmEnd = new Float32Array(3);
+      const tsStart = new Float32Array(6).fill(99);
+      const tsEnd = new Float32Array(6).fill(99);
+      const wasmStart = new Float32Array(6).fill(99);
+      const wasmEnd = new Float32Array(6).fill(99);
 
-      const tsCount = tsModule.compute_cap_suppression(
+      const tsCount = tsModule.compute_joint_codes(
         segments,
         visibility,
         t1Params,
         t2Params,
-        4,
-        5,
-        startPositions,
-        endPositions,
+        7,
+        10,
         tsStart,
         tsEnd
       );
-      const wasmCount = wasmModule!.compute_cap_suppression(
+      const wasmCount = wasmModule!.compute_joint_codes(
         segments,
         visibility,
         t1Params,
         t2Params,
-        4,
-        5,
-        startPositions,
-        endPositions,
+        7,
+        10,
         wasmStart,
         wasmEnd
       );
 
+      expect(tsCount).toBe(6);
       expect(wasmCount).toBe(tsCount);
-      expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
-      expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
-      // Pin the expected values on BOTH backends, so a matched-but-wrong
-      // pair still fails — including the fractional 45° suppression.
-      for (const [start, end] of [
-        [tsStart, tsEnd],
-        [wasmStart, wasmEnd],
-      ]) {
-        // seg0: free start; straight joint at v1.
-        expect(start[0]).toBe(0);
-        expect(end[0]).toBeCloseTo(1, 6);
-        // seg1: straight joint at v1; 45° joint at v2 — fractional cos 45°.
-        expect(start[1]).toBeCloseTo(1, 6);
-        expect(end[1]).toBeCloseTo(d, 5);
-        // seg2: 45° joint at v2; clipped far end (t2 = 0.6 < 1) -> 1.
-        expect(start[2]).toBeCloseTo(d, 5);
-        expect(end[2]).toBe(1);
-      }
+      // Codes are exact small integers, so this is toEqual, not almost-equal.
+      expect(Array.from(wasmStart)).toEqual(Array.from(tsStart));
+      expect(Array.from(wasmEnd)).toEqual(Array.from(tsEnd));
+
+      // Pin the values too, so a change of encoding cannot pass by agreeing
+      // with itself on both backends.
+      expect(tsEnd[0]).toBe(2); // slot 0 end joins slot 1 at its START: +(1+1)
+      expect(tsStart[1]).toBe(-3); // slot 1 start joins slot 0 at its END: -(0+3)
+      expect(tsEnd[2]).toBe(-6); // slot 2 end joins slot 3 at its END: -(3+3)
+      expect(tsEnd[3]).toBe(-5); // slot 3 end joins slot 2 at its END: -(2+3)
+      expect(tsStart[4]).toBe(-1); // trimmed off its vertex
+      expect(tsStart[5]).toBe(0); // degenerate self-registering segment
+      expect(tsEnd[5]).toBe(0);
     });
-
-    it.skipIf(!wasmFilesExist)(
-      'compute_cap_suppression should match on huge coordinates (f32 squared-length overflow)',
-      () => {
-        // Regression: the direction loop accumulated the squared length in f32,
-        // which overflows to infinity once a component delta passes
-        // sqrt(f32::MAX) ≈ 1.8e19. Rust then zeroed the direction and dropped
-        // the joint (suppression 0) while the TS mirror — reading the same f32
-        // inputs but accumulating in f64 — kept it (suppression 1). Since the TS
-        // backend is the PRODUCTION path above 16 dimensions, the same scene
-        // rendered differently at 17D than at 16D. Both now accumulate in f64.
-        const segments = new Uint32Array([0, 1, 1, 2]);
-        const visibility = new Uint8Array([1, 1]);
-        const t1Params = new Float32Array([0, 0]);
-        const t2Params = new Float32Array([1, 1]);
-        const C = 1e30; // well past the 1.8e19 f32 overflow threshold
-        const startPositions = new Float32Array([-C, 0, 0, 0, 0, 0]);
-        const endPositions = new Float32Array([0, 0, 0, C, 0, 0]);
-
-        const tsStart = new Float32Array(2);
-        const tsEnd = new Float32Array(2);
-        const wasmStart = new Float32Array(2);
-        const wasmEnd = new Float32Array(2);
-
-        tsModule.compute_cap_suppression(
-          segments,
-          visibility,
-          t1Params,
-          t2Params,
-          2,
-          3,
-          startPositions,
-          endPositions,
-          tsStart,
-          tsEnd
-        );
-        wasmModule!.compute_cap_suppression(
-          segments,
-          visibility,
-          t1Params,
-          t2Params,
-          2,
-          3,
-          startPositions,
-          endPositions,
-          wasmStart,
-          wasmEnd
-        );
-
-        // The shared vertex is a straight-through joint at any scale.
-        expect(tsEnd[0]).toBeCloseTo(1, 6);
-        expect(wasmEnd[0]).toBeCloseTo(1, 6);
-        expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
-        expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
-      }
-    );
   });
 
   // ============================================================================

@@ -424,87 +424,66 @@ export function calculate_segment_lengths(
   }
 }
 
-/**
- * Unit direction pointing from an endpoint back along its own segment.
- *
- * One unit direction per visible segment, start -> end. A degenerate
- * (zero-length or non-finite) segment gets a zero direction, whose dot product
- * is 0, which yields suppression 0 — the cap is kept, the wanted fallback.
- */
-function segmentDirections(
-  visibleCount: number,
-  startPositions: Float32Array,
-  endPositions: Float32Array
-): Float32Array {
-  const dirs = new Float32Array(visibleCount * 3);
-  for (let i = 0; i < visibleCount; i++) {
-    const o = i * 3;
-    const dx = endPositions[o] - startPositions[o];
-    const dy = endPositions[o + 1] - startPositions[o + 1];
-    const dz = endPositions[o + 2] - startPositions[o + 2];
-    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (Number.isFinite(len) && len > 0) {
-      dirs[o] = dx / len;
-      dirs[o + 1] = dy / len;
-      dirs[o + 2] = dz / len;
-    }
-  }
-  return dirs;
-}
+/** Free polyline end: keep the soft cap. */
+export const JOINT_FREE_END = 0;
+/** Slice-clipped endpoint: no neighbour will arrive, so suppress the cap. */
+export const JOINT_CLIPPED = -1;
+/** Degree->=3 hub: several quads already stack here, so keep the cap. */
+export const JOINT_HUB = -2;
 
 /**
- * Per-endpoint cap suppression in [0, 1] (drives the shader cap factor).
+ * Per-endpoint **joint code** (drives the shader's join geometry and cap).
  *
- * TypeScript reference for the Rust `compute_cap_suppression` kernel — see
- * `wasm/rust/src/lines_clipping.rs` for the full rationale. In short: the line
- * fragment shader dims each segment towards `0.5` at its own endpoints, which
- * is only correct where a neighbouring quad overlaps and adds the missing half
- * back. Collinear neighbours tile rather than overlap, so this returns `1.0`
- * (suppress the dimming) for clipped endpoints and straight-through interior
- * joints, `0.0` (keep it) for free ends, branch points, and sharp bends, and
- * `clamp(-dot(awayA, awayB), 0, 1)` in between.
+ * TypeScript reference for the Rust `compute_joint_codes` kernel — see the Rust
+ * doc comment in `wasm/rust/src/lines_clipping.rs` for the full rationale. This
+ * mirror is not just a WASM-missing fallback: it is the production backend for
+ * `ndim > 16`, which the fixed-size Rust kernels cannot serve, so the two must
+ * agree exactly.
  *
- * Only degree-2 vertices count as joints, and only endpoints that actually
- * reach the shared vertex (untrimmed, on a visible segment) participate.
+ * Agreement is trivial here in a way it was not for the scalar this replaced:
+ * the output is integer index arithmetic, so there is no f32/f64 accumulation
+ * order to reconcile between the backends.
  *
- * Caveat: the bend angle is measured in display/data space, but quad overlap
- * is a screen-space (camera-dependent) property this scalar does not track, so
- * a gentle 3D bend that projects sharp can sum to ~2x body brightness — see
- * the line material README's "Known limitation" note and the Rust doc.
+ * | value         | meaning                                                    |
+ * |---------------|------------------------------------------------------------|
+ * | ` 0`          | free polyline end — keep the soft cap                       |
+ * | `-1`          | slice-clipped — suppress the cap entirely                   |
+ * | `-2`          | degree->=3 hub — keep the cap                               |
+ * | `+(slot + 1)` | joins visible segment `slot`, at that segment's START       |
+ * | `-(slot + 3)` | joins visible segment `slot`, at that segment's END         |
+ *
+ * `slot` is a storage slot in the line texture, so it survives the depth-sort
+ * worker's draw-order permutation without adjustment.
  *
  * @param segments - Vertex index pairs [numSegments * 2]
  * @param visibility - Visibility mask [numSegments]
  * @param t1Params - Start interpolation parameters [numSegments]
  * @param t2Params - End interpolation parameters [numSegments]
  * @param numSegments - Total number of segments
- * @param numVertices - Total number of source vertices
- * @param startPositions - Clipped start positions [visibleCount * 3]
- * @param endPositions - Clipped end positions [visibleCount * 3]
- * @param outputStart - Output start suppression [visibleCount]
- * @param outputEnd - Output end suppression [visibleCount]
+ * @param numVertices - Total number of source vertices (bounds the touch tables)
+ * @param outputStart - Output start joint codes [visibleCount]
+ * @param outputEnd - Output end joint codes [visibleCount]
  * @returns Number of visible segments written
  */
-export function compute_cap_suppression(
+export function compute_joint_codes(
   segments: Uint32Array,
   visibility: Uint8Array,
   t1Params: Float32Array,
   t2Params: Float32Array,
   numSegments: number,
   numVertices: number,
-  startPositions: Float32Array,
-  endPositions: Float32Array,
   outputStart: Float32Array,
   outputEnd: Float32Array
 ): number {
   // Endpoint code: (outIdx << 1) | endBit. `codeSum` accumulates the codes of
   // the endpoints landing exactly on each vertex and `degree` counts them
-  // (saturating at 3, so branch points stay distinguishable from ordinary
-  // joints). At degree 2 the partner is simply `codeSum - myCode` — one
-  // scattered array instead of two, halving this pass's cache traffic. Both are
-  // left zero-initialised: degree gates every read, so a sentinel fill would be
-  // pure cost. Int32 holds the sums with room to spare: a code is at most 2x the visible
-  // segment count, so two of them stay under 2^31 for any scene that fits in
-  // memory.
+  // (saturating at 3, so hubs stay distinguishable from ordinary joints). At
+  // degree 2 the partner is simply `codeSum - myCode` — one scattered array
+  // instead of two, halving this pass's cache traffic. Both are left
+  // zero-initialised: degree gates every read, so a sentinel fill would be pure
+  // cost. Int32 holds the sums with room to spare: a code is at most 2x the
+  // visible segment count, so two of them stay under 2^31 for any scene that
+  // fits in memory.
   const codeSum = new Int32Array(numVertices);
   const degree = new Uint8Array(numVertices);
 
@@ -515,7 +494,7 @@ export function compute_cap_suppression(
       codeSum[vertex] += code;
       degree[vertex] = d + 1;
     } else {
-      degree[vertex] = 3; // branch point — the sum is no longer meaningful
+      degree[vertex] = 3; // hub — the sum is no longer meaningful
     }
   };
 
@@ -523,43 +502,49 @@ export function compute_cap_suppression(
   for (let segIdx = 0; segIdx < numSegments; segIdx++) {
     if (visibility[segIdx] === 0) continue;
     const code = outIdx << 1;
-    if (t1Params[segIdx] <= 0) registerTouch(segments[segIdx * 2], code);
-    if (t2Params[segIdx] >= 1) registerTouch(segments[segIdx * 2 + 1], code | 1);
+    if (t1Params[segIdx] <= 0.0) registerTouch(segments[segIdx * 2], code);
+    if (t2Params[segIdx] >= 1.0) registerTouch(segments[segIdx * 2 + 1], code | 1);
     outIdx++;
   }
 
   const visibleCount = outIdx;
 
-  // Normalise ONCE per segment; the joint test is then a single dot product.
-  // The "away" vector at an endpoint is +dir at a start and -dir at an end, so
-  //   dot(awayMine, awayPartner) = sMine * sPartner * dot(dirMine, dirPartner)
-  // and sMine * sPartner is +1 exactly when the two endpoint bits agree.
-  const dirs = segmentDirections(visibleCount, startPositions, endPositions);
-
-  const jointSuppression = (vertex: number, myCode: number): number => {
-    if (vertex >= numVertices || degree[vertex] !== 2) return 0;
+  const jointCode = (vertex: number, myCode: number): number => {
+    if (vertex >= numVertices) return JOINT_FREE_END; // unregistered
+    const d = degree[vertex];
+    if (d < 2) return JOINT_FREE_END;
+    if (d > 2) return JOINT_HUB;
     const partner = codeSum[vertex] - myCode;
-    if (partner === myCode) return 0; // self-segment registered both its ends here
-    // A malformed NaN t-parameter can make this endpoint query a degree-2
-    // vertex without having registered its own code. Keep the TypeScript
-    // fallback symmetric with Rust: reject the resulting negative / out-of-
-    // range partner before indexing (`dirs[-1]` is undefined -> NaN).
-    if (partner < 0 || partner >> 1 >= visibleCount) return 0;
-    const mo = (myCode >> 1) * 3;
-    const po = (partner >> 1) * 3;
-    if (mo + 2 >= dirs.length || po + 2 >= dirs.length) return 0;
-    const dot = dirs[mo] * dirs[po] + dirs[mo + 1] * dirs[po + 1] + dirs[mo + 2] * dirs[po + 2];
-    const sign = (myCode & 1) === (partner & 1) ? 1 : -1;
-    return Math.min(Math.max(-(sign * dot), 0), 1);
+    const slot = partner >> 1;
+    // Three ways the difference can fail to name a real partner:
+    //
+    // - out of range: the sum did not contain `myCode`, so the difference is
+    //   arbitrary. That happens when the registering pass skipped this endpoint
+    //   but this pass did not — the two run on the complementary tests `t <= 0`
+    //   / `!(t > 0)`, which agree for every ordinary float but BOTH go false for
+    //   NaN. The predecessor kernel bounded the same arithmetic against its
+    //   direction table's length; keep an equivalent bound so a code can never
+    //   name a slot outside the stream it indexes, independent of the texel
+    //   writer's capacity clamp.
+    // - `slot === my slot`: a zero-length or looping segment registered BOTH of
+    //   its own endpoints here, so the difference is its own other endpoint (the
+    //   two codes differ only in the end bit, which is why comparing whole codes
+    //   is not enough). The angle-only scalar this replaced survived the case by
+    //   returning a plausible number; a code gets dereferenced, and a segment
+    //   mitered against itself is the asymmetric-join case that produces flaps.
+    if (slot < 0 || slot >= visibleCount || slot === myCode >> 1) return JOINT_FREE_END;
+    // endBit 0 = the partner's START touches this vertex, 1 = its END does.
+    return (partner & 1) === 0 ? slot + 1 : -(slot + 3);
   };
 
   outIdx = 0;
   for (let segIdx = 0; segIdx < numSegments; segIdx++) {
     if (visibility[segIdx] === 0) continue;
     const code = outIdx << 1;
-    outputStart[outIdx] = t1Params[segIdx] > 0 ? 1 : jointSuppression(segments[segIdx * 2], code);
+    outputStart[outIdx] =
+      t1Params[segIdx] > 0.0 ? JOINT_CLIPPED : jointCode(segments[segIdx * 2], code);
     outputEnd[outIdx] =
-      t2Params[segIdx] < 1 ? 1 : jointSuppression(segments[segIdx * 2 + 1], code | 1);
+      t2Params[segIdx] < 1.0 ? JOINT_CLIPPED : jointCode(segments[segIdx * 2 + 1], code | 1);
     outIdx++;
   }
 

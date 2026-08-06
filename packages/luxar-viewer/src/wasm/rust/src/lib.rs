@@ -83,8 +83,9 @@ pub use depth_sort::sort_splats_by_depth;
 pub use effective_radii::calculate_effective_radii;
 pub use gsplats_processing::{mahalanobis_distance, project_gsplats_nd_to_3d};
 pub use lines_clipping::{
-    calculate_segment_lengths, clip_segment_single, clip_segments_batch, compute_cap_suppression,
+    calculate_segment_lengths, clip_segment_single, clip_segments_batch, compute_joint_codes,
     interpolate_clipped_positions, interpolate_colors_batch, interpolate_scalars_batch,
+    JOINT_CLIPPED, JOINT_FREE_END, JOINT_HUB,
 };
 pub use mesh_culling::{compact_visible_faces, mesh_vertex_visibility_mask};
 pub use projection::extract_3d_positions;

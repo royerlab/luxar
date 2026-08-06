@@ -32,8 +32,8 @@ function makeSingleSegmentConfig(width: number): InstancedLinesMeshConfig {
     startSharpness: new Float32Array([2]),
     endSharpness: new Float32Array([2]),
     segmentLengths: new Float32Array([1]),
-    startCapSuppression: new Float32Array([0]),
-    endCapSuppression: new Float32Array([0]),
+    startJointCode: new Float32Array([0]),
+    endJointCode: new Float32Array([0]),
     segmentCount: 1,
   };
 }
@@ -88,8 +88,8 @@ describe('computeLineBounds — precomputed projection bounds fast path', () => 
       startSharpness: new Float32Array([2, 2]),
       endSharpness: new Float32Array([2, 2]),
       segmentLengths: new Float32Array([1, 1]),
-      startCapSuppression: new Float32Array([0, 0]),
-      endCapSuppression: new Float32Array([0, 0]),
+      startJointCode: new Float32Array([0, 0]),
+      endJointCode: new Float32Array([0, 0]),
       segmentCount: 2,
     };
 

@@ -40,8 +40,8 @@ function makeSource(count: number, withScalars = false, withAlphas = false): Lin
   const startSharpness = new Float32Array(count);
   const endSharpness = new Float32Array(count);
   const segmentLengths = new Float32Array(count);
-  const startCapSuppression = new Float32Array(count);
-  const endCapSuppression = new Float32Array(count);
+  const startJointCode = new Float32Array(count);
+  const endJointCode = new Float32Array(count);
   const startScalars = withScalars ? new Float32Array(count) : undefined;
   const endScalars = withScalars ? new Float32Array(count) : undefined;
   const startAlphas = withAlphas ? new Float32Array(count) : undefined;
@@ -58,8 +58,8 @@ function makeSource(count: number, withScalars = false, withAlphas = false): Lin
     segmentLengths[i] = 1.5 + i;
     // Continuous scalars, deliberately fractional: a writer that accidentally
     // quantises suppression back to the old boolean contract must fail.
-    startCapSuppression[i] = 0.25 + 0.5 * (i % 2);
-    endCapSuppression[i] = 0.25 + 0.5 * ((i + 1) % 2);
+    startJointCode[i] = 0.25 + 0.5 * (i % 2);
+    endJointCode[i] = 0.25 + 0.5 * ((i + 1) % 2);
     if (startScalars && endScalars) {
       startScalars[i] = 0.05 * i;
       endScalars[i] = 0.07 * i;
@@ -79,8 +79,8 @@ function makeSource(count: number, withScalars = false, withAlphas = false): Lin
     startSharpness,
     endSharpness,
     segmentLengths,
-    startCapSuppression,
-    endCapSuppression,
+    startJointCode,
+    endJointCode,
     startScalars,
     endScalars,
     startAlphas,
@@ -147,11 +147,11 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
       expect(arr[o + 13]).toBe(src.endColors[p3 + 1]);
       expect(arr[o + 14]).toBe(src.endColors[p3 + 2]);
       expect(arr[o + 15]).toBe(src.endSharpness[i]);
-      // texel 4: segmentLength, startCapSuppression, endCapSuppression, 0
+      // texel 4: segmentLength, startJointCode, endJointCode, 0
       // (suppression is a continuous [0, 1] Float32 scalar, copied verbatim).
       expect(arr[o + 16]).toBe(src.segmentLengths[i]);
-      expect(arr[o + 17]).toBe(src.startCapSuppression[i]);
-      expect(arr[o + 18]).toBe(src.endCapSuppression[i]);
+      expect(arr[o + 17]).toBe(src.startJointCode[i]);
+      expect(arr[o + 18]).toBe(src.endJointCode[i]);
       expect(arr[o + 19]).toBe(0.0);
       // texel 5: startScalar, endScalar, per-endpoint alphas
       expect(arr[o + 20]).toBe(src.startScalars![i]);
@@ -360,22 +360,61 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
     expect(writeLineTexels(texture, src, cap + 5)).toBe(cap);
   });
 
-  it('restores a soft cap when capacity truncation splits an adjacent joint pair', () => {
+  it('invalidates a joint code that names a slot beyond the written prefix', () => {
+    // Capacity clamping keeps only a PREFIX of the projected stream, so a code
+    // emitted for the whole stream can name a partner that was never written.
+    // Left alone that is a dangling pointer into pooled texels holding either
+    // nothing or a previous tenant's data — so the writer rewrites it to the
+    // free-end sentinel and the retained endpoint draws its soft cap instead.
+    //
+    // This replaces a heuristic that inferred the same situation from matching
+    // endpoint POSITIONS on either side of the cut, and which its own comment
+    // conceded could not handle arbitrary indexed neighbours anywhere in the
+    // stream. The code makes it exact: a partner is in the prefix or it is not.
     configureElementTextureLayout(6); // one 6-texel segment per row
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachLineStorage(geometry, 1);
-    const src = makeSource(2); // seg0 end == seg1 start; both suppressions are 0.75
+    const src = makeSource(2);
+    // seg0's end joins seg1 at seg1's start: +(1 + 1). seg1 is about to be cut.
+    src.endJointCode[0] = 2;
+    // seg0's start joins nothing.
+    src.startJointCode[0] = 0;
 
     expect(writeLineTexels(texture, src, 2)).toBe(1);
     const arr = texture.image.data as Float32Array;
-    expect(arr[17]).toBe(src.startCapSuppression[0]);
-    expect(arr[18]).toBe(0.0); // omitted neighbour can no longer fill this end
+    expect(arr[17]).toBe(0); // untouched free end
+    expect(arr[18]).toBe(0); // partner slot 1 >= written 1 → invalidated
+  });
 
-    // Position mismatch: do not soften an unrelated retained endpoint merely
-    // because both suppression scalars happen to be positive.
-    src.startPositions[3] = 10;
+  it('keeps a joint code whose partner IS inside the written prefix', () => {
+    // Sensitivity control for the test above: with room for both segments the
+    // same code must survive, or the invalidation assertion proves nothing.
+    configureElementTextureLayout(6);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachLineStorage(geometry, 2);
+    const src = makeSource(2);
+    src.endJointCode[0] = 2; // names slot 1
+    src.startJointCode[1] = -3; // names slot 0 at its end
+
+    expect(writeLineTexels(texture, src, 2)).toBe(2);
+    const arr = texture.image.data as Float32Array;
+    expect(arr[18]).toBe(2);
+    expect(arr[LINE_FLOATS_PER_SEGMENT + 17]).toBe(-3);
+  });
+
+  it('passes the sentinels through the capacity clamp unchanged', () => {
+    // 0 / -1 / -2 carry no slot, so they must never be reinterpreted as one.
+    configureElementTextureLayout(6);
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachLineStorage(geometry, 1);
+    const src = makeSource(2);
+    src.startJointCode[0] = -1; // slice-clipped
+    src.endJointCode[0] = -2; // degree->=3 hub
+
     writeLineTexels(texture, src, 2);
-    expect(arr[18]).toBe(src.endCapSuppression[0]);
+    const arr = texture.image.data as Float32Array;
+    expect(arr[17]).toBe(-1);
+    expect(arr[18]).toBe(-2);
   });
 
   it('clamps the attach capacity to the per-node bound (structural safety net)', () => {
