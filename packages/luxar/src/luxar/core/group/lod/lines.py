@@ -33,14 +33,21 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
+from .group import (
+    DEFAULT_ADDITIVE_METHOD,
+    DEFAULT_ADDITIVE_N_LODS,
+    resolve_additive_axis,
+)
 from .poisson_disk import poisson_disk_order
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
 LinesMethodName = Literal["random", "salience", "spatial-uniform", "poisson-disk"]
 
-DEFAULT_N_LODS: int = 4
-DEFAULT_METHOD: LinesMethodName = "random"
+# Aliases of the shared resolver's constants so the kwarg defaults below and
+# ``resolve_additive_axis_lines`` always agree.
+DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
+DEFAULT_METHOD: LinesMethodName = DEFAULT_ADDITIVE_METHOD
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -535,8 +542,6 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
     :func:`luxar.core.group.lod.group.resolve_additive_axis` (one
     implementation shared with Points so the two can't drift).
     """
-    from .group import resolve_additive_axis
-
     return resolve_additive_axis(spec, "Lines")
 
 

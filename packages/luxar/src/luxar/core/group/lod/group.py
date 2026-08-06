@@ -42,7 +42,7 @@ This module hosts:
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
 
 from arbol import aprint
 
@@ -547,8 +547,11 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
 # (``resolve_additive_axis_points`` / ``resolve_additive_axis_lines``) can never
 # drift.
 
-#: Defaults for ``additive_lod=True`` / ``additive_lod=dict()``.
-DEFAULT_ADDITIVE_METHOD: str = "random"
+#: Defaults for ``additive_lod=True`` / ``additive_lod=dict()``. This is the
+#: only place the values are written: ``points.DEFAULT_METHOD`` /
+#: ``lines.DEFAULT_METHOD`` (and their ``DEFAULT_N_LODS``) alias these, so the
+#: per-geometry function defaults and the resolver can't drift apart.
+DEFAULT_ADDITIVE_METHOD: Literal["random"] = "random"
 DEFAULT_ADDITIVE_N_LODS: int = 4
 
 

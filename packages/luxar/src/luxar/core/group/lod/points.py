@@ -32,6 +32,11 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
+from .group import (
+    DEFAULT_ADDITIVE_METHOD,
+    DEFAULT_ADDITIVE_N_LODS,
+    resolve_additive_axis,
+)
 from .poisson_disk import poisson_disk_order
 from .spatial_uniform import stratified_grid_order
 
@@ -39,9 +44,11 @@ from .spatial_uniform import stratified_grid_order
 PointsMethodName = Literal["random", "salience", "spatial-uniform", "poisson-disk"]
 
 
-# Default for ``additive_lod=True`` and ``additive_lod=dict()``.
-DEFAULT_N_LODS: int = 4
-DEFAULT_METHOD: PointsMethodName = "random"
+# Default for ``additive_lod=True`` and ``additive_lod=dict()``. Aliases of the
+# shared resolver's constants so the kwarg defaults below and
+# ``resolve_additive_axis_points`` always agree.
+DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
+DEFAULT_METHOD: PointsMethodName = DEFAULT_ADDITIVE_METHOD
 
 # Defaults for ``substitutive_lod=True`` / ``substitutive_lod=dict()`` — the
 # coarse levels are synthesised gsplats (each point lifted to an isotropic
@@ -455,8 +462,6 @@ def resolve_additive_axis_points(
     :func:`luxar.core.group.lod.group.resolve_additive_axis` (one
     implementation shared with Lines so the two can't drift).
     """
-    from .group import resolve_additive_axis
-
     return resolve_additive_axis(spec, "Points")
 
 
