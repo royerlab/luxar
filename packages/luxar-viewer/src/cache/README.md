@@ -418,7 +418,6 @@ new MultiLevelCachingStore(baseUrl: string, options?: {
   l1MaxSize?: number;      // L1 size in bytes (default: 100MB)
   l2MaxSize?: number;      // L2 size in bytes (default: 2GB)
   debug?: boolean;         // Enable debug logging (default: false)
-  urlParams?: URLSearchParams;  // For testing (optional)
 })
 ```
 
@@ -558,23 +557,16 @@ new ChunkPrefetcher(store: MultiLevelCachingStore, options?: {
   maxConcurrent?: number;       // Max concurrent prefetches (default: 4)
   enabled?: boolean;            // Enable/disable (default: true)
   debug?: boolean;              // Enable debug logging (default: false)
-  urlParams?: URLSearchParams;  // For testing (optional)
 })
 ```
 
 #### Methods
 
-**`onAccess(key: string, priority?: 'high' | 'normal'): void`**
+**`onAccess(key: string): void`**
 
 Called by store when a chunk is accessed from L2 or L3. Enqueues
-adjacent chunks for prefetching at the given priority (default
-`'normal'`). Called automatically - not for direct use.
-
-**`enqueueWithPriority(keys: Iterable<string>, priority?: 'high' | 'normal'): void`**
-
-Explicitly enqueue an iterable of chunk keys for prefetching at a chosen
-priority (default `'high'`). Used by higher-level scheduling code to
-front-load chunks ahead of demand.
+adjacent chunks for prefetching. Called automatically - not for direct
+use.
 
 **`registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void`**
 
@@ -584,15 +576,13 @@ Register array shape and chunk sizes for bounds checking during prefetch. When r
 prefetcher.registerArrayBounds('gsplats_t0023/centers', [2096, 4], [1024, 4]);
 ```
 
-**`getStats(): { queued, queuedHigh, queuedNormal, inFlight, enabled }`**
+**`getStats(): { queued, inFlight, enabled }`**
 
 Get prefetch queue statistics:
 
 ```typescript
 {
-  queued: number,        // Total chunks waiting (high + normal tiers)
-  queuedHigh: number,    // Chunks waiting in the high-priority tier
-  queuedNormal: number,  // Chunks waiting in the normal-priority tier
+  queued: number,        // Chunks waiting in the queue
   inFlight: number,      // Chunks currently being prefetched
   enabled: boolean       // Whether prefetching is enabled
 }
@@ -874,7 +864,7 @@ await window.__luxarDebug.cache.clearAll();
   `AsyncReadable` with validation, prefetcher hookup, and disposal.
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.
 - `chunk-prefetcher.ts` — Background prefetcher for adjacent chunks
-  with per-array bounds registration and high/normal priority queues.
+  with per-array bounds registration and a single FIFO queue.
 - `slice-cache.ts` — `SliceCache` (S-cache): per-(node, view) byte-budget
   LRU of decoded per-slice geometry, keyed by node path +
   slice/tolerance/displayDims signature; sits above the chunk caches so

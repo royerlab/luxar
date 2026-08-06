@@ -34,14 +34,9 @@ describe('PollingLoop', () => {
   });
 
   describe('start/stop', () => {
-    it('should not be running initially', () => {
-      expect(loop.isRunning()).toBe(false);
-    });
-
     it('should start and call onStart callback', () => {
       loop.start();
 
-      expect(loop.isRunning()).toBe(true);
       expect(onStartMock).toHaveBeenCalledTimes(1);
     });
 
@@ -49,7 +44,6 @@ describe('PollingLoop', () => {
       loop.start();
       loop.stop();
 
-      expect(loop.isRunning()).toBe(false);
       expect(onStopMock).toHaveBeenCalledTimes(1);
     });
 
@@ -119,117 +113,12 @@ describe('PollingLoop', () => {
     });
   });
 
-  describe('interval configuration', () => {
-    it('should return the current interval', () => {
-      expect(loop.getInterval()).toBe(100);
-    });
-
-    it('should allow changing interval', () => {
-      loop.setInterval(200);
-      expect(loop.getInterval()).toBe(200);
-    });
-
-    it('should use new interval after current scheduled tick', () => {
-      loop.start();
-
-      vi.advanceTimersByTime(100);
-      expect(tickCount).toBe(1);
-
-      loop.setInterval(50);
-
-      // The current tick was scheduled with 100ms interval
-      // The new interval (50ms) takes effect after this tick executes
-      vi.advanceTimersByTime(100);
-      expect(tickCount).toBe(2);
-
-      // Now new 50ms interval is in effect
-      vi.advanceTimersByTime(50);
-      expect(tickCount).toBe(3);
-
-      vi.advanceTimersByTime(50);
-      expect(tickCount).toBe(4);
-    });
-  });
-
-  describe('tickNow', () => {
-    it('should execute tick immediately', () => {
-      expect(tickCount).toBe(0);
-
-      loop.tickNow();
-
-      expect(tickCount).toBe(1);
-    });
-
-    it('should not affect regular tick schedule', () => {
-      loop.start();
-
-      loop.tickNow(); // Immediate tick
-      expect(tickCount).toBe(1);
-
-      vi.advanceTimersByTime(100);
-      expect(tickCount).toBe(2); // Regular tick still happens
-    });
-
-    // ui.md O7 / Phase E15: previously `'should work when loop is not running'`
-    // — vague (P9). Rename to surface the actual contract: tickNow()
-    // invokes the callback exactly once even when start() was never
-    // called, and the loop's running flag stays false.
-    it('tickNow() invokes the callback exactly once when the loop is stopped, without starting it', () => {
-      loop.tickNow();
-      expect(tickCount).toBe(1);
-      expect(loop.isRunning()).toBe(false);
-    });
-  });
-
-  describe('statistics', () => {
-    it('should track tick count', () => {
-      loop.start();
-
-      expect(loop.getStats().tickCount).toBe(0);
-
-      vi.advanceTimersByTime(100);
-      expect(loop.getStats().tickCount).toBe(1);
-
-      vi.advanceTimersByTime(200);
-      expect(loop.getStats().tickCount).toBe(3);
-    });
-
-    it('should track running state', () => {
-      expect(loop.getStats().isRunning).toBe(false);
-
-      loop.start();
-      expect(loop.getStats().isRunning).toBe(true);
-
-      loop.stop();
-      expect(loop.getStats().isRunning).toBe(false);
-    });
-
-    it('should reset stats', () => {
-      loop.start();
-      vi.advanceTimersByTime(500);
-
-      expect(loop.getStats().tickCount).toBe(5);
-
-      loop.resetStats();
-
-      expect(loop.getStats().tickCount).toBe(0);
-      expect(loop.isRunning()).toBe(true); // Still running
-    });
-  });
-
   describe('error handling', () => {
     // Audit G7 (viewer-ui-config-themes-core-utils): onStart/onStop
-    // throw paths were untested. Pin the CURRENT behavior (the
-    // production code does NOT wrap these in try/catch — exceptions
-    // propagate to the caller of start()/stop()).
-    //
-    // The tests below are documentary: they prove the propagation, and
-    // they prove the loop's `running` flag is left in the surprising
-    // state (true after a throwing onStart; false after stop()'s
-    // pre-onStop teardown). If you change the polling-loop to wrap
-    // onStart/onStop in try/catch, update these tests to assert the
-    // new no-throw + state-recovery contract.
-    it('onStart exception propagates and leaves running=true', () => {
+    // throw paths. Pin the CURRENT behavior (the production code does NOT
+    // wrap these in try/catch — exceptions propagate to the caller of
+    // start()/stop()).
+    it('onStart exception propagates', () => {
       const onStartThrowing = vi.fn(() => {
         throw new Error('start failure');
       });
@@ -240,15 +129,13 @@ describe('PollingLoop', () => {
       });
 
       expect(() => errorLoop.start()).toThrow('start failure');
-      // running flag was set BEFORE onStart was called, and not reset.
-      expect(errorLoop.isRunning()).toBe(true);
       expect(onStartThrowing).toHaveBeenCalledTimes(1);
 
       // Cleanup: stop the loop so afterEach is clean.
       errorLoop.stop();
     });
 
-    it('onStop exception propagates AFTER running flag flips to false', () => {
+    it('onStop exception propagates', () => {
       const onStopThrowing = vi.fn(() => {
         throw new Error('stop failure');
       });
@@ -259,12 +146,8 @@ describe('PollingLoop', () => {
       });
 
       errorLoop.start();
-      expect(errorLoop.isRunning()).toBe(true);
 
       expect(() => errorLoop.stop()).toThrow('stop failure');
-      // Production code clears `running` BEFORE invoking onStop, so the
-      // exception leaves the loop in the post-stop state.
-      expect(errorLoop.isRunning()).toBe(false);
       expect(onStopThrowing).toHaveBeenCalledTimes(1);
     });
 
@@ -293,8 +176,6 @@ describe('PollingLoop', () => {
       vi.advanceTimersByTime(100); // Should still continue
       expect(tickCount).toBe(3);
 
-      expect(errorLoop.isRunning()).toBe(true);
-
       errorLoop.stop();
       consoleSpy.mockRestore();
     });
@@ -311,19 +192,6 @@ describe('PollingLoop', () => {
       loop.start();
       vi.advanceTimersByTime(200);
       expect(tickCount).toBe(4);
-    });
-
-    it('should reset tick count on restart', () => {
-      loop.start();
-      vi.advanceTimersByTime(300);
-
-      const statsBefore = loop.getStats().tickCount;
-      expect(statsBefore).toBe(3);
-
-      loop.stop();
-      loop.start();
-
-      expect(loop.getStats().tickCount).toBe(0);
     });
   });
 });

@@ -177,8 +177,8 @@ export function createRendererCapabilities(
   if (isWebGLRenderer(renderer)) {
     // WebGL2 path: probe raw-GL for capabilities. This is the only
     // place in the codebase that calls `getContext()` post-renderer
-    // (the canvas-side pre-renderer call in `scene-manager` and the
-    // probe in `webgpu-availability` are the documented exceptions).
+    // (the canvas-side pre-renderer call in `scene-manager` is the
+    // documented exception).
     const gl = renderer.getContext() as WebGL2RenderingContext;
 
     const maxMSAASamplesRaw = gl.getParameter(gl.MAX_SAMPLES) as number | null;

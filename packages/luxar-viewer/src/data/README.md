@@ -105,7 +105,6 @@ data/
 │   ├── chunk-bounds-loader.ts     # Shared chunk_bounds zarr probe
 │   ├── color-loader.ts            # Shared color-range loader (points, lines, gsplats)
 │   ├── extend-to-all-preflight.ts # Resolves extend_to_all dim names → indices
-│   ├── transferable-accumulator.ts # Zero-allocation buffer management
 │   ├── spatial-facade.ts          # Shared loadX/updateView facade orchestration (incl. S-cache restore/store)
 │   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
 │   ├── aggregate-loader-metrics.ts # Roll up per-loader metrics for the monitor

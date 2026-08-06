@@ -85,18 +85,12 @@ physical GPU backend:
   through its internal WebGL2 backend.
 
 Branch on `apiSurface` to pick method signatures and resource layout rules
-(readback shape, row padding, render target behavior). Use diagnostic probes only
-for telemetry or UI messaging about the physical backend.
+(readback shape, row padding, render target behavior). It is also the value to
+use for telemetry or UI messaging about which renderer Luxar constructed.
 
 ## Runtime detection
 
-`src/utils/webgpu-availability.ts` exposes:
-
-```ts
-getRendererAPI(): Promise<'webgpu' | 'webgl2' | 'unsupported'>
-getRendererAPISync(): 'webgpu' | 'webgl2' | 'unsupported'
-```
-
-These helpers are diagnostic. They drive badges, telemetry, and unsupported
-browser messages; the actual renderer choice still follows the selection rules
-above.
+Which renderer Luxar actually constructed is reported by
+`RendererCapabilities.apiSurface` (`'webgl2' | 'webgpu'`). Branch on it for
+telemetry or UI messaging about the renderer API surface; the renderer choice
+itself follows the selection rules above.

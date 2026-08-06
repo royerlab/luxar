@@ -31,7 +31,6 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 - **Notifier Facade**: Dependency-inverted UI notification surface (toast, error, help overlay, loading indicator)
 - **EventGroup**: Group-scoped DOM event listener registration with one-call teardown
 - **Result<T, E>**: Discriminated-union return type for fallible operations
-- **WebGPU/WebGL2 Availability Probe**: Page-load-time backend detection (async + sync variants, cached)
 - **Camera Type Helpers**: Unified `LuxarCamera` union and type guards for perspective vs orthographic
 - **Effective Visibility**: `isEffectivelyVisible` — the single parent-chain walk answering "does this node actually render?" (`visible` is a LOCAL flag, so a hidden layer or a hidden LOD level leaves its descendants' flags true). Shared by the LOD load gate, LOD eviction, the pick pass, and the depth-sort scheduler
 - **Platform Detection**: Single `isMacPlatform()` helper for OS-conditional defaults
@@ -53,7 +52,6 @@ utils/
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
-├── webgpu-availability.ts   # getRendererAPI (async) + getRendererAPISync
 ├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
 │   ├── event-group.ts       # DOM-listener group with single dispose() teardown
@@ -223,15 +221,6 @@ The single DOM element the viewer mounts all overlays, panels, toasts, dialogs, 
 - `getViewerContainer()` — The current mount root (falls back to `document.body`).
 - `setViewerContainer(el)` — Adopt `el`; a non-`body` element is promoted to a containing block (`contain: layout`, plus `position: relative` when statically positioned) so the viewer's `position: fixed`/`absolute` overlays scope to it. Saves the element's prior inline `position`/`contain`.
 - `resetViewerContainer()` — Revert to `document.body` and restore exactly the inline styles `setViewerContainer` mutated.
-
-### webgpu-availability.ts - Backend Availability Probe
-
-Page-load-time graphics-API probe answering "what's available?" (vs `RendererCapabilities.apiSurface`, which answers "what did we pick?"). Used for diagnostics badges and feature flags. See `BROWSER_SUPPORT_POLICY.md` for the WebGPU/WebGL2 policy.
-
-- `RendererAPI` = `'webgpu' | 'webgl2' | 'unsupported'`
-- `getRendererAPI()` — Async, definitive. Requests a WebGPU adapter to confirm; result is cached after the first call.
-- `getRendererAPISync()` — Synchronous fast path. Returns `'webgpu'` if `navigator.gpu` exists at all (no adapter probe); else falls back to `'webgl2'` / `'unsupported'`.
-- `_resetCachedAPI()` — Test-only cache reset
 
 ## Console Interception
 
