@@ -111,7 +111,7 @@ data/
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
 │   ├── abort-error.ts             # isAbortError — "superseded, not failed" classifier
 │   ├── chunk-bounds-loader.ts     # Shared chunk_bounds zarr probe
-│   ├── color-loader.ts            # Shared color-range loader (points, lines, gsplats)
+│   ├── color-loader.ts            # Shared color-range loader (points, lines, gsplats, mesh)
 │   ├── extend-to-all-preflight.ts # Resolves extend_to_all dim names → indices
 │   ├── spatial-facade.ts          # Shared loadX/updateView facade orchestration (incl. S-cache restore/store)
 │   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
@@ -1244,7 +1244,7 @@ backend swaps or zarrita API moves stay isolated to this one file.
 | `collectAncestorNodes(root, path)` | Walk the scene graph and return the chain of ancestor `SceneNode`s.      |
 | `collectAncestorAttrs(root, path)` | Convenience — collect the chain as `ComposableAttrs[]`.                  |
 | `getEffectiveAttrs(root, path)`    | Compose the effective attrs for a target path in one call.               |
-| `collectDataDescendants(start)`    | Collect every data-leaf (points/lines/gsplats) under `start`.            |
+| `collectDataDescendants(start)`    | Collect every data-leaf (points/lines/gsplats/mesh) under `start`.       |
 
 ### Dims → ViewState (dims-to-view-state.ts)
 
@@ -1337,6 +1337,8 @@ _For implementation details, see the source files in this directory._
   index, projection.
 - [loaders](./loaders/README.md) — Unified loader infrastructure
   (`SpatialQueryBuilder`, `RangeLoader`, tolerance).
+- [mesh](./mesh/README.md) — Mesh whole-node loader, metadata preflight,
+  whole-triangle nD cull.
 - [nav](./nav/) — Multi-strategy directory navigation
   (`DirectoryNavigator`).
 - [points](./points/README.md) — Points spatial-index loader and

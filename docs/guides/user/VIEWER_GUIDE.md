@@ -1,8 +1,9 @@
 # Luxar Viewer User Guide
 
-The Luxar viewer is a browser-based WebGL application for exploring nD scientific
-scenes containing points, lines, Gaussian splats, and triangle meshes. It loads data from Zarr
-archives served over HTTP or from local files.
+The Luxar viewer is a browser-based application for exploring nD scientific scenes
+containing points, lines, Gaussian splats, and triangle meshes. It renders with WebGL
+by default and has an opt-in WebGPU path (see the `renderer` URL parameter below), and
+it loads data from Zarr archives served over HTTP or from local files.
 
 ![Luxar viewer interface overview](../../images/docs/viewer-ui-overview.png)
 
