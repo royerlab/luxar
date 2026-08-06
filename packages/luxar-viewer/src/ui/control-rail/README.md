@@ -11,8 +11,8 @@ The control rail is a slim, vertical activity rail docked to the left edge of th
 ## File Map
 
 ```
+control-rail.ts        — ControlRail class: buttons, idle/wake, collapse/fullscreen, hint
 control-rail/
-├── index.ts           — ControlRail class: buttons, idle/wake, collapse/fullscreen, hint
 ├── rail-overlay.ts    — RailOverlay: flyout + panel-popover lifecycle (one-open-at-a-time)
 ├── types.ts           — ControlRailItem, ControlRailPopover, ControlRailToggle interfaces
 ├── dom-helpers.ts     — isPanelVisible (visibility check), escapeHtml (tooltip safety)
@@ -21,7 +21,7 @@ control-rail/
 
 ## Architecture
 
-### ControlRail (index.ts)
+### ControlRail (control-rail.ts)
 
 The main orchestrator. Owns:
 

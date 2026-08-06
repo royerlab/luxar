@@ -24,14 +24,14 @@
  * @module ui/control-rail
  */
 
-import { getViewerContainer } from '../../utils/viewer-container';
-import { isDocumentFullscreen } from '../../utils/fullscreen';
-import { RailOverlay } from './rail-overlay';
-import { isPanelVisible, escapeHtml } from './dom-helpers';
-import type { ControlRailItem } from './types';
+import { getViewerContainer } from '../utils/viewer-container';
+import { isDocumentFullscreen } from '../utils/fullscreen';
+import { RailOverlay } from './control-rail/rail-overlay';
+import { isPanelVisible, escapeHtml } from './control-rail/dom-helpers';
+import type { ControlRailItem } from './control-rail/types';
 
-export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './types';
-export { RAIL_ICONS } from './icons';
+export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './control-rail/types';
+export { RAIL_ICONS } from './control-rail/icons';
 
 const HINT_STORAGE_KEY = 'luxar-control-rail-hint-dismissed';
 /** First-run hint fades away on its own if the user never interacts. */
