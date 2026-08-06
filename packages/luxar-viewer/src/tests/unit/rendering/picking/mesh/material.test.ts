@@ -1,23 +1,40 @@
 /**
- * The GLSL mesh pick wrapper (spec §6.5).
+ * The mesh pick wrapper PAIR (spec §6.5) — run against BOTH backends.
  *
  * Covers the three things it does that no sibling pick wrapper does — mode-derived
  * uniforms, `side` synced from the visual material, and the coverage inputs — plus
  * the clone fidelity every pick wrapper needs because `Material.clone()` would call
  * the constructor with no config.
  *
+ * Table-driven over `[glsl, tsl]` following `materials/mesh/blending-mode.test.ts`,
+ * because the two wrappers reimplement the same contract independently: each has its
+ * own `setPickMode`, `setPickSide`, `clone`, and coverage setters. Testing only the
+ * GLSL one would let the TSL twin drift — and a divergence there is invisible on a
+ * WebGL-only suite, which is the failure mode this whole material pair exists to
+ * guard against. (The TSL wrapper builds a real node graph in its constructor; that
+ * works headless, as `pick-opacity-tail.test.ts` already relies on.)
+ *
  * @module tests/unit/rendering/picking/mesh/material
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { MeshPickingMaterial } from '../../../../../rendering/picking/mesh/material';
+import { MeshPickingTSLMaterial } from '../../../../../rendering/picking/mesh/material-tsl';
 import { MESH_DEFAULTS } from '../../../../../rendering/materials/mesh/appearance';
 import type { CameraAwareMaterial } from '../../../../../rendering/materials/_shared/camera-aware-material';
 import { isCameraAwareMaterial } from '../../../../../rendering/materials/_shared/camera-aware-material';
+import type { MeshPickingMaterialConfig } from '../../../../../rendering/picking/mesh/material';
 
-const build = (overrides = {}) => new MeshPickingMaterial({ nodeId: 7, ...overrides });
+/** The two wrappers, behind one constructor signature. */
+type PickWrapper = MeshPickingMaterial | MeshPickingTSLMaterial;
+const BACKENDS: ReadonlyArray<[string, (c: MeshPickingMaterialConfig) => PickWrapper]> = [
+  ['glsl', (c) => new MeshPickingMaterial(c)],
+  ['tsl', (c) => new MeshPickingTSLMaterial(c)],
+];
 
-describe('MeshPickingMaterial — construction', () => {
+describe.each(BACKENDS)('MeshPickingMaterial [%s] — construction', (_name, make) => {
+  const build = (overrides = {}) => make({ nodeId: 7, ...overrides });
+
   it('starts in the `opaque` state, matching the mesh default blending mode', () => {
     // Not cosmetic: the first pick can precede any layers-panel interaction and any
     // pick render, so a material that started in the commutative state would answer
@@ -65,7 +82,9 @@ describe('MeshPickingMaterial — construction', () => {
   });
 });
 
-describe('MeshPickingMaterial — setPickMode', () => {
+describe.each(BACKENDS)('MeshPickingMaterial [%s] — setPickMode', (_name, make) => {
+  const build = (overrides = {}) => make({ nodeId: 7, ...overrides });
+
   it('drives both uniforms from the mode, together', () => {
     const m = build();
     m.setPickMode('additive');
@@ -94,7 +113,9 @@ describe('MeshPickingMaterial — setPickMode', () => {
   });
 });
 
-describe('MeshPickingMaterial — setPickSide', () => {
+describe.each(BACKENDS)('MeshPickingMaterial [%s] — setPickSide', (_name, make) => {
+  const build = (overrides = {}) => make({ nodeId: 7, ...overrides });
+
   it('adopts the requested side and invalidates the program', () => {
     const m = build();
     const before = m.version;
@@ -116,7 +137,9 @@ describe('MeshPickingMaterial — setPickSide', () => {
   });
 });
 
-describe('MeshPickingMaterial — clone', () => {
+describe.each(BACKENDS)('MeshPickingMaterial [%s] — clone', (_name, make) => {
+  const build = (overrides = {}) => make({ nodeId: 7, ...overrides });
+
   it('carries the nodeId, the coverage inputs, the mode state and the side across', () => {
     // `Material.clone()` would call the constructor with no config, leaving nodeId
     // undefined — every pick wrapper overrides it for that reason. The mesh one also

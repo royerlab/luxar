@@ -37,7 +37,6 @@ function stubMetrics(over: Partial<Record<string, number>> = {}) {
     path: '/test_gsplats/additive_x',
     queries: 0,
     loads: 0,
-    evictions: 0,
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
@@ -45,7 +44,6 @@ function stubMetrics(over: Partial<Record<string, number>> = {}) {
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
-    memoryLimit: 0,
     ...over,
   };
 }

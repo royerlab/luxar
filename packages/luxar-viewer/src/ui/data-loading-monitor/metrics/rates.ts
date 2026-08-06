@@ -1,10 +1,10 @@
 /**
  * Rate calculation for the data-loading monitor. The Monitor walks its
  * event ring buffer once per `calculateRates` call to compute per-second
- * rolling rates (queries, loads, hits, misses) plus a bandwidth measure
- * over a tighter window. The computation is pure (events + window sizes
- * → rates); the cache-and-timeout dance stays monitor-internal so this
- * module can be unit-tested directly.
+ * rolling rates (queries, loads) plus a bandwidth measure over a tighter
+ * window. The computation is pure (events + window sizes → rates); the
+ * cache-and-timeout dance stays monitor-internal so this module can be
+ * unit-tested directly.
  */
 
 import type { MonitorEvent } from '../../../types/data-monitor-types';
@@ -13,8 +13,6 @@ import type { MonitorEvent } from '../../../types/data-monitor-types';
 export interface RatesSnapshot {
   queriesPerSec: number;
   loadsPerSec: number;
-  hitsPerSec: number;
-  missesPerSec: number;
   bandwidth: number;
   lastCalculated: number;
 }
@@ -24,7 +22,7 @@ export interface CalculateRatesParams {
   now: number;
   /** Event ring buffer to walk; iterated newest-first for early exit. */
   events: readonly MonitorEvent[];
-  /** Rolling window over which to count queries/loads/hits/misses. */
+  /** Rolling window over which to count queries/loads. */
   rateWindowMs: number;
   /** Tighter window for bandwidth (`load` event memory bytes). */
   bandwidthWindowMs: number;
@@ -48,8 +46,6 @@ export function calculateRates(params: CalculateRatesParams): void {
 
   let queries = 0;
   let loads = 0;
-  let hits = 0;
-  let misses = 0;
   let bandwidth = 0;
 
   const rateCutoff = now - rateWindowMs;
@@ -71,20 +67,12 @@ export function calculateRates(params: CalculateRatesParams): void {
           bandwidth += event.data.memory || 0;
         }
         break;
-      case 'cache-hit':
-        hits++;
-        break;
-      case 'cache-miss':
-        misses++;
-        break;
     }
   }
 
   const windowSeconds = rateWindowMs / 1000;
   rates.queriesPerSec = queries / windowSeconds;
   rates.loadsPerSec = loads / windowSeconds;
-  rates.hitsPerSec = hits / windowSeconds;
-  rates.missesPerSec = misses / windowSeconds;
   // bandwidth is bytes/sec, normalised by the bandwidth window so the
   // value is comparable across configurations (the window is not
   // always 1000 ms).

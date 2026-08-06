@@ -13,7 +13,8 @@ export const inputConfig: InputConfig = {
       toggleRendering: 'r',
       toggleScaleBar: 'b',
       toggleColormapLegend: 'j',
-      toggleDebugConsole: 'ctrl+l',
+      // Bare key; the Ctrl modifier is applied structurally at the binding site.
+      toggleDebugConsole: 'l',
       toggleLayers: 'l',
       recenterCamera: 'f',
       toggleControlMode: 'v',

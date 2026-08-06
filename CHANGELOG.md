@@ -6,6 +6,34 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Removed — unreachable accelerated gsplat code paths
+
+Three optimized paths existed and were maintained but could not be selected by
+any production call, so they read as capabilities the project did not actually
+have. All three are removed:
+
+- The Metal **raw splat-centric** kernel path (`MetalRawSplatFunction`, the
+  `_uses_raw_custom_metal` gate, the `forward_raw_splat_3d` / `backward_raw_splat_3d`
+  bindings and their `rasterize_*_raw_splat_centric_3d` kernels). It was gated on
+  `amp_max is None`, but the production fit pipeline always sets `amp_max` (auto
+  default `1.0`), and the raw kernel applies softplus to `raw_a` in-shader with no
+  amplitude clamp, so it could never honour the bound. The non-raw splat-centric
+  path still serves production and shares the same threadgroup-reduction backward
+  (the raw-parameter reparameterization VJP is handled by PyTorch autograd); the
+  earlier fwd+bwd micro-optimization measured on the raw variant is the only thing
+  lost. The already-dead `validate_splat_L_tensors_3d` validator in the same
+  bindings file went with it.
+- The GPU seeding helpers `local_maxima_gpu` / `soft_blur_nd_gpu` in
+  `gsplats/seeds/gpu_ops.py`, which had only test callers — the CPU siblings have
+  no `device=` dispatch and `seed_from_peaks` does its own GPU intensity sampling
+  rather than a maxima filter.
+- The stale `gsplats/models/gsplats/cuda/setup.py` (and its `LUXAR_CUDA_ALL_ARCHS`
+  env var), a twin of the real `cuda/build.py` build entry point that nothing
+  referenced.
+
+The Metal README performance table, the seeds GPU-operations docs, and the
+`CLAUDE.md` GPU-support notes are updated to describe only the reachable paths.
+
 #### Mesh renders shaded — the fourth geometry type gets its material pair
 
 Until now a mesh loaded and drew with flat per-vertex colour, which for a surface
