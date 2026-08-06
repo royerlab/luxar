@@ -41,6 +41,14 @@ luxar demo deps --only scipy       # report one import module
 luxar demo deps --only scipy --install  # install only scipy's constrained spec
 ```
 
+Eleven gsplat demos also accept `--show-roundtrip`, which renders the fitted
+splats back and shows original / reconstruction / absolute-difference panels
+with PSNR and MSE (needs `matplotlib`). The five whose figure is one row per
+channel through a 3-D volume share the implementation in
+`_roundtrip_common.py`; the other six keep their own — laid out over 2-D
+images, over sampled timepoints, or with demo-specific titles for a
+single-channel volume.
+
 ## Optional dependencies
 
 The core install deliberately excludes the heavyweight packages some demos need
@@ -69,9 +77,12 @@ Two rules govern the gate, both learned from real bugs:
 
 `tests/test_demos_dependencies.py` enforces both: every spec must accept exactly
 the versions its `pyproject.toml` pin accepts, every module passed to
-`require_module` must exist in the table, and no demo source — runtime message or
-docstring alike — may spell out `pip install <pkg>` for a package the table
-bounds without carrying that bound.
+`require_module` must exist in the table, and no scanned source — runtime message
+or docstring alike — may spell out `pip install <pkg>` for a package the table
+bounds without carrying that bound. Both test modules scan the set defined by
+`tests/_scanned_modules.py`: every `demo_*.py` **plus** the shared
+`_*_common.py` helpers, since a gate that moves out of a demo into a shared
+helper must not escape the guards.
 
 Installing everything:
 
