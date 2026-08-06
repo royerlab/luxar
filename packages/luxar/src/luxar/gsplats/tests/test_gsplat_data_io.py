@@ -103,7 +103,11 @@ class TestCullHeuristic:
 
 
 class TestSaveWhitelist:
-    """Verify save() preserves quality metrics in fitting_info."""
+    """Verify the ``save()`` ``fitting_info`` whitelist keeps the quality metrics.
+
+    Asserted against a local copy of the whitelist rather than through a real
+    ``save()`` call — see the module docstring.
+    """
 
     def test_quality_metrics_included(self):
         """Check that save() whitelist includes all quality metrics from finalize_results."""

@@ -69,46 +69,46 @@ directory of their own and are exercised from the top-level `tests/`.
 
 ## Dependencies and Test Execution
 
-### Core Tests (Always Available)
-These tests only require numpy and can be run in any environment:
+### Required: torch and scipy
+
+Both are hard requirements for the subpackage as a whole, not per-test extras.
+`gsplats/__init__.py` imports `clahe` (which imports `torch` at module level)
+and `lod` (which imports `scipy.sparse`), and every test module here lives
+inside the `luxar.gsplats` package — so collecting *any* of them imports
+`luxar.gsplats` first. Without either dependency the run ends in a collection
+error, including for the pure-numpy modules such as
+`utils/tests/test_trils.py`. Install them via the `gsplats` extra (the `test`
+and `dev` extras pull it in):
 
 ```bash
-# Test triangular matrix utilities
-hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py
+pip install -e ".[gsplats]"
 ```
 
-### Optional Dependency Tests
+The in-module `HAS_TORCH` flags and `pytest.mark.skipif(not HAS_TORCH, ...)`
+guards (`test_fit_gsplats.py`, `test_tiled_fitting.py`, the shared
+`conftest.py`) are vestigial for the same reason — collection fails before
+they are ever consulted. The "(requires torch)" labels under
+[Test Categories](#test-categories) mark modules whose *subject under test* is
+torch-backed; they do not imply the unlabelled modules run without torch.
 
-Some tests require additional dependencies:
+### Genuinely optional
 
-- **PyTorch tests**: the torch-dependent set spans the model, fitting, optim,
-  multiscale, culling, metrics and CUDA/Metal-backend tests. The
-  "(requires torch)" labels under [Test Categories](#test-categories) mark the
-  modules in `tests/` and `models/*/tests/`; the `fitting/`, `optim/` and
-  `multiscale/` unit tests and `utils/tests/test_device.py` are torch-only as
-  well, without carrying a label.
-- **SciPy tests**: `seeds/tests/` (seed generation uses scipy for peak detection and interpolation)
-
-Only some of these degrade gracefully. Modules that gate on a `HAS_TORCH` flag or
-`pytest.mark.skipif` — for example `test_fit_gsplats.py`, `test_tiled_fitting.py`,
-and the shared `conftest.py` fixtures — skip when torch is missing. Others
-(`test_metrics.py`, `test_gsplats_integration.py`, `test_culling.py`) import
-torch at module level, so without it they error during collection rather than
-skipping. `test_progressive_fitting.py` errors at collection too, but only
-transitively: its own `import torch` is function-local, and it is
-`luxar.gsplats.fit_progressive_gsplats` that imports torch at module level.
+- **CUDA** (`models/gsplats/cuda/tests/`) and **Metal**
+  (`models/gsplats/metal/tests/`) — skip cleanly when the device or the
+  compiled backend is unavailable.
+- **napari** (`fitting/tests/test_visualization.py`) — mocked into
+  `sys.modules`, never imported for real.
 
 ## Running Tests
 
-### Run All Available Tests
+### Run the Whole Suite
 ```bash
-# Run all tests that can execute with current dependencies
 hatch run pytest packages/luxar/src/luxar/gsplats/ -v
 ```
 
-### Run Core Tests Only
+### Run a Single Module
 ```bash
-# Run only the tests that don't require external dependencies
+# e.g. just the triangular matrix utilities
 hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py -v
 ```
 
@@ -129,7 +129,9 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Round-trip correctness
 - Edge cases and error handling
 
-**Coverage**: Covers all functions in `trils.py`
+**Coverage**: Covers every function in `trils.py` except `permute_cholesky_packed`,
+which (together with `embed_cholesky_packed`) is exercised by
+`tests/test_cholesky_dim_ops.py`
 
 ### 2. Fitting Pipeline Tests (`fitting/tests/`)
 
@@ -253,7 +255,7 @@ Run the full test suite:
 hatch run pytest packages/luxar/src/luxar/gsplats/ -v
 ```
 
-The test count and execution time varies depending on available dependencies (torch, scipy, CUDA).
+The test count and execution time vary with the available hardware backends (CUDA, Metal).
 
 ## Adding New Tests
 
@@ -261,7 +263,8 @@ When adding new functionality to gsplats:
 
 1. **Create tests in context**: Place tests in the appropriate `tests/` folder near the code
 2. **Follow naming conventions**: Use `test_<module_name>.py` for test files
-3. **Handle dependencies gracefully**: Use `pytest.mark.skipif` for optional dependencies
+3. **Handle dependencies gracefully**: Use `pytest.mark.skipif` for the genuinely
+   optional ones (CUDA, Metal) — torch and scipy are always present
 4. **Include comprehensive coverage**: Test normal cases, edge cases, and error conditions
 5. **Update this README**: Document new test files and their purpose
 
@@ -278,15 +281,16 @@ When adding new functionality to gsplats:
 2. **Edge case handling**: Empty arrays, boundary conditions, invalid inputs
 3. **Numerical stability**: Tests for floating-point edge cases
 4. **Cross-validation**: Comparison with reference implementations when possible
-5. **Graceful degradation**: Tests skip when dependencies unavailable
+5. **Graceful degradation**: Device-specific tests (CUDA, Metal) skip when the
+   hardware or compiled backend is unavailable
 
 ## Dependencies
 
 ### Required
 - `numpy>=1.24`
 - `pytest>=7.4.0`
-- `torch` (for model, fitting, and optimization tests)
-- `scipy` (for seed generation and spatial operations)
+- `torch` (imported by `clahe` at package import time — required to collect any test here)
+- `scipy` (imported by `lod` at package import time — likewise required)
 
 ### Optional
 - CUDA GPU (for GPU-specific tests, skipped gracefully when unavailable)
