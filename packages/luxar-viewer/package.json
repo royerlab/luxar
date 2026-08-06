@@ -73,7 +73,7 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "test:perf": "vitest --run --config vitest.perf.config.ts",
-    "test:perf:e2e": "playwright test --config playwright.perf.config.ts",
+    "test:perf:e2e": "LUXAR_E2E_NO_FIXTURES=1 playwright test --config playwright.perf.config.ts",
     "perf:diff": "node scripts/perf-diff.mjs",
     "test:watch": "vitest --watch",
     "test:with-fixtures": "pnpm test:generate-fixtures && pnpm test",

@@ -52,17 +52,23 @@ const REQUIRED_DATASETS = [
  *     though the files exist. One HTTP probe settles this; probing all ~47 would add 47
  *     round-trips to every run to re-answer the same question about the serving root.
  *
- * **Skipped for the smoke subset**, which is the whole point of `LUXAR_E2E_NO_FIXTURES`.
- * Smoke is an explicit five-file allowlist chosen so that none of them reads
- * `tests/fixtures/`, and its CI job generates datasets at runtime via `make run-examples`
- * and pulls no Git LFS. Requiring fixtures there would abort the one suite deliberately
- * built not to need them — i.e. it would contradict, in the same change, the contract
- * this file's own README documents.
+ * **Skipped for the suites that read no fixtures**, which is the whole point of
+ * `LUXAR_E2E_NO_FIXTURES`:
  *
- * A flag set by the two smoke scripts, rather than a spec-list inspection: Playwright's
- * `FullConfig` does not expose which files the CLI filter selected, and re-deriving the
- * allowlist here would put a second copy of it one edit away from disagreeing with
- * `package.json`. The flag lives on the same line as the file list, so they move together.
+ *  - smoke, an explicit five-file allowlist chosen so that none of them reads
+ *    `tests/fixtures/`, whose CI job generates datasets at runtime via `make run-examples`
+ *    and pulls no Git LFS;
+ *  - the perf benchmarks, which share this global setup through
+ *    `playwright.perf.config.ts` but match only `*perf-bench.spec.ts` — none of which
+ *    reads `tests/fixtures/` either.
+ *
+ * Requiring fixtures in either would abort a suite deliberately built not to need them.
+ *
+ * A flag set by the invoking `package.json` script, rather than a spec-list inspection:
+ * Playwright's `FullConfig` does not expose which files the CLI filter selected, and
+ * re-deriving the allowlist here would put a second copy of it one edit away from
+ * disagreeing with `package.json`. The flag lives on the same line as the file list (or
+ * the `--config`), so they move together.
  */
 async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string): Promise<void> {
   if (process.env.LUXAR_E2E_NO_FIXTURES === '1') {

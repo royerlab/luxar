@@ -36,6 +36,7 @@ directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 | `pnpm test:e2e`       | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
 | `pnpm test:e2e:ci`    | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
 | `pnpm test:e2e:smoke` | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
+| `pnpm test:perf:e2e`  | Only `*perf-bench.spec.ts`, under `playwright.perf.config.ts` (which shares this global setup)                                                   |
 
 The smoke subset is deliberately narrow: its CI job generates datasets at
 runtime via `make run-examples` and pulls no Git LFS. **Do not add a spec that
@@ -58,12 +59,19 @@ global setup fails fast, naming `pnpm test:generate-fixtures`. Both harnesses
 read the manifest through `tools/fixture-manifest.ts` so they cannot disagree
 about which fixtures exist.
 
-**Except for smoke**, which sets `LUXAR_E2E_NO_FIXTURES=1` to skip the check.
-Its five specs are chosen precisely so none of them touches `tests/fixtures/`,
-and its CI job generates datasets at runtime with no LFS — so requiring
-fixtures there would break the one suite built not to need them. The flag is
-set on the same `package.json` line as the file list, so the two move together
-rather than drifting apart.
+**Except for the two suites that read no fixtures**, which set
+`LUXAR_E2E_NO_FIXTURES=1` to skip the check:
+
+- **smoke** — its five specs are chosen precisely so none of them touches
+  `tests/fixtures/`, and its CI job generates datasets at runtime with no LFS;
+- **perf** (`pnpm test:perf:e2e`) — a different config, but the same global
+  setup, and none of its `*perf-bench.spec.ts` files reads `tests/fixtures/`.
+
+Requiring fixtures in either would break a suite built not to need them. The
+flag is set on the same `package.json` line as the file list (or the
+`--config`), so the two move together rather than drifting apart. The same
+variable is the escape hatch for a one-off local run of a spec you know does
+not read fixtures.
 
 ## Folder Layout
 
@@ -71,7 +79,7 @@ rather than drifting apart.
 e2e/
 ├── fixtures.ts          # Re-extended `test` fixture; auto console-error guard
 ├── helpers.ts           # ~40 Playwright helper utilities (wait/get/assert)
-├── global-setup.ts      # Pre-flight: verifies servers + datasets, makes dirs
+├── global-setup.ts      # Pre-flight: servers, datasets, fixtures; makes dirs
 ├── harnesses/
 │   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
 ├── *.spec.ts            # Playwright specs (one per feature area)
@@ -223,8 +231,8 @@ Helpers follow a few conventions worth matching:
 
 ## Global Setup (`global-setup.ts`)
 
-Runs once before any spec (wired in `playwright.config.ts`). Four
-preflight checks:
+Runs once before any spec (wired in `playwright.config.ts`, and shared
+by `playwright.perf.config.ts`). Five preflight checks:
 
 1. **Checkout identity** — both the Vite server and the repository
    dataset server must return the deterministic marker for the current
@@ -242,7 +250,13 @@ preflight checks:
    found locally. A fixture that exists on disk but is not reachable
    from the server is therefore a preflight error rather than a later
    viewer timeout.
-4. **Output directories** — creates `test-results/` and
+4. **Generated zarr fixtures** — every name in the manifest must exist
+   under `tests/fixtures/`, and the first of them must be reachable
+   over HTTP (one probe: they all share a serving root, so they answer
+   the same question). Unlike the examples check this **throws**, and
+   it is skipped when `LUXAR_E2E_NO_FIXTURES=1` — see
+   [Generated zarr fixtures are a hard dependency](#generated-zarr-fixtures-are-a-hard-dependency).
+5. **Output directories** — creates `test-results/` and
    `test-results/debug/` if they don't exist.
 
 Identity markers live in the gitignored
