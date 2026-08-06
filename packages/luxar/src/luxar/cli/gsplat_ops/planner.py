@@ -9,6 +9,7 @@ when ``--tiling content`` is selected; this is no longer a standalone command.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -124,6 +125,10 @@ def run_content_fit(
     from luxar.gsplats.planner import FitPlan, fit_planned, plan_volume
     from luxar.gsplats.planner.fit_planned import _fit_one_box
 
+    def _section(title: str) -> Any:
+        # Skip the section header/indent when quiet; the body still runs.
+        return asection(title) if verbose else contextlib.nullcontext()
+
     def _load_vol() -> Any:
         if volume is not None:
             return volume
@@ -197,11 +202,13 @@ def run_content_fit(
         feature_metric,
         feature_threshold,
     )
-    aprint(
-        f"Density: {density.k_star_reference:,} splats / "
-        f"{density.n_features_reference:,} {density.feature_method} features "
-        f"→ K ~ features^{density.saturation_exponent:.2f} (cap {density.saturation_cap:,})"
-    )
+    if verbose:
+        aprint(
+            f"Density: {density.k_star_reference:,} splats / "
+            f"{density.n_features_reference:,} {density.feature_method} features "
+            f"→ K ~ features^{density.saturation_exponent:.2f} "
+            f"(cap {density.saturation_cap:,})"
+        )
 
     vol = _load_vol()
 
@@ -226,7 +233,7 @@ def run_content_fit(
                 f"density.feature_method '{density.feature_method}' — per-box budgets "
                 "will be mis-scaled. Use matching metrics."
             )
-        with asection("Scanning content + planning"):
+        with _section("Scanning content + planning"):
             from luxar.gsplats.fitting.preprocessing import _resolve_floor
 
             t0 = time.perf_counter()
@@ -253,14 +260,15 @@ def run_content_fit(
                 min_leaf=min_leaf,
                 max_leaf=max_leaf,
                 overlap=overlap,
-                device=device,
             )
             med, mx = fitplan.overlap_fraction()
-            aprint(
-                f"Plan: {fitplan.n_boxes} boxes, total budget {fitplan.total_budget:,} "
-                f"splats, overlap median {med:.0%} / max {mx:.0%}  "
-                f"({time.perf_counter() - t0:.1f}s)"
-            )
+            if verbose:
+                aprint(
+                    f"Plan: {fitplan.n_boxes} boxes, total budget "
+                    f"{fitplan.total_budget:,} splats, overlap median "
+                    f"{med:.0%} / max {mx:.0%}  "
+                    f"({time.perf_counter() - t0:.1f}s)"
+                )
         if plan_only:
             if output is None:
                 raise typer.BadParameter(
@@ -268,7 +276,8 @@ def run_content_fit(
                 )
             output.parent.mkdir(parents=True, exist_ok=True)
             fitplan.to_json(output)
-            aprint(f"Wrote plan: {output}")
+            if verbose:
+                aprint(f"Wrote plan: {output}")
             return
         if output is None:
             raise typer.BadParameter("content fit requires --output/-o")
@@ -279,7 +288,8 @@ def run_content_fit(
         created_plan = True
 
     if plan_only:  # --plan-only with an explicit --plan: nothing to compute
-        aprint(f"Plan: {plan_json_path}")
+        if verbose:
+            aprint(f"Plan: {plan_json_path}")
         return
     if output is None:
         raise typer.BadParameter("content fit requires --output/-o")
@@ -323,7 +333,7 @@ def run_content_fit(
         # concurrent `fit -j` runs targeting one output can't clobber each
         # other's in-progress boxes — the helper clean-slates only its OWN dir.
         tmp_dir = _parallel_staging_dir(output, token)
-        with asection(f"Fitting {fitplan.n_boxes} boxes ({n_jobs} concurrent)"):
+        with _section(f"Fitting {fitplan.n_boxes} boxes ({n_jobs} concurrent)"):
             result = fit_planned_parallel(
                 fitplan,
                 jobs=n_jobs,
@@ -333,13 +343,15 @@ def run_content_fit(
                 partition=partition,
                 recipe=recipe,
                 recipe_params=recipe_params,
+                verbose=verbose,
             )
     else:
         fk = _fit_kwargs()
-        with asection(f"Fitting {fitplan.n_boxes} boxes"):
+        with _section(f"Fitting {fitplan.n_boxes} boxes"):
 
             def _prog(i: int, n: int, msg: str) -> None:
-                aprint(f"  [{i + 1}/{n}] {msg}")
+                if verbose:
+                    aprint(f"  [{i + 1}/{n}] {msg}")
 
             result = fit_planned(
                 vol,
@@ -355,13 +367,14 @@ def run_content_fit(
     output.parent.mkdir(parents=True, exist_ok=True)
     _save_fit_result(result, output, compress=compress)
     kind = "partition" if partition else "leaf"
-    aprint(
-        f"Fit {fitplan.n_boxes} boxes → {kind} "
-        f"in {time.perf_counter() - t0:.1f}s → {output}"
-    )
+    if verbose:
+        aprint(
+            f"Fit {fitplan.n_boxes} boxes → {kind} "
+            f"in {time.perf_counter() - t0:.1f}s → {output}"
+        )
     if created_plan and not keep_boxes:
         Path(plan_json_path).unlink(missing_ok=True)
-    elif created_plan:
+    elif created_plan and verbose:
         # --keep-boxes retains the internal plan too; its token-suffixed name
         # is no longer predictable from the output path, so point at it.
         aprint(f"Kept plan at {plan_json_path}")
