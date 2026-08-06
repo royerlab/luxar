@@ -43,7 +43,6 @@ app_batch.command("run")(run_batch_run)
 @app_batch.command("status")
 def batch_status_cmd(
     output_dir: Path = typer.Argument(..., exists=True, help="Batch output directory"),
-    verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Check status of a batch fitting job.
 
@@ -53,7 +52,7 @@ def batch_status_cmd(
     Examples:
         luxar gsplat batch-fit status output_dir/
     """
-    return run_batch_status_cmd(output_dir=output_dir, verbose=verbose)
+    return run_batch_status_cmd(output_dir=output_dir)
 
 
 @app_batch.command("validate")

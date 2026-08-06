@@ -275,6 +275,12 @@ class TestProgressiveFitting:
 
     # ── Production-floor regression guard ────────────────────────
 
+    def test_enable_dynamic_ops_default_is_false(self):
+        """Progressive relocation is OFF by default, and the caller's value is
+        now honoured (previously the param was accepted then hardcoded off)."""
+        sig = inspect.signature(fit_progressive_gaussian_splats)
+        assert sig.parameters["enable_dynamic_ops"].default is False
+
     @pytest.mark.slow
     def test_residual_pass_min_iters_default_honored(self):
         """Regression guard: residual-pass floor MUST default to 500.

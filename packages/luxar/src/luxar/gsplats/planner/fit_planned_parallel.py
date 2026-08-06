@@ -18,6 +18,7 @@ detection). It does not touch the uniform-tiled path.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 import threading
@@ -164,7 +165,12 @@ def fit_planned_parallel(
 
     failures: list[tuple[int, str]] = []
     n = len(budgeted)
-    with asection(f"Parallel planned fitting: {n} boxes, {jobs} concurrent worker(s)"):
+    section = (
+        asection(f"Parallel planned fitting: {n} boxes, {jobs} concurrent worker(s)")
+        if verbose
+        else contextlib.nullcontext()
+    )
+    with section:
         with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
             done = 0
             try:
@@ -265,7 +271,7 @@ def fit_planned_parallel(
 
     if not keep_boxes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-    else:
+    elif verbose:
         aprint(f"Kept boxes at {tmp_dir}")
     return result
 

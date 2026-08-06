@@ -2118,7 +2118,10 @@ class TestContentMerge:
     def test_status_counts_empty_box_as_completed(self, tmp_path: Path) -> None:
         """An empty content box (`.empty` marker) is COMPLETED, not failed/unknown."""
         from luxar.gsplats.batch.manifest import output_filename, save_manifest
-        from luxar.gsplats.batch.status import check_batch_status
+        from luxar.gsplats.batch.status import (
+            check_batch_status,
+            format_status_report,
+        )
 
         out = tmp_path / "batch"
         tiles = out / "tiles"
@@ -2137,6 +2140,11 @@ class TestContentMerge:
         assert st.completed == 2  # store + empty-marker both count as completed
         assert st.failed == 0
         assert st.unknown == 0
+
+        # format_status_report takes (status, manifest) positionally — no
+        # verbose kwarg (the dead `-v` flag was removed).
+        report = format_status_report(st, manifest)
+        assert "2/2 completed" in report
 
     def test_validate_reports_empty_box_separately(self, tmp_path: Path) -> None:
         """`batch-fit validate` counts an empty box as EMPTY, not MISSING."""
