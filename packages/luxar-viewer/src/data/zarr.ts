@@ -153,6 +153,14 @@ export function openArray<Store extends Readable>(
   return open(location, { ...options, kind: 'array' });
 }
 
+/**
+ * Read a whole array, or a slice selection of it, into a typed array.
+ *
+ * @param array - Opened zarr array.
+ * @param selection - Per-dimension slice selection; omit to read the whole array.
+ * @param options - Get options, e.g. an abort signal built by {@link abortOptions}.
+ * @returns The decoded data with the selection's shape and stride.
+ */
 export async function readArray<D extends DataType, Store extends Readable>(
   array: Array<D, Store>,
   selection?: Slice[],

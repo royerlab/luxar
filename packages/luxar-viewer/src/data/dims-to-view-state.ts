@@ -33,8 +33,9 @@ export interface DimsToViewStateOptions {
   maxRadius: number;
   /**
    * Initial filler for the tolerance array before the per-dim rules below
-   * are applied. The value is overwritten for every dim and only matters
-   * if a caller supplies an incomplete dimension snapshot.
+   * are applied. Every entry is overwritten — a dim with no metadata falls
+   * through to `maxRadius`, not to this value — so it does not currently
+   * reach the returned `ViewState`.
    */
   defaultTolerance: number;
 }
