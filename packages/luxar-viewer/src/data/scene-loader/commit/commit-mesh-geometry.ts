@@ -37,19 +37,25 @@ import type { StagedMeshCommit } from '../process/data-processor-mesh';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
 /**
- * Nodes already warned about unsorted translucency.
+ * Nodes already warned about unsorted translucency, keyed by OBJECT IDENTITY.
  *
  * Module-scoped so the notice is once per node for the lifetime of the tab rather than
- * once per commit — `commitMeshGeometry` runs on EVERY slice move, and a per-call
- * warning would flood the console during a scrub. Mirrors `noticedWinding` in
- * `../process/data-processor-mesh`, the other one-time mesh notice, including the
- * accepted tradeoff that a dataset switch may re-warn.
+ * once per commit — this runs on EVERY slice move, and a per-call warning would flood
+ * the console during a scrub.
+ *
+ * A `WeakSet` of the mesh itself rather than a `Set` of paths, which is what this was
+ * and which was wrong in both directions: a dataset switch that reused a path left the
+ * NEW node permanently suppressed, while the comment claimed the opposite ("a dataset
+ * switch may re-warn"). Identity has neither problem — a replaced node is a different
+ * object, and the entry disappears with the old one instead of leaking for the tab's
+ * lifetime.
  */
-const noticedTranslucency = new Set<string>();
+let noticedTranslucency = new WeakSet<THREE.Mesh>();
 
 /** Test seam: forget which nodes have been warned about. */
 export function resetTranslucencyNoticesForTesting(): void {
-  noticedTranslucency.clear();
+  // A WeakSet cannot be enumerated or cleared, so replace it.
+  noticedTranslucency = new WeakSet<THREE.Mesh>();
 }
 
 /**
@@ -80,12 +86,8 @@ export function resetTranslucencyNoticesForTesting(): void {
  * already fell back to `opaque` stays silent). `uniforms.uOpacity.value` is the same
  * live-opacity read `ui/layers/layer-apply.ts` performs.
  */
-function noticeUnsortedTranslucency(
-  object: THREE.Mesh,
-  path: string,
-  colorComponents: 3 | 4 | undefined
-): void {
-  if (noticedTranslucency.has(path)) return;
+export function noticeUnsortedTranslucency(object: THREE.Mesh, path: string): void {
+  if (noticedTranslucency.has(object)) return;
 
   const material = object.material as
     (THREE.Material & { uniforms?: { uOpacity?: { value?: number } } }) | undefined;
@@ -93,10 +95,13 @@ function noticeUnsortedTranslucency(
   if (material.userData?.blendingMode !== 'normal') return;
 
   const opacity = material.uniforms?.uOpacity?.value ?? 1.0;
-  const hasVertexAlpha = colorComponents === 4;
+  // Stamped at commit (below). NOT read off the geometry attribute: `mesh-geometry.ts`
+  // pads RGB to RGBA for uint8/uint16, so `itemSize === 4` is true for plenty of meshes
+  // that carry no authored alpha at all.
+  const hasVertexAlpha = object.userData.meshColorComponents === 4;
   if (normalModeDepthWrite(opacity) && !hasVertexAlpha) return;
 
-  noticedTranslucency.add(path);
+  noticedTranslucency.add(object);
   const cause = hasVertexAlpha
     ? `per-vertex RGBA alpha${normalModeDepthWrite(opacity) ? '' : ` and opacity ${opacity}`}`
     : `opacity ${opacity}`;
@@ -193,7 +198,10 @@ export function commitMeshGeometry(
   // are only both known here: the resolved mode lives on the material, while per-vertex
   // RGBA is a property of the LOADED arrays (`MeshMetadata` carries `has_colors`, not a
   // channel count) and so does not exist until the first commit.
-  noticeUnsortedTranslucency(object, staged.path, data.colorComponents);
+  // Stamped so the Layers panel can evaluate the same predicate later: a mode or
+  // opacity change after load has no access to `LoadedMeshData`.
+  object.userData.meshColorComponents = data.colorComponents;
+  noticeUnsortedTranslucency(object, staged.path);
 
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it

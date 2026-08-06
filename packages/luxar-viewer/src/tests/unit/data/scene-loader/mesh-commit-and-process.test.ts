@@ -23,6 +23,7 @@ import {
 } from '../../../../data/scene-loader/process/data-processor-mesh';
 import {
   commitMeshGeometry,
+  noticeUnsortedTranslucency,
   resetTranslucencyNoticesForTesting,
 } from '../../../../data/scene-loader/commit/commit-mesh-geometry';
 import { createEmptyMeshNode } from '../../../../rendering/node-factory/create-mesh-node';
@@ -356,6 +357,38 @@ describe('commitMeshGeometry — the unsorted-translucency notice (§6.3)', () =
       opacity: 1.0,
     } as MeshMetadata);
     expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('fires on a post-load mode switch, with no further commit', async () => {
+    // The gap the commit-only siting left: a STATIC mesh — one whose slice never moves,
+    // so it never commits again — could be switched to `normal` in the Layers panel and
+    // never warn. Reading the mode LIVE off the material does not help if nothing calls
+    // the predicate. This asserts the predicate is reachable from that path.
+    const root = new THREE.Group();
+    const mesh = await commitOnce('/static', { ...ATTRS, opacity: 0.4 } as MeshMetadata, {
+      root,
+    });
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    // Nothing has committed since; only the material's mode changes.
+    (mesh.material as THREE.Material).userData.blendingMode = 'normal';
+    noticeUnsortedTranslucency(mesh, '/static');
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('de-duplicates by node IDENTITY, so a reused path is not suppressed', async () => {
+    // Keyed by path, a dataset switch that reused a node path left the NEW mesh
+    // permanently silent for the tab's lifetime — while the comment claimed the
+    // opposite. Two distinct objects at the same path must each get their notice.
+    const attrs = { ...ATTRS, blending_mode: 'normal', opacity: 0.5 } as MeshMetadata;
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    for (let i = 0; i < 2; i++) {
+      // A fresh scene each time — the dataset-switch shape.
+      await commitOnce('/reused', attrs, { root: new THREE.Group() });
+    }
+    const hits = warn.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§6.3'));
+    expect(hits).toHaveLength(2);
     warn.mockRestore();
   });
 
