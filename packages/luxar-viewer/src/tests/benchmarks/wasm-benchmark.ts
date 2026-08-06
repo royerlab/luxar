@@ -143,6 +143,15 @@ function generateSegments(count: number): Uint32Array {
   return segments;
 }
 
+function generateCholeskyFactors(count: number, ndim: number): Float32Array {
+  const size = (ndim * (ndim + 1)) / 2;
+  const factors = new Float32Array(count * size);
+  for (let i = 0; i < count * size; i++) {
+    factors[i] = Math.random() * 0.5 + 0.5;
+  }
+  return factors;
+}
+
 function generateQuantizedU8(count: number): Uint8Array {
   const data = new Uint8Array(count);
   for (let i = 0; i < count; i++) {
@@ -978,6 +987,100 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
   ],
 
   'GSPLATS PROCESSING': [
+    (size) => {
+      // project_gsplats_nd_to_3d - the fused production kernel: discrete gate,
+      // continuous attenuation (marginal Cholesky + shifted Gaussian),
+      // visibility decision and compacted centers/Cholesky/amplitudes/colors,
+      // all in one pass.
+      const ndim = 4;
+      const positions = generatePositions(size, ndim);
+      // Narrow the hidden dim's spread so a healthy fraction of splats survives
+      // the truncation radius and the compaction writes are actually measured.
+      // The ±10 spread `generatePositions` gives every dim would attenuate
+      // essentially everything away, leaving only the gate + attenuation timed.
+      for (let i = 0; i < size; i++) {
+        positions[i * ndim + 3] = Math.sin(i * 0.019);
+      }
+      const cholesky = generateCholeskyFactors(size, ndim);
+      const amplitudes = generateRadii(size);
+      const colors = new Float32Array(size * 3).fill(1);
+      const discreteVisibility = new Uint8Array(size).fill(1);
+      const slicePos = new Float32Array(ndim);
+      const hiddenDims = new Uint32Array([3]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+      const tsOut = {
+        centers: new Float32Array(size * 3),
+        cholesky: new Float32Array(size * 6),
+        amplitudes: new Float32Array(size),
+        colors: new Float32Array(size * 3),
+      };
+      const wasmOut = {
+        centers: new Float32Array(size * 3),
+        cholesky: new Float32Array(size * 6),
+        amplitudes: new Float32Array(size),
+        colors: new Float32Array(size * 3),
+      };
+
+      const tsTime = measureTime(
+        () => {
+          tsModule.project_gsplats_nd_to_3d(
+            positions,
+            cholesky,
+            amplitudes,
+            colors,
+            discreteVisibility,
+            slicePos,
+            hiddenDims,
+            displayDims,
+            ndim,
+            size,
+            3,
+            0.01,
+            3.0,
+            tsOut.centers,
+            tsOut.cholesky,
+            tsOut.amplitudes,
+            tsOut.colors
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
+
+      const wasmTime = measureTime(
+        () => {
+          wasmModule!.project_gsplats_nd_to_3d(
+            positions,
+            cholesky,
+            amplitudes,
+            colors,
+            discreteVisibility,
+            slicePos,
+            hiddenDims,
+            displayDims,
+            ndim,
+            size,
+            3,
+            0.01,
+            3.0,
+            wasmOut.centers,
+            wasmOut.cholesky,
+            wasmOut.amplitudes,
+            wasmOut.colors
+          );
+        },
+        CONFIG.iterations,
+        CONFIG.warmupIterations
+      );
+
+      return {
+        name: 'project_gsplats_nd_to_3d',
+        category: 'GSPLATS PROCESSING',
+        tsTime,
+        wasmTime,
+        speedup: tsTime / wasmTime,
+      };
+    },
     (_size) => {
       // mahalanobis_distance - per-point operation, benchmark with many calls
       const ndim = 4;
