@@ -19,7 +19,6 @@ if HAS_TORCH:
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.models.gsplats import (
         render_gaussians,
-        render_gaussians_batched,
         render_gaussians_numpy,
         render_gaussians_pytorch,
     )
@@ -511,14 +510,14 @@ class TestBatchedRendering:
         assert torch.all(result_with_floor >= 0)
         assert torch.all(result_no_floor >= 0)
 
-    def test_empty_batched_rendering(self) -> None:
-        """Test batched rendering with no splats."""
+    def test_empty_input_renders_zeros(self) -> None:
+        """render_gaussians with zero splats returns an all-zero tensor."""
         shape = (5, 5)
         centers = torch.zeros((0, 2), dtype=torch.float32)
         Ls = torch.zeros((0, 2, 2), dtype=torch.float32)
         amps = torch.zeros((0,), dtype=torch.float32)
 
-        result = render_gaussians_batched(
+        result = render_gaussians(
             shape=shape,
             centers=centers,
             Ls=Ls,

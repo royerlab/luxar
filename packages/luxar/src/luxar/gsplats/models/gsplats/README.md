@@ -51,7 +51,6 @@ User-friendly wrappers that accept `GSplatData` objects:
 |----------|-------------|
 | `render_gaussians_numpy(shape, result, ...)` | CPU NumPy output (no gradients) |
 | `render_gaussians_pytorch(shape, result, ...)` | PyTorch tensor output (supports gradients) |
-| `render_gaussians_batched(shape, result, ...)` | Batched rendering for large datasets |
 
 ## Usage
 

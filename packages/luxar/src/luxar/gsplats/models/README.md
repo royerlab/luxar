@@ -33,7 +33,6 @@ from luxar.gsplats.models import (
     render_gaussians,
     render_gaussians_numpy,
     render_gaussians_pytorch,
-    render_gaussians_batched,
     # Numerical utilities
     stable_inverse_softplus,
     stable_inverse_softplus_torch,
@@ -79,7 +78,6 @@ User-friendly wrappers that accept `GSplatData` objects:
 
 - `render_gaussians_numpy()` -- CPU NumPy output (no gradients)
 - `render_gaussians_pytorch()` -- PyTorch tensor output
-- `render_gaussians_batched()` -- Direct batched rendering
 
 ### Accelerated Backends
 

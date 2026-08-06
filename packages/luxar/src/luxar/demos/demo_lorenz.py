@@ -7,7 +7,9 @@ This demo demonstrates:
 - Progressive writing for efficient memory usage
 - Complete workflow: generate → serve → view → cleanup
 
-The demo is completely self-contained - all generation code is in this file.
+The demo is self-contained - the generation code is in this file. The only
+shared helper it borrows for generation is the vectorized HSV→RGB colouring
+(alongside the usual `launch_viewer` / `parse_int_arg` plumbing).
 
 Usage:
     python demo_lorenz.py [--points N]
@@ -41,8 +43,66 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, parse_int_arg
+from luxar.demos import hsv_to_rgb, launch_viewer, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
+
+# Lorenz system parameters (classic values)
+LORENZ_SIGMA = 10.0  # Prandtl number
+LORENZ_RHO = 28.0  # Rayleigh number
+LORENZ_BETA = 8.0 / 3.0  # Geometric factor
+LORENZ_DT = 0.01  # Time step for Euler integration
+
+
+def lorenz_trajectory(n_points: int, seed: int | None = None) -> np.ndarray:
+    """Integrate the classic Lorenz attractor and return its trajectory.
+
+    The Lorenz system
+
+    .. code-block:: text
+
+        dx/dt = σ(y - x)
+        dy/dt = x(ρ - z) - y
+        dz/dt = xy - βz
+
+    is integrated with forward Euler using the classic parameters σ=10.0
+    (Prandtl number), ρ=28.0 (Rayleigh number), β=8/3 (geometric factor) and a
+    time step dt=0.01, starting from (0.1, 0.0, 0.0). The result is scaled by
+    0.1 and centered on its center of mass so it frames nicely in a viewer.
+
+    Pure and silent: the narrated progress lives in the caller.
+
+    Args:
+        n_points: Number of trajectory samples to integrate.
+        seed: If given, the start point is perturbed by a small seeded random
+            offset (``x += U(-0.01, 0.01)``) for variety. ``None`` (the
+            default) means no perturbation at all — a fully deterministic run.
+
+    Returns:
+        ``(n_points, 3)`` float32 positions, scaled and mean-centered.
+    """
+    positions = np.zeros((n_points, 3), dtype=np.float32)
+
+    # Starting point (with small random perturbation if seed is provided)
+    x, y, z = 0.1, 0.0, 0.0
+    if seed is not None:
+        rng = np.random.default_rng(seed)
+        x += rng.uniform(-0.01, 0.01)
+
+    for i in range(n_points):
+        dx = LORENZ_SIGMA * (y - x) * LORENZ_DT
+        dy = (x * (LORENZ_RHO - z) - y) * LORENZ_DT
+        dz = (x * y - LORENZ_BETA * z) * LORENZ_DT
+
+        x += dx
+        y += dy
+        z += dz
+
+        positions[i] = [x, y, z]
+
+    # Scale positions to fit nicely in view, then center at the center of mass.
+    positions *= 0.1
+    positions -= np.mean(positions, axis=0)
+    return positions
 
 
 def generate_lorenz_attractor(
@@ -50,7 +110,8 @@ def generate_lorenz_attractor(
 ) -> None:
     """Generate Lorenz attractor with time-based colors.
 
-    This function contains ALL the generation logic - completely self-contained.
+    The generation logic is in this file (:func:`lorenz_trajectory`); the only
+    thing borrowed is the shared ``hsv_to_rgb`` colour helper.
 
     The Lorenz system is a set of differential equations that produces
     chaotic behavior, creating a beautiful butterfly-shaped attractor.
@@ -61,82 +122,24 @@ def generate_lorenz_attractor(
         seed: Random seed for reproducibility (adds small perturbation)
     """
     with asection(f"Generating Lorenz Attractor ({n_points:,} points)"):
-        # Lorenz system parameters (classic values)
-        sigma = 10.0  # Prandtl number
-        rho = 28.0  # Rayleigh number
-        beta = 8.0 / 3.0  # Geometric factor
-        dt = 0.01  # Time step for Euler integration
-
-        aprint(f"Parameters: σ={sigma}, ρ={rho}, β={beta:.3f}, dt={dt}")
-
-        # Initialize trajectory
-        positions = np.zeros((n_points, 3), dtype=np.float32)
-
-        # Starting point (with optional random perturbation for variety)
-        x, y, z = 0.1, 0.0, 0.0
+        aprint(
+            f"Parameters: σ={LORENZ_SIGMA}, ρ={LORENZ_RHO}, "
+            f"β={LORENZ_BETA:.3f}, dt={LORENZ_DT}"
+        )
         if seed is not None:
-            rng = np.random.default_rng(seed)
-            x += rng.uniform(-0.01, 0.01)
-            aprint(f"Using seed {seed} with perturbed start: ({x:.3f}, {y}, {z})")
+            aprint(f"Using seed {seed}: start point perturbed by up to ±0.01 in x")
 
-        # Integrate Lorenz equations using Euler method
+        # Integrate Lorenz equations using Euler method, then scale and center
+        # the attractor for nice viewing.
         aprint("Integrating Lorenz equations...")
-        for i in range(n_points):
-            # Lorenz differential equations:
-            # dx/dt = σ(y - x)
-            # dy/dt = x(ρ - z) - y
-            # dz/dt = xy - βz
-            dx = sigma * (y - x) * dt
-            dy = (x * (rho - z) - y) * dt
-            dz = (x * y - beta * z) * dt
-
-            x += dx
-            y += dy
-            z += dz
-
-            positions[i] = [x, y, z]
-
-        # Scale and center the attractor for nice viewing
-        positions *= 0.1  # Scale down
-        center = np.mean(positions, axis=0)
-        positions -= center  # Center at origin
+        positions = lorenz_trajectory(n_points, seed=seed)
         aprint(
             f"✓ Generated trajectory (bounds: {positions.min():.2f} to {positions.max():.2f})"
         )
 
         # Create time-based color gradient (cycles through color wheel twice)
         aprint("Generating time-based color gradient...")
-        t = np.linspace(0, 1, n_points)
-        hue = (t * 2) % 1.0  # Cycle through hues twice for visual interest
-
-        # Vectorized HSV to RGB conversion (full saturation and value)
-        s, v = 1.0, 1.0
-        c = v * s  # Chroma
-        h_prime = hue * 6.0  # Hue in [0, 6) range
-        x_val = c * (1 - np.abs(h_prime % 2 - 1))  # Intermediate value
-        m = v - c  # Match value
-
-        # Initialize RGB arrays
-        r = np.zeros(n_points, dtype=np.float32)
-        g = np.zeros(n_points, dtype=np.float32)
-        b = np.zeros(n_points, dtype=np.float32)
-
-        # Apply RGB values based on hue sector (vectorized)
-        sector = np.floor(h_prime).astype(int)
-        mask = sector == 0
-        r[mask], g[mask], b[mask] = c, x_val[mask], 0.0
-        mask = sector == 1
-        r[mask], g[mask], b[mask] = x_val[mask], c, 0.0
-        mask = sector == 2
-        r[mask], g[mask], b[mask] = 0.0, c, x_val[mask]
-        mask = sector == 3
-        r[mask], g[mask], b[mask] = 0.0, x_val[mask], c
-        mask = sector == 4
-        r[mask], g[mask], b[mask] = x_val[mask], 0.0, c
-        mask = sector == 5
-        r[mask], g[mask], b[mask] = c, 0.0, x_val[mask]
-
-        colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)
+        colors = hsv_to_rgb((np.linspace(0, 1, n_points) * 2.0) % 1.0)
         aprint("✓ Generated rainbow color gradient")
 
     # Write to zarr

@@ -989,14 +989,24 @@ if __name__ == "__main__":
 ## Key Principles
 
 ### 1. Self-Contained
-**All generation code must be in the demo file itself.**
+**The code that makes the demo what it is must be in the demo file itself.**
+
+Whatever a reader opens the file to learn — the maths, the pipeline, the thing
+being demonstrated — stays in the file. Plumbing does not: use the shared
+helpers in §6 (downloading, caching, argv parsing, HSV→RGB, viewer launching,
+optional-dependency gating, precomputed-data loading) rather than hand-rolling
+them, and share heavier scaffolding through a `_*_common.py` module as the
+interop and graph demos do.
 
 ✅ **GOOD**:
 ```python
+from luxar.demos import hsv_to_rgb  # shared plumbing — fine
+
 def generate_my_data(output_path):
-    # Generate positions here
+    # The interesting part is right here
     x = np.linspace(0, 10, 1000)
     positions = ...
+    colors = hsv_to_rgb(positions[:, 0] / positions[:, 0].max())
     # Write to zarr here
     with LuxarZarrCompiler(output_path) as compiler:
         ...
@@ -1005,9 +1015,9 @@ def generate_my_data(output_path):
 ❌ **BAD**:
 ```python
 def generate_my_data(output_path):
-    # Calls external function - not self-contained!
+    # The demo's whole point now lives somewhere else
     from my_utils import create_positions
-    positions = create_positions()  # ← External dependency!
+    positions = create_positions()  # ← nothing left to read here
 ```
 
 ### 2. Use Temporary Directory

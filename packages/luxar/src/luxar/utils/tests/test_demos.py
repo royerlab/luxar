@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.demos.demo_lorenz import lorenz_trajectory
 from luxar.encoding import ArrayDecoder
 from luxar.utils.demos import (
     _safe_extract_zip_member,
@@ -22,6 +23,20 @@ from luxar.utils.demos import (
     create_random_spheres,
     create_time_series_demo,
 )
+
+
+def _sorted_per_axis(points: np.ndarray) -> np.ndarray:
+    """Sort each column of an (N, 3) array independently.
+
+    Comparing two point sets row-by-row needs them in the same order, and the
+    compiler reorders points along a Hilbert curve. Sorting whole rows is not
+    an option: the trajectory has point pairs closer together than one
+    quantization step, so their order can flip and pair up rows that are
+    hundreds of units apart. Sorting each axis on its own cannot do that — a
+    rank swap only ever exchanges two values that are within quantization
+    distance of each other.
+    """
+    return np.sort(points, axis=0)
 
 
 class TestCreateLorenzAttractor:
@@ -62,6 +77,30 @@ class TestCreateLorenzAttractor:
             pos1 = store1["LorenzAttractor"]["positions"][:]
             pos2 = store2["LorenzAttractor"]["positions"][:]
             np.testing.assert_array_almost_equal(pos1, pos2)
+
+    def test_positions_come_from_the_demo_integrator(self) -> None:
+        """The fixture and ``luxar demo run lorenz`` share one integrator.
+
+        Guards the dedup: if either side re-inlines or re-parameterises the
+        Lorenz integration, the two stop agreeing and this fails.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "lorenz.luxar.zarr"
+            create_lorenz_attractor(store_path, n_points=500, seed=42)
+
+            store = zarr.open(store_path, mode="r")
+            written = ArrayDecoder().decode(
+                store["LorenzAttractor"]["positions"], store
+            )
+
+            # Same trajectory, scaled up for visibility exactly as the builder
+            # does. Compared per axis (see _sorted_per_axis); the tolerance
+            # covers the uint16 position quantization, whose step is ~0.006
+            # over this extent.
+            expected = lorenz_trajectory(500, seed=42) * 100.0 - 50.0
+            np.testing.assert_allclose(
+                _sorted_per_axis(written), _sorted_per_axis(expected), atol=0.05
+            )
 
     def test_has_colors_and_radii(self) -> None:
         """Test that colors and radii are included."""
