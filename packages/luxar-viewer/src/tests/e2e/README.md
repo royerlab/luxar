@@ -31,10 +31,10 @@ directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 
 ### Which script runs which specs
 
-| Script | Selection |
-|---|---|
-| `pnpm test:e2e` | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`) |
-| `pnpm test:e2e:ci` | The same, minus tests tagged `@visual` — a **title grep**, not a file list |
+| Script                | Selection                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm test:e2e`       | Everything under `src/tests/e2e/`, minus `*perf-bench.spec.ts` (`testIgnore`)                                                                    |
+| `pnpm test:e2e:ci`    | The same, minus tests tagged `@visual` — a **title grep**, not a file list                                                                       |
 | `pnpm test:e2e:smoke` | An explicit five-file allowlist: `viewer-initialization`, `url-parameters`, `dataset-switching`, `controls-interaction`, `keyboard-input-system` |
 
 The smoke subset is deliberately narrow: its CI job generates datasets at
