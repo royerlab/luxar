@@ -34,7 +34,6 @@ export {
   type LoaderDependencies,
   type BaseLoader,
   type SpatialDataLoader,
-  type AccumulatorStats,
   type LoadedDataMetadata,
   hasDimensionMetadata,
   getDisplayDimCount,

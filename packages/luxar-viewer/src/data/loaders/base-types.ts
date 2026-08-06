@@ -173,27 +173,6 @@ export interface SpatialDataLoader<
 }
 
 // ============================================================================
-// Accumulator Support
-// ============================================================================
-
-/**
- * Statistics tracked by accumulators.
- */
-export interface AccumulatorStats {
-  /** Total allocations */
-  allocations: number;
-
-  /** Total bytes allocated */
-  bytesAllocated: number;
-
-  /** Buffer reuse count */
-  reuseCount: number;
-
-  /** Peak memory usage */
-  peakMemoryBytes: number;
-}
-
-// ============================================================================
 // Loaded Data Metadata
 // ============================================================================
 
