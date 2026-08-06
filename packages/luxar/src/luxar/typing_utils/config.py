@@ -1,4 +1,4 @@
-"""luxar.config – Centralized configuration and settings for Luxar core."""
+"""luxar.typing_utils.config – Centralized configuration and settings for Luxar core."""
 
 from __future__ import annotations
 

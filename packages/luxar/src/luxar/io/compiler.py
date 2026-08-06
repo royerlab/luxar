@@ -1,4 +1,4 @@
-"""luxar.compiler – Progressive Zarr compiler for memory-efficient scene building.
+"""luxar.io.compiler – Progressive Zarr compiler for memory-efficient scene building.
 
 This module provides the LuxarZarrCompiler class which implements progressive
 writing to Zarr stores, enabling handling of arbitrarily large datasets without
@@ -678,8 +678,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         path: NodePath,
         levels: List[Dict[str, Any]],
         *,
-        method: str = "random",
-        grid_shape: Optional[Tuple[int, ...]] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         **attrs: Any,
     ) -> Dict[str, Any]:
@@ -700,10 +698,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` /
                 ``labels``. ``positions`` is required; others may be
                 ``None``.
-            method: Ordering method used (``random`` / ``salience`` /
-                ``spatial-uniform``). Recorded as an attr on the parent
-                node.
-            grid_shape: Forwarded to each per-level ``write_points``.
             extend_to_all: Forwarded to each per-level write.
             **attrs: Additional parent-node attrs (compositing,
                 colormap, etc.).
@@ -752,7 +746,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 sharpness=lvl.get("sharpness"),
                 scalars=lvl.get("scalars"),
                 labels=lvl.get("labels"),
-                grid_shape=grid_shape,
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
@@ -770,7 +763,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["n_points"] = n_points_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
-        group.attrs["additive_lod_method"] = method
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 
@@ -797,7 +789,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         path: NodePath,
         levels: List[Dict[str, Any]],
         *,
-        method: str = "random",
         extend_to_all: Optional[Union[List[str], str]] = None,
         **attrs: Any,
     ) -> Dict[str, Any]:
@@ -878,10 +869,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group.attrs["type"] = "lines"
         group.attrs["n_vertices"] = n_vertices_total
         group.attrs["n_segments"] = n_segments_total
-        group.attrs["n_polylines"] = n_polylines_total
         group.attrs["n_additive_sublods"] = n_levels
         group.attrs["position_bounds"] = global_bounds
-        group.attrs["additive_lod_method"] = method
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 

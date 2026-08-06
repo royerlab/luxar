@@ -6,9 +6,6 @@ export interface MonitorTimings {
   maxEventAge: number;
   ratesCacheTimeout: number;
   defaultUpdateInterval: number;
-  minRenderInterval: number;
-  timelinePointInterval: number;
-  defaultTimeRange: number;
   queryCleanupCheckInterval: number;
   maxQueryAge: number;
 }
@@ -17,10 +14,8 @@ export interface MonitorTimings {
  * Data loading monitor thresholds
  */
 export interface MonitorThresholds {
-  lowCacheHitRate: number;
   highQueryTime: number;
   highLoadTime: number;
-  highMemoryUsage: number;
   highErrorRate: number;
   lowQueryEfficiency: number;
 }
@@ -30,9 +25,7 @@ export interface MonitorThresholds {
  */
 export interface MonitorLimits {
   maxEvents: number;
-  maxTimelinePoints: number;
   maxAdvisorHistory: number;
-  defaultMemoryLimit: number;
   rateCalculationWindow: number;
   bandwidthCalculationWindow: number;
 }

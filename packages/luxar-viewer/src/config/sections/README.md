@@ -41,7 +41,7 @@ sections/
 - **[input/](input/README.md)** — default adjustment sensitivity, the global keyboard shortcut map, the fly-mode movement key set, and the dimension-navigation keys.
 - **[rendering-controls/](rendering-controls/README.md)** — the single source of truth for user-adjustable rendering settings: camera FOV/clipping, bloom, global EOG, anti-aliasing, tone mapping, vignette, detector noise, lens distortion, navigation mode, and adaptive-DPR toggles.
 - **[scene/](scene/README.md)** — canvas background color, default fit-to-bounds framing ratio, and a forward-compatible `ShaderConfig` placeholder reserved for future per-geometry shader knobs.
-- **[ui/](ui/README.md)** — z-index layering, timing constants for transient UI, loading-spinner geometry, debug-console panel/interceptor/style settings, the scale-bar overlay, and per-component border-radius/padding tokens.
+- **[ui/](ui/README.md)** — z-index layering, timing constants for transient UI, loading-spinner geometry, debug-console panel/style settings, the scale-bar overlay, and per-component border-radius/padding tokens.
 - **[webgl/](webgl/README.md)** — WebGL2 context attributes, `THREE.WebGLRenderer` constructor options, and the post-processing render-target settings (MSAA is off — incompatible with the additive blending used for points/gsplats).
 
 ## See Also

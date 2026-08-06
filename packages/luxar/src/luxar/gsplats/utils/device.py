@@ -185,7 +185,6 @@ def resolve_jobs_per_gpu(
     gpu_indices: list[int],
     *,
     task_voxels: int,
-    n_tasks: int,
     jobs_per_gpu: str | int = "auto",
     dtype_bytes: int = 4,
     safety_factor: float = 2.0,
@@ -199,8 +198,7 @@ def resolve_jobs_per_gpu(
     voxel bytes); an explicit int applies uniformly to every device.
 
     ``gpu_indices == []`` means CPU: returns ``{-1: n}`` where ``n`` is the
-    explicit count or half the CPU count.  The engine clamps global concurrency
-    (``sum`` of the returned counts) to ``n_tasks`` — this function does not.
+    explicit count or half the CPU count.
     """
     explicit: Optional[int] = None
     if not (isinstance(jobs_per_gpu, str) and jobs_per_gpu.strip().lower() == "auto"):
