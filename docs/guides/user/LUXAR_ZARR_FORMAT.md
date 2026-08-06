@@ -877,11 +877,12 @@ uses the correct value.
 
 ## Layers (Viewer Panel)
 
-Any scene-graph node — `points`, `lines`, `gsplats`, or a container `group` —
-may be exposed as a layer in the viewer's Layers panel by setting
+Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
+`group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls.
+mode's κ), blending mode, and colormap controls, plus three mesh-only shading
+controls (ambient, shade falloff, alpha cutoff).
 
 ```javascript
 {

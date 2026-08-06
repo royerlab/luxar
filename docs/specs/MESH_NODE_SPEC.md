@@ -21,11 +21,11 @@ discrete (time, channel). This is a deliberate narrowing; it is what makes §5, 
 
 ## 1. Motivation
 
-Luxar has three first-class geometry types, all of which are *soft, emissive, per-element* primitives
+Luxar had three first-class geometry types, all of which are *soft, emissive, per-element* primitives
 rendered as instanced quads. None of them can represent a **surface**: an isosurface from a volume, a
 segmentation boundary, a cortical/organ mesh, a CAD or simulation domain, or a molecular solvent
-surface. These are routine outputs in the same scientific pipelines Luxar already serves, and today
-they can only be approximated by dense point clouds.
+surface. These are routine outputs in the same scientific pipelines Luxar already serves, and until
+this spec landed they could only be approximated by dense point clouds.
 
 A `mesh` node closes that gap with indexed triangles and real surface shading.
 
