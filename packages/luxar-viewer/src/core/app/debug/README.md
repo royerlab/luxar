@@ -70,12 +70,13 @@ users see after enabling `?debug`.
 Pure helper behind `__luxarDebug.getState()`. Exports
 `computeDebugState(ctx: DebugStateContext): DebugState`, the input-surface
 interface `DebugStateContext`, and the result-shape interfaces (`DebugState`,
-`PointCloudInfo`, `GSplatMeshInfo`, `LineMeshInfo`, `GPUPoolDebugStats`,
-`LODGroupDebugInfo`, `PartitionDebugInfo`).
+`PointCloudInfo`, `GSplatMeshInfo`, `LineMeshInfo`, `MeshNodeInfo`,
+`GPUPoolDebugStats`, `LODGroupDebugInfo`, `PartitionDebugInfo`).
 
-`computeDebugState` walks the scene graph once and tallies per-mesh detail for
-three geometry types — Points, Lines, GSplats — by inspecting
-`userData.nodeType`. For each it uses `InstancedBufferGeometry.instanceCount`
+`computeDebugState` walks the scene graph once and tallies per-node detail for
+all four geometry types — Points, Lines, GSplats, Mesh — by inspecting
+`userData.nodeType`. For the three instanced-quad types it uses
+`InstancedBufferGeometry.instanceCount`
 as the source of truth, because pooled attribute arrays are over-allocated and
 `drawRange` only covers the 6-index base quad. Points additionally fall back
 to `userData.visiblePointCount` and then attribute count when `instanceCount`

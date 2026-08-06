@@ -21,7 +21,8 @@ class TestPackageDescription:
         assert "gaussian splat" in docstring or "splat" in docstring
 
     def test_all_geometry_classes_exported(self) -> None:
-        """All three geometry types must be importable from the top-level package."""
+        """All four geometry types must be importable from the top-level package."""
         assert hasattr(luxar, "Points")
         assert hasattr(luxar, "Lines")
         assert hasattr(luxar, "GSplats")
+        assert hasattr(luxar, "Mesh")

@@ -9,7 +9,7 @@ through it the actual paths of tracked animals — white storks flying Europe to
 the Sahel, turkey vultures the length of the Americas, blue and humpback whales
 crossing ocean basins.
 
-Two of Luxar's three geometry types, plus two non-displayed dimensions:
+Two of Luxar's four geometry types, plus two non-displayed dimensions:
 
   * **Occurrences (Points)** — GBIF records placed on the globe from
     ``decimallatitude`` / ``decimallongitude``, coloured by major taxonomic

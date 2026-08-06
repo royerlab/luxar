@@ -50,7 +50,7 @@ Features
 --------
 
 * **nD Visualization**: Handle arbitrary-dimensional data with interactive slicing
-* **Three Geometry Types**: Points (soft-edged spheres), Lines (width-tapered curves), and Gaussian Splats (oriented Gaussians)
+* **Four Geometry Types**: Points (soft-edged spheres), Lines (width-tapered curves), Gaussian Splats (oriented Gaussians), and Mesh (shaded triangle surfaces)
 * **Performance**: 100K-10M points at 60 FPS with WebGL rendering
 * **Compression**: 4-40x data compression with lossy/lossless options
 * **Streaming**: Memory-efficient lazy loading with intelligent caching

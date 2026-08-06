@@ -82,10 +82,12 @@ import type { EncodingName } from '../../types/format-contract';
  * `.zarray` + `.zattrs` and nothing else. Optional entries are `undefined` when
  * the node's presence flags say the array is absent.
  *
- * The label/image-label CSR arrays are included even though v1 does not fetch
- * them (picking lands in a later phase). They are part of the node's declared
- * footprint, so budgeting them from the start means the ceiling does not
- * silently loosen when the label loader arrives.
+ * The label/image-label CSR arrays are included even though nothing fetches them yet.
+ * Picking itself has landed (`rendering/picking/mesh/`) and returns the vertex ordinal
+ * that indexes this CSR, but the step that turns that ordinal into a label string is
+ * still unwritten. They are part of the node's declared footprint either way, so
+ * budgeting them from the start means the ceiling does not silently loosen when the
+ * label read does arrive.
  */
 export interface MeshArrayHandles {
   vertices: zarr.Array<zarr.DataType, zarr.Readable>;

@@ -60,7 +60,7 @@ is the slow exception).
 
 | Feature | Description |
 |---------|-------------|
-| **[Three geometries](#geometry-types)** | Points, lines, and Gaussian splats share one attribute model — nD positions, per-element colors, sizes, and opacity |
+| **[Four geometries](#geometry-types)** | Points, lines, Gaussian splats and triangle meshes share one attribute model — nD positions, per-element colors and opacity (plus a size for the three per-element types; a triangle takes its extent from its own vertices) |
 | **[n-Dimensional](#n-dimensional-visualization)** | 3D, 4D, 5D and beyond: named axes with physical units, radius-based slicing, keyboard navigation, per-axis transforms |
 | **Massive scale** | 100K to 10M+ primitives at interactive frame rates, with level-of-detail and progressive streaming from local files or remote servers |
 | **[Volume rendering](#volume-rendering-with-gaussian-splats)** | Image volumes fitted to oriented Gaussians — gigabytes of voxels become megabytes of streamable, GPU-native geometry, timelapses included |
@@ -191,7 +191,7 @@ luxar serve my_data.luxar.zarr --profile 3g --viewer
 luxar export my_data.luxar.zarr -o my_export/
 ```
 
-From here: [Geometry Types](#geometry-types) for points, lines, and splats;
+From here: [Geometry Types](#geometry-types) for points, lines, splats, and meshes;
 [n-Dimensional Visualization](#n-dimensional-visualization) for 4D and beyond; and
 [Volume Rendering](#volume-rendering-with-gaussian-splats) if your data is an image
 volume rather than a point set.
@@ -462,6 +462,37 @@ for the scaling and timelapse story, or the
 [Gaussian Splatting Guide](packages/luxar/src/luxar/gsplats/README.md) for the
 fitting model in detail.
 
+### Mesh
+
+Triangle surfaces — isosurfaces, segmentation boundaries, cortical and organ
+meshes. The other three primitives are soft and emissive; a mesh is the one
+*connected, shaded* type, lit by a view-anchored headlight so shape reads from
+shading rather than from density.
+
+```python
+scene.add_mesh(
+    "Nuclei",
+    vertices,               # (V, D) float32 - nD vertex positions
+    faces,                  # (F, 3) uint32  - triangle vertex indices
+    normals=normals,        # (V, 3) float32 - optional, needs normal_dims
+    normal_dims=[0, 1, 2],  # which three dims the normals describe
+    colors=colors,          # (V, 3|4) - optional per-vertex RGB(A)
+)
+```
+
+Two differences from the other three worth knowing up front. A mesh has **no
+per-element size** — a triangle's extent comes from its own vertices, so it adds
+no padding to scene bounds. And it defaults to `blending_mode="opaque"` rather
+than `additive`, which is what makes it depth-correct without sorting.
+
+Normals are optional: omit them and the shader derives a flat per-face normal
+from screen-space derivatives. `normal_dims` is required whenever you *do* pass
+them, because in nD there is no implicit "first three dimensions".
+
+LOD, spatial partitioning and `volumetric` blending are not supported and raise
+rather than silently degrading — see
+[the mesh spec](docs/specs/MESH_NODE_SPEC.md) §9 for why, per exclusion.
+
 ---
 
 ## n-Dimensional Visualization
@@ -659,7 +690,7 @@ See [Zarr Format Specification](docs/guides/user/LUXAR_ZARR_FORMAT.md) for compl
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Python Layer (luxar)                                               │
 ├─────────────────────────────────────────────────────────────────────┤
-│  core/          Scene graph: Scene, Points, Lines, GSplats         │
+│  core/          Scene graph: Scene, Points, Lines, GSplats, Mesh   │
 │  io/            Zarr compilation with spatial ordering              │
 │  encoding/      Semantic types, quantization, compression           │
 │  validation/    Input validation and type checking                  │

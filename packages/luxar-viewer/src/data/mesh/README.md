@@ -177,8 +177,11 @@ a reader might expect a re-fetch and find none.
 
 ## Not here yet
 
-Label / image-label CSR arrays are **budgeted and pair-checked** by Stage 1 but not
-fetched — picking arrives in a later phase. Counting them from the start means the
+Label / image-label CSR arrays are **budgeted and pair-checked** by Stage 1 but never
+fetched. Picking has landed (`rendering/picking/mesh/`) and hands back the vertex
+ordinal that indexes this CSR, but the read that turns that ordinal into a label string
+is still unwritten — so the arrays remain unused by any code path. Counting them from
+the start means the
 ceiling does not silently loosen when the label loader lands, and the pair check
 means a `has_labels` with one array missing fails now, while the error can still
 name the real problem. Stage 2's CSR offset-monotonicity check arrives with the
