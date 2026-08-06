@@ -133,8 +133,10 @@ function noticeKey(path: string, described: string): string {
 const noticedContinuousHidden = new Set<string>();
 
 /**
- * Report — once per node and hidden dimension, at `info` — a mesh whose hidden dims include
- * a CONTINUOUS one.
+ * Report — at `info`, once per node and hidden dimension — a mesh whose hidden dims include
+ * a CONTINUOUS one. A node's not-yet-reported dimensions are named together in ONE line
+ * rather than one line each; the dedup is per (node, dimension), so an axis that becomes
+ * hidden later still gets its own line.
  *
  * This is the measurement behind spec §9's deferral of exact nD triangle clipping. §5
  * culls whole triangles by per-vertex slab membership, which is a true cut when the

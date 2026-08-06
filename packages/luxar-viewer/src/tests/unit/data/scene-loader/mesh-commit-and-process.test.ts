@@ -301,6 +301,46 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
     expect(hit).toContain('[um]');
   });
 
+  it('names every continuous hidden dim, batched into one line', async () => {
+    // Two continuous hidden axes are one node's worth of evidence, so they are named
+    // together in a single line rather than one line each — the shape §5.2.1 states.
+    // Both must appear: WHICH axes turn up hidden-and-continuous is the entire payload,
+    // so a message that reported only the first would lose half the measurement.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const data: LoadedMeshData = {
+      // One triangle in 5D, all three vertices at hidden (z2, z3) = (0, 0).
+      vertices: new Float32Array([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0]),
+      faces: new Uint32Array([0, 1, 2]),
+      normals: null,
+      colors: null,
+      scalars: undefined,
+      vertexCount: 3,
+      faceCount: 1,
+      ndim: 5,
+    };
+    // z3 carries no unit, so it also covers the bracket-less arm of the description.
+    const view = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0, 0],
+      tolerance: [1e10, 1e10, 1e10, 1, 1],
+      dimensions: [
+        { name: 'x', unit: '', scale: 1 },
+        { name: 'y', unit: '', scale: 1 },
+        { name: 'z', unit: '', scale: 1 },
+        { name: 'z2', unit: 'um', scale: 1, step: 1 },
+        { name: 'z3', unit: '', scale: 1, step: 1 },
+      ],
+    } as MeshViewState;
+    await processMeshData('/two-axes', data, view, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain('z2 [um]');
+    expect(hits[0]).toContain('z3');
+  });
+
   it('stays silent when the hidden dim is discrete — the dominant real case', async () => {
     // Time/channel hidden dims get a TRUE cut from the half-cell membership rule, so
     // there is nothing to report. If this fired here the signal would be worthless:
