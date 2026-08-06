@@ -36,7 +36,7 @@ export class ChunkPrefetcher {
   // Queue management. A single FIFO queue (the Set preserves insertion
   // order) drained under the concurrency limit each processQueue cycle.
   private inFlight = new Set<string>();
-  private normalQueue = new Set<string>();
+  private queue = new Set<string>();
   private processing = false;
   // Lifecycle: set by dispose(). Distinct from `enabled` (a feature toggle)
   // so we can short-circuit the in-flight `.finally()` continuation
@@ -127,8 +127,8 @@ export class ChunkPrefetcher {
    */
   private addToQueue(key: string): boolean {
     if (this.inFlight.has(key)) return false;
-    if (this.normalQueue.has(key)) return false;
-    this.normalQueue.add(key);
+    if (this.queue.has(key)) return false;
+    this.queue.add(key);
     this.log(`  Enqueued: ${key}`);
     return true;
   }
@@ -147,13 +147,13 @@ export class ChunkPrefetcher {
     this.processing = true;
 
     try {
-      while (this.normalQueue.size > 0 && this.inFlight.size < this.maxConcurrent) {
+      while (this.queue.size > 0 && this.inFlight.size < this.maxConcurrent) {
         if (this.isDisposed) break;
         // Set insertion order gives FIFO semantics.
-        const key = this.normalQueue.values().next().value;
+        const key = this.queue.values().next().value;
         if (!key) break;
 
-        this.normalQueue.delete(key);
+        this.queue.delete(key);
         this.inFlight.add(key);
 
         this.log(`Prefetching: ${key} (${this.inFlight.size}/${this.maxConcurrent} slots)`);
@@ -178,7 +178,7 @@ export class ChunkPrefetcher {
             // that started before dispose() can keep re-entering
             // processQueue and dispatching additional fetches against
             // the (now-disposed) store.
-            if (!this.isDisposed && this.normalQueue.size > 0) {
+            if (!this.isDisposed && this.queue.size > 0) {
               queueMicrotask(() => this.processQueue());
             }
           });
@@ -340,7 +340,7 @@ export class ChunkPrefetcher {
     this.seen.clear();
     this.parsedCache.clear();
     this.maxChunkIndices.clear();
-    this.normalQueue.clear();
+    this.queue.clear();
     this.inFlight.clear();
     this.processing = false;
   }
@@ -354,7 +354,7 @@ export class ChunkPrefetcher {
     enabled: boolean;
   } {
     return {
-      queued: this.normalQueue.size,
+      queued: this.queue.size,
       inFlight: this.inFlight.size,
       enabled: this.enabled,
     };
