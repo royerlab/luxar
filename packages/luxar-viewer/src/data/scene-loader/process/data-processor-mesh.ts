@@ -109,27 +109,32 @@ export async function processMeshData(
   return { path, data, projected };
 }
 
-/** Dedup key for the continuous-hidden-dimension notice. NUL cannot occur in a name. */
-function noticeKey(path: string, dimName: string): string {
-  return `${path}\u0000${dimName}`;
+/** Dedup key for the continuous-hidden-dimension notice. NUL cannot occur in a name or unit. */
+function noticeKey(path: string, described: string): string {
+  return `${path}\u0000${described}`;
 }
 
 /**
  * Which continuous hidden dimensions have already been reported, per node.
  *
- * Keyed by `path` **and dimension name**, not by path alone. Path alone would defeat
- * the point of the notice: it exists to COLLECT evidence about which axes turn up
- * hidden-and-continuous on real data, and a 4D mesh that first reports a continuous
- * time axis would then have the early return suppress a continuous Z forever once
- * `displayDims` changed. The one configuration the measurement is actually looking for
- * is the one it would never see.
+ * Keyed by `path` **and the dimension as the message describes it** — name and unit — not
+ * by path alone. Path alone would defeat the point of the notice: it exists to COLLECT
+ * evidence about which axes turn up hidden-and-continuous on real data, and a 4D mesh that
+ * first reports a continuous time axis would then have the early return suppress a
+ * continuous Z forever once `displayDims` changed. The one configuration the measurement is
+ * actually looking for is the one it would never see. The unit is in the key for the same
+ * reason it is in the message: it is half the evidence, so a same-named axis that comes
+ * back with a different unit after a dataset switch still has something to say.
  *
- * Still module-scoped and still per-node for a given dimension, so a scrub warns once.
+ * Still module-scoped and still per-node for a given dimension, so a scrub warns once. That
+ * once-per-tab granularity matches `noticedWinding` above, and is the right one here: the
+ * question this measures is whether the configuration occurs at all, not how often.
  */
 const noticedContinuousHidden = new Set<string>();
 
 /**
- * Report — once per node, at `info` — a mesh whose hidden dims include a CONTINUOUS one.
+ * Report — once per node and hidden dimension, at `info` — a mesh whose hidden dims include
+ * a CONTINUOUS one.
  *
  * This is the measurement behind spec §9's deferral of exact nD triangle clipping. §5
  * culls whole triangles by per-vertex slab membership, which is a true cut when the
@@ -142,13 +147,17 @@ const noticedContinuousHidden = new Set<string>();
  * the experiment. Promote exact clipping when it starts appearing on real data; leave it
  * deferred while it does not.
  *
- * **It reports the dimension's name and unit rather than judging "spatial" itself.**
- * Units in Luxar are free-form strings and there is no spatial-unit vocabulary in the
- * viewer; inventing one for a diagnostic would be a taxonomy that is wrong at the edges
- * and load-bearing nowhere else. A continuous hidden dim is the exact trigger for the
- * slab approximation either way — the name and unit are what let a reader tell the case
- * that matters (a continuous Z) from the benign one (a continuous time axis, where a
- * slab is a reasonable thing to want).
+ * **Hidden-and-continuous already IS §9's "continuous hidden spatial" condition**, so the
+ * filter below is not a loose proxy for it. `DimensionMetadata.spatial` does exist, but the
+ * writer's own invariant makes it redundant here: `core/dimensions.py` forces a
+ * non-displayed, non-spatial dimension to be discrete, so anything that reaches this loop
+ * hidden and continuous was authored `spatial=true`. Testing the flag as well would narrow
+ * nothing, and would silently drop evidence from a scene whose metadata omits it.
+ *
+ * The name and unit are reported because one judgement is genuinely left over that no flag
+ * can make: a dimension may be *declared* spatial and still be a time axis, where a slab is
+ * a reasonable thing to want. Naming it is what lets a reader tell that benign case from the
+ * continuous Z the promotion condition is actually about.
  *
  * `info`, not `warning`: nothing is wrong. The slab is the documented behaviour, and the
  * node renders correctly under it.
@@ -164,29 +173,24 @@ function noticeContinuousHiddenDim(
 
   const displayed = new Set(viewState.displayDims);
   const extended = new Set(extendDims);
-  // Names and display strings tracked separately: recovering the name by splitting the
-  // display string back apart would break on any dimension whose own name contains the
-  // separator.
-  const names: string[] = [];
-  const described: string[] = [];
+  const fresh: string[] = [];
   for (let i = 0; i < ndim && i < dims.length; i++) {
     const dim = dims[i];
     // An extended dim has an infinite slab, so the approximation cannot bite there.
     if (displayed.has(i) || dim?.discrete || extended.has(dim?.name ?? '')) continue;
-    const name = dim?.name ?? `dim${i}`;
-    // Per (node, dimension): a dimension that becomes hidden later is NEW evidence and
-    // must still be reported, even though this node has already been noticed once.
-    if (noticedContinuousHidden.has(noticeKey(path, name))) continue;
-    names.push(name);
-    described.push(`${name}${dim?.unit ? ` [${dim.unit}]` : ''}`);
+    // The message text IS the dedup key, so the two cannot drift apart. Per (node,
+    // dimension): a dimension that becomes hidden later is NEW evidence and must still be
+    // reported even though this node has already been noticed once.
+    const described = `${dim?.name ?? `dim${i}`}${dim?.unit ? ` [${dim.unit}]` : ''}`;
+    if (noticedContinuousHidden.has(noticeKey(path, described))) continue;
+    fresh.push(described);
   }
-  if (names.length === 0) return;
+  if (fresh.length === 0) return;
 
-  for (const name of names) noticedContinuousHidden.add(noticeKey(path, name));
-  const continuous = described;
+  for (const described of fresh) noticedContinuousHidden.add(noticeKey(path, described));
   log.info(
     Modules.SCENE_LOADER,
-    `Mesh ${path} has continuous hidden dimension(s) ${continuous.join(', ')}. Triangles ` +
+    `Mesh ${path} has continuous hidden dimension(s) ${fresh.join(', ')}. Triangles ` +
       'are culled by whole-triangle slab membership, not clipped, so the surface shown is ' +
       'a slab of finite thickness rather than an exact cross-section ' +
       '(MESH_NODE_SPEC.md §5.2.1). Correct and intended; noted because exact nD clipping ' +
@@ -194,8 +198,8 @@ function noticeContinuousHiddenDim(
   );
 }
 
-/** Test seam: forget which nodes have been warned about. */
-export function resetWindingNoticesForTesting(): void {
+/** Test seam: forget every notice this module has already emitted. */
+export function resetMeshNoticesForTesting(): void {
   noticedWinding.clear();
   noticedContinuousHidden.clear();
 }

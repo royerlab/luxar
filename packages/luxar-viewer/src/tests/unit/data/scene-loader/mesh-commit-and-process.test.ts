@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import {
   processMeshData,
-  resetWindingNoticesForTesting,
+  resetMeshNoticesForTesting,
 } from '../../../../data/scene-loader/process/data-processor-mesh';
 import { commitMeshGeometry } from '../../../../data/scene-loader/commit/commit-mesh-geometry';
 import { createEmptyMeshNode } from '../../../../rendering/node-factory/create-mesh-node';
@@ -111,7 +111,7 @@ function viewWithDim(
 
 describe('processMeshData — the undecidable-winding notice', () => {
   beforeEach(() => {
-    resetWindingNoticesForTesting();
+    resetMeshNoticesForTesting();
     vi.restoreAllMocks();
   });
 
@@ -273,14 +273,18 @@ describe('commitMeshGeometry', () => {
 
 describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gate)', () => {
   beforeEach(() => {
-    resetWindingNoticesForTesting();
+    resetMeshNoticesForTesting();
+    // Restore here, not with a trailing `mockRestore()` per test: a failing assertion
+    // throws before the trailing call runs, leaving the spy installed so the NEXT test
+    // sees this one's calls and fails for a reason that has nothing to do with it.
+    vi.restoreAllMocks();
   });
 
   it('reports a continuous hidden dim, naming it and its unit', async () => {
     // The measurement behind §9's deferral of exact nD clipping: a continuous hidden
     // dim is exactly when the whole-triangle slab stops being a true cut. The name and
-    // unit are in the message because the viewer has no spatial-unit vocabulary, so the
-    // reader classifies "spatial Z" vs "benign time axis", not the code.
+    // unit are in the message for the one judgement no metadata flag can make — a dim
+    // can be declared spatial and still be a time axis, and only the name says so.
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     // A real unit, because the unit is half of what the message exists to convey — it
     // is what lets a reader tell a spatial axis from a temporal one. The test was named
@@ -295,7 +299,6 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
     expect(hit).toBeDefined();
     expect(hit).toContain('z2');
     expect(hit).toContain('[um]');
-    info.mockRestore();
   });
 
   it('stays silent when the hidden dim is discrete — the dominant real case', async () => {
@@ -310,7 +313,39 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
       { normal_dims: [0, 1, 2], double_sided: false }
     );
     expect(info.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§5.2.1'))).toBe(false);
-    info.mockRestore();
+  });
+
+  it('stays silent when the continuous hidden dim is extend_to_all', async () => {
+    // An extended dim is slice-invariant, so its membership slab is infinite
+    // (EXTEND_TO_ALL_TOLERANCE) and there is no finite thickness to report. Reporting it
+    // would put the one case the approximation provably cannot bite into the evidence.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    await processMeshData(
+      '/extended',
+      loadedAtW(0),
+      viewWithDim(1.0, { name: 'z2', step: 1, unit: 'um' }),
+      { normal_dims: [0, 1, 2], double_sided: false, extend_to_all: ['z2'] }
+    );
+    expect(info.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§5.2.1'))).toBe(false);
+  });
+
+  it('reports the same axis again when it comes back with a different unit', async () => {
+    // The dedup key is the message text — name AND unit — not the name alone. A dataset
+    // switch that reuses a node path and an axis name but changes the unit is new
+    // evidence: the unit is half of what the reader classifies on, so suppressing the
+    // second line would hide exactly the distinction the message exists to draw.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    for (const unit of ['s', 'um']) {
+      const view = viewWithDim(1.0, { name: 'w', step: 1, unit });
+      await processMeshData('/reload', loadedAtW(0), view, {
+        normal_dims: [0, 1, 2],
+        double_sided: false,
+      });
+    }
+    const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
+    expect(hits).toHaveLength(2);
+    expect(hits[0]).toContain('[s]');
+    expect(hits[1]).toContain('[um]');
   });
 
   it('reports a NEWLY hidden dimension, even after the node was already noticed', async () => {
@@ -342,7 +377,6 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
     expect(hits).toHaveLength(2);
     expect(hits[0]).toContain('time');
     expect(hits[1]).toContain('z');
-    info.mockRestore();
   });
 
   it('reports once per node, not once per slice move', async () => {
@@ -355,13 +389,12 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
     }
     const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
     expect(hits).toHaveLength(1);
-    info.mockRestore();
   });
 });
 
 describe('processMeshData — membership tolerance', () => {
   beforeEach(() => {
-    resetWindingNoticesForTesting();
+    resetMeshNoticesForTesting();
     vi.restoreAllMocks();
   });
 
