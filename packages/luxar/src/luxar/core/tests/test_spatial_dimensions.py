@@ -198,7 +198,8 @@ class TestCompilerIntegration:
     """Test that the compiler correctly extracts and stores spatial metadata."""
 
     def test_compiler_stores_spatial_metadata(self, tmp_path) -> None:
-        """Test that LuxarZarrCompiler stores spatial_extend_dims in zarr attributes."""
+        """LuxarZarrCompiler stores each dimension's spatial flag inside the
+        scene_dimensions attribute."""
         import zarr
 
         from luxar import Dimension, Dimensions
@@ -238,15 +239,3 @@ class TestCompilerIntegration:
         assert scene_dims[2]["spatial"] is True  # z
         assert scene_dims[3]["spatial"] is True  # depth
         assert scene_dims[4]["spatial"] is False  # time
-
-        # Check points node has spatial_extend_dims (only written when
-        # extend_to_all is used; may not be present on plain points nodes)
-        points_node = store["test_points"]
-        if "spatial_extend_dims" in points_node.attrs:
-            assert points_node.attrs["spatial_extend_dims"] == [
-                True,
-                True,
-                True,
-                True,
-                False,
-            ]
