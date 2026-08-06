@@ -198,7 +198,8 @@ class TestCompilerIntegration:
     """Test that the compiler correctly extracts and stores spatial metadata."""
 
     def test_compiler_stores_spatial_metadata(self, tmp_path) -> None:
-        """Test that LuxarZarrCompiler stores each dimension's spatial flag inside the scene_dimensions attribute."""
+        """LuxarZarrCompiler stores each dimension's spatial flag inside the
+        scene_dimensions attribute."""
         import zarr
 
         from luxar import Dimension, Dimensions

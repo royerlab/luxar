@@ -68,8 +68,9 @@ test.describe('L2 persistence across page reload (R7)', () => {
 
     const after = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     expect(after.l2).toBeDefined();
-    // L2 entries survive the reload (none dropped) and are read back
-    // from disk rather than re-fetched from the network.
+    // The entry count must not shrink across the reload. On its own this is
+    // only a floor (a re-download would also refill it), which is why the
+    // read assertion below carries the actual persistence proof.
     expect(after.l2.count).toBeGreaterThanOrEqual(before.l2.count);
     expect(after.l2.reads).toBeGreaterThan(0);
   });

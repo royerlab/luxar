@@ -1,4 +1,4 @@
-"""Tests for DataNode types: Lines and GSplats."""
+"""Tests for DataNode types: the cross-type parity matrix, Lines and GSplats."""
 
 import numpy as np
 import pytest
