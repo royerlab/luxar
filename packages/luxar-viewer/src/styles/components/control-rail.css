@@ -479,7 +479,7 @@
 }
 
 /* Auto-hide: the hint melts away if the user never interacts (the element is
-   removed after the transition — see HINT_FADE_MS in control-rail/index.ts). */
+   removed after the transition — see HINT_FADE_MS in control-rail.ts). */
 .luxar-control-rail-hint.is-leaving {
   opacity: 0;
   pointer-events: none;
