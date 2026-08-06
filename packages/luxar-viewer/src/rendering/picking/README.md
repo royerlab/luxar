@@ -49,9 +49,7 @@ picking/
 │   ├── pick-mode.ts             #   MeshPickAwareMaterial + the mode → (cutout, depth) map
 │   └── provoking-vertex.ts      #   aligns WebGL's flat provoking vertex with WebGPU's
 │
-├── PICKING_DESIGN.md            # Backend readback strategy + 1-frame-latency rationale
-└── index.ts                     # Public barrel — re-exports the four picking
-                                 #   materials and PickingSystem + PickResult
+└── PICKING_DESIGN.md            # Backend readback strategy + 1-frame-latency rationale
 ```
 
 ## Per-geometry picking parity

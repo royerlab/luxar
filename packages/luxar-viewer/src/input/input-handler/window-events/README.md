@@ -12,7 +12,3 @@ during `init()`.
 - `fullscreen-toggle.ts` — `toggleFullscreen` body. Requests
   fullscreen on `document.documentElement`; falls back to the WebGL
   canvas if the document request rejects; exits otherwise.
-- `fov-wheel-math.ts` — `calculateFovChange`. Currently unused by the
-  live wheel handler (which calls `sceneManager.updateFOV(deltaY)`
-  directly), kept as a documented public surface + because its tests
-  pin the `[fovMin, fovMax]` clamp behavior used elsewhere.

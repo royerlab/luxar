@@ -12,9 +12,6 @@ export interface DebugConsoleConfig {
     bottomOffset: number;
     leftOffset: number;
   };
-  interceptor: {
-    maxBufferSize: number;
-  };
   resize: {
     borderWidth: number;
   };

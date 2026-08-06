@@ -15,7 +15,6 @@ from typing import (
     List,
     Optional,
     Sequence,
-    Tuple,
     Union,
 )
 
@@ -124,7 +123,6 @@ class Group(Node):
         image_labels: Optional[Any] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
-        grid_shape: Optional[Tuple[int, ...]] = None,
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         partition: Any = None,
@@ -152,7 +150,6 @@ class Group(Node):
                 JPEG/WebP blobs for best compression.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
-            grid_shape: Optional grid shape for structured data
             dim_order: Map data columns to scene dimensions by name.
                 E.g., ``["Y", "X"]`` for 2D data in a 3D scene.
                 Unmapped dims are filled with ``fill`` values and auto-extended.
@@ -223,7 +220,6 @@ class Group(Node):
             image_labels=image_labels,
             parent=parent,
             extend_to_all=extend_to_all,
-            grid_shape=grid_shape,
             dim_order=dim_order,
             fill=fill,
             partition=partition,
