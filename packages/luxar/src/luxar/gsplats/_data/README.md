@@ -10,7 +10,7 @@ Internal implementation package for `luxar.gsplats.gsplat_data.GSplatData` — s
 
 ## Module Map (Implementation Details)
 
-- **`base.py`** — `_GSplatDataOps`: Shared mixin base declaring instance attributes (`colors`, `stats`, `_node`) plus STUBS for cross-mixin method calls (`filter`, `_map_substitutive`, etc.). Inherits from `_SplatArrayMixin` so mixins can call `self.volumes()` / `self.scale()`. The real implementations live on `GSplatData` or sibling mixins; stubs here let mypy resolve cross-mixin `self.` calls.
+- **`base.py`** — `_GSplatDataOps`: Shared mixin base declaring instance attributes (`colors`, `stats`, `_node`) plus STUBS for cross-mixin method calls (`filter`, `_map_substitutive`, etc.). Inherits from `_SplatArrayMixin` so mixins can call `self.volumes()` / `self.scale()`. The real implementations live on `GSplatData` or sibling mixins; stubs here let mypy resolve cross-mixin `self.` calls. Also home to the shared module-level helpers: `_readonly` / `_readonly_opt` / `_readonly_sublod` (zero-copy non-writable views backing the immutability contract), `_merge_lod_colors` (the None/all/mixed color merge, dtype + RGB→RGBA layout policy) and `_concat_additive_levels` (ladder-wide merge of several views' additive ladders).
 
 - **`metrics.py`** — `_SplatArrayMixin`: Shared computed properties for splat array containers. Inherited by BOTH `AdditiveSubLOD` and `GSplatData` (via `_GSplatDataOps`). Reads only `centers` / `amplitudes` / `cholesky_factors` plus `ndim` / `n_splats` / `truncation_radius`. Self-contained (no `GSplatData`-specific dependencies).
   - **Exports**: `n_splats`, `ndim`, `__len__`, `volumes()`, `masses()`, `marginal_sigmas()`, `scale(axes=None)`, `eccentricities(axes=None)`, `principal_radii(anisotropy=True)`, `nearest_neighbor_distances(spatial_axes=None, group_axes=None, k=1)`, `neighbor_counts(radius, spatial_axes=None, group_axes=None)`, internal helpers `_cholesky_diag_elements()`, `_nondegenerate_axes(eps=...)`, `_resolve_axes(axes)`, `_grouped_spatial(...)`, `_cell_size_hint(...)`
@@ -26,15 +26,24 @@ Internal implementation package for `luxar.gsplats.gsplat_data.GSplatData` — s
 
 - **`culling.py`** — `CullingMixin`: `cull(target=None, method="auto", ...)` — unified splat removal. Methods (ordered cheapest → most principled): `"cumulative"` (amplitude sum), `"amplitude_percentile"`, `"combined"` (amplitude+volume heuristic), `"redundancy"` (fractional contribution without target), `"error_budget"` (most principled; requires target volume). `"auto"` selects based on available inputs. Multi-substitutive datasets cull every level via `_map_substitutive` and rebuild the pyramid (preserves LOD structure).
 
+- **`lod_views.py`** — `LODViewsMixin`: The LOD tree structure/accessor family. The derived finest-first matrix views over the ground-truth node (`substitutive_levels`, `additive_sublods`, `n_substitutive`, `n_additive_sublods`, `default_substitutive`, `_finest_leaf()`), per-level access (`additive_sublod(level)`, `at_substitutive(level)`, `_view_of_level(...)`), ladder reshaping (`additive_prefix(level)`, `flattened()`, `lod_psnrs()`), the matrix constructors (`from_additive_sublods`, `from_substitutive_levels`) and the node-tree bridge (`tree`, `from_tree`).
+
+- **`composition.py`** — `CompositionMixin`: Multi-dataset composition. `concatenate(datasets)` (per-`(substitutive, additive)`-cell merge, so pyramids stay pyramids), `combine_as_new_dimension(datasets, values, sigma)`, `merge_with_channel_colors(...)`, `embed_dimension(values, sigma)` (D → D+1 promotion), plus the `kind=partition` builders `to_spatial_partition(max_elements=..., rule=...)` and `partition_from_regions(regions, recipe=...)`.
+
+- **`transforms.py`** — `TransformsMixin`: Geometric transforms — `transform(matrix)` (centers + covariance, diagonal fast path), `translate(offset)`, `center_at_centroid()` (amplitude-weighted, spatial axes only) — and the two structure-preserving rebuild helpers `_map_substitutive(fn)` / `_map_additive(fn)` that every per-level op in the sibling mixins goes through.
+
+- **`intensity.py`** — `IntensityMixin`: Amplitude / color edits, all ladder-preserving: `affine_intensity`, `normalize_intensity`, `clamp_intensity`, `scale_intensity`, `reweight_amplitude(multiplier)` (per-splat), `soft_scale_filter(highpass=..., lowpass=..., width=...)` (smooth log2-scale band reweighting), `with_colors(colors)` and the shared `_with_new_amplitudes(...)`.
+
 - **`__init__.py`** — Empty docstring: "Internal domain mixins for `GSplatData`" (no exports; package is a private split).
 
 ## Ownership
 
-All six domain mixins are inherited by `GSplatData` in `luxar.gsplats.gsplat_data`: four (`RenderMixin`, `IOAdapterMixin`, `FilteringMixin`, `CullingMixin`) as direct bases and the remaining two (`_GSplatDataOps`, `_SplatArrayMixin`) transitively, as the chain below shows. The mixins' `self.` calls resolve through `_GSplatDataOps`'s stubs.
+All ten domain mixins are inherited by `GSplatData` in `luxar.gsplats.gsplat_data`: eight (`RenderMixin`, `IOAdapterMixin`, `FilteringMixin`, `CullingMixin`, `LODViewsMixin`, `CompositionMixin`, `TransformsMixin`, `IntensityMixin`) as direct bases and the remaining two (`_GSplatDataOps`, `_SplatArrayMixin`) transitively, as the chain below shows. No two mixins define the same name, so the base order is free of MRO surprises; the mixins' `self.` calls resolve through `_GSplatDataOps`'s stubs. `GSplatData` itself keeps only construction (`__init__`), `truncation_radius` and `__repr__`.
 
 **Mixin inheritance chain**:
 ```
-GSplatData -> RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin
+GSplatData -> RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin,
+              LODViewsMixin, CompositionMixin, TransformsMixin, IntensityMixin
               ↓
               _GSplatDataOps -> _SplatArrayMixin
 ```
@@ -106,6 +115,8 @@ A plain `None` default would conflate the two and make uncompressed output impos
 Tests live in the parent package's test suite (`packages/luxar/src/luxar/gsplats/tests/`):
 
 - **`test_gsplat_data.py`**: The core data API — properties (`n_splats`, `ndim`, `__len__`, `repr`, `stats`), construction/validation, and the transforms (`translate`, `center_at_centroid`, `scale_intensity`, affine/normalize/clamp intensity, `transform` incl. covariance correctness).
+- **`test_gsplat_data_lod.py`**: The LOD matrix API (`LODViewsMixin`) — additive ladders and substitutive levels, `additive_prefix` / `flattened` / `at_substitutive` read-only views, the per-level constructors, and the `_merge_lod_colors` dtype / RGB→RGBA layout policy.
+- **`test_gsplat_data_tree_bridge.py`**: The node-tree bridge (`tree` / `from_tree`) round-trips, including the `_readonly_sublod` stats-aliasing regression.
 - **`test_gsplat_data_aggregations.py`**: Computed metrics (`volumes`, `principal_radii`, `masses`, `marginal_sigmas`, `eccentricities`), filtering (`filter`, `filter_by`, `slice_by`), and reshape ops (`concatenate`, `embed_dimension`, `combine_as_new_dimension`).
 - **`test_gsip_filters.py`**: Spatial-aware metrics (`scale`/`eccentricity` auto-ignoring a zero-variance time axis), `nearest_neighbor_distances` / `neighbor_counts`, the `isolation_max` filter, percentile thresholds, and the soft (amplitude-reweighting) high/low-pass.
 - **`test_gsplat_data_io.py`**: Cull heuristics (`cumulative`, `amplitude_percentile`, `combined`, `auto`), the save whitelist (which `fitting_info` keys the `save()` whitelist includes vs excludes — asserted directly against the whitelist logic, no actual zarr save/load), and multi-dataset channel-color merge.
@@ -113,7 +124,7 @@ Tests live in the parent package's test suite (`packages/luxar/src/luxar/gsplats
 - **`test_spatial_partition.py`**: `GSplatData.to_spatial_partition` — spatial BSP into a `kind=partition` tree (max-elements/split-rule, splat preservation, `bsp_tree` provenance, on-disk round-trip, scene grafting).
 - **`test_spatial_axes.py`**: The shared spatial-axis auto-detection helpers (`spatial_axes_from_max_sigma`, `spatial_only_shift`).
 
-Run via: `hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_gsplat_data.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_aggregations.py packages/luxar/src/luxar/gsplats/tests/test_gsip_filters.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_io.py packages/luxar/src/luxar/gsplats/tests/test_culling.py packages/luxar/src/luxar/gsplats/tests/test_spatial_partition.py packages/luxar/src/luxar/gsplats/tests/test_spatial_axes.py -v`
+Run via: `hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_gsplat_data.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_lod.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_tree_bridge.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_aggregations.py packages/luxar/src/luxar/gsplats/tests/test_gsip_filters.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_io.py packages/luxar/src/luxar/gsplats/tests/test_culling.py packages/luxar/src/luxar/gsplats/tests/test_spatial_partition.py packages/luxar/src/luxar/gsplats/tests/test_spatial_axes.py -v`
 
 ## See Also
 
