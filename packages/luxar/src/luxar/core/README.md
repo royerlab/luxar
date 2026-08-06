@@ -45,7 +45,7 @@ with LuxarZarrCompiler('my_scene.luxar.zarr') as compiler:
 **Key Concepts:**
 - **Scene**: Root container defining dimensions
 - **Nodes**: Hierarchical organization (groups can contain groups/data)
-- **DataNodes**: Points, Lines, GSplats - the actual renderable data
+- **DataNodes**: Points, Lines, GSplats, Mesh - the actual renderable data
 - **Transforms**: 4x4 matrices for positioning/rotation/scaling
 - **Dimensions**: Support nD data with keyboard navigation
 
@@ -60,7 +60,7 @@ The root node of the scene hierarchy. Provides builder methods for constructing 
 - Scene-level dimension definitions
 - Broadcasting support for nD data
 - Hierarchical organization with groups
-- Support for Points, Lines, and GSplats data
+- Support for Points, Lines, GSplats, and Mesh data
 
 **Usage Example:**
 ```python
@@ -811,7 +811,8 @@ Node (base class)
  └── DataNode (abstract base for data nodes)
       ├── Points (point data)
       ├── Lines (curve/line data)
-      └── GSplats (Gaussian splat data)
+      ├── GSplats (Gaussian splat data)
+      └── Mesh (triangle surface data)
 ```
 
 ## Dependencies
@@ -840,6 +841,7 @@ Tests are located in `core/tests/`:
 - `test_group.py` - Group class with add_* methods
 - `test_gsplats_extend_to_all.py` - extend_to_all functionality in Scene.add_gsplats()
 - `test_hdr_colors.py` - Edge case tests for HDR color support
+- `test_mesh.py` - Mesh DataNode: add_mesh round-trips (topology, normals/normal_dims, colors, labels), shading/double_sided resolution, and the volumetric-blending / LOD / partition refusals
 - `test_node_properties.py` - Node properties and method chaining
 - `test_node_rendering.py` - Rendering attributes for Node class
 - `test_overlays.py` - Screen-space overlays (add_text / add_image / add_html)

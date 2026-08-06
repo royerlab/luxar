@@ -180,7 +180,7 @@ has_labels: bool
 has_image_labels: bool
 shading: "smooth" | "flat"      # default "smooth" when normals present, else "flat"; consumed by §3.4/§6.2
 double_sided: bool              # default true
-position_bounds: [[min...], [max...]]
+position_bounds: {"min": [...], "max": [...]}  # nD vertex bbox, per io/_compiler/bounds.py
 ordering: "none"                # v1 always; reserved for a future spatial index
 ```
 
@@ -680,9 +680,13 @@ model is deliberately minimal and light-free:
 > `normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))` is **explicitly forced** to `z >= 0` in both
 > backends. The cross product carries the sign of the fragment-space y axis, and GLSL's `dFdy` is
 > bottom-up while WGSL's `dpdy` is top-down — so "orientation-defined by the rasterized fragment, so it
-> always faces the viewer" is only true once enforced; unenforced, the flat variant collapses to
-> `uAmbient` on WebGPU alone, which the GLSL-compiling parity harness cannot see. (b) The stored-normal
-> view transform is written out as `viewMatrix · (modelNormalMatrix · n)` rather than through three's
+> always faces the viewer" is only true once enforced. That an unenforced flat variant would collapse to
+> `uAmbient` on WebGPU alone is a spec-derived RISK, not an observed behaviour: the real-WebGPU A/B (§11
+> row 6) MEASURED a face-on flat quad rendering identically with the flip REMOVED, so on Chrome + Apple
+> Silicon the two conventions coincide and the flip is currently inert there. It is kept as insurance —
+> one instruction, correct under either convention, and neither shading-language spec promises the two
+> conventions agree. (b) The stored-normal view transform is written out as
+> `viewMatrix · (modelNormalMatrix · n)` rather than through three's
 > `transformNormalToView`, whose `transformDirection` **normalizes**: since the writer accepts
 > zero-length normals with a warning (§3.5), that normalize would produce `NaN` and interpolate it
 > across every triangle touching the vertex, flat-shading all of them instead of distorting locally.
@@ -895,6 +899,13 @@ rule. Writing `blending_mode="opaque"` into every mesh node would silently break
 
 So: mesh joins the other three in *not* stamping the attr, and diverges only in the viewer-side `??`
 fallback. Ancestor inheritance is preserved exactly.
+
+⚠️ The `??` only fires if **composition preserves the unset state**. `nodeAttrs` here is the composed
+record (`applyEffectiveAttrs` → `composeAttrs`, `data/attrs-composer.ts`), and
+`normalizeBlendingMode(undefined)` returns `'additive'` — so composing unconditionally through it hands
+`createMeshNode` an `'additive'` indistinguishable from an authored one and the `?? 'opaque'` becomes
+dead code (it was, until the first end-to-end render caught it — §11 row 6). `composeAttrs` therefore
+normalizes only a value some level actually set, and leaves a fully-unset chain `undefined`.
 
 `volumetric` handling belongs in the same place — `createMeshNode`, warn once and fall back to `opaque`
 (§6.3 above) — **not** in the writer, for the same reason: the mode may be inherited from an ancestor the

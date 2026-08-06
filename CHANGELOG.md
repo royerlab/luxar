@@ -35,9 +35,10 @@ one backend only:
 
 - **The derivative normal is forced viewer-facing.** `cross(dFdx(P), dFdy(P))`
   carries the sign of the fragment-space y axis, and GLSL's `dFdy` is bottom-up
-  where WGSL's `dpdy` is top-down. Unforced, the flat variant shades correctly on
-  WebGL and collapses to `uAmbient` everywhere on WebGPU — and the parity harness
-  compiles TSL *to GLSL*, so it could never see it.
+  where WGSL's `dpdy` is top-down. Unforced, the flat variant could collapse to
+  `uAmbient` on WebGPU while shading correctly on WebGL — and the parity harness
+  compiles TSL *to GLSL*, so it could never see it. (Later measured inert on
+  Chrome — see the WebGPU A/B entry below; the flip is kept as insurance.)
 - **The stored normal is transformed without three's `transformNormalToView`**,
   whose `transformDirection` normalizes. The writer accepts zero-length normals
   with a warning (degenerate triangles legitimately produce them), and
@@ -326,8 +327,9 @@ The mesh vertical shipped with a stated gap — the GLSL↔TSL parity harness dr
 is now: an A/B against native WebGPU (system Chrome channel, `?renderer=webgpu`,
 screenshot-then-decode with the WebGL arm as a control) shows `apiSurface: 'webgpu'`,
 all three fixture nodes committing with identical triangle/vertex counts and identical
-shader variants, and **pixel-identical output** — 105,822 lit pixels on both backends,
-mean lit channel differing by 0.14%.
+shader variants, and **pixel-equivalent output** — 105,822 lit pixels on both backends,
+mean lit channel differing by 0.14% (sub-quantization dithering — equivalent to the eye,
+not byte-identical).
 
 It also **corrected an overstatement of our own**, which is the more useful half. The
 §6.2 notes claimed an unforced derivative normal "would collapse to `uAmbient`

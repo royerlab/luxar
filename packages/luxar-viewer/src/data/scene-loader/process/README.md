@@ -30,10 +30,15 @@ the commit function from `data-processor-*` keep working.
 
 ```typescript
 // Lines
-export interface StagedLinesCommit {
+export interface StagedLinesGeometryCommit {
   path: string;
+  noop?: undefined;
+  /** Raw loader-returned data — stamped as `committedData` on commit. */
+  sourceData: LoadedLinesData;
   processed: ProcessedLinesData;
 }
+// Either a real geometry commit or the stamp-only no-op fast path.
+export type StagedLinesCommit = StagedLinesGeometryCommit | StagedNoopCommit<LoadedLinesData>;
 export async function processLinesData(
   path: string,
   data: LoadedLinesData,
@@ -51,13 +56,18 @@ export async function projectLinesTo3DUsingWorker(
 export { commitLinesGeometry } from '../commit/commit-lines-geometry';
 
 // GSplats
-export interface StagedGSplatsCommit {
+export interface StagedGSplatsGeometryCommit {
   path: string;
+  noop?: undefined;
+  /** Raw loader-returned data — stamped as `committedData` on commit. */
+  sourceData: LoadedGSplatsData;
   // `processed.choleskyFactors3D` (6-stride) flows straight to the GPU
   // commit — no split/re-interleave pass; `processed.bounds` carries the
   // projection's fused-scan cull metadata (AABB + max Cholesky row norm).
   processed: ProcessedGSplatsData;
 }
+// Either a real geometry commit or the stamp-only no-op fast path.
+export type StagedGSplatsCommit = StagedGSplatsGeometryCommit | StagedNoopCommit<LoadedGSplatsData>;
 export async function processGSplatsData(
   path: string,
   data: LoadedGSplatsData,
@@ -73,13 +83,41 @@ export async function projectGSplatsTo3DUsingWorker(
   updateVersion: number
 ): Promise<ProcessedGSplatsData>;
 export { commitGSplatsGeometry } from '../commit/commit-gsplats-geometry';
+
+// Points (synchronous staging half — no projection, so no worker export)
+export type { StagedPointsCommit }; // re-exported from '../../points/handler'
+export function processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit;
+
+// Mesh
+export interface StagedMeshCommit {
+  path: string;
+  /** The whole loaded mesh — held so the commit can read colours and counts. */
+  data: LoadedMeshData;
+  /** The projection for this epoch. */
+  projected: ProjectedMeshData;
+}
+export async function processMeshData(
+  path: string,
+  data: LoadedMeshData,
+  viewState: MeshViewState,
+  attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
+): Promise<StagedMeshCommit>;
+export function resetWindingNoticesForTesting(): void; // test seam
 ```
 
-Consumers: `SceneLoader.processLinesData` / `processGSplatsData`
-(`data/scene-loader.ts`), `scene-loader/lifecycle/retry.ts`, and the per-node
-loaders in `scene-loader/nodes/load-{lines,gsplats}-node.ts` — all of
-which reach these functions through the `LoadCtx` interface assembled
-in `nodes/build-ctx.ts`, never via direct import.
+Consumers: the per-node loaders in
+`scene-loader/nodes/load-{points,lines,gsplats,mesh}-node.ts` and
+`scene-loader/lifecycle/retry.ts` reach these functions through an injected ctx
+(`NodeBuildCtx`, declared in `nodes/build-ctx.ts`; `RetryCtx` for the retry path)
+and never import them. The direct importers are `data/scene-loader.ts` — which
+owns the four `SceneLoader.process{Points,Lines,GSplats,Mesh}Data` methods (thin
+delegations to the helpers here) and assembles both ctxs, via
+`makeNodeBuildCtx()` and `makeRetryCtx()` — and the per-type update handlers
+(`data/{lines,gsplats,mesh}/handler.ts`), which import their own processor
+directly: they serve the `SceneLoader.updateView` load + stage sweep, whose
+per-type ctxs come from `update-view/build-update-ctxs.ts` instead.
+`data/points/handler.ts` imports no processor — it declares its own
+`StagedPointsCommit` and stages inline, since Points has no process step.
 
 ## Invariants
 
@@ -115,8 +153,9 @@ in `nodes/build-ctx.ts`, never via direct import.
 ## See also
 
 - `../commit/` — atomic GPU commit phase consumed by these stages.
-- `../nodes/build-ctx.ts` — assembles the `LoadCtx` that exposes
-  `processLinesData` / `processGSplatsData` to the per-node loaders.
+- `../nodes/build-ctx.ts` — declares the `NodeBuildCtx` interface that exposes
+  all four `process*Data` functions to the per-node loaders; the object itself
+  is built by `SceneLoader.makeNodeBuildCtx()`.
 - `../lifecycle/retry.ts` — re-runs the same `process → commit` pair
   when a previous attempt failed.
 - `../../../workers/data-worker/projection/in-process.ts` —
