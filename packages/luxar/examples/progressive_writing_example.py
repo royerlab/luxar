@@ -25,7 +25,7 @@ from _overlay_style import add_explainer
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions
-from luxar.compiler import LuxarZarrCompiler
+from luxar.io.compiler import LuxarZarrCompiler
 from luxar.utils.paths import get_examples_output_dir
 
 

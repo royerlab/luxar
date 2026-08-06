@@ -74,7 +74,7 @@ Ring buffer system for capturing and managing console output:
 **Core Features**:
 
 - **Lazy Proxy Singleton**: Importing `consoleInterceptor` is side-effect-free; patching is explicit via `.patch()`
-- **Ring Buffer**: Circular buffer that wraps cleanly on the fill boundary. Capacity defaults to `DEFAULT_MAX_BUFFER_SIZE` (10,000) and is reconfigurable via `setMaxBufferSize(n)` so the bootstrap can push the canonical `config.ui.debugConsole.interceptor.maxBufferSize` value without a load-time config import (`getMaxBufferSize()` reads it back)
+- **Ring Buffer**: Circular buffer that wraps cleanly on the fill boundary. Fixed capacity of `DEFAULT_MAX_BUFFER_SIZE` (10,000) messages
 - **Listener Set**: Real-time callbacks (`addListener` / `removeListener`) for live UI consumption
 - **Reversible**: `patch()` is idempotent (`isPatched` reports state); `dispose()` restores the original console methods; `disposeInstance()` resets the singleton between tests
 
@@ -230,14 +230,14 @@ The single DOM element the viewer mounts all overlays, panels, toasts, dialogs, 
 class ConsoleInterceptor {
   private messageBuffer: BufferedMessage[] = [];
   private bufferIndex = 0;
-  private maxBufferSize = DEFAULT_MAX_BUFFER_SIZE; // 10000; reconfigurable via setMaxBufferSize()
+  private maxBufferSize = DEFAULT_MAX_BUFFER_SIZE; // fixed default 10,000
   private hasWrapped = false;
 }
 ```
 
 **Key Features**:
 
-- **Memory Efficient**: Bounded circular buffer (default 10,000, `setMaxBufferSize`-tunable) prevents memory leaks
+- **Memory Efficient**: Bounded circular buffer (fixed default 10,000) prevents memory leaks
 - **Early Capture**: Starts before any other code executes
 - **Original Preservation**: Maintains original console.\* functionality
 - **Stack Traces**: Automatic stack trace extraction for errors
@@ -394,7 +394,7 @@ class Panel {
 
 ### Console Buffer Management
 
-- **Bounded Size**: Ring buffer (default 10,000 messages, `setMaxBufferSize`-tunable) prevents unbounded memory growth; shrinking trims oldest-first to preserve chronological order
+- **Bounded Size**: Ring buffer (fixed default 10,000 messages) prevents unbounded memory growth
 - **Boundary-Safe Wrap**: When `length === maxBufferSize`, the next write goes to index 0 (not `maxBufferSize`, which would have grown the array and stranded the oldest entry)
 - **Listener Set**: `Set<callback>` for O(1) add/remove and snapshot iteration on emit
 
