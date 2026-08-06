@@ -282,7 +282,12 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
     // unit are in the message because the viewer has no spatial-unit vocabulary, so the
     // reader classifies "spatial Z" vs "benign time axis", not the code.
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
-    await processMeshData('/continuous', loadedAtW(0), viewWithDim(1.0, { name: 'z2', step: 1 }), {
+    const view = viewWithDim(1.0, { name: 'z2', step: 1 });
+    // A real unit, because the unit is half of what the message exists to convey — it
+    // is what lets a reader tell a spatial axis from a temporal one. The test was named
+    // for it and did not assert it.
+    (view.dimensions as { unit: string }[])[3].unit = 'um';
+    await processMeshData('/continuous', loadedAtW(0), view, {
       normal_dims: [0, 1, 2],
       double_sided: false,
     });
@@ -290,6 +295,7 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
     const hit = messages.find((m) => m.includes('/continuous') && m.includes('§5.2.1'));
     expect(hit).toBeDefined();
     expect(hit).toContain('z2');
+    expect(hit).toContain('[um]');
     info.mockRestore();
   });
 
@@ -305,6 +311,35 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
       { normal_dims: [0, 1, 2], double_sided: false }
     );
     expect(info.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§5.2.1'))).toBe(false);
+    info.mockRestore();
+  });
+
+  it('reports a NEWLY hidden dimension, even after the node was already noticed', async () => {
+    // The failure keying by path alone would cause, and the one that matters most:
+    // this notice exists to COLLECT evidence about which axes turn up
+    // hidden-and-continuous. A 4D mesh that first reports a continuous time axis would
+    // then have the early return suppress a continuous Z forever once displayDims
+    // changed — so the one configuration the measurement is looking for is the one it
+    // would never see.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const first = viewWithDim(1.0, { name: 'time', step: 1 });
+    await processMeshData('/swaps', loadedAtW(0), first, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+
+    // Same node, different displayDims: dim 2 ("z") is now hidden and continuous.
+    const second = viewWithDim(1.0, { name: 'time', step: 1 });
+    (second as { displayDims: number[] }).displayDims = [0, 1, 3];
+    await processMeshData('/swaps', loadedAtW(0), second, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+
+    const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
+    expect(hits).toHaveLength(2);
+    expect(hits[0]).toContain('time');
+    expect(hits[1]).toContain('z');
     info.mockRestore();
   });
 

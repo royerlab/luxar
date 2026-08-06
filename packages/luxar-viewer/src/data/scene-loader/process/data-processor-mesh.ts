@@ -109,10 +109,22 @@ export async function processMeshData(
   return { path, data, projected };
 }
 
+/** Dedup key for the continuous-hidden-dimension notice. NUL cannot occur in a name. */
+function noticeKey(path: string, dimName: string): string {
+  return `${path}\u0000${dimName}`;
+}
+
 /**
- * Nodes already reported as having a continuous hidden dimension.
+ * Which continuous hidden dimensions have already been reported, per node.
  *
- * Same rationale as {@link noticedWinding}: this runs on every slice move.
+ * Keyed by `path` **and dimension name**, not by path alone. Path alone would defeat
+ * the point of the notice: it exists to COLLECT evidence about which axes turn up
+ * hidden-and-continuous on real data, and a 4D mesh that first reports a continuous
+ * time axis would then have the early return suppress a continuous Z forever once
+ * `displayDims` changed. The one configuration the measurement is actually looking for
+ * is the one it would never see.
+ *
+ * Still module-scoped and still per-node for a given dimension, so a scrub warns once.
  */
 const noticedContinuousHidden = new Set<string>();
 
@@ -147,22 +159,31 @@ function noticeContinuousHiddenDim(
   ndim: number,
   extendDims: readonly string[]
 ): void {
-  if (noticedContinuousHidden.has(path)) return;
   const dims = viewState.dimensions;
   if (!dims) return;
 
   const displayed = new Set(viewState.displayDims);
   const extended = new Set(extendDims);
-  const continuous: string[] = [];
+  // Names and display strings tracked separately: recovering the name by splitting the
+  // display string back apart would break on any dimension whose own name contains the
+  // separator.
+  const names: string[] = [];
+  const described: string[] = [];
   for (let i = 0; i < ndim && i < dims.length; i++) {
     const dim = dims[i];
     // An extended dim has an infinite slab, so the approximation cannot bite there.
     if (displayed.has(i) || dim?.discrete || extended.has(dim?.name ?? '')) continue;
-    continuous.push(`${dim?.name ?? `dim${i}`}${dim?.unit ? ` [${dim.unit}]` : ''}`);
+    const name = dim?.name ?? `dim${i}`;
+    // Per (node, dimension): a dimension that becomes hidden later is NEW evidence and
+    // must still be reported, even though this node has already been noticed once.
+    if (noticedContinuousHidden.has(noticeKey(path, name))) continue;
+    names.push(name);
+    described.push(`${name}${dim?.unit ? ` [${dim.unit}]` : ''}`);
   }
-  if (continuous.length === 0) return;
+  if (names.length === 0) return;
 
-  noticedContinuousHidden.add(path);
+  for (const name of names) noticedContinuousHidden.add(noticeKey(path, name));
+  const continuous = described;
   log.info(
     Modules.SCENE_LOADER,
     `Mesh ${path} has continuous hidden dimension(s) ${continuous.join(', ')}. Triangles ` +
