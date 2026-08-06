@@ -154,7 +154,6 @@ def plan_volume(
     min_leaf: int = 256,
     max_leaf: int = 512,
     overlap: int = 32,
-    device: Optional[str] = None,
     threshold_abs: Optional[float] = None,
 ) -> FitPlan:
     """Convenience: scan ``volume`` then plan. Returns a :class:`FitPlan`.
@@ -171,7 +170,6 @@ def plan_volume(
         cell=cell,
         method=feature_method,
         threshold_abs=threshold_abs,
-        device=device,
     )
     return plan_partition(
         field,

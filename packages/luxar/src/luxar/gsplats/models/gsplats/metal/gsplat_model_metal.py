@@ -200,85 +200,6 @@ class MetalSplatFunction(torch.autograd.Function):
         return d_centers, d_Ls, d_amps, None, None, None, None
 
 
-class MetalRawSplatFunction(torch.autograd.Function):
-    """Custom autograd function that keeps raw 3D parameters in Metal."""
-
-    @staticmethod
-    def forward(
-        ctx: Any,
-        raw_mu: torch.Tensor,
-        raw_L_diag: torch.Tensor,
-        L_off: torch.Tensor,
-        raw_a: torch.Tensor,
-        sigma_min_diag: torch.Tensor,
-        shape: Tuple[int, ...],
-        truncate: float,
-        intensity_floor: float = 1e-5,
-    ) -> torch.Tensor:
-        if not METAL_AVAILABLE:
-            raise RuntimeError("Metal splatting backend is not available")
-        if len(shape) != 3:
-            raise ValueError("MetalRawSplatFunction requires 3D volumes")
-        if (
-            raw_mu.device.type != "mps"
-            or raw_L_diag.device.type != "mps"
-            or L_off.device.type != "mps"
-            or raw_a.device.type != "mps"
-            or sigma_min_diag.device.type != "mps"
-        ):
-            raise ValueError("MetalRawSplatFunction requires MPS tensors")
-        if (
-            raw_mu.dtype != torch.float32
-            or raw_L_diag.dtype != torch.float32
-            or L_off.dtype != torch.float32
-            or raw_a.dtype != torch.float32
-            or sigma_min_diag.dtype != torch.float32
-        ):
-            raise TypeError("Metal raw kernels require float32 tensors")
-
-        ctx.shape = tuple(int(s) for s in shape)
-        ctx.truncate = float(truncate)
-        ctx.intensity_floor = float(intensity_floor)
-        ctx.save_for_backward(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag)
-
-        output = cast(
-            torch.Tensor,
-            metal_splatting_backend.forward_raw_splat_3d(
-                raw_mu.contiguous(),
-                raw_L_diag.contiguous(),
-                L_off.contiguous(),
-                raw_a.contiguous(),
-                sigma_min_diag.contiguous(),
-                list(shape),
-                float(truncate),
-                float(intensity_floor),
-            ),
-        )
-        if output.shape != torch.Size(shape):
-            output = output.view(shape)
-        return output
-
-    @staticmethod
-    def backward(
-        ctx: Any, grad_output: torch.Tensor
-    ) -> Tuple[Optional[torch.Tensor], ...]:
-        raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag = ctx.saved_tensors
-        d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a = (
-            metal_splatting_backend.backward_raw_splat_3d(
-                grad_output,
-                raw_mu.contiguous(),
-                raw_L_diag.contiguous(),
-                L_off.contiguous(),
-                raw_a.contiguous(),
-                sigma_min_diag.contiguous(),
-                list(ctx.shape),
-                ctx.truncate,
-                ctx.intensity_floor,
-            )
-        )
-        return d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a, None, None, None, None
-
-
 class GaussianSplatModelMetal(GaussianSplatModel):
     """Gaussian splat model with an optimized Metal/MPS rendering backend.
 
@@ -361,33 +282,7 @@ class GaussianSplatModelMetal(GaussianSplatModel):
     def _uses_custom_metal(self) -> bool:
         return METAL_AVAILABLE and self.dim == 3 and self.raw_mu.device.type == "mps"
 
-    @property
-    def _uses_raw_custom_metal(self) -> bool:
-        return (
-            self._uses_custom_metal
-            and self.sigma_max_diag is None
-            and self.amp_max is None
-            and self.max_eccentricity is None
-            and self.voxel_size is None
-            and self.L_off.shape[1] == 3
-        )
-
     def forward(self) -> torch.Tensor:
-        if self._uses_raw_custom_metal:
-            return cast(
-                torch.Tensor,
-                MetalRawSplatFunction.apply(  # type: ignore[no-untyped-call]
-                    self.raw_mu,
-                    self.raw_L_diag,
-                    self.L_off,
-                    self.raw_a,
-                    self.sigma_min_diag,
-                    self.shape,
-                    self.truncate,
-                    self._intensity_floor,
-                ),
-            )
-
         centers, Ls, amps = self.current_params()
         if self._uses_custom_metal:
             return cast(

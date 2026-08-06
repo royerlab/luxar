@@ -1,11 +1,10 @@
 /**
  * Cache metrics aggregation. Pulls L0/L1/L2/network stats from the
  * optional provider ports, walks the loader map to refresh
- * per-loader metric snapshots and accumulate memory limits +
- * evictions, and returns a single `CacheMetrics` object for the
- * Cache tab to render. Panel-agnostic — no DOM or tab-state
- * dependencies — so the Monitor's main file can focus on event
- * dispatch + DOM patching rather than this multi-source roll-up.
+ * per-loader metric snapshots, and returns a single `CacheMetrics`
+ * object for the Cache tab to render. Panel-agnostic — no DOM or
+ * tab-state dependencies — so the Monitor's main file can focus on
+ * event dispatch + DOM patching rather than this multi-source roll-up.
  *
  * Side effects that callers depend on:
  *   1. `metricsCache.set(path, ...)` is called for every loader so
@@ -34,8 +33,6 @@ export type { CacheTelemetryState };
 export interface CacheRatesSnapshot {
   queriesPerSec: number;
   loadsPerSec: number;
-  hitsPerSec: number;
-  missesPerSec: number;
   bandwidth: number;
 }
 
@@ -57,7 +54,7 @@ export interface AggregateCacheMetricsParams {
    *  passes it. Absent → no SliceCache row in the aggregated metrics. */
   sliceProvider?: SliceProvider | null;
   cacheStatsProvider: CacheStatsProvider | null;
-  /** Active loaders to roll up memoryLimit + evictions from. */
+  /** Active loaders whose metric snapshots are refreshed into `metricsCache`. */
   loaders: Map<string, LoaderMonitor>;
   /**
    * The monitor's metrics-snapshot map. Mutated in place: each
@@ -90,7 +87,6 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   let totalCacheMemory = 0;
   let memoryLimit = 0;
   let totalEntries = 0;
-  let evictions = 0;
   // Sum of the per-tier byte BUDGETS (not usage). Populated from the tiers'
   // resolved maxSize; drives the memory-pressure gauge's denominator so it
   // shows a real "X% of <limit>" instead of "no memory limit configured".
@@ -209,42 +205,23 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     totalEntries = (l0Stats?.count ?? 0) + (sliceStats?.count ?? 0);
   }
 
-  // Walk loaders for memoryLimit / evictions; refresh metricsCache.
-  // When no cacheStatsProvider is available, fall back to per-loader
-  // memoryUsed + spatial-index entry counts.
+  // Refresh metricsCache. When no cacheStatsProvider is available, fall back to
+  // per-loader memoryUsed for the total-memory figure.
   for (const [path, loader] of loaders) {
     const metrics = loader.getMetrics();
     metricsCache.set(path, metrics);
 
-    memoryLimit += metrics.memoryLimit;
-    evictions += metrics.evictions;
-
     if (!cacheStatsProvider) {
       totalCacheMemory += metrics.memoryUsed;
-      if (metrics.spatialIndex && metrics.spatialIndex.rangesInCache !== undefined) {
-        totalEntries += metrics.spatialIndex.rangesInCache;
-      }
     }
   }
 
-  // The real limit is the sum of the per-tier byte budgets (L0 + S-cache + L1 +
-  // L2). The per-loader `memoryLimit` above is a legacy field hardcoded to 0 in
-  // every loader (an unimplemented per-loader cap), so without this the gauge
-  // reads "no memory limit configured". Fall back to the loader sum only when no
-  // cache provider exposed a budget (e.g. caching disabled → genuinely no limit).
-  if (tierBudget > 0) {
-    memoryLimit = tierBudget;
-  }
+  // The memory limit is the sum of the per-tier byte budgets (L0 + S-cache + L1 +
+  // L2). When no cache provider exposed a budget (e.g. caching disabled) it stays
+  // 0 and the gauge reads "no memory limit configured".
+  memoryLimit = tierBudget;
 
   const memoryPercent = memoryLimit > 0 ? (totalCacheMemory / memoryLimit) * 100 : 0;
-
-  // Hit rate from L1 stats only — not a true demand hit rate, just
-  // the L1-tier ratio. Higher tiers (L0 in-memory, L2 OPFS) carry
-  // their own counters under l0Stats / l2Stats. Field is named
-  // `recentHitRate` for back-compat; consumers wanting per-tier
-  // breakdown should read `l0`, `l1`, `l2` directly.
-  const totalL1Accesses = l1Stats ? l1Stats.hits + l1Stats.misses : 0;
-  const recentHitRate = totalL1Accesses > 0 ? l1Stats!.hits / totalL1Accesses : 0;
 
   // Effective demand hit rate across L0/L1/L2/network. L0 hits come
   // from the L0Provider (decompressed-chunk cache); L1/L2/network
@@ -322,17 +299,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     memoryLimit,
     memoryPercent,
     totalEntries,
-    totalAccesses: totalL1Accesses,
-    recentHitRate,
     effectiveDemandHitRate,
-    // `evictions` accumulated across loaders.
-    evictionsTotal: evictions,
-    avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
-    reuseRatio: 0,
-    // Rolling per-second rates from `./rates.ts`. Don't recompute
-    // here as `lifetime/60` — that ratio drifts as history accumulates.
-    hitsPerSecond: rates.hitsPerSec,
-    missesPerSecond: rates.missesPerSec,
     avgAccessTime: 0,
     queriesPerSec: rates.queriesPerSec,
     loadsPerSec: rates.loadsPerSec,

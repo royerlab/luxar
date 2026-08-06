@@ -10,7 +10,6 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   // accumulator buffers and compacting in place.
   useAccumulators: true,
   initialAccumulatorCapacity: 8192,
-  accumulatorGrowthFactor: 1.5,
 
   // Web workers offload CPU-heavy operations: nD→3D projection
   // (with built-in per-element visibility/culling) and decoding. AABB

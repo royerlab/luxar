@@ -311,7 +311,6 @@ dataLoading: {
     // Object pooling (reuse buffers across updates)
     useAccumulators: true,
     initialAccumulatorCapacity: 8192,
-    accumulatorGrowthFactor: 1.5,
 
     // Web Workers (offload CPU work)
     useWebWorkers: true,
@@ -350,9 +349,6 @@ config.ui.debugConsole = {
     minWidth: 400,
     maxWidth: 1200,
     // minHeight, maxHeight, bottomOffset, leftOffset also defined
-  },
-  interceptor: {
-    maxBufferSize: 10000, // Ring buffer for console messages
   },
   // resize + style sub-objects also defined
 };
@@ -499,7 +495,6 @@ import { config } from '../config';
 
 // Access debug settings
 const panelWidth = config.ui.debugConsole.panel.defaultWidth;
-const bufferSize = config.ui.debugConsole.interceptor.maxBufferSize;
 ```
 
 ### Versioning

@@ -14,10 +14,10 @@ import {
   SPLAT_TEXTURE_LAYOUT,
   configureElementTextureLayout,
   resetElementTextureLayoutForTests,
-  getSplatTextureWidth,
-  getMaxSplatCapacityPerNode,
+  getElementTextureWidth,
+  getMaxElementCapacityPerNode,
   clampSplatCapacity,
-  splatTextureHeightForCapacity,
+  elementTextureHeightForCapacity,
   getPlaceholderElementTexture,
 } from '../../../rendering/element-texture-layout';
 import {
@@ -104,46 +104,46 @@ afterEach(() => {
 
 describe('element-texture-layout — texel address math', () => {
   it('defaults to a 4096-wide texture with a 4096² capacity bound', () => {
-    expect(getSplatTextureWidth()).toBe(4096);
-    expect(getMaxSplatCapacityPerNode()).toBe(
+    expect(getElementTextureWidth(SPLAT_TEXTURE_LAYOUT)).toBe(4096);
+    expect(getMaxElementCapacityPerNode(SPLAT_TEXTURE_LAYOUT)).toBe(
       (4096 * 4096) / SPLAT_TEXTURE_LAYOUT.texelsPerElement
     );
   });
 
   it('caps the width at min(4096, maxTextureSize) and forces a multiple of 4', () => {
     configureElementTextureLayout(16384);
-    expect(getSplatTextureWidth()).toBe(4096); // never wider than 4096
+    expect(getElementTextureWidth(SPLAT_TEXTURE_LAYOUT)).toBe(4096); // never wider than 4096
 
     // Non-4096 width: a 2048-class device.
     configureElementTextureLayout(2048);
-    expect(getSplatTextureWidth()).toBe(2048);
-    expect(getMaxSplatCapacityPerNode()).toBe(
+    expect(getElementTextureWidth(SPLAT_TEXTURE_LAYOUT)).toBe(2048);
+    expect(getMaxElementCapacityPerNode(SPLAT_TEXTURE_LAYOUT)).toBe(
       (2048 * 2048) / SPLAT_TEXTURE_LAYOUT.texelsPerElement
     );
 
     // A pathological non-multiple-of-4 limit is rounded DOWN so a
     // splat's 4 texels can never straddle a row boundary.
     configureElementTextureLayout(2050);
-    expect(getSplatTextureWidth()).toBe(2048);
+    expect(getElementTextureWidth(SPLAT_TEXTURE_LAYOUT)).toBe(2048);
 
     // Sub-4 limits floor at 4 (would otherwise round to width 0 and
     // divide-by-zero the height math).
     configureElementTextureLayout(3);
-    expect(getSplatTextureWidth()).toBe(4);
+    expect(getElementTextureWidth(SPLAT_TEXTURE_LAYOUT)).toBe(4);
   });
 
   it('computes row-padded texture heights', () => {
     configureElementTextureLayout(4096);
     // 1024 splats/row at width 4096.
-    expect(splatTextureHeightForCapacity(0)).toBe(1);
-    expect(splatTextureHeightForCapacity(1)).toBe(1);
-    expect(splatTextureHeightForCapacity(1024)).toBe(1);
-    expect(splatTextureHeightForCapacity(1025)).toBe(2);
+    expect(elementTextureHeightForCapacity(0, SPLAT_TEXTURE_LAYOUT)).toBe(1);
+    expect(elementTextureHeightForCapacity(1, SPLAT_TEXTURE_LAYOUT)).toBe(1);
+    expect(elementTextureHeightForCapacity(1024, SPLAT_TEXTURE_LAYOUT)).toBe(1);
+    expect(elementTextureHeightForCapacity(1025, SPLAT_TEXTURE_LAYOUT)).toBe(2);
   });
 
   it('clamps requested capacities to the per-node texture bound', () => {
     configureElementTextureLayout(2048);
-    const max = getMaxSplatCapacityPerNode();
+    const max = getMaxElementCapacityPerNode(SPLAT_TEXTURE_LAYOUT);
     expect(clampSplatCapacity(max - 1)).toBe(max - 1);
     expect(clampSplatCapacity(max)).toBe(max);
     expect(clampSplatCapacity(max + 1)).toBe(max);
@@ -221,7 +221,7 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachSplatStorage(geometry, 16); // bound = 8×8/4 = 16 → 8 rows
     expect(texture.image.height).toBe(8);
-    const rowFloats = getSplatTextureWidth() * 4;
+    const rowFloats = getElementTextureWidth(SPLAT_TEXTURE_LAYOUT) * 4;
     expect(rowFloats).toBe(32);
 
     writeSplatTexels(texture, makeSource(4), 4); // 4 splats = floats [0, 64) = rows 0,1
@@ -632,7 +632,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
 
     // Envelope, for the headline number: 64 B texture (4 texels × 16 B)
     // + 2 × 4 B for the ordering PAIR.
-    const rowBytes = getSplatTextureWidth() * 16;
+    const rowBytes = getElementTextureWidth(SPLAT_TEXTURE_LAYOUT) * 16;
     expect(bytes).toBeGreaterThanOrEqual(capacity * 72);
     expect(bytes).toBeLessThanOrEqual(capacity * 72 + rowBytes + 256);
 

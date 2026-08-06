@@ -77,7 +77,6 @@ Constant values used throughout Luxar.
 - **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`
 - **Categorical**: `MIN_CATEGORIES`, `MAX_CATEGORY_LABEL_LENGTH`, `CATEGORICAL_STEP`
 - **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`
-- **Validation**: Error message templates
 
 **Purpose**: Centralize magic numbers and limits
 

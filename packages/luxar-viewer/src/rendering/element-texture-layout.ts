@@ -195,24 +195,9 @@ export const SPLAT_TEXTURE_LAYOUT: ElementTextureLayout = {
 /** Floats per splat row in the texture's backing store. */
 export const SPLAT_FLOATS_PER_SPLAT = SPLAT_TEXTURE_LAYOUT.floatsPerElement;
 
-/** Splat-texture width in texels (multiple of 4 — see the generic core). */
-export function getSplatTextureWidth(): number {
-  return getElementTextureWidth(SPLAT_TEXTURE_LAYOUT);
-}
-
-/** Hard per-node splat capacity (see {@link getMaxElementCapacityPerNode}). */
-export function getMaxSplatCapacityPerNode(): number {
-  return getMaxElementCapacityPerNode(SPLAT_TEXTURE_LAYOUT);
-}
-
 /** Clamp a requested splat capacity (see {@link clampElementCapacity}). */
 export function clampSplatCapacity(requested: number): number {
   return clampElementCapacity(requested, SPLAT_TEXTURE_LAYOUT);
-}
-
-/** Texture height (rows) needed for `capacity` splats at the session width. */
-export function splatTextureHeightForCapacity(capacity: number): number {
-  return elementTextureHeightForCapacity(capacity, SPLAT_TEXTURE_LAYOUT);
 }
 
 // ---------------------------------------------------------------------------
@@ -231,24 +216,9 @@ export const POINT_TEXTURE_LAYOUT: ElementTextureLayout = {
 /** Floats per point row in the texture's backing store. */
 export const POINT_FLOATS_PER_POINT = POINT_TEXTURE_LAYOUT.floatsPerElement;
 
-/** Point-texture width in texels (multiple of 3 — see the generic core). */
-export function getPointTextureWidth(): number {
-  return getElementTextureWidth(POINT_TEXTURE_LAYOUT);
-}
-
-/** Hard per-node point capacity (see {@link getMaxElementCapacityPerNode}). */
-export function getMaxPointCapacityPerNode(): number {
-  return getMaxElementCapacityPerNode(POINT_TEXTURE_LAYOUT);
-}
-
 /** Clamp a requested point capacity (see {@link clampElementCapacity}). */
 export function clampPointCapacity(requested: number): number {
   return clampElementCapacity(requested, POINT_TEXTURE_LAYOUT);
-}
-
-/** Texture height (rows) needed for `capacity` points at the session width. */
-export function pointTextureHeightForCapacity(capacity: number): number {
-  return elementTextureHeightForCapacity(capacity, POINT_TEXTURE_LAYOUT);
 }
 
 // ---------------------------------------------------------------------------
@@ -267,22 +237,7 @@ export const LINE_TEXTURE_LAYOUT: ElementTextureLayout = {
 /** Floats per segment row in the texture's backing store. */
 export const LINE_FLOATS_PER_SEGMENT = LINE_TEXTURE_LAYOUT.floatsPerElement;
 
-/** Line-texture width in texels (multiple of 6 — see the generic core). */
-export function getLineTextureWidth(): number {
-  return getElementTextureWidth(LINE_TEXTURE_LAYOUT);
-}
-
-/** Hard per-node segment capacity (see {@link getMaxElementCapacityPerNode}). */
-export function getMaxLineCapacityPerNode(): number {
-  return getMaxElementCapacityPerNode(LINE_TEXTURE_LAYOUT);
-}
-
 /** Clamp a requested segment capacity (see {@link clampElementCapacity}). */
 export function clampLineCapacity(requested: number): number {
   return clampElementCapacity(requested, LINE_TEXTURE_LAYOUT);
-}
-
-/** Texture height (rows) needed for `capacity` segments at the session width. */
-export function lineTextureHeightForCapacity(capacity: number): number {
-  return elementTextureHeightForCapacity(capacity, LINE_TEXTURE_LAYOUT);
 }

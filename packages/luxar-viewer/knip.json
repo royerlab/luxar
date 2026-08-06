@@ -12,18 +12,14 @@
   ],
   "project": ["src/**/*.ts"],
   "ignore": [
-    "src/rendering/picking/index.ts",
     "src/rendering/shaders/index.ts",
-    "src/types/index.ts",
     "src/types/format-contract.ts",
     "typedoc.json",
     "src/tests/builders/**",
-    "src/tests/mocks/**",
     "src/tests/e2e/helpers.ts",
     "src/tests/test-config.ts"
   ],
   "ignoreBinaries": ["hatch"],
-  "ignoreDependencies": ["glob"],
   "ignoreExportsUsedInFile": true,
   "tags": ["-internal"]
 }

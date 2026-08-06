@@ -45,9 +45,6 @@ export const uiConfig: UIConfig = {
       bottomOffset: 20,
       leftOffset: 20,
     },
-    interceptor: {
-      maxBufferSize: 10000,
-    },
     resize: {
       borderWidth: 4,
     },

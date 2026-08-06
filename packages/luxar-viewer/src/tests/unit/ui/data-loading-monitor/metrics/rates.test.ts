@@ -15,8 +15,6 @@ function freshRates(): RatesSnapshot {
   return {
     queriesPerSec: 0,
     loadsPerSec: 0,
-    hitsPerSec: 0,
-    missesPerSec: 0,
     bandwidth: 0,
     lastCalculated: 0,
   };
@@ -59,9 +57,6 @@ describe('calculateRates', () => {
       makeEvent({ type: 'query', timestamp: now - 4000 }),
       makeEvent({ type: 'query', timestamp: now - 3000 }),
       makeEvent({ type: 'load', timestamp: now - 2000, data: { memory: 100 } }),
-      makeEvent({ type: 'cache-hit', timestamp: now - 1500 }),
-      makeEvent({ type: 'cache-miss', timestamp: now - 1000 }),
-      makeEvent({ type: 'cache-miss', timestamp: now - 500 }),
     ];
 
     calculateRates({
@@ -73,12 +68,10 @@ describe('calculateRates', () => {
       rates,
     });
 
-    // 5s window: 2 queries, 1 load, 1 hit, 2 misses
+    // 5s window: 2 queries, 1 load
     // queriesPerSec = 2 / 5s = 0.4
     expect(rates.queriesPerSec).toBeCloseTo(0.4, 5);
     expect(rates.loadsPerSec).toBeCloseTo(0.2, 5);
-    expect(rates.hitsPerSec).toBeCloseTo(0.2, 5);
-    expect(rates.missesPerSec).toBeCloseTo(0.4, 5);
   });
 
   it('bandwidth uses the tighter 1s window, not the full rate window', () => {

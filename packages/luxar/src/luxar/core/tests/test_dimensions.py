@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from luxar.dimensions import Dimension, Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 
 
 class TestDimension:

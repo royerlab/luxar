@@ -97,30 +97,14 @@ from .validation.nd_transforms import (
 
 __version__ = "2026.06.05"
 
-# Backward compatibility and optional re-exports.
+# Optional re-exports.
 # gsplats always provides names (real or stub that raises on use if torch is missing).
-import sys
-
 from . import colormaps, core, io, typing_utils, utils
 from . import validation as validation_module
-from .core import dimensions, node, points, scene
-from .io import compiler, writer
+from .core import node, points, scene
+from .io import writer
 from .utils import array as array_utils
 from .validation import base as validation
-
-# Module aliases for import paths that real consumers rely on (verified live:
-# dimensions/compiler/transforms/config have in-repo importers). The
-# ``luxar.demos`` alias was removed: it shadowed the real ``luxar/demos/``
-# package (so ``import luxar.demos.demo_x`` failed and demos/tests fell back to
-# importlib file-path loading). ``luxar.demos`` now resolves to the real package,
-# which re-exports the helper API (launch_viewer, parse_demo_flags, …) so
-# ``from luxar.demos import launch_viewer`` keeps working while sibling demos
-# import each other normally. Dead aliases with zero importers — array_utils,
-# node, points, scene, writer, types, _io — were removed (no back-compat burden).
-sys.modules["luxar.dimensions"] = dimensions
-sys.modules["luxar.compiler"] = compiler
-sys.modules["luxar.transforms"] = transforms
-sys.modules["luxar.config"] = typing_utils.config
 
 __all__: list[str] = [
     # Core classes
