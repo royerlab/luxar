@@ -50,14 +50,15 @@ import { loadAndStage as meshLoadAndStage, label as meshLabel } from './mesh/han
  * Staged-commit payload for a lines node: either the processed geometry held
  * between the async load/process stage and the synchronous atomic commit, or
  * the stamp-only no-op fast path taken when the GPU already holds that exact
- * data. Re-exported so the type is reachable from the `scene-loader` facade;
- * it is defined in the data-processor module.
+ * data. Defined in the data-processor module; the re-export here has no
+ * consumers today — every call site imports it from `data-processor-lines`
+ * directly.
  */
 export type { StagedLinesCommit } from './scene-loader/process/data-processor-lines';
 /**
  * Staged-commit payload for a gsplats node: the gsplats counterpart of
  * {@link StagedLinesCommit}, with the same geometry-or-no-op union and the
- * same reason for being re-exported here.
+ * same consumer-free re-export.
  */
 export type { StagedGSplatsCommit } from './scene-loader/process/data-processor-gsplats';
 import {

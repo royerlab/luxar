@@ -31,11 +31,17 @@ export { SceneLoaderManager, getSceneLoader } from './scene-loader-manager';
 /**
  * Core data-loading contract types: the points {@link DataLoader} interface
  * (the Points-specific loader contract, paralleled by separate
- * `LinesDataLoader`/`GSplatsDataLoader`), the {@link ViewState} query passed to
- * loaders, loaded-payload shapes ({@link LoadedPointsData}), loader
- * configuration/stats, and the scene-graph ({@link SceneNode}) and
- * spatial-query result types. Re-exported so consumers depend on the barrel
- * rather than the internal `data-loader-types` module.
+ * `LinesDataLoader`/`GSplatsDataLoader`/`MeshDataLoader` for the other three
+ * geometry types), the {@link ViewState} query passed to loaders,
+ * loaded-payload shapes ({@link LoadedPointsData}), loader configuration/stats,
+ * and the scene-graph ({@link SceneNode}) and spatial-query result types.
+ *
+ * These are re-exports of convenience for the barrel's own consumers, not the
+ * canonical import path. `data-loader-types` forwards the points types
+ * (`DataLoader`, `ViewState`, `LoadedPointsData`, `PointRange`) from
+ * `types/points` — where new code should import those from — and declares the
+ * loader-side shapes (`LoaderConfig`, `SceneNode`, `SpatialQueryResult`,
+ * `LoaderStats`) itself.
  */
 export type {
   DataLoader,
