@@ -6,7 +6,8 @@ Pure function taking a ``group: Group`` parameter as the first arg. Called by
 
 Notably shorter than its siblings, and structurally so: mesh has no
 ``additive_lod`` / ``substitutive_lod`` / ``partition`` branches, because none of
-those exist for a connected surface (MESH_NODE_SPEC.md §9). What remains is the
+those paths exist for a mesh yet — for three different reasons, spelled out in the
+rejections below and in MESH_NODE_SPEC.md §9. What remains is the
 single-leaf write path the other adders reach after their LOD/partition
 dispatch — plus one rejection those adders never need, since a specialized-group
 parent is the one way a mesh could end up somewhere it cannot be rendered.

@@ -110,8 +110,11 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     gsplats: { lod: true, partition: true, pooled: true, depthSortable: true },
     // Mesh: a connected surface, not a set of independent elements — see
     // docs/specs/MESH_NODE_SPEC.md §2.1 and §9.
-    //   lod           the additive/substitutive ladder reduces independent
-    //                 elements; the mesh analogue is QEM decimation.
+    //   lod           the ADDITIVE prefix ladder reduces independent elements
+    //                 and cannot apply (a prefix of an index buffer is a holed
+    //                 surface, not a coarser one); SUBSTITUTIVE levels assume
+    //                 nothing of the sort and are missing only a producer, the
+    //                 mesh analogue of which is QEM decimation.
     //   partition     a BSP cut needs vertex duplication at part boundaries.
     //   pooled        mesh renders as an indexed BufferGeometry, NOT through the
     //                 instanced-quad element-texture stack.

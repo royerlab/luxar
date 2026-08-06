@@ -1363,7 +1363,7 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 
 | Excluded | Why | Natural follow-up |
 |---|---|---|
-| **LOD / decimation** | The additive/substitutive ladder machinery assumes independent elements. The mesh analog is QEM decimation — a project, not a line item. | `luxar mesh lod` with QEM levels feeding the existing `kind=lod` group |
+| **LOD / decimation** | Two flavours, two different reasons. The **additive** prefix ladder assumes independent elements and cannot apply at all: a prefix of an index buffer is a surface with *holes*, not a coarser surface. **Substitutive** levels make no independence assumption — a level is an independently-authored `(vertices, faces)` pair chosen by `coverage_fraction` — and are missing only a producer. The mesh analog is QEM decimation: a project, not a line item. | `luxar mesh lod` with QEM levels feeding the existing `kind=lod` group |
 | **`kind=partition`** | Cheap in principle (BSP over face centroids) but needs vertex duplication at part boundaries. | The **first** follow-up — highest value for large meshes |
 | **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** |
 | **Per-triangle depth sorting** | Index-buffer permutation, not instance permutation. | Extend the depth-sort coordinator with an index-permutation path |
@@ -1377,6 +1377,27 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 stamp it. No clobber ever resulted — `validate_render_attrs`'s reject-unknown gate already failed such a
 write, just with the *unknown-attr* message instead of the *reserved* one — so it was only an
 error-message gap. #1220 added the key to all three sibling sets, matching `MESH_RESERVED_ATTRS` (§3.3).
+
+### 9.1 A mesh node must NOT carry LOD energy stamps
+
+`level_stats` / `lod_stats` are the additive ladder's quality stamps —
+`energy_fraction_cum` per sub-LOD and `reference_energy` per leaf
+(`GSPLATS_ZARR_FORMAT.md` "Quality Stamps"). `_ALLOWED_NODE_ATTRS` in
+`io/_compiler/node_common.py` is geometry-blind, so nothing in the write path stops a caller
+from setting either key on a mesh. The adder refuses them.
+
+The hazard is viewer-side. `energyCompensation` (`scene/lod-blend.ts`) scales a leaf's brightness
+by `1/e(k)` while its ladder is incomplete, and `scene/lod-fade.ts` gates that on
+`BLENDABLE_MODES = {additive, luminous, volumetric}` — on the **blending mode, not the geometry
+type** — and mesh supports two of those (§6.3). Brightening a partially-streamed splat prefix is
+correct: it really is a dimmer version of the whole. Brightening a partially-drawn *surface* is
+not: a holed picture belongs at full brightness.
+
+Enforcing this now is prophylactic. Two independent latches hold today — mesh cannot be inside a
+`kind=lod` group (§9), so the fade pass never visits it, and the mesh commit never stamps
+`committedEnergyFraction`, so the factor is 1. Substitutive LOD would remove the first, a reveal
+ladder the second. A reveal ladder is expected to arrive as a face *order* plus a reveal fraction
+on a single leaf, which needs neither key, so this rule does not stand in its way.
 
 ---
 
