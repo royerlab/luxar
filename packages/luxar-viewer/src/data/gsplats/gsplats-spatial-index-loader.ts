@@ -920,7 +920,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     if (this.chunkIndex) {
       this.metrics.spatialIndex = buildSpatialIndexMetrics(
         this.chunkIndex.chunkCount,
-        this.chunkIndex.metadata.chunk_size ?? 0,
         this.metrics.queries,
         this.totalQueryCells,
         this.metrics.elementsLoaded
