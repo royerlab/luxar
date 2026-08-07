@@ -54,7 +54,9 @@ jobs:
           fi
           git fetch -q origin "$base" 2>/dev/null || true
           changed="$(git diff --no-renames --name-only "$base"...HEAD)"
+          deleted="$(git diff --no-renames --diff-filter=D --name-only "$base"...HEAD)"
           echo "--- changed files ---"; printf '%s\n' "$changed"
+          echo "--- deleted files ---"; printf '%s\n' "$deleted"
           # docs_only iff there IS at least one change and EVERY changed path is a
           # top-level/nested *.md or lives under docs/. A single non-doc file
           # (code, config, tests, lockfiles, workflows) forces the full suite.
@@ -68,9 +70,11 @@ jobs:
 
           # Run the documentation gate for published docs, documented source,
           # checker/baseline changes, and the build/workflow files that define
-          # the gate. Empty change output is treated as relevant (fail-safe).
+          # the gate. Any deletion also runs it because package READMEs may name
+          # tracked files of any type; --no-renames makes a rename include a
+          # deletion. Empty change output is treated as relevant (fail-safe).
           docs_pattern='(^docs/|\.md$|\.rst$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/(check-overrides\.mjs|check-typedoc-warnings(-tests)?\.mjs))$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
-          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qE "$docs_pattern"; then
+          if [ -z "$changed" ] || [ -n "$deleted" ] || printf '%s\n' "$changed" | grep -qE "$docs_pattern"; then
             echo "-> documentation-relevant changes: RUN docs-quality"
             echo "docs_relevant=true" >> "$GITHUB_OUTPUT"
           else

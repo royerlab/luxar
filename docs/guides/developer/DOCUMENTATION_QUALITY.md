@@ -10,7 +10,9 @@ The `docs-quality` CI job runs the full gate for pull requests that change:
 
 - `docs/**`, Markdown, or reStructuredText;
 - Python source under `packages/luxar/src/luxar/**`;
-- TypeScript source under `packages/luxar-viewer/src/**`; or
+- TypeScript source under `packages/luxar-viewer/src/**`;
+- any tracked file deletion or rename, because package READMEs may reference
+  files of any type; or
 - documentation checkers, baselines, build configuration, or workflows.
 
 The job reports success explicitly for unrelated changes, so it can remain a
