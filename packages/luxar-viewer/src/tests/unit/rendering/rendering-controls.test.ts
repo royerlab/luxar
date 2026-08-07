@@ -680,14 +680,30 @@ describe('RenderingControls', () => {
       const nearMax = nearCtrl.max.mock.calls.at(-1)[0];
       const farMax = farCtrl.max.mock.calls.at(-1)[0];
 
-      // near must reach DOWN to the ortho floor (2e-6 * R) and UP past any
-      // near the policy produces while the scene is framed — the old absolute
-      // max of 10 could not show a framed near of ~44 on this scene.
-      const R = 0.5 * 95.3 * 1.05;
+      // The range must CONTAIN every near/far the policy can produce over the
+      // whole legal orbit range — asserted by evaluating the policy's own
+      // equations rather than against a hand-picked threshold. An earlier
+      // version used `nearMax = scale` and a sample value of 111.98, which is
+      // itself outside that range: the assertion encoded the bug.
+      const scale = 95.3;
+      const R = 0.5 * scale * 1.05;
+      const distMax = scale * config.controls.scaleMultipliers.maxDistanceFactor;
       expect(nearMin).toBeCloseTo(R * 2e-6, 12);
-      expect(nearMax).toBeGreaterThan(44);
-      // far must reach the zoom-out limit rather than a fixed 100000.
-      expect(farMax).toBeCloseTo(95.3 * config.controls.scaleMultipliers.maxDistanceFactor, 6);
+
+      for (const dist of [
+        R * 0.5, // inside the sphere (floor binds)
+        1.7 * scale, // framed — where `nearMax = scale` used to pin
+        scale + R, // the crossover that exposed it
+        distMax, // zoom-out limit
+      ]) {
+        const far = dist + R;
+        const near = Math.max(Math.max(1e-9, R * 2e-6), far / 1000, dist - R);
+        expect(near).toBeGreaterThanOrEqual(nearMin);
+        expect(near).toBeLessThanOrEqual(nearMax);
+        expect(far).toBeLessThanOrEqual(farMax);
+      }
+      // far must include the expanded radius, not stop at dist alone.
+      expect(farMax).toBeCloseTo(distMax + R, 6);
     });
 
     it('scales the range down for a micron-scale scene', () => {
@@ -698,9 +714,14 @@ describe('RenderingControls', () => {
 
       const nearMin = controls.controllers.nearPlane.min.mock.calls.at(-1)[0];
       const nearMax = controls.controllers.nearPlane.max.mock.calls.at(-1)[0];
-      // The whole useful range sat BELOW the old 0.0001 minimum here.
+      // The point of this case is the BOTTOM end: on a micron scene the whole
+      // useful range sat below the old absolute 0.0001 minimum.
       expect(nearMin).toBeLessThan(0.0001);
-      expect(nearMax).toBeCloseTo(0.01, 10);
+      expect(nearMin).toBeCloseTo(0.5 * 0.01 * 1.05 * 2e-6, 15);
+      // The top end still spans the legal orbit range, so it must NOT collapse
+      // to the diagonal — that spelling made small scenes worse than the old
+      // absolute max of 10.
+      expect(nearMax).toBeGreaterThan(10);
     });
 
     // The step is what the GUI reads the DISPLAYED DECIMAL COUNT off of, via

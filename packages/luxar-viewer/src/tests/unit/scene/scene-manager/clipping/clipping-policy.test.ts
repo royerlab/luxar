@@ -105,7 +105,10 @@ describe('applyClippingPlanes', () => {
     ['Infinite far', 0.1, Infinity],
     ['Infinite near', Infinity, 1000],
     ['-Infinity near', -Infinity, 1000],
-  ])('refuses non-finite planes (%s) without mutating the camera', (_label, near, far) => {
+    ['zero near', 0, 1000],
+    ['negative near', -2, -1],
+    ['negative near, positive far', -2, 1000],
+  ])('refuses invalid planes (%s) without mutating the camera', (_label, near, far) => {
     const camera = makeCamera(new THREE.Vector3(), 1, 1000);
     const updateSpy = vi.spyOn(camera, 'updateProjectionMatrix');
     applyClippingPlanes(camera, near, far);

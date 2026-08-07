@@ -95,10 +95,16 @@ export function applyClippingPlanes(camera: LuxarCamera, near: number, far: numb
   // `restoreCamera` (`core/app/snapshot/viewer-snapshot.ts`) shows the shape of
   // the hazard: it assigns `camera.near` / `camera.far` directly and so bypasses
   // this validation entirely. Anything routed here in future is covered.
-  if (!Number.isFinite(near) || !Number.isFinite(far)) {
+  // `near <= 0` is refused alongside: a zero or negative near is invalid for a
+  // perspective frustum (the projection divides by it) and is equally
+  // unreachable from `near >= far` when `far` is also non-positive. Same
+  // rationale as above — the callers happen to guarantee positivity today
+  // (`positiveOrDefault`, and the controllers' clamp to a `minNearForRadius`
+  // minimum), but that is their property, not this function's contract.
+  if (!Number.isFinite(near) || !Number.isFinite(far) || near <= 0) {
     log.warning(
       Modules.SCENE_MANAGER,
-      `Ignoring non-finite clipping planes (near: ${near}, far: ${far})`
+      `Ignoring invalid clipping planes (near: ${near}, far: ${far})`
     );
     return;
   }

@@ -199,7 +199,13 @@ export function minNearForRadius(expandedRadius: number): number {
  *    orbit target sits at `minDistance = 1e-3 · diagonal`
  *    (`controls.scaleMultipliers`) = `1.905e-3 · R`, while `far ≈ 1.05 · R`.
  *    Keeping it in front of the near plane needs `1.05 R / C < 1.905e-3 R`.
- *  - **C ≥ 992, stay lossless for Points / Lines / GSplats.** All three
+ *    NOTE this assumes the orbit target is at the sphere CENTRE. Panned onto a
+ *    bbox corner (`0.952 · R`) the general form `(dist + R)/C < 1.905e-3 · R`
+ *    tightens, and for the last ~2% of the zoom-in range the floor overtakes
+ *    `minDistance`. Only mesh is affected — the other three types are inside
+ *    the fade's reject region throughout that band by construction — so this
+ *    does not move C.
+ *  - **C ≥ 993, stay lossless for Points / Lines / GSplats.** All three
  *    already suppress anything closer than `nearCull = 1e-3 · diagonal`
  *    via `perspectiveNearFade` (`materials/_shared/glsl-lib.ts`), though
  *    by two different mechanisms worth knowing before trusting this:
@@ -207,21 +213,34 @@ export function minNearForRadius(expandedRadius: number): number {
  *    (both backends); Lines instead cull only when BOTH endpoints are
  *    near, clip a half-near segment onto the `nearCull` plane, and apply
  *    the fade PER-FRAGMENT as a multiply. Either way the fade is what
- *    governs, and it is under 0.01 below `1.0582 · nearCull`. The worst
- *    case is the camera ON the sphere surface, where `far = 2R` and the
- *    floor is largest relative to `nearCull`:
- *    `2R / C ≤ 1.0582 · 1.905e-3 · R` ⟹ `C ≥ 992`. At C = 1000 the
- *    frustum cut lands where the fade is 0.007, so the most any of the
- *    three loses is fragments carrying <1% of their intensity.
+ *    governs, and it is under 0.01 below `1.0582 · nearCull`.
  *
- * 992 binds. C = 1000 clears it by **0.8%** — deliberately thin, because
+ *    The worst case is NOT the camera on the sphere surface — it is just
+ *    OUTSIDE it, at the crossover `dist = R · (C+1)/(C-1) ≈ 1.002 · R`,
+ *    the last distance at which the floor still beats the surface term and
+ *    therefore where the floor sits highest relative to `nearCull`
+ *    (fade 0.00755 there versus 0.00725 on the surface). So
+ *    `2.002 R / C ≤ 1.0582 · 1.905e-3 · R` ⟹ `C ≥ 993`.
+ *
+ * 993 binds. C = 1000 clears it by **0.7%** — deliberately thin, because
  * every extra unit of C is depth precision given away, and the margin is
  * *enforced* rather than trusted: the "clipped band is already
- * shader-rejected" property in `bounds-math.property.test.ts` fails if a
- * future change to `nearCull`, to the fade band, or to this constant eats
- * it. (Mesh has no near fade in either backend — verified in the GLSL and
- * TSL sources — so it is the one type the floor can clip; there is no
- * value of C that avoids that while still bounding the ratio.)
+ * shader-rejected" property in `bounds-math.property.test.ts` generates the
+ * whole floor-binding region INCLUDING that crossover, and a companion test
+ * pins the crossover as strictly worse than the surface — so a future change
+ * to `nearCull`, to the fade band, or to this constant fails there. (Mesh has
+ * no near fade in either backend — verified in the GLSL and TSL sources — so
+ * it is the one type the floor can clip; no value of C avoids that while
+ * still bounding the ratio.)
+ *
+ * The losslessness argument assumes `nearCull` and this floor are derived from
+ * the SAME bounds, which holds on the metadata and per-frame paths. It can
+ * diverge in one narrow case: on a metadata-less scene `SceneBoundsCache.ensure`
+ * never populates, so the materials keep `_nearCull`'s 0.1 default while
+ * `autoAdjustFromBounds` derives its sphere from `Box3.setFromObject`. On a
+ * large metadata-less scene the floor can then exceed `nearCull` and clip
+ * points/lines/gsplats the fade would have drawn. Compiled Luxar scenes always
+ * carry `position_bounds`, so this is not reachable through the normal loader.
  *
  * Measured payoff at the reported pose (R = 52.5, dist = 8.5, far = 61):
  * the floor rises 1.05e-4 → 0.061 and depth quantization improves

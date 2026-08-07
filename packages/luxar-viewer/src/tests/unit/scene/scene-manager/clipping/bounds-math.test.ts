@@ -389,16 +389,23 @@ describe('bounds-math', () => {
 
       // (1) Don't clip the orbit target at maximum zoom-in (far ~ 1.05 R there).
       const cMinTarget = SPHERE_SAFETY_EXPANSION / perR(MIN_DISTANCE_FACTOR);
-      // (2) Stay inside the shader reject band, worst case camera ON the sphere
-      //     surface where far = 2R and the floor is largest relative to nearCull.
-      const cMinLossless = 2 / (FADE_REJECT_HEADROOM * perR(NEAR_CULL_FACTOR));
+      // (2) Stay inside the shader reject band. The worst case is the crossover
+      //     just OUTSIDE the sphere — dist = R(C+1)/(C-1) ~ 1.002 R, the last
+      //     distance where the floor still beats the surface term — not the
+      //     surface itself, where the floor is slightly lower.
+      const crossoverOverR = (MAX_NEAR_FAR_RATIO + 1) / (MAX_NEAR_FAR_RATIO - 1);
+      const farAtCrossoverOverR = crossoverOverR + 1;
+      const cMinLossless = farAtCrossoverOverR / (FADE_REJECT_HEADROOM * perR(NEAR_CULL_FACTOR));
 
       expect(cMinTarget).toBeCloseTo(551, 0);
-      expect(cMinLossless).toBeCloseTo(992, 0);
+      expect(cMinLossless).toBeCloseTo(993, 0);
+      // Strictly tighter than the surface case the derivation used to name.
+      const cMinAtSurface = 2 / (FADE_REJECT_HEADROOM * perR(NEAR_CULL_FACTOR));
+      expect(cMinLossless).toBeGreaterThan(cMinAtSurface);
       // The lossless constraint binds, and the constant clears it — barely.
       expect(cMinLossless).toBeGreaterThan(cMinTarget);
       expect(MAX_NEAR_FAR_RATIO).toBeGreaterThanOrEqual(cMinLossless);
-      expect(MAX_NEAR_FAR_RATIO / cMinLossless - 1).toBeLessThan(0.02); // ~0.8% margin
+      expect(MAX_NEAR_FAR_RATIO / cMinLossless - 1).toBeLessThan(0.01); // ~0.7% margin
     });
 
     it('dominates the minNearForRadius backstop for every non-degenerate sphere', () => {

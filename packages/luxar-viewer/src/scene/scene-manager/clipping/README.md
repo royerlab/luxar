@@ -47,7 +47,7 @@ so the per-frame `ensure()` re-walks the graph each frame (see the
   The bound is lossless for Points / Lines / GSplats, not a tradeoff:
   their shaders already discard anything closer than
   `nearCull = 1e-3 * diagonal` (`perspectiveNearFade`), and the floor
-  stays inside that reject band — by only 0.8%, which is why a property
+  stays inside that reject band — by only 0.7%, which is why a property
   test enforces it rather than a comment asserting it. The full
   derivation of the constant lives on `MAX_NEAR_FAR_RATIO`; it is not
   restated here, so there is one place to change. Mesh has no near fade

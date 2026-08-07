@@ -717,12 +717,25 @@ export class RenderingControls {
       if (typeof ctrl.min === 'function') ctrl.min(min).max(max).step(step);
     };
 
+    // Both maxima come from the SAME sphere equations the clipping policy uses,
+    // evaluated at the furthest camera distance the controls allow. Anything
+    // less and the range input clamps again — which is the entire symptom this
+    // method exists to remove.
+    //
+    // `nearMax = scale` (an earlier spelling) was not merely short at the
+    // zoom-out limit: `near = dist - R` overtakes it once `dist > scale + R`,
+    // i.e. at 0.9x the framed distance, so the thumb pinned at the OPENING
+    // pose of any ordinary scene. It also made things worse below diagonal ~10,
+    // where the old absolute max of 10 was the larger of the two and a manual
+    // `near` above the scene diagonal stopped being settable.
+    //
     // R is the safety-expanded radius the clipping policy works in.
     const R = 0.5 * scale * SPHERE_SAFETY_EXPANSION;
+    const distMax = scale * config.controls.scaleMultipliers.maxDistanceFactor;
     const nearMin = minNearForRadius(R);
-    const nearMax = scale; // beyond any near the policy produces while framed
+    const nearMax = distMax; // near = dist - R, so distMax bounds it
     const farMin = nearMin * 10;
-    const farMax = scale * config.controls.scaleMultipliers.maxDistanceFactor;
+    const farMax = distMax + R; // far = dist + R at the limit
 
     reRange(this.controllers.nearPlane, nearMin, nearMax, decadeStep(nearMin));
     reRange(this.controllers.farPlane, farMin, farMax, decadeStep(scale / 1000));

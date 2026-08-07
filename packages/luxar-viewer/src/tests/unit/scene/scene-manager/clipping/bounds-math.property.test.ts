@@ -156,25 +156,35 @@ describe('bounds-math properties', () => {
       return t * t * (3 - 2 * t);
     };
 
-    // Generates the regime this property is ABOUT: the camera inside the
-    // (safety-expanded) sphere, where the floor is what sets `near`.
+    // Generates the regime this property is ABOUT: every camera distance at
+    // which the FLOOR is what sets `near`, which is NOT merely "inside the
+    // sphere". The floor keeps binding until the surface distance overtakes it:
     //
-    // Deliberately NOT `fc.pre(near === floor)` over the wide `distArb`. That
-    // spelling was measured to hold in 0.06% of cases (distArb reaches 1e6
-    // while radiusArb stops at 1e4, so the camera is nearly always far
-    // OUTSIDE the sphere), which left the property executing its body ~0
-    // times in fast-check's default 100 runs — green and proving nothing.
-    // Parameterizing the arbitrary instead of filtering it keeps every
-    // generated case on-topic.
-    const insideFracArb = fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true });
+    //   dist - R > (dist + R) / C   ⟺   dist > R · (C + 1) / (C - 1)
+    //
+    // i.e. out to dist ≈ 1.002 · R for C = 1000. That last 0.2% matters,
+    // because it is where the floor sits HIGHEST relative to `nearCull` and so
+    // where the losslessness margin is thinnest — the true worst case is there,
+    // not on the sphere surface (fade 0.00755 vs 0.00725). An earlier version
+    // generated `dist <= R` and therefore never visited the tightest point.
+    //
+    // Also deliberately NOT `fc.pre(near === floor)` over the wide `distArb`:
+    // that spelling was measured to hold in 0.06% of cases (distArb reaches 1e6
+    // while radiusArb stops at 1e4, so the camera is nearly always far OUTSIDE
+    // the sphere), leaving the property's body to run ~0 times in fast-check's
+    // default 100 runs — green and proving nothing. Parameterizing the
+    // arbitrary keeps every generated case on-topic.
+    const floorFracArb = fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true });
 
     test('when the floor sets near, the clipped band is already shader-rejected', () => {
       fc.assert(
-        fc.property(radiusArb, insideFracArb, (radius, insideFrac) => {
+        fc.property(radiusArb, floorFracArb, (radius, floorFrac) => {
           const R = radius * SPHERE_SAFETY_EXPANSION;
-          // Strictly inside: nextafter-style shave keeps `dist < R` true even
-          // when insideFrac rounds to exactly 1.
-          const dist = R * insideFrac * (1 - Number.EPSILON);
+          // Crossover derived from the constant, not hardcoded, so tuning
+          // MAX_NEAR_FAR_RATIO keeps this covering the right region.
+          const crossover =
+            (R * (MAX_NEAR_FAR_RATIO + 1)) / (MAX_NEAR_FAR_RATIO - 1) - Number.EPSILON * R;
+          const dist = crossover * floorFrac;
           const { near, far } = planesAt(radius, dist);
           // Guard against this property silently going vacuous again: the
           // whole point is the regime where the floor binds.
@@ -185,6 +195,28 @@ describe('bounds-math properties', () => {
           expect(smoothstep(nearCull, 2 * nearCull, near)).toBeLessThanOrEqual(NEAR_FADE_REJECT);
         })
       );
+    });
+
+    // The tightest point specifically, as a fixed case rather than trusting the
+    // arbitrary to sample it: at the crossover the floor/nearCull ratio peaks,
+    // which is what pins MAX_NEAR_FAR_RATIO's lower bound at 993.
+    test('the margin is thinnest at the floor/surface crossover, and holds there', () => {
+      const radius = 50;
+      const R = radius * SPHERE_SAFETY_EXPANSION;
+      const nearCull = 2 * radius * 0.001;
+      const crossover = (R * (MAX_NEAR_FAR_RATIO + 1)) / (MAX_NEAR_FAR_RATIO - 1);
+      const atCrossover = planesAt(radius, crossover * (1 - 1e-12));
+      const atSurface = planesAt(radius, R);
+
+      const fadeAt = (n: number) => smoothstep(nearCull, 2 * nearCull, n);
+      // Strictly worse than the sphere surface — the case the docs used to name.
+      expect(fadeAt(atCrossover.near)).toBeGreaterThan(fadeAt(atSurface.near));
+      // ...and still inside the reject band.
+      expect(fadeAt(atCrossover.near)).toBeLessThanOrEqual(NEAR_FADE_REJECT);
+      // The required constant at that point, which is what 1000 must clear.
+      const requiredC = atCrossover.far / (1.0582 * nearCull);
+      expect(requiredC).toBeCloseTo(993, 0);
+      expect(MAX_NEAR_FAR_RATIO).toBeGreaterThanOrEqual(requiredC);
     });
 
     test('near and far are monotone non-decreasing in camera distance', () => {
