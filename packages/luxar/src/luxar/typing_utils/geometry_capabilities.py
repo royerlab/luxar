@@ -7,10 +7,11 @@ leaf?"* — a **vocabulary**. Several writer-side questions are narrower than th
 * may it back a ``kind=partition`` group's ``display_type``?
 
 Those are **capabilities**, and a type can be a perfectly valid geometry leaf
-without having them: ``mesh`` is writable but has no LOD ladder (the
-additive/substitutive machinery assumes independent elements) and no partition
-path (BSP over face centroids needs vertex duplication at part boundaries) — see
-``docs/specs/MESH_NODE_SPEC.md`` §9.
+without having them: ``mesh`` is writable but has no LOD ladder and no partition
+path — see ``docs/specs/MESH_NODE_SPEC.md`` §9. Note the LOD flavours are
+excluded for different reasons: the ADDITIVE prefix ladder assumes independent
+elements and cannot apply to a surface at all, whereas SUBSTITUTIVE levels make
+no such assumption and are missing only a producer (mesh decimation).
 
 Answering a capability question with the vocabulary is how a type gets admitted
 to a code path that cannot represent it. Answering it with a hand-written tuple
@@ -143,13 +144,25 @@ def require_lod_display_type(display_type: object, context: str) -> None:
     """
     if display_type in GEOMETRY_TYPES and not supports_lod(display_type):
         valid = " / ".join(repr(t) for t in lod_capable_types())
+        # The per-mechanism explanation is MESH-SPECIFIC and is appended only for
+        # mesh. This guard also fires for any future LOD-less geometry type, and
+        # for those an explanation about surfaces and QEM decimation would be a
+        # confidently wrong diagnostic — worse than a generic one, because it reads
+        # as though it were about the type the caller actually named.
+        detail = (
+            " For mesh the two flavours differ: the ADDITIVE prefix ladder reduces "
+            "a set of independent elements, which a connected surface is not, so it "
+            "cannot apply; SUBSTITUTIVE levels would work unchanged and are only "
+            "missing a producer (the mesh analog is QEM decimation, which does not "
+            "exist yet)."
+            if display_type == "mesh"
+            else ""
+        )
         raise ValueError(
             f"{context}: display_type for a kind=lod group must be one of "
             f"{valid}, got {display_type!r}. A geometry type is excluded until it "
-            "has an LOD ladder: the additive/substitutive machinery reduces a set "
-            "of independent elements, which a connected surface is not (a mesh's "
-            "analog is QEM decimation and does not exist yet). Writing this would "
-            "produce a kind=lod group no viewer path can load."
+            f"has an LOD ladder.{detail} Writing this would produce a kind=lod "
+            "group no viewer path can load."
         )
 
 

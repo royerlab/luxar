@@ -343,6 +343,104 @@ def test_mesh_under_a_partition_group_is_rejected(tmp_path) -> None:
             part.add_mesh("part_0", _V, _F)
 
 
+def test_lod_refusal_distinguishes_the_two_ladder_flavours(tmp_path) -> None:
+    """The REASON is pinned, not just the fact of the refusal.
+
+    Every other assertion in this file matches a short structural substring
+    (``"kind=lod"``), which is why the justification was free to rot: the message
+    spent months telling users that substitutive LOD reduces independent elements
+    and is therefore impossible for a surface. Only the additive flavour works that
+    way. Substitutive levels are independently-authored ``(vertices, faces)`` pairs
+    chosen by ``coverage_fraction`` — the machinery makes no independence assumption
+    and the only missing piece is a decimator (spec §9).
+
+    "Impossible" and "not written yet" are different answers to a user asking
+    whether to wait for it, so the distinction is worth a test.
+    """
+    with LuxarZarrCompiler(tmp_path / "why.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        lod = scene.add_lod_group("ladder")
+        with pytest.raises(ValueError) as excinfo:
+            lod.add_mesh("child_0", _V, _F)
+
+    message = str(excinfo.value)
+    assert "ADDITIVE" in message and "SUBSTITUTIVE" in message
+    # The additive arm is excluded on principle: a prefix of an index buffer is a
+    # holed surface, not a coarse one.
+    assert "holes" in message
+    # The substitutive arm is excluded only for want of a producer.
+    assert "no producer" in message
+    # ...and must NOT be blamed on the independence assumption that only the
+    # additive ladder makes. This is the exact sentence that was wrong. Scoped to the
+    # substitutive clause on purpose: "the ADDITIVE ladder reduces independent
+    # elements" is accurate, and the sibling copy of this rationale in
+    # ``typing_utils/geometry_capabilities.py`` says exactly that.
+    _additive_arm, substitutive_arm = message.split("SUBSTITUTIVE", 1)
+    assert "independent elements" not in substitutive_arm
+
+
+def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
+    """Spec §9.1: a mesh must never carry an additive ladder's energy stamps.
+
+    ``level_stats`` / ``lod_stats`` are in the geometry-blind allow-list in
+    ``io/_compiler/node_common.py``, so before this guard they wrote clean on a mesh.
+    The viewer's ``energyCompensation`` scales brightness by ``1/energy_fraction_cum``
+    and is gated on the BLENDING MODE (``additive``/``luminous``/``volumetric``), not
+    on geometry type — and mesh supports two of those. Brightening a dimmer splat
+    prefix is right; brightening a holed surface is not.
+
+    Prophylactic rather than a live-bug fix (mesh cannot be in a ``kind=lod`` group,
+    and the mesh commit never stamps ``committedEnergyFraction``), so this test is
+    what keeps the rule true once substitutive LOD or a reveal ladder removes one of
+    those latches.
+    """
+    with LuxarZarrCompiler(tmp_path / "stamps.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        for key in ("lod_stats", "level_stats"):
+            with pytest.raises(ValueError, match="energy"):
+                scene.add_mesh(f"m_{key}", _V, _F, **{key: {"reference_energy": 1.0}})
+
+        # Refused on KEY PRESENCE, not on what the dict happens to hold: a
+        # ``quality``-only ``level_stats`` is not an energy stamp, but it has no
+        # meaning on a mesh either, so the container goes too. Deliberate breadth —
+        # the day substitutive mesh levels land, this narrows to the energy keys and
+        # this assertion is what makes that an explicit decision.
+        with pytest.raises(ValueError, match="energy"):
+            scene.add_mesh("m_quality", _V, _F, level_stats={"quality": 0.9})
+
+        # The keys are refused, not the whole attrs surface: a mesh with ordinary
+        # render attrs still writes.
+        assert scene.add_mesh("plain", _V, _F, opacity=0.5) is not None
+
+
+def test_mesh_names_the_reason_for_the_lod_and_partition_parameters(tmp_path) -> None:
+    """``add_mesh(additive_lod=…)`` must not answer like a typo.
+
+    ``partition`` / ``additive_lod`` / ``substitutive_lod`` are real parameters on the
+    sibling adders, so a caller reaching for one on a mesh spelled a real feature
+    correctly. Without a refusal of its own they fall into ``**attrs`` and come back as
+    "Unknown node attribute … The viewer would silently ignore it. Remove it or use a
+    supported attribute" — and ``partition`` even draws a "Did you mean 'absorption'?"
+    hint. Right outcome, misleading reason: the same defect the ``kind=lod`` parent
+    message carried, in the arm a user is far more likely to hit.
+    """
+    reasons = {
+        "additive_lod": "holes",
+        "substitutive_lod": "no producer",
+        "partition": "boundary vertices",
+    }
+    with LuxarZarrCompiler(tmp_path / "params.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        for key, reason in reasons.items():
+            with pytest.raises(ValueError) as excinfo:
+                scene.add_mesh(f"m_{key}", _V, _F, **{key: True})
+            message = str(excinfo.value)
+            assert key in message
+            assert reason in message
+            assert "Unknown node attribute" not in message
+            assert "Did you mean" not in message
+
+
 def test_partition_group_rejects_mesh_display_type(tmp_path) -> None:
     with LuxarZarrCompiler(tmp_path / "pd.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
