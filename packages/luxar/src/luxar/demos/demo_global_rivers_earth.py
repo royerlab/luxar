@@ -15,7 +15,7 @@ A rotatable 3D globe built from two of Luxar's geometry types at once:
     minor tributaries read teal and major rivers white. Additive-LOD streams the
     biggest rivers first.
 
-This exercises two of Luxar's three geometry types (Points + Lines) at global
+This exercises two of Luxar's four geometry types (Points + Lines) at global
 scale with level-of-detail, in real geographic 3D.
 
 ================================================================================

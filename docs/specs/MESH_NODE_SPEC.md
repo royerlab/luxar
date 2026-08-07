@@ -38,8 +38,9 @@ into the contract:
   `NodeTypeName | 'mesh'` while `mesh` was a viewer-only forward declaration; #1220 put `mesh` in the
   contract and deleted the local extension, so it is now the plain alias
   `SceneGraphNodeType = NodeTypeName`.
-- `packages/luxar-viewer/src/data/scene-loader/monitor/scene-graph-converter.ts:26` — `'mesh'` is still
-  in the display-type whitelist.
+- `packages/luxar-viewer/src/data/scene-loader/monitor/scene-graph-converter.ts:26` — `'mesh'` is in
+  the display-type whitelist, and that entry is now backed by a real `GraphNodeType` rather than by a
+  reservation.
 
 These were display-only placeholders; there was no data model, loader, geometry, or material behind
 them. This spec makes the name real end to end.
@@ -950,7 +951,7 @@ by behavior tests instead — e.g. §8's stored-normal view-space-transform chec
 `#define` (the sibling `line-max`, `point-max`, `gsplat-normal-premult`) or a runtime-uniform branch the
 TSL path bakes per graph (`gsplat-opaque`, from gsplat's runtime `uProjectionMode` split). Note the
 harness (`tsl-codegen-snapshot.spec.ts`) asserts **both stages** of every variant unconditionally, so
-each variant is a `.vertex` + `.fragment` snapshot pair — the shipped inventory is exactly 24 such pairs.
+each variant is a `.vertex` + `.fragment` snapshot pair — the shipped inventory is exactly 30 such pairs.
 Mesh's per-mode emissions (§6.2) are therefore separately snapshotted — and note the mesh **default is
 `opaque`**, unlike the siblings whose default is the alpha-weighted `additive`. New variants — six, i.e.
 twelve snapshot files: `mesh` (the `opaque` default — alpha cutout, §6.2), `mesh-additive` (the
@@ -1159,10 +1160,13 @@ Most of the *dispatch* plumbing is now table-driven (§10), so this list is domi
 new mesh code rather than by edits to existing branches. The items that remain hand-written are
 called out as such.
 
-⚠️ This is the **planning** checklist, written before the phases ran, and its boxes were only
-partly ticked as each phase landed. An unticked box here does **not** mean the work is outstanding
-— most of the TypeScript / Rust / Tests rows below shipped in Phases 3–5. **§11 is the authoritative
-delivery record**; read this section as the original work breakdown, not as current status.
+⚠️ This is the **planning** checklist, written before the phases ran. Every box is now ticked — the
+Python vertical in #1220 (Phase 1), the cull kernels in #1232 (Phase 2), and the viewer loader,
+materials, picking, fixtures and demo across Phases 3–6 — so read it as the original work breakdown
+and as the record of *what* each subsystem had to change, not as current status. **§11 is the
+authoritative delivery record.** Paths are as they stood when each phase landed; later refactors
+have moved or removed a few of them (the `types/index.ts` barrel is gone, for instance), so treat a
+name here as a pointer to the subsystem rather than to a live file.
 
 **Python**
 
@@ -1206,45 +1210,49 @@ delivery record**; read this section as the original work breakdown, not as curr
 
 **TypeScript**
 
-- [ ] `types/mesh.ts`, `types/index.ts`, `types/window.d.ts`, `data/data-loader-types.ts`
+- [x] `types/mesh.ts`, `types/index.ts`, `types/window.d.ts`, `data/data-loader-types.ts`
 - [x] `types/data-monitor-types.ts` — the local `| 'mesh'` extension is **already deleted** (#1220), so `SceneGraphNodeType` is now plain `NodeTypeName`
-- [ ] `data/scene-loader/loaders/loader-registry.ts` — one line in `LoaderByKind`. The three parallel
+- [x] `data/scene-loader/loaders/loader-registry.ts` — one line in `LoaderByKind`. The three parallel
       maps became a single kind-keyed store in #1079; `getLoaderType` / `disposeAll` / the counters are
       one implementation each. Omitting the entry is a **compile error**
       (`TS2339: Property 'mesh' does not exist on type 'LoaderByKind'`), not a silent gap
-- [ ] `data/scene-loader/geometry-descriptors.ts` — one row in `GEOMETRY_DESCRIPTORS`, carrying
+- [x] `data/scene-loader/geometry-descriptors.ts` — one row in `GEOMETRY_DESCRIPTORS`, carrying
       `loadNode`, `applyPartialExtendTolerance`, `retryCommit` and the two loader factories. This is
       the row that `load-scene-nodes`, `lifecycle/retry` and `prefetch/slice-prefetcher` all read, so
       those three files need **no mesh edit at all**. A missing row fails the build with
       `TS2741: Property 'mesh' is missing … required in type 'Record<GeometryKind, …>'`
-- [ ] `data/scene-loader/loaders/loader-factory.ts`, `nodes/build-scene-graph.ts`
+- [x] `data/scene-loader/loaders/loader-factory.ts`, `nodes/build-scene-graph.ts`
       (bare-leaf-root union), `nodes/build-ctx.ts` (the `processMeshData` / `commitMeshGeometry`
       pair, matching the uniform shape #1099 gave all three existing types)
-- [ ] `data/scene-loader/monitor/monitor-wiring.ts`, `scene-graph-converter.ts`,
+- [x] `data/scene-loader/monitor/monitor-wiring.ts`, `scene-graph-converter.ts`,
       `data/scene-loader-monitor-port.ts`
 - [x] `data/scene-loader/lifecycle/retry.ts` — **no edit needed.** The `else if (gsplatsLoader)` chain
       became a descriptor lookup in #1099. The hazard this spec flagged — a missing arm meaning a
       failed mesh load could never be retried, with nothing in the type system to say so — is now a
       build failure at the descriptor table instead
-- [ ] `data/scene-loader/prefetch/slice-prefetcher.ts` — **no dispatch edit**, but mesh has no
+- [x] `data/scene-loader/prefetch/slice-prefetcher.ts` — **no dispatch edit**, but mesh has no
       meaningful slice prefetch in v1 (whole-node resident, §7). The prefetcher is driven by three
       hardcoded `prefetchNode(path, 'points'|'lines'|'gsplats', …)` call sites, so mesh is excluded by
       simply not adding a fourth — confirm that stays true rather than assuming it
-- [ ] `data/loaders/spatial-query/tolerance-computer.ts` — add the `mesh` arm to
+- [x] `data/loaders/spatial-query/tolerance-computer.ts` — add the `mesh` arm to
       `computeHiddenDimTolerance` and `meshSlabTolerance` to `ToleranceOptions` (§5.2.1). Callers must
       pass `discreteRole: 'membership'`. **Do not** default the spatial arm to Lines' `0`
-- [ ] `wasm/types.ts` — declare both new kernels on the `WasmModule` interface (§5.4); `pickBackend`
+- [x] `wasm/types.ts` — declare both new kernels on the `WasmModule` interface (§5.4); `pickBackend`
       swaps the module wholesale, so a kernel missing from either backend breaks the `>16D` path
-- [ ] `data/attrs-composer.ts`, `data/stats/{aggregator,scene-stats}.ts`
-- [ ] `rendering/mesh-geometry.ts`, `rendering/node-factory.ts`,
+- [x] `data/attrs-composer.ts`, `data/stats/{aggregator,scene-stats}.ts`
+- [x] `rendering/mesh-geometry.ts`, `rendering/node-factory.ts`,
       `rendering/node-factory/create-mesh-node.ts`
-- [ ] `rendering/materials/mesh/{material,shader}-{glsl,tsl}.ts`, `rendering/picking/mesh/*`
-- [ ] `rendering/material-manager/factories.ts`, `rendering/material-colormap-helpers.ts`
-- [ ] `scene/scene-manager/camera/camera-framing.ts`, `scene/lod-freshness.ts`,
-      `scene/synthetic-scene.ts`
-- [ ] `ui/layers/{layer-apply,layer-state,layers-panel}.ts`
-- [ ] `ui/data-loading-monitor.ts` + `data-loading-monitor/{templates,advisor}.ts`
-- [ ] `core/app/debug/{debug-interface,debug-state}.ts`
+- [x] `rendering/materials/mesh/{material,shader}-{glsl,tsl}.ts`, `rendering/picking/mesh/*`
+- [x] `rendering/material-manager/factories.ts`, `rendering/material-colormap-helpers.ts`
+- [x] `scene/scene-manager/camera/camera-framing.ts` — its own arm, since a mesh contributes DRAWN
+      triangles (`drawRange.count / 3`) rather than an `instanceCount`. `scene/lod-freshness.ts`
+      needed no literal: it discriminates on `supportsLod(nodeType)`, which is false for mesh, so a
+      mesh leaf is correctly untracked. `scene/synthetic-scene.ts` is deliberately **not** extended —
+      the `?debug` perf-bench injector still builds points/lines/gsplats only, mesh having no pooled
+      instanced path to bench
+- [x] `ui/layers/{layer-apply,layer-state,layers-panel}.ts`
+- [x] `ui/data-loading-monitor.ts` + `data-loading-monitor/{templates,advisor}.ts`
+- [x] `core/app/debug/{debug-interface,debug-state}.ts`
 
 **Verified type-agnostic — no mesh change needed.** Swept for geometry-type literals and found clean,
 so mesh rides these subsystems for free. Recorded so an implementer doesn't re-derive it:
@@ -1274,9 +1282,9 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 
 **Rust / WASM**
 
-- [ ] `wasm/rust/src/mesh_culling.rs` + `lib.rs` registration
-- [ ] `wasm/typescript/mesh-culling.ts` + `index.ts` registration (also the production `>16D` backend)
-- [ ] Rust↔TS parity tests
+- [x] `wasm/rust/src/mesh_culling.rs` + `lib.rs` registration
+- [x] `wasm/typescript/mesh-culling.ts` + `index.ts` registration (also the production `>16D` backend)
+- [x] Rust↔TS parity tests
 
 **Docs**
 
@@ -1296,8 +1304,8 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       fail-fast twin of the §6.5 loader-side `n_vertices > 2^27 → LoaderError` pin, verified to fail
       before the validator exists per this section's rule), authoring lint, broadcast color/scalar,
       `extend_to_all`, reader
-- [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
-- [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
+- [x] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
+- [x] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
       WASM trap — including a 64-bit index like `2^32 + 1` whose bare u32 cast would wrap into range,
       pinning §3.5 Stage 2's source-value check; an undersized `normals`/`colors`/`scalars` array →
@@ -1308,23 +1316,23 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       metadata preflight, asserting **no chunk-key request** (an `<array>/<chunk-coords>` key) is ever
       issued — only the `.zarray`/`.zattrs` metadata keys the preflight legitimately reads — verified to
       fail before the preflight exists), and the `volumetric`→`opaque` fallback warning (§6.3)
-- [ ] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
+- [x] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
       mesh RGB-only (goes red if `vAlpha` is dropped — the exact "(V,4) renders like (V,3)" defect); under
       `opaque`, fragments with `a < uAlphaCutoff` are **discarded** (cutout) and survivors write alpha 1.0;
       under `max`, the emitted RGB is **premultiplied** by `a` (`vec4(shadedColor * a, a)`). Each must be
       verified to fail before the fix.
-- [ ] TS unit (default base color, §6.1/§6.2): a bare `add_mesh(vertices, faces)` mesh (no `colors`, no
+- [x] TS unit (default base color, §6.1/§6.2): a bare `add_mesh(vertices, faces)` mesh (no `colors`, no
       `scalars`) renders opaque **white**, not black — the `color` attribute is filled `(1,1,1)` rather
       than left unbound. Verified to go **red** if the white fill is dropped (an unbound `color` reads the
       GL default `(0,0,0,1)` and, times the multiplicative §6.2 shade term, the surface comes out solid
       black).
-- [ ] TS unit (native vertex-attr dtypes, §6.1.1): geometry assembly binds a `uint8`/`uint16` **RGB** mesh
+- [x] TS unit (native vertex-attr dtypes, §6.1.1): geometry assembly binds a `uint8`/`uint16` **RGB** mesh
       as a **4-component** normalized `color` attribute (padded RGBA, opaque alpha) and a `uint8`/`float16`
       **scalar** as a `float32` `aScalar` — never a size-3 `uint8`/`uint16` color nor an itemSize-1
       `uint8`/`float16` scalar, both of which fail `createRenderPipeline` validation on the WebGPU backend.
       Assert the resulting `BufferAttribute` `itemSize`/array-type and that the padded alpha is opaque
       (`vAlpha == 1.0`); pairs with the §6.4 codegen-snapshot harness that exercises the TSL/WebGPU path.
-- [ ] TS unit: on a **`double_sided: false`** mesh, `updateView` for a `displayDims` change `[0,1,2]`→`[0,2,1]`
+- [x] TS unit: on a **`double_sided: false`** mesh, `updateView` for a `displayDims` change `[0,1,2]`→`[0,2,1]`
       re-extracts positions, re-decides the `normal` attribute, recomputes bounds, and reverses the index
       winding so front faces stay visible (goes red without the reversal precisely because `FrontSide`
       culls the flipped triangles) — rebuilds `position`/`normal`/index, not just the index (§7).
@@ -1335,7 +1343,7 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       slice moves (§5.4), not just the displayDims-change event. And on the same mesh, a `displayDims`
       change to a **different axis triple** than the frame falls back to `DoubleSide` for the epoch —
       both orientations render (§5.4/§7)
-- [ ] TS unit: **flat-vs-smooth on the same normal-bearing mesh** — one mesh with valid stored normals
+- [x] TS unit: **flat-vs-smooth on the same normal-bearing mesh** — one mesh with valid stored normals
       (`normal_dims == displayDims`; use vertex-averaged normals that differ from the geometric face
       normals, so smooth and flat genuinely disagree — a faceted face-normal fixture would render the
       two variants identically even in a correct build) selects the stored-normal `mesh.fragment` variant under
@@ -1350,7 +1358,7 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       the substituted derivative normal **without** the flip — the same camera-facing gradient as the
       front view — verified to go **red** against a build that applies `gl_FrontFacing ? N : -N` to the
       fallback normal (§6.2's per-fragment exemption)
-- [ ] TS unit (**both backends** — GLSL and TSL): **stored-normal view-space transform** — a
+- [x] TS unit (**both backends** — GLSL and TSL): **stored-normal view-space transform** — a
       smooth-shaded mesh whose stored per-vertex normals equal its geometric face normals, with at least
       one face normal that **mixes the differently-scaled axes** — a nonzero component both along z and
       within the xy-plane (a tetrahedron, whose four face normals positively span R³, guarantees this;
@@ -1365,18 +1373,18 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       codegen snapshot) as the GLSL twin's pin. Verified to go **red** against a build that binds the raw
       untransformed normal, or uses the plain model-view instead of the inverse-transpose — either
       mislights the rotated node / skews normals off-perpendicular under the anisotropic scale
-- [ ] TS unit / E2E (pick corner contract, §6.5): a pick on a mesh triangle resolves to **a corner
+- [x] TS unit / E2E (pick corner contract, §6.5): a pick on a mesh triangle resolves to **a corner
       vertex of that face** — assert membership in `(i0, i1, i2)`, never one exact corner (the provoking
       vertex is backend-dependent: last on WebGL, first on WebGPU; `WEBGL_provoking_vertex` aligns them
       only where available)
-- [ ] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
+- [x] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
       `mesh-additive`/`mesh-max` variants
-- [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
+- [x] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
       `vitest.config.ts` globalSetup)
-- [ ] E2E: one `mesh-rendering.spec.ts`, plus extend the existing multi-geometry
+- [x] E2E: one `mesh-rendering.spec.ts`, plus extend the existing multi-geometry
       `tests/e2e/geometry-types.spec.ts` (it asserts `userData.nodeType` per type and already covers
       lines + gsplats) with a mesh case
-- [ ] One demo exercising the type end to end
+- [x] One demo exercising the type end to end
 
 > Every test must be verified to **fail before the fix** — mutate the implementation and confirm the
 > test goes red. A cull test that passes against an all-ones mask is vacuous.
@@ -1542,7 +1550,7 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 | **1** ✅ *(done — #1220)* | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH`) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | Landed as #1220, all in one PR: `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip tests green; a mesh child of a lod/partition group **raises** (both rejections pinned by tests) |
 | **2** ✅ *(done — #1232)* | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
 | **3** ✅ *(done)* | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
-| **4** ✅ *(done)* | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent. Landed as the `mesh/` material stack (4 files + `appearance.ts`), 5 codegen variants (10 snapshot files), and the §6.2 headlight with its compile-time stored-normal/derivative variant. Two spec refinements were forced by the implementation and are folded back into §6.2: the derivative normal is **forced** viewer-facing rather than assumed so (`cross(dFdx, dFdy)` has the sign of the fragment-space y axis, and WGSL's `dpdy` is top-down where GLSL's `dFdy` is bottom-up), and the stored normal is transformed WITHOUT three's `transformNormalToView` (whose internal `normalize` turns a legitimately zero-length normal into a whole-triangle NaN, contradicting §3.5's locally-distorted contract). The `normal`/`aScalar` attributes are bound for the node's lifetime from the metadata rather than bound/unbound per epoch — the shader variant alone stops reading them, which keeps the attribute set (and hence the WebGPU vertex layout) fixed |
+| **4** ✅ *(done)* | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent. Landed as the `mesh/` material stack (4 files + `appearance.ts`), 5 codegen variants (10 snapshot files — the sixth, `mesh-pick`, arrives with picking in Phase 5, which is why §6.4 and §8 count six), and the §6.2 headlight with its compile-time stored-normal/derivative variant. Two spec refinements were forced by the implementation and are folded back into §6.2: the derivative normal is **forced** viewer-facing rather than assumed so (`cross(dFdx, dFdy)` has the sign of the fragment-space y axis, and WGSL's `dpdy` is top-down where GLSL's `dFdy` is bottom-up), and the stored normal is transformed WITHOUT three's `transformNormalToView` (whose internal `normalize` turns a legitimately zero-length normal into a whole-triangle NaN, contradicting §3.5's locally-distorted contract). The `normal`/`aScalar` attributes are bound for the node's lifetime from the metadata rather than bound/unbound per epoch — the shader variant alone stops reading them, which keeps the attribute set (and hence the WebGPU vertex layout) fixed |
 | **5** ✅ *(done)* | Picking pair, layers panel, monitor, stats, camera framing, debug | Full parity with the other three at the UI level. The pick pair landed as `rendering/picking/mesh/` — six files rather than the siblings' four, the extra two being `pick-mode.ts` (the blending mode's TWO pick-pass consequences derived in one place, so "cutout on, brightness-as-depth" is unrepresentable) and `provoking-vertex.ts` (WebGL's `flat` provoking vertex aligned with WebGPU's). Two §6.5 refinements were forced by the implementation and are folded back above: the pick material tracks the visual material's `side` per epoch (the siblings' quads are view-facing, so theirs can pin `DoubleSide`; a mesh's culled back faces must not rasterize into the pick buffer at true surface depth), and the surface-depth VALUE differs between backends (`gl_FragCoord.z` vs three's `depth` node, which expands to a linear view-space depth) — benign, since both are monotone in distance and the pick depth only orders fragments within one render, and now documented rather than latent. The registration itself went into `NodeFactory.registerExistingSceneNodes`, NOT only the node factory: `initPicking` traverses the finished scene before constructing the `PickingSystem`, so on a first load the factory has no system to register with and that retro pass is the one production runs. It was a three-way `else if` chain and is now a `Record<GeometryTypeName, …>`. Monitor / stats / camera framing needed no work (Phase 3 had already made them four-way); the debug surface did — `getState()` gained `meshNodes` + `totalTriangles`, and `getDrawOrder()` was reporting **0 elements for every mesh** because its element-count fallback was a partial copy of the shared per-type reader with `visibleTriangleCount` missing |
 | **6** ✅ *(done — real-WebGPU A/B run; two claims remain reasoned, see the cell)* | Fixture + E2E spec + demo + docs + CHANGELOG | Shippable. `test_mesh.luxar.zarr` / `test_mesh_nd.luxar.zarr` + `mesh-rendering.spec.ts` landed first, and earned their keep immediately: the FIRST end-to-end render of a written mesh found three defects, including that §6.3's `opaque` default had never fired on the production load path (`normalizeBlendingMode(undefined)` returns `'additive'`, so the `?? 'opaque'` was dead code — see the §6.3 note). No unit test could have caught it: they all hand the resolver an attrs object rather than one that has been through composition. The fixture is a WELDED, CLOSED icosphere on purpose — welded so `gl_VertexID` is a genuine many-to-one pick target (162 vertices, not the 960 a de-indexed mesh would have), closed so an nD slab cull exposes interior back faces, and smooth non-axis-aligned normals so a build ignoring `shading` renders visibly differently. The reference demo is `demo_mesh_isosurface_cells3d` — marching-cubes isosurfaces of the same volume its gsplat twin fits, so the two representations can be compared directly on one dataset. The docs pass covered the two package READMEs that had omitted mesh entirely (`rendering/` gained a Mesh Material section naming the two backend hazards; `data/` gained the whole-node-loader section explaining why mesh does NOT stream and why its tolerance arm is its own), the Layers-panel README, and the stale "picking and the panel controls land in later phases" claim in `CLAUDE.md`. Two `README.md` claims that still say "all three geometry types" were checked and LEFT: one is about volumetric blending physics and the other about the chunk-bounds spatial query, and mesh genuinely participates in neither (§9). On the remaining gap: a **real-WebGPU A/B was run** (system Chrome channel, `?renderer=webgpu` vs the same URL without it, screenshot-then-decode with the WebGL arm as the control — the recipe matters, see the note below), and it establishes the substance of what was open. Native WebGPU reports `apiSurface: 'webgpu'`, commits all three fixture nodes with identical triangle/vertex counts and identical shader variants, and renders **pixel-equivalent** output to WebGL: 105,822 lit pixels on both, mean lit channel differing by 0.14% (sub-quantization dithering — equivalent to the eye, not byte-identical). So the WGSL path is no longer unexercised, and it agrees with GLSL on a real mesh.
 
@@ -1553,13 +1561,15 @@ The A/B also **corrected an overstatement** in the §6.2 notes, which is the mor
 Still arguments rather than measurements: the provoking-vertex convention and the surface-depth VALUE, both because reading the pick buffer's ids and depth from outside the app is not cheaply reachable |
 
 Phase 0 landed alone, with no mesh code, so any regression it caused would have been unambiguous.
-Phase 1 (the Python writable side) landed next, as #1220; Phase 2 (the cull kernels) is independent
-of the remaining viewer phases and can land at any point. The *drawable* half of the contract edit —
-adding `mesh` to `loader_types` — was deliberately **not** part of Phase 1: it fires the three §10.2
-compile errors, which can only be cleared by real Phase-3 code, so it belongs with Phase 3. Phase 3
-used to be the widest diff — a sweep across every dispatch site — and is now one of the narrower ones:
-the three dispatch files need no mesh edit, leaving the `loader_types` switch-on, the loader, the
-geometry builder, and two table entries. Phase 4 is the deepest single piece of work.
+Phase 1 (the Python writable side) landed next, as #1220; Phase 2 (the cull kernels) was independent
+of the remaining viewer phases and landed on its own as #1232. The *drawable* half of the contract
+edit — adding `mesh` to `loader_types` — was deliberately **not** part of Phase 1: it fires the three
+§10.2 compile errors, which can only be cleared by real Phase-3 code, so it belonged with Phase 3.
+Phase 3 would once have been the widest diff — a sweep across every dispatch site — and turned out to
+be one of the narrower ones: the three dispatch files needed no mesh edit, leaving the `loader_types`
+switch-on, the loader, the geometry builder, and two table entries. Phase 4 was the deepest single
+piece of work.
 
-**Estimate:** 5–6 PRs, roughly 4–5.5K LOC including tests — against ~14K LOC for the full Lines
-vertical, the difference being everything in §9 plus the dispatch work Phase 0 already absorbed.
+**Estimate (as written up front):** 5–6 PRs, roughly 4–5.5K LOC including tests — against ~14K LOC
+for the full Lines vertical, the difference being everything in §9 plus the dispatch work Phase 0
+already absorbed.

@@ -168,8 +168,9 @@ coupling — they take a `Scene` reference and return pure NumPy arrays):
 ## Subpackages
 
 - **[`adders/`](adders/README.md)** — per-leaf `add_<type>_impl` bodies for
-  Points, Lines, and GSplats, plus their partition- and multi-LOD-wrapper
-  helpers. `group.py`'s public methods are thin delegates over these.
+  Points, Lines, GSplats, and Mesh, plus their partition- and multi-LOD-wrapper
+  helpers (mesh has neither — it refuses both). `group.py`'s public methods are
+  thin delegates over these.
 - **[`gsplats_pipeline/`](gsplats_pipeline/README.md)** — the high-level gsplats
   write path backing `add_gsplats_from_data` / `_from_file` / `_from_volume`;
   resolves the substitutive and additive LOD axes and routes to a flat node, a
@@ -182,6 +183,6 @@ coupling — they take a `Scene` reference and return pure NumPy arrays):
 ## See Also
 
 - [core/README.md](../README.md) — the `core` scene-graph module (Scene, Node,
-  DataNode, Points, Lines, GSplats, Dimensions, transforms)
+  DataNode, Points, Lines, GSplats, Mesh, Dimensions, transforms)
 - [gsplats/README.md](../../gsplats/README.md) — Gaussian-splat fitting, LOD, and
   the `GSplatData` container
