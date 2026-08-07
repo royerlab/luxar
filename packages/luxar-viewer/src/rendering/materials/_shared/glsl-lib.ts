@@ -224,6 +224,20 @@ export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
  * and every blending mode is correct by construction, with no axial profile and
  * no cap dimming.
  *
+ * That partition is exact in exact arithmetic, not bit-exact in float32. The
+ * two sides of a joint evaluate algebraically identical operands in a
+ * canonical order, but they reach pixel space differently — the vertex stage
+ * scales the NDC difference `ndcEnd - ndcStart` once, while
+ * `luxarLinePixelPos` scales each endpoint and the caller subtracts afterwards
+ * — so their miter points agree only to float32 rounding, order 1e-5 px on the
+ * `test_line_joins` fixture. That is at most a single seam pixel under the
+ * rasteriser's subpixel quantisation, and it is why the acceptance spec
+ * (`tests/e2e/line-join-artifact.spec.ts`, which quantifies it) gates the bend
+ * bands at a couple of outlier pixels rather than at the zero they measure.
+ * Subtracting in NDC and scaling afterwards on both paths — here and in the
+ * TSL twin — would make the two sides bit-exact; that is a known, deliberately
+ * deferred change.
+ *
  * The two stages MUST build the same quad or a pick footprint stops matching
  * what the eye sees, so this lives here rather than being written twice.
  *

@@ -54,8 +54,9 @@
  * different turn angle. The pre-miter #790 baseline showed this plainly: the
  * gentle `curve_smooth` band (~10.5° turns) scored 4.94% dark while the 90°
  * `zigzag_right_angle` band scored 0.076%, even though the zigzag's wedge was
- * far the worse defect. (Both read 0% on the mitred renderer, which is what
- * the acceptance spec now asserts.)
+ * far the worse defect. (Both read 0% on the mitred renderer; the acceptance
+ * spec gates them a couple of pixels above that, for the float32 seam reason
+ * its header gives.)
  *
  * The reason is geometric. The uncovered wedge at a turn of angle θ is a
  * sector of the tube's half-width `h`, so the gap it leaves is not one width

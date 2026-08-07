@@ -227,8 +227,11 @@ the tube, normalised by its own median) sees exactly the smooth
 per-joint dip that was the #780 bead chain and would score zero on the
 outlier metric. The spec asserts a gapless flux profile on all five bands,
 zero dark and zero bright outliers plus a flat flux profile on both
-straight bands — and, since the miter landed, zero outliers on the two
-bend bands as well, so a regression to unmitred rendering fails it.
+straight bands — and, since the miter landed, at most two outliers of each
+kind on the two bend bands, which both measure zero, so a regression to
+unmitred rendering fails it by a wide margin. (The bend ceiling is two rather
+than zero only to absorb a seam pixel the float32 operand order can cost;
+the spec header quantifies it.)
 
 The before/after on that harness:
 

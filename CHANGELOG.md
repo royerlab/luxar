@@ -60,7 +60,9 @@ outlier pixels to **zero of each**, and the right-angle zigzag's axial flux p05
 rises from 0.780 to 0.985 against a straight-band 1.000. Both straight bands
 are unchanged at zero outliers and a flat profile — the miter reduces
 algebraically to `R·perp` at a collinear joint — and the nine-ray hub control holds at
-0.157% / 0.114%. The spec now asserts those zeros, so unmitred rendering cannot
+0.157% / 0.114%. The spec now gates the two bend bands at a couple of outlier
+pixels — the measurement is zero, the small ceiling only absorbs a seam pixel
+the shaders' float32 operand order can cost — so unmitred rendering cannot
 come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
 under `make test-e2e`.)
 
@@ -95,7 +97,7 @@ the straight bands additionally at zero outliers and a flat profile. The two
 bending cases were first **recorded** under documented ceilings rather than
 fixed: measured with the device pixel ratio pinned at 4.94% dark / 3.52% bright
 on the curve. Once the join geometry landed in the entry above
-those ceilings were replaced by zero-outlier assertions, plus a 0.9 axial-flux
+those ceilings dropped to two outlier pixels against a measured zero, plus a 0.9 axial-flux
 floor on the zigzag, whose wedge is too wide for the outlier metric to see.
 
 Scope note: the E2E job is currently disabled in CI, so the spec runs only

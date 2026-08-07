@@ -304,6 +304,18 @@ export interface TSLLineJoinArgs {
  * nothing rasterises there to shade — so this rotates the quad's end edge onto
  * the shared miter edge and the two quads TILE.
  *
+ * That tiling is exact in exact arithmetic, not bit-exact in float32. The two
+ * sides of a joint evaluate algebraically identical operands in a canonical
+ * order, but they reach pixel space differently — the vertex stage scales the
+ * NDC difference `ndcEnd.sub(ndcStart)` once, while this helper scales each
+ * endpoint (`sharedPx`, `farPx`) and subtracts afterwards — so their miter
+ * points agree only to float32 rounding, order 1e-5 px on the
+ * `test_line_joins` fixture, which is at most one seam pixel once the
+ * rasteriser quantises. `tests/e2e/line-join-artifact.spec.ts` quantifies it
+ * and gates the bend bands accordingly. Subtracting in NDC and scaling
+ * afterwards on both paths — here and in `GLSL_LINE_JOIN` — would make the two
+ * sides bit-exact; that is a known, deliberately deferred change.
+ *
  * STRUCTURAL DIFFERENCE FROM THE GLSL TWIN, and it is deliberate: the join
  * STYLE is a build-time graph variant here (the caller simply does not call
  * this when the style is `none`), exactly as the line factories already treat

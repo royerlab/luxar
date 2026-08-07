@@ -9,15 +9,35 @@
  * frame difference masquerade as a joint defect.
  *
  * The spec asserts that the join geometry closes the wedge. Both bending
- * bands must show ZERO dark and zero bright outliers, exactly like the two
- * straight bands, and the zigzag's axial flux must stay above 0.9 — the same
- * floor the straight bands hold. Unmitred rendering cannot clear either: it
- * measured 4.94% dark / 3.52% bright on `curve_smooth` and a flux p05 of
- * 0.780 on `zigzag_right_angle`. Alongside that, what was already correct
- * must stay correct: both straight bands at zero outliers (#785), every
+ * bands measure ZERO dark and zero bright outliers, exactly like the two
+ * straight bands, and are gated at no more than two of each; the zigzag's
+ * axial flux must additionally stay above 0.9 — the same floor the straight
+ * bands hold. Unmitred rendering cannot clear either gate: it measured 4.94%
+ * dark / 3.52% bright (1918 dark pixels) on `curve_smooth`, 0.076% (30
+ * pixels) on `zigzag_right_angle`, and a flux p05 of 0.780 there.
+ * Alongside that, what was already correct must stay
+ * correct: both straight bands at zero outliers (#785), every
  * band's flux profile gapless, the straight profiles flat (#780 — no
  * bead-chain dip at interior joints), and the nine-ray hub inside a small
  * ceiling as the never-mitered control.
+ *
+ * Why the bend bands are gated at two rather than at the zero they measure.
+ * The miter's design invariant is that both sides of a joint compute the same
+ * miter point, but they compute it from the same operands in a different
+ * float32 order: the vertex path forms `(ndcEnd - ndcStart) * (0.5 *
+ * uResolution)` while the join helper scales each point by `0.5 *
+ * uResolution` and subtracts afterwards, and in float32 those two are not the
+ * same number. Simulated on this fixture the two sides' miter points disagree
+ * by up to 6.6e-05 px on `curve_smooth` and 7.6e-06 px on
+ * `zigzag_right_angle` — enough that subpixel quantisation could in principle
+ * drop or double one seam pixel, which with AA off and a 25/255 threshold
+ * against a ~153/255 tube core scores as a full outlier. Both bands measure 0
+ * on this GPU and driver across four runs, and the ceiling exists only to
+ * absorb that seam pixel. It is not slack in the measurement: a count
+ * anywhere near two means something real has changed and wants investigating,
+ * not re-baselining. Making the two sides agree bit-exactly means subtracting
+ * in NDC and scaling afterwards in both shader backends, which is a separate
+ * change.
  *
  * Some context before reading a number out of this spec. The local-median
  * metric only counts the part of a wedge that is still a couple of pixels
@@ -192,8 +212,8 @@ const EXPECTED_LINE_SEGMENTS = 120 + 16 + 40 + 20 + 9;
 /**
  * Floor on the zigzag band's axial flux p05.
  *
- * The bend bands are gated on outlier COUNTS below (`toBe(0)`), not on a
- * fraction, so there is no bend ceiling left to name. The zigzag needs this
+ * The bend bands are gated on outlier COUNTS below (at most two of each, both
+ * measuring 0), not on a fraction. The zigzag needs this
  * second gate because its wedge is far too wide for the local-median metric
  * to see: unmitred it scored only 0.076% dark, and its flux p05 is what
  * actually responded — 0.780 unmitred against 0.985 mitred (2026-08-07),
@@ -440,7 +460,23 @@ test.describe('Line-joint artifact measurement (#790)', () => {
     // #790: the miter closes the outer-side wedge and removes the inner-side
     // double-cover lens, so both bending cases now measure exactly what the
     // straight bands do — not a single tick, dark or bright. Unmitred, the
-    // curve scored 4.94% dark / 3.52% bright here.
+    // curve scored 4.94% dark / 3.52% bright (1918 dark pixels) here and the
+    // zigzag 0.076% (30 pixels).
+    //
+    // The MEASURED value on both bands is 0, across four runs, and the
+    // ceiling of 2 is not slack in that measurement. It is there because the
+    // two sides of a joint are not guaranteed to land on the same miter point
+    // bit-for-bit: they use the same operands in a different float32 order —
+    // the vertex path forms `(ndcEnd - ndcStart) * (0.5 * uResolution)`, the
+    // join helper scales each point and subtracts afterwards — which on this
+    // fixture puts them up to 6.6e-05 px apart on the curve (7.6e-06 px on the
+    // zigzag). Subpixel quantisation can turn that into one dropped or doubled
+    // seam pixel, and with AA off that scores as a full outlier. Two still
+    // leaves ~960x margin on the curve and ~15x on the zigzag against unmitred
+    // rendering, so a count anywhere near the ceiling is not the seam: it means
+    // something real has changed and should be investigated, not re-baselined.
+    // (Making the two sides agree exactly means subtracting in NDC and scaling
+    // afterwards in both shader backends — see `_shared/glsl-lib.ts`.)
     //
     // Positive control, run 2026-08-07: re-pointing this spec's URL at
     // `&lineJoin=none` reproduces 4.941% dark / 3.520% bright on the curve and
@@ -448,10 +484,13 @@ test.describe('Line-joint artifact measurement (#790)', () => {
     // without the join geometry. They are a regression detector, not a
     // tautology — if you widen them, re-run that A/B before believing the
     // result.
-    expect(curve.outliers.darkOutliers, 'curve_smooth dark outliers').toBe(0);
-    expect(curve.outliers.brightOutliers, 'curve_smooth bright outliers').toBe(0);
-    expect(zigzag.outliers.darkOutliers, 'zigzag_right_angle dark outliers').toBe(0);
-    expect(zigzag.outliers.brightOutliers, 'zigzag_right_angle bright outliers').toBe(0);
+    expect(curve.outliers.darkOutliers, 'curve_smooth dark outliers').toBeLessThanOrEqual(2);
+    expect(curve.outliers.brightOutliers, 'curve_smooth bright outliers').toBeLessThanOrEqual(2);
+    expect(zigzag.outliers.darkOutliers, 'zigzag_right_angle dark outliers').toBeLessThanOrEqual(2);
+    expect(
+      zigzag.outliers.brightOutliers,
+      'zigzag_right_angle bright outliers'
+    ).toBeLessThanOrEqual(2);
 
     // Zero outliers alone would not prove the zigzag's wedge is closed. That
     // wedge is a 28.8 px-radius quarter disc, far wider than the local-median
