@@ -157,6 +157,22 @@ bend the two quads leave a small uncovered wedge on the outside of the turn.
 Closing it needs real join geometry (extending the quads longitudinally by a
 half-width), which is tracked separately (#790).
 
+That artifact now has an automated acceptance measurement:
+`../../../tests/e2e/line-join-artifact.spec.ts` renders the
+`test_line_joins` fixture (five joint cases, one per horizontal band —
+smooth curve, 90° zigzag, thin and thick straights, and a nine-ray hub)
+and scores every band on one frame with the pure metrics in
+`../../../tests/helpers/line-join-metrics.ts`. There are **two** metrics
+because each is blind to what the other catches: a local-median outlier
+count sees the narrow one-to-two-pixel wedge tick but tracks any smooth
+variation invisibly, while an axial flux profile (cross-section sum along
+the tube, normalised by its own median) sees exactly the smooth
+per-joint dip that was the #780 bead chain and would score zero on the
+outlier metric. The spec asserts what already holds — zero dark outliers
+on the straight bands, a flat flux profile on the thick one — and merely
+records the bend cases under a documented ceiling until join geometry
+lands.
+
 ## Geometry and storage layout
 
 Lines use `THREE.Mesh` with `InstancedBufferGeometry` — **not**
