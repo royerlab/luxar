@@ -90,7 +90,7 @@ void main() {
 	if ( ( nodeVarying1 <= 0.0 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -99,7 +99,7 @@ void main() {
 	if ( ( nodeVar1 > 0.25 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -110,7 +110,7 @@ void main() {
 	if ( ( max( nodeVarying3.x, max( nodeVarying3.y, nodeVarying3.z ) ) < 0.0001 ) ) {
 
 		discard;
-		
+
 
 	}
 

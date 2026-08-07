@@ -3,10 +3,11 @@
  * harness. The page entry (`../tsl-harness.ts`, loaded by
  * `tsl-harness.html`) imports everything it needs from here.
  *
- * The 76 registry entries live in five shader-family modules —
- * `post-processing.ts` (8), `points.ts` (18), `lines.ts` (24),
- * `gsplats.ts` (18), `mesh.ts` (8) — and are merged here into the single
- * `SHADER_REGISTRY` the Playwright parity/codegen specs drive by name.
+ * The registry entries live in six shader-family modules —
+ * `post-processing.ts`, `points.ts`, `lines.ts`, `gsplats.ts`,
+ * `mesh.ts`, and `erf.ts` (shared math) — and are merged here into the
+ * single `SHADER_REGISTRY` the Playwright parity/codegen specs drive by
+ * name.
  *
  * The registry is deliberately WIDER than the codegen snapshot list: an entry earns
  * a snapshot only when it generates distinct shader code, while an entry that
@@ -25,6 +26,7 @@ import { POINT_SHADERS } from './points';
 import { LINE_SHADERS } from './lines';
 import { GSPLAT_SHADERS } from './gsplats';
 import { MESH_SHADERS } from './mesh';
+import { ERF_SHADERS } from './erf';
 
 /**
  * The merged TSL↔GLSL parity shader registry: every family module's entries
@@ -37,6 +39,7 @@ export const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   ...LINE_SHADERS,
   ...GSPLAT_SHADERS,
   ...MESH_SHADERS,
+  ...ERF_SHADERS,
 };
 
 export { HARNESS_SIZE, renderGLSL, renderTSL } from './render';

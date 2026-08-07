@@ -55,8 +55,8 @@ layout( std140 ) uniform object {
 };
 
 layout( std140 ) uniform render {
-	mat4 cameraViewMatrix;
 	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
 };
 uniform sampler2D nodeUniform4;
 

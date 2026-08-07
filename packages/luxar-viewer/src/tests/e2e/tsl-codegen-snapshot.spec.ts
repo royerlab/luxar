@@ -122,6 +122,11 @@ function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: str
 // variants so attribute-packing changes (Float16 colours, etc.) have a
 // regression gate across Points, Lines, and GSplats.
 const SHADERS = [
+  // Shared-math erf polynomial (materials/_shared/erf.ts): the snapshot
+  // pins the LITERALS the TSL code generator emits for the coefficient
+  // values — the textual half of the value-level parity contract (the
+  // pixel half is the parity spec's 'erf' test).
+  'erf',
   'line',
   'line-pick',
   'line-gamma-one',

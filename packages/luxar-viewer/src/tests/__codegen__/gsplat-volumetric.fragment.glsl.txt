@@ -107,7 +107,7 @@ void main() {
 	if ( ( nodeVar4 > nodeUniform3 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -116,7 +116,7 @@ void main() {
 	if ( ( ( nodeVar5 * max( nodeUniform7, 1.0 ) ) < 0.0001 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -126,7 +126,7 @@ void main() {
 	if ( ( ( max( nodeVar8.x, max( nodeVar8.y, nodeVar8.z ) ) < 0.0001 ) && ( nodeVar6 < 0.0001 ) ) ) {
 
 		discard;
-		
+
 
 	}
 

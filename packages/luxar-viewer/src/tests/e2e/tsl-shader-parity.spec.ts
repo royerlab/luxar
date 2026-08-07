@@ -259,6 +259,27 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('erf polynomial: GLSL block and TSL builder agree numerically', async ({ page }) => {
+    await bootHarness(page);
+
+    // Both sides sweep x across [-4, 4] (clamp regions + the full
+    // transition) and encode (erf(x)+1)/2. The two implementations are
+    // generated from the same coefficient VALUES but through different
+    // paths (string interpolation vs float() nodes + codegen), so this
+    // is the value-level backend-parity guarantee _shared/erf.ts
+    // promises. Any structural divergence — Horner order, sign branch,
+    // clamp radius, a drifted coefficient — separates the gradients.
+    const glslPixels = await runGLSL(page, 'erf');
+    const tslResult = await runTSL(page, 'erf');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'erf');
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `erf GLSL/TSL divergence: mean abs diff ${diff.toFixed(3)} on 0-255 scale.`
+    ).toBeLessThan(2.0);
+  });
+
   test('fxaa renders identically through both backends', async ({ page }) => {
     await bootHarness(page);
 
