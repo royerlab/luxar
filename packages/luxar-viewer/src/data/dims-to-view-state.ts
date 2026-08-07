@@ -24,17 +24,32 @@
 import type { SimpleDims } from '../types/dims';
 import type { ViewState } from './data-loader-types';
 
+/**
+ * Options controlling how {@link simpleDimsToViewState} fills the per-dimension
+ * tolerance array when converting a `SimpleDims` snapshot into a `ViewState`.
+ */
 export interface DimsToViewStateOptions {
   /** Per-non-displayed continuous dim tolerance (typical: scene maxRadius). */
   maxRadius: number;
   /**
    * Initial filler for the tolerance array before the per-dim rules below
-   * are applied. The value is overwritten for every dim and only matters
-   * if a caller supplies an incomplete dimension snapshot.
+   * are applied. Every entry is overwritten — a dim with no metadata falls
+   * through to `maxRadius`, not to this value — so it does not currently
+   * reach the returned `ViewState`.
    */
   defaultTolerance: number;
 }
 
+/**
+ * Convert a `SimpleDims` navigation snapshot into the `ViewState` query the
+ * spatial-index loaders consume, applying the per-dimension tolerance rules
+ * described in this module's header (0 for displayed dims, 0.5 for discrete
+ * non-spatial dims, `maxRadius` otherwise).
+ *
+ * @param dims - Current dimension snapshot (displayed set, current step, metadata).
+ * @param options - Tolerance fill options; see {@link DimsToViewStateOptions}.
+ * @returns The `ViewState` describing displayed dims, slice position, and tolerances.
+ */
 export function simpleDimsToViewState(
   dims: SimpleDims,
   { maxRadius, defaultTolerance }: DimsToViewStateOptions
