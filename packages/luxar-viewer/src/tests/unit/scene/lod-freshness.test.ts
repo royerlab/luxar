@@ -84,9 +84,7 @@ describe('visibleElementCount', () => {
     // how much detail a level carries. Reading the wrong one here would let a
     // triangle-less level be displayed because it still had vertices.)
     expect(
-      visibleElementCount(
-        stamped('mesh', { visibleTriangleCount: 0, visibleVertexCount: 12 })
-      )
+      visibleElementCount(stamped('mesh', { visibleTriangleCount: 0, visibleVertexCount: 12 }))
     ).toBe(0);
   });
 
