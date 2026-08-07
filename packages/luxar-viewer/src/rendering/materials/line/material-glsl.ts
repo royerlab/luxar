@@ -82,7 +82,7 @@ export interface LineMaterialConfig {
   scalarRange?: [number, number];
   /**
    * Join style at degree-2 polyline joints (#790). Omitted ⇒ the session
-   * override if one is set, else {@link DEFAULT_LINE_JOIN}. See
+   * override if one is set, else `DEFAULT_LINE_JOIN`. See
    * `types/line-join.ts` for the cost/fidelity ladder.
    */
   join?: LineJoinStyle;
