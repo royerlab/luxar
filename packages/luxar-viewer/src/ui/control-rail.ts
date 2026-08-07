@@ -35,7 +35,9 @@ import type { ControlRailItem } from './control-rail/types';
  * import from `ui/control-rail`: {@link ControlRailItem} (one icon button) plus
  * the two optional shapes it composes — `ControlRailPopover` (a rich, lazily
  * built panel anchored to the item) and `ControlRailToggle` (a compact toggle
- * shown inside the item's flyout).
+ * shown inside the item's flyout). `RAIL_ICONS` rides along for the same
+ * reason, though `help-overlay.ts` and `rail-panels/home-popover.ts` still
+ * reach it directly via `control-rail/icons` — keep this re-export either way.
  */
 export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './control-rail/types';
 export { RAIL_ICONS } from './control-rail/icons';
@@ -106,6 +108,11 @@ export class ControlRail {
   // so refresh active-state after the interaction settles.
   private readonly onDocClick = (): void => this.scheduleRefresh();
 
+  /**
+   * Build the rail DOM, wire the global listeners, and mount it in the viewer
+   * container. Items are rendered in the order given; the rail starts collapsed
+   * if the user left it that way last session.
+   */
   constructor(
     items: ControlRailItem[],
     /** Optional element docked at the rail's bottom (e.g. the perf readout). */
@@ -238,6 +245,7 @@ export class ControlRail {
     document.body.classList.add(BODY_MARKER_CLASS);
   }
 
+  /** The chevron handle that collapses the rail to a stub and expands it back. */
   private buildCollapseButton(): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -275,6 +283,7 @@ export class ControlRail {
     this.wake();
   }
 
+  /** Build one rail button, including its tooltip and flyout/popover wiring. */
   private buildButton(item: ControlRailItem): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -342,12 +351,14 @@ export class ControlRail {
     }
   }
 
+  /** Bring the rail to full opacity and restart the idle-fade countdown. */
   private wake(): void {
     if (this.disposed) return;
     this.root.classList.add('is-awake');
     this.scheduleSleep();
   }
 
+  /** Arm the idle timer that dims the rail once the pointer stays away. */
   private scheduleSleep(): void {
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     const delay = this.collapsed ? COLLAPSED_IDLE_MS : IDLE_MS;
@@ -383,6 +394,7 @@ export class ControlRail {
     });
   }
 
+  /** Re-read every item's active/disabled state and repaint the buttons. */
   private refresh(): void {
     if (this.disposed) return;
     for (const item of this.items) {
@@ -425,6 +437,7 @@ export class ControlRail {
     }
   }
 
+  /** Resolve an item's active state from its own predicate, else from its panel. */
   private isItemActive(item: ControlRailItem): boolean {
     if (item.isActive) {
       try {
@@ -436,6 +449,7 @@ export class ControlRail {
     return item.openSelector ? isPanelVisible(item.openSelector, this.container) : false;
   }
 
+  /** Show the one-time 'controls live here' hint, unless it was seen before. */
   private maybeShowHint(): void {
     let seen = false;
     try {
@@ -471,6 +485,7 @@ export class ControlRail {
     this.hintFadeTimer = window.setTimeout(() => this.dismissHint(), HINT_FADE_MS);
   }
 
+  /** Remove the hint for good and remember that the user has seen it. */
   private dismissHint(): void {
     if (this.hintAutoHideTimer) window.clearTimeout(this.hintAutoHideTimer);
     if (this.hintFadeTimer) window.clearTimeout(this.hintFadeTimer);
@@ -486,6 +501,7 @@ export class ControlRail {
     this.hint = undefined;
   }
 
+  /** Tear down listeners, timers, the overlay and the rail DOM. Idempotent. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

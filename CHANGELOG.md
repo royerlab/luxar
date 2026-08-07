@@ -37,11 +37,58 @@ mitering alone. Default style is `miter`; a per-node `join` attribute and
 `?lineJoin=none|miter` override it.
 
 Net deletion: the per-segment `dirs` table (~32 MB at 2.7M segments), the
-per-endpoint normalize + dot, and `softenCapacitySplitCap`. Measured on the new
-`line-join-artifacts` spec, none → miter: a 120-segment sinusoid drops from 233
-to 2 outlier pixels and a right-angle zigzag from 726 to 0, while straight
-polylines come back byte-identical (the miter reduces algebraically to `R·perp`
-at a collinear joint).
+per-endpoint normalize + dot, and `softenCapacitySplitCap`. A/B'd none → miter
+on this branch's own scratch fixture: a 120-segment sinusoid drops from 233 to 2
+outlier pixels and a right-angle zigzag from 726 to 0, while straight polylines
+come back byte-identical (the miter reduces algebraically to `R·perp` at a
+collinear joint). That fixture was superseded by the `test_line_joins` fixture
+and `line-join-artifact.spec.ts` described below, which is the acceptance
+harness going forward — the two figures above are not reproducible from it.
+
+#### Documentation — pull-request quality gate and warning ratchets (#776)
+
+Documentation-relevant pull requests now report a stable `docs-quality` check.
+It combines the existing README/docstring/JSDoc completeness baseline with a
+message-level TypeDoc warning baseline and a warning-fatal Sphinx build. Broken
+internal references fail deterministically; external HTTP link checking remains
+an explicit opt-in audit with narrow reviewed exceptions. The developer guide
+records measurable phases for reducing the remaining completeness and TypeDoc
+debt to zero.
+
+#### Tests — the line-joint artifact gets an automated acceptance measurement (#790)
+
+The outer-side miter wedge existed only as a scratch script, and nothing
+guarded the already-fixed joint defects (#780 bead chain, #785 straight-joint
+notch) while the vertex stage is rewritten to close it. Two pure metrics now
+score a rendered frame (`src/tests/helpers/line-join-metrics.ts`): a
+**local-median outlier count** for narrow wedge ticks, and an **axial flux
+profile** (cross-section sum along the tube, normalised by its own median) for
+smooth per-joint dips. Both are needed — a 50% flux ramp at every joint scores
+zero outliers, and a 1-pixel tick leaves the flux profile flat.
+
+The new `test_line_joins.luxar.zarr` fixture puts five joint cases in separate
+world-Y bands (120-segment smooth curve, 90° zigzag, thin and thick straights,
+and a nine-ray indexed hub) under a pinned photometry-grade viewer config, and
+`line-join-artifact.spec.ts` measures every band on one frame, locating each by
+projecting its world AABB through the live camera. Every band is asserted to
+have a gapless flux profile — a torn tube is a defect at any turn angle — and
+the straight bands additionally at zero outliers and a flat profile. The two
+bending cases are **recorded** under documented ceilings rather than fixed:
+measured 2026-08-06, with the device pixel ratio pinned, at 4.94% dark /
+3.53% bright on the curve. Those are pre-miter numbers — the join geometry
+landed in the entry above, and the ceilings have not yet been re-measured
+against the mitred renderer, so they still stand in the spec as upper bounds.
+
+Scope note: the E2E job is currently disabled in CI, so the spec runs only
+under `make test-e2e` locally. What runs on every PR is the unit suite, and it
+pins the metrics themselves — their arithmetic, their degenerate-input
+behaviour and their sensitivity envelope — not the renderer.
+
+The local-median metric's sensitivity envelope is documented and pinned by unit
+tests: it is non-monotone in defect width (1 px and 2 px counted, ≥ 3 px
+invisible, because the defect poisons its own median), so its fraction is a
+detector, not a severity measure, and not comparable between bands of different
+turn angle.
 
 #### Four geometry types, said consistently
 

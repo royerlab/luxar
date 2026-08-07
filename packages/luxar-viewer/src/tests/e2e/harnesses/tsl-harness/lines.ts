@@ -4,9 +4,7 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * behind-camera + ortho-near culling, sorted-index permutation) plus
  * the line-pick counterparts + multi-row, cap-suppression, clipping-remap,
- * and exact-near-plane boundary variants, plus the two screen-space-miter join
- * pairs (ortho, and the perspective near-plane joint of #1346 with its control).
- * 30 registry entries.
+ * and exact-near-plane boundary variants. 32 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -34,16 +32,6 @@ import {
 } from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
 import { buildBehindCamera, buildColormapTexture } from './shared';
-import {
-  NEAR_PLANE_B_FAR,
-  NEAR_PLANE_CAMERA,
-  NEAR_PLANE_CONTROL_B_FAR,
-  NEAR_PLANE_WIDTH,
-  PERSPECTIVE_LINE_SCALE,
-  nearPlaneSegments,
-  worldLength,
-  type Vec3,
-} from '../../../helpers/line-join-near-plane-scenario';
 
 /**
  * Single-segment texel source shared by the mesh builder and the
@@ -495,58 +483,243 @@ function buildJoinTexelSource(): LineTexelSource {
   };
 }
 
-/** 6x2 data texture for any two-segment joint fixture. */
-function buildJoinDataTexture(texels: LineTexelSource): THREE.DataTexture {
+/**
+ * SAME-PARITY twin of {@link buildJoinTexelSource}: the identical V, but with
+ * segment 1 AUTHORED IN REVERSE so the two segments meet END to END.
+ *
+ * The end->start fixture above cannot see the join's orientation rule at all:
+ * there `atEnd` and `partnerSharesItsStart` agree, so orienting the partner leg
+ * on either one gives the same `turn`. At an END-END joint they disagree, and
+ * the pre-fix orientation handed back the partner's own traversal direction —
+ * the NEGATION of what the joint needs. This fixture is the one that renders
+ * that difference.
+ *
+ * Geometry, re-derived the way the fixture above documents it:
+ *   seg 0  (-0.6, -0.3) -> (0, 0)      seg 1  (0.6, -0.3) -> (0, 0)
+ *   From seg 0's END: lineDir = (0.894, 0.447), the partner's far endpoint is
+ *   its START at pixel (19.2, -9.6), so partnerDir = (0.894, -0.447) and
+ *   turn = 0.6 — the SAME joint angle as the end->start fixture, as it must be
+ *   (turn describes the geometry, not the authoring). grow = sqrt(2/1.6) = 1.12
+ *   <= 2 and the axial reach is 6.4 * sqrt(0.25) = 3.2 px against a half-leg of
+ *   ~10.7 px, so the joint IS mitred and the cap is 1.0.
+ *   Pre-fix the same call read turn = -0.6: grow = 2.24 > 2 rejected the miter
+ *   AND clamp(-0.6, 0, 1) = 0 kept the soft endpoint cap, so the joint rendered
+ *   DIMMER than with the join disabled. That inversion is what the parity spec
+ *   asserts against.
+ *   Widths are unchanged at 0.1 x uOrthoLineScale 64 = 6.4 px half-width, clear
+ *   of the 2 px rendered-width gate.
+ *
+ * Codes follow compute_joint_codes: seg 0's END meets seg 1's END, so
+ * seg0.endJointCode = -(1 + 3) = -4 and seg1.endJointCode = -(0 + 3) = -3; both
+ * outer endpoints are free ends (0).
+ */
+function buildSameParityJoinTexelSource(): LineTexelSource {
+  const src = buildJoinTexelSource();
+  return {
+    ...src,
+    startPositions: new Float32Array([...JOIN_A_START, ...JOIN_B_END]),
+    endPositions: new Float32Array([...JOIN_SHARED, ...JOIN_SHARED]),
+    startJointCode: new Float32Array([0, 0]),
+    endJointCode: new Float32Array([-4, -3]),
+  };
+}
+
+/**
+ * World position whose projection under {@link buildBehindCamera} (a 60 deg
+ * perspective camera at world z = 1) lands `px`/`py` pixels from the centre of
+ * the 64x64 viewport at view depth `depth`:
+ *   ndc = px / (0.5 * resolution) = px / 32,  world = ndc * tan(fov/2) * depth.
+ * Lets the taper fixture below be specified in the pixel space the join math
+ * actually works in.
+ */
+function perspectivePixelPos(px: number, py: number, depth: number): [number, number, number] {
+  const scale = (Math.tan(Math.PI / 6) * depth) / 32;
+  return [px * scale, py * scale, 1 - depth];
+}
+
+/**
+ * TAPERED, PERSPECTIVE joint: the first line fixture to reach the join block
+ * off the ortho fast path, and the one that pins the DECLINED-miter cap
+ * derivation. Neither was reachable from this suite before.
+ *
+ * It does NOT gate the 2 px WIDTH straddle, despite the taper. Segment 0's
+ * rendered half-width really does run from 1.79 px at t = 0 to 6.4 px at t = 1,
+ * but this source spreads {@link buildJoinTexelSource} and overrides only the
+ * positions, widths and lengths — so the t = 0 end keeps that source's FREE-END
+ * sentinel (startJointCode 0) and the block short-circuits on `namesAPartner`
+ * there whatever its width is. The two partner-naming ends are both at 6.4 px,
+ * 3.2x the gate; raising the 0.028 start width would not move a pixel.
+ *
+ * Nor does it gate the near-plane conjunction. `buildVisualLineUniforms` leaves
+ * nearCull at its 0.01 default and every endpoint here is at depth 1.0 or 1.5,
+ * so the predicate is emitted rather than constant-folded but is never false —
+ * deleting either conjunct changes nothing on this fixture.
+ * {@link NEAR_PLANE_JOIN} is the pair that gates it.
+ *
+ * It does NOT witness the provoking-vertex divergence a per-VERTEX join width
+ * would introduce, either. The TSL side renders through
+ * `WebGPURenderer({ forceWebGL: true })` (see `./render.ts`), so both backends
+ * compile to GLSL and share one provoking-vertex rule, and a divergent `flat`
+ * cap would resolve the same way on each. The per-END width is pinned instead
+ * by the source assertion `#790 both vertex stages hand luxarLineJoin each END
+ * its own segment-constant width` in
+ * `tests/unit/rendering/materials/line/material-glsl.test.ts`, the codegen
+ * snapshot `tests/__codegen__/line.vertex.glsl.txt` (generated from the TSL
+ * graph, so it pins the TSL twin), and the CPU mirror in
+ * `tests/unit/rendering/line-join-math.test.ts`.
+ *
+ * The joint is deliberately one the block DECLINES rather than mitres: a mitred
+ * joint's cap is 1.0, which is also the code-implied default of a slot-bearing
+ * joint code, so the derivation would leave no trace in the image. Declining
+ * derives clamp(turn, 0, 1) instead, which here is 0 — maximally far from the
+ * default, and the only thing this pair renders that no other join fixture does.
+ *
+ * Geometry, in the pixel space the join works in (offsets from the viewport
+ * centre; see {@link perspectivePixelPos}):
+ *   seg 0  (-8, -6) -> (0, 0) at depth 1      seg 1  (0, 0) -> (6, -8) at depth 1.5
+ *   Both legs project 10 px long. dirIn = (0.8, 0.6), dirOut = (0.6, -0.8), so
+ *   turn = 0 (a right angle): grow = sqrt(2) is inside the miter limit but the
+ *   axial reach 6.4 * sqrt(2 - 1) = 6.4 px exceeds 0.5 * min(10, 10) = 5 px, so
+ *   both sides decline and derive cap = clamp(0, 0, 1) = 0.
+ *   Widths follow the perspective branch, width * uPerspectiveLineScale / depth
+ *   with the harness's scale of 64: seg 0 is 0.028 -> 1.79 px at t = 0 and
+ *   0.1 -> 6.4 px at t = 1; seg 1 is 0.1 -> 6.4 px and 0.15 -> 6.4 px, i.e.
+ *   constant on screen. Only the two 6.4 px ends name a partner (see above).
+ *   The two legs sit at DIFFERENT depths (1 and 1.5) so the near-plane
+ *   conjunction reads two distinct values rather than one number twice — both
+ *   of them far in front of nearCull, so it stays unconditionally true.
+ */
+const TAPER_A_START = perspectivePixelPos(-8, -6, 1);
+const TAPER_SHARED = perspectivePixelPos(0, 0, 1);
+const TAPER_B_END = perspectivePixelPos(6, -8, 1.5);
+
+function buildTaperJoinTexelSource(): LineTexelSource {
+  const src = buildJoinTexelSource();
+  return {
+    ...src,
+    startPositions: new Float32Array([...TAPER_A_START, ...TAPER_SHARED]),
+    endPositions: new Float32Array([...TAPER_SHARED, ...TAPER_B_END]),
+    startWidths: new Float32Array([0.028, 0.1]),
+    endWidths: new Float32Array([0.1, 0.15]),
+    // World-space leg lengths (the cap ramp's axial scale).
+    segmentLengths: new Float32Array([0.1804, 0.5685]),
+  };
+}
+
+/**
+ * NEAR-PLANE joint: the fixture that makes the two-sided near-plane guard a
+ * RENDERED gate rather than a shader-text assertion.
+ *
+ * The guard is a conjunction over BOTH far endpoints of the joint, not just the
+ * fetched partner's. Nothing in this suite could see that: every other join
+ * fixture sits far in front of nearCull on both legs, so the predicate is
+ * unconditionally true. Here segment 0's far endpoint is BEHIND the cull plane
+ * and segment 1's is in front, which is exactly the asymmetry the conjunction
+ * exists for.
+ *
+ *   nearCull 0.6 (threaded through `joinEntry`), perspective camera.
+ *   seg 0  depth 0.3 -> shared at depth 1.0     seg 1  shared -> depth 1.5
+ *
+ * One-sided (pre-fix), each side tested only the endpoint it FETCHED:
+ *   - seg 0's END fetches seg 1's far endpoint at depth 1.5, which clears 0.6,
+ *     so it accepted and mitred;
+ *   - seg 1's START fetches seg 0's far endpoint at depth 0.3, which does not,
+ *     so it declined.
+ * Segment 0 then mitred alone and its rotated end edge had nothing to tile
+ * against — the flap. With the conjunction seg 0 also tests its OWN far
+ * endpoint (0.3 < 0.6), so both sides take the `noJoin` path and the mitred
+ * render IS the unmitred one, pixel for pixel. That equality is the assertion.
+ *
+ * Every OTHER reason to decline is ruled out, or the gate would be vacuous
+ * (offsets from the viewport centre; see {@link perspectivePixelPos}):
+ *   Camera near is 0.1, clear of the 0.3 endpoint. Segment 0 is near-plane
+ *   SEGMENT-clipped at tA = 3/7 onto the 0.6 plane, which lands its rendered
+ *   start 10 px left of the shared vertex (the unclipped start is 35 px out at
+ *   depth 0.3); the shared vertex itself projects to the centre of the 64x64
+ *   viewport. Segment 1 leaves along (0.6, 0.8) for 15 px. So dirIn = (1, 0),
+ *   dirOut = (0.6, 0.8) and turn = 0.6: grow = sqrt(2/1.6) = 1.12 <= 2 and the
+ *   axial reach 6.4 * 0.5 = 3.2 px clears both sides' overshoot guards
+ *   (0.5 * min(10, 15) = 5 px from seg 0, 0.5 * min(15, 17.5) = 7.5 px from
+ *   seg 1 — its partner leg is projected under the nearCull w-guard, so seg 0
+ *   reads 17.5 px there rather than 35). Both partner-naming ends render at
+ *   0.1 * 64 / 1.0 = 6.4 px of half-width, 3.2x the 2 px gate.
+ *
+ * Codes are {@link buildJoinTexelSource}'s: seg 0's END meets seg 1's START,
+ * outer ends free.
+ */
+const NEAR_PLANE_CULL = 0.6;
+const NEAR_PLANE_A_START = perspectivePixelPos(-35, 0, 0.3);
+const NEAR_PLANE_SHARED = perspectivePixelPos(0, 0, 1);
+const NEAR_PLANE_B_END = perspectivePixelPos(9, 12, 1.5);
+
+function buildNearPlaneJoinTexelSource(): LineTexelSource {
+  const src = buildJoinTexelSource();
+  return {
+    ...src,
+    startPositions: new Float32Array([...NEAR_PLANE_A_START, ...NEAR_PLANE_SHARED]),
+    endPositions: new Float32Array([...NEAR_PLANE_SHARED, ...NEAR_PLANE_B_END]),
+    // World-space leg lengths (the cap ramp's axial scale).
+    segmentLengths: new Float32Array([0.7252, 0.644]),
+  };
+}
+
+function buildJoinDataTexture(src: LineTexelSource): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Float32Array(48), 6, 2, THREE.RGBAFormat, THREE.FloatType);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.flipY = false;
-  writeLineTexels(tex, texels, 2);
+  writeLineTexels(tex, src, 2);
   return tex;
 }
 
-function buildJoinMesh(material: THREE.Material, texels: LineTexelSource): THREE.Object3D {
-  const mesh = createInstancedLinesMesh({ ...texels, segmentCount: 2 }, material);
+function buildJoinMesh(src: LineTexelSource, material: THREE.Material): THREE.Object3D {
+  const mesh = createInstancedLinesMesh({ ...src, segmentCount: 2 }, material);
   mesh.frustumCulled = false;
   return mesh;
 }
 
-/**
- * The camera + uniform configuration one join fixture PAIR is authored for.
- * Factored out so the ortho V above and the perspective near-plane scenario
- * below share `joinEntry`'s style plumbing instead of duplicating it — the
- * `uLineJoin` / factory-`join` coupling is the fiddly part and must be
- * identical in both pairs.
- */
+/** The two-segment joint geometry a {@link joinEntry} pair renders. */
 interface JoinFixture {
   readonly texels: () => LineTexelSource;
   readonly isOrtho: boolean;
-  /** Everything but `uLineJoin`, which `joinEntry` supplies. */
-  readonly uniforms: (texture: THREE.DataTexture) => Record<string, THREE.IUniform>;
   readonly buildCamera?: () => THREE.Camera;
+  /** `uNearCull`; defaults to `buildVisualLineUniforms`'s 0.01. */
+  readonly nearCull?: number;
 }
 
-/** The original ortho V (see {@link buildJoinTexelSource}). */
-const ORTHO_JOIN_FIXTURE: JoinFixture = {
-  texels: buildJoinTexelSource,
-  isOrtho: true,
-  uniforms: (texture) => buildVisualLineUniforms(texture, true),
+const END_TO_START_JOIN: JoinFixture = { texels: buildJoinTexelSource, isOrtho: true };
+const SAME_PARITY_JOIN: JoinFixture = { texels: buildSameParityJoinTexelSource, isOrtho: true };
+const TAPER_JOIN: JoinFixture = {
+  texels: buildTaperJoinTexelSource,
+  isOrtho: false,
+  buildCamera: buildBehindCamera,
+};
+const NEAR_PLANE_JOIN: JoinFixture = {
+  texels: buildNearPlaneJoinTexelSource,
+  isOrtho: false,
+  buildCamera: buildBehindCamera,
+  nearCull: NEAR_PLANE_CULL,
 };
 
 /**
+ * @param fixture - the joint geometry (see {@link JoinFixture}).
  * @param join - the `uLineJoin` value. BOTH backends must be driven from this
  * one number: GLSL reads it as a runtime uniform while the TSL factory bakes it
- * into the graph (via `lineJoinStyleFromUniform` in the ShaderSource path), so
- * a fixture that set only one of them would compare a mitred quad against an
- * unmitred one and fail for the wrong reason.
- * @param fixture - which joint geometry/camera to render it on.
+ * into the graph (`buildTSLMaterial` below passes `join` to the factory, which
+ * simply omits the join block for `none`), so a fixture that set only one of
+ * them would compare a mitred quad against an unmitred one and fail for the
+ * wrong reason.
  */
-function joinEntry(join: number, fixture: JoinFixture = ORTHO_JOIN_FIXTURE): RegistryEntry {
+function joinEntry(fixture: JoinFixture, join: number): RegistryEntry {
   return {
     source: LINE_SOURCE,
     buildUniforms: () => ({
-      ...fixture.uniforms(buildJoinDataTexture(fixture.texels())),
+      ...buildVisualLineUniforms(
+        buildJoinDataTexture(fixture.texels()),
+        fixture.isOrtho,
+        fixture.nearCull
+      ),
       uLineJoin: { value: join },
     }),
     buildDefines: () => ({ LUXAR_GAMMA_ONE: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
@@ -561,112 +734,10 @@ function joinEntry(join: number, fixture: JoinFixture = ORTHO_JOIN_FIXTURE): Reg
       material.blending = THREE.NoBlending;
       return material;
     },
-    buildMesh: (material) => buildJoinMesh(material, fixture.texels()),
+    buildMesh: (material) => buildJoinMesh(fixture.texels(), material),
     ...(fixture.buildCamera ? { buildCamera: fixture.buildCamera } : {}),
   };
 }
-
-/**
- * The PERSPECTIVE near-plane joint of issue #1346, built entirely from
- * `tests/helpers/line-join-near-plane-scenario.ts` — the same module the vitest
- * mirror test consumes, so the two are provably one configuration.
- *
- * Segment A runs from the front to the shared vertex; segment B runs from the
- * shared vertex to a point BEHIND the near-cull plane while its own shared
- * endpoint stays unclipped. Under the old one-sided guard, A saw B's far
- * endpoint behind the plane and fell back to the plain perpendicular while B
- * saw A's in front and mitred ALONE — an asymmetric flap at the joint. With the
- * guard two-sided BOTH sides fall back and keep their code-implied cap, so the
- * `-miter` render must be pixel-identical to `-none`; that identity is what the
- * parity spec asserts, and it is sharp (pre-fix the two differed).
- *
- * The existing ortho `line-join-miter` pair cannot see this: `uIsOrtho == 1`
- * short-circuits the near-plane test to true on both sides, so no ortho fixture
- * can ever exercise the conjunction.
- *
- * Paired with a CONTROL fixture that moves B's far endpoint in front of the
- * plane and changes nothing else. "miter == none" is satisfied by every way the
- * join block can fail to RUN — width gate closed, mis-encoded joint code, wrong
- * storage slot, culled segment, quad off-screen — so on its own it would be a
- * weak claim. The control proves the miter fires under this exact camera and
- * these exact uniforms, which is what gives the identity next to it meaning.
- *
- * See the scenario module for why each number is what it is; the uniforms here
- * are the ones it is authored against (`uNearCull = 0.5` deliberately ABOVE the
- * camera's own 0.1 near plane, and the real
- * `uPerspectiveLineScale = resolutionY / tan(fov/2)`).
- *
- * @param bFar - segment B's far endpoint: `NEAR_PLANE_B_FAR` (behind the
- * near-cull plane, the reproducing case) or `NEAR_PLANE_CONTROL_B_FAR`.
- */
-function buildNearPlaneJoinTexelSource(bFar: Vec3): LineTexelSource {
-  const segments = nearPlaneSegments(bFar);
-  const color = [1, 0.5, 0.25];
-  return {
-    startPositions: new Float32Array(segments.flatMap((s) => [...s.start])),
-    endPositions: new Float32Array(segments.flatMap((s) => [...s.end])),
-    startColors: new Float32Array([...color, ...color]),
-    endColors: new Float32Array([...color, ...color]),
-    startWidths: new Float32Array([NEAR_PLANE_WIDTH, NEAR_PLANE_WIDTH]),
-    endWidths: new Float32Array([NEAR_PLANE_WIDTH, NEAR_PLANE_WIDTH]),
-    startSharpness: new Float32Array([0.5, 0.5]),
-    endSharpness: new Float32Array([0.5, 0.5]),
-    segmentLengths: new Float32Array(segments.map((s) => worldLength(s.start, s.end))),
-    startJointCode: new Float32Array(segments.map((s) => s.startJointCode)),
-    endJointCode: new Float32Array(segments.map((s) => s.endJointCode)),
-  };
-}
-
-/**
- * This pair's OWN camera, constructed from `NEAR_PLANE_CAMERA` rather than
- * reusing `buildBehindCamera`. The shared one is wired into ~20 unrelated point
- * / gsplat / line fixtures, so retuning it for one of those would silently move
- * this joint out of the configuration the scenario module's depths, half-widths
- * and `turn` are computed for. Building it from the same constants keeps the
- * numbers and the camera from drifting apart.
- */
-function buildNearPlaneJoinCamera(): THREE.Camera {
-  const { fovDegrees, aspect, near, far, camZ } = NEAR_PLANE_CAMERA;
-  const camera = new THREE.PerspectiveCamera(fovDegrees, aspect, near, far);
-  camera.position.set(0, 0, camZ);
-  camera.lookAt(0, 0, 0);
-  return camera;
-}
-
-/**
- * The reproducing case: B's far endpoint BEHIND the near-cull plane.
- *
- * Every uniform the scenario's arithmetic depends on is taken FROM the scenario
- * module — `uNearCull`, `uPerspectiveLineScale`, `uMaxLinePixelWidth` — so the
- * numbers and the fixture cannot drift apart. `uResolution` is the deliberate
- * exception: it must equal the harness's fixed render-target edge
- * (`HARNESS_SIZE` in `./render`), which `buildVisualLineUniforms` already
- * supplies, and overriding it from `NEAR_PLANE_CAMERA.resolution` would create a
- * shader/target mismatch on a harness resize rather than a coupling. See that
- * field's doc comment.
- */
-const NEAR_PLANE_JOIN_FIXTURE: JoinFixture = {
-  texels: () => buildNearPlaneJoinTexelSource(NEAR_PLANE_B_FAR),
-  isOrtho: false,
-  uniforms: (texture) => ({
-    ...buildVisualLineUniforms(texture, false, NEAR_PLANE_CAMERA.nearCull),
-    uPerspectiveLineScale: { value: PERSPECTIVE_LINE_SCALE },
-    uMaxLinePixelWidth: { value: NEAR_PLANE_CAMERA.maxLinePixelWidth },
-  }),
-  buildCamera: buildNearPlaneJoinCamera,
-};
-
-/**
- * The CONTROL: identical camera, uniforms and joint codes, with B's far endpoint
- * moved in FRONT of the near-cull plane. Both sides mitre here, so this pair's
- * `miter` must differ strongly from its `none` — the proof that the join block
- * runs at all under this camera, without which the pair above could pass by
- * never reaching the block.
- */
-const NEAR_PLANE_CONTROL_JOIN_FIXTURE: JoinFixture = {
-  ...NEAR_PLANE_JOIN_FIXTURE,
-  texels: () => buildNearPlaneJoinTexelSource(NEAR_PLANE_CONTROL_B_FAR),
-};
 
 function jointCodeEntry(jointCode: number): RegistryEntry {
   const style: LineFixtureStyle = {
@@ -753,22 +824,30 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // join block at all. Pinned as a PAIR: `-miter` must match across backends,
   // and the parity spec additionally requires it to DIFFER from `-none`, which
   // is what proves the join is running rather than being silently skipped.
-  'line-join-miter': joinEntry(1.0),
-  'line-join-none': joinEntry(0.0),
-  // The PERSPECTIVE near-plane joint of #1346 (see NEAR_PLANE_JOIN_FIXTURE):
-  // segment B runs off behind the near-cull plane while its shared endpoint
-  // stays unclipped. Pinned as a pair whose two members must be pixel-IDENTICAL
-  // — with the near-plane guard two-sided both segments fall back and keep
-  // their code-implied cap, so styling the joint `miter` changes nothing here.
-  // Pre-fix B mitred alone and the two differed.
-  'line-join-nearplane-miter': joinEntry(1.0, NEAR_PLANE_JOIN_FIXTURE),
-  'line-join-nearplane-none': joinEntry(0.0, NEAR_PLANE_JOIN_FIXTURE),
-  // ...and its CONTROL, same camera and uniforms with B's far endpoint moved in
-  // FRONT of the plane. This pair must DIFFER, which is what proves the join
-  // block runs under this camera at all — otherwise the identity above would be
-  // satisfied by every way the block can fail to run.
-  'line-join-nearplane-control-miter': joinEntry(1.0, NEAR_PLANE_CONTROL_JOIN_FIXTURE),
-  'line-join-nearplane-control-none': joinEntry(0.0, NEAR_PLANE_CONTROL_JOIN_FIXTURE),
+  'line-join-miter': joinEntry(END_TO_START_JOIN, 1.0),
+  'line-join-none': joinEntry(END_TO_START_JOIN, 0.0),
+  // The SAME-PARITY (END-END) twin of the pair above. An end->start joint is
+  // structurally blind to the partner-leg orientation — `atEnd` and
+  // `partnerSharesItsStart` agree there — so this is the pair that pins it.
+  // The parity spec additionally requires the mitred render to be AT LEAST AS
+  // BRIGHT as the unmitred one around the shared vertex: the pre-fix
+  // orientation read turn = -0.6 here, which both declined the miter and kept
+  // the soft endpoint cap, i.e. it rendered DIMMER than `none`.
+  'line-join-same-parity-miter': joinEntry(SAME_PARITY_JOIN, 1.0),
+  'line-join-same-parity-none': joinEntry(SAME_PARITY_JOIN, 0.0),
+  // TAPERED joint under a PERSPECTIVE camera. The first line fixtures to reach
+  // the join block off the ortho fast path, and the ones that pin the
+  // DECLINED-miter cap derivation — this joint is a right angle the block
+  // declines rather than mitres. They do NOT gate the 2 px width straddle or
+  // the near-plane conjunction; see {@link TAPER_JOIN} for why.
+  'line-join-taper-miter': joinEntry(TAPER_JOIN, 1.0),
+  'line-join-taper-none': joinEntry(TAPER_JOIN, 0.0),
+  // NEAR-PLANE joint: nearCull 0.6 with segment 0's far endpoint at depth 0.3,
+  // so the guard's two operands genuinely disagree. Both sides must decline,
+  // which makes `-miter` and `-none` pixel-identical; the one-sided guard let
+  // segment 0 miter alone and flap. See {@link NEAR_PLANE_JOIN}.
+  'line-join-near-plane-miter': joinEntry(NEAR_PLANE_JOIN, 1.0),
+  'line-join-near-plane-none': joinEntry(NEAR_PLANE_JOIN, 0.0),
   // Multi-row texture-orientation parity: the segment renders from
   // STORAGE SLOT 1 of a 2-row texture (row 0 is a green decoy). Both
   // backends must resolve the same row — a Y-flip mismatch between the

@@ -45,6 +45,9 @@ DEFAULT_BLENDING_MODE: Final[str] = "additive"
 # The viewer mirror is `packages/luxar-viewer/src/types/line-join.ts`; keep the
 # spellings and the default in step with it.
 LINE_JOIN_STYLES: Final[frozenset[str]] = frozenset({"none", "miter"})
+# Documentation of the shared default, deliberately WITHOUT a reader here: the
+# writer must not bake a join style into the file, or an unset node would freeze
+# today's default forever and the viewer could never move it. Not dead code.
 DEFAULT_LINE_JOIN: Final[str] = "miter"
 
 # Absorption (kappa) — the volumetric blending mode's per-node coefficient.

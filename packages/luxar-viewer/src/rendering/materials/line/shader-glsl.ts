@@ -437,7 +437,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         vViewZ = 0.0;
         return;
       }
-      float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
       // Fade intensity in proportion to the clamp so the giant quad
       // doesn't overcontribute. fade=1 when not clamped, →0 as the
       // raw width grows past the clamp by a factor.
@@ -473,17 +472,33 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // backends disagreed as well. Evaluating both ends everywhere makes the
       // two caps segment-constant, which is what "flat" requires.
       //
-      // The third argument is THIS segment's OTHER endpoint's PRE-CLIP depth
-      // (endDepth at the start, startDepth at the end), which the two-sided
-      // near-plane guard needs — see luxarLineJoin. Pre-clip, because that is
-      // the value the partner derives for this segment from uLineTex.
+      // Per-END widths, not this vertex's: the gate inside luxarLineJoin must be
+      // segment-constant or the "flat" cap varyings below resolve from whichever
+      // corner provokes (see luxarLineEndPixelWidth). Geometrically identical —
+      // each equals the per-vertex clamped width at the corner that consumes it
+      // (at a t=0 vertex tEff == tA and mvPos == mvStart, symmetrically at t=1),
+      // so only the DECISIONS become segment-constant. Same #849 reasoning as
+      // segMaxPixelWidth above.
+      //
+      // The trailing depth argument is the segment's FAR endpoint, from the
+      // ORIGINAL pre-clipping depths: the near-plane guard inside the helper
+      // needs both far endpoints of the joint, so the start call passes the
+      // END's depth and the end call the START's.
+      float startEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tA), mvStart.z, nearCull),
+        minPixelWidth, maxPW
+      );
+      float endEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tB), mvEnd.z, nearCull),
+        minPixelWidth, maxPW
+      );
       vec3 startJoin = luxarLineJoin(
-        false, tA <= 0.0, endDepth, aStartJointCode, ndcStart,
-        lineDir, pixelLen, clampedPixelWidth, nearCull
+        false, tA <= 0.0, aStartJointCode, ndcStart,
+        lineDir, pixelLen, startEndPixelWidth, endDepth, nearCull
       );
       vec3 endJoin = luxarLineJoin(
-        true, tB >= 1.0, startDepth, aEndJointCode, ndcEnd,
-        lineDir, pixelLen, clampedPixelWidth, nearCull
+        true, tB >= 1.0, aEndJointCode, ndcEnd,
+        lineDir, pixelLen, endEndPixelWidth, startDepth, nearCull
       );
       if (startJoin.z >= 0.0) vCapSuppressStart = startJoin.z;
       if (endJoin.z >= 0.0) vCapSuppressEnd = endJoin.z;

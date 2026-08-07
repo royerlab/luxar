@@ -44,7 +44,11 @@ either `uPerspectiveLineScale = resY / tan(fov/2)` or
 `uOrthoLineScale = 2·resY / frustumHeight` (precomputed CPU-side so the
 shader has no `tan()` or projection-mode divide), clamps to
 `[1.5 px, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
-offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × clampedPixelWidth`.
+offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × startEndPixelWidth` /
+`endEndPixelWidth` — the clamped pixel half-width of the END this corner sits at
+(from the shared `luxarLineEndPixelWidth` / `tslLineEndPixelWidth` helper),
+which is segment-constant and equals the per-vertex clamp exactly at the corner
+it is consumed at (the join below needs it segment-constant; see there).
 The fragment stage shades
 `capFactor × perpFalloff × edgeAA × widthScale × vWidthFade × nearFade` (the near
 fade is computed PER-FRAGMENT from the interpolated view depth `vViewZ` — a
@@ -173,21 +177,19 @@ coordinate and the super-Gaussian cross-section is unchanged.
 Both sides of a joint must take the same branch, or one rotated edge has
 nothing to tile against and rasterises as a flap. The guards are therefore
 computed from operands that are identical on either side — the shared
-vertex's width and depth, and `min()` over the two lengths — with the
-directions read in a canonical order (incoming edge first):
+vertex's width, the depths of the joint's two FAR endpoints (NOT the shared
+vertex's own; see the bullet below), and `min()` over the two lengths — with
+the directions read in a canonical order (incoming edge first):
 
 - miter limit `grow = sqrt(2/(1+turn)) ≤ 2` (θ ≤ 120°)
 - overshoot on the **axial** reach `R·tan(θ/2) ≤ ½·min(pixelLen, partnerLen)`
   — not on `|M|`, which is ≈R always and would disable the join on every
   polyline whose segments are shorter than twice the tube radius, i.e.
   exactly the dense-curve case
-- **both** far endpoints in front of the near-cull plane — each side passes its
-  own other endpoint's **pre-clip** depth in, which is what the partner reads
-  for it out of `uLineTex`, so the conjunction is identical on either side.
-  Testing only the partner's let one segment mitre alone (#1346): with `B`
-  running off behind the plane, `A` saw `B`'s far endpoint behind and fell back
-  while `B` saw `A`'s in front and mitred
-- this endpoint must actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
+- BOTH far endpoints of the joint — the partner's and this segment's own —
+  must be in front of the near plane (testing only the partner's has each side
+  testing a different point, so one side can miter alone against nothing), and
+  this endpoint must actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
 - a **rendered-width gate** of 2 px: the wedge has area ~θ·R²/2, so below
   that it is sub-pixel and the line is already pinned to the 1.5 px floor
   with its intensity faded. The cost then lands only where the benefit is —
@@ -202,12 +204,43 @@ Where the block is skipped, the code-implied cap above applies instead, which
 is exact for the straight and gentle joints that dominate real polyline data
 and are projection-invariant anyway.
 
-**All four stages build the same quad**: the visual and picking GLSL vertex
-shaders both call `luxarLineJoin` from the shared `glsl-lib.ts` block, and the
-visual and picking TSL factories both call its twin `tslLineJoin` in
-`tsl-helpers.ts`. One implementation per language, so a pick footprint cannot
-drift from what the eye sees, and the cross-backend pixel claim is pinned by the
-`line-join-*` fixtures in the GLSL↔TSL parity harness.
+All four stages build the join from one source: the visual and pick GLSL vertex
+shaders share `GLSL_LINE_JOIN`'s `luxarLineJoin`, and the visual and pick TSL
+factories share its twin `tslLineJoin` (`_shared/tsl-helpers.ts`). Parity tests
+assert the two backends agree on the VISUAL join — end→start, END–END, and a
+tapered perspective joint (`line-join-*` in the TSL harness) — so a mitred
+joint is not a WebGL2/WebGPU difference. The pick stages run the same helper by
+construction, but no pick fixture carries a slot-bearing joint code, so a
+mitred corner's pick footprint is not pixel-pinned on either backend.
+
+The wedge was given an automated acceptance measurement before it was
+closed, and that harness stays. `../../../tests/e2e/line-join-artifact.spec.ts`
+renders the `test_line_joins` fixture (five joint cases, one per horizontal
+band — smooth curve, 90° zigzag, thin and thick straights, and a nine-ray
+hub) and scores every band on one frame with the pure metrics in
+`../../../tests/helpers/line-join-metrics.ts`. There are **two** metrics
+because each is blind to what the other catches: a local-median outlier
+count sees the narrow one-to-two-pixel wedge tick but tracks any smooth
+variation invisibly, while an axial flux profile (cross-section sum along
+the tube, normalised by its own median) sees exactly the smooth
+per-joint dip that was the #780 bead chain and would score zero on the
+outlier metric. The spec asserts what already holds — zero dark and zero
+bright outliers on both straight bands, flat flux profiles on both, and a
+gapless flux profile on all five — and records the bend cases under
+documented ceilings. Those ceilings were recorded against the unmitred
+renderer and have not been re-measured since the miter landed, so they
+now stand as pre-miter upper bounds rather than as a description of what
+the bend bands look like today.
+
+Read the metrics module header before quoting one of its numbers, and
+read them as the pre-miter figures they are: the local-median count is
+non-monotone in defect width (a wedge three or more pixels across poisons
+its own median and scores zero), so the gentle `curve_smooth` band
+measured 4.94% dark while the 90° `zigzag_right_angle`, whose wedge is
+far worse but far wider, measured 0.077%. For wide wedges the axial flux
+dip is the measure that responds — p05 0.749 on the zigzag against 1.000
+on the straight bands. (Measured pre-miter with `dpr=1` pinned, headless
+Chromium, 2026-08-06.)
 
 ## Geometry and storage layout
 
@@ -338,3 +371,4 @@ they remain the readable reference even after the TSL path stabilises.
 - `../../material-manager.ts` — creates the per-node line materials and owns the camera-broadcast loop
 - `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage screen-space expansion math
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
+- `../../../tests/e2e/line-join-artifact.spec.ts` / `../../../tests/helpers/line-join-metrics.ts` — the joint-artifact acceptance measurement described above (#780 / #785 / #790)

@@ -188,6 +188,21 @@ float luxarLineJointCapSuppression(float jointCode) {
 `;
 
 /**
+ * Rendered half-width (px) below which the join is skipped.
+ *
+ * The uncovered wedge has area ~theta*R^2/2, so under a couple of pixels it is
+ * sub-pixel and invisible — and a line that thin already sits on the 1.5 px
+ * floor with its intensity faded. Gating on width puts the cost only where the
+ * benefit is: million-segment scenes are thin-line scenes and skip the block.
+ *
+ * Lives HERE, in the dependency-free GLSL block, and is interpolated into the
+ * shader source below AND imported by the TSL twin, so the two backends cannot
+ * drift. (`tsl-helpers.ts` pulls in `three/tsl`; `glsl-lib.ts` imports nothing,
+ * which makes it the safe direction for the shared constant to flow.)
+ */
+export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
+
+/**
  * Screen-space join geometry at degree-2 polyline joints (#790), shared by the
  * visual and picking GLSL vertex stages.
  *
@@ -206,10 +221,11 @@ float luxarLineJointCapSuppression(float jointCode) {
  * what the eye sees, so this lives here rather than being written twice.
  *
  * REQUIRED GLOBALS (same implicit-context pattern as `GLSL_SORTED_INDEX`):
- * `uLineTex`, `uResolution`, `uIsOrtho`, `modelViewMatrix`,
- * `projectionMatrix`, and `luxarSortedIndex()`. Include this block AFTER
- * those declarations — GLSL resolves names top-down. `uLineJoin` is declared
- * here, so an including shader must not declare it again.
+ * `uLineTex`, `uResolution`, `uIsOrtho`, `uOrthoLineScale`,
+ * `uPerspectiveLineScale`, `modelViewMatrix`, `projectionMatrix`, and
+ * `luxarSortedIndex()`. Include this block AFTER those declarations — GLSL
+ * resolves names top-down. `uLineJoin` is declared here, so an including
+ * shader must not declare it again.
  */
 export const GLSL_LINE_JOIN = `
 // Join style at degree-2 polyline joints: 0 none, 1 miter. Runtime uniform
@@ -229,6 +245,28 @@ vec3 luxarLinePixelPos(vec3 localPos, float nearCullValue) {
   return vec3(ndc * (0.5 * uResolution), -mv.z);
 }
 
+// Rendered half-width AT ONE ENDPOINT, in pixels, for either projection.
+//
+// The rendered width is otherwise PER-VERTEX: it interpolates the width and the
+// view depth at the vertex's own t, so the t=0 and t=1 corners of one quad see
+// different values (the same property that forced the pathological cull to gate
+// on a segment-constant max — issue #849). Feeding a per-vertex width to
+// luxarLineJoin would make the join's width gate per-vertex, and both cap
+// varyings are "flat": the two triangles of a quad provoke from different
+// vertices, so a segment whose ends straddle the gate would resolve its cap
+// from whichever corner happened to provoke, and WebGL and WGSL would disagree
+// about which that is.
+//
+// Evaluated at an END this is segment-constant, and it agrees with the
+// per-vertex value exactly at the corner that consumes it (t=1 interpolates to
+// mvEnd and endW), so the geometry is unchanged. Both segments meeting at a
+// joint also read the SAME shared vertex, so they still agree on the gate.
+float luxarLineEndPixelWidth(float widthAtEnd, float viewZ, float nearCullValue) {
+  return (uIsOrtho == 1)
+    ? (widthAtEnd * uOrthoLineScale)
+    : (widthAtEnd * uPerspectiveLineScale / max(-viewZ, nearCullValue));
+}
+
 // The corner offset and endpoint cap for one end of one segment.
 //   .xy  this corner's offset in pixel space, ALWAYS valid: the plain
 //        perpendicular half-width whenever no join applies.
@@ -237,24 +275,34 @@ vec3 luxarLinePixelPos(vec3 localPos, float nearCullValue) {
 vec3 luxarLineJoin(
   bool atEnd,             // this vertex sits at the segment's END (t == 1)
   bool reachesVertex,     // near-clipping did NOT move this endpoint
-  float thisFarDepth,     // PRE-CLIP view depth of THIS segment's OTHER endpoint
   float jointCode,        // texel4.y at the start, texel4.z at the end
   vec2 sharedNdc,         // NDC of the shared vertex (ndcStart / ndcEnd)
   vec2 lineDir,           // this segment's unit direction, pixel space
   float pixelLen,
-  float clampedPixelWidth,
+  float joinPixelWidth,   // THIS END's clamped pixel half-width — segment-
+                          // constant, never the per-vertex one (see below)
+  float selfFarDepth,     // view-space depth (-mvZ) of THIS segment's far
+                          // endpoint, i.e. the one that is NOT the shared
+                          // vertex, from the UNCLIPPED endpoint depths
   float nearCull
 ) {
   vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
-  vec3 noJoin = vec3(perpendicular * clampedPixelWidth, -1.0);
+  vec3 noJoin = vec3(perpendicular * joinPixelWidth, -1.0);
 
-  // The wedge has area ~theta*R^2/2 pixels, so below a couple of pixels of
-  // half-width it is sub-pixel and invisible — and a line that thin already
-  // sits on the 1.5 px floor with its intensity faded. Gating on width puts
-  // the cost only where the benefit is: million-segment scenes are thin-line
-  // scenes and skip this entirely.
-  float joinMinHalfWidth = 2.0;
-  if (uLineJoin < 0.5 || clampedPixelWidth <= joinMinHalfWidth) return noJoin;
+  // The gate value is the shared LINE_JOIN_MIN_HALF_WIDTH, interpolated in from
+  // the TypeScript constant above (which the TSL twin imports) so the two
+  // backends cannot drift; its declaration carries the sub-pixel-wedge
+  // rationale.
+  //
+  // The width MUST be this end's own, not the calling vertex's: .z feeds a
+  // "flat" varying, so both this gate and the axial-overshoot guard below have
+  // to answer the same on all four quad corners. A per-vertex width makes a
+  // tapered or foreshortened segment straddle the gate, and then the cap is
+  // decided by the provoking vertex alone — which WebGL takes from the last
+  // vertex and WGSL from the first. Same reasoning as the #849 segment-constant
+  // pathological cull at the call sites.
+  float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};
+  if (uLineJoin < 0.5 || joinPixelWidth <= joinMinHalfWidth) return noJoin;
   // A near-clipped endpoint was moved onto the nearCull plane, so it is no
   // longer AT its source vertex and no neighbour meets it there.
   if (!reachesVertex) return noJoin;
@@ -291,31 +339,33 @@ vec3 luxarLineJoin(
     : texelFetch(uLineTex, pTexel, 0).xyz;
   vec3 farPx = luxarLinePixelPos(partnerFar, nearCull);
   vec2 sharedPx = sharedNdc * (0.5 * uResolution);
-  // The partner runs FROM the shared vertex TO its far endpoint when it shares
-  // its start, and the other way when it shares its end.
-  vec2 partnerDelta = partnerSharesItsStart
-    ? (farPx.xy - sharedPx)
-    : (sharedPx - farPx.xy);
+  // Orient the partner leg on THIS segment's traversal sense — on atEnd, NOT
+  // on which of the partner's endpoints happens to be the shared one. With
+  // dirIn = atEnd ? lineDir : partnerDir (and dirOut its mirror) the chain runs
+  // through the joint the way THIS segment traverses it, so the partner leg has
+  // to point AWAY from the shared vertex when this segment ARRIVES there
+  // (atEnd) and INTO it when this segment LEAVES it. Orienting on
+  // partnerSharesItsStart is only right for the end->start / start->end chains:
+  // at an END-END or START-START joint it hands back the partner's own
+  // traversal direction, which is the negation of what this joint needs, so a
+  // collinear joint reads turn = -1, the miter limit rejects it, and
+  // clamp(turn, 0, 1) keeps the soft cap — the #780 dimming, back at every
+  // same-parity joint. Oriented this way the two sides evaluate the IDENTICAL
+  // (dirIn, dirOut) pair at an end->start joint and the exactly negated pair at
+  // a same-parity one; both give the same turn and mirrored miter points, so
+  // the quads still tile. (partnerSharesItsStart still picks the texel above —
+  // it names the partner's FAR endpoint, which is a different question.)
+  vec2 partnerDelta = atEnd ? (farPx.xy - sharedPx) : (sharedPx - farPx.xy);
   float partnerLen = length(partnerDelta);
-  // NEAR-PLANE GUARD, TWO-SIDED (#1346). Testing only the PARTNER's far
-  // endpoint let the two sides of one joint disagree: segment A running from
-  // the front to the shared vertex, segment B running from it to a point
-  // behind the near-cull plane. A saw B's far endpoint behind and fell back to
-  // the plain perpendicular; B saw A's far endpoint in front, its own shared
-  // endpoint unclipped, and mitred ALONE — a wedge on one side of the joint
-  // and B's rotated edge protruding on the other. Each side therefore also
-  // tests ITS OWN far endpoint, so both evaluate the identical conjunction.
-  //
-  // thisFarDepth MUST be the PRE-CLIP view depth of this segment's other
-  // endpoint: that is bit-for-bit what the partner computes for this segment
-  // when it fetches the stored position from uLineTex and projects it with the
-  // same modelViewMatrix. Never "simplify" it to the near-clipped depth — the
-  // two sides would then compare different operands, which is the whole bug.
-  bool thisFarInFront = (uIsOrtho == 1) || (thisFarDepth >= nearCull);
-  bool partnerInFront = (uIsOrtho == 1) || (farPx.z >= nearCull);
-  if (!(thisFarInFront && partnerInFront) || partnerLen <= 0.0001 || pixelLen <= 0.0001) {
-    return noJoin;
-  }
+  // BOTH far endpoints must clear the near plane, not just the fetched one.
+  // Testing only the partner's makes each side test a DIFFERENT point: for A
+  // running front->shared meeting B running shared->behind, A declines while B
+  // accepts, so B miters alone and its rotated edge has nothing to tile
+  // against. With the conjunction A tests {A.far, B.far} and B tests {B.far,
+  // A.far} — the same pair — so both sides take the same branch. Ortho has no
+  // 1/z singularity, so the whole test stays inert there.
+  bool bothFarInFront = (uIsOrtho == 1) || (farPx.z >= nearCull && selfFarDepth >= nearCull);
+  if (!bothFarInFront || partnerLen <= 0.0001 || pixelLen <= 0.0001) return noJoin;
 
   // CANONICAL operand order — incoming edge first, outgoing second — so both
   // segments meeting here evaluate the same expression and, crucially, take
@@ -342,20 +392,11 @@ vec3 luxarLineJoin(
   // magnitude disables the join on every polyline whose segments are shorter
   // than twice the tube radius, i.e. exactly the dense-curve case this issue
   // is about. Both tests read the same operands from either side, so the two
-  // quads always agree, TO ROUNDING, on whether this joint is mitred — the same
-  // quantity is reached by different float expressions on the two sides, so a
-  // joint tuned within an ulp of grow == 2.0 can still split.
-  //
-  // min(pixelLen, partnerLen) is honest only BECAUSE the near-plane guard above
-  // is two-sided: a segment whose far endpoint is near-clipped contributes a
-  // SHORTENED pixelLen on its own side but its full stored length on the
-  // partner's, so the two sides would take the min over different pairs. With
-  // the symmetric guard any near-clipped endpoint on either segment rejects the
-  // joint on BOTH sides, so a clipped pixelLen never reaches this comparison.
+  // quads always agree on whether this joint is mitred.
   float grow = sqrt(2.0 / max(1.0 + turn, 1e-6));
-  float axialReach = clampedPixelWidth * sqrt(max(grow * grow - 1.0, 0.0));
+  float axialReach = joinPixelWidth * sqrt(max(grow * grow - 1.0, 0.0));
   if (grow > 2.0 || axialReach > 0.5 * min(pixelLen, partnerLen)) {
-    return vec3(perpendicular * clampedPixelWidth, suppression);
+    return vec3(perpendicular * joinPixelWidth, suppression);
   }
 
   // Intersection of the two segments' +R offset lines. It reduces to R * perp
@@ -366,6 +407,6 @@ vec3 luxarLineJoin(
   // so nothing may dim it.
   vec2 perpIn = vec2(-dirIn.y, dirIn.x);
   vec2 perpOut = vec2(-dirOut.y, dirOut.x);
-  return vec3((perpIn + perpOut) * (clampedPixelWidth / (1.0 + turn)), 1.0);
+  return vec3((perpIn + perpOut) * (joinPixelWidth / (1.0 + turn)), 1.0);
 }
 `;

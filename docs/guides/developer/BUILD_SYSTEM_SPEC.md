@@ -330,8 +330,9 @@ MIN_NODE_MINOR := 22
 | `make generate-doc-images` | Generate documentation screenshots using Playwright (depends on `generate-readme-demos`) |
 | `make serve-docs` | Serve documentation locally |
 | `make clean-docs` | Clean documentation artifacts |
-| `make check-docs` | Check documentation quality |
-| `make check-docs-verbose` | Check documentation with detailed output |
+| `make check-docs` | Run the PR documentation gate locally: pnpm-override guard, completeness ratchet, TypeDoc warning ratchet, and the warning-fatal Sphinx build (mirrors the required `docs-quality` CI job) |
+| `make check-docs-verbose` | Same gate with verbose completeness output |
+| `make check-docs-external-links` | Opt-in external HTTP link audit (`sphinx-build -b linkcheck`); deliberately not a required CI gate |
 | `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
 ### Utilities

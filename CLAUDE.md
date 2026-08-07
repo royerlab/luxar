@@ -54,6 +54,10 @@ make type-check-python  # read-only: mypy
 make security           # read-only: bandit
 make check-typescript   # read-only: typecheck + lint + unit tests
 make check-rust   # Rust type/lint checks (cargo check + clippy)
+make check-docs   # REQUIRED gate mirror: completeness + TypeDoc ratchets +
+                  # warning-fatal Sphinx. A new file under docs/ must be listed
+                  # in a docs/index.rst toctree or this goes red.
+make check-docs-external-links  # opt-in external HTTP link audit (not a gate)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
 make format-all   # Format all code (Python, TypeScript, Rust, Go, CUDA)
 
@@ -822,12 +826,11 @@ npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
 pnpm test:generate-fixtures
 npx playwright test geometry-types.spec.ts blending-modes.spec.ts colormap-system.spec.ts \
   post-processing-pipeline.spec.ts rendering-controls.spec.ts ortho-mode.spec.ts
-# Line joint artifacts (#785/#790) — measures each joint topology as its own
-# band with TWO metrics (local-median outliers + axial flux ripple; the first
-# is structurally blind to the #780 bead-notch class the second catches).
-# WebGL only: it A/Bs a live uLineJoin flip, and the TSL backend bakes the
-# join style into the graph instead.
-npx playwright test line-join-artifacts.spec.ts
+# Line joint artifacts (#780/#785/#790) — scores each joint topology as its
+# own band of one frame with TWO metrics (local-median outliers + axial flux
+# ripple; the first is structurally blind to the bead-notch class the second
+# catches). Needs generate-fixtures.
+npx playwright test line-join-artifact.spec.ts
 
 # Data & I/O
 npx playwright test data-integrity.spec.ts dataset-switching.spec.ts real-dataset-loading.spec.ts \
@@ -1099,6 +1102,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 ```bash
 make test-all                    # All tests pass
 make check-all                   # Linting, type checking
+make check-docs                  # Documentation gate (required check in CI)
 pnpm run format                  # Format TypeScript (from luxar-viewer/)
 ```
 

@@ -157,3 +157,32 @@ def test_require_lod_message_names_the_valid_set_and_the_reason() -> None:
     for capable in lod_capable_types():
         assert repr(capable) in message
     assert "LOD ladder" in message
+
+
+def test_a_non_mesh_lodless_type_gets_a_GENERIC_message() -> None:
+    """The mesh explanation must not be attached to every rejection.
+
+    ``require_lod_display_type`` guards any LOD-less geometry type, not just mesh, and
+    its message used to explain the additive-vs-substitutive distinction unconditionally.
+    For a different type that would be a confidently wrong diagnostic — it reads as
+    though it were about the type the caller named.
+
+    Simulated by making a currently-LOD-capable type look LOD-less, which is the only
+    way to reach the non-mesh branch while mesh is the sole excluded type.
+    """
+    from unittest.mock import patch
+
+    with patch(
+        "luxar.typing_utils.geometry_capabilities.supports_lod", return_value=False
+    ):
+        with pytest.raises(ValueError) as excinfo:
+            require_lod_display_type("points", "kind=lod group 'g'")
+    message = str(excinfo.value)
+    assert "kind=lod group must be one of" in message
+    assert "QEM" not in message, "the mesh-specific rationale must not appear here"
+    assert "connected surface" not in message
+
+    # ...while mesh still gets the full explanation.
+    with pytest.raises(ValueError) as mesh_exc:
+        require_lod_display_type("mesh", "kind=lod group 'g'")
+    assert "QEM" in str(mesh_exc.value)

@@ -59,8 +59,9 @@ data). Criteria AND together.
 | `--dry-run` | Report impact (splats/mass/amplitude removed) and write nothing |
 
 Reuses `BatchedSpatialHashGrid` (`utils/spatial_hash.py`) for the neighbour
-queries; percentile/soft resolution lives in `filter_by` /
-`soft_scale_filter` (`gsplats/gsplat_data.py`).
+queries; percentile/soft resolution lives in `filter_by`
+(`gsplats/_data/filtering.py`) and `soft_scale_filter`
+(`gsplats/_data/intensity.py`).
 
 ### `convert` appearance
 

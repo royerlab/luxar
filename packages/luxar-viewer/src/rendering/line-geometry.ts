@@ -241,7 +241,9 @@ export const MAX_EXACT_JOINT_SLOT = 16777216 - 3;
  * the stream, not just the pair straddling the boundary.
  *
  * It also enforces the encoding's REPRESENTABILITY bound — see
- * {@link MAX_EXACT_JOINT_SLOT}.
+ * {@link MAX_EXACT_JOINT_SLOT} — and its WELL-FORMEDNESS: a code must decode to
+ * a non-negative integer slot, so a hand-authored fractional value cannot reach
+ * the shader and be truncated into a negative `texelFetch`.
  *
  * Exported for tests: the two rules bind at wildly different scales (the prefix
  * rule at whatever the node was clamped to, the representability rule only past
@@ -254,6 +256,13 @@ export function clampJointCode(code: number, written: number): number {
   // Sentinels (0, -1, -2) carry no slot and always pass through.
   if (code === 0 || code === -1 || code === -2) return code;
   const slot = code > 0 ? code - 1 : -code - 3;
+  // A slot must be a NON-NEGATIVE INTEGER, not merely small enough. The upper
+  // bounds alone accept a hand-authored fractional code — 0.75 decodes to
+  // slot -0.25, which the shader then reads as partner-bearing (> 0.5) and
+  // truncates to partnerSlot = -1, i.e. an out-of-range texelFetch. Same for a
+  // NaN or an infinity, which fail every comparison below anyway. This is the
+  // whole point of a second bound on codes the kernel did not emit.
+  if (!Number.isInteger(slot) || slot < 0) return 0;
   return slot < written && slot <= MAX_EXACT_JOINT_SLOT ? code : 0;
 }
 
