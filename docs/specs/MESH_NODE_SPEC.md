@@ -551,8 +551,8 @@ re-extraction of the display-space projection, **not** compaction — compaction
 `drawElements` never fetches an unreferenced vertex, so culled vertices cost nothing to draw, and the
 mesh is resident in full anyway (§7). This deliberately avoids:
 
-- `compact_by_mask` (`wasm/rust/src/projection.rs:122`), which is **`&[f32]`-only** and could not
-  compact the native `uint8`/`uint16` colors §3.2 permits without a widening pass (the `uint8`/`float16`
+- a generic mask-compaction helper over the vertex buffers, which would be **`&[f32]`-only** and could
+  not compact the native `uint8`/`uint16` colors §3.2 permits without a widening pass (the `uint8`/`float16`
   scalars are uploaded as `f32` on the attribute path anyway, §6.1.1, but the colors stay native, only
   padded RGB→RGBA);
 - a `vertex_remap` array and the index remapping that goes with it;

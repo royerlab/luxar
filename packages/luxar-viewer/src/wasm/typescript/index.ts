@@ -37,29 +37,17 @@ export {
   decode_lut_row_u16,
   decode_broadcasted,
 } from './decode';
-export {
-  extract_3d_positions,
-  calculate_bounds_3d,
-  compact_by_mask,
-  count_visible,
-  radii_to_visibility_mask,
-} from './projection';
+export { extract_3d_positions } from './projection';
 export {
   mahalanobis_distance,
-  extract_cholesky_submatrix,
+  /** Exposed for the parity tests; the Rust twin is private. */
   computeMarginalCholesky,
-  compute_gsplats_attenuation,
-  extract_visible_cholesky_3d,
-  compact_attenuated_amplitudes,
   project_gsplats_nd_to_3d,
 } from './gsplats-processing';
 export {
   clip_segment_single,
   clip_segments_batch,
   interpolate_clipped_positions,
-  lerp,
-  lerp_vec3,
-  distance_3d,
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
@@ -92,28 +80,12 @@ import {
   decode_lut_row_u16,
   decode_broadcasted,
 } from './decode';
-import {
-  extract_3d_positions,
-  calculate_bounds_3d,
-  compact_by_mask,
-  count_visible,
-  radii_to_visibility_mask,
-} from './projection';
-import {
-  mahalanobis_distance,
-  extract_cholesky_submatrix,
-  compute_gsplats_attenuation,
-  extract_visible_cholesky_3d,
-  compact_attenuated_amplitudes,
-  project_gsplats_nd_to_3d,
-} from './gsplats-processing';
+import { extract_3d_positions } from './projection';
+import { mahalanobis_distance, project_gsplats_nd_to_3d } from './gsplats-processing';
 import {
   clip_segment_single,
   clip_segments_batch,
   interpolate_clipped_positions,
-  lerp,
-  lerp_vec3,
-  distance_3d,
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
@@ -148,22 +120,11 @@ export class TypeScriptFallback implements WasmModule {
   decode_lut_row_u16 = decode_lut_row_u16;
   decode_broadcasted = decode_broadcasted;
   extract_3d_positions = extract_3d_positions;
-  calculate_bounds_3d = calculate_bounds_3d;
-  compact_by_mask = compact_by_mask;
-  count_visible = count_visible;
-  radii_to_visibility_mask = radii_to_visibility_mask;
   mahalanobis_distance = mahalanobis_distance;
-  extract_cholesky_submatrix = extract_cholesky_submatrix;
-  compute_gsplats_attenuation = compute_gsplats_attenuation;
-  extract_visible_cholesky_3d = extract_visible_cholesky_3d;
-  compact_attenuated_amplitudes = compact_attenuated_amplitudes;
   project_gsplats_nd_to_3d = project_gsplats_nd_to_3d;
   clip_segment_single = clip_segment_single;
   clip_segments_batch = clip_segments_batch;
   interpolate_clipped_positions = interpolate_clipped_positions;
-  lerp = lerp;
-  lerp_vec3 = lerp_vec3;
-  distance_3d = distance_3d;
   interpolate_scalars_batch = interpolate_scalars_batch;
   interpolate_colors_batch = interpolate_colors_batch;
   calculate_segment_lengths = calculate_segment_lengths;

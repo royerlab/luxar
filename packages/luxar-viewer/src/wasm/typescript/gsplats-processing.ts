@@ -5,8 +5,10 @@
  *
  * High-performance implementations of GSplats processing operations:
  * - Mahalanobis distance computation (forward substitution)
- * - Cholesky submatrix extraction
- * - Batch attenuation computation for visibility filtering
+ * - Marginal-covariance Cholesky factorization for a dimension subset
+ *   (`computeMarginalCholesky`) + display-marginal padding for 1D/2D scenes
+ * - Fused nD→3D projection (`project_gsplats_nd_to_3d`): attenuation,
+ *   visibility, and compaction in a single pass
  */
 
 import { MAX_SUPPORTED_DIMS } from '../../config/constants';
@@ -58,8 +60,8 @@ function packedIndex(row: number, col: number): number {
  *   Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
  *
  * This function reconstructs Σ_S and then Cholesky-factorizes it.
- * Simply extracting L elements (as extract_cholesky_submatrix does)
- * is INCORRECT when there are cross-dimension correlations.
+ * Simply extracting the raw L row/column sub-matrix is INCORRECT when there are
+ * cross-dimension correlations.
  *
  * @param fullPackedL - Full packed Cholesky factor array
  * @param fullPackedOffset - Offset into fullPackedL for this splat
@@ -254,127 +256,6 @@ export function mahalanobis_distance(
 }
 
 /**
- * Extract a Cholesky submatrix for specified dimensions.
- *
- * **WARNING**: This extracts raw L elements, NOT the correct marginal Cholesky factor.
- * For Σ = L·Lᵀ, the Cholesky of marginal covariance Σ_S ≠ submatrix of L when there
- * are cross-dimension correlations. Use `computeMarginalCholesky()` instead for
- * correct results with correlated covariances.
- *
- * @param packed - Full packed Cholesky [packedSize]
- * @param keepDims - Indices of dimensions to keep (must be sorted ascending) [subNdim]
- * @param subNdim - Number of dimensions to keep
- * @param output - Output packed submatrix [subPackedSize]
- */
-export function extract_cholesky_submatrix(
-  packed: Float32Array,
-  keepDims: Uint32Array,
-  subNdim: number,
-  output: Float32Array
-): void {
-  let outIdx = 0;
-
-  for (let subRow = 0; subRow < subNdim; subRow++) {
-    const origRow = keepDims[subRow];
-    for (let subCol = 0; subCol <= subRow; subCol++) {
-      const origCol = keepDims[subCol];
-      output[outIdx++] = packed[packedIndex(origRow, origCol)];
-    }
-  }
-}
-
-/**
- * Compute attenuation factors for all GSplats based on hidden dimension distance.
- *
- * For each splat, computes:
- * 1. Difference vector in hidden dimensions
- * 2. Mahalanobis distance using hidden Cholesky submatrix
- * 3. Attenuation via shifted Gaussian: scale · max(0, exp(-0.5 · D²) - C),
- *    where C = exp(-0.5 · truncate²) and scale = 1 / (1 - C) — C⁰-continuous truncation
- * 4. Visibility = (amplitude · attenuation) >= minAmplitude
- *
- * @param positions - Splat centers [splatCount * ndim]
- * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
- * @param amplitudes - Splat amplitudes [splatCount]
- * @param slicePosition - Current slice position [ndim]
- * @param hiddenDims - Indices of hidden dimensions (sorted) [numHidden]
- * @param ndim - Total dimensionality
- * @param splatCount - Number of splats
- * @param minAmplitude - Visibility threshold
- * @param truncate - Truncation radius in sigmas for the shifted Gaussian
- * @param outputVisibility - Output visibility mask [splatCount]
- * @param outputAttenuation - Output attenuation factors [splatCount]
- * @returns Number of visible splats
- */
-export function compute_gsplats_attenuation(
-  positions: Float32Array,
-  cholesky: Float32Array,
-  amplitudes: Float32Array,
-  slicePosition: Float32Array,
-  hiddenDims: Uint32Array,
-  ndim: number,
-  splatCount: number,
-  minAmplitude: number,
-  truncate: number,
-  outputVisibility: Uint8Array,
-  outputAttenuation: Float32Array
-): number {
-  const numHidden = hiddenDims.length;
-  const fullPackedSize = (ndim * (ndim + 1)) / 2;
-  const hiddenPackedSize = (numHidden * (numHidden + 1)) / 2;
-
-  // Shifted Gaussian constants for C⁰ continuous truncation
-  const shiftC = Math.exp(-0.5 * truncate * truncate);
-  const invOneMinusC = 1.0 / (1.0 - shiftC);
-
-  // Temporary buffers (pre-allocated, reused across all splats)
-  const diff = new Float32Array(numHidden);
-  const hiddenCholesky = new Float32Array(hiddenPackedSize);
-  const y = new Float32Array(numHidden); // Forward substitution buffer
-
-  let visibleCount = 0;
-
-  for (let i = 0; i < splatCount; i++) {
-    const centerOffset = i * ndim;
-    const choleskyOffset = i * fullPackedSize;
-
-    let attenuation: number;
-
-    if (numHidden === 0) {
-      // No hidden dimensions, full visibility
-      attenuation = 1.0;
-    } else {
-      // Compute difference vector in hidden dimensions
-      for (let hIdx = 0; hIdx < numHidden; hIdx++) {
-        const d = hiddenDims[hIdx];
-        diff[hIdx] = slicePosition[d] - positions[centerOffset + d];
-      }
-
-      // Compute marginal Cholesky for hidden dimensions
-      computeMarginalCholesky(cholesky, choleskyOffset, hiddenDims, numHidden, hiddenCholesky, 0);
-
-      // Compute Mahalanobis distance (reuses pre-allocated y buffer)
-      const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numHidden, y);
-
-      // Shifted Gaussian attenuation: scale · max(0, exp(-0.5·D²) - C)
-      const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
-      attenuation = Math.max(0.0, invOneMinusC * (rawExp - shiftC));
-    }
-
-    outputAttenuation[i] = attenuation;
-
-    const attenuatedAmplitude = amplitudes[i] * attenuation;
-    const visible = attenuatedAmplitude >= minAmplitude;
-    outputVisibility[i] = visible ? 1 : 0;
-    if (visible) {
-      visibleCount++;
-    }
-  }
-
-  return visibleCount;
-}
-
-/**
  * Internal Mahalanobis distance (matches Rust internal function).
  * Accepts an optional pre-allocated buffer to avoid per-call allocation.
  */
@@ -400,76 +281,6 @@ function mahalanobisDistanceInternal(
     sumSq += y[i] * y[i];
   }
   return Math.sqrt(sumSq);
-}
-
-/**
- * Extract 3D Cholesky submatrices for visible splats.
- *
- * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
- * @param visibility - Visibility mask [splatCount]
- * @param displayDims - Display dimension indices in requested order (mapped to
- *   X/Y/Z; a permuted order yields the correspondingly permuted marginal, not a
- *   sorted one) [1..=3]; missing rows are padded for 1D/2D data (see
- *   `computeDisplayCholesky3D`)
- * @param ndim - Total dimensionality
- * @param splatCount - Number of splats
- * @param output - Output 3D Cholesky factors [visibleCount * 6]
- * @returns Number of visible splats processed
- */
-export function extract_visible_cholesky_3d(
-  cholesky: Float32Array,
-  visibility: Uint8Array,
-  displayDims: Uint32Array,
-  ndim: number,
-  splatCount: number,
-  output: Float32Array
-): number {
-  const fullPackedSize = (ndim * (ndim + 1)) / 2;
-  let outSplat = 0;
-
-  for (let i = 0; i < splatCount; i++) {
-    if (visibility[i] === 0) {
-      continue;
-    }
-
-    const srcOffset = i * fullPackedSize;
-    const dstOffset = outSplat * 6;
-
-    // Compute marginal Cholesky for display dimensions (3D)
-    computeDisplayCholesky3D(cholesky, srcOffset, displayDims, output, dstOffset);
-
-    outSplat++;
-  }
-
-  return outSplat;
-}
-
-/**
- * Compact amplitudes by visibility mask, applying attenuation.
- *
- * @param amplitudes - Original amplitudes [splatCount]
- * @param attenuation - Attenuation factors [splatCount]
- * @param visibility - Visibility mask [splatCount]
- * @param splatCount - Number of splats
- * @param output - Output attenuated amplitudes [visibleCount]
- * @returns Number of visible splats
- */
-export function compact_attenuated_amplitudes(
-  amplitudes: Float32Array,
-  attenuation: Float32Array,
-  visibility: Uint8Array,
-  splatCount: number,
-  output: Float32Array
-): number {
-  let outIdx = 0;
-
-  for (let i = 0; i < splatCount; i++) {
-    if (visibility[i] !== 0) {
-      output[outIdx++] = amplitudes[i] * attenuation[i];
-    }
-  }
-
-  return outIdx;
 }
 
 // Module-level forward-substitution + marginal-Cholesky scratch for the fused
@@ -546,7 +357,8 @@ export function project_gsplats_nd_to_3d(
     const centerOffset = i * ndim;
     const choleskyOffset = i * fullPackedSize;
 
-    // (2) Continuous attenuation (identical to compute_gsplats_attenuation).
+    // (2) Continuous attenuation: marginal Cholesky over the hidden dims,
+    //     Mahalanobis distance, then the shifted Gaussian.
     let attenuation: number;
     if (numContinuous === 0) {
       attenuation = 1.0;
@@ -567,12 +379,23 @@ export function project_gsplats_nd_to_3d(
       // `.subarray(0, numContinuous)` view would allocate once PER SPLAT here.
       const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numContinuous, _fusedY);
       const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
-      attenuation = Math.max(0.0, invOneMinusC * (rawExp - shiftC));
+      // Clamp at 0 with a comparison rather than Math.max: Rust's `f32::max`
+      // IGNORES NaN and returns 0.0, while `Math.max(0, NaN)` is NaN. A NaN
+      // anywhere in a splat's center/covariance would otherwise leave this
+      // backend with a NaN attenuation where WASM had 0.0. `NaN > 0` is false,
+      // so the two twins agree on every input. (The visibility gate below is
+      // the second line of defence, for a NaN that arrives in `amplitudes`.)
+      const shifted = invOneMinusC * (rawExp - shiftC);
+      attenuation = shifted > 0.0 ? shifted : 0.0;
     }
 
-    // (3) Visibility decision.
+    // (3) Visibility decision. The rejection is the NEGATION of the acceptance
+    // rule, not `<`: a NaN amplitude (or `Infinity * 0` when a splat is fully
+    // attenuated) is neither `<` nor `>=` the threshold, and plain `<` would let
+    // it through to be emitted with a NaN amplitude — the #725 silent-corruption
+    // mode. Mirrors the Rust twin.
     const attenuatedAmplitude = amplitudes[i] * attenuation;
-    if (attenuatedAmplitude < minAmplitude) continue;
+    if (attenuatedAmplitude < minAmplitude || Number.isNaN(attenuatedAmplitude)) continue;
 
     // (4) Write compacted outputs at dense slot `out`.
     const cOff = out * 3;
