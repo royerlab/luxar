@@ -198,9 +198,9 @@ describe('bounds-math properties', () => {
     });
 
     // The tightest point specifically, as a fixed case rather than trusting the
-    // arbitrary to sample it: at the crossover the floor/nearCull ratio peaks,
-    // which is what pins MAX_NEAR_FAR_RATIO's lower bound at 993.
-    test('the margin is thinnest at the floor/surface crossover, and holds there', () => {
+    // arbitrary to sample it: at the crossover `near / nearCull` peaks, which is
+    // what pins MAX_NEAR_FAR_RATIO's lower bound at 993.
+    test('the worst case is the floor/surface crossover, and the bound clears it', () => {
       const radius = 50;
       const R = radius * SPHERE_SAFETY_EXPANSION;
       const nearCull = 2 * radius * 0.001;
@@ -208,15 +208,29 @@ describe('bounds-math properties', () => {
       const atCrossover = planesAt(radius, crossover * (1 - 1e-12));
       const atSurface = planesAt(radius, R);
 
+      // The geometric fact that makes the crossover — not the sphere surface —
+      // the worst case: the floor sits HIGHER there relative to `nearCull`.
+      // Asserted on `near` rather than on the fade, because at the chosen C both
+      // fades are exactly 0; that collapse IS the margin, and asserting a strict
+      // fade ordering would fail the moment the bound became comfortable.
+      expect(atCrossover.near).toBeGreaterThan(atSurface.near);
+      expect(atCrossover.near / nearCull).toBeGreaterThan(atSurface.near / nearCull);
+
+      // Losslessness at the worst case, with the margin made explicit: the floor
+      // lands strictly BELOW `nearCull`, so the fade is fully zero rather than
+      // merely under the 0.01 reject threshold.
       const fadeAt = (n: number) => smoothstep(nearCull, 2 * nearCull, n);
-      // Strictly worse than the sphere surface — the case the docs used to name.
-      expect(fadeAt(atCrossover.near)).toBeGreaterThan(fadeAt(atSurface.near));
-      // ...and still inside the reject band.
       expect(fadeAt(atCrossover.near)).toBeLessThanOrEqual(NEAR_FADE_REJECT);
-      // The required constant at that point, which is what 1000 must clear.
+      expect(atCrossover.near).toBeLessThan(nearCull);
+      expect(fadeAt(atCrossover.near)).toBe(0);
+
+      // The constant the crossover demands, and the headroom the chosen C has
+      // over it. At the minimum-viable C = 1000 this margin is 0.7%; the extra
+      // is what survives a 10% tightening of `nearCull` (see bounds-math.test).
       const requiredC = atCrossover.far / (1.0582 * nearCull);
       expect(requiredC).toBeCloseTo(993, 0);
       expect(MAX_NEAR_FAR_RATIO).toBeGreaterThanOrEqual(requiredC);
+      expect(MAX_NEAR_FAR_RATIO / requiredC - 1).toBeGreaterThan(0.15);
     });
 
     test('near and far are monotone non-decreasing in camera distance', () => {

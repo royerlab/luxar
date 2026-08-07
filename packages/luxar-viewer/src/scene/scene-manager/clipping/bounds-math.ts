@@ -153,7 +153,7 @@ export const MIN_NEAR_RADIUS_FACTOR = 2e-6;
  *
  *  - **Perspective** — a dominated backstop. {@link nearPlaneFloor} raises
  *    `near` to `far / MAX_NEAR_FAR_RATIO`, which is always larger (`far >= R`
- *    always holds, so `far / 1000 >= 1e-3 · R` versus this `2e-6 · R`). It
+ *    always holds, so `far / 1200 >= 8e-4 · R` versus this `2e-6 · R`). It
  *    surfaces only at `R -> 0`, where it yields `MIN_NEAR_PLANE` and keeps the
  *    callers' degenerate-frustum guard tripping instead of NaN-ing.
  *  - **Orthographic** — the OPERATIVE floor. Ortho opts out of the ratio bound
@@ -190,10 +190,11 @@ export function minNearForRadius(expandedRadius: number): number {
  * opaque `normal`-mode geometry — see `rendering/blending-state.ts`),
  * which is exactly where it was reported.
  *
- * Why 1000 specifically. A LARGER C means a smaller floor: less
- * precision, but less clipped. Two constraints put a floor under C, and
- * only a soft preference (keep precision) pushes from above — so C wants
- * to be the smallest value satisfying both:
+ * Why 1200 specifically. A LARGER C means a smaller floor: less precision,
+ * but less clipped. Two hard constraints put a floor under C, and only a soft
+ * preference (keep precision) pushes from above — and that preference turns
+ * out to be nearly free, so C is set for MARGIN above the binding constraint
+ * rather than at it:
  *
  *  - **C > 551, don't clip the zoom target.** At maximum zoom-in the
  *    orbit target sits at `minDistance = 1e-3 · diagonal`
@@ -222,13 +223,21 @@ export function minNearForRadius(expandedRadius: number): number {
  *    (fade 0.00755 there versus 0.00725 on the surface). So
  *    `2.002 R / C ≤ 1.0582 · 1.905e-3 · R` ⟹ `C ≥ 993`.
  *
- * 993 binds. C = 1000 clears it by **0.7%** — deliberately thin, because
- * every extra unit of C is depth precision given away, and the margin is
- * *enforced* rather than trusted: the "clipped band is already
- * shader-rejected" property in `bounds-math.property.test.ts` generates the
- * whole floor-binding region INCLUDING that crossover, and a companion test
- * pins the crossover as strictly worse than the surface — so a future change
- * to `nearCull`, to the fade band, or to this constant fails there. (Mesh has
+ * 993 binds, and C = 1200 clears it by **20.8%**. The margin is deliberate,
+ * and it is cheap: going from the minimum-viable 1000 to 1200 gives away
+ * **0.03%** of the total precision gain (Δz 7.05e-5 → 8.47e-5 world units on
+ * the reported pose, against 4.10e-2 before the bound), and buys survival of
+ * ordinary tuning elsewhere. Measured: a 10% tightening of `nearCull` needs
+ * C ≥ 1104, and reducing the fade reject headroom to 1.0 needs C ≥ 1051 —
+ * C = 1000 would have become silently LOSSY under either, C = 1200 holds.
+ *
+ * The margin is also *enforced* rather than trusted: the "clipped band is
+ * already shader-rejected" property in `bounds-math.property.test.ts`
+ * generates the whole floor-binding region INCLUDING that crossover, a
+ * companion test pins the crossover as strictly worse than the surface, and
+ * the arithmetic test asserts the constant survives that 10% `nearCull`
+ * tightening — so a future change to `nearCull`, to the fade band, or to this
+ * constant fails there. (Mesh has
  * no near fade in either backend — verified in the GLSL and TSL sources — so
  * it is the one type the floor can clip; no value of C avoids that while
  * still bounding the ratio.)
@@ -243,8 +252,8 @@ export function minNearForRadius(expandedRadius: number): number {
  * carry `position_bounds`, so this is not reachable through the normal loader.
  *
  * Measured payoff at the reported pose (R = 52.5, dist = 8.5, far = 61):
- * the floor rises 1.05e-4 → 0.061 and depth quantization improves
- * 4.10e-2 → 7.05e-5 world units, i.e. **581x** finer.
+ * the floor rises 1.05e-4 → 0.0508 and depth quantization improves
+ * 4.10e-2 → 8.47e-5 world units, i.e. **485x** finer.
  *
  * PERSPECTIVE ONLY — see the `boundNearFarRatio` parameter of
  * {@link nearPlaneFloor}. An orthographic projection maps eye depth
@@ -254,10 +263,10 @@ export function minNearForRadius(expandedRadius: number): number {
  * (unlike perspective) really does draw — `perspectiveNearFade` returns
  * 1.0 for ortho, so ALL FOUR geometry types render up to `near` there.
  * Measured on a diagonal-100 scene at the deepest legal orbit distance:
- * applying the bound under ortho clips 52.7% of the eye-to-target depth
+ * applying the bound under ortho clips 43.8% of the eye-to-target depth
  * versus 0.105% without it, and changes depth resolution by 0.1%.
  */
-export const MAX_NEAR_FAR_RATIO = 1000;
+export const MAX_NEAR_FAR_RATIO = 1200;
 
 /**
  * The near-plane floor both clipping paths clamp to: the scale-aware
@@ -267,8 +276,8 @@ export const MAX_NEAR_FAR_RATIO = 1000;
  * Scale-invariant by construction — the bound is derived from `far`,
  * which is itself scene-scaled — so it keeps the tiny-scene guarantee
  * `minNearForRadius` was introduced for (#573) without the Z-precision
- * cost: on a diagonal-0.1 scene at maximum zoom-in, `far / 1000` is
- * ~5.3e-5 while the closest reachable orbit distance is ~1.7e-4, so
+ * cost: on a diagonal-0.1 scene at maximum zoom-in, `far / 1200` is
+ * ~4.4e-5 while the closest reachable orbit distance is ~1.7e-4, so
  * nearby geometry still renders.
  *
  * Always `< far` for `far > 0`, so callers can rely on it never

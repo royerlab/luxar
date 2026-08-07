@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RenderingControls, decadeStep } from '../../../ui/rendering-controls';
 import { config } from '../../../config';
 import { log } from '../../../utils/log';
+import { MAX_NEAR_FAR_RATIO } from '../../../scene/scene-manager/clipping/bounds-math';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 
 // Note: PostProcessingManager and SceneManager are not imported because we use
@@ -697,7 +698,7 @@ describe('RenderingControls', () => {
         distMax, // zoom-out limit
       ]) {
         const far = dist + R;
-        const near = Math.max(Math.max(1e-9, R * 2e-6), far / 1000, dist - R);
+        const near = Math.max(Math.max(1e-9, R * 2e-6), far / MAX_NEAR_FAR_RATIO, dist - R);
         expect(near).toBeGreaterThanOrEqual(nearMin);
         expect(near).toBeLessThanOrEqual(nearMax);
         expect(far).toBeLessThanOrEqual(farMax);

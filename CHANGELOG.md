@@ -54,9 +54,10 @@ opaque `normal`-mode geometry), and to _pop_ while orbiting, because `near`
 tracks camera distance and the quantization changes with it.
 
 The near-plane floor is now `nearPlaneFloor(R, far) = max(minNearForRadius(R),
-far / MAX_NEAR_FAR_RATIO)` with `MAX_NEAR_FAR_RATIO = 1000`, shared by the
-auto-adjust and per-frame dynamic paths. On the case above `near` becomes 0.061
-and depth quantization improves 4.10e-2 → 7.05e-5 world units — **581x** finer.
+far / MAX_NEAR_FAR_RATIO)` with `MAX_NEAR_FAR_RATIO = 1200`, shared by the
+auto-adjust and per-frame dynamic paths, with `MAX_NEAR_FAR_RATIO = 1200`. On
+the case above `near` becomes 0.0508 and depth quantization improves
+4.10e-2 → 8.47e-5 world units — **485x** finer.
 
 `1000` is derived, not picked. A larger C means a smaller floor, so two
 constraints push C _up_ and only the wish to keep precision pushes down:
@@ -66,12 +67,17 @@ shaders already discard geometry (`perspectiveNearFade` below
 `1.0582 · nearCull`). The worst case there is not the camera on the sphere
 surface but the crossover just outside it — `dist = R(C+1)/(C-1) ≈ 1.002 · R`,
 the last distance at which the floor still beats the surface term, where the
-floor sits highest relative to `nearCull`. The second binds, and 1000 clears it
-by only **0.7%** —
-deliberately thin, since every extra unit of C is precision given away. Both
-constraints are pinned as executable arithmetic, and the losslessness margin is
-enforced by a property test against the shaders' own reject threshold rather
-than trusted. Being derived from `far` (itself scene-scaled) the floor also
+floor sits highest relative to `nearCull`. The second binds at 993, and 1200
+clears it by **20.8%** —
+margin chosen deliberately rather than sitting at the minimum-viable 1000,
+because it turns out to be nearly free: the step from 1000 to 1200 gives away
+**0.03%** of the total precision gain and buys survival of ordinary tuning
+elsewhere. Measured: a 10% tightening of `nearCull` requires C ≥ 1104, and
+reducing the fade reject headroom to 1.0 requires C ≥ 1051 — C = 1000 would have
+become silently lossy under either. Both constraints are pinned as executable
+arithmetic, and the margin is enforced by a property test against the shaders'
+own reject threshold plus an assertion that the constant survives that 10%
+tightening — rather than trusted. Being derived from `far` (itself scene-scaled) the floor also
 keeps the tiny-scene guarantee that motivated the radius-proportional floor, so
 `MIN_NEAR_RADIUS_FACTOR` is now a dominated backstop that only surfaces on a
 degenerate zero-radius sphere.
@@ -80,7 +86,7 @@ The bound is **perspective-only**. An orthographic projection maps eye depth
 linearly to the depth buffer, so its resolution is `(far − near) / 2²⁴`
 regardless of `near` — and `perspectiveNearFade` returns 1.0 under ortho, so all
 four geometry types render right up to the near plane there. Applying the ratio
-bound under ortho was measured to clip 52.7% of the eye-to-target depth at the
+bound under ortho was measured to clip 43.8% of the eye-to-target depth at the
 deepest legal orbit distance for a 0.1% change in depth resolution, so both
 clipping paths now read the live camera and drop the bound for ortho.
 

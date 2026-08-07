@@ -39,7 +39,7 @@ import type { ControlsManager } from '../../../controls/controls-manager';
  * approaches zero.
  *
  * Coupled to `MAX_NEAR_FAR_RATIO` in `clipping/bounds-math.ts`: at
- * maximum zoom-in the near-plane floor (`far / 1000`) must still sit in
+ * maximum zoom-in the near-plane floor (`far / MAX_NEAR_FAR_RATIO`) must sit in
  * front of the orbit target, which is what pins that ratio's lower
  * bound. Loosening this factor without re-deriving that one would clip
  * whatever the user zoomed in on.

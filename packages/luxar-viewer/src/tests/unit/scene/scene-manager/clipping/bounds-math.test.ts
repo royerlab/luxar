@@ -371,8 +371,9 @@ describe('bounds-math', () => {
       // The user-reported pose: diagonal-100 scene (expanded R = 52.5) seen
       // from 8.5 units off centre → far = 61. The old floor gave
       // near = 1.05e-4 (ratio 5.8e5:1, ~4e-2 world units of depth
-      // quantization at 24 bits); the bound gives 0.061.
-      expect(nearPlaneFloor(52.5, 61)).toBeCloseTo(0.061, 9);
+      // quantization at 24 bits); the bound gives 61 / MAX_NEAR_FAR_RATIO.
+      expect(nearPlaneFloor(52.5, 61)).toBeCloseTo(61 / MAX_NEAR_FAR_RATIO, 9);
+      expect(nearPlaneFloor(52.5, 61)).toBeCloseTo(0.0508333, 6);
       expect(61 / nearPlaneFloor(52.5, 61)).toBeCloseTo(MAX_NEAR_FAR_RATIO, 6);
     });
 
@@ -405,7 +406,16 @@ describe('bounds-math', () => {
       // The lossless constraint binds, and the constant clears it — barely.
       expect(cMinLossless).toBeGreaterThan(cMinTarget);
       expect(MAX_NEAR_FAR_RATIO).toBeGreaterThanOrEqual(cMinLossless);
-      expect(MAX_NEAR_FAR_RATIO / cMinLossless - 1).toBeLessThan(0.01); // ~0.7% margin
+      // The margin over that constraint is deliberate, and pinned as the
+      // concrete robustness claim it was chosen for rather than as an arbitrary
+      // band: a 10% tightening of `nearCull` must still leave the bound
+      // lossless. C = 1000 (the minimum-viable value) fails this; 1200 passes,
+      // for 0.03% of the total precision gain.
+      const cMinLosslessAt = (ncFactor: number) =>
+        farAtCrossoverOverR / (FADE_REJECT_HEADROOM * perR(ncFactor));
+      expect(cMinLosslessAt(NEAR_CULL_FACTOR * 0.9)).toBeCloseTo(1103, 0);
+      expect(MAX_NEAR_FAR_RATIO).toBeGreaterThanOrEqual(cMinLosslessAt(NEAR_CULL_FACTOR * 0.9));
+      expect(1000).toBeLessThan(cMinLosslessAt(NEAR_CULL_FACTOR * 0.9));
     });
 
     it('dominates the minNearForRadius backstop for every non-degenerate sphere', () => {
@@ -428,7 +438,7 @@ describe('bounds-math', () => {
     // nothing — while `perspectiveNearFade` returns 1.0 under ortho, meaning
     // ALL FOUR geometry types render right up to `near` there. Measured: at the
     // deepest legal orbit distance on a diagonal-100 scene, applying the bound
-    // under ortho clips 52.7% of the eye-to-target depth for a 0.1% change in
+    // under ortho clips 43.8% of the eye-to-target depth for a 0.1% change in
     // depth resolution.
     it('omits the ratio bound for an orthographic projection', () => {
       const R = 52.5;
@@ -436,7 +446,7 @@ describe('bounds-math', () => {
       expect(nearPlaneFloor(R, far, false)).toBe(minNearForRadius(R));
       expect(nearPlaneFloor(R, far, false)).toBeCloseTo(1.05e-4, 9);
       // ...and still applies it for perspective, from the same inputs.
-      expect(nearPlaneFloor(R, far, true)).toBeCloseTo(0.061, 9);
+      expect(nearPlaneFloor(R, far, true)).toBeCloseTo(far / MAX_NEAR_FAR_RATIO, 9);
       // Default is perspective — the common case must not need the argument.
       expect(nearPlaneFloor(R, far)).toBe(nearPlaneFloor(R, far, true));
     });
@@ -503,10 +513,10 @@ describe('bounds-math', () => {
       const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: R });
       expect(planes.near).toBe(nearPlaneFloor(R, 2 * R));
       expect(planes.far).toBeCloseTo(2 * R, 6);
-      // Literal pin: the floor is far/MAX_NEAR_FAR_RATIO = 2R/1000, NOT the
+      // Literal pin: the floor is far/MAX_NEAR_FAR_RATIO, NOT the
       // dominated minNearForRadius backstop (2e-6*R). Asserting against
       // nearPlaneFloor alone cannot catch a broken formula inside it.
-      expect(planes.near).toBeCloseTo((2 * R) / 1000, 12);
+      expect(planes.near).toBeCloseTo((2 * R) / MAX_NEAR_FAR_RATIO, 12);
       expect(planes.near).toBeGreaterThan(minNearForRadius(R) * 100);
     });
 
@@ -577,7 +587,7 @@ describe('bounds-math', () => {
       const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       // Deepest legal orbit distance ~ framed distance / ZOOM_IN_FACTOR;
       // framed distance is on the order of the diagonal (~2R), so use
-      // 2R / 1000 as the representative deepest zoom.
+      // 2R / ZOOM_IN_FACTOR as the representative deepest zoom.
       const deepestZoom = (2 * R) / 1000;
       const cameraPos = {
         x: sphere.center.x,
@@ -592,9 +602,9 @@ describe('bounds-math', () => {
       expect(planes.near).toBe(nearPlaneFloor(R, planes.far));
       expect(planes.near).toBeLessThan(deepestZoom);
       // The margin is the reason MAX_NEAR_FAR_RATIO cannot go much below
-      // 1000: at the deepest legal zoom far ≈ R, so the floor is ≈ R/1000
-      // while the target sits at 2R/1000 — a factor of 2. At C = 500 the
-      // near plane would swallow the thing you zoomed in on.
+      // ~551: at the deepest legal zoom far ≈ R, so the floor is ≈ R/C while
+      // the target sits at 2R/ZOOM_IN_FACTOR — a factor of ~2.4 at C = 1200. Below C ≈ 551
+      // the near plane would swallow the thing you zoomed in on.
       expect(deepestZoom / planes.near).toBeGreaterThan(1.9);
     });
 

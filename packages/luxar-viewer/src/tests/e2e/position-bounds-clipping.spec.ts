@@ -423,7 +423,7 @@ test.describe('Position Bounds and Clipping Planes', () => {
     // only loosening it past this ceiling trips the alarm. That direction is
     // what makes the literal safe from the mirrored-constant drift that #573
     // removed from the sibling test below.
-    const RATIO_CEILING = 1000;
+    const RATIO_CEILING = 1200;
     expect(info.far / info.near).toBeLessThanOrEqual(RATIO_CEILING * (1 + 1e-6));
 
     // And the consequence that actually matters: depth quantization at the
