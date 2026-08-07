@@ -96,9 +96,9 @@ export const MAX_PICK_BUFFER_DIM = 1024;
  * view space to pick-buffer pixels manually with uFx == uFy (a
  * square-pixel assumption), so a pick buffer with a different aspect
  * than the camera displaces gsplat picks horizontally away from screen
- * center. Points/lines pick through the aspect-aware projectionMatrix
- * and tolerate any aspect — but only aspect-preserving sizing keeps all
- * three geometry types consistent.
+ * center. Points/lines/mesh pick through the aspect-aware
+ * projectionMatrix and tolerate any aspect — but only aspect-preserving
+ * sizing keeps all four geometry types consistent.
  */
 export function computePickBufferSize(drawW: number, drawH: number): { w: number; h: number } {
   const halfW = Math.max(drawW / 2, 1);

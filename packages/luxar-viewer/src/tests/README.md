@@ -939,5 +939,5 @@ When adding new tests:
 ## Top-Level Files
 
 - `setup.ts` — Vitest per-file setup: installs all mocks via `installAllMocks()`, patches `Reflect.construct` so Vitest 4 can `new`-construct arrow-function mocks, and silences jsdom's "Not implemented: navigation" jsdomError so download-via-`<a>.click()` paths (EXR/video/screenshot export) don't pollute the console.
-- `global-setup.ts` — Vitest **global** setup (one-shot per run). Parses the fixture list directly from `tests/fixtures/generate_test_data.py` (single source of truth), regenerates any missing zarr fixtures via `hatch run python ... generate_test_data.py`, and regenerates `roundtrip_expectations.json` when stale.
+- `global-setup.ts` — Vitest **global** setup (one-shot per run). Parses the fixture list from `tests/fixtures/generate_test_data.py` (single source of truth) through `tools/fixture-manifest.ts`, the shared parser the Playwright preflight reads too, regenerates any missing zarr fixtures via `hatch run python ... generate_test_data.py`, and regenerates `roundtrip_expectations.json` when stale.
 - `test-config.ts` — Centralised config helpers (`createTestCamera`, `testBloomConfig`, `testControlsConfig`, `testShaderConfig`) so tests pull values from `src/config/` instead of hard-coding defaults.

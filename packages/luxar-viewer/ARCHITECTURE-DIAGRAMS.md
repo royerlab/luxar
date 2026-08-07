@@ -27,14 +27,15 @@ as cross-cutting concerns importable from any layer.
 
 ### Overview: Python → Zarr → TypeScript → WebGL
 
-The pipeline is split per geometry type (Points, Lines, GSplats),
-each with its own spatial-index loader. The `SceneLoader`
-orchestrates them and a `WorkerPool` offloads decode + projection.
+The pipeline is split per geometry type (Points, Lines, GSplats,
+Mesh), each with its own spatial-index loader — except Mesh, whose
+loader is whole-node. The `SceneLoader` orchestrates them and a
+`WorkerPool` offloads decode + projection.
 
 ```mermaid
 graph TB
     subgraph "Python (luxar.io)"
-        A[Points / Lines / GSplats<br/>nD attributes per geometry]
+        A[Points / Lines / GSplats / Mesh<br/>nD attributes per geometry]
         B[ArrayEncoder<br/>Broadcasting, LUT, Quantization]
         C[SpatialIndex Builder<br/>Morton/Hilbert ordering]
         D[ZarrWriter<br/>Chunked, compressed]
@@ -336,7 +337,7 @@ so a context-loss cycle doesn't leak registrations.
 ```mermaid
 graph LR
     subgraph "Scene Rendering"
-        A[3D Geometry<br/>Points, Lines, GSplats]
+        A[3D Geometry<br/>Points, Lines, GSplats, Mesh]
         B[Camera-aware Materials<br/>register w/ MaterialManager]
         C[Vertex Shader<br/>Position + size calc]
         D[Fragment Shader<br/>Gaussian / per-geometry<br/>HDR-correct output]

@@ -69,7 +69,7 @@ export interface LuxarMaterial extends THREE.Material {
   /**
    * Apply a blending mode to this material in-place.
    *
-   * All three geometry materials implement it today (the optionality is
+   * All four geometry materials implement it today (the optionality is
    * kept for exotic/legacy materials the generic fallback still covers).
    * Call this instead of writing `mat.blending`/`mat.blendEquation`
    * directly so type-specific factors, defines (LUXAR_VOLUMETRIC /
