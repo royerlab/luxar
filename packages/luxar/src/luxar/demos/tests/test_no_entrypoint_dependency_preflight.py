@@ -25,11 +25,12 @@ its subclass ``ModuleNotFoundError``, or :class:`~luxar.demos.MissingDependencyE
 ``if __name__ == "__main__":`` block (demos run as ``python -m ...``) — plus,
 transitively, every module-local helper any of them calls by bare name. A
 scanned module that defines NO entry point of its own — today exactly
-``_interop_common.py``, ``_roundtrip_common.py`` and ``registry.py``, whose
-callers live in the demos that import them — has every module-level ``def``
-treated as reachable instead. So a gate moved into one of *those* modules stays
-guarded; the precondition is the absence of an entry point, not the ``_common``
-name (see the last bullet below for the case it does not cover). Nested
+``_graph_common.py``, ``_interop_common.py``, ``_roundtrip_common.py`` and
+``registry.py``, whose callers live in the demos that import them — has every
+module-level ``def`` treated as reachable instead. So a gate moved into one of
+*those* modules stays guarded; the precondition is the absence of an entry
+point, not the ``_common`` name (see the last bullet below for the case it does
+not cover). Nested
 ``def``s inside a reachable function are scanned too, conservatively, whether
 or not the closure is provably called: skipping them would reopen the bypass
 of hiding the preflight in an immediately-invoked local closure.
@@ -255,12 +256,13 @@ def _entry_reachable(tree: ast.Module) -> list[ast.AST]:
     is still scanned no matter which entry point calls it.
 
     A module with NO entry point of its own — no ``main()``, no ``__main__``
-    guard, nothing called at import time; today ``_interop_common.py``,
-    ``_roundtrip_common.py`` and ``registry.py`` — would otherwise have every one
-    of its functions unreachable, so the walk would return nothing and the guard
-    would pass vacuously. That is not a hypothetical: moving a gate out of five
-    demos' ``main()``-reachable code into one such helper would silently *drop*
-    it from this guard. For those modules every module-level ``def`` is therefore
+    guard, nothing called at import time; today ``_graph_common.py``,
+    ``_interop_common.py``, ``_roundtrip_common.py`` and ``registry.py`` —
+    would otherwise have every one of its functions unreachable, so the walk
+    would return nothing and the guard would pass vacuously. That is not a
+    hypothetical: moving a gate out of five demos' ``main()``-reachable code
+    into one such helper would silently *drop* it from this guard. For those
+    modules every module-level ``def`` is therefore
     seeded as a root — the demos reach them by import, so the entry point is
     simply somewhere else.
 
@@ -285,7 +287,7 @@ def _entry_reachable(tree: ast.Module) -> list[ast.AST]:
         roots.append(node)  # ordinary top-level statement runs on `python -m ...`
         seed_names |= _local_callees(node, defs)
     if not has_entry_point:
-        # No entry point in THIS module (a shared helper such as
+        # No entry point in THIS module (a shared helper such as _graph_common /
         # _interop_common / _roundtrip_common / registry): its callers' entry
         # points are elsewhere, so treat every module-level function as
         # reachable rather than none.

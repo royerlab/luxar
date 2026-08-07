@@ -117,7 +117,6 @@ DEMO_META = {
 
 import bz2
 import gzip
-import hashlib
 import re
 import sys
 import tempfile
@@ -130,6 +129,13 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import launch_viewer, parse_int_arg, parse_path_arg, require_module
+from luxar.demos._graph_common import (
+    build_adjacency,
+    build_community_legend,
+    compute_communities,
+    download_file,
+    nodes_hash,
+)
 from luxar.utils._umap_utils import build_legend_html, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -177,42 +183,6 @@ def _find_latest_file(index_url: str, pattern: re.Pattern) -> tuple[str, str]:
     return latest, index_url + latest
 
 
-def _download(url: str, dest: Path, description: str) -> None:
-    """Stream a URL to ``dest``, with progress. No-op if file exists."""
-    if dest.exists() and dest.stat().st_size > 0:
-        size_mb = dest.stat().st_size / (1024 * 1024)
-        aprint(f"  Using cached {dest.name} ({size_mb:.1f} MB)")
-        return
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    aprint(f"  Downloading {description}")
-    aprint(f"    URL: {url}")
-
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    with requests.get(url, stream=True, timeout=180) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        written = 0
-        last_pct = 0.0
-        with open(tmp, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1 << 20):
-                if not chunk:
-                    continue
-                f.write(chunk)
-                written += len(chunk)
-                if total > 0:
-                    pct = 100.0 * written / total
-                    if pct - last_pct >= 20.0:
-                        aprint(
-                            f"    {written / (1024 * 1024):,.0f} / "
-                            f"{total / (1024 * 1024):,.0f} MB  ({pct:.0f}%)"
-                        )
-                        last_pct = pct
-    tmp.rename(dest)
-    size_mb = dest.stat().st_size / (1024 * 1024)
-    aprint(f"  ✓ Saved {dest.name} ({size_mb:.1f} MB)")
-
-
 def ensure_data(cache_dir: Path) -> tuple[Path, Path]:
     """Fetch latest AS-rel + AS-org2info files. Returns local paths."""
     with asection("Discovering latest CAIDA snapshots"):
@@ -225,8 +195,8 @@ def ensure_data(cache_dir: Path) -> tuple[Path, Path]:
     org_path = cache_dir / org_name
 
     with asection("Fetching CAIDA data"):
-        _download(rel_url, rel_path, f"{rel_name} (~5-15 MB)")
-        _download(org_url, org_path, f"{org_name} (~10-30 MB)")
+        download_file(rel_url, rel_path, f"{rel_name} (~5-15 MB)")
+        download_file(org_url, org_path, f"{org_name} (~10-30 MB)")
 
     return rel_path, org_path
 
@@ -402,31 +372,6 @@ def filter_to_lcc(
 # -----------------------------------------------------------------------------
 
 
-def _build_adjacency(nodes: list[str], edges: pd.DataFrame):
-    """Undirected, unweighted CSR adjacency (treats all edges as symmetric)."""
-    from scipy.sparse import csr_matrix
-
-    idx = {s: i for i, s in enumerate(nodes)}
-    rows = np.fromiter((idx[a] for a in edges["asn_a"]), dtype=np.int32)
-    cols = np.fromiter((idx[b] for b in edges["asn_b"]), dtype=np.int32)
-    data = np.ones(len(edges), dtype=np.float32)
-    n = len(nodes)
-    mat = csr_matrix(
-        (
-            np.concatenate([data, data]),
-            (np.concatenate([rows, cols]), np.concatenate([cols, rows])),
-        ),
-        shape=(n, n),
-    )
-    mat.sum_duplicates()
-    mat.data = np.minimum(mat.data, 1.0)
-    return mat
-
-
-def _nodes_hash(nodes: list[str]) -> str:
-    return hashlib.sha256("\n".join(nodes).encode("utf-8")).hexdigest()[:16]
-
-
 def _pca_realign(coords: np.ndarray) -> np.ndarray:
     """Rotate coords so the largest-variance axis is X, then Y, then Z."""
     centered = coords - coords.mean(axis=0)
@@ -445,7 +390,7 @@ def compute_layout(
     nodes: list[str], edges: pd.DataFrame, cache_path: Path, recompute: bool
 ) -> np.ndarray:
     """Spectral embedding + UMAP + PCA-realign → 3D coords, cached to npz."""
-    node_hash = _nodes_hash(nodes)
+    node_hash = nodes_hash(nodes)
 
     if cache_path.exists() and not recompute:
         with asection("Loading cached 3D layout"):
@@ -462,7 +407,7 @@ def compute_layout(
     from scipy.sparse.linalg import eigsh
 
     with asection("Computing spectral + UMAP layout"):
-        adj = _build_adjacency(nodes, edges)
+        adj = build_adjacency(nodes, edges, columns=("asn_a", "asn_b"))
         aprint(f"  Adjacency: {adj.shape[0]:,} × {adj.shape[0]:,}, nnz={adj.nnz:,}")
 
         lap = laplacian(adj, normed=True).astype(np.float64)
@@ -511,37 +456,6 @@ def compute_layout(
         np.savez(cache_path, coords=coords, node_hash=np.array(node_hash))
         aprint(f"  Cached to {cache_path.name}")
     return coords
-
-
-# -----------------------------------------------------------------------------
-# Communities
-# -----------------------------------------------------------------------------
-
-
-def compute_communities(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
-    """Louvain communities on the undirected projection of the AS graph."""
-    nx = require_module("networkx")
-
-    with asection("Detecting communities (Louvain)"):
-        g = nx.Graph()
-        g.add_nodes_from(nodes)
-        g.add_edges_from(
-            zip(edges["asn_a"].tolist(), edges["asn_b"].tolist(), strict=True)
-        )
-        partitions = nx.community.louvain_communities(g, seed=42)
-        partitions = sorted(partitions, key=len, reverse=True)
-        aprint(f"  {len(partitions)} communities")
-        for i, p in enumerate(partitions[:5]):
-            aprint(f"    #{i}: {len(p):,} ASes")
-        if len(partitions) > 5:
-            aprint(f"    ... + {len(partitions) - 5} smaller")
-
-        idx = {s: i for i, s in enumerate(nodes)}
-        comms = np.full(len(nodes), -1, dtype=np.int32)
-        for comm_id, members in enumerate(partitions):
-            for asn in members:
-                comms[idx[asn]] = comm_id
-    return comms
 
 
 # -----------------------------------------------------------------------------
@@ -789,32 +703,6 @@ def build_edge_lines(
 # -----------------------------------------------------------------------------
 
 
-def _build_community_legend(communities: np.ndarray, top_n: int = 20) -> str:
-    unique, counts = np.unique(communities, return_counts=True)
-    order = np.argsort(-counts)
-    unique = unique[order]
-    counts = counts[order]
-    n_comms = len(unique)
-    lines = [
-        '<div style="font-size:1.3vh;line-height:1.5;'
-        "background:rgba(0,0,0,0.55);padding:0.6vh 0.8vh;"
-        'border-radius:4px;max-height:82vh;overflow:hidden">'
-        '<div style="color:#ffcc44;font-weight:bold;margin-bottom:0.4vh">'
-        f"Community ({n_comms})</div>"
-    ]
-    for comm_id, count in zip(unique[:top_n], counts[:top_n], strict=True):
-        r, g, b = get_categorical_color(int(comm_id), n_comms)
-        lines.append(
-            f'<div style="white-space:nowrap">'
-            f'<span style="color:rgb({r},{g},{b})">█</span> '
-            f"#{int(comm_id)} ({int(count):,})</div>"
-        )
-    if n_comms > top_n:
-        lines.append(f'<div style="color:#888">... +{n_comms - top_n} more</div>')
-    lines.append("</div>")
-    return "".join(lines)
-
-
 def _build_edge_legend() -> str:
     pc_r, pc_g, pc_b = [int(x * 255) for x in COLOR_PROVIDER_CUSTOMER]
     p_r, p_g, p_b = [int(x * 255) for x in COLOR_PEER]
@@ -963,7 +851,7 @@ def build_scene(
             )
 
             # Per-view captions + node legends
-            community_legend = _build_community_legend(communities)
+            community_legend = build_community_legend(communities)
             country_legend = build_legend_html("country", country_cats, country_codes)
 
             for view_id, caption, legend_html in [
@@ -1045,7 +933,13 @@ def main() -> None:
         cache_path=cache_dir / LAYOUT_CACHE_FILENAME,
         recompute=recompute,
     )
-    communities = compute_communities(nodes, edges)
+    communities = compute_communities(
+        nodes,
+        edges,
+        columns=("asn_a", "asn_b"),
+        unit_label="ASes",
+        summary_suffix="",
+    )
     degrees = _node_degrees(nodes, edges)
 
     if "--no-serve" in argv:

@@ -66,6 +66,67 @@ the shaders' float32 operand order can cost — so unmitred rendering cannot
 come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
 under `make test-e2e`.)
 
+#### Mesh is per-triangle depth sorted
+
+`normal`-mode meshes composited in index order: whichever triangle the writer
+emitted last drew last, so faces showed through each other and — with per-vertex
+RGBA at full node opacity, where `depthWrite` is on while `transparent` is true —
+whatever was behind a translucent fragment was depth-REJECTED outright. The
+mitigation shipped in #1328 was a one-time warning naming the node. This replaces
+the warning with the fix, and deletes it.
+
+Almost all of it is reuse. A triangle's "center" is its vertex centroid: 3 floats
+per element, exactly like a splat center or a line segment midpoint. So the
+registration (`noteDepthSortCommit`), the SortWorker, the sort kernel, the
+generation/stale-drop bookkeeping and the per-frame camera-motion re-sort
+scheduler all serve mesh unchanged, and `GEOMETRY_CAPABILITIES.mesh.depthSortable`
+is now `true` — which is also what makes a Layers-panel switch INTO `normal`
+reprocess the node so it registers.
+
+The apply is the part that genuinely differs, and it differs structurally rather
+than by degree. The three instanced types permute `aSortedIndex`, a per-instance
+draw-slot indirection, streaming a new ordering into an inactive twin attribute
+and flipping a uniform when it completes. A mesh has no indirection: it is one
+indexed `drawElements`, and the draw order of its triangles IS the order of the
+index buffer. `geometry.index` is BOUND state, so no uniform can select between
+two of them, and reassigning it is the drawn-geometry rebind `applyMeshIndices`
+exists to avoid. The new `depth-sort-coordinator/triangle-ordering.ts` therefore
+writes the whole visible prefix ATOMICALLY — one `set`, one update range — because
+a half-written index buffer is not a permutation: some triangles would draw twice
+and others not at all, a wrong picture rather than a stale one. The cost is
+bounded by a quantity the mesh path already pays, since `applyMeshIndices`
+re-uploads that same prefix on every slice move.
+
+Two things that took finding:
+
+- **The permutation must be applied to the CANONICAL triples, not to the live
+  buffer.** The buffer already holds the previous permutation, so permuting it
+  again composes the two — invisible on the first sort, a scrambled surface on the
+  second. The coordinator retains the commit's `ProjectedMeshData.indices` for
+  exactly as long as the node is being sorted, and drops it on every release
+  branch so an opaque mesh never carries a second copy of its index.
+- **`commitMeshGeometry` has to stamp `committedData`.** Mesh has no
+  memoized-concat noop path of its own, so it never set the stamp — and the
+  coordinator's resolve path, per-frame scheduler and capture drain all gate on it.
+  Unset, every sort still dispatched, still resolved, and was then silently
+  dropped: the surface would have rendered unsorted with nothing anywhere
+  reporting a problem.
+
+Picking needed no work, and the reason is worth recording: for an indexed draw
+`gl_VertexID` (WGSL `@builtin(vertex_index)`) IS the value fetched from the index
+buffer, so a mesh's element ordinal is invariant under any permutation of the
+triples. The slot-syncing the instanced types need to keep the pick pass reading
+the same permutation has no analogue here.
+
+Verified on a real written scene rather than in unit tests alone: two overlapping
+half-opaque quads, green at z = +2 and red at z = −2, authored NEAR-first so the
+index order is deliberately the wrong one. Sampling the centre of the frame,
+`?depthSort=0` gives (r 199, g 153) — red wins, the far quad composited last, as
+authored. Sorted gives (r 162, g 196) — green wins. Orbiting to the far side with
+real mouse drags flips it back to (r 184, g 136). What sorting still cannot fix is
+interpenetrating triangles, a residual shared with the other three types and the
+reason `opaque` remains the mesh default.
+
 #### Documentation — pull-request quality gate and warning ratchets (#776)
 
 Documentation-relevant pull requests now report a stable `docs-quality` check.
