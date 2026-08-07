@@ -1402,30 +1402,29 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 Each of these is a deliberate exclusion, not an oversight. Each should surface clearly — an error, or
 for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rather than silently misbehave.
 
-> **One code follow-up this section currently OVERSTATES its own compliance on**, noted
-> here rather than silently carried:
+> This section carried two code follow-ups it OVERSTATED its own compliance on. **Both have
+> now landed**, so the paragraph above is true as written:
 >
-> - **The `add_mesh` refusal message justifies refusing substitutive LOD with additive's
->   reason.** It reads "the additive/substitutive ladder reduces independent elements (a
->   surface is connected)", which is true of the additive flavour and false of the
->   substitutive one — see the two rows below. The refusal itself is correct (no producer
->   exists yet); only its stated reason is wrong, and it is user-facing.
->
-> (§6.3's translucent-`normal` warning — the second entry here until it landed — is now
-> implemented in `commit-mesh-geometry.ts`, so the per-triangle-depth-sort exclusion below
-> does surface as the paragraph above promises.)
+> - §6.3's translucent-`normal` warning is implemented in `commit-mesh-geometry.ts`, so the
+>   per-triangle-depth-sort exclusion below does surface rather than silently misbehave.
+> - The `add_mesh` refusal message no longer justifies refusing substitutive LOD with
+>   additive's reason. It used to read "the additive/substitutive ladder reduces independent
+>   elements (a surface is connected)" — true of the additive flavour, false of the
+>   substitutive one. The two flavours now get the two separate reasons the rows below give
+>   (`_reject_specialized_parent` / `_reject_structure_params` in
+>   `packages/luxar/src/luxar/core/group/adders/mesh.py`).
 
 | Excluded | Why | Natural follow-up |
 |---|---|---|
 | **Additive LOD ladder** | A prefix of an index buffer is a **holed** surface, not a coarse one. That is the difference from a splat prefix, which genuinely is a sparser approximation of the same field — so the ladder degrades gracefully there and produces a *wrong picture* here. The legitimate refinement scheme is a progressive mesh (base mesh + vertex-split records), which cannot use the prefix-count ladder at all: different data structure, not a widening. | Not a LOD in any form. A deliberate progressive-draw effect IS worth exposing — see **§9.1** — but off the `additive` code path |
-| **Substitutive LOD levels** | Nothing structural, and the machinery makes no independence assumption: a level is an independently-authored `(vertices, faces)` pair, selected by `coverage_fraction`. What is missing is only the PRODUCER. Per-level picking is already solved — the LOD registry hides inactive levels and the picking system skips hidden nodes, so each level is its own pick domain with its own per-vertex label CSR. | `luxar mesh lod` with QEM levels. Viewer side is a two-line widening: flip `GEOMETRY_CAPABILITIES.mesh.lod` and extend `LodGroupMetadata.display_type`. **The cheapest of the LOD family by a wide margin** |
+| **Substitutive LOD levels** | Nothing structural, and the machinery makes no independence assumption: a level is an independently-authored `(vertices, faces)` pair, selected by `coverage_fraction`. What is missing is only the PRODUCER. Per-level picking is already solved — the LOD registry hides inactive levels and the picking system skips hidden nodes, so each level is its own pick domain with its own per-vertex label CSR. | `luxar mesh lod` with QEM levels. Viewer side is a two-line widening: flip `GEOMETRY_CAPABILITIES.mesh.lod` and extend `LODGroupMetadata.display_type`. **The cheapest of the LOD family by a wide margin** |
 | **`kind=partition`** | BSP over face centroids, needing vertex duplication at part boundaries plus a per-part split of the per-vertex label CSR. **Bookkeeping, not correctness:** with stored normals split verbatim a duplicated boundary vertex carries an identical position AND normal in both parts, so nothing seams under §6.2's shading — and the derivative variant is per-fragment off the rasterized triangle, hence part-agnostic by construction. Seams arrive only with something RECOMPUTED per part: area-averaged normals, tangent frames, UVs, baked AO. | Highest value for large meshes. Revisit the seam question the moment shading gains any per-part recomputation |
 | **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** — a condition that is now *measured* rather than asserted: `processMeshData` emits a `log.info` for a node whose hidden dims include a continuous one (`noticeContinuousHiddenDim` in `data/scene-loader/process/data-processor-mesh.ts`), naming each such dimension and its unit. Promote when that line starts appearing against real datasets; see TODO item 29 under "Future / Exploratory" for why the deferral is a decision rather than a backlog entry |
 | **Per-triangle depth sorting** | Index-buffer permutation, not instance permutation. The coordinator's double-buffered ordering and chunked apply already exist, and the mesh problem is the *easier* one (permute F triples by face centroid; no per-element extent, no texture indirection). **This is the weakest exclusion in the table**, and the only one with a live user-visible consequence: §6.3's translucent-`normal` warning is its mitigation. | Extend the depth-sort coordinator with an index-permutation path |
 | **Spatial index** | Not merely "see §7": a chunk of faces is not independently meaningful, because the index buffer references vertices anywhere in the array — so a face chunk draws only with the whole vertex buffer resident, or after the same remap/duplicate bookkeeping the partition row describes. An efficiency cliff, not an impossibility: partial loading is achievable, it just forfeits most of the bandwidth win a chunk index exists to buy. Moot in practice as well, since the 512 MiB per-node byte budget binds first (≈22.4M vertices for a 3D float32 mesh, measured), well under §7's ≤-few-million-triangle expectation. | Mirror the lines dual-index loader over faces |
 | **`volumetric` blending** | Not about opacity — about **path length**. Emission–absorption integrates κ over the distance a ray spends inside a participating medium, and a triangle is zero-thickness, so τ = 0 however translucent the surface is. The adjacent feature that DOES make sense — volume rendering bounded by a mesh's front and back faces — is a different thing entirely and is not what this excludes. | — |
 | **Worker projection** | Measure first (§7). | — |
-| **Mesh import formats** (PLY/OBJ/STL/glTF) | Independent of the node type. | `luxar mesh import`, mirroring `gsplat import` |
+| ~~**Mesh import formats** (PLY/OBJ/STL/glTF)~~ — **landed** | Independent of the node type, which is why it could ship on its own afterwards. | Shipped as `luxar mesh import` (`luxar/mesh/interop/`), mirroring `gsplat import` |
 
 ### 9.1 Reveal ladders — an additive prefix as an EFFECT, never as a LOD
 
@@ -1453,6 +1452,19 @@ Omitting the stamp is both the cheapest fix and the honest encoding, because the
 meaning — "this prefix is dim, compensate for it" — is a false statement about a holed
 surface. `energyCompensation` already returns exactly `1` for an absent `e`, leaving the
 leaf byte-identical. LOD **cross-fade** is gated on the same set and follows the same rule.
+
+The rule is **enforced at write time**: `add_mesh` raises if `level_stats` or `lod_stats` is
+supplied (`_reject_energy_stamps` in `packages/luxar/src/luxar/core/group/adders/mesh.py`) — on key
+presence, deliberately broader than the energy fields themselves, since neither attribute has any
+meaning on a mesh today. Substitutive mesh levels are the one thing that would change that
+(`level_stats.quality` is a legitimate non-energy stamp), so whoever lands the decimator narrows the
+guard to the energy keys rather than routing around it. It has to be the adder that refuses,
+because the write path's allow-list `_ALLOWED_NODE_ATTRS` in
+`packages/luxar/src/luxar/io/_compiler/node_common.py` is geometry-blind and would let either key
+through on any node type. The refusal is prophylactic rather than a fix for a live bug: two latches
+hold today — mesh cannot sit in a `kind=lod` group (§9), so the fade pass never visits it, and the
+mesh commit never stamps `committedEnergyFraction`, so the factor is 1 — and substitutive LOD would
+remove the first, a reveal ladder the second.
 
 **Not a concern:** `coverage_fraction` auto-selection. That selector chooses between
 *substitutive levels*; an additive ladder inside a leaf streams to completion and is never
