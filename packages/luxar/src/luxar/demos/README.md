@@ -303,7 +303,7 @@ Rows: identity, `offset +5`, `offset -3`, `scale ×2`, `scale ×2 offset +2`, a 
 
 **Run**: `luxar demo run nd_transforms`
 
-**Demonstrates**: `nd_transform` affine on a discrete ordinal dimension (offset, scale, negative scale, scale+offset), categorical permutation, hierarchical composition through nested groups, a spatial 4x4 `transform` and an `nd_transform` on the same group, `extend_to_all` for static furniture and per-section pinning, `visible_range` overlays as a live expected-value readout. Doubles as the visual regression harness for the viewer's no-preimage rule (see `packages/luxar-viewer/src/data/transforms/README.md`).
+**Demonstrates**: `nd_transform` affine on a discrete ordinal dimension (offset, scale, negative scale, scale+offset), categorical permutation, hierarchical composition through nested groups, a spatial 4x4 `transform` and an `nd_transform` on the same group, `extend_to_all` for static furniture and per-section pinning, `visible_range` overlays as a live expected-value readout, and composite group layers (`Frame_Section` / `Channel_Section` are the only `layer=True` nodes, so the Layers panel offers one row per half of the bench instead of one per marker). Doubles as the visual regression harness for the viewer's no-preimage rule (see `packages/luxar-viewer/src/data/transforms/README.md`).
 
 ---
 
@@ -323,7 +323,7 @@ Beautiful procedural forest using L-system grammars to showcase the **Lines** no
 
 **Run**: `luxar demo run forest [-- --iterations=6] [-- --trees=16]`
 
-**Demonstrates**: **Lines node type** as an indexed branching network with shared joint vertices, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes.
+**Demonstrates**: **Lines node type** as an indexed branching network with shared joint vertices, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes, and a `layer=True` `trees` container group so the hundreds of per-tree nodes reach the Layers panel as one composite row.
 
 ---
 
@@ -856,7 +856,7 @@ Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium 
 
 **Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
 
-**Demonstrates**: Per-object `coverage_fraction` LOD selection at scale, scene-graph transforms (`add_group(transform=...)`, `transforms.compose`/`rotate`/`translate`) for placement so splat arrays stay identical, automatic `array_ref` array deduplication in the encoder, and initial-camera setup via `ViewerConfig(camera=CameraConfig(...))`. Options: `--count=N`, `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
+**Demonstrates**: Per-object `coverage_fraction` LOD selection at scale, scene-graph transforms (`add_group(transform=...)`, `transforms.compose`/`rotate`/`translate`) for placement so splat arrays stay identical, automatic `array_ref` array deduplication in the encoder, a `layer=True` `embryo_line` container group (one Layers-panel row for the whole line rather than 100), and initial-camera setup via `ViewerConfig(camera=CameraConfig(...))`. Options: `--count=N`, `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
 
 ---
 
@@ -994,7 +994,8 @@ def generate_my_data(output_path: Path, **params) -> None:
         # 2. Write to zarr
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
-            scene.add_points('name', positions, colors=colors, ...)
+            # `layer=True` is not optional — see §8.
+            scene.add_points('name', positions, colors=colors, layer=True, ...)
 
 def main():
     """Entry point - generate and serve."""
@@ -1195,14 +1196,45 @@ there, or the build fails.
 Soft checks that *degrade a feature* rather than refuse to run are fine and are
 not flagged — e.g. disabling image thumbnails when `Pillow` is absent.
 
+### 8. Expose your geometry as a Layers-panel layer
+
+Pass `layer=True` to every geometry adder (`add_points` / `add_lines` /
+`add_gsplats` / `add_mesh` / `add_gsplats_from_*`). The Layers panel lists only
+nodes whose zarr attrs carry `layer: true`, and it is the only way a viewer can
+toggle a node, re-window its display range, change its gamma or switch its
+blending mode — so a demo that omits the kwarg ships a panel that does nothing,
+often for its one and only geometry node. `Node.layer` defaults to `False`, so
+this is an omission, not a choice.
+
+When a demo emits MANY sibling nodes — one per tile, per tree, per repeat — do
+**not** mark each one; hundreds of rows is worse than none. Put them under a
+container group added with `layer=True` and let the panel treat it as one
+composite row that fans its controls down to every descendant:
+
+```python
+trees = scene.add_group("trees", layer=True)
+for i, tree in enumerate(trees_to_write):
+    trees.add_lines(f"tree_{i:04d}", ...)   # no per-node layer=
+```
+
+Give the group the `blending_mode` its descendants use: a group that authors
+none falls back to the panel's default (`additive`), which mislabels the row and
+hides mode-specific controls such as the `volumetric` absorption slider.
+
+`tests/test_demo_layers.py` fails the build if a demo authors geometry that no
+layer covers. Sibling nodes covered by a container group are listed in its
+`EXEMPT` table together with the group that covers them, and that group is
+checked too — so an exemption cannot outlive the layer it leans on.
+
 ## Creating New Demos
 
 1. **Copy a template** (demo_lorenz.py or demo_cubic_array.py)
 2. **Rename** to demo_yourname.py
 3. **Update docstring** with what it demonstrates
 4. **Implement generation** in the generate_* function (keep everything in that function!)
-5. **Test** by running: `hatch run python demo_yourname.py`
-6. **Ctrl+C** to stop and verify cleanup works
+5. **Expose the geometry** with `layer=True` (or a `layer=True` container group) — see §8
+6. **Test** by running: `hatch run python demo_yourname.py`
+7. **Ctrl+C** to stop and verify cleanup works
 
 ## Tips
 
@@ -1217,10 +1249,12 @@ dims = Dimensions.default_3d()
 with LuxarZarrCompiler(output) as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
-    # Write in batches
+    # Write in batches, under one composite group layer (see §8) rather than
+    # one Layers-panel row per batch
+    batches = scene.add_group('batches', layer=True)
     for i in range(num_batches):
         batch = generate_batch(i)
-        scene.add_points(f'batch_{i}', batch)
+        batches.add_points(f'batch_{i}', batch)
 ```
 
 ### For nD Demos

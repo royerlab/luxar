@@ -224,6 +224,7 @@ def generate_5d_spiral_galaxy(
                 gamma=1.0,
                 blending_mode="additive",
                 intensity=5.58,
+                layer=True,
             )
 
             # --- Overlays ---

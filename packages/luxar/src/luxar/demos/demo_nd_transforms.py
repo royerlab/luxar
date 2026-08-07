@@ -84,6 +84,11 @@ FEATURES DEMONSTRATED
   per-section pinning (Frame rows ignore Channel and vice versa)
 - Dimension-gated text overlays (``visible_range``) as a live expected-value
   readout
+- Composite group layers: the two halves of the bench hang off ``Frame_Section``
+  and ``Channel_Section``, the only two nodes marked ``layer=True``. The Layers
+  panel therefore shows one row per half — fanning visibility, range, gamma and
+  blend down to every ruler, rail, ghost and marker — instead of one row per
+  node (66 of them) for what a reader thinks of as two things.
 
 Usage:
     python demo_nd_transforms.py [--no-serve]
@@ -529,9 +534,9 @@ def _add_static_text(
 # =============================================================================
 
 
-def _add_frame_ruler(scene: Any, y: float, counter: List[int]) -> None:
+def _add_frame_ruler(section: Any, y: float, counter: List[int]) -> None:
     """World-frame ruler: always-on numerals over a baseline with tick notches."""
-    ruler = scene.add_group("World_Frame_Ruler", blending_mode="normal")
+    ruler = section.add_group("World_Frame_Ruler", blending_mode="normal")
 
     baseline_y = y - 1.9
     ruler.add_lines(
@@ -578,7 +583,7 @@ def _add_frame_ruler(scene: Any, y: float, counter: List[int]) -> None:
 
 
 def _add_frame_cursor(
-    scene: Any,
+    section: Any,
     y_top: float,
     y_bottom: float,
     readout_y: float,
@@ -591,7 +596,7 @@ def _add_frame_cursor(
     matches the slice at a time, so it reads as a cursor sliding along the
     ruler, with the world index spelled out above it.
     """
-    cursor = scene.add_group("World_Frame_Cursor", blending_mode="normal")
+    cursor = section.add_group("World_Frame_Cursor", blending_mode="normal")
 
     columns: List[np.ndarray] = []
     digits: List[np.ndarray] = []
@@ -636,7 +641,7 @@ def _add_frame_cursor(
     counter[0] += col_pos.shape[0] + dig_pos.shape[0]
 
 
-def _add_frame_row(scene: Any, row: FrameRow, y: float, counter: List[int]) -> Any:
+def _add_frame_row(section: Any, row: FrameRow, y: float, counter: List[int]) -> Any:
     """Rail + label + always-on ghosts + the transformed lit markers.
 
     Returns the group the markers were written into — the node whose
@@ -646,7 +651,7 @@ def _add_frame_row(scene: Any, row: FrameRow, y: float, counter: List[int]) -> A
     locals_ = row.local_frames()
 
     # --- static furniture: no nd_transform, always visible -----------------
-    furniture = scene.add_group(f"Row_{name}_Static", blending_mode="normal")
+    furniture = section.add_group(f"Row_{name}_Static", blending_mode="normal")
 
     furniture.add_lines(
         f"Rail_{name}",
@@ -702,7 +707,7 @@ def _add_frame_row(scene: Any, row: FrameRow, y: float, counter: List[int]) -> A
     # carries the nd_transform: the two transform kinds are independent and
     # compose side by side.
     if row.parent_nd_transform is not None:
-        parent = scene.add_group(
+        parent = section.add_group(
             f"Row_{name}_Parent",
             transform=transforms.translate(0.0, y, 0.0),
             nd_transform=row.parent_nd_transform,
@@ -717,7 +722,7 @@ def _add_frame_row(scene: Any, row: FrameRow, y: float, counter: List[int]) -> A
         extra: Dict[str, Any] = (
             {} if row.nd_transform is None else {"nd_transform": row.nd_transform}
         )
-        target = scene.add_group(
+        target = section.add_group(
             f"Row_{name}_Markers",
             transform=transforms.translate(0.0, y, 0.0),
             blending_mode="normal",
@@ -749,7 +754,7 @@ def _add_frame_row(scene: Any, row: FrameRow, y: float, counter: List[int]) -> A
     return target
 
 
-def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> Dict[str, Any]:
+def _add_channel_section(section: Any, y0: float, counter: List[int]) -> Dict[str, Any]:
     """Categorical-permutation half of the bench.
 
     Returns the marker group of each channel row, keyed by node name, so the
@@ -761,7 +766,7 @@ def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> Dict[str,
     x_lo = channel_x(0) - CH_TICK * 0.5
     x_hi = channel_x(len(CHANNELS) - 1) + CH_TICK * 0.5
 
-    ruler = scene.add_group("World_Channel_Ruler", blending_mode="normal")
+    ruler = section.add_group("World_Channel_Ruler", blending_mode="normal")
     for c, cname in enumerate(CHANNELS):
         _add_static_text(
             ruler,
@@ -785,7 +790,7 @@ def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> Dict[str,
     )
 
     # Channel cursor — the same idea as the frame cursor, on the other axis.
-    cursor = scene.add_group("World_Channel_Cursor", blending_mode="normal")
+    cursor = section.add_group("World_Channel_Cursor", blending_mode="normal")
     cur_pos = np.vstack(
         [
             _to_5d(
@@ -810,7 +815,7 @@ def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> Dict[str,
         y = y0 - (i + 1) * ROW_DY
         name = _channel_node_name(label)
 
-        furniture = scene.add_group(f"Chan_{name}_Static", blending_mode="normal")
+        furniture = section.add_group(f"Chan_{name}_Static", blending_mode="normal")
         furniture.add_lines(
             f"Chan_Rail_{name}",
             _rail_vertices(y, x_lo, x_hi),
@@ -864,7 +869,7 @@ def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> Dict[str,
         extra: Dict[str, Any] = (
             {} if perm is None else {"nd_transform": {"Channel": {"permutation": perm}}}
         )
-        markers = scene.add_group(
+        markers = section.add_group(
             f"Chan_{name}_Markers",
             transform=transforms.translate(0.0, y, 0.0),
             blending_mode="normal",
@@ -1128,10 +1133,25 @@ def generate_demo(output_path: Path) -> int:
                 ),
             )
 
+            # Two composite layers, not twenty. Every ruler, cursor, rail,
+            # ghost, label and marker of a half-bench hangs off one
+            # `layer=True` group, so the Layers panel offers exactly the two
+            # rows a reader of this bench thinks in — "the Frame half" and
+            # "the Channel half" — and fans visibility / range / gamma / blend
+            # down to every descendant. Both wrappers are deliberately bare:
+            # no `transform` and no `nd_transform`, so the composed
+            # `world_nd_transform` self-check below is unaffected by them.
+            frame_section = scene.add_group(
+                "Frame_Section", layer=True, blending_mode="normal"
+            )
+            channel_section = scene.add_group(
+                "Channel_Section", layer=True, blending_mode="normal"
+            )
+
             with asection("World frame ruler + cursor"):
-                _add_frame_ruler(scene, ruler_y, counter)
+                _add_frame_ruler(frame_section, ruler_y, counter)
                 _add_frame_cursor(
-                    scene,
+                    frame_section,
                     ruler_y - 2.8,
                     last_row_y - ROW_DY * 0.6,
                     readout_y,
@@ -1142,7 +1162,7 @@ def generate_demo(output_path: Path) -> int:
             with asection("Frame rows"):
                 for i, row in enumerate(FRAME_ROWS):
                     marker_nodes[row.name] = _add_frame_row(
-                        scene, row, -i * ROW_DY, counter
+                        frame_section, row, -i * ROW_DY, counter
                     )
                     lights = [
                         int(row.scale * k + row.offset) for k in row.local_frames()
@@ -1154,7 +1174,9 @@ def generate_demo(output_path: Path) -> int:
                     )
 
             with asection("Channel rows"):
-                channel_marker_nodes = _add_channel_section(scene, channel_y0, counter)
+                channel_marker_nodes = _add_channel_section(
+                    channel_section, channel_y0, counter
+                )
 
             _add_overlays(scene)
 

@@ -184,6 +184,7 @@ def generate_cubic_array(
                 opacity=1.0,
                 blending_mode="additive",
                 intensity=0.384,
+                layer=True,
             )
             aprint(f"✓ Added {len(positions):,} points (cubic array)")
 
@@ -201,6 +202,7 @@ def generate_cubic_array(
                 sharpness=star_sharp,
                 opacity=0.4,  # Semi-transparent
                 blending_mode="normal",  # Normal blending for stars
+                layer=True,
             )
             aprint(f"✓ Added {len(star_pos):,} background stars")
 

@@ -534,6 +534,7 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                     intensity=0.6,
                     blending_mode="luminous",
                     extend_to_all=[],
+                    layer=True,
                 )
                 total = len(all_verts)
 

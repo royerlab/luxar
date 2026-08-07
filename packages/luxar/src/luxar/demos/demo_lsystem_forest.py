@@ -57,7 +57,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 from arbol import aprint, asection
@@ -651,6 +651,7 @@ def generate_forest(
                 colors=grid_colors,
                 sharpness=0.8,
                 line_type="segments",
+                layer=True,
             )
             n_grid = len(grid_vertices) // 2
             aprint(f"Ground: {n_grid} segments")
@@ -684,6 +685,16 @@ def generate_forest(
                 (x - forest_size / 2, y - forest_size / 2) for x, y in raw_positions
             ]
             aprint(f"  Placed {len(positions)} trees using Poisson disk sampling")
+
+            # One node per tree keeps each crown independently pickable, but
+            # a Layers-panel row per tree (hundreds of them) would be unusable
+            # — so the trees live under
+            # a single `layer=True` group. The panel shows one "trees" row and
+            # fans its visibility / range / gamma / blend down to every tree.
+            # Created on the first tree that survives the degenerate-expansion
+            # skip below, so a rules set that emits nothing leaves no empty
+            # group behind (a panel row that controls nothing).
+            trees: Optional[Any] = None
 
             # Collect all leaves for batch addition
             all_leaf_positions = []
@@ -746,10 +757,13 @@ def generate_forest(
                 if len(edges) == 0:
                     continue
 
+                if trees is None:
+                    trees = scene.add_group("trees", layer=True)
+
                 # Indexed line type: joints and branch points share vertex
                 # indices, so the viewer suppresses joint caps (no bead-chain
                 # look on thick trunks)
-                scene.add_lines(
+                trees.add_lines(
                     f"tree_{i:04d}",
                     vertices=vertices,
                     widths=widths,
@@ -792,6 +806,7 @@ def generate_forest(
                     radii=leaf_radii,
                     sharpness=leaf_sharpness,
                     intensity=0.031,
+                    layer=True,
                 )
                 aprint(f"  Foliage: {len(leaf_positions):,} fluffy leaf points")
 

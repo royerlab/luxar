@@ -304,6 +304,7 @@ def generate_spotify_landscape(
                 opacity=0.9,
                 intensity=0.12,
                 labels=labels,
+                layer=True,
             )
 
             # Title overlay

@@ -6,6 +6,26 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Demos: every scene now has something in the Layers panel (#1362)
+
+The panel lists only nodes whose zarr attrs carry `layer: true`, and `Node.layer`
+defaults to `False`. Twenty-eight demos never passed it, so nothing in them — in
+most cases their one and only geometry node — could be toggled, re-ranged,
+gamma'd or re-blended at view time. They pass it now.
+
+Two of those demos emit many sibling nodes (one per L-system tree — 663 at the
+default sampling — and 100 embryo copies), where a row each would be worse than
+none, so the siblings sit under one
+`layer=True` container group that the panel treats as a composite and fans its
+controls down from. `demo_nd_transforms` gets the same treatment for a different
+reason: its rulers, cursors, rails, ghosts and markers — 66 nodes from twelve
+call sites — are the two halves of one measuring instrument, so they now hang off
+`Frame_Section` and `Channel_Section`, and the bench goes from no panel rows to
+two. A new AST lint, `demos/tests/test_demo_layers.py`, pins both the weak
+invariant (a demo that authors geometry exposes at least one layer) and the
+per-call one, with an exemption list for the composite-group cases that is itself
+checked against the group each exemption names.
+
 #### Mesh is per-triangle depth sorted
 
 `normal`-mode meshes composited in index order: whichever triangle the writer

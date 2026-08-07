@@ -575,6 +575,7 @@ def generate_4d_fractal_dataset(
                 sharpness=sharpnesses,
                 opacity=0.8,
                 intensity=0.0625,
+                layer=True,
             )
 
             # --- Overlays ---

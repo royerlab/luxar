@@ -570,6 +570,7 @@ def generate_paper_landscape(
                 opacity=0.9,
                 intensity=0.1,
                 labels=stacked.labels,
+                layer=True,
                 substitutive_lod=substitutive_lod_or_flat(
                     dict(compression_factor=8, levels=3, device="auto")
                 ),
