@@ -240,7 +240,7 @@
     },
     {
       "id": "arxiv_papers_kaggle",
-      "title": "arXiv Paper Embeddings",
+      "title": "arXiv Papers (Kaggle / OpenAI)",
       "geometry": "points",
       "category": "embeddings",
       "script": "demo_arxiv_embeddings_kaggle.py",
@@ -326,12 +326,12 @@
       "dataset": "datasets/demos/spiral_galaxy_5d.luxar.zarr"
     },
     {
-      "id": "arxiv_papers",
-      "title": "Arxiv Papers",
+      "id": "arxiv_papers_semantic_scholar",
+      "title": "arXiv Papers (Semantic Scholar)",
       "geometry": "points",
       "category": "embeddings",
-      "script": "demo_arxiv_paper_embeddings.py",
-      "dataset": "datasets/demos/arxiv_papers.luxar.zarr"
+      "script": "demo_arxiv_embeddings_semantic_scholar.py",
+      "dataset": "datasets/demos/arxiv_papers_semantic_scholar.luxar.zarr"
     },
     {
       "id": "atp_synthase",

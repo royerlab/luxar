@@ -1,7 +1,7 @@
 """Guard the README's ``luxar demo`` docs against the live registry / CLI.
 
 Issue #718: the README claimed ``luxar demo run 1`` equaled ``luxar demo run
-lorenz`` (index 1 is actually ``arxiv_papers``), carried stale sample-table
+lorenz`` (index 1 is actually ``arxiv_papers_kaggle``), carried stale sample-table
 rows, and described ``run-all`` skips inaccurately. These checks fail if the
 cited demo keys, the illustrative sample-table rows, or the ``run-all``
 download-cap wording drift from what the registry / CLI report.

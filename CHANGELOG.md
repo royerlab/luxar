@@ -6,6 +6,32 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Changed (breaking) — the Semantic Scholar arXiv demo is renamed `arxiv_papers_semantic_scholar`
+
+Two arXiv embedding demos read as variants of one dataset and were not: one pulls
+the Semantic Scholar API and embeds abstracts with Sentence-BERT, the other reads
+the Kaggle dump's pre-computed OpenAI text-embedding-3-large vectors. The first
+owned the bare name. **RENAME (breaking, no alias):** key `arxiv_papers` →
+`arxiv_papers_semantic_scholar` (the old key errors out with close-match
+suggestions), script `demo_arxiv_paper_embeddings.py` →
+`demo_arxiv_embeddings_semantic_scholar.py`, cache `arxiv_paper` →
+`arxiv_semantic_scholar`, output `arxiv_papers_semantic_scholar.luxar.zarr`. A warm
+cache is not migrated:
+`mv ~/.cache/luxar/arxiv_paper ~/.cache/luxar/arxiv_semantic_scholar` keeps it,
+`luxar demo cache clear --orphans` reclaims it, doing neither recomputes it once; a
+built `arxiv_papers.luxar.zarr` is claimed by no demo now and can be deleted. KEY
+disambiguates the `luxar demo` table, the titles reach `demo info` and the run
+banner, and each scene's own overlay title now names its source too.
+
+The overlap was in metadata and one-directional, not on disk: the Kaggle demo
+declared `arxiv_papers` on top of its own output, and `_status` existence-checks a
+demo's declared outputs, so a Semantic Scholar build made the Kaggle row read
+`output ✓`. Never the reverse: that demo only wrote `arxiv_papers_kaggle.luxar.zarr`
+and its serve-path scene lives in a `TemporaryDirectory`. It now claims only
+`arxiv_papers_kaggle`; that temp scene and its Points node — the zarr group path,
+visible in debug/monitor output — lose the retired name too. A new registry test
+fails if two demos ever resolve an output to the same scene path again (#1363).
+
 #### Mesh is per-triangle depth sorted
 
 `normal`-mode meshes composited in index order: whichever triangle the writer

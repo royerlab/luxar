@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-Contained Demo: ArXiv Paper Embeddings - Landscape of Scientific Knowledge
+"""Self-Contained Demo: arXiv Paper Embeddings from the Semantic Scholar API
 
 Visualize scientific papers from arXiv in 3D embedding space, showing how
 different research areas cluster together based on semantic similarity.
@@ -14,8 +14,8 @@ This visualization shows scientific papers as points in 3D space, where:
 - **Size = Citation count** (larger = more influential)
 
 The 3D coordinates are computed using:
-1. **Embeddings**: Convert paper abstracts to 768D vectors using Sentence-BERT
-2. **UMAP**: Reduce 768D → 3D while preserving semantic relationships
+1. **Embeddings**: Convert paper abstracts to 384D vectors using Sentence-BERT
+2. **UMAP**: Reduce 384D → 3D while preserving semantic relationships
 
 WHAT YOU'LL SEE:
 - Papers naturally cluster by topic (ML, quantum physics, genomics, etc.)
@@ -45,14 +45,16 @@ FIELDS OF STUDY:
 - And more!
 
 Usage:
-    python demo_arxiv_paper_embeddings.py [--papers=N] [--fields=LIST]
+    python demo_arxiv_embeddings_semantic_scholar.py [--papers=N] [--fields=LIST]
 
     Options:
-    --papers=N          Number of papers per field (default: 1000)
+    --papers=N          Number of papers per field (default: 200000 — with the
+                        5 default fields that is ~1M papers in total)
     --fields=cs,physics Fields to include (default: cs,physics,biology,medicine,math)
 
-    Embeddings + 3D UMAP are cached automatically under ~/.cache/luxar/arxiv_paper
-    (keyed on fields + papers-per-field), so repeat runs are instant.
+    Embeddings + 3D UMAP are cached automatically under
+    ~/.cache/luxar/arxiv_semantic_scholar (keyed on fields + papers-per-field),
+    so repeat runs are instant.
 
 Controls:
     - Rotate to explore the knowledge landscape
@@ -73,6 +75,15 @@ NOTES:
   coarsening; without it the scene still builds as a flat (fully viewable)
   point cloud
 - API rate limits: ~100 requests/second (use delays for large queries)
+- The cache directory was previously named 'arxiv_paper'. An old warm cache now
+  reads as an orphan in `luxar demo cache list` and everything is recomputed
+  (the multi-minute paths above). To keep it, rename it once:
+      mv ~/.cache/luxar/arxiv_paper ~/.cache/luxar/arxiv_semantic_scholar
+  or reclaim the space with `luxar demo cache clear --orphans`
+- The output scene stem moved too, so a previously built
+  datasets/demos/arxiv_papers.luxar.zarr is claimed by no demo any more and can
+  simply be deleted by hand (`cache clear --outputs` only walks the SELECTED
+  demos' DECLARED outputs, and this stem is declared by nobody now)
 
 FOR 1M PAPERS:
 Consider using Semantic Scholar's bulk datasets instead of API:
@@ -81,9 +92,9 @@ Download pre-computed embeddings and metadata directly!
 """
 
 DEMO_META = {
-    "key": "arxiv_papers",
-    "title": "arXiv Papers",
-    "description": "arXiv papers in 3D embedding space (Sentence-BERT + UMAP), clustered by field.",
+    "key": "arxiv_papers_semantic_scholar",
+    "title": "arXiv Papers (Semantic Scholar)",
+    "description": "arXiv papers from the Semantic Scholar API, embedded with Sentence-BERT and shown as a 3D UMAP.",
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
@@ -92,8 +103,8 @@ DEMO_META = {
         "gpu": "none",
         "local_data": None,
     },
-    "caches": ["arxiv_paper"],
-    "outputs": ["arxiv_papers"],
+    "caches": ["arxiv_semantic_scholar"],
+    "outputs": ["arxiv_papers_semantic_scholar"],
 }
 
 import sys
@@ -238,7 +249,8 @@ def compute_text_embeddings(texts: list[str]) -> np.ndarray:
     Returns:
         Array of shape (n_texts, embedding_dim) with embeddings
     """
-    # Gated here, not in main(): a warm arxiv_paper cache never needs the model.
+    # Gated here, not in main(): a warm arxiv_semantic_scholar cache never needs
+    # the model.
     SentenceTransformer = require_module("sentence_transformers").SentenceTransformer
 
     with asection("Computing text embeddings"):
@@ -278,7 +290,8 @@ def reduce_embeddings_umap(
     Returns:
         (n_samples, n_components) reduced coordinates
     """
-    # Gated here, not in main(): a warm arxiv_paper cache never needs UMAP.
+    # Gated here, not in main(): a warm arxiv_semantic_scholar cache never needs
+    # UMAP.
     UMAP = require_module("umap").UMAP
 
     with asection(f"Reducing {embeddings.shape[1]}D → {n_components}D with UMAP"):
@@ -443,10 +456,13 @@ def generate_paper_landscape(
             "citations": citation_counts,
         }
 
-    # Embeddings + UMAP are cached ON BY DEFAULT under ~/.cache/luxar/arxiv_paper,
-    # keyed on the query (fields + papers-per-field), version=1.
+    # Embeddings + UMAP are cached ON BY DEFAULT under
+    # ~/.cache/luxar/arxiv_semantic_scholar, keyed on the query (fields +
+    # papers-per-field), version=1.
     cache_key = f"embed3d_{'_'.join(fields)}_n{papers_per_field}"
-    bundle = cache_computed("arxiv_paper", cache_key, _compute_bundle, version=1)
+    bundle = cache_computed(
+        "arxiv_semantic_scholar", cache_key, _compute_bundle, version=1
+    )
     papers_clean = bundle["papers_clean"]
     embeddings_3d = np.asarray(bundle["embeddings_3d"], dtype=np.float32)
     primary_fields = bundle["fields"]
@@ -578,7 +594,7 @@ def generate_paper_landscape(
             # --- Overlays ---
             # Title
             scene.add_text(
-                "ArXiv Paper Landscape",
+                "arXiv Papers — Semantic Scholar",
                 position=(0.02, 0.02),
                 font_size=0.055,
                 anchor="top-left",
@@ -670,7 +686,7 @@ def main() -> None:
             ]
 
     aprint("=" * 70)
-    aprint("ARXIV PAPER EMBEDDINGS - LANDSCAPE OF KNOWLEDGE")
+    aprint("ARXIV PAPER EMBEDDINGS - FROM SEMANTIC SCHOLAR")
     aprint("=" * 70)
     aprint("")
     aprint("Visualize scientific papers in 3D semantic space!")
@@ -693,13 +709,16 @@ def main() -> None:
     aprint(f"  Total target: ~{len(field_list) * papers_per_field:,} papers")
     aprint("")
     aprint("⏱️  Expected time:")
-    aprint("  • First run: 2-5 minutes (download + compute embeddings)")
+    aprint("  • First run: minutes to hours, scaling with the paper count")
+    aprint("    (download + compute embeddings; see the scale table in NOTES)")
     aprint("  • Cached run: <30 seconds (results cached automatically)")
     aprint("")
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "arxiv_papers.luxar.zarr"
+        output_path = (
+            get_demos_output_dir() / "arxiv_papers_semantic_scholar.luxar.zarr"
+        )
         try:
             n_papers = generate_paper_landscape(
                 output_path,
@@ -721,8 +740,10 @@ def main() -> None:
         return
 
     # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_arxiv_") as tmpdir:
-        output_path = Path(tmpdir) / "arxiv_papers.luxar.zarr"
+    with tempfile.TemporaryDirectory(
+        prefix="luxar_demo_arxiv_semantic_scholar_"
+    ) as tmpdir:
+        output_path = Path(tmpdir) / "arxiv_papers_semantic_scholar.luxar.zarr"
 
         try:
             n_papers = generate_paper_landscape(

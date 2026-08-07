@@ -76,6 +76,26 @@ def test_keys_unique_and_resolvable() -> None:
         assert get_demo(str(demo.index)) == demo
 
 
+def test_output_stems_unique_across_registry() -> None:
+    """No two demos may resolve an output to the same scene path.
+
+    Outputs land side by side in ``datasets/demos/``, so a shared path means two
+    demos overwrite each other's scene and ``luxar demo`` STATUS reports one as
+    built because the other ran (issue #1363: the Kaggle arXiv demo listed
+    ``arxiv_papers`` alongside ``arxiv_papers_kaggle``, colliding with the
+    Semantic Scholar demo's only output). Compared on RESOLVED paths, not raw
+    stems, because ``demo_output_paths`` passes a ``.zarr``-suffixed stem through
+    verbatim — ``"foo"`` and ``"foo.luxar.zarr"`` are two spellings of one file.
+    """
+    dummy_dir = Path("/nonexistent-demos-dir")  # resolve only; touch nothing
+    owners: dict[str, list[str]] = {}
+    for demo in iter_demos():
+        for path in registry.demo_output_paths(demo, demos_dir=dummy_dir):
+            owners.setdefault(path.name, []).append(demo.key)
+    shared = {name: keys for name, keys in owners.items() if len(keys) > 1}
+    assert not shared, f"output scenes claimed by multiple demos: {shared}"
+
+
 def test_descriptions_unique_and_non_placeholder() -> None:
     """Field-quality guard: descriptions must be real, distinct one-liners.
 
