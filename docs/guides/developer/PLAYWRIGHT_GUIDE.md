@@ -673,8 +673,8 @@ test('no memory leaks', async ({ page }) => {
 ## Resources
 
 - [Playwright Documentation](https://playwright.dev)
-- [Three.js Testing Guide](https://threejs.org/docs/#manual/en/introduction/Testing)
-- [WebGL Debugging Tools](https://www.khronos.org/webgl/wiki/Debugging)
+- [Three.js Manual](https://threejs.org/manual/)
+- [WebGL Debugging Tools](https://wikis.khronos.org/webgl/Debugging)
 
 ---
 
