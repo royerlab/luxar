@@ -137,6 +137,16 @@
       "dataset": "datasets/demos/gsplats_3d_cells3d_multichannel.luxar.zarr"
     },
     {
+      "id": "mesh_isosurface_cells3d",
+      "title": "Cells3D Isosurfaces",
+      "geometry": "mesh",
+      "category": "microscopy",
+      "script": "demo_mesh_isosurface_cells3d.py",
+      "dataset": "datasets/demos/mesh_isosurface_cells3d.luxar.zarr",
+      "fillTarget": 0.84,
+      "note": "the first SHADED tile. A headlit surface has N.L~1 on every visible facet, so its lit histogram is only 0.06 wide (p10 0.840, p50 0.873, p99 0.903); driving that p99 to the 0.9 target parks the WHOLE subject in the ACES highlight rolloff, which desaturates toward white - membrane saturation measured 0.28 against 0.85 authored. The clip guard cannot catch it either, being a tail test on a distribution with no tail. That is now the auto-exposure flat-subject pass's job: spread 0.063 is well under NARROW_SPREAD_MAX, so it re-targets the median and comes down ~1.5 stops on its own. These are the numbers exposure-policy.ts was calibrated on, so this tile deliberately carries NO exposure override - it is the case that pass exists for. Framing still needs one: the default 0.95 fill clips the slab off the bottom and both sides, and 0.84 fits it whole at 82pct coverage"
+    },
+    {
       "id": "gsplats_3d_organoid_multichannel",
       "title": "Multichannel 3D Organoid",
       "geometry": "gsplats",
