@@ -152,10 +152,38 @@ targets is correct under every camera. A true fix needs a screen-space
 (per-frame) suppression, a design change at odds with the once-per-commit
 worker architecture — the trade-off is discussed in #795.
 
-The other known artifact is the **outer-side miter wedge**: at a sharp
-bend the two quads leave a small uncovered wedge on the outside of the turn.
+The other known artifact is the **outer-side miter wedge**: at a bend the
+two quads leave an uncovered wedge on the outside of the turn, growing from
+nothing at the centerline to roughly `half_width × turn_angle` at the tube
+edge — negligible on a gentle curve, a quarter disc of the full half-width
+at 90°.
 Closing it needs real join geometry (extending the quads longitudinally by a
 half-width), which is tracked separately (#790).
+
+That artifact now has an automated acceptance measurement:
+`../../../tests/e2e/line-join-artifact.spec.ts` renders the
+`test_line_joins` fixture (five joint cases, one per horizontal band —
+smooth curve, 90° zigzag, thin and thick straights, and a nine-ray hub)
+and scores every band on one frame with the pure metrics in
+`../../../tests/helpers/line-join-metrics.ts`. There are **two** metrics
+because each is blind to what the other catches: a local-median outlier
+count sees the narrow one-to-two-pixel wedge tick but tracks any smooth
+variation invisibly, while an axial flux profile (cross-section sum along
+the tube, normalised by its own median) sees exactly the smooth
+per-joint dip that was the #780 bead chain and would score zero on the
+outlier metric. The spec asserts what already holds — zero dark and zero
+bright outliers on both straight bands, flat flux profiles on both, and a
+gapless flux profile on all five — and merely records the bend cases
+under documented ceilings until join geometry lands.
+
+Read the metrics module header before quoting one of its numbers: the
+local-median count is non-monotone in defect width (a wedge three or more
+pixels across poisons its own median and scores zero), so the gentle
+`curve_smooth` band measures 4.94% dark while the 90°
+`zigzag_right_angle`, whose wedge is far worse but far wider, measures
+0.077%. For wide wedges the axial flux dip is the measure that responds —
+p05 0.749 on the zigzag against 1.000 on the straight bands. (Measured
+with `dpr=1` pinned, headless Chromium, 2026-08-06.)
 
 ## Geometry and storage layout
 
@@ -286,3 +314,4 @@ they remain the readable reference even after the TSL path stabilises.
 - `../../material-manager.ts` — creates the per-node line materials and owns the camera-broadcast loop
 - `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage screen-space expansion math
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
+- `../../../tests/e2e/line-join-artifact.spec.ts` / `../../../tests/helpers/line-join-metrics.ts` — the joint-artifact acceptance measurement described above (#780 / #785 / #790)
