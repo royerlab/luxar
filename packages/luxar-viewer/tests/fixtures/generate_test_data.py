@@ -82,6 +82,7 @@ FIXTURE_NAMES: list[str] = [
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
     "test_labelled_points.luxar.zarr",
+    "test_line_joins.luxar.zarr",
     "test_lines.luxar.zarr",
     "test_lines_blending_modes.luxar.zarr",
     "test_lines_categorical.luxar.zarr",
@@ -1716,6 +1717,253 @@ def generate_lines_test() -> None:
 
         aprint(f"  Created {output}")
         aprint(f"  Vertices: {vertices.shape}, Widths: {widths.shape}")
+
+
+def generate_line_joins_test() -> None:
+    """Polyline-joint artifact verification set (issues #780 / #785 / #790).
+
+    The measurement fixture behind
+    ``src/tests/e2e/line-join-artifact.spec.ts``. Five joint cases, each a
+    separate node in its OWN horizontal band of world Y so the bands never
+    touch and can be measured independently on one frame:
+
+    ``curve_smooth``
+        120-segment sinusoidal polyline, gentle (~10 degree) turns. The
+        headline #790 case: measured 2026-08-06 in headless Chromium, with
+        ``dpr=1`` pinned, at 4.94% dark and 3.53% bright outliers. Every
+        figure in this docstring comes from that same pinned frame.
+    ``zigzag_right_angle``
+        16-segment 90-degree zigzag; sharp bends, still inside a miter
+        limit. Its wedge is far worse than the curve's but also far wider,
+        and the local-median metric only counts the part of a wedge that is
+        still a couple of pixels across, so it barely registers this band
+        (0.077% dark, 0.077% bright). The axial flux dip (p05 0.749 against
+        1.000 on the straight bands) is the measure that sees it. See the
+        sensitivity envelope in ``src/tests/helpers/line-join-metrics.ts``.
+    ``straight_thin``
+        Straight polyline with free ends at the base width. Segment length
+        0.5 against width 0.15 gives ``L/w = 3.3``, comfortably clear of the
+        ``L/w >= 2`` a #780 per-joint notch (axial length ``2 x width``)
+        needs to sit between joints rather than merge with its neighbours.
+        This is the more sensitive of the two straight guards.
+    ``straight_thick``
+        Straight polyline at 4x the base width, 20 segments, ``L/w = 1.67``.
+        That is below the ``L/w >= 2`` separation criterion, so a #780
+        regression here would partly merge into a broad ripple rather than
+        resolve into discrete notches — the guard still fires (a full
+        regression models to p05 ~0.735 against the 0.9 gate) but it is the
+        weaker of the pair. What must NOT happen is subdividing it further:
+        the first draft used 199 segments (``L/w = 0.17``), where the
+        notches merge into near-uniform dimming that normalising the flux
+        profile by its own median removes entirely — a fully #780-regressed
+        dense band still scores p05 = 0.98, i.e. the guard is disabled.
+    ``hub_9ray``
+        Nine rays meeting at ONE shared hub vertex (a degree-9 branch
+        point). Authored with ``line_type="indexed"`` because joints are
+        matched by vertex INDEX: nine two-vertex chains that merely repeat
+        the hub coordinate would be nine unrelated free ends, not a branch
+        point. This case must never be mitered — it is the control.
+
+    All geometry lies in the ``z = 0`` plane so the pinned face-on camera
+    sees it flat, and every line is flat achromatic so Rec.709 luminance is
+    exactly the rendered intensity. The viewer config is photometry-grade
+    (identity tone response, no bloom / AA / noise / adaptive DPR, camera
+    pinned) for the same reason as ``test_lift_parity``: without it the spec
+    would measure through ACES plus bloom plus jitter.
+
+    On-screen width is four times what the authored width suggests, which
+    matters because the metric's sensitivity depends on pixel sizes. The
+    shader computes ``rawPixelWidth = width * uPerspectiveLineScale / dist``
+    with ``uPerspectiveLineScale = res.y / tan(fov / 2)``, and expands the
+    quad by ``rawPixelWidth`` on EACH side, so the rendered full width is
+    ``4 * authored_width * px_per_world_unit``. At the pinned framing below
+    that is 36 px per world unit, giving 21.6 px for ``straight_thin``,
+    86.4 px for ``straight_thick`` and 57.6 px (28.8 px half-width) for the
+    two bend bands. Measured cross-sections agree: 21.95 and 82.0 px, the
+    latter a few percent under nominal where the perpendicular falloff drops
+    below the background cutoff.
+
+    Band world-space AABBs (z = 0) — the measurement rectangles the E2E spec
+    projects through the live camera. All four horizontal bands span
+    ``x in [-10, 10]`` and their AABB X range is inset exactly 1.0 unit from
+    those ends, so the free-end cap ramps stay OUT of the measured region;
+    ``hub_9ray`` is measured whole. ``curve_smooth`` gets a taller box than
+    its siblings because its 28.8 px half-width plus its 0.7-unit amplitude
+    would otherwise reach the box edge exactly. Keep this table in sync with
+    ``LINE_JOIN_BANDS`` in ``src/tests/e2e/line-join-artifact.spec.ts``, and
+    the segment counts in sync with ``EXPECTED_LINE_SEGMENTS`` there.
+
+    ==================== ============== ==============
+    node                 x range        y range
+    ==================== ============== ==============
+    curve_smooth         [-9.0,   9.0]  [ 6.3,   9.7]
+    zigzag_right_angle   [-9.0,   9.0]  [ 2.5,   5.5]
+    straight_thin        [-9.0,   9.0]  [-1.5,   1.5]
+    straight_thick       [-9.0,   9.0]  [-5.5,  -2.5]
+    hub_9ray             [-1.5,   1.5]  [-9.5,  -6.5]
+    ==================== ============== ==============
+    """
+    with asection("Generating Line-Joints Artifact Test"):
+        output = FIXTURES_DIR / "test_line_joins.luxar.zarr"
+
+        # Geometry spans x in [-10, 10]; band centers are 4 units apart so
+        # the AABBs above leave a gutter of at least 0.6 units between
+        # neighbours (1.0 everywhere except below curve_smooth's taller box).
+        x_min, x_max = -10.0, 10.0
+        base_width = 0.15
+        thick_width = 4.0 * base_width
+        bend_width = 0.4
+
+        # Flat achromatic: R == G == B, so Rec.709 luminance IS the rendered
+        # intensity. 0.6 rather than 1.0 keeps the tube core off the 8-bit
+        # ceiling under the linear (tone_mapping="None") photometry config —
+        # a clipped core would hide exactly the flux dips this fixture
+        # exists to detect.
+        grey = (0.6, 0.6, 0.6)
+
+        # curve_smooth: 121 vertices -> 120 segments, 4 periods over the span.
+        curve_x = np.linspace(x_min, x_max, 121, dtype=np.float32)
+        curve = np.column_stack(
+            [
+                curve_x,
+                8.0 + 0.7 * np.sin(2.0 * np.pi * curve_x / 5.0),
+                np.zeros_like(curve_x),
+            ]
+        ).astype(np.float32)
+
+        # zigzag_right_angle: consecutive deltas are (+1.25, +1.25) and
+        # (+1.25, -1.25) — dot product exactly 0, i.e. a true 90-degree turn.
+        # 16 segments of 1.25 span exactly [-10, 10], so the documented
+        # 1.0-unit AABB inset holds for this band like the others.
+        zig_i = np.arange(17)
+        zig_x = (x_min + 1.25 * zig_i).astype(np.float32)
+        zig_y = (4.0 + 0.625 * np.where(zig_i % 2 == 0, -1.0, 1.0)).astype(np.float32)
+        zig_z = np.zeros_like(zig_x)
+        zigzag = np.column_stack([zig_x, zig_y, zig_z]).astype(np.float32)
+
+        # straight_thin / straight_thick: collinear chains with free ends.
+        # A #780 notch is 2 x width long, so segment length wants L/w >= 2
+        # for notches to stay separated (3.3 here for thin, 1.67 for thick).
+        # See the docstring: over-subdivision merges the notches into uniform
+        # dimming and the flux normalisation then cancels it entirely.
+        thin_x = np.linspace(x_min, x_max, 41, dtype=np.float32)
+        thin = np.column_stack(
+            [thin_x, np.zeros_like(thin_x), np.zeros_like(thin_x)]
+        ).astype(np.float32)
+
+        thick_x = np.linspace(x_min, x_max, 21, dtype=np.float32)
+        thick = np.column_stack(
+            [thick_x, np.full_like(thick_x, -4.0), np.zeros_like(thick_x)]
+        ).astype(np.float32)
+
+        # hub_9ray: one shared hub row + nine tips, wired by index so all
+        # nine edges reference the SAME hub vertex (degree-9 branch point).
+        hub_center = np.array([0.0, -8.0, 0.0], dtype=np.float32)
+        ray_angles = np.arange(9) * (2.0 * np.pi / 9.0)
+        ray_tips = np.column_stack(
+            [
+                hub_center[0] + 1.2 * np.cos(ray_angles),
+                hub_center[1] + 1.2 * np.sin(ray_angles),
+                np.zeros(9),
+            ]
+        ).astype(np.float32)
+        hub_vertices = np.vstack([hub_center[None, :], ray_tips]).astype(np.float32)
+        hub_indices = np.column_stack(
+            [np.zeros(9, dtype=np.uint32), np.arange(1, 10, dtype=np.uint32)]
+        )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        # Photometry-grade viewer config (same rationale as
+        # test_lift_parity): identity tone response and every non-linear or
+        # stochastic post-effect off, camera pinned face-on. fov=47 at
+        # distance 23 puts +-10 world units of Y across the viewport
+        # height — 36 px per world unit at 720p. See the docstring for the
+        # 4x factor between authored width and rendered pixel width: the
+        # thin band renders 21.6 px across and the thick one 86.4 px.
+        viewer_config = ViewerConfig(
+            camera=CameraConfig(
+                position=(0.0, 0.0, 23.0),
+                target=(0.0, 0.0, 0.0),
+                up=(0.0, 1.0, 0.0),
+                fov=47.0,
+            ),
+            background_color="#000000",
+            tone_mapping="None",
+            exposure=0.0,
+            global_offset=0.0,
+            global_gamma=1.0,
+            bloom_enabled=False,
+            vignette_enabled=False,
+            detector_noise_enabled=False,
+            fxaa_enabled=False,
+            msaa_enabled=False,
+            ssaa_enabled=False,
+            chromatic_lens_distortion_enabled=False,
+            adaptive_dpr_enabled=False,
+            control_type="orbit",
+            auto_rotate=False,
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+
+            # Default blending (additive) is what production lines use — it
+            # is deliberately NOT overridden here.
+            scene.add_lines(
+                "curve_smooth",
+                curve,
+                widths=bend_width,
+                colors=grey,
+                line_type="polyline",
+            )
+            scene.add_lines(
+                "zigzag_right_angle",
+                zigzag,
+                widths=bend_width,
+                colors=grey,
+                line_type="polyline",
+            )
+            scene.add_lines(
+                "straight_thin",
+                thin,
+                widths=base_width,
+                colors=grey,
+                line_type="polyline",
+            )
+            scene.add_lines(
+                "straight_thick",
+                thick,
+                widths=thick_width,
+                colors=grey,
+                line_type="polyline",
+            )
+            scene.add_lines(
+                "hub_9ray",
+                hub_vertices,
+                widths=bend_width,
+                colors=grey,
+                indices=hub_indices,
+                line_type="indexed",
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  curve_smooth:       {len(curve)} vertices, {len(curve) - 1} segs")
+        aprint(f"  zigzag_right_angle: {len(zigzag)} vertices, {len(zigzag) - 1} segs")
+        aprint(f"  straight_thin:      {len(thin)} vertices, width {base_width}")
+        aprint(f"  straight_thick:     {len(thick)} vertices, width {thick_width}")
+        aprint(f"  hub_9ray:           {len(hub_vertices)} vertices, 9 indexed rays")
 
 
 def generate_lines_categorical_test() -> None:
@@ -3877,6 +4125,9 @@ def main() -> None:
         aprint("")
 
         generate_lines_categorical_test()
+        aprint("")
+
+        generate_line_joins_test()
         aprint("")
 
         generate_extend_to_all_test()
