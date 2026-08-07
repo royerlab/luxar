@@ -54,6 +54,10 @@ make type-check-python  # read-only: mypy
 make security           # read-only: bandit
 make check-typescript   # read-only: typecheck + lint + unit tests
 make check-rust   # Rust type/lint checks (cargo check + clippy)
+make check-docs   # REQUIRED gate mirror: completeness + TypeDoc ratchets +
+                  # warning-fatal Sphinx. A new file under docs/ must be listed
+                  # in a docs/index.rst toctree or this goes red.
+make check-docs-external-links  # opt-in external HTTP link audit (not a gate)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
 make format-all   # Format all code (Python, TypeScript, Rust, Go, CUDA)
 
@@ -1093,6 +1097,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 ```bash
 make test-all                    # All tests pass
 make check-all                   # Linting, type checking
+make check-docs                  # Documentation gate (required check in CI)
 pnpm run format                  # Format TypeScript (from luxar-viewer/)
 ```
 
