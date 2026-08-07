@@ -28,7 +28,21 @@ export { SceneLoaderManager, getSceneLoader } from './scene-loader-manager';
 // The show/hide/toggle accessors were removed; production code uses
 // the 'panel-cycle' / 'panel-hide' event bus instead.
 
-// Types
+/**
+ * Core data-loading contract types: the points {@link DataLoader} interface
+ * (the Points-specific loader contract, paralleled by separate
+ * `LinesDataLoader`/`GSplatsDataLoader`/`MeshDataLoader` for the other three
+ * geometry types), the {@link ViewState} query passed to loaders,
+ * loaded-payload shapes ({@link LoadedPointsData}), loader configuration/stats,
+ * and the scene-graph ({@link SceneNode}) and spatial-query result types.
+ *
+ * These are re-exports of convenience for the barrel's own consumers, not the
+ * canonical import path. `data-loader-types` forwards the points types
+ * (`DataLoader`, `ViewState`, `LoadedPointsData`, `PointRange`) from
+ * `types/points` — where new code should import those from — and declares the
+ * loader-side shapes (`LoaderConfig`, `SceneNode`, `SpatialQueryResult`,
+ * `LoaderStats`) itself.
+ */
 export type {
   DataLoader,
   ViewState,
@@ -53,6 +67,11 @@ export {
 
 // Directory navigation
 export { DirectoryNavigator } from './nav/directory-navigator';
+/**
+ * Result types for {@link DirectoryNavigator}: a single {@link DirectoryEntry}
+ * listing row and the {@link NavigationResult} returned when browsing a store's
+ * directory tree.
+ */
 export type { DirectoryEntry, NavigationResult } from './nav/directory-navigator';
 
 // Array decoding (for Python luxar.encoding compatibility)
@@ -61,6 +80,12 @@ export {
   ArrayRefRegistry,
   loadAndDecodeOptionalArray,
 } from './array-decoder/decoder';
+/**
+ * An encoded array's on-disk `.zattrs` metadata (shape, dtype, and nested
+ * `encoding` block) for Python `luxar.encoding` arrays. This is the stored
+ * input that {@link ArrayDecoder}`.decode` consumes to reconstruct the array,
+ * not something the decoder produces.
+ */
 export type { ArrayMetadata } from './array-decoder/decoder';
 
 // Lines data loading

@@ -63,9 +63,10 @@ one backend only:
 
 - **The derivative normal is forced viewer-facing.** `cross(dFdx(P), dFdy(P))`
   carries the sign of the fragment-space y axis, and GLSL's `dFdy` is bottom-up
-  where WGSL's `dpdy` is top-down. Unforced, the flat variant shades correctly on
-  WebGL and collapses to `uAmbient` everywhere on WebGPU — and the parity harness
-  compiles TSL *to GLSL*, so it could never see it.
+  where WGSL's `dpdy` is top-down. Unforced, the flat variant could collapse to
+  `uAmbient` on WebGPU while shading correctly on WebGL — and the parity harness
+  compiles TSL *to GLSL*, so it could never see it. (Later measured inert on
+  Chrome — see the WebGPU A/B entry below; the flip is kept as insurance.)
 - **The stored normal is transformed without three's `transformNormalToView`**,
   whose `transformDirection` normalizes. The writer accepts zero-length normals
   with a warning (degenerate triangles legitimately produce them), and
@@ -354,8 +355,9 @@ The mesh vertical shipped with a stated gap — the GLSL↔TSL parity harness dr
 is now: an A/B against native WebGPU (system Chrome channel, `?renderer=webgpu`,
 screenshot-then-decode with the WebGL arm as a control) shows `apiSurface: 'webgpu'`,
 all three fixture nodes committing with identical triangle/vertex counts and identical
-shader variants, and **pixel-identical output** — 105,822 lit pixels on both backends,
-mean lit channel differing by 0.14%.
+shader variants, and **pixel-equivalent output** — 105,822 lit pixels on both backends,
+mean lit channel differing by 0.14% (sub-quantization dithering — equivalent to the eye,
+not byte-identical).
 
 It also **corrected an overstatement of our own**, which is the more useful half. The
 §6.2 notes claimed an unforced derivative normal "would collapse to `uAmbient`
@@ -493,14 +495,16 @@ per-vertex `normals`, `colors`, `scalars`, labels and image labels. `luxar info`
 reports vertex and face counts, `LuxarScene.get_mesh()` / `list_meshes()` read it
 back, and a mesh leaf contributes to scene bounds like any other geometry.
 
-**Writable, not yet renderable.** The viewer cannot draw a mesh yet — its loader,
-material and picking land in a later phase (`docs/specs/MESH_NODE_SPEC.md` §11).
-The format contract now names the two sets separately so neither side has to
-answer the other's question: `geometry_types` is the writable leaf vocabulary
-(which `mesh` joins now) and the new `loader_types` is the viewer-drawable subset
-(which it does not). Adding a type to `loader_types` without its viewer code is
-still a compile error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and
-`computeHiddenDimTolerance`, exactly as before.
+**Writable first, renderable in the phases that followed.** At this point the
+viewer could not draw a mesh — its loader, shaded material and picking landed in
+the later phases described in the entries above (`docs/specs/MESH_NODE_SPEC.md`
+§11 tracks the whole sequence). The format contract names the two sets separately
+so neither side has to answer the other's question: `geometry_types` is the
+writable leaf vocabulary (which `mesh` joined here) and the new `loader_types` is
+the viewer-drawable subset (which it joined with the Phase-3 switch-on). Adding a
+type to `loader_types` without its viewer code is still a compile error at
+`LoaderByKind`, `GEOMETRY_DESCRIPTORS` and `computeHiddenDimTolerance`, exactly as
+before.
 
 Unlike the other three types a mesh has no per-element size — a triangle's extent
 comes from its own vertices — so it adds no extent padding to bounds. `normals`
