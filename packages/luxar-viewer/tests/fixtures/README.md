@@ -72,6 +72,7 @@ expectations.
 | `test_lines.luxar.zarr` | Lines geometry (vertices, widths, optional colors and segments). |
 | `test_gsplats.luxar.zarr` | GSplats (Gaussian Splats) geometry (centers, amplitudes, Cholesky factors, colors). |
 | `test_labelled_points.luxar.zarr` | Small labelled-points dataset used by the `hover-tooltip.spec.ts` E2E spec. |
+| `test_line_joins.luxar.zarr` | Five polyline-joint cases in separate world-Y bands (smooth curve, 90° zigzag, thin and thick straights, nine-ray indexed hub) under a photometry-grade pinned viewer config. Acceptance fixture for `line-join-artifact.spec.ts` (issues #780 / #785 / #790). |
 
 ## Files
 

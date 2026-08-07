@@ -1728,17 +1728,30 @@ def generate_line_joins_test() -> None:
     touch and can be measured independently on one frame:
 
     ``curve_smooth``
-        120-segment sinusoidal polyline. The #790 case — the issue measured
-        ~1.34% dark outliers along its outer edges.
+        120-segment sinusoidal polyline, gentle (~10 degree) turns. The
+        headline #790 case: measured 2026-08-06 in headless Chromium at
+        ~5.1% dark and ~1.3% bright outliers.
     ``zigzag_right_angle``
-        14-segment 90-degree zigzag; sharp bends, still inside a miter limit.
+        16-segment 90-degree zigzag; sharp bends, still inside a miter
+        limit. Its wedge is far WORSE than the curve's but far WIDER, so
+        the local-median metric barely registers it (~0.12% dark) — the
+        axial flux dip (p05 ~0.71 against 1.00 on the straight bands) is
+        the measure that sees this band. See the sensitivity envelope in
+        ``src/tests/helpers/line-join-metrics.ts``.
     ``straight_thin``
-        Straight polyline with free ends at the base width.
+        Straight polyline with free ends at the base width. Segment length
+        0.5 against width 0.15 gives ``L/w = 3.3``, so a #780 per-joint
+        notch (axial length ``2 x width``) would sit BETWEEN joints and
+        show as a real ripple in the flux profile.
     ``straight_thick``
-        Straight polyline at 4x the base width, densely subdivided (199
-        collinear segments, each far shorter than one line width). Its
-        interior joints are the #780 bead-chain guard: a per-joint flux dip
-        would show immediately in the axial flux profile.
+        Straight polyline at 4x the base width, 20 segments. ``L/w = 1.67``
+        deliberately: the notch must be shorter than the segment spacing or
+        consecutive notches overlap into near-uniform dimming, which
+        normalising the flux profile by its own median then removes. A
+        densely subdivided thick band (the first draft used 199 segments,
+        ``L/w = 0.17``) DISABLES this guard rather than strengthening it —
+        simulated through the real metric a fully #780-regressed dense band
+        still scores p05 = 0.98.
     ``hub_9ray``
         Nine rays meeting at ONE shared hub vertex (a degree-9 branch
         point). Authored with ``line_type="indexed"`` because joints are
@@ -1754,10 +1767,12 @@ def generate_line_joins_test() -> None:
     would measure through ACES plus bloom plus jitter.
 
     Band world-space AABBs (z = 0) — the measurement rectangles the E2E spec
-    projects through the live camera. Their X range is inset 1.0 unit from
-    the geometry ends so the free-end cap ramps stay OUT of the measured
-    region; ``hub_9ray`` is measured whole. Keep this table in sync with
-    ``LINE_JOIN_BANDS`` in ``src/tests/e2e/line-join-artifact.spec.ts``.
+    projects through the live camera. All four horizontal bands span
+    ``x in [-10, 10]`` and their AABB X range is inset exactly 1.0 unit from
+    those ends, so the free-end cap ramps stay OUT of the measured region;
+    ``hub_9ray`` is measured whole. Keep this table in sync with
+    ``LINE_JOIN_BANDS`` in ``src/tests/e2e/line-join-artifact.spec.ts``, and
+    the segment counts in sync with ``EXPECTED_LINE_SEGMENTS`` there.
 
     ==================== ============== ==============
     node                 x range        y range
@@ -1796,21 +1811,27 @@ def generate_line_joins_test() -> None:
             ]
         ).astype(np.float32)
 
-        # zigzag_right_angle: consecutive deltas are (+1.4, +1.4) and
-        # (+1.4, -1.4) — dot product exactly 0, i.e. a true 90-degree turn.
-        zig_i = np.arange(15)
-        zig_x = (-9.8 + 1.4 * zig_i).astype(np.float32)
-        zig_y = (4.0 + 0.7 * np.where(zig_i % 2 == 0, -1.0, 1.0)).astype(np.float32)
+        # zigzag_right_angle: consecutive deltas are (+1.25, +1.25) and
+        # (+1.25, -1.25) — dot product exactly 0, i.e. a true 90-degree turn.
+        # 16 segments of 1.25 span exactly [-10, 10], so the documented
+        # 1.0-unit AABB inset holds for this band like the others.
+        zig_i = np.arange(17)
+        zig_x = (x_min + 1.25 * zig_i).astype(np.float32)
+        zig_y = (4.0 + 0.625 * np.where(zig_i % 2 == 0, -1.0, 1.0)).astype(np.float32)
         zig_z = np.zeros_like(zig_x)
         zigzag = np.column_stack([zig_x, zig_y, zig_z]).astype(np.float32)
 
         # straight_thin / straight_thick: collinear chains with free ends.
+        # Segment length must stay COMPARABLE TO OR LONGER THAN the width
+        # (L/w = 3.3 and 1.67 here) — see the docstring: over-subdivision
+        # merges the #780 notches into uniform dimming and the flux
+        # normalisation then cancels it.
         thin_x = np.linspace(x_min, x_max, 41, dtype=np.float32)
         thin = np.column_stack(
             [thin_x, np.zeros_like(thin_x), np.zeros_like(thin_x)]
         ).astype(np.float32)
 
-        thick_x = np.linspace(x_min, x_max, 200, dtype=np.float32)
+        thick_x = np.linspace(x_min, x_max, 21, dtype=np.float32)
         thick = np.column_stack(
             [thick_x, np.full_like(thick_x, -4.0), np.zeros_like(thick_x)]
         ).astype(np.float32)

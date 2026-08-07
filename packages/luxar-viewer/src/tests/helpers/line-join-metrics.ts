@@ -31,6 +31,44 @@
  * A regression in either direction therefore has to move at least one of
  * the two numbers.
  *
+ * ## Sensitivity envelope of the local-median metric (READ THIS)
+ *
+ * A local median is a small-scale detector and nothing else. Because the
+ * defect sits inside the very window the median is taken over, a wide defect
+ * poisons its own reference: once a dark run is at least `(window + 1) / 2`
+ * pixels across, the local median goes dark too, the pixel then fails the
+ * background mask, and the defect scores **zero**. Measured on a 21-pixel
+ * band at the default `window = 5`:
+ *
+ * | Notch width | Dark outliers |
+ * | ----------- | ------------- |
+ * | 1 px        | 19            |
+ * | 2 px        | 34            |
+ * | 3 px        | 0             |
+ * | 5 px        | 0             |
+ * | 7 px        | 0             |
+ *
+ * So `darkFraction` is a **detector, not a severity measure**, it is
+ * non-monotone in defect width, and it is **not comparable between bands of
+ * different turn angle**. The live #790 baseline shows this plainly: the
+ * GENTLE `curve_smooth` band (~10.5° turns, ~1.3 px wedge chord) scores
+ * ~5.1% while the 90° `zigzag_right_angle` band — whose wedge is a 7.2
+ * px-radius quarter disc, a far worse defect — scores ~0.12%, because its
+ * wedge is too wide for the window to see. For wide defects read
+ * {@link measureAxialFlux} instead: on that same frame the zigzag's flux p05
+ * is 0.714 against 1.000 on the straight bands. The unit tests pin this
+ * envelope so a change to `window` that silently alters sensitivity fails.
+ *
+ * ## Display encoding
+ *
+ * Both metrics operate on DISPLAY-encoded (sRGB) luminance, because that is
+ * what a composited screenshot carries. The encoding is monotone, so a
+ * defect always registers — but it is also compressive near white: around a
+ * typical mid-bright tube value a small relative deviation measures about
+ * **2.3x smaller** than it is in linear light (a 4.0% linear ripple reads as
+ * ~1.76%). Any future change to the absolute `threshold` must be chosen with
+ * that factor in mind.
+ *
  * ## Contract
  *
  * Everything here is a pure function over plain data (a luminance array plus
@@ -65,8 +103,11 @@ export type LuminanceArray = Float32Array | Uint8ClampedArray;
 export interface LocalMedianOptions {
   /**
    * Side length of the square neighbourhood the median is taken over. Must
-   * be an odd positive integer. Default `5` — wide enough to step over a
-   * one-to-two-pixel wedge tick, narrow enough to track a smooth ramp.
+   * be an odd integer `>= 3` — at `1` the "median" is the pixel itself and
+   * the metric can never report an outlier. Default `5` — wide enough to
+   * step over a one-to-two-pixel wedge tick, narrow enough to track a smooth
+   * ramp. Changing it moves the sensitivity envelope documented in the
+   * module header; the unit tests pin that envelope deliberately.
    */
   window?: number;
   /**
@@ -115,15 +156,30 @@ export interface AxialFluxOptions {
 export interface AxialFluxResult {
   /** Above-cutoff pixels that contributed to the profile. */
   insidePixels: number;
-  /** Axial positions that had at least one above-cutoff pixel. */
+  /**
+   * Axial positions in the profile, i.e. the region's extent along the axis
+   * minus the leading and trailing all-background runs. Compare it against
+   * the region's own width/height: a tube that is continuous by construction
+   * must give `samples === rect.width` (or `rect.height` for `'y'`).
+   */
   samples: number;
+  /**
+   * Positions INSIDE the profile whose cross-section was entirely
+   * background, i.e. holes in the tube. Recorded as `0` in
+   * {@link profile} rather than dropped — see the function docs.
+   */
+  emptySamples: number;
   /** Raw (un-normalised) median cross-section sum, in luminance units. */
   medianFlux: number;
   /** Cross-section sums divided by {@link medianFlux}, in axial order. */
   profile: number[];
   /** 5th percentile of {@link profile} — the joint-dip detector. */
   p05: number;
-  /** 50th percentile of {@link profile}. Exactly `1` whenever `samples > 0`. */
+  /**
+   * 50th percentile of {@link profile}. Exactly `1` whenever the profile is
+   * non-empty, because the normaliser uses the same rank — so it carries no
+   * information and asserting on it would be vacuous.
+   */
   p50: number;
   /** 95th percentile of {@link profile}. */
   p95: number;
@@ -246,6 +302,12 @@ function neighbourhoodMedian(
  * and the metric that is deliberately blind to any smooth variation — see
  * {@link measureAxialFlux} for that half.
  *
+ * It is ALSO blind to any defect wider than about `(window + 1) / 2` pixels,
+ * which makes the returned fractions a detector rather than a severity
+ * measure and makes them incomparable across bands of different turn angle.
+ * Read the "Sensitivity envelope" section of the module header before
+ * interpreting a number from this function.
+ *
  * @param luminance One value per pixel, row-major, on a 0-255 scale.
  * @param width Image width in pixels.
  * @param height Image height in pixels.
@@ -255,7 +317,7 @@ function neighbourhoodMedian(
  *   an empty, out-of-image or all-background region — assert on it rather
  *   than reading a zero outlier count as "clean".
  * @throws If the image size is invalid, the buffer is too short, or `window`
- *   is not an odd positive integer.
+ *   is not an odd integer `>= 3`.
  */
 export function measureLocalMedianOutliers(
   luminance: LuminanceArray,
@@ -277,9 +339,11 @@ export function measureLocalMedianOutliers(
         `${width * height} needed for ${width}x${height}`
     );
   }
-  if (!Number.isInteger(window) || window < 1 || window % 2 === 0) {
+  if (!Number.isInteger(window) || window < 3 || window % 2 === 0) {
+    // `window: 1` makes the median the pixel itself, so the metric would
+    // report zero outliers forever — reject it rather than lie.
     throw new Error(
-      `measureLocalMedianOutliers: window must be an odd positive integer, got ${window}`
+      `measureLocalMedianOutliers: window must be an odd integer >= 3, got ${window}`
     );
   }
   if (!(threshold >= 0)) {
@@ -349,9 +413,15 @@ export function measureLocalMedianOutliers(
  * from 1.0 down toward 0.7. That asymmetry is the entire reason this second
  * metric exists.
  *
- * Axial positions whose cross-section is entirely background are skipped
- * rather than recorded as zero, so a region that overhangs the ends of the
- * tube does not manufacture a fake dip.
+ * Only the LEADING and TRAILING all-background runs are trimmed — the case
+ * where the region overhangs the ends of the tube. An all-background
+ * position in the INTERIOR is a hole in the tube and is recorded as `0`,
+ * counted in {@link AxialFluxResult.emptySamples}. Skipping interior holes
+ * instead (the obvious implementation) is catastrophic: a tube missing every
+ * other 8-pixel run — half the line gone — closes back up into a perfectly
+ * flat profile of `p05 = p50 = p95 = 1` and zero median outliers, so every
+ * assertion an acceptance spec could make would pass on a renderer that lost
+ * half the geometry.
  *
  * @param luminance One value per pixel, row-major, on a 0-255 scale.
  * @param width Image width in pixels.
@@ -363,7 +433,9 @@ export function measureLocalMedianOutliers(
  * @returns The normalised profile and its percentiles. `insidePixels` and
  *   `samples` are `0` for an empty, out-of-image or all-background region,
  *   and the percentiles are then `0` — a value that fails a `> 0.9` guard
- *   loudly instead of reading as clean.
+ *   loudly instead of reading as clean. The same holds when more than half
+ *   the profile is empty, which leaves the median at zero and the profile
+ *   unnormalisable.
  * @throws If the image size is invalid or the buffer is too short.
  */
 export function measureAxialFlux(
@@ -389,6 +461,7 @@ export function measureAxialFlux(
   const empty: AxialFluxResult = {
     insidePixels: 0,
     samples: 0,
+    emptySamples: 0,
     medianFlux: 0,
     profile: [],
     p05: 0,
@@ -402,7 +475,7 @@ export function measureAxialFlux(
 
   const alongCount = axis === 'x' ? rect.width : rect.height;
   const acrossCount = axis === 'x' ? rect.height : rect.width;
-  const flux: number[] = [];
+  const raw: number[] = [];
   let insidePixels = 0;
 
   for (let a = 0; a < alongCount; a++) {
@@ -417,17 +490,29 @@ export function measureAxialFlux(
         count++;
       }
     }
-    if (count > 0) {
-      flux.push(sum);
-      insidePixels += count;
-    }
+    raw.push(count > 0 ? sum : 0);
+    insidePixels += count;
   }
 
-  if (flux.length === 0) return empty;
+  // Trim the leading/trailing overhang only — interior zeros are holes in
+  // the tube and MUST survive into the profile.
+  let first = 0;
+  while (first < raw.length && raw[first] === 0) first++;
+  let last = raw.length - 1;
+  while (last >= first && raw[last] === 0) last--;
+  if (first > last) return empty;
+
+  const flux = raw.slice(first, last + 1);
+  const emptySamples = flux.reduce((n, f) => (f === 0 ? n + 1 : n), 0);
 
   const sorted = [...flux].sort((p, q) => p - q);
   const medianFlux = percentileSorted(sorted, 0.5);
-  if (medianFlux <= 0) return empty;
+  if (medianFlux <= 0) {
+    // More than half the tube is missing — there is no sane normaliser, so
+    // report the counts and let the zeroed percentiles fail the caller's
+    // guard rather than inventing a scale.
+    return { ...empty, insidePixels, samples: flux.length, emptySamples };
+  }
 
   const profile = flux.map((f) => f / medianFlux);
   const sortedProfile = sorted.map((f) => f / medianFlux);
@@ -435,6 +520,7 @@ export function measureAxialFlux(
   return {
     insidePixels,
     samples: flux.length,
+    emptySamples,
     medianFlux,
     profile,
     p05: percentileSorted(sortedProfile, 0.05),

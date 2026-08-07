@@ -4,9 +4,16 @@
  *
  * Every case builds a synthetic luminance image by hand so the expected
  * answer is known exactly, including the two edge rows the background mask
- * legitimately drops. The fourth case is the load-bearing one: it proves the
- * two metrics are genuinely complementary, because the #780 bead-chain
- * failure it models is invisible to the local-median metric by construction.
+ * legitimately drops. Two groups are load-bearing beyond simple coverage:
+ *
+ *   - "the two metrics are complementary" proves the #780 bead-chain failure
+ *     is invisible to the local-median metric by construction, which is why
+ *     the axial flux metric exists at all.
+ *   - "sensitivity envelope" PINS the local-median metric's non-monotone
+ *     response to defect width (1 px counted, 2 px counted, >= 3 px invisible
+ *     because the defect poisons its own median). A change to the default
+ *     window that silently moves that envelope must fail here, because
+ *     nothing downstream would notice.
  */
 import { describe, it, expect } from 'vitest';
 
@@ -31,10 +38,11 @@ const BAND_VALUE = 200;
 function makeBand(
   width: number,
   height: number,
-  valueAt: (x: number) => number = () => BAND_VALUE
+  valueAt: (x: number) => number = () => BAND_VALUE,
+  bandHeight: number = BAND_HEIGHT
 ): Float32Array {
   const image = new Float32Array(width * height);
-  for (let y = BAND_TOP; y <= BAND_BOTTOM; y++) {
+  for (let y = BAND_TOP; y < BAND_TOP + bandHeight; y++) {
     for (let x = 0; x < width; x++) {
       image[y * width + x] = valueAt(x);
     }
@@ -42,15 +50,19 @@ function makeBand(
   return image;
 }
 
-/** Overwrite one full-height column of the band with `value`. */
-function punchColumn(
+/** Overwrite `count` adjacent full-height columns of the band with `value`. */
+function punchColumns(
   image: Float32Array,
   width: number,
   column: number,
-  value: number
+  value: number,
+  count = 1,
+  bandHeight: number = BAND_HEIGHT
 ): Float32Array {
-  for (let y = BAND_TOP; y <= BAND_BOTTOM; y++) {
-    image[y * width + column] = value;
+  for (let y = BAND_TOP; y < BAND_TOP + bandHeight; y++) {
+    for (let x = column; x < column + count; x++) {
+      image[y * width + x] = value;
+    }
   }
   return image;
 }
@@ -95,7 +107,7 @@ describe('measureLocalMedianOutliers', () => {
     const width = 40;
     const height = 20;
     const tick = 20;
-    const image = punchColumn(makeBand(width, height), width, tick, 0);
+    const image = punchColumns(makeBand(width, height), width, tick, 0);
 
     const m = measureLocalMedianOutliers(image, width, height, WHOLE(width, height));
 
@@ -115,7 +127,7 @@ describe('measureLocalMedianOutliers', () => {
     const height = 20;
     const tick = 20;
     const overbright = 255;
-    const image = punchColumn(makeBand(width, height), width, tick, overbright);
+    const image = punchColumns(makeBand(width, height), width, tick, overbright);
 
     const m = measureLocalMedianOutliers(image, width, height, WHOLE(width, height));
 
@@ -130,8 +142,64 @@ describe('measureLocalMedianOutliers', () => {
   it('rejects an even window', () => {
     const image = makeBand(20, 20);
     expect(() => measureLocalMedianOutliers(image, 20, 20, WHOLE(20, 20), { window: 4 })).toThrow(
-      /odd positive integer/
+      /odd integer >= 3/
     );
+  });
+
+  it('rejects window 1, where the "median" is the pixel itself', () => {
+    // With a 1x1 window every pixel equals its own median, so the metric
+    // would report zero outliers on ANY image — a silent always-pass.
+    const image = punchColumns(makeBand(40, 20), 40, 20, 0);
+    expect(() => measureLocalMedianOutliers(image, 40, 20, WHOLE(40, 20), { window: 1 })).toThrow(
+      /odd integer >= 3/
+    );
+  });
+});
+
+describe('sensitivity envelope of the local-median metric', () => {
+  // A 21-pixel-tall band, matching the measured table in the module header.
+  const ENVELOPE_BAND_HEIGHT = 21;
+  const width = 60;
+  const height = 40;
+
+  /** Dark outliers for a `notchWidth`-pixel black notch across the band. */
+  function darkOutliersForNotch(notchWidth: number): number {
+    const image = punchColumns(
+      makeBand(width, height, () => BAND_VALUE, ENVELOPE_BAND_HEIGHT),
+      width,
+      30,
+      0,
+      notchWidth,
+      ENVELOPE_BAND_HEIGHT
+    );
+    return measureLocalMedianOutliers(image, width, height, WHOLE(width, height)).darkOutliers;
+  }
+
+  it('counts a 1 px notch', () => {
+    // Every band row except the two at the band edges, where the window
+    // straddles the background and the median drops out of the mask.
+    expect(darkOutliersForNotch(1)).toBe(ENVELOPE_BAND_HEIGHT - 2);
+  });
+
+  it('counts a 2 px notch, at roughly double the 1 px score', () => {
+    // Two columns x (21 - 4) rows: the mask loses two rows per band edge
+    // now, because the notch contributes more zeros to the window.
+    expect(darkOutliersForNotch(2)).toBe(2 * (ENVELOPE_BAND_HEIGHT - 4));
+    expect(darkOutliersForNotch(2)).toBeGreaterThan(darkOutliersForNotch(1));
+  });
+
+  it('is BLIND to a 3 px notch — the defect poisons its own median', () => {
+    // 3 of the 5 window columns are dark, so the local median goes dark,
+    // the mask rejects the pixel, and the defect scores zero. This is the
+    // documented non-monotonicity, pinned here on purpose.
+    expect(darkOutliersForNotch(3)).toBe(0);
+  });
+
+  it('is BLIND to an 8 px notch — a much worse defect, still zero', () => {
+    expect(darkOutliersForNotch(8)).toBe(0);
+    // Stated as an ordering so the intent survives a refactor: a wider
+    // defect scoring LESS than a narrower one is the whole warning.
+    expect(darkOutliersForNotch(8)).toBeLessThan(darkOutliersForNotch(1));
   });
 });
 
@@ -147,7 +215,6 @@ describe('measureAxialFlux', () => {
     expect(a.insidePixels).toBe(width * BAND_HEIGHT);
     expect(a.medianFlux).toBeCloseTo(BAND_HEIGHT * BAND_VALUE, 4);
     expect(a.p05).toBeCloseTo(1, 10);
-    expect(a.p50).toBeCloseTo(1, 10);
     expect(a.p95).toBeCloseTo(1, 10);
     expect(a.min).toBeCloseTo(1, 10);
   });
@@ -170,6 +237,79 @@ describe('measureAxialFlux', () => {
     expect(a.insidePixels).toBe(height * BAND_HEIGHT);
     expect(a.min).toBeCloseTo(1, 10);
     expect(a.p95).toBeCloseTo(1, 10);
+  });
+
+  it('records an INTERIOR all-background column as a hole, never skips it', () => {
+    // Punch four adjacent columns of the tube out entirely. If interior
+    // dropouts were skipped instead of recorded, the profile would close up
+    // and report a perfectly flat, perfectly clean tube.
+    const width = 40;
+    const height = 20;
+    const image = punchColumns(makeBand(width, height), width, 18, 0, 4);
+
+    const a = measureAxialFlux(image, width, height, WHOLE(width, height), 'x');
+
+    expect(a.samples).toBe(width);
+    expect(a.emptySamples).toBe(4);
+    expect(a.min).toBe(0);
+    expect(a.p05).toBe(0);
+    expect(a.profile[18]).toBe(0);
+    expect(a.profile[21]).toBe(0);
+    expect(a.profile[17]).toBeCloseTo(1, 10);
+  });
+
+  it('does not report a tube with every other 8 px run missing as clean', () => {
+    // The exact regression this behaviour exists for: half the line gone.
+    // Skipping interior dropouts closed the profile back up into
+    // samples=328, p05=p50=p95=min=1 with zero median outliers, so every
+    // assertion an acceptance spec can make passed on a broken renderer.
+    const width = 128;
+    const height = 20;
+    const image = makeBand(width, height);
+    for (let x = 8; x + 8 <= width; x += 16) punchColumns(image, width, x, 0, 8);
+
+    const m = measureLocalMedianOutliers(image, width, height, WHOLE(width, height));
+    const a = measureAxialFlux(image, width, height, WHOLE(width, height), 'x');
+
+    // The median metric still sees nothing — an 8 px hole is far outside
+    // its envelope. The flux profile is what catches this.
+    expect(m.darkOutliers).toBe(0);
+    expect(a.emptySamples).toBeGreaterThan(50);
+    expect(a.min).toBe(0);
+    expect(a.p05).toBe(0);
+  });
+
+  it('trims only the LEADING and TRAILING overhang', () => {
+    // The band spans the full width, so overhang has to come from the
+    // region: ask for 6 columns of pure background on each side by moving
+    // the band inward instead.
+    const width = 40;
+    const height = 20;
+    const image = makeBand(width, height);
+    // Blank the first 6 and last 6 columns — pure overhang, not holes.
+    punchColumns(image, width, 0, 0, 6);
+    punchColumns(image, width, width - 6, 0, 6);
+
+    const a = measureAxialFlux(image, width, height, WHOLE(width, height), 'x');
+
+    expect(a.samples).toBe(width - 12);
+    expect(a.emptySamples).toBe(0);
+    expect(a.min).toBeCloseTo(1, 10);
+  });
+
+  it('refuses to normalise when more than half the tube is missing', () => {
+    const width = 40;
+    const height = 20;
+    const image = makeBand(width, height);
+    // Blank 24 of the 40 columns, interleaved so they stay interior.
+    for (let x = 2; x < 38; x += 3) punchColumns(image, width, x, 0, 2);
+
+    const a = measureAxialFlux(image, width, height, WHOLE(width, height), 'x');
+
+    expect(a.emptySamples).toBeGreaterThan(a.samples / 2);
+    expect(a.medianFlux).toBe(0);
+    expect(a.profile).toHaveLength(0);
+    expect(a.p05).toBe(0);
   });
 });
 
@@ -201,7 +341,7 @@ describe('the two metrics are complementary (#780 vs #790)', () => {
     // the profile median sits at 0.75 of peak, so the trough normalises to
     // ~0.67 — far below the 1.0 a healthy tube holds.
     expect(a.samples).toBe(width);
-    expect(a.p50).toBeCloseTo(1, 10);
+    expect(a.emptySamples).toBe(0);
     expect(a.p05).toBeLessThan(0.8);
     expect(a.min).toBeLessThan(0.72);
     expect(a.min).toBeGreaterThan(0.6);

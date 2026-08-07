@@ -6,6 +6,32 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Tests — the line-joint artifact gets an automated acceptance measurement (#790)
+
+The outer-side miter wedge existed only as a scratch script, and nothing
+guarded the already-fixed joint defects (#780 bead chain, #785 straight-joint
+notch) while the vertex stage is rewritten to close it. Two pure metrics now
+score a rendered frame (`src/tests/helpers/line-join-metrics.ts`): a
+**local-median outlier count** for narrow wedge ticks, and an **axial flux
+profile** (cross-section sum along the tube, normalised by its own median) for
+smooth per-joint dips. Both are needed — a 50% flux ramp at every joint scores
+zero outliers, and a 1-pixel tick leaves the flux profile flat.
+
+The new `test_line_joins.luxar.zarr` fixture puts five joint cases in separate
+world-Y bands (120-segment smooth curve, 90° zigzag, thin and thick straights,
+and a nine-ray indexed hub) under a pinned photometry-grade viewer config, and
+`line-join-artifact.spec.ts` measures every band on one frame, locating each by
+projecting its world AABB through the live camera. Straight bands are asserted
+at zero outliers with a gapless flat flux profile; the two bending cases are
+**recorded** under documented ceilings — measured 2026-08-06 at 5.07% dark /
+1.35% bright on the curve — which drop to zero when the join geometry lands.
+
+The local-median metric's sensitivity envelope is documented and pinned by unit
+tests: it is non-monotone in defect width (1 px and 2 px counted, ≥ 3 px
+invisible, because the defect poisons its own median), so its fraction is a
+detector, not a severity measure, and not comparable between bands of different
+turn angle.
+
 #### Removed — unreachable accelerated gsplat code paths
 
 Three optimized paths existed and were maintained but could not be selected by

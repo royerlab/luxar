@@ -158,16 +158,17 @@ exports group into the categories below.
 
 ### Scene introspection and pixel sampling
 
-| Helper                                         | Use when                                                                        |
-| ---------------------------------------------- | ------------------------------------------------------------------------------- |
-| `getLuxarState(page)`                          | Read `__luxarDebug.getState()` with a clear error if the interface isn't ready. |
-| `getSceneObjectNames(page)`                    | Flat list of every named object in the scene graph.                             |
-| `getLayerMaterialState(page, layer)`           | Inspect uniforms / blending / depth state of a specific layer's material.       |
-| `getPostProcessingState(page)`                 | Read the post-processing pipeline state (tone mapping mode, bloom, exposure).   |
-| `validateSceneAttributes(page)`                | Audit every geometry's attribute buffers against the format spec.               |
-| `SampledPixel`, `ElementPixelStats`            | Types returned by the pixel-sampling helpers.                                   |
-| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`.                             |
-| `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.               |
+| Helper                                         | Use when                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `getLuxarState(page)`                          | Read `__luxarDebug.getState()` with a clear error if the interface isn't ready.                                           |
+| `getSceneObjectNames(page)`                    | Flat list of every named object in the scene graph.                                                                       |
+| `getLayerMaterialState(page, layer)`           | Inspect uniforms / blending / depth state of a specific layer's material.                                                 |
+| `getPostProcessingState(page)`                 | Read the post-processing pipeline state (tone mapping mode, bloom, exposure).                                             |
+| `validateSceneAttributes(page)`                | Audit every geometry's attribute buffers against the format spec.                                                         |
+| `SampledPixel`, `ElementPixelStats`            | Types returned by the pixel-sampling helpers.                                                                             |
+| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`.                                                                       |
+| `captureCanvasRGBA(page, selector?)`           | Decode ONE element screenshot into a full-frame RGBA buffer — whole-image / multi-region analysis on one identical frame. |
+| `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.                                                         |
 
 ### Pattern for a new helper
 

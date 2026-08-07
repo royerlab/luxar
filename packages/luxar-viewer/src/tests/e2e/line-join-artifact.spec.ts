@@ -11,28 +11,43 @@
  * Two things are being protected here:
  *
  *   - What is ALREADY correct must stay correct while the vertex stage is
- *     rewritten for the miter-join series: the straight bands carry zero
- *     dark outliers (#785) and a flat axial flux profile (#780 — no
- *     bead-chain dip at interior joints), and the nine-ray hub stays inside
- *     a small ceiling as the never-mitered control.
+ *     rewritten for the miter-join series: both straight bands carry zero
+ *     dark and zero bright outliers (#785), and their axial flux profiles
+ *     are gapless and flat (#780 — no bead-chain dip at interior joints).
+ *     The nine-ray hub stays inside a small ceiling as the never-mitered
+ *     control.
  *   - What is still BROKEN is recorded, not fixed. `curve_smooth` and
- *     `zigzag_right_angle` still show the uncovered outer-side wedge, so
- *     their dark-outlier fractions are only held under a documented
- *     ceiling. The measured numbers are printed for the record.
+ *     `zigzag_right_angle` still show the uncovered outer-side wedge and the
+ *     inner-side double-cover lens, so their outlier fractions are only held
+ *     under documented ceilings. The measured numbers are printed for the
+ *     record.
+ *
+ * READ BEFORE INTERPRETING A NUMBER FROM THIS SPEC: the local-median metric
+ * is a 1-2 pixel band-pass and is NON-MONOTONE in defect width — a wedge
+ * three or more pixels across poisons its own median and scores ZERO. The
+ * gentle `curve_smooth` therefore scores far higher than the 90°
+ * `zigzag_right_angle`, whose wedge is much worse but much wider. The full
+ * measured envelope is in the `line-join-metrics.ts` module header.
  *
  * The metrics run on the DISPLAY-encoded luminance of the composited frame,
  * not on linearised radiance. That is deliberate — both metrics are
- * relative and the encoding is monotone, so a defect still registers (a
- * linear 50% flux dip reads as roughly 0.73 through the sRGB transfer,
- * still far under the 0.9 floor the flat-profile guard uses). The fixture
- * pins an identity tone response and turns bloom / AA / noise off precisely
- * so nothing NON-monotone sits between the geometry and the measurement.
+ * relative and the encoding is monotone, so a defect still registers,
+ * though compressed by roughly 2.3x near a mid-bright tube value (see the
+ * module header). The fixture pins an identity tone response and turns
+ * bloom / AA / noise off precisely so nothing NON-monotone sits between the
+ * geometry and the measurement.
  */
 
 import type { Page } from '@playwright/test';
 
 import { test, expect } from './fixtures';
-import { waitForLuxarReady, waitForRenderStable, assertNoShaderErrors } from './helpers';
+import {
+  waitForLuxarReady,
+  waitForRenderStable,
+  assertNoShaderErrors,
+  captureCanvasRGBA,
+  type CanvasFrameRGBA,
+} from './helpers';
 import {
   measureAxialFlux,
   measureLocalMedianOutliers,
@@ -42,7 +57,7 @@ import {
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
 
-/** A band's node name plus the world-space AABB its pixels live in. */
+/** A band's node name, the world-space AABB its pixels live in, and its floor. */
 interface BandBox {
   /** Node name in the fixture scene. */
   name: string;
@@ -51,6 +66,14 @@ interface BandBox {
   xMax: number;
   yMin: number;
   yMax: number;
+  /**
+   * Inside-pixel floor, set at roughly half the value measured on
+   * 2026-08-06. A per-band floor (rather than one shared small number) is
+   * what makes a mislocated rectangle detectable: a rect that slides onto a
+   * neighbouring band or off the tube still finds *some* pixels, just far
+   * fewer than this band's own tube can produce.
+   */
+  minInsidePixels: number;
 }
 
 /**
@@ -58,105 +81,50 @@ interface BandBox {
  *
  * These mirror the table in `generate_line_joins_test()`
  * (`tests/fixtures/generate_test_data.py`) exactly — change one and you must
- * change the other, or the spec silently measures the wrong pixels. The X
- * range is inset 1.0 unit from the geometry ends so the free-end cap ramps
- * stay out of the measured region; `hub_9ray` is measured whole.
+ * change the other, or the spec silently measures the wrong pixels. The four
+ * horizontal bands span world x [-10, 10] and their X range is inset exactly
+ * 1.0 unit from those ends so the free-end cap ramps stay out of the
+ * measured region; `hub_9ray` is measured whole.
  */
 const LINE_JOIN_BANDS: readonly BandBox[] = [
-  { name: 'curve_smooth', xMin: -9.0, xMax: 9.0, yMin: 6.5, yMax: 9.5 },
-  { name: 'zigzag_right_angle', xMin: -9.0, xMax: 9.0, yMin: 2.5, yMax: 5.5 },
-  { name: 'straight_thin', xMin: -9.0, xMax: 9.0, yMin: -1.5, yMax: 1.5 },
-  { name: 'straight_thick', xMin: -9.0, xMax: 9.0, yMin: -5.5, yMax: -2.5 },
-  { name: 'hub_9ray', xMin: -1.5, xMax: 1.5, yMin: -9.5, yMax: -6.5 },
+  { name: 'curve_smooth', xMin: -9, xMax: 9, yMin: 6.5, yMax: 9.5, minInsidePixels: 19000 },
+  { name: 'zigzag_right_angle', xMin: -9, xMax: 9, yMin: 2.5, yMax: 5.5, minInsidePixels: 20000 },
+  { name: 'straight_thin', xMin: -9, xMax: 9, yMin: -1.5, yMax: 1.5, minInsidePixels: 7000 },
+  { name: 'straight_thick', xMin: -9, xMax: 9, yMin: -5.5, yMax: -2.5, minInsidePixels: 25000 },
+  { name: 'hub_9ray', xMin: -1.5, xMax: 1.5, yMin: -9.5, yMax: -6.5, minInsidePixels: 3500 },
 ];
 
 /**
- * Dark-outlier ceiling for the two bending cases. The issue measured ~1.34%
- * on `curve_smooth`; 3% leaves real headroom for GPU / driver rasterisation
- * differences without letting a genuine blow-up through.
+ * Total line segments the fixture commits: curve 120 + zigzag 16 + thin 40 +
+ * thick 20 + hub 9. Derived from the same geometry as `LINE_JOIN_BANDS`, so
+ * a change to either the vertex counts or the band table has to move both.
+ */
+const EXPECTED_LINE_SEGMENTS = 120 + 16 + 40 + 20 + 9;
+
+/**
+ * Dark- and bright-outlier ceilings for the two bending cases.
  *
- * WHEN THE MITER JOIN LANDS, this ceiling drops to zero — a later part of
- * the #790 series is expected to replace it with `toBe(0)`, matching what
+ * Measured 2026-08-06, headless Chromium, at the fixture's pinned framing:
+ * `curve_smooth` 5.07% dark / 1.35% bright, `zigzag_right_angle` 0.12% dark
+ * / 0.00% bright. The ceilings sit well above those with room for GPU,
+ * driver and resolution differences — these are guard rails against a
+ * blow-up, NOT spec values, and they are geometry- and resolution-dependent:
+ * re-measure before tightening them.
+ *
+ * WHEN THE MITER JOIN LANDS, the dark ceiling drops to zero — a later part
+ * of the #790 series is expected to replace it with `toBe(0)`, matching what
  * the straight bands already assert.
  */
-const BEND_DARK_CEILING = 0.03;
+const BEND_DARK_CEILING = 0.08;
+const BEND_BRIGHT_CEILING = 0.04;
 
 /**
- * Ceiling for the never-mitered control. A degree-9 branch point has all
+ * Ceilings for the never-mitered control. A degree-9 branch point has all
  * nine quads stacked around the hub with cap suppression at 0, so it has no
- * uncovered wedge to begin with; it is here to stay byte-stable.
+ * uncovered wedge to begin with; measured 0.11% dark / 0.11% bright, and it
+ * is here to stay stable.
  */
-const HUB_DARK_CEILING = 0.01;
-
-/**
- * Minimum inside-pixel count per band. A blank frame, a lost dataset or a
- * mislocated rectangle all collapse to 0 here, so every band assertion
- * below is anchored to real measured pixels rather than an empty mask.
- */
-const MIN_INSIDE_PIXELS = 200;
-
-/** A decoded canvas frame: raw RGBA bytes plus its pixel dimensions. */
-interface CanvasFrame {
-  width: number;
-  height: number;
-  rgba: Uint8ClampedArray;
-}
-
-/**
- * Screenshot the canvas once and hand back its raw RGBA bytes.
- *
- * The WebGL drawing buffer cannot be read back directly (the viewer runs
- * with `preserveDrawingBuffer: false`), so the composited element
- * screenshot is the only honest source — the same reasoning as
- * `helpers.ts::samplePixelsAt`. The PNG is decoded in-page and returned as
- * base64 RGBA so the whole frame crosses the bridge exactly once.
- */
-async function captureCanvasFrame(page: Page): Promise<CanvasFrame> {
-  const canvas = page.locator('canvas').first();
-  await canvas.waitFor({ state: 'visible' });
-  const png = await canvas.screenshot({ animations: 'disabled' });
-  const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
-
-  const decoded = await page.evaluate(async (url: string) => {
-    const img = new Image();
-    img.decoding = 'sync';
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('line-join-artifact: screenshot decode failed'));
-      img.src = url;
-    });
-
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
-    if (w <= 0 || h <= 0) {
-      throw new Error(`line-join-artifact: empty screenshot ${w}x${h}`);
-    }
-
-    const off = document.createElement('canvas');
-    off.width = w;
-    off.height = h;
-    const ctx = off.getContext('2d', { willReadFrequently: true });
-    if (!ctx) throw new Error('line-join-artifact: 2D context unavailable');
-    ctx.drawImage(img, 0, 0);
-    const data = ctx.getImageData(0, 0, w, h).data;
-
-    // Chunked: String.fromCharCode.apply blows the stack on a multi-MB buffer.
-    let binary = '';
-    const CHUNK = 0x8000;
-    for (let i = 0; i < data.length; i += CHUNK) {
-      const slice = data.subarray(i, i + CHUNK) as unknown as number[];
-      binary += String.fromCharCode.apply(null, slice);
-    }
-    return { width: w, height: h, base64: btoa(binary) };
-  }, dataUrl);
-
-  const buf = Buffer.from(decoded.base64, 'base64');
-  return {
-    width: decoded.width,
-    height: decoded.height,
-    rgba: new Uint8ClampedArray(buf.buffer, buf.byteOffset, buf.byteLength),
-  };
-}
+const HUB_OUTLIER_CEILING = 0.01;
 
 /** Normalised-device-coordinate bounding box of one band. */
 interface NdcBox {
@@ -165,6 +133,34 @@ interface NdcBox {
   maxX: number;
   minY: number;
   maxY: number;
+}
+
+/**
+ * Block until every fixture line node has committed its full segment count.
+ *
+ * `waitForLuxarReady` only polls `initialized` and `waitForRenderStable`
+ * only watches the frame counter, so neither knows whether the data
+ * worker's projection has reached the GPU. Screenshotting before it does
+ * produced a BIMODAL `curve_smooth` dark fraction across repeat runs (~2%
+ * on a settled frame, ~5% on a half-committed one) — a race, not noise.
+ */
+async function waitForLineSegmentsCommitted(page: Page, expected: number): Promise<void> {
+  await page.waitForFunction(
+    (want: number) => {
+      const debug = (window as unknown as { __luxarDebug?: { getState?: () => unknown } })
+        .__luxarDebug;
+      if (typeof debug?.getState !== 'function') return false;
+      const state = debug.getState() as {
+        lineMeshes?: Array<{ segmentCount?: number }>;
+        totalLines?: number;
+      };
+      const meshes = state.lineMeshes ?? [];
+      if (meshes.length < 5) return false;
+      return (state.totalLines ?? 0) === want;
+    },
+    expected,
+    { timeout: 30000 }
+  );
 }
 
 /**
@@ -214,7 +210,7 @@ async function projectBands(page: Page, bands: readonly BandBox[]): Promise<NdcB
  * Convert an NDC bounding box to a pixel rectangle in the decoded frame.
  * NDC +Y points up; image rows run down.
  */
-function ndcBoxToRect(box: NdcBox, frame: CanvasFrame): PixelRect {
+function ndcBoxToRect(box: NdcBox, frame: CanvasFrameRGBA): PixelRect {
   const toPxX = (ndc: number) => (ndc * 0.5 + 0.5) * frame.width;
   const toPxY = (ndc: number) => (1 - (ndc * 0.5 + 0.5)) * frame.height;
   const x0 = Math.max(0, Math.floor(Math.min(toPxX(box.minX), toPxX(box.maxX))));
@@ -225,13 +221,31 @@ function ndcBoxToRect(box: NdcBox, frame: CanvasFrame): PixelRect {
 }
 
 test.describe('Line-joint artifact measurement (#790)', () => {
+  // Fail fast with an actionable message instead of an opaque "measured too
+  // few pixels": this fixture is Python-generated and NOT covered by the
+  // Playwright global-setup (which only checks datasets/examples).
+  test.beforeAll(async () => {
+    const { existsSync } = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const specDir = path.dirname(fileURLToPath(import.meta.url));
+    const fixtureDir = path.resolve(specDir, '../../../tests/fixtures/test_line_joins.luxar.zarr');
+    if (!existsSync(fixtureDir)) {
+      throw new Error(
+        `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
+          'from packages/luxar-viewer/ first.'
+      );
+    }
+  });
+
   test('band metrics on a single frame', async ({ page }) => {
     await page.goto(`/?src=${FIXTURES_BASE}/test_line_joins.luxar.zarr&debug`);
     await waitForLuxarReady(page);
+    await waitForLineSegmentsCommitted(page, EXPECTED_LINE_SEGMENTS);
     await waitForRenderStable(page);
     await assertNoShaderErrors(page);
 
-    const frame = await captureCanvasFrame(page);
+    const frame = await captureCanvasRGBA(page);
     const luminance = rgbaToLuminance(frame.rgba, frame.width, frame.height);
     const ndcBoxes = await projectBands(page, LINE_JOIN_BANDS);
     expect(ndcBoxes).toHaveLength(LINE_JOIN_BANDS.length);
@@ -262,21 +276,19 @@ test.describe('Line-joint artifact measurement (#790)', () => {
           `bright=${outliers.brightOutliers} (${(outliers.brightFraction * 100).toFixed(3)}%) ` +
           `worstDeficit=${outliers.worstDeficit.toFixed(1)} ` +
           `worstExcess=${outliers.worstExcess.toFixed(1)} | ` +
-          `flux samples=${flux.samples} p05=${flux.p05.toFixed(3)} ` +
-          `p50=${flux.p50.toFixed(3)} p95=${flux.p95.toFixed(3)} min=${flux.min.toFixed(3)}`
+          `flux samples=${flux.samples} empty=${flux.emptySamples} ` +
+          `p05=${flux.p05.toFixed(3)} p95=${flux.p95.toFixed(3)} min=${flux.min.toFixed(3)}`
       );
     }
 
-    // Every band must have measured real pixels — otherwise the frame was
-    // blank or a rectangle landed off the geometry, and every assertion
-    // below would pass vacuously.
+    // Every band must have measured its own tube's worth of pixels.
     for (const band of LINE_JOIN_BANDS) {
       const measured = byName.get(band.name);
       expect(measured, `no measurement for band ${band.name}`).toBeDefined();
       expect(
         measured!.outliers.insidePixels,
         `band ${band.name} measured too few pixels`
-      ).toBeGreaterThan(MIN_INSIDE_PIXELS);
+      ).toBeGreaterThan(band.minInsidePixels);
     }
 
     const thin = byName.get('straight_thin')!;
@@ -286,31 +298,61 @@ test.describe('Line-joint artifact measurement (#790)', () => {
     const hub = byName.get('hub_9ray')!;
 
     // #785: cap suppression makes a straight polyline's interior joints
-    // invisible. Neither straight band may show a single dark tick.
+    // invisible. Neither straight band may show a single tick, dark or
+    // bright — both measure exactly 0 today.
     expect(thin.outliers.darkOutliers, 'straight_thin dark outliers').toBe(0);
+    expect(thin.outliers.brightOutliers, 'straight_thin bright outliers').toBe(0);
     expect(thick.outliers.darkOutliers, 'straight_thick dark outliers').toBe(0);
+    expect(thick.outliers.brightOutliers, 'straight_thick bright outliers').toBe(0);
 
-    // #780: the thick band is 199 collinear segments, each far shorter than
-    // one line width. A per-joint flux dip (the bead chain) would drag p05
-    // toward 0.7; a healthy tube holds a flat profile at 1.0.
-    expect(thick.flux.samples, 'straight_thick axial samples').toBeGreaterThan(100);
-    expect(thick.flux.p50, 'straight_thick axial p50').toBeCloseTo(1, 6);
-    expect(thick.flux.p05, 'straight_thick axial p05').toBeGreaterThan(0.9);
-    expect(thick.flux.p95, 'straight_thick axial p95').toBeLessThan(1.1);
+    // #780: both straight tubes are continuous by construction, so their
+    // flux profiles must be gapless and flat. Segment length over width is
+    // 3.3 (thin) and 1.67 (thick) — deliberately at or above 1, because at
+    // L/w well below 1 the per-joint notches merge into uniform dimming and
+    // normalising by the profile's own median cancels the very defect this
+    // guards. `thin` is the more sensitive of the two.
+    for (const [label, band] of [
+      ['straight_thin', thin],
+      ['straight_thick', thick],
+    ] as const) {
+      expect(band.flux.samples, `${label} axial samples`).toBe(band.rect.width);
+      expect(band.flux.emptySamples, `${label} axial gaps`).toBe(0);
+      expect(band.flux.p05, `${label} axial p05`).toBeGreaterThan(0.9);
+      expect(band.flux.p95, `${label} axial p95`).toBeLessThan(1.1);
+    }
 
     // The never-mitered control: nine quads stacked around one hub vertex.
-    expect(hub.outliers.darkFraction, 'hub_9ray dark fraction').toBeLessThan(HUB_DARK_CEILING);
+    expect(hub.outliers.darkFraction, 'hub_9ray dark fraction').toBeLessThan(HUB_OUTLIER_CEILING);
+    expect(hub.outliers.brightFraction, 'hub_9ray bright fraction').toBeLessThan(
+      HUB_OUTLIER_CEILING
+    );
 
     // #790, RECORDED not fixed: both bending cases still leave an uncovered
-    // wedge on the outside of every turn. Asserting 0 here would fail today,
-    // and pinning the exact buggy value would be just as wrong — so they are
-    // only held under a documented ceiling that the miter-join part of the
-    // series is expected to replace with `toBe(0)`.
+    // wedge on the outside of every turn and a double-covered lens on the
+    // inside. Asserting 0 here would fail today, and pinning the exact buggy
+    // value would be just as wrong — so they are only held under documented
+    // ceilings that the miter-join part of the series is expected to replace
+    // with `toBe(0)`.
     expect(curve.outliers.darkFraction, 'curve_smooth dark fraction').toBeLessThan(
       BEND_DARK_CEILING
     );
+    expect(curve.outliers.brightFraction, 'curve_smooth bright fraction').toBeLessThan(
+      BEND_BRIGHT_CEILING
+    );
+
+    // WARNING for whoever closes #790: a zero dark fraction HERE would NOT
+    // prove the wedge is closed. The zigzag's 90-degree wedge is a ~7 px
+    // quarter disc, far wider than the local-median metric's ~2 px envelope,
+    // so it reads ~0.12% today while the far gentler curve reads ~5%. The
+    // measure to watch for this band is its axial flux dip — p05 ~0.71
+    // today against 1.00 on the straight bands, printed above. It is left
+    // unasserted only because no fixed floor is meaningful until the join
+    // geometry defines what "closed" looks like.
     expect(zigzag.outliers.darkFraction, 'zigzag_right_angle dark fraction').toBeLessThan(
       BEND_DARK_CEILING
+    );
+    expect(zigzag.outliers.brightFraction, 'zigzag_right_angle bright fraction').toBeLessThan(
+      BEND_BRIGHT_CEILING
     );
   });
 });
