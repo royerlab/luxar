@@ -2,6 +2,11 @@
 Tests for Gaussian splat rendering functions.
 """
 
+import contextlib
+from types import SimpleNamespace
+from unittest import mock
+from unittest.mock import PropertyMock
+
 import numpy as np
 import pytest
 
@@ -19,11 +24,35 @@ if HAS_TORCH:
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.models.gsplats import (
         render_gaussians,
-        render_gaussians_batched,
         render_gaussians_numpy,
         render_gaussians_pytorch,
     )
     from luxar.gsplats.utils.trils import pack_tril
+
+    @contextlib.contextmanager
+    def _force_mps_device():
+        """Make every tensor report device.type == 'mps' (keeping real CPU
+        storage) and turn a `.to(<that fake device>)` into a no-op, so the
+        MPS-only CPU fallback branch in group_by_box / group_by_box_gpu
+        executes on a CPU host. A fallback body that does nothing (e.g.
+        `pass`) leaves uniq/inv unbound and raises here — which is exactly
+        the mutation these tests must catch."""
+        fake_device = SimpleNamespace(type="mps")
+        orig_to = torch.Tensor.to
+
+        def fake_to(self, *args, **kwargs):
+            # Swallow the move back to the fake mps device in either the
+            # positional (`.to(device)`) or keyword (`.to(device=...)`) form.
+            if (args and args[0] is fake_device) or kwargs.get("device") is fake_device:
+                return self
+            return orig_to(self, *args, **kwargs)
+
+        with (
+            mock.patch.object(torch.Tensor, "device", new_callable=PropertyMock) as dev,
+            mock.patch.object(torch.Tensor, "to", fake_to),
+        ):
+            dev.return_value = fake_device
+            yield
 
 
 @pytest.fixture(autouse=True)
@@ -430,11 +459,11 @@ class TestRenderGaussiansFullNumpy:
         np.testing.assert_allclose(result_numpy, result_torch, atol=1e-6, rtol=1e-6)
 
 
-class TestBatchedRendering:
-    """Test batched rendering implementation."""
+class TestRenderGaussiansCore:
+    """Test the core render_gaussians entry point on raw tensors."""
 
-    def test_batched_rendering_2d(self, multi_2d_params) -> None:
-        """Test batched rendering in 2D."""
+    def test_core_rendering_2d(self, multi_2d_params) -> None:
+        """Test 2D rendering straight through the core engine."""
         params = multi_2d_params
 
         result = render_gaussians(
@@ -453,12 +482,12 @@ class TestBatchedRendering:
         assert np.all(result_np >= 0)
         assert np.sum(result_np) > 0
 
-    def test_batched_vs_sequential_consistency(self, multi_2d_params) -> None:
-        """Test that batched rendering matches sequential version."""
+    def test_core_matches_wrapper(self, multi_2d_params) -> None:
+        """The core engine and the GSplatData wrapper agree."""
         params = multi_2d_params
 
-        # Render with batched implementation
-        result_batched = render_gaussians(
+        # Render straight through the core engine
+        result_core = render_gaussians(
             shape=params["shape"],
             centers=torch.from_numpy(params["centers"]),
             Ls=torch.from_numpy(params["L"]),
@@ -467,16 +496,14 @@ class TestBatchedRendering:
         )
 
         # Render with wrapper (uses GSplatData)
-        result_sequential = render_gaussians_pytorch(
+        result_wrapper = render_gaussians_pytorch(
             shape=params["shape"],
             result=params["result"],
             truncate=3.0,
         )
 
         # Results should be very similar
-        torch.testing.assert_close(
-            result_batched, result_sequential, atol=1e-4, rtol=1e-3
-        )
+        torch.testing.assert_close(result_core, result_wrapper, atol=1e-4, rtol=1e-3)
 
     def test_amplitude_aware_culling(self, multi_2d_params) -> None:
         """Test amplitude-aware culling feature."""
@@ -511,14 +538,14 @@ class TestBatchedRendering:
         assert torch.all(result_with_floor >= 0)
         assert torch.all(result_no_floor >= 0)
 
-    def test_empty_batched_rendering(self) -> None:
-        """Test batched rendering with no splats."""
+    def test_empty_input_renders_zeros(self) -> None:
+        """render_gaussians with zero splats returns an all-zero tensor."""
         shape = (5, 5)
         centers = torch.zeros((0, 2), dtype=torch.float32)
         Ls = torch.zeros((0, 2, 2), dtype=torch.float32)
         amps = torch.zeros((0,), dtype=torch.float32)
 
-        result = render_gaussians_batched(
+        result = render_gaussians(
             shape=shape,
             centers=centers,
             Ls=Ls,
@@ -529,8 +556,8 @@ class TestBatchedRendering:
         assert result.shape == shape
         assert torch.all(result == 0)
 
-    def test_single_splat_batched(self, simple_2d_params) -> None:
-        """Test batched rendering with single splat."""
+    def test_single_splat(self, simple_2d_params) -> None:
+        """Test core rendering with a single splat."""
         params = simple_2d_params
 
         result = render_gaussians(
@@ -912,27 +939,50 @@ class TestMPSFallbackHandling:
         assert inv.device.type == "mps"
         assert uniq.shape[0] == 2
 
-    def test_mps_fallback_code_path_exists(self) -> None:
-        """Verify MPS fallback code path exists in group_by_box."""
-        import inspect
+    def test_group_by_box_mps_fallback_cpu(self) -> None:
+        """Drive the MPS CPU-fallback branch of group_by_box on a CPU host.
 
+        `_force_mps_device()` makes every tensor report device.type == 'mps'
+        while keeping real CPU storage, so the `if sizes.device.type == 'mps'`
+        branch runs and produces the same groupings as the plain CPU path. A
+        no-op fallback body (e.g. `pass`) would leave uniq/inv unbound and
+        raise UnboundLocalError, so this test genuinely exercises the branch.
+        """
         from luxar.gsplats.models.gsplats.rendering_core import group_by_box
 
-        source = inspect.getsource(group_by_box)
-        assert 'device.type == "mps"' in source, (
-            "group_by_box should have MPS fallback handling"
-        )
+        lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long)
+        hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long)
 
-    def test_mps_fallback_code_path_exists_gpu(self) -> None:
-        """Verify MPS fallback code path exists in group_by_box_gpu."""
-        import inspect
+        with _force_mps_device():
+            groups = group_by_box(lo, hi)
 
+        # Exact groupings, member indices included — keying by box shape makes
+        # this independent of the order torch.unique returns the sizes in.
+        assert {key: idx.tolist() for key, idx in groups.items()} == {
+            (5, 5): [0, 2],
+            (7, 3): [1],
+        }
+
+    def test_group_by_box_gpu_mps_fallback_cpu(self) -> None:
+        """Drive the MPS CPU-fallback branch of group_by_box_gpu on a CPU host.
+
+        Same mechanism as ``test_group_by_box_mps_fallback_cpu``: the fake mps
+        device forces the fallback branch, and a no-op body would raise
+        UnboundLocalError instead of returning the unique sizes / inverse map.
+        """
         from luxar.gsplats.models.gsplats.rendering_core import group_by_box_gpu
 
-        source = inspect.getsource(group_by_box_gpu)
-        assert 'device.type == "mps"' in source, (
-            "group_by_box_gpu should have MPS fallback handling"
-        )
+        lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long)
+        hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long)
+
+        with _force_mps_device():
+            uniq, inv = group_by_box_gpu(lo, hi)
+
+        # Exact unique sizes, and `inv` must index them back to each input's
+        # own box shape (order-independent, so no reliance on unique's sort).
+        sizes = uniq.tolist()
+        assert sorted(sizes) == [[5, 5], [7, 3]]
+        assert [sizes[g] for g in inv.tolist()] == [[5, 5], [7, 3], [5, 5]]
 
 
 class TestMPSPeakFindingFallback:

@@ -1,7 +1,6 @@
 /**
- * Tests for `src/wasm/typescript/gsplats_processing.ts`
- * (Mahalanobis distance, Cholesky submatrix extraction, marginal Cholesky,
- * gsplat attenuation, visible-cholesky compaction, attenuated-amplitude compaction).
+ * Tests for `src/wasm/typescript/gsplats-processing.ts`
+ * (Mahalanobis distance, marginal Cholesky, fused nD→3D projection).
  *
  * Extracted from `tests/unit/wasm/typescript-reference.test.ts` per the
  * restructuring plan (wasm.md O1 / Phase D8): the 1714-line mega-file
@@ -12,11 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   mahalanobis_distance,
-  extract_cholesky_submatrix,
   computeMarginalCholesky,
-  compute_gsplats_attenuation,
-  extract_visible_cholesky_3d,
-  compact_attenuated_amplitudes,
   project_gsplats_nd_to_3d,
 } from '../../../../wasm/typescript';
 
@@ -52,234 +47,6 @@ describe('gsplats_processing: mahalanobis_distance', () => {
 
     const dist = mahalanobis_distance(diff, packedL, 2);
     expect(dist).toBeCloseTo(5.0, 5);
-  });
-});
-
-describe('gsplats_processing: extract_cholesky_submatrix', () => {
-  it('should extract 2D submatrix from 4D Cholesky', () => {
-    // 4D Cholesky: 10 elements
-    // [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33]
-    const packed = new Float32Array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]);
-
-    // Extract dims [0, 2] (2D submatrix)
-    const keepDims = new Uint32Array([0, 2]);
-    const output = new Float32Array(3); // 2D packed = 3 elements
-
-    extract_cholesky_submatrix(packed, keepDims, 2, output);
-
-    // Expected: [L00, L20, L22] = [1.0, 4.0, 6.0]
-    expect(output[0]).toBe(1.0); // L[0,0]
-    expect(output[1]).toBe(4.0); // L[2,0]
-    expect(output[2]).toBe(6.0); // L[2,2]
-  });
-
-  it('should extract 3D submatrix from 5D Cholesky', () => {
-    // 5D Cholesky: 15 elements
-    // Build with identity-like values for easy verification
-    const packed = new Float32Array(15);
-    for (let i = 0; i < 15; i++) {
-      packed[i] = i + 1;
-    }
-
-    // Extract dims [0, 1, 2] (first 3 dims)
-    const keepDims = new Uint32Array([0, 1, 2]);
-    const output = new Float32Array(6); // 3D packed = 6 elements
-
-    extract_cholesky_submatrix(packed, keepDims, 3, output);
-
-    // Should extract [L00, L10, L11, L20, L21, L22] = [1, 2, 3, 4, 5, 6]
-    expect(output[0]).toBe(1.0);
-    expect(output[1]).toBe(2.0);
-    expect(output[2]).toBe(3.0);
-    expect(output[3]).toBe(4.0);
-    expect(output[4]).toBe(5.0);
-    expect(output[5]).toBe(6.0);
-  });
-});
-
-describe('gsplats_processing: compute_gsplats_attenuation', () => {
-  it('should have full attenuation with no hidden dimensions', () => {
-    // 3D splats with no hidden dimensions
-    const positions = new Float32Array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
-    const cholesky = new Float32Array([
-      1.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      1.0, // Splat 0
-      1.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      1.0, // Splat 1
-    ]);
-    const amplitudes = new Float32Array([1.0, 0.5]);
-    const slicePos = new Float32Array([0.0, 0.0, 0.0]);
-    const hiddenDims = new Uint32Array([]); // No hidden dims
-
-    const visibility = new Uint8Array(2);
-    const attenuation = new Float32Array(2);
-
-    const count = compute_gsplats_attenuation(
-      positions,
-      cholesky,
-      amplitudes,
-      slicePos,
-      hiddenDims,
-      3,
-      2,
-      0.1,
-      3.0,
-      visibility,
-      attenuation
-    );
-
-    expect(count).toBe(2); // Both visible
-    expect(attenuation[0]).toBe(1.0); // No attenuation
-    expect(attenuation[1]).toBe(1.0);
-  });
-
-  it('should attenuate splats far in hidden dimension', () => {
-    // 4D splats with dim 3 as hidden
-    const positions = new Float32Array([
-      0.0,
-      0.0,
-      0.0,
-      0.0, // Splat 0: at slice
-      0.0,
-      0.0,
-      0.0,
-      5.0, // Splat 1: far in hidden dim
-    ]);
-    // 4D Cholesky: 10 elements, identity
-    const cholesky = new Float32Array([
-      1.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      0.0,
-      1.0, // Splat 0
-      1.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      0.0,
-      1.0, // Splat 1
-    ]);
-    const amplitudes = new Float32Array([1.0, 1.0]);
-    const slicePos = new Float32Array([0.0, 0.0, 0.0, 0.0]);
-    const hiddenDims = new Uint32Array([3]); // Dim 3 is hidden
-
-    const visibility = new Uint8Array(2);
-    const attenuation = new Float32Array(2);
-
-    const count = compute_gsplats_attenuation(
-      positions,
-      cholesky,
-      amplitudes,
-      slicePos,
-      hiddenDims,
-      4,
-      2,
-      0.01, // Low threshold
-      3.0,
-      visibility,
-      attenuation
-    );
-
-    // Splat 0: mahal = 0, attenuation = 1.0
-    expect(visibility[0]).toBe(1);
-    expect(attenuation[0]).toBeCloseTo(1.0, 5);
-
-    // Splat 1: mahal = 5.0, beyond 3σ truncation → attenuation ≈ 0
-    expect(visibility[1]).toBe(0);
-    expect(attenuation[1]).toBeLessThan(0.001);
-
-    expect(count).toBe(1);
-  });
-});
-
-describe('gsplats_processing: extract_visible_cholesky_3d', () => {
-  it('should extract 3D Cholesky for visible splats only', () => {
-    // 4D Cholesky: 10 elements per splat
-    const cholesky = new Float32Array([
-      1.0,
-      2.0,
-      3.0,
-      4.0,
-      5.0,
-      6.0,
-      7.0,
-      8.0,
-      9.0,
-      10.0, // Splat 0
-      11.0,
-      12.0,
-      13.0,
-      14.0,
-      15.0,
-      16.0,
-      17.0,
-      18.0,
-      19.0,
-      20.0, // Splat 1
-      21.0,
-      22.0,
-      23.0,
-      24.0,
-      25.0,
-      26.0,
-      27.0,
-      28.0,
-      29.0,
-      30.0, // Splat 2
-    ]);
-    const visibility = new Uint8Array([1, 0, 1]); // Splats 0 and 2 visible
-    const displayDims = new Uint32Array([0, 1, 2]);
-    const output = new Float32Array(12); // 2 visible * 6 elements
-
-    const count = extract_visible_cholesky_3d(cholesky, visibility, displayDims, 4, 3, output);
-
-    expect(count).toBe(2);
-    // Splat 0: [L00, L10, L11, L20, L21, L22] = [1, 2, 3, 4, 5, 6]
-    expect(output[0]).toBe(1.0);
-    expect(output[1]).toBe(2.0);
-    expect(output[2]).toBe(3.0);
-    expect(output[3]).toBe(4.0);
-    expect(output[4]).toBe(5.0);
-    expect(output[5]).toBe(6.0);
-    // Splat 2: [L00, L10, L11, L20, L21, L22] = [21, 22, 23, 24, 25, 26]
-    expect(output[6]).toBe(21.0);
-    expect(output[7]).toBe(22.0);
-    expect(output[8]).toBe(23.0);
-    expect(output[9]).toBe(24.0);
-    expect(output[10]).toBe(25.0);
-    expect(output[11]).toBe(26.0);
-  });
-});
-
-describe('gsplats_processing: compact_attenuated_amplitudes', () => {
-  it('should compact amplitudes with attenuation', () => {
-    const amplitudes = new Float32Array([1.0, 2.0, 3.0, 4.0]);
-    const attenuation = new Float32Array([0.5, 0.25, 0.75, 0.1]);
-    const visibility = new Uint8Array([1, 0, 1, 0]);
-    const output = new Float32Array(2);
-
-    const count = compact_attenuated_amplitudes(amplitudes, attenuation, visibility, 4, output);
-
-    expect(count).toBe(2);
-    expect(output[0]).toBeCloseTo(0.5, 5); // 1.0 * 0.5
-    expect(output[1]).toBeCloseTo(2.25, 5); // 3.0 * 0.75
   });
 });
 
@@ -320,23 +87,6 @@ describe('gsplats_processing: computeMarginalCholesky', () => {
     expect(output[2]).toBeCloseTo(Math.sqrt(16.25), 3);
   });
 
-  it('should differ from raw extraction for correlated Cholesky', () => {
-    // Same correlated L as above
-    const packed = new Float32Array([2, 1, 3, 0.5, 0.5, 4]);
-    const keepDims = new Uint32Array([0, 2]);
-
-    const rawOutput = new Float32Array(3);
-    extract_cholesky_submatrix(packed, keepDims, 2, rawOutput);
-
-    const marginalOutput = new Float32Array(3);
-    computeMarginalCholesky(packed, 0, keepDims, 2, marginalOutput, 0);
-
-    // Raw gives [L[0,0], L[2,0], L[2,2]] = [2, 0.5, 4]
-    expect(rawOutput[2]).toBeCloseTo(4.0, 5);
-    // Marginal gives sqrt(16.25) ≈ 4.031 ≠ 4.0
-    expect(Math.abs(marginalOutput[2] - rawOutput[2])).toBeGreaterThan(0.01);
-  });
-
   it('should give correct Mahalanobis distance with marginal Cholesky', () => {
     // Same 3D correlated L
     const packed = new Float32Array([2, 1, 3, 0.5, 0.5, 4]);
@@ -352,40 +102,197 @@ describe('gsplats_processing: computeMarginalCholesky', () => {
     // ||y|| ≈ sqrt(0.25 + 0.00386) ≈ 0.504
     expect(dist).toBeCloseTo(0.5, 1);
   });
+});
 
-  it('should produce correct attenuation with correlated Cholesky', () => {
-    // 4D splat with correlated L (matches Rust test)
-    // L = [[2,0,0,0], [1,3,0,0], [0,0,2,0], [0.5,0.5,0,4]]
-    const positions = new Float32Array([0, 0, 0, 0]);
-    const cholesky = new Float32Array([2, 1, 3, 0, 0, 2, 0.5, 0.5, 0, 4]);
-    const amplitudes = new Float32Array([1.0]);
-    const slicePos = new Float32Array([0, 0, 0, 1]); // slice at dim3 = 1
-    const hiddenDims = new Uint32Array([3]);
+/**
+ * Visibility-gate contracts of the fused kernel. Migrated here from the
+ * per-kernel attenuation tests that went with `compute_gsplats_attenuation`:
+ * the gate is now inlined in `project_gsplats_nd_to_3d`, so it needs pinning
+ * through the surviving entry point.
+ */
+describe('gsplats_processing: fused visibility gate', () => {
+  // One splat, `ndim` dims, all-visible discrete gate; returns [count, amplitude].
+  const project = (
+    positions: number[],
+    ndim: number,
+    continuousHiddenDims: number[],
+    amplitude: number,
+    minAmplitude: number
+  ): [number, number] => {
+    const packedSize = (ndim * (ndim + 1)) / 2;
+    const cholesky = new Float32Array(packedSize);
+    for (let i = 0; i < ndim; i++) cholesky[(i * (i + 1)) / 2 + i] = 1.0; // identity L
+    const outAmplitudes = new Float32Array(1);
+    const count = project_gsplats_nd_to_3d(
+      new Float32Array(positions),
+      cholesky,
+      new Float32Array([amplitude]),
+      new Float32Array([1, 1, 1]),
+      new Uint8Array([1]),
+      new Float32Array(ndim), // slice at the origin
+      new Uint32Array(continuousHiddenDims),
+      new Uint32Array([0, 1, 2]),
+      ndim,
+      1,
+      3,
+      minAmplitude,
+      3.0,
+      new Float32Array(3),
+      new Float32Array(6),
+      outAmplitudes,
+      new Float32Array(3)
+    );
+    return [count, outAmplitudes[0]];
+  };
 
-    const visibility = new Uint8Array(1);
-    const attenuation = new Float32Array(1);
+  it('keeps a splat whose attenuated amplitude sits EXACTLY on minAmplitude', () => {
+    // No hidden dims → the `numContinuous === 0` short-circuit forces
+    // attenuation = 1, so the emitted amplitude is the raw one and the gate is
+    // tested at its boundary. The gate is `>= minAmplitude`; a mutant flipping
+    // it to a strict `>` drops this splat.
+    expect(project([0, 0, 0], 3, [], 0.25, 0.25)).toEqual([1, 0.25]);
+    // One ulp of headroom below the threshold and it must go.
+    expect(project([0, 0, 0], 3, [], 0.25, 0.2500001)[0]).toBe(0);
+  });
 
-    compute_gsplats_attenuation(
+  it('culls a splat whose hidden-dim position is NaN (WASM parity)', () => {
+    // A NaN center makes the Mahalanobis distance NaN. Rust clamps with
+    // `f32::max`, which ignores NaN and yields attenuation 0 → culled. This
+    // backend must agree: emitting the splat instead would push a NaN amplitude
+    // to the GPU (`NaN < minAmplitude` is false), the #725 corruption mode.
+    expect(project([0, 0, 0, Number.NaN], 4, [3], 1.0, 1e-6)[0]).toBe(0);
+  });
+
+  it('culls a splat whose attenuated AMPLITUDE comes out NaN', () => {
+    // The attenuation clamp above cannot help here — the NaN arrives already in
+    // `amplitudes`, so the gate itself has to reject it. `NaN < minAmplitude` is
+    // false, so a gate spelled as a plain `<` would emit the splat with a NaN
+    // amplitude straight to the GPU.
+    expect(project([0, 0, 0], 3, [], Number.NaN, 1e-6)[0]).toBe(0);
+    // Same for the `Infinity * 0` product: a fully attenuated splat with an
+    // infinite amplitude yields NaN, not 0.
+    expect(project([0, 0, 0, 50], 4, [3], Number.POSITIVE_INFINITY, 1e-6)[0]).toBe(0);
+    // A finite amplitude on the same off-slice splat is culled the ordinary way,
+    // so the case above really is the NaN arm and not just the distance cull.
+    expect(project([0, 0, 0, 50], 4, [3], 1.0, 1e-6)[0]).toBe(0);
+  });
+});
+
+/**
+ * Dense compaction of the fused kernel — the TS twin of
+ * `gsplats_processing.rs::test_fused_compaction_stride`.
+ *
+ * Here and not only in `wasm-vs-typescript.test.ts` for the same reason as the
+ * display-dims block below: those cases are `skipIf(!wasmFilesExist)` and vanish
+ * without a built WASM artifact, while this backend is the production path for
+ * ndim > 16. Without this, the discrete gate, the RGBA alpha stride and the
+ * dense-slot bookkeeping would be unpinned on the TS side.
+ */
+describe('gsplats_processing: dense compaction stride (TS reference)', () => {
+  // Same fixture as the Rust test: 4 splats, dim 3 the continuous hidden
+  // slicing dim (slice at 0). splat1 is far off-slice in dim 3 (attenuated
+  // below minAmplitude) and splat2 is discrete-gated, so the surviving pair
+  // splat0/splat3 is NON-CONTIGUOUS — the only arrangement in which the dense
+  // output slot diverges from the loop index.
+  const ndim = 4;
+  const splatCount = 4;
+  // prettier-ignore
+  const positions = new Float32Array([
+    0, 0, 0, 0, // splat0 (on slice)
+    1, 1, 1, 50, // splat1 (far in dim3 → attenuated out)
+    2, 2, 2, 0, // splat2 (discrete-gated)
+    3, 1, 2, 0.3, // splat3 (near slice → visible)
+  ]);
+  const one = [2, 1, 3, 0, 0, 2, 0.5, 0.5, 0, 4];
+  const cholesky = new Float32Array([...one, ...one, ...one, ...one]);
+  const amplitudes = new Float32Array([1.0, 0.5, 1.0, 0.8]);
+  const discreteVisibility = new Uint8Array([1, 1, 0, 1]);
+
+  // Attenuated amplitude of splat3: hidden dim 3 of the factor above
+  // marginalizes to Σ₃₃ = 0.5² + 0.5² + 0² + 4² = 16.5, so the 1×1 factor is
+  // √16.5 = 4.0620192 and D = 0.3 / 4.0620192 = 0.0738549. The shifted Gaussian
+  // at truncate = 3 (shiftC = e^-4.5) is
+  // (exp(-D²/2) - shiftC) / (1 - shiftC) = 0.9972458, so the raw 0.8 emerges as
+  // 0.7977967. splat0 sits on the slice, so attenuation is exactly 1.
+  const SPLAT3_AMPLITUDE = 0.7977967;
+
+  const project = (colorComponents: number, colors: number[]) => {
+    const centers = new Float32Array(splatCount * 3);
+    const chol = new Float32Array(splatCount * 6);
+    const outColors = new Float32Array(splatCount * colorComponents);
+    const amps = new Float32Array(splatCount);
+    const count = project_gsplats_nd_to_3d(
       positions,
       cholesky,
       amplitudes,
-      slicePos,
-      hiddenDims,
-      4,
-      1,
+      new Float32Array(colors),
+      discreteVisibility,
+      new Float32Array(ndim), // slice at the origin
+      new Uint32Array([3]), // dim 3 is the continuous hidden dim
+      new Uint32Array([0, 1, 2]),
+      ndim,
+      splatCount,
+      colorComponents,
       0.001,
       3.0,
-      visibility,
-      attenuation
+      centers,
+      chol,
+      amps,
+      outColors
     );
+    return { count, centers, chol, amps, outColors };
+  };
 
-    // Marginal for dim [3]: Σ_33 = 0.25+0.25+0+16 = 16.5
-    // L_S = sqrt(16.5) ≈ 4.062
-    // Mahalanobis: 1/4.062 ≈ 0.2462
-    // Attenuation: exp(-0.5 * 0.2462^2) ≈ 0.970
-    expect(attenuation[0]).toBeGreaterThan(0.9);
-    expect(attenuation[0]).toBeLessThan(1.0);
-    expect(visibility[0]).toBe(1);
+  it('compacts a non-contiguous visible pair at both RGB and RGBA stride', () => {
+    // prettier-ignore
+    const rgb = project(3, [
+      0.1, 0.2, 0.3, // splat0
+      0.4, 0.5, 0.6, // splat1
+      0.7, 0.8, 0.9, // splat2
+      0.15, 0.25, 0.35, // splat3
+    ]);
+
+    expect(rgb.count).toBe(2);
+    // Centers in display order for splat0, splat3 — splat3 lands in slot 1,
+    // not slot 3.
+    expect(Array.from(rgb.centers.subarray(0, 6))).toEqual([0, 0, 0, 3, 1, 2]);
+    // Display marginal over dims [0,1,2] of the shared factor: Σ_S =
+    // [[4,2,0],[2,10,0],[0,0,4]] → packed [2,1,3,0,0,2]. Checked at dense slots
+    // 0 AND 1 — slot 1 stays all-zero if the out index misses the compaction.
+    // Colour stride cannot affect it, so the RGB run alone pins it.
+    const expectedChol = [2, 1, 3, 0, 0, 2];
+    for (let s = 0; s < rgb.count; s++) {
+      for (let k = 0; k < expectedChol.length; k++) {
+        expect(rgb.chol[s * 6 + k]).toBeCloseTo(expectedChol[k], 6);
+      }
+    }
+    const expectedRgb = [0.1, 0.2, 0.3, 0.15, 0.25, 0.35];
+    for (let k = 0; k < expectedRgb.length; k++) {
+      expect(rgb.outColors[k]).toBeCloseTo(expectedRgb[k], 6);
+    }
+    expect(rgb.amps[0]).toBe(1.0);
+    // Same 1e-5-grade band as the Rust twin: tight enough to reject a wrong
+    // exponent (exp(-D²) would give 0.7955994) and the raw-L33 shortcut that
+    // skips the marginalization (4 → 0.7977279), loose enough for f32 rounding.
+    expect(rgb.amps[1]).toBeCloseTo(SPLAT3_AMPLITUDE, 5);
+
+    // ---- RGBA: alpha rides along in the same dense slot at stride 4 ----
+    // prettier-ignore
+    const rgba = project(4, [
+      0.1, 0.2, 0.3, 0.9, // splat0 (alpha 0.9 ≠ r 0.1)
+      0.4, 0.5, 0.6, 0.6, // splat1
+      0.7, 0.8, 0.9, 0.3, // splat2
+      0.15, 0.25, 0.35, 0.85, // splat3
+    ]);
+
+    expect(rgba.count).toBe(2);
+    expect(Array.from(rgba.centers.subarray(0, 6))).toEqual([0, 0, 0, 3, 1, 2]);
+    const expectedRgba = [0.1, 0.2, 0.3, 0.9, 0.15, 0.25, 0.35, 0.85];
+    for (let k = 0; k < expectedRgba.length; k++) {
+      expect(rgba.outColors[k]).toBeCloseTo(expectedRgba[k], 6);
+    }
+    expect(rgba.amps[0]).toBe(1.0);
+    expect(rgba.amps[1]).toBeCloseTo(SPLAT3_AMPLITUDE, 5);
   });
 });
 
@@ -408,31 +315,37 @@ describe('gsplats_processing: computeMarginalCholesky', () => {
 describe('gsplats_processing: fewer than 3 display dims (TS reference)', () => {
   const SQRT_EPS = Math.sqrt(1e-10);
 
-  it('extract_visible_cholesky_3d pads a 2D marginal with a scale-matched phantom axis', () => {
-    const cholesky = new Float32Array([2.0, 0.5, 1.5]); // packed 2D [L00, L10, L11]
-    const output = new Float32Array(6);
-
-    const count = extract_visible_cholesky_3d(
-      cholesky,
+  // Run the fused kernel on a single all-visible splat (no discrete gate) and
+  // return its 6-slot display Cholesky. Drives the phantom-padding contract
+  // through the ONLY surviving entry point (extract_visible_cholesky_3d is gone).
+  const cholFor = (
+    cholesky: number[],
+    ndim: number,
+    displayDims: number[],
+    continuousHiddenDims: number[] = []
+  ): Float32Array => {
+    const chol = new Float32Array(6);
+    project_gsplats_nd_to_3d(
+      new Float32Array(ndim), // positions: splat at origin (on slice → no attenuation)
+      new Float32Array(cholesky),
+      new Float32Array([1.0]),
+      new Float32Array([1, 1, 1]),
       new Uint8Array([1]),
-      new Uint32Array([0, 1]),
-      2,
+      new Float32Array(ndim),
+      new Uint32Array(continuousHiddenDims),
+      new Uint32Array(displayDims),
+      ndim,
       1,
-      output
+      3,
+      1e-6,
+      3.0,
+      new Float32Array(3),
+      chol,
+      new Float32Array(1),
+      new Float32Array(3)
     );
-
-    expect(count).toBe(1);
-    // Keeping ALL dims reproduces the input factor.
-    expect(output[0]).toBeCloseTo(2.0, 5);
-    expect(output[1]).toBeCloseTo(0.5, 5);
-    expect(output[2]).toBeCloseTo(1.5, 5);
-    // Phantom row: uncorrelated, scale-matched.
-    expect(output[3]).toBe(0);
-    expect(output[4]).toBe(0);
-    expect(output[5]).toBeCloseTo(Math.sqrt(2.0 * 1.5), 5);
-    // The regression this guards: an epsilon here renders the scene black.
-    expect(output[5]).toBeGreaterThan(SQRT_EPS * 1000);
-  });
+    return chol;
+  };
 
   it('project_gsplats_nd_to_3d handles a 2D scene (no OOB read, z-padded centers)', () => {
     const one = [2.0, 0.5, 1.5];
@@ -474,53 +387,27 @@ describe('gsplats_processing: fewer than 3 display dims (TS reference)', () => {
   });
 
   it('pads BOTH missing rows for a single display dim', () => {
-    const output = new Float32Array(6);
-    extract_visible_cholesky_3d(
-      new Float32Array([2.0, 0.5, 1.5]),
-      new Uint8Array([1]),
-      new Uint32Array([0]),
-      2,
-      1,
-      output
-    );
-
-    // Marginal over dim 0 alone is [sqrt(L00^2)] = [2]; phantom = 2 on both rows.
-    expect(Array.from(output)).toEqual([2, 0, 2, 0, 0, 2]);
+    // ndim=2, display=[0] only; dim 1 is a continuous hidden dim on the slice
+    // (position 0) so the splat is not attenuated. The 1-D marginal over dim 0
+    // is [sqrt(L00²)] = [2]; the phantom = 2 fills both padded rows.
+    const chol = cholFor([2.0, 0.5, 1.5], 2, [0], [1]);
+    expect(Array.from(chol)).toEqual([2, 0, 2, 0, 0, 2]);
   });
 
   it('keeps the phantom axis proportional to the splat (not a constant)', () => {
-    const phantomFor = (scale: number): number => {
-      const output = new Float32Array(6);
-      extract_visible_cholesky_3d(
-        new Float32Array([2.0 * scale, 0.5 * scale, 1.5 * scale]),
-        new Uint8Array([1]),
-        new Uint32Array([0, 1]),
-        2,
-        1,
-        output
-      );
-      return output[5];
-    };
+    const phantomFor = (scale: number): number =>
+      cholFor([2.0 * scale, 0.5 * scale, 1.5 * scale], 2, [0, 1])[5];
 
     expect(phantomFor(2) / phantomFor(1)).toBeCloseTo(2.0, 4);
   });
 
   it('yields a finite positive phantom for a fully degenerate marginal', () => {
-    const output = new Float32Array(6);
-    extract_visible_cholesky_3d(
-      new Float32Array([0, 0, 0]),
-      new Uint8Array([1]),
-      new Uint32Array([0, 1]),
-      2,
-      1,
-      output
-    );
-
     // Crout floors the diagonals at sqrt(eps) before the mean is taken, so the
     // covariance stays non-singular instead of collapsing to zero.
-    expect(Number.isFinite(output[5])).toBe(true);
-    expect(output[5]).toBeGreaterThan(0);
-    expect(output[5]).toBeCloseTo(SQRT_EPS, 10);
+    const chol = cholFor([0, 0, 0], 2, [0, 1]);
+    expect(Number.isFinite(chol[5])).toBe(true);
+    expect(chol[5]).toBeGreaterThan(0);
+    expect(chol[5]).toBeCloseTo(SQRT_EPS, 10);
   });
 
   it('is rotation-invariant: an in-plane rotation does not change the phantom axis', () => {
@@ -534,17 +421,7 @@ describe('gsplats_processing: fewer than 3 display dims (TS reference)', () => {
       const l00 = Math.sqrt(a);
       const l10 = b / l00;
       const l11 = Math.sqrt(d - l10 * l10);
-
-      const output = new Float32Array(6);
-      extract_visible_cholesky_3d(
-        new Float32Array([l00, l10, l11]),
-        new Uint8Array([1]),
-        new Uint32Array([0, 1]),
-        2,
-        1,
-        output
-      );
-      return output[5];
+      return cholFor([l00, l10, l11], 2, [0, 1])[5];
     });
 
     // Taken over the Cholesky pivots the mean is (det Sigma)^(1/4) = sqrt(sx*sy).
@@ -776,42 +653,6 @@ describe('gsplats_processing: >16 continuous hidden dims (issue #725)', () => {
 
     expect(count).toBe(1);
     expect(outAmplitudes[0]).toBeCloseTo(expectedAtten, 5);
-  });
-
-  it('legacy compute_gsplats_attenuation matches the correlated >16-D result', () => {
-    const ndim = correlatedNdim;
-    const hiddenDims = new Uint32Array(Array.from({ length: ndim - 3 }, (_, k) => k + 3));
-    const delta = 0.5;
-    const positions = new Float32Array(ndim);
-    positions[18] = delta;
-
-    const truncate = 4.0;
-    const shiftC = Math.exp(-0.5 * truncate * truncate);
-    const invOneMinusC = 1.0 / (1.0 - shiftC);
-    const expectedAtten = Math.max(
-      0.0,
-      invOneMinusC * (Math.exp(-0.5 * 3.25 * delta * delta) - shiftC)
-    );
-
-    const visibility = new Uint8Array(1);
-    const attenuation = new Float32Array(1);
-    const count = compute_gsplats_attenuation(
-      positions,
-      correlatedPacked(),
-      new Float32Array([1.0]),
-      new Float32Array(ndim),
-      hiddenDims,
-      ndim,
-      1,
-      1e-6,
-      truncate,
-      visibility,
-      attenuation
-    );
-
-    expect(count).toBe(1);
-    expect(visibility[0]).toBe(1);
-    expect(attenuation[0]).toBeCloseTo(expectedAtten, 5);
   });
 
   it('INTERLEAVE: a small subNdim=2 marginal after a >16-D one is uncorrupted', () => {

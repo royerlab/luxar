@@ -330,8 +330,6 @@ seeds = generate_seeds(volume, device='cuda:1')
 
 GPU acceleration is applied to:
 - **Sobel gradients**: 10-50x faster (supports arbitrary dimensions)
-- **Peak detection**: 20-100x faster (2D/3D only)
-- **Soft blur**: 5-20x faster (all dimensions via separable 1D convolution)
 - **Interpolation**: 10-30x faster (2D/3D only)
 - **Deduplication**: Always CPU (SpatialHashGrid based, `device` parameter ignored)
 
@@ -340,7 +338,6 @@ GPU acceleration is applied to:
 | Operation | 1D | 2D | 3D | 4D+ |
 |-----------|----|----|----|----|
 | Sobel gradients | ✅ GPU | ✅ GPU | ✅ GPU | ✅ GPU |
-| Peak detection | ❌ CPU | ✅ GPU | ✅ GPU | ❌ CPU |
 | Interpolation | ❌ CPU | ✅ GPU | ✅ GPU | ❌ CPU |
 | Deduplication | ✅ CPU | ✅ CPU | ✅ CPU | ✅ CPU |
 
@@ -511,13 +508,12 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 | `edges.py` | `seed_from_edges()`, plus shared `_compute_nd_sobel_magnitude()` and `_sample_amplitudes()` helpers |
 | `peaks.py` | `seed_from_peaks()` (PyTorch, GPU-accelerated multinomial sampling) |
 | `utils.py` | `local_maxima()`, `dedupe_farthest_first()`, `combine_seeds()`, `sigmas_to_cholesky_isotropic()`, `SEED_AMPLITUDE_SCALE`; re-exports `SpatialHashGrid` from `luxar.utils.spatial_hash` |
-| `gpu_ops.py` | PyTorch GPU kernels (`_get_device()`, `should_use_gpu()`, Sobel/blur/max-pool/grid-sample) shared by the CPU/GPU dispatch paths |
+| `gpu_ops.py` | PyTorch GPU kernels (`_get_device()`, `should_use_gpu()`, Sobel/grid-sample) shared by the CPU/GPU dispatch paths |
 
 ## References
 
 - **Main API**: See `fit_gsplats.py` for integration with fitting pipeline
 - **Decomposition**: See `multiscale/decompose.py` for multi-scale decomposition details
-- **Performance**: See `SEEDING_PERFORMANCE_ISSUE.md` for the superlinear scaling of edge detection at high seed counts
 - **Tests**: See `tests/` for usage examples and validation
 
 ## Version History

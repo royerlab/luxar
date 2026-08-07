@@ -10,9 +10,9 @@
  * suites (clip-segment property tests, scalar end-to-end, golden
  * equivalence) keep their assertions while exercising the *live* code:
  *
- *   - `clipSegmentToSlice` / `lerp` / `lerpVec3` / `distance3D` wrap the
- *     TS-reference clipper (`wasm/typescript/lines-clipping.ts`), which
- *     is the implementation the worker uses as its fallback.
+ *   - `clipSegmentToSlice` wraps the TS-reference clipper
+ *     (`wasm/typescript/lines-clipping.ts`), which is the implementation
+ *     the worker uses as its fallback.
  *   - `projectGSplatsViaDispatcher` / `projectLinesViaDispatcher` run the
  *     worker dispatchers in-process against a caller-supplied backend
  *     (TypeScript fallback or compiled WASM), returning the same
@@ -23,12 +23,7 @@
  * @module tests/helpers/projection-adapters
  */
 
-import {
-  clip_segment_single,
-  lerp as lerpRef,
-  lerp_vec3 as lerpVec3Ref,
-  distance_3d as distance3DRef,
-} from '../../wasm/typescript/lines-clipping';
+import { clip_segment_single } from '../../wasm/typescript/lines-clipping';
 import { isExtendToAll } from '../../workers/data-worker/projection/hidden-dims';
 import { projectGSplatsTo3D } from '../../workers/data-worker/projection/gsplats';
 import { projectLinesTo3D } from '../../workers/data-worker/projection/lines';
@@ -77,19 +72,6 @@ export function clipSegmentToSlice(
   while (d1.length < 3) d1.push(0);
   while (d2.length < 3) d2.push(0);
   return { p1: d1, p2: d2, t1, t2, visible: true };
-}
-
-/** Scalar lerp (re-export of the TS-reference primitive). */
-export const lerp = lerpRef;
-
-/** 3-vector lerp returning a plain `number[]` (legacy shape). */
-export function lerpVec3(a: number[], b: number[], t: number): number[] {
-  return Array.from(lerpVec3Ref(Float32Array.from(a), Float32Array.from(b), t));
-}
-
-/** 3D Euclidean distance over plain arrays (legacy shape). */
-export function distance3D(a: number[], b: number[]): number {
-  return distance3DRef(Float32Array.from(a), Float32Array.from(b));
 }
 
 // ---------------------------------------------------------------------------

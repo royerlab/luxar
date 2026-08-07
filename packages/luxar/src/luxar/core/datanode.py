@@ -1,7 +1,7 @@
 """DataNode abstract base class for data-bearing nodes.
 
 This module defines the abstract base class for all nodes that contain
-visualization data (Points, Lines, GSplats).
+visualization data (Points, Lines, GSplats, Mesh).
 """
 
 from __future__ import annotations

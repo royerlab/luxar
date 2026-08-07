@@ -23,13 +23,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  darkTheme,
-  lightTheme,
-  frostedGlassTheme,
-  liquidGlassTheme,
-  type Theme,
-} from '../../../themes';
+import { darkTheme } from '../../../themes/themes/dark.theme';
+import { lightTheme } from '../../../themes/themes/light.theme';
+import { frostedGlassTheme } from '../../../themes/themes/frosted-glass.theme';
+import { liquidGlassTheme } from '../../../themes/themes/liquid-glass.theme';
+import type { Theme } from '../../../themes/types';
 
 const ALL_THEMES: Array<{ name: string; theme: Theme; expectedId: string }> = [
   { name: 'dark', theme: darkTheme, expectedId: 'dark' },

@@ -47,7 +47,7 @@ Simple type aliases for improved readability.
 - **Scene**: `NodePath`, `NodeAttributes`, `SceneHierarchy`, `GroupAttrs`
 - **Dimensions**: `DimensionRange`, `DimensionIndex`, `DimensionIndices`, `CategoryList`
 - **Colors**: `ColorValue`, `ColorRGB`, `ColorRGBA`
-- **Metadata**: `PointsMetadata`, `LinesMetadata`, `GSplatsMetadata`, `SceneMetadata`
+- **Metadata**: `PointsMetadata`, `LinesMetadata`, `GSplatsMetadata`, `MeshMetadata`, `SceneMetadata`
 - **Validation**: `ValidationResult`
 
 **Purpose**: Simplify complex type annotations
@@ -57,7 +57,7 @@ Enumeration types and configuration classes.
 
 **Key Enums:**
 - `BlendingMode`: Rendering blend modes (normal, additive, max, opaque, luminous, volumetric)
-- `NodeType`: Scene graph node types (scene, group, points, lines, gsplats)
+- `NodeType`: Scene graph node types (scene, group, points, lines, gsplats, mesh)
 - `PhysicalUnit`: Supported physical units (nm, um, mm, etc.)
 
 **Key Classes:**
@@ -77,7 +77,6 @@ Constant values used throughout Luxar.
 - **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`
 - **Categorical**: `MIN_CATEGORIES`, `MAX_CATEGORY_LABEL_LENGTH`, `CATEGORICAL_STEP`
 - **Node Types**: `NODE_TYPE_SCENE`, `NODE_TYPE_POINTS`, `NODE_TYPE_LINES`, `NODE_TYPE_GSPLATS`
-- **Validation**: Error message templates
 
 **Purpose**: Centralize magic numbers and limits
 

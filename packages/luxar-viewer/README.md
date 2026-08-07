@@ -51,6 +51,19 @@ await app.init({
 app.dispose(); // removes all listeners, GPU resources, UI
 ```
 
+### Utility classes
+
+The `styles.css` bundle also ships a Tailwind-like set of atomic utility
+classes for embedders to reuse — flexbox, justify/gap, padding/margin,
+text color/size/weight/align, surface, border, radius, shadow, backdrop
+blur, transition, display, position, overflow, cursor, opacity, and
+z-index groups. Every selector is namespaced under `.luxar-` (so it never
+collides with host-page styles) and resolves to the viewer's `--luxar-*`
+theme custom properties, so utilities pick up the active theme with no
+hardcoded colors or spacing. See
+[`src/styles/base/README.md`](src/styles/base/README.md) for the full
+group table.
+
 ### `LuxarAppOptions`
 
 | Option             | Type                  | Default         | Notes                                                                                                                                                                                                        |
@@ -413,7 +426,8 @@ pnpm test:with-fixtures  # Generate test fixtures, then run tests
 # Prerequisite: examples + fixtures must exist. Run once locally:
 #   make run-examples
 #   pnpm test:generate-fixtures
-# Or use `make test-e2e` from the repo root which orchestrates this.
+# `make test-e2e` does NOT run those for you — it only installs
+# node_modules; the pre-flight aborts the run if the fixtures are absent.
 # E2E is currently disabled in GitHub CI (browser/GPU reliability);
 # `pnpm test:e2e:smoke` is the subset the workflow re-enable would
 # run (also useful locally for quick verification).
@@ -432,7 +446,6 @@ pnpm bench:wasm      # Run WASM vs TypeScript benchmarks
 # Fixtures & Media
 pnpm test:generate-fixtures  # Generate test fixtures from Python
 pnpm readme-images   # Generate README screenshot images
-pnpm readme-videos   # Generate README video recordings
 
 # AI Debugging
 pnpm agent:debug     # Run Playwright agent driver (headless)

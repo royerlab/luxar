@@ -38,6 +38,7 @@ import sys
 import numpy as np
 from arbol import Arbol, aprint, asection
 
+from luxar.gsplats.demos._demo_common import ellipse_polygon_from_L
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
@@ -60,23 +61,6 @@ Arbol.max_depth = 4
 # =============================================================================
 # Helpers
 # =============================================================================
-
-
-def ellipse_polygon_from_L(
-    mu_yx: np.ndarray, L: np.ndarray, t: float = 2.0, n_pts: int = 64
-) -> np.ndarray:
-    """Build a 2D oriented ellipse polygon from center and Cholesky factor.
-
-    Returns (n_pts, 2) array of (y, x) polygon points at the t-sigma contour.
-    """
-    Sigma = L @ L.T
-    evals, evecs = np.linalg.eigh(Sigma)
-    evals = np.clip(evals, 1e-12, None)
-    radii = t * np.sqrt(evals)
-    theta = np.linspace(0, 2 * np.pi, n_pts, endpoint=False)
-    circle = np.stack([np.cos(theta), np.sin(theta)], axis=0)
-    pts = (evecs @ (radii[:, None] * circle)).T + mu_yx[None, :]
-    return pts.astype(np.float32)
 
 
 def count_out_of_bounds(result: GSplatData, shape, truncate: float = 3.0):

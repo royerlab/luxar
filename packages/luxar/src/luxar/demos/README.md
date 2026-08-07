@@ -6,7 +6,7 @@ This folder contains self-contained demo scripts that showcase Luxar's capabilit
 
 These demos are:
 - **Didactic**: Easy to understand and learn from
-- **Self-contained**: All generation code in one file
+- **Self-contained**: The code that makes the demo distinctive lives in one file
 - **Complete**: Generate → Serve → View → Cleanup workflow
 - **Copy-pasteable**: Can be used as templates for your own visualizations
 
@@ -41,6 +41,14 @@ luxar demo deps --only scipy       # report one import module
 luxar demo deps --only scipy --install  # install only scipy's constrained spec
 ```
 
+Eleven gsplat demos also accept `--show-roundtrip`, which renders the fitted
+splats back and shows original / reconstruction / absolute-difference panels
+with PSNR and MSE (needs `matplotlib`). The five whose figure is one row per
+channel through a 3-D volume share the implementation in
+`_roundtrip_common.py`; the other six keep their own — laid out over 2-D
+images, over sampled timepoints, or with demo-specific titles for a
+single-channel volume.
+
 ## Optional dependencies
 
 The core install deliberately excludes the heavyweight packages some demos need
@@ -69,9 +77,16 @@ Two rules govern the gate, both learned from real bugs:
 
 `tests/test_demos_dependencies.py` enforces both: every spec must accept exactly
 the versions its `pyproject.toml` pin accepts, every module passed to
-`require_module` must exist in the table, and no demo source — runtime message or
-docstring alike — may spell out `pip install <pkg>` for a package the table
-bounds without carrying that bound.
+`require_module` must exist in the table, and no scanned source — runtime message
+or docstring alike — may spell out `pip install <pkg>` for a package the table
+bounds without carrying that bound. Those guards — and the substitutive-LOD one
+in `tests/test_substitutive_lod_gated.py` — read the set defined by
+`tests/_scanned_modules.py`: every `*.py` directly under `demos/` **except**
+`__init__.py` and `_dependencies.py`. It is a denylist, not a `demo_*.py` glob or
+a `_*_common.py` pattern, so a gate that moves out of a demo into a shared helper
+cannot escape the guards — and any new module dropped in here is covered without
+an edit there. The flip side: a scratch `.py` file left in `demos/` is scanned
+too, so keep throwaway scripts out of this directory.
 
 Installing everything:
 
@@ -950,7 +965,7 @@ from arbol import aprint, asection
 from luxar import LuxarZarrCompiler, Dimension, Dimensions
 
 def generate_my_data(output_path: Path, **params) -> None:
-    """Generate the dataset - ALL CODE IN THIS FUNCTION.
+    """Generate the dataset - THE INTERESTING CODE IS IN THIS FUNCTION.
 
     Args:
         output_path: Where to write zarr
@@ -958,7 +973,8 @@ def generate_my_data(output_path: Path, **params) -> None:
     """
     with asection("Generating Data"):
         # 1. Generate positions, colors, radii, etc.
-        # ALL generation logic here - no external functions!
+        # The generation logic that makes this demo what it is goes here;
+        # for plumbing, reach for the shared helpers in §6.
         positions = ...
         colors = ...
 
@@ -989,14 +1005,24 @@ if __name__ == "__main__":
 ## Key Principles
 
 ### 1. Self-Contained
-**All generation code must be in the demo file itself.**
+**The code that makes the demo what it is must be in the demo file itself.**
+
+Whatever a reader opens the file to learn — the maths, the pipeline, the thing
+being demonstrated — stays in the file. Plumbing does not: use the shared
+helpers in §6 (downloading, caching, argv parsing, HSV→RGB, viewer launching,
+optional-dependency gating, precomputed-data loading) rather than hand-rolling
+them, and share heavier scaffolding through a `_*_common.py` module as the
+interop demos do with `_interop_common.py`.
 
 ✅ **GOOD**:
 ```python
+from luxar.demos import hsv_to_rgb  # shared plumbing — fine
+
 def generate_my_data(output_path):
-    # Generate positions here
+    # The interesting part is right here
     x = np.linspace(0, 10, 1000)
     positions = ...
+    colors = hsv_to_rgb(positions[:, 0] / positions[:, 0].max())
     # Write to zarr here
     with LuxarZarrCompiler(output_path) as compiler:
         ...
@@ -1005,9 +1031,9 @@ def generate_my_data(output_path):
 ❌ **BAD**:
 ```python
 def generate_my_data(output_path):
-    # Calls external function - not self-contained!
+    # The demo's whole point now lives somewhere else
     from my_utils import create_positions
-    positions = create_positions()  # ← External dependency!
+    positions = create_positions()  # ← nothing left to read here
 ```
 
 ### 2. Use Temporary Directory
@@ -1082,6 +1108,7 @@ from luxar.demos import (
     require_module,      # gate an OPTIONAL dependency at its point of use (see #7)
     parse_demo_flags,    # --recompute / --no-serve / --serve-only
     parse_int_arg,       # --points=N / --sample N integer flags
+    parse_path_arg,      # --cache-dir PATH / --data=PATH path flags (expands ~)
     hsv_to_rgb,          # vectorized rainbow / hue-ramp colouring
     detect_device, warn_if_no_cuda_gpu,          # GPU/MPS/CPU
     load_precomputed_gsplats, load_precomputed_bundle,  # LFS-shipped gsplat data

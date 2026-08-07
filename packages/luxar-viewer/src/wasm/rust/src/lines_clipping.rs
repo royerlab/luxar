@@ -23,6 +23,72 @@ use crate::common::{validate_ndim, MAX_SUPPORTED_DIMS, SEGMENT_PARALLEL_EPSILON}
 /// Alias for readability within this module
 const MAX_DIMS: usize = MAX_SUPPORTED_DIMS;
 
+/// Shared per-segment nD slab clip. Returns (visible, t1, t2). On any
+/// invisibility case (non-finite coord, same-side rejection, or t1>=t2) it
+/// returns (false, t1, t2) with whatever t-params had accumulated; callers
+/// decide how to report an invisible segment.
+#[inline]
+fn clip_segment_core(
+    p1: &[f32],
+    p2: &[f32],
+    slice_position: &[f32],
+    tolerance: &[f32],
+    is_display_dim: &[bool; MAX_DIMS],
+    ndim: usize,
+) -> (bool, f32, f32) {
+    let mut t1: f32 = 0.0;
+    let mut t2: f32 = 1.0;
+    for dim in 0..ndim {
+        if is_display_dim[dim] {
+            continue;
+        }
+        let tol = tolerance[dim];
+        let slice_center = slice_position[dim];
+        let slice_min = slice_center - tol;
+        let slice_max = slice_center + tol;
+        let v1 = p1[dim];
+        let v2 = p2[dim];
+        // #806: a non-finite (NaN or ±Inf) coordinate on a slicing (non-displayed)
+        // dimension cannot be localized against the slice, so the segment is
+        // treated as invisible. Enforced identically in the TypeScript backend
+        // (`lines-clipping.ts`) so the two backends stay in parity — f32::max/min
+        // ignore a NaN operand and would otherwise leave the t-params finite,
+        // rendering a segment the TS path drops.
+        if !v1.is_finite() || !v2.is_finite() {
+            return (false, t1, t2);
+        }
+        let p1_in = v1 >= slice_min && v1 <= slice_max;
+        let p2_in = v2 >= slice_min && v2 <= slice_max;
+        if p1_in && p2_in {
+            continue;
+        }
+        if !p1_in
+            && !p2_in
+            && ((v1 < slice_min && v2 < slice_min) || (v1 > slice_max && v2 > slice_max))
+        {
+            return (false, t1, t2);
+        }
+        let dv = v2 - v1;
+        if dv.abs() < SEGMENT_PARALLEL_EPSILON {
+            continue;
+        }
+        let inv_dv = 1.0 / dv;
+        let t_min = (slice_min - v1) * inv_dv;
+        let t_max = (slice_max - v1) * inv_dv;
+        if dv > 0.0 {
+            t1 = t1.max(t_min);
+            t2 = t2.min(t_max);
+        } else {
+            t1 = t1.max(t_max);
+            t2 = t2.min(t_min);
+        }
+        if t1 >= t2 {
+            return (false, t1, t2);
+        }
+    }
+    (true, t1, t2)
+}
+
 /// Clip a single segment to the nD slice and return interpolation parameters.
 ///
 /// Returns (visible, t1, t2) where:
@@ -42,9 +108,6 @@ pub fn clip_segment_single(
     display_dims: &[u32],
     ndim: usize,
 ) -> Vec<f32> {
-    let mut t1: f32 = 0.0;
-    let mut t2: f32 = 1.0;
-
     validate_ndim(ndim, "clip_segment_single");
 
     // OPTIMIZATION: Use fixed-size array instead of HashSet (zero allocation)
@@ -55,71 +118,13 @@ pub fn clip_segment_single(
         }
     }
 
-    for dim in 0..ndim {
-        if is_display_dim[dim] {
-            continue; // Skip displayed dimensions
-        }
-
-        let tol = tolerance[dim];
-        let slice_center = slice_position[dim];
-        let slice_min = slice_center - tol;
-        let slice_max = slice_center + tol;
-
-        let v1 = p1[dim];
-        let v2 = p2[dim];
-
-        // #806: a non-finite (NaN or ±Inf) coordinate on a slicing (non-displayed)
-        // dimension cannot be localized against the slice, so the segment is
-        // treated as invisible. Enforced here, identically in the TypeScript
-        // backend (`lines-clipping.ts`), so the two backends stay in parity —
-        // f32::max/min ignore a NaN operand and would otherwise leave the
-        // t-params finite, rendering a segment the TS path drops.
-        if !v1.is_finite() || !v2.is_finite() {
-            return vec![0.0, 0.0, 0.0]; // [visible=0, t1, t2]
-        }
-
-        // Classify endpoints relative to slice
-        let p1_in = v1 >= slice_min && v1 <= slice_max;
-        let p2_in = v2 >= slice_min && v2 <= slice_max;
-
-        if p1_in && p2_in {
-            continue; // Both in - no clipping for this dimension
-        }
-
-        if !p1_in && !p2_in {
-            // Both out - check if on same side (Case E: invisible)
-            if (v1 < slice_min && v2 < slice_min) || (v1 > slice_max && v2 > slice_max) {
-                return vec![0.0, 0.0, 0.0]; // [visible=0, t1, t2]
-            }
-            // Opposite sides - will clip both (Case D)
-        }
-
-        // Compute intersection parameters
-        let dv = v2 - v1;
-        if dv.abs() < SEGMENT_PARALLEL_EPSILON {
-            continue; // Parallel to slice
-        }
-
-        // OPTIMIZATION: Avoid two divisions - use reciprocal multiplication
-        let inv_dv = 1.0 / dv;
-        let t_min = (slice_min - v1) * inv_dv;
-        let t_max = (slice_max - v1) * inv_dv;
-
-        // Clip t1 (entry) and t2 (exit)
-        if dv > 0.0 {
-            t1 = t1.max(t_min);
-            t2 = t2.min(t_max);
-        } else {
-            t1 = t1.max(t_max);
-            t2 = t2.min(t_min);
-        }
-
-        if t1 >= t2 {
-            return vec![0.0, 0.0, 0.0]; // No valid range
-        }
+    let (visible, t1, t2) =
+        clip_segment_core(p1, p2, slice_position, tolerance, &is_display_dim, ndim);
+    if visible {
+        vec![1.0, t1, t2] // [visible=1, t1, t2]
+    } else {
+        vec![0.0, 0.0, 0.0] // [visible=0, t1, t2]
     }
-
-    vec![1.0, t1, t2] // [visible=1, t1, t2]
 }
 
 /// Batch clip all segments and output visibility mask and interpolation parameters.
@@ -190,72 +195,14 @@ pub fn clip_segments_batch(
         let p1_offset = v0 * ndim;
         let p2_offset = v1 * ndim;
 
-        let mut t1: f32 = 0.0;
-        let mut t2: f32 = 1.0;
-        let mut visible = true;
-
-        for dim in 0..ndim {
-            if is_display_dim[dim] {
-                continue;
-            }
-
-            let tol = tolerance[dim];
-            let slice_center = slice_position[dim];
-            let slice_min = slice_center - tol;
-            let slice_max = slice_center + tol;
-
-            let v1_val = positions[p1_offset + dim];
-            let v2_val = positions[p2_offset + dim];
-
-            // #806: a non-finite (NaN or ±Inf) coordinate on a slicing
-            // (non-displayed) dimension cannot be localized against the slice,
-            // so the segment is treated as invisible. Enforced here, identically
-            // in the TypeScript backend (`lines-clipping.ts`), so the two
-            // backends stay in parity.
-            if !v1_val.is_finite() || !v2_val.is_finite() {
-                visible = false;
-                break;
-            }
-
-            let p1_in = v1_val >= slice_min && v1_val <= slice_max;
-            let p2_in = v2_val >= slice_min && v2_val <= slice_max;
-
-            if p1_in && p2_in {
-                continue;
-            }
-
-            if !p1_in
-                && !p2_in
-                && ((v1_val < slice_min && v2_val < slice_min)
-                    || (v1_val > slice_max && v2_val > slice_max))
-            {
-                visible = false;
-                break;
-            }
-
-            let dv = v2_val - v1_val;
-            if dv.abs() < SEGMENT_PARALLEL_EPSILON {
-                continue;
-            }
-
-            // OPTIMIZATION: Avoid two divisions - use reciprocal multiplication
-            let inv_dv = 1.0 / dv;
-            let t_min = (slice_min - v1_val) * inv_dv;
-            let t_max = (slice_max - v1_val) * inv_dv;
-
-            if dv > 0.0 {
-                t1 = t1.max(t_min);
-                t2 = t2.min(t_max);
-            } else {
-                t1 = t1.max(t_max);
-                t2 = t2.min(t_min);
-            }
-
-            if t1 >= t2 {
-                visible = false;
-                break;
-            }
-        }
+        let (visible, t1, t2) = clip_segment_core(
+            &positions[p1_offset..],
+            &positions[p2_offset..],
+            slice_position,
+            tolerance,
+            &is_display_dim,
+            ndim,
+        );
 
         output_visibility[seg_idx] = if visible { 1 } else { 0 };
         output_t1[seg_idx] = t1;
@@ -338,35 +285,6 @@ pub fn interpolate_clipped_positions(
     }
 
     out_idx as u32
-}
-
-/// Linear interpolation helper (scalar).
-#[wasm_bindgen]
-pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + t * (b - a)
-}
-
-/// Linear interpolation for 3D vectors.
-///
-/// Returns interpolated vector as [x, y, z].
-#[wasm_bindgen]
-pub fn lerp_vec3(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
-    vec![
-        a[0] + t * (b[0] - a[0]),
-        a[1] + t * (b[1] - a[1]),
-        a[2] + t * (b[2] - a[2]),
-    ]
-}
-
-/// Calculate 3D Euclidean distance.
-#[wasm_bindgen]
-pub fn distance_3d(a: &[f32], b: &[f32]) -> f32 {
-    // Match the TypeScript mirror: widen before subtraction/squaring so
-    // component deltas above sqrt(f32::MAX) stay finite.
-    let dx = b[0] as f64 - a[0] as f64;
-    let dy = b[1] as f64 - a[1] as f64;
-    let dz = b[2] as f64 - a[2] as f64;
-    (dx * dx + dy * dy + dz * dz).sqrt() as f32
 }
 
 /// Batch interpolate scalar attributes for visible segments.
@@ -898,28 +816,6 @@ mod tests {
     }
 
     #[test]
-    fn test_lerp() {
-        assert_eq!(lerp(0.0, 10.0, 0.0), 0.0);
-        assert_eq!(lerp(0.0, 10.0, 1.0), 10.0);
-        assert_eq!(lerp(0.0, 10.0, 0.5), 5.0);
-    }
-
-    #[test]
-    fn test_lerp_vec3() {
-        let a = vec![0.0, 0.0, 0.0];
-        let b = vec![10.0, 20.0, 30.0];
-        let result = lerp_vec3(&a, &b, 0.5);
-        assert_eq!(result, vec![5.0, 10.0, 15.0]);
-    }
-
-    #[test]
-    fn test_distance_3d() {
-        let a = vec![0.0, 0.0, 0.0];
-        let b = vec![3.0, 4.0, 0.0];
-        assert_eq!(distance_3d(&a, &b), 5.0); // 3-4-5 triangle
-    }
-
-    #[test]
     fn test_interpolate_clipped_positions() {
         // 2 segments, 4D positions, display_dims=[0,1,2]
         // Segment 0: visible, t1=0.0, t2=0.5 (half clipped)
@@ -1036,17 +932,6 @@ mod tests {
         assert!((output_end[0] - 0.0).abs() < 1e-6);
         assert!((output_end[1] - 1.0).abs() < 1e-6);
         assert!((output_end[2] - 0.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_distance_3d_huge_coordinates_no_f32_overflow() {
-        let a = [-1e30f32, 0.0, 0.0];
-        let b = [1e30f32, 0.0, 0.0];
-        let distance = distance_3d(&a, &b);
-
-        assert!(distance.is_finite());
-        let expected = (b[0] as f64 - a[0] as f64) as f32;
-        assert_eq!(distance, expected);
     }
 
     #[test]

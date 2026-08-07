@@ -3,11 +3,11 @@
 Partition out from ``test_gsplat_data.py`` to keep that file focused on
 the core data API. This file covers:
 
-- Computed properties: ``TestVolumes``, ``TestMasses``,
+- Computed properties: ``TestVolumes``, ``TestPrincipalRadii``, ``TestMasses``,
   ``TestMarginalSigmas``, ``TestEccentricities``
 - Filtering / slicing: ``TestFilter``, ``TestFilterBy``, ``TestSliceBy``
-- Reshape ops: ``TestConcatenate``, ``TestPartition``,
-  ``TestEmbedDimension``, ``TestCombineAsNewDimension``
+- Reshape ops: ``TestConcatenate``, ``TestEmbedDimension``,
+  ``TestCombineAsNewDimension``
 """
 
 import numpy as np
@@ -786,6 +786,19 @@ class TestCombineAsNewDimension:
         time_col = result.centers[:, 3]
         assert np.allclose(time_col[:2], 10.0)
         assert np.allclose(time_col[2:4], 20.0)
+
+    def test_per_splat_value_arrays(self):
+        """A per-dataset entry may itself be a per-splat coordinate array."""
+        datasets = [_make_3d_gsplat(n=3, seed=i) for i in range(2)]
+        result = GSplatData.combine_as_new_dimension(
+            datasets,
+            values=[
+                np.array([0.0, 0.5, 1.0], dtype=np.float32),
+                np.array([5.0, 5.5, 6.0], dtype=np.float32),
+            ],
+        )
+        assert result.ndim == 4
+        assert np.allclose(result.centers[:, 3], [0.0, 0.5, 1.0, 5.0, 5.5, 6.0])
 
     def test_sigma_zero_discrete(self):
         """sigma=0 gives near-zero variance in the new dimension."""

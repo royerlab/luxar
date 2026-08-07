@@ -12,9 +12,9 @@ The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURen
 
 - **HDR Rendering Pipeline**: 16-bit float (HalfFloat) buffers for true HDR support
 - **Mega-shader post-processing**: One fused fragment pass for bloom mix, detector noise, EOG, tone mapping, vignette, chromatic lens distortion, and sRGB encoding
-- **Custom Shader System**: Optimized shaders for Points, Lines, and GSplats
+- **Custom Shader System**: Optimized shaders for Points, Lines, GSplats, and Mesh
 - **Line Rendering**: Instanced quad geometry for thick lines with seamless joints
-- **Material Management**: Per-node materials with lifecycle tracking for Points, Lines, and GSplats
+- **Material Management**: Per-node materials with lifecycle tracking for Points, Lines, GSplats, and Mesh
 - **World-Space Point Sizing**: Physically accurate scaling
 - **Anti-Aliasing Options**: FXAA, MSAA, and SSAA support
 
@@ -78,7 +78,6 @@ rendering/
 │       └── capture.ts                  # captureHDRPixels / captureHDRAsEXR / renderToImageData
 │
 ├── picking/                            # GPU picking materials + orchestration
-│   ├── index.ts                        # Picking barrel
 │   ├── picking-system.ts               # Orchestrator
 │   ├── PICKING_DESIGN.md               # Backend readback strategy + 1-frame-latency rationale
 │   ├── point/    { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
@@ -100,7 +99,7 @@ rendering/
 │   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
 │
 ├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
-│   └── index.ts                        # Keeps the tsl-shader-parity e2e harness's import path stable
+│   └── index.ts                        # Stable re-export spelling; no importer today (knip-ignored)
 │
 ├── index.ts                            # Public-API barrel
 └── README.md                           # This documentation

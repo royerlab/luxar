@@ -2,12 +2,12 @@
  * Unit tests for MaterialManager.rebuildAfterContextRestore.
  *
  * The rebuild path is tested in isolation: we don't need a real WebGL
- * context. All three material kinds are PER NODE now (the line-material
+ * context. All four material kinds are PER NODE now (the line-material
  * LRU — the last cached kind — died with the lines texture-storage
- * migration), so the cache maps rebuild clears are permanently empty;
- * what the rebuild MUST NOT do is disturb the camera-update registry or
- * dispose live materials. We create materials through the public API,
- * call the rebuild method, and assert those invariants hold.
+ * migration), so there is nothing left for the rebuild to clear; what it
+ * MUST NOT do is disturb the camera-update registry or dispose live
+ * materials. We create materials through the public API, call the rebuild
+ * method, and assert those invariants hold.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -30,7 +30,7 @@ const POINT_PROPS = {
 } as const;
 
 // Line materials are per node too (each carries its own `uLineTex`),
-// so the line cache — like the point/gsplat caches — stays empty.
+// so — like point and gsplat materials — they are never cached.
 const LINE_PROPS = {
   opacity: 0.7,
   gamma: 1.5,
@@ -44,10 +44,9 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     __resetMaterialManagerForTests();
   });
 
-  it('keeps the caches empty and preserves the camera-update registry', () => {
-    // rebuildAfterContextRestore drops the per-type allocation caches —
-    // permanently empty in the per-node world, so the clear is a no-op —
-    // but PRESERVES registeredMaterials / ownedMaterials so existing
+  it('preserves the camera-update registry', () => {
+    // rebuildAfterContextRestore has nothing to drop in the per-node world,
+    // and it PRESERVES registeredMaterials / ownedMaterials so existing
     // visible scene materials keep receiving updateCameraParams()
     // across the restore.
     const mm = new MaterialManager();

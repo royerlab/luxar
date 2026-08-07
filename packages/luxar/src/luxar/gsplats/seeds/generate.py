@@ -13,6 +13,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.seeds.edges import seed_from_edges
 from luxar.gsplats.seeds.grid import seed_from_grid
 from luxar.gsplats.seeds.multiscale_decomposition import seed_from_decomposition
 from luxar.gsplats.seeds.peaks import seed_from_peaks
@@ -292,19 +293,8 @@ def generate_seeds(
             result = seed_from_grid(V, **grid_kwargs)
             results.append(result)
         elif m == "edges":
-            # Lazy import since edges.py may not exist yet
-            try:
-                from luxar.gsplats.seeds.edges import seed_from_edges
-
-                result = seed_from_edges(V, **edges_kwargs)
-                results.append(result)
-            except ImportError:
-                import warnings
-
-                warnings.warn(
-                    "Edge seeding not available yet (edges.py not implemented)",
-                    UserWarning,
-                )
+            result = seed_from_edges(V, **edges_kwargs)
+            results.append(result)
         elif m == "peaks":
             # Pass target_seeds as n_seeds if not already set
             if "n_seeds" not in peaks_kwargs and target_seeds is not None:
@@ -375,8 +365,6 @@ def _auto_combine(
 
     # Edge seeds first (highest priority - captures structure)
     try:
-        from luxar.gsplats.seeds.edges import seed_from_edges
-
         with asection(f"Edge detection ({budget_edges} seeds)"):
             edge_kwargs = {**edges_kwargs, "n_seeds": budget_edges}
             seeds_edges = seed_from_edges(V, **edge_kwargs)
@@ -384,8 +372,6 @@ def _auto_combine(
                 results.append(seeds_edges)
                 if verbose:
                     aprint(f"✓ Generated {len(seeds_edges.centers)} edge seeds")
-    except ImportError:
-        pass  # Edges not available yet
     except (ValueError, RuntimeError) as e:
         import warnings
 

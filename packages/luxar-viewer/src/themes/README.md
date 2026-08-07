@@ -26,7 +26,7 @@ ThemeManager (singleton)
 ## Usage
 
 ```typescript
-import { ThemeManager } from './themes';
+import { ThemeManager } from './theme-manager';
 
 const tm = ThemeManager.getInstance();
 
@@ -139,7 +139,6 @@ in private/incognito mode (logs a warning, continues without persistence).
 
 ```
 themes/
-├── index.ts              — Public exports (types, ThemeManager, four built-in themes)
 ├── types.ts              — Theme, ThemeColors, ThemeTypography, ThemeEffects, etc.
 ├── theme-manager.ts      — ThemeManager singleton
 ├── glass-filters.ts      — SVG filter pipeline + refraction-layer injector for liquid-glass
@@ -153,19 +152,19 @@ themes/
 ## Subpackages
 
 - [`themes/`](./themes/README.md) — The four built-in `Theme` objects
-  (`darkTheme`, `lightTheme`, `frostedGlassTheme`, `liquidGlassTheme`)
-  re-exported by `index.ts` and registered by `ThemeManager`'s
-  constructor.
+  (`darkTheme`, `lightTheme`, `frostedGlassTheme`, `liquidGlassTheme`),
+  registered by `ThemeManager`'s constructor.
 
 ## Public API
 
-Re-exported by `./index.ts`:
+There is no barrel; import each symbol directly from its module:
 
-- `class ThemeManager` — singleton; see Usage above
-- `type Theme`, `type ThemeChangeHandler`
-- `darkTheme`, `lightTheme`, `frostedGlassTheme`, `liquidGlassTheme`
+- `class ThemeManager` from `./theme-manager` — singleton; see Usage above
+- `type Theme`, `type ThemeChangeHandler` from `./types`
+- `darkTheme`, `lightTheme`, `frostedGlassTheme`, `liquidGlassTheme` from
+  `./themes/{dark,light,frosted-glass,liquid-glass}.theme`
 
-Internal (not re-exported from `index.ts`, imported directly by
-`theme-manager.ts`): `injectGlassFilters`, `removeGlassFilters`,
+Internal, imported directly by `theme-manager.ts`:
+`injectGlassFilters`, `removeGlassFilters`,
 `injectGlassRefractionLayers`, `removeGlassRefractionLayers`,
 `setupGlassRefractionObserver` from `./glass-filters`.

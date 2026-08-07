@@ -115,7 +115,8 @@ A triangle renders **iff all three of its vertices pass the nD slab test**. No
 clipping, no re-triangulation, no attribute interpolation — and no vertex
 compaction either: only the _index_ buffer is rebuilt on a slice change, so
 culled vertices cost nothing to draw and the loader gets to keep native-dtype
-colours (the alternative, `compact_by_mask`, is `&[f32]`-only).
+colours (a generic `&[f32]`-only mask compaction, as the former `compact_by_mask`
+was, could not).
 
 The price is a **ragged, triangle-quantized cut boundary** rather than a clean
 planar section. On a well-tessellated mesh with a tolerance comparable to the edge
@@ -175,14 +176,17 @@ no subset to fetch; it returns the same cached `LoadedMeshData` object, and what
 varies with the view is handled downstream by `projectMeshTo3D`. This is the one place
 a reader might expect a re-fetch and find none.
 
-## Not here yet
+## What this loader deliberately does not fetch
 
-Label / image-label CSR arrays are **budgeted and pair-checked** by Stage 1 but not
-fetched — picking arrives in a later phase. Counting them from the start means the
-ceiling does not silently loosen when the label loader lands, and the pair check
-means a `has_labels` with one array missing fails now, while the error can still
-name the real problem. Stage 2's CSR offset-monotonicity check arrives with the
-fetch.
+Label / image-label CSR arrays are **budgeted and pair-checked** by Stage 1 but never
+fetched here — the finished state, not a gap. Picking resolves a vertex ordinal that
+indexes the CSR directly, and the shared `data/loaders/picking/label-loader.ts` reads
+the two arrays lazily on first hover, exactly as it does for points, lines and
+gsplats. Budgeting them anyway keeps the ceiling honest about the node's declared
+footprint, and the pair check means a `has_labels` with one array missing fails at
+load — where the error can still name the real problem — instead of at the first
+hover. What is genuinely absent is Stage 2's CSR offset-monotonicity check: it needs
+the materialized arrays this loader never materializes.
 
 Note what the presence-flag check does _not_ cover: the converse direction, an
 array the flags disown, is unreachable through the loader (it opens an optional

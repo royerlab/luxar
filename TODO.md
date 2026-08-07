@@ -373,7 +373,7 @@ to ship after). Sequencing is at the bottom.
   signature (→ `--recipe {…}`), and the redundant two-terminal "View it"
   block (→ single `luxar serve … --viewer --open`). **Remaining:** verify a
   truly-fresh-machine `make setup-dev`, and optionally regenerate the gallery
-  media (`make generate-readme-images/videos`).
+  media (`make generate-gallery`).
 - **R18 [LAUNCH] — Documentation: content pass + confirm it's publicly
   viewable.** The **hosting is already wired**: `.github/workflows/docs.yml`
   builds Sphinx (Python API) + typedoc (viewer) and deploys to **GitHub Pages**
@@ -392,15 +392,17 @@ to ship after). Sequencing is at the bottom.
 - **R19 [LAUNCH] — README refresh + showcase the newer/better demos (images +
   video).** Extends R11 (whose one open remainder was "regenerate the gallery
   media"). The pipeline exists: `make generate-readme-demos →
-  generate-readme-images / generate-readme-videos` (Playwright captures of the
-  live viewer → `docs/images/readme/*.{png,gif,webp}`).
+  generate-readme-images` for the stills (Playwright captures of the live
+  viewer → `docs/images/readme/*.png`) and `make generate-gallery` for the
+  orbit videos (→ `docs/images/gallery/*.{webm,webp}`, gitignored staging;
+  curated picks get copied into `docs/images/readme/gallery/`).
   - **Curate a stronger gallery** from the newer/better datasets (H&E pathology
     gsplats, 4D *C. elegans* tracking, organoid multichannel, Gaia) — decide
     which few best convey the range (volumetric splats, nD navigation, scale).
   - **Regenerate** stills + short loops via the Playwright pipeline; refresh the
     README gallery section + captions; ensure everything renders on GitHub.
   - ✅ **Gallery harness built** (2026-07-13): a manifest-driven capture tool that
-    produces a still PNG **and** a 30 s 360° orbit video (WebP+GIF) for every
+    produces a still PNG **and** a seamlessly-looping orbit video (WebP+WebM) for every
     demo in one pass — auto-center + fill-to-frame, chrome hidden, robust
     screenshot-based auto-exposure (percentile target; per-demo override). SSOT
     is `scripts/gallery/manifest.json` (~20 curated demos spanning
@@ -697,6 +699,11 @@ to ship after). Sequencing is at the bottom.
     - **Post-projection cache for gsplats/lines (fold `uTruncate` into the S-cache key) — DROPPED at current scales.** Warm step ≈ 23 ms, mostly re-projection (10–19 ms; gsplat S-cache is pre-projection); saving ~15 ms/step is imperceptible. **Trigger: timepoints ≥ ~2 M splats** (cost is linear in N/tp — h2afva-class ~2.5 M/tp ⇒ ~50–60 ms/step, then this is a small, mechanical win).
     - **Manual-scrub prefetch (t±1 during keyboard/slider nav) — CONDITIONAL, remote-only.** Local ceiling 21 ms/step (imperceptible). At `luxar serve --profile 4g`: 208 → 105 ms/step (~50%) IF dwell allows the prefetch and it wins the throttled link from background ladder deepening (shared bandwidth — a reallocation policy, not a free win). **Trigger: remote-dataset scrub UX becomes a goal** (hosted demos / shared exports over real networks).
     - Instrument notes for whoever re-probes: the timelapse bench's perTp includes a 250–350 ms settle floor (not step latency); CDP `emulateNetworkConditions` does NOT throttle data-worker fetches — use `luxar serve --profile`; under throttle measure time-to-FIRST-commit (background deepening pollutes quiet-based metrics).
+
+29 - **Exact nD triangle clipping for mesh** — DEFERRED BY DECISION, with a measurement now installed. `docs/specs/MESH_NODE_SPEC.md` §5 culls whole triangles by per-vertex slab membership. That is a *true cut* when the hidden dims are discrete (time, channel — the case mesh was scoped for) and only a **thick slab** when a hidden dim is continuous and spatial (§5.2.1). Exact clipping would remove the approximation at roughly **1500 LOC across two backends** (Rust + the TS reference, which must stay in 1:1 parity and is also the production >16D path).
+    - **Why deferred, explicitly:** not for lack of time — the cost/benefit is bad *today*. It is dual-backend code with parity tests, permanently maintained, for a configuration with no known users. The §5 kernel was chosen precisely because it covers the dominant real case for ~10% of the cost.
+    - **The promotion trigger, now falsifiable.** The spec's condition was "if continuous hidden spatial dims turn out to be a real use case", which nothing measured. `processMeshData` now emits a `log.info` when a mesh's hidden dims include a continuous one, naming each such dimension and its unit (`data/scene-loader/process/data-processor-mesh.ts::noticeContinuousHiddenDim`), deduplicated per node and dimension (an `extend_to_all` dim is skipped — its slab is infinite, so the approximation cannot bite there). Hidden-and-continuous tracks the spec's "continuous hidden **spatial**" condition closely rather than being a loose superset: `core/dimensions.py` forces a dimension *authored* non-displayed and non-spatial to be discrete, so an axis authored hidden can only reach the line with `spatial=true`. The one gap is runtime rather than authoring — a dimension authored `display=true, spatial=false` keeps the flag false and becomes hidden the moment the display axes are swapped — which argues for reporting it, not filtering it out: testing the flag would narrow nothing on the authored case while dropping evidence there and from any scene whose metadata omits it. The name and unit are printed for the one judgement no flag can make: a dimension may be *declared* spatial and still be a time axis, where a slab is a reasonable thing to want.
+    - **Promote when** that line starts appearing against real datasets with a spatial axis. Until then the deferral stands on evidence rather than on assertion.
 
 ---
 

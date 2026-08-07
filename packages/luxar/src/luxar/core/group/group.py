@@ -15,7 +15,6 @@ from typing import (
     List,
     Optional,
     Sequence,
-    Tuple,
     Union,
 )
 
@@ -35,10 +34,10 @@ if TYPE_CHECKING:
 
 
 class Group(Node):
-    """A group node that can contain data children (Points, Lines, GSplats).
+    """A group node that can contain data children (Points, Lines, GSplats, Mesh).
 
-    Groups provide add_points(), add_lines(), and add_gsplats() methods for
-    adding data nodes. They access the root Scene for dimension validation
+    Groups provide add_points(), add_lines(), add_gsplats(), and add_mesh()
+    methods for adding data nodes. They access the root Scene for dimension validation
     and the writer interface.
 
     Groups are created via add_group() on any Node, Scene, or Group::
@@ -124,7 +123,6 @@ class Group(Node):
         image_labels: Optional[Any] = None,
         parent: Optional[Node] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
-        grid_shape: Optional[Tuple[int, ...]] = None,
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         partition: Any = None,
@@ -152,7 +150,6 @@ class Group(Node):
                 JPEG/WebP blobs for best compression.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
-            grid_shape: Optional grid shape for structured data
             dim_order: Map data columns to scene dimensions by name.
                 E.g., ``["Y", "X"]`` for 2D data in a 3D scene.
                 Unmapped dims are filled with ``fill`` values and auto-extended.
@@ -223,7 +220,6 @@ class Group(Node):
             image_labels=image_labels,
             parent=parent,
             extend_to_all=extend_to_all,
-            grid_shape=grid_shape,
             dim_order=dim_order,
             fill=fill,
             partition=partition,
@@ -401,9 +397,10 @@ class Group(Node):
                 data addressing vertex rows and is never reordered.
             fill: Fill values for scene dimensions absent from ``dim_order``.
             **attrs: Additional attributes — ``opacity``, ``intensity``,
-                ``gamma``, ``colormap``, ``layer``, ``visible``, ``transform``,
-                ``nd_transform``, ``blending_mode``. Note ``volumetric`` blending
-                is rejected — it has no meaning for an opaque surface.
+                ``offset``, ``gamma``, ``colormap``, ``layer``, ``visible``,
+                ``transform``, ``nd_transform``, ``blending_mode``. Note
+                ``volumetric`` blending is rejected — it has no meaning for an
+                opaque surface.
 
         Returns:
             The created Mesh node.

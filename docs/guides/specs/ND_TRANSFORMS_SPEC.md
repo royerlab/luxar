@@ -376,7 +376,7 @@ The no-preimage rule (§9.2.1) exempts extended dimensions from the node's `exte
 
 **TypeScript viewer side**: Parent nd_transforms ARE automatically composed via `computeWorldNdTransform()` in `scene-loader.ts`. This function traverses the scene graph and composes nd_transforms from parent to child. This means:
 - `nd_transform` on a group propagates correctly to all child data nodes in the viewer
-- `nd_transform` on a points/lines/gsplats node applies correctly in the viewer
+- `nd_transform` on a points/lines/gsplats/mesh node applies correctly in the viewer
 - Composition follows the same rules as the Python side (affine composition for continuous/discrete, permutation composition for categorical)
 
 ## 10. Performance Analysis

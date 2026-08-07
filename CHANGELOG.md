@@ -6,6 +6,69 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Four geometry types, said consistently
+
+`grep -ci mesh README.md` returned 0. The lead paragraph, the capabilities table
+and the architecture diagram all still described a three-geometry system, and
+`docs/concepts/architecture.rst` went further, listing "Triangle meshes" under
+*consider alternatives — use three.js*. All now name mesh; the alternatives entry
+is rewritten as the caveat that is actually true (Luxar renders surfaces but does
+not author them, and a mesh gets no LOD or spatial partitioning, so one very
+large surface loads whole). `README.md` gains a Mesh section under Geometry
+Types covering `add_mesh`, the no-per-element-size and `opaque`-by-default
+differences, optional normals, and the §9 exclusions; `docs/api/core.rst` gains
+the missing `luxar.core.Mesh` autoclass entry; `CITATION.cff`'s abstract names
+four types.
+
+`MESH_NODE_SPEC.md`'s §8 integration checklist still showed most of the
+TypeScript / Rust / test half unchecked, long after those phases shipped — every
+box verified against the tree and ticked, with the header saying plainly that §11
+is the delivery record and that the paths are historical. Its shader-variant
+inventory was also two counts stale.
+
+The rest is the same drift a layer down: three demo docstrings saying "two of
+Luxar's three geometry types", the Python subpackage READMEs and module
+docstrings, the viewer package READMEs, shared-helper and source comments
+(picking system, data-loading monitor, layers material), the architecture
+diagrams, the gsplats format spec, the nD-transform and intensity/gamma developer
+specs, and the visualization skill. `INTENSITY_GAMMA_DESIGN.md` needed more than
+a count: mesh does carry the GOG chain, but it deliberately omits the
+zero-contribution early discard, because an opaque surface still has to write
+depth for a fragment that ends up black.
+
+Claims that count the *instanced-quad, depth-sorted, volumetric* families rather
+than the type vocabulary were checked and deliberately left at three — mesh takes
+part in none of those, and the `?debug` synthetic-scene bench injector genuinely
+still builds only points, lines and gsplats.
+
+#### Removed — unreachable accelerated gsplat code paths
+
+Three optimized paths existed and were maintained but could not be selected by
+any production call, so they read as capabilities the project did not actually
+have. All three are removed:
+
+- The Metal **raw splat-centric** kernel path (`MetalRawSplatFunction`, the
+  `_uses_raw_custom_metal` gate, the `forward_raw_splat_3d` / `backward_raw_splat_3d`
+  bindings and their `rasterize_*_raw_splat_centric_3d` kernels). It was gated on
+  `amp_max is None`, but the production fit pipeline always sets `amp_max` (auto
+  default `1.0`), and the raw kernel applies softplus to `raw_a` in-shader with no
+  amplitude clamp, so it could never honour the bound. The non-raw splat-centric
+  path still serves production and shares the same threadgroup-reduction backward
+  (the raw-parameter reparameterization VJP is handled by PyTorch autograd); the
+  earlier fwd+bwd micro-optimization measured on the raw variant is the only thing
+  lost. The already-dead `validate_splat_L_tensors_3d` validator in the same
+  bindings file went with it.
+- The GPU seeding helpers `local_maxima_gpu` / `soft_blur_nd_gpu` in
+  `gsplats/seeds/gpu_ops.py`, which had only test callers — the CPU siblings have
+  no `device=` dispatch and `seed_from_peaks` does its own GPU intensity sampling
+  rather than a maxima filter.
+- The stale `gsplats/models/gsplats/cuda/setup.py` (and its `LUXAR_CUDA_ALL_ARCHS`
+  env var), a twin of the real `cuda/build.py` build entry point that nothing
+  referenced.
+
+The Metal README performance table, the seeds GPU-operations docs, and the
+`CLAUDE.md` GPU-support notes are updated to describe only the reachable paths.
+
 #### Mesh renders shaded — the fourth geometry type gets its material pair
 
 Until now a mesh loaded and drew with flat per-vertex colour, which for a surface
@@ -35,9 +98,10 @@ one backend only:
 
 - **The derivative normal is forced viewer-facing.** `cross(dFdx(P), dFdy(P))`
   carries the sign of the fragment-space y axis, and GLSL's `dFdy` is bottom-up
-  where WGSL's `dpdy` is top-down. Unforced, the flat variant shades correctly on
-  WebGL and collapses to `uAmbient` everywhere on WebGPU — and the parity harness
-  compiles TSL *to GLSL*, so it could never see it.
+  where WGSL's `dpdy` is top-down. Unforced, the flat variant could collapse to
+  `uAmbient` on WebGPU while shading correctly on WebGL — and the parity harness
+  compiles TSL *to GLSL*, so it could never see it. (Later measured inert on
+  Chrome — see the WebGPU A/B entry below; the flip is kept as insurance.)
 - **The stored normal is transformed without three's `transformNormalToView`**,
   whose `transformDirection` normalizes. The writer accepts zero-length normals
   with a warning (degenerate triangles legitimately produce them), and
@@ -326,8 +390,9 @@ The mesh vertical shipped with a stated gap — the GLSL↔TSL parity harness dr
 is now: an A/B against native WebGPU (system Chrome channel, `?renderer=webgpu`,
 screenshot-then-decode with the WebGL arm as a control) shows `apiSurface: 'webgpu'`,
 all three fixture nodes committing with identical triangle/vertex counts and identical
-shader variants, and **pixel-identical output** — 105,822 lit pixels on both backends,
-mean lit channel differing by 0.14%.
+shader variants, and **pixel-equivalent output** — 105,822 lit pixels on both backends,
+mean lit channel differing by 0.14% (sub-quantization dithering — equivalent to the eye,
+not byte-identical).
 
 It also **corrected an overstatement of our own**, which is the more useful half. The
 §6.2 notes claimed an unforced derivative normal "would collapse to `uAmbient`
@@ -465,14 +530,16 @@ per-vertex `normals`, `colors`, `scalars`, labels and image labels. `luxar info`
 reports vertex and face counts, `LuxarScene.get_mesh()` / `list_meshes()` read it
 back, and a mesh leaf contributes to scene bounds like any other geometry.
 
-**Writable, not yet renderable.** The viewer cannot draw a mesh yet — its loader,
-material and picking land in a later phase (`docs/specs/MESH_NODE_SPEC.md` §11).
-The format contract now names the two sets separately so neither side has to
-answer the other's question: `geometry_types` is the writable leaf vocabulary
-(which `mesh` joins now) and the new `loader_types` is the viewer-drawable subset
-(which it does not). Adding a type to `loader_types` without its viewer code is
-still a compile error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and
-`computeHiddenDimTolerance`, exactly as before.
+**Writable first, renderable in the phases that followed.** At this point the
+viewer could not draw a mesh — its loader, shaded material and picking landed in
+the later phases described in the entries above (`docs/specs/MESH_NODE_SPEC.md`
+§11 tracks the whole sequence). The format contract names the two sets separately
+so neither side has to answer the other's question: `geometry_types` is the
+writable leaf vocabulary (which `mesh` joined here) and the new `loader_types` is
+the viewer-drawable subset (which it joined with the Phase-3 switch-on). Adding a
+type to `loader_types` without its viewer code is still a compile error at
+`LoaderByKind`, `GEOMETRY_DESCRIPTORS` and `computeHiddenDimTolerance`, exactly as
+before.
 
 Unlike the other three types a mesh has no per-element size — a triangle's extent
 comes from its own vertices — so it adds no extent padding to bounds. `normals`

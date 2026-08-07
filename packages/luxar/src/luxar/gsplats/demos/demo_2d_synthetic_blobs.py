@@ -43,6 +43,7 @@ import numpy as np
 from arbol import aprint
 from skimage import data, filters
 
+from luxar.gsplats.demos._demo_common import ellipse_polygon_from_L
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
@@ -62,30 +63,6 @@ N_FRAMES = 40  # number of compression steps (<= #splats)
 TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
 SPACING = (1.0, 1.0)  # (row, col); not needed for ranking here
 # ==========================
-
-
-# --- Helper: oriented 2D ellipse polygon from covariance ---
-def ellipse_polygon_from_L(
-    mu_yx: np.ndarray, L: np.ndarray, t: float = 2.0, n_pts: int = 64
-) -> np.ndarray:
-    """
-    Build a polygon approximating the 2D ellipse corresponding to the level set
-    (x-μ)^T Σ^{-1} (x-μ) = t^2, where Σ = L L^T (full cov in voxel units).
-
-    Returns (n_pts, 2) array of (y,x) polygon points.
-    """
-    Sigma = L @ L.T  # (2,2)
-    # Eigen-decompose Sigma for principal axes
-    evals, evecs = np.linalg.eigh(Sigma)  # evals >= 0
-    evals = np.clip(evals, 1e-12, None)
-    # Radii along principal axes at level t: r_i = t * sqrt(lambda_i)
-    radii = t * np.sqrt(evals)  # (2,)
-    # Parametric angles
-    theta = np.linspace(0, 2 * np.pi, n_pts, endpoint=False)
-    circle = np.stack([np.cos(theta), np.sin(theta)], axis=0)  # (2, n_pts)
-    # Map unit circle -> ellipse in data coords: μ + R diag(r) circle
-    pts = (evecs @ (radii[:, None] * circle)).T + mu_yx[None, :]
-    return pts.astype(np.float32)
 
 
 # 1) Make a soft 2D “blobs” image

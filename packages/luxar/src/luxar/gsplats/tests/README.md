@@ -8,24 +8,21 @@ The tests are organized following the "in-subpackage" pattern, where each subpac
 
 ```
 gsplats/
-├── tests/                          # Integration tests
+├── tests/                          # Integration/unit tests (~30 test_*.py modules)
 │   ├── __init__.py
-│   ├── test_batch.py               # Batch fitting orchestration
-│   ├── test_cholesky_dim_ops.py    # Cholesky dimension operations
-│   ├── test_culling.py             # Splat culling algorithms
-│   ├── test_fit_gsplats.py         # Full fitting pipeline (requires torch/scipy)
-│   ├── test_gpu_profile.py         # GPU profiling and benchmarks
-│   ├── test_gsplat_data.py         # GSplatData class tests
-│   ├── test_gsplats_integration.py # Integration tests
-│   ├── test_metrics.py             # Quality metrics (PSNR, SSIM, MSE)
-│   ├── test_progressive_fitting.py # Progressive fitting pipeline
-│   ├── test_slurm_gen.py           # Generated Slurm control-flow behavior
-│   ├── test_spatial_volume_filter.py # Spatial volume filtering
-│   ├── test_tiled_fitting.py       # Tiled fitting for large volumes
+│   ├── test_*.py                   # ~30 modules grouped by area: GSplatData I/O &
+│   │                               #   aggregations & LOD, fitting/tiled/progressive
+│   │                               #   fitting, calibration & reporting, culling &
+│   │                               #   filtering, spatial partition/axes, batch/local
+│   │                               #   runner/task pool, Slurm generation, metrics,
+│   │                               #   GPU profile, tree bridge. Run
+│   │                               #   `ls packages/luxar/src/luxar/gsplats/tests/`
+│   │                               #   for the current set.
 │   └── README.md                   # This file
 ├── fitting/
 │   └── tests/                      # Fitting pipeline unit tests
 │       ├── __init__.py
+│       ├── test_downscale.py           # Volume downscaling utilities
 │       ├── test_fitting_config.py      # Configuration validation
 │       ├── test_fitting_preprocessing.py # Data preprocessing
 │       ├── test_fitting_validation.py   # Input validation
@@ -33,6 +30,7 @@ gsplats/
 │       ├── test_losses.py               # Loss functions
 │       ├── test_optimization.py         # Optimization loop
 │       ├── test_results.py              # Result finalization
+│       ├── test_sorting.py             # Z-order (Morton) splat sorting
 │       └── test_visualization.py        # Visualization helpers
 ├── optim/
 │   └── tests/                      # Optimizer tests
@@ -41,7 +39,10 @@ gsplats/
 ├── utils/
 │   └── tests/                      # Utils-specific tests
 │       ├── __init__.py
-│       └── test_trils.py           # Triangular matrix operations
+│       ├── test_alpha.py           # Per-splat opacity (color alpha) conversions
+│       ├── test_device.py          # PyTorch device-selection helpers
+│       ├── test_trils.py           # Triangular matrix operations
+│       └── test_trils_properties.py # Property-based triangular-packing tests
 ├── models/
 │   ├── utils/tests/                # Model utility tests
 │   │   ├── __init__.py
@@ -54,40 +55,60 @@ gsplats/
 └── multiscale/
     └── tests/                      # Multiscale decomposition tests
         ├── __init__.py
+        ├── test_decompose_advanced.py  # Advanced decomposition (loss types, edge cases)
         ├── test_decomposition_basic.py
         └── test_energy_distribution.py
 ```
 
+The tree shows the largest test directories only. The other subpackages that
+carry their own `tests/` directory (`clahe/`, `fitting/dynamic_ops/`,
+`interop/`, `io/`, `lod/`, `planner/`, `preprocessing/`, `seeds/`, and the
+`models/gsplats/{cuda,metal}` backends) follow the same pattern. A few
+subpackages — `batch/`, `calibration/`, `rendering/` — have no `tests/`
+directory of their own and are exercised from the top-level `tests/`.
+
 ## Dependencies and Test Execution
 
-### Core Tests (Always Available)
-These tests only require numpy and can be run in any environment:
+### Required: torch and scipy
+
+Both are hard requirements for the subpackage as a whole, not per-test extras.
+`gsplats/__init__.py` imports `clahe` (which imports `torch` at module level)
+and `lod` (which imports `scipy.sparse`), and every test module here lives
+inside the `luxar.gsplats` package — so collecting *any* of them imports
+`luxar.gsplats` first. Without either dependency the run ends in a collection
+error, including for the pure-numpy modules such as
+`utils/tests/test_trils.py`. Install them via the `gsplats` extra (the `test`
+and `dev` extras pull it in):
 
 ```bash
-# Test triangular matrix utilities
-hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py
+pip install -e ".[gsplats]"
 ```
 
-### Optional Dependency Tests
+The in-module `HAS_TORCH` flags and `pytest.mark.skipif(not HAS_TORCH, ...)`
+guards (`test_fit_gsplats.py`, `test_tiled_fitting.py`, the shared
+`conftest.py`) are vestigial for the same reason — collection fails before
+they are ever consulted. The "(requires torch)" labels under
+[Test Categories](#test-categories) mark modules whose *subject under test* is
+torch-backed; they do not imply the unlabelled modules run without torch.
 
-Some tests require additional dependencies:
+### Genuinely optional
 
-- **PyTorch tests**: `test_lt_solver.py`, `test_inverse_softplus.py` (torch-dependent tests)
-- **SciPy tests**: `test_candidates.py` (scipy-dependent tests)
-
-These tests are designed to skip gracefully when dependencies are missing.
+- **CUDA** (`models/gsplats/cuda/tests/`) and **Metal**
+  (`models/gsplats/metal/tests/`) — skip cleanly when the device or the
+  compiled backend is unavailable.
+- **napari** (`fitting/tests/test_visualization.py`) — mocked into
+  `sys.modules`, never imported for real.
 
 ## Running Tests
 
-### Run All Available Tests
+### Run the Whole Suite
 ```bash
-# Run all tests that can execute with current dependencies
 hatch run pytest packages/luxar/src/luxar/gsplats/ -v
 ```
 
-### Run Core Tests Only
+### Run a Single Module
 ```bash
-# Run only the tests that don't require external dependencies
+# e.g. just the triangular matrix utilities
 hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py -v
 ```
 
@@ -108,11 +129,14 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Round-trip correctness
 - Edge cases and error handling
 
-**Coverage**: Covers all functions in `trils.py`
+**Coverage**: Covers every function in `trils.py` except `permute_cholesky_packed`,
+which (together with `embed_cholesky_packed`) is exercised by
+`tests/test_cholesky_dim_ops.py`
 
 ### 2. Fitting Pipeline Tests (`fitting/tests/`)
 
 **Unit Tests for Modular Fitting Pipeline:**
+- `test_downscale.py` - Volume downscaling utilities
 - `test_fitting_config.py` - Configuration dataclass validation
 - `test_fitting_preprocessing.py` - Data preprocessing and normalization
 - `test_fitting_validation.py` - Input validation at API boundaries
@@ -120,6 +144,7 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - `test_losses.py` - Loss functions and regularization
 - `test_optimization.py` - Optimization loop and convergence
 - `test_results.py` - Result finalization and statistics
+- `test_sorting.py` - Z-order (Morton code) splat sorting during fitting
 - `test_visualization.py` - Visualization helpers (napari mocked)
 
 ### 3. Integration Tests (`tests/`)
@@ -136,7 +161,14 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - End-to-end integration tests for the gsplats pipeline
 
 **`test_gsplat_data.py`**:
-- GSplatData class tests (save/load, concatenation, merging)
+- Core GSplatData API (properties, validation, spatial ops, intensity ops)
+- Mixin-composition guard: no `_GSplatDataOps` stub may win the MRO
+
+**`test_gsplat_data_io.py`**:
+- GSplatData I/O-facing surface (culling, `save()` `fitting_info` whitelist, channel-color merge)
+
+**`test_gsplat_data_aggregations.py`**:
+- GSplatData computed properties, filtering/slicing, and reshape ops (concatenation, embed/combine dimension)
 
 **`test_batch.py`**:
 - Batch manifest creation and serialization
@@ -149,23 +181,27 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Literal Slurm log/output paths and preset arguments with spaces, quotes, shell metacharacters, and percent signs (Slurm filename patterns)
 - Rejection of output-directory line terminators that could split an sbatch directive
 
-**`test_cholesky_dim_ops.py`** (requires torch):
+**`test_cholesky_dim_ops.py`**:
 - Cholesky factor dimension operations and transformations
 
 **`test_culling.py`** (requires torch):
-- Splat culling algorithms (cumulative, redundancy, error-budget)
+- Per-splat deletion error and contribution-based culling
+- Redundancy mode, nD support, and joint-compounding binary search
+- The `GSplatData.cull` error-budget path
+  (cumulative/amplitude-percentile culling lives in
+  `test_gsplat_data_io.py::TestCullHeuristic`)
 
 **`test_gpu_profile.py`**:
 - GPU profiling and benchmark data handling
 
-**`test_metrics.py`**:
+**`test_metrics.py`** (requires torch):
 - Quality metrics computation (PSNR, SSIM, MSE)
 - Comparison between original and reconstructed volumes
 
 **`test_progressive_fitting.py`** (requires torch):
 - Progressive fitting pipeline with iterative residual refinement
 
-**`test_spatial_volume_filter.py`** (requires torch):
+**`test_spatial_volume_filter.py`**:
 - Spatial volume filtering for splat datasets
 
 **`test_tiled_fitting.py`** (requires torch):
@@ -191,7 +227,7 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Parameter transformation and constraint enforcement
 - Forward pass rendering in 2D/3D
 - Gradient computation and optimization
-- Batched vs sequential rendering consistency
+- Voxel-size-aware eccentricity constraints in `_build_L()` (anisotropic voxels)
 - Edge cases and numerical stability
 
 **`test_rendering.py`** (requires torch):
@@ -209,7 +245,7 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - **Algorithmic patterns**: 90%+ pattern coverage (validation, arrays, distances)
 - **Input validation**: Comprehensive validation pattern tests
 - **Error handling**: Edge cases and error conditions covered
-- **GaussianSplatModel**: Complete class testing (35+ test methods)
+- **GaussianSplatModel**: Complete class testing (28 test methods)
 - **Optimization pipeline**: Full fit_gaussian_splats testing (25+ test methods)
 - **Rendering functions**: Comprehensive rendering tests (25+ test methods)
 
@@ -220,7 +256,7 @@ Run the full test suite:
 hatch run pytest packages/luxar/src/luxar/gsplats/ -v
 ```
 
-The test count and execution time varies depending on available dependencies (torch, scipy, CUDA).
+The test count and execution time vary with the available hardware backends (CUDA, Metal).
 
 ## Adding New Tests
 
@@ -228,7 +264,8 @@ When adding new functionality to gsplats:
 
 1. **Create tests in context**: Place tests in the appropriate `tests/` folder near the code
 2. **Follow naming conventions**: Use `test_<module_name>.py` for test files
-3. **Handle dependencies gracefully**: Use `pytest.mark.skipif` for optional dependencies
+3. **Handle dependencies gracefully**: Use `pytest.mark.skipif` for the genuinely
+   optional ones (CUDA, Metal) — torch and scipy are always present
 4. **Include comprehensive coverage**: Test normal cases, edge cases, and error conditions
 5. **Update this README**: Document new test files and their purpose
 
@@ -245,15 +282,16 @@ When adding new functionality to gsplats:
 2. **Edge case handling**: Empty arrays, boundary conditions, invalid inputs
 3. **Numerical stability**: Tests for floating-point edge cases
 4. **Cross-validation**: Comparison with reference implementations when possible
-5. **Graceful degradation**: Tests skip when dependencies unavailable
+5. **Graceful degradation**: Device-specific tests (CUDA, Metal) skip when the
+   hardware or compiled backend is unavailable
 
 ## Dependencies
 
 ### Required
 - `numpy>=1.24`
 - `pytest>=7.4.0`
-- `torch` (for model, fitting, and optimization tests)
-- `scipy` (for seed generation and spatial operations)
+- `torch` (imported by `clahe` at package import time — required to collect any test here)
+- `scipy` (imported by `lod` at package import time — likewise required)
 
 ### Optional
 - CUDA GPU (for GPU-specific tests, skipped gracefully when unavailable)

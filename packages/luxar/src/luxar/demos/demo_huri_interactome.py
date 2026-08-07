@@ -117,7 +117,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, require_module
+from luxar.demos import launch_viewer, parse_int_arg, parse_path_arg, require_module
 from luxar.utils._umap_utils import build_legend_html, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -1076,24 +1076,6 @@ def build_scene(
 # -----------------------------------------------------------------------------
 
 
-def _int_arg(argv: list[str], flag: str, default: int) -> int:
-    for i, arg in enumerate(argv):
-        if arg == flag and i + 1 < len(argv):
-            return int(argv[i + 1])
-        if arg.startswith(flag + "="):
-            return int(arg.split("=", 1)[1])
-    return default
-
-
-def _path_arg(argv: list[str], flag: str) -> Path | None:
-    for i, arg in enumerate(argv):
-        if arg == flag and i + 1 < len(argv):
-            return Path(argv[i + 1]).expanduser()
-        if arg.startswith(flag + "="):
-            return Path(arg.split("=", 1)[1]).expanduser()
-    return None
-
-
 def _node_degrees(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
     """Degree per node, in the same order as ``nodes``."""
     counts = pd.concat([edges["sym_a"], edges["sym_b"]]).value_counts()
@@ -1102,8 +1084,8 @@ def _node_degrees(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
 
 def main() -> None:
     argv = sys.argv[1:]
-    max_edges = _int_arg(argv, "--max-edges", DEFAULT_MAX_EDGES)
-    cache_dir = _path_arg(argv, "--cache-dir") or CACHE_DIR
+    max_edges = parse_int_arg("max-edges", DEFAULT_MAX_EDGES, argv)
+    cache_dir = parse_path_arg("cache-dir", argv) or CACHE_DIR
     recompute = "--recompute-layout" in argv
 
     aprint("=" * 70)

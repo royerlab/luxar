@@ -11,17 +11,18 @@ The control rail is a slim, vertical activity rail docked to the left edge of th
 ## File Map
 
 ```
-control-rail/
-├── index.ts           — ControlRail class: buttons, idle/wake, collapse/fullscreen, hint
-├── rail-overlay.ts    — RailOverlay: flyout + panel-popover lifecycle (one-open-at-a-time)
-├── types.ts           — ControlRailItem, ControlRailPopover, ControlRailToggle interfaces
-├── dom-helpers.ts     — isPanelVisible (visibility check), escapeHtml (tooltip safety)
-└── icons.ts           — RAIL_ICONS: inline SVG map (currentColor stroke, 24×24)
+ui/
+├── control-rail.ts         — ControlRail class: buttons, idle/wake, collapse/fullscreen, hint
+└── control-rail/
+    ├── rail-overlay.ts     — RailOverlay: flyout + panel-popover lifecycle (one-open-at-a-time)
+    ├── types.ts            — ControlRailItem, ControlRailPopover, ControlRailToggle interfaces
+    ├── dom-helpers.ts      — isPanelVisible (visibility check), escapeHtml re-export (tooltip safety)
+    └── icons.ts            — RAIL_ICONS: inline SVG map (currentColor stroke, 24×24)
 ```
 
 ## Architecture
 
-### ControlRail (index.ts)
+### ControlRail (control-rail.ts)
 
 The main orchestrator. Owns:
 
@@ -86,7 +87,7 @@ The flyout + panel-popover lifecycle coordinator. Owns:
 ### DOM Helpers (dom-helpers.ts)
 
 - **`isPanelVisible(selector, scope)`** — true when the element exists, has `getClientRects().length > 0`, and has `visibility !== 'hidden'` + `opacity > 0.01` (the active-state check for `openSelector` items)
-- **`escapeHtml(s)`** — escapes `&<>"` for safe tooltip `innerHTML` interpolation
+- **`escapeHtml(s)`** — re-exports the canonical `escapeHtml`, escaping `&<>"'` (the single-quote superset) for safe tooltip `innerHTML` interpolation
 
 ### Icons (icons.ts)
 
