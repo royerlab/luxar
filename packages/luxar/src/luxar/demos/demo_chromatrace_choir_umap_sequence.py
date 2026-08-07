@@ -59,7 +59,6 @@ DEMO_META = {
 }
 
 import json
-import re
 import sys
 import tempfile
 import zipfile
@@ -71,7 +70,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, parse_path_arg
 from luxar.utils._umap_utils import format_label
 from luxar.utils.paths import get_demos_output_dir
 
@@ -196,16 +195,6 @@ def load_chromatrace_data(
         groups = palette.get("groups", [])
 
     return coords, attributes, category_maps, term_colors, groups
-
-
-def _parse_data_arg(argv: list[str]) -> Path | None:
-    for i, arg in enumerate(argv):
-        if arg == "--data" and i + 1 < len(argv):
-            return Path(argv[i + 1]).expanduser()
-        m = re.match(r"^--data=(.+)$", arg)
-        if m:
-            return Path(m.group(1)).expanduser()
-    return None
 
 
 def _term_to_group(groups: list[dict]) -> dict[str, str]:
@@ -617,7 +606,7 @@ def main() -> None:
     aprint("CHROMATRACE 3D UMAP — Sequential Cell-Type Walkthrough")
     aprint("=" * 70)
 
-    explicit_data = _parse_data_arg(sys.argv[1:])
+    explicit_data = parse_path_arg("data", sys.argv[1:])
     use_tsp = "--no-tsp" not in sys.argv
     coords, attributes, category_maps, term_colors, groups = load_chromatrace_data(
         explicit_data
