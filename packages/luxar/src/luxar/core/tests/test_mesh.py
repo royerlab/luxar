@@ -371,8 +371,12 @@ def test_lod_refusal_distinguishes_the_two_ladder_flavours(tmp_path) -> None:
     # The substitutive arm is excluded only for want of a producer.
     assert "no producer" in message
     # ...and must NOT be blamed on the independence assumption that only the
-    # additive ladder makes. This is the exact sentence that was wrong.
-    assert "independent elements" not in message
+    # additive ladder makes. This is the exact sentence that was wrong. Scoped to the
+    # substitutive clause on purpose: "the ADDITIVE ladder reduces independent
+    # elements" is accurate, and the sibling copy of this rationale in
+    # ``typing_utils/geometry_capabilities.py`` says exactly that.
+    _additive_arm, substitutive_arm = message.split("SUBSTITUTIVE", 1)
+    assert "independent elements" not in substitutive_arm
 
 
 def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
@@ -399,6 +403,34 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
         # The keys are refused, not the whole attrs surface: a mesh with ordinary
         # render attrs still writes.
         assert scene.add_mesh("plain", _V, _F, opacity=0.5) is not None
+
+
+def test_mesh_names_the_reason_for_the_lod_and_partition_parameters(tmp_path) -> None:
+    """``add_mesh(additive_lod=…)`` must not answer like a typo.
+
+    ``partition`` / ``additive_lod`` / ``substitutive_lod`` are real parameters on the
+    other three adders, so a caller reaching for one on a mesh spelled a real feature
+    correctly. Without a refusal of its own they fall into ``**attrs`` and come back as
+    "Unknown node attribute … The viewer would silently ignore it. Remove it or use a
+    supported attribute" — and ``partition`` even draws a "Did you mean 'absorption'?"
+    hint. Right outcome, misleading reason: the same defect the ``kind=lod`` parent
+    message carried, in the arm a user is far more likely to hit.
+    """
+    reasons = {
+        "additive_lod": "holes",
+        "substitutive_lod": "no producer",
+        "partition": "boundary vertices",
+    }
+    with LuxarZarrCompiler(tmp_path / "params.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        for key, reason in reasons.items():
+            with pytest.raises(ValueError) as excinfo:
+                scene.add_mesh(f"m_{key}", _V, _F, **{key: True})
+            message = str(excinfo.value)
+            assert key in message
+            assert reason in message
+            assert "Unknown node attribute" not in message
+            assert "Did you mean" not in message
 
 
 def test_partition_group_rejects_mesh_display_type(tmp_path) -> None:

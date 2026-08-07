@@ -85,6 +85,49 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
         )
 
 
+# Reason per structural parameter the sibling adders take and mesh does not. Same
+# three exclusions as the parent-group refusals above and as ``Group.add_mesh``'s
+# docstring, worded for a caller who passed the knob; insertion order decides which
+# one a multi-parameter call is told about.
+_UNSUPPORTED_STRUCTURE_PARAMS: Dict[str, str] = {
+    "additive_lod": (
+        "an ADDITIVE prefix ladder cannot apply at all — a prefix of an index "
+        "buffer is a surface with holes in it, not a coarser surface"
+    ),
+    "substitutive_lod": (
+        "SUBSTITUTIVE levels are structurally fine and simply have no producer — "
+        "mesh decimation does not exist yet"
+    ),
+    "partition": (
+        "a BSP cut runs through faces, so each part needs its boundary vertices "
+        "duplicated and the per-vertex label CSR split to match"
+    ),
+}
+
+
+def _reject_structure_params(name: str, attrs: Dict[str, Any]) -> None:
+    """Refuse the sibling adders' ``additive_lod`` / ``substitutive_lod`` / ``partition``.
+
+    ``add_mesh`` has no such parameters, so a caller who passes one lands in
+    ``**attrs`` and gets the generic UNKNOWN-attribute rejection from
+    ``validate_render_attrs`` — "The viewer would silently ignore it… Remove it or
+    use a supported attribute", plus a "Did you mean 'absorption'?" hint for
+    ``partition``. That is a typo diagnostic, and this caller made no typo: they
+    asked for a real feature the other three geometry types have, by its real name.
+
+    The refusal is correct either way; only its stated reason was wrong, which is the
+    same defect the parent-group message above carried. Answering with the per-flavour
+    reason (spec §9) is what tells a user whether to wait for the feature.
+    """
+    for key, reason in _UNSUPPORTED_STRUCTURE_PARAMS.items():
+        if key in attrs:
+            raise ValueError(
+                f"Cannot add mesh '{name}' with '{key}'. That is a Points / Lines / "
+                f"GSplats parameter and mesh has no such path yet: {reason} (spec "
+                "§9). Write the mesh as a plain leaf instead."
+            )
+
+
 def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
     """Refuse ``blending_mode='volumetric'`` on a mesh (spec §9).
 
@@ -142,7 +185,10 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
 
     A reveal ladder (§9.1) is expected to arrive as a face ORDER plus a reveal
     fraction on a single leaf, which needs neither key — so this refusal does not
-    stand in its way.
+    stand in its way. Substitutive mesh levels are the one thing it would touch:
+    ``level_stats`` also carries the non-energy ``quality`` stamp a level may
+    legitimately want, so whoever lands the decimator narrows this to the energy keys
+    rather than working around it.
     """
     supplied = sorted(k for k in ("level_stats", "lod_stats") if k in attrs)
     if supplied:
@@ -187,6 +233,7 @@ def add_mesh_impl(
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
         _reject_specialized_parent(parent or group, name)
+        _reject_structure_params(name, attrs)
         _reject_volumetric_blending(name, attrs)
         _reject_energy_stamps(name, attrs)
 

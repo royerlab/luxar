@@ -16,9 +16,9 @@ import numpy as np
 
 from luxar.typing_utils import PositionArray, BlendingMode, validate_positions
 
-raw = np.random.rand(100, 3)  # any (N, D) numpy array
+raw = np.random.rand(100, 3)         # any (N, D) numpy array
 positions = validate_positions(raw)  # runtime check -> Float32Array
-mode = BlendingMode.ADDITIVE  # str-backed enum member (mode == "additive")
+mode = BlendingMode.ADDITIVE         # str-backed enum member (mode == "additive")
 ```
 
 See [Usage Examples](#usage-examples) for protocols, enums, and constants.
@@ -132,12 +132,10 @@ Configuration settings, defaults, and validation functions.
 ```python
 from luxar.typing_utils import NodeProtocol, validate_positions
 
-
 def process_node(node: NodeProtocol) -> None:
     """Process any node that follows the protocol."""
     for depth, child in node.walk():
         print(f"{'  ' * depth}{child.name}")
-
 
 # Validate data at runtime
 positions = np.random.randn(100, 3)
@@ -148,8 +146,10 @@ validated = validate_positions(positions)  # Returns Float32Array
 ```python
 from luxar.typing_utils import ColorArray, TransformMatrix
 
-
-def apply_transform(points: PositionArray, transform: TransformMatrix) -> PositionArray:
+def apply_transform(
+    points: PositionArray,
+    transform: TransformMatrix
+) -> PositionArray:
     """Apply 4x4 transform to points."""
     # Clear type signatures without numpy.typing verbosity
     ...
@@ -160,8 +160,8 @@ def apply_transform(points: PositionArray, transform: TransformMatrix) -> Positi
 from luxar.typing_utils import BlendingMode, PhysicalUnit
 
 # str-backed enum members compare equal to their string value
-mode = BlendingMode.ADDITIVE  # mode == "additive"
-mode = BlendingMode("additive")  # look up a member from its string
+mode = BlendingMode.ADDITIVE        # mode == "additive"
+mode = BlendingMode("additive")     # look up a member from its string
 
 # Validation: convert a string, rejecting unknown values
 unit = PhysicalUnit.validate("um")  # -> PhysicalUnit.MICROMETER
@@ -175,8 +175,7 @@ if unit in (PhysicalUnit.NANOMETER, PhysicalUnit.MICROMETER, PhysicalUnit.MILLIM
 from luxar.typing_utils import (
     MAX_POINTS_WARNING,
     TARGET_CHUNK_BYTES,
-    OPACITY_MIN,
-    OPACITY_MAX,
+    OPACITY_MIN, OPACITY_MAX
 )
 
 if n_points > MAX_POINTS_WARNING:
