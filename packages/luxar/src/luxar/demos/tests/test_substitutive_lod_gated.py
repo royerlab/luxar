@@ -10,8 +10,10 @@ contract these demos advertise (#712, #1107).
 The fix is :func:`luxar.demos.substitutive_lod_or_flat`, which passes the spec
 through when both modules are importable and returns ``None`` (flat leaf, plus a
 notice) when they are not. This test is what keeps it fixed for the whole class
-rather than one demo at a time: it fails if any demo passes a ``substitutive_lod``
-that was not resolved through the helper.
+rather than one demo at a time: it fails if any scanned module passes a
+``substitutive_lod`` that was not resolved through the helper. The scanned set is
+``_scanned_modules.scanned_demo_modules()`` — the demos plus the shared helpers,
+since those build scene nodes too.
 
 Accepted values for the keyword: a direct call to the helper, a local/module name
 bound from such a call (the shape used when one spec feeds several ``add_*``
@@ -31,10 +33,15 @@ from pathlib import Path
 
 import pytest
 
+from ._scanned_modules import REQUIRED_SHARED_HELPERS, scanned_demo_modules
+
 HELPER = "substitutive_lod_or_flat"
 
 DEMOS_DIR = Path(__file__).resolve().parent.parent
-DEMO_FILES = sorted(DEMOS_DIR.glob("demo_*.py"))
+#: Demos AND the shared helpers they delegate to — a shared helper builds
+#: scene nodes too (``_interop_common.add_gsplats_from_file``), so restricting
+#: this scan to ``demo_*.py`` would let an ungated spec hide there.
+DEMO_FILES = scanned_demo_modules(DEMOS_DIR)
 
 
 def _gated_names(tree: ast.AST) -> set[str]:
@@ -123,6 +130,21 @@ def test_guard_catches_a_bare_spec(tmp_path: Path) -> None:
         "lod = dict(compression_factor=8)\nscene.add_points('x', substitutive_lod=lod)\n"
     )
     assert _ungated_sites(ungated_name) == [2]
+
+
+def test_the_scan_covers_the_shared_helpers() -> None:
+    """The shared helpers must be in the scanned set, not just ``demo_*.py``.
+
+    ``_interop_common.build_interop_scene`` calls ``add_gsplats_from_file``, so an
+    ungated ``substitutive_lod`` could live there just as easily as in a demo —
+    and a ``demo_*.py``-only scan would never look. No helper trips the guard
+    today, so nothing else here would notice the narrower set.
+    """
+    names = {p.name for p in DEMO_FILES}
+    assert REQUIRED_SHARED_HELPERS <= names, (
+        "shared helper modules are outside this guard's scan: "
+        f"{sorted(REQUIRED_SHARED_HELPERS - names)}"
+    )
 
 
 def test_the_guard_sees_real_call_sites() -> None:
