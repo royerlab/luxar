@@ -21,15 +21,23 @@
  * for local-median outliers and axial flux ripple. Every mitrable joint in that
  * fixture is a `line_type="polyline"` end->start joint at constant width on a
  * face-on plane (the one indexed case is a degree-9 hub, which is never
- * mitred), so it is structurally blind to all three of the properties below —
- * the partner-leg orientation (which only bites at a same-parity joint), the
- * per-END join width (which needs a taper or foreshortening to straddle the
- * gate), and the near-plane conjunction (every endpoint there sits at the same
- * depth, far in front of the near plane, so both operands pass either way). Two
- * fixture pairs in the GLSL/TSL parity harness
+ * mitred), so it is structurally blind to three of the four properties below
+ * and to HALF of the fourth — the partner-leg orientation (which only bites at
+ * a same-parity joint), the per-END join width (which needs a taper or
+ * foreshortening to straddle the gate), the near-plane conjunction (every
+ * endpoint there sits at the same depth, far in front of the near plane, so both
+ * operands pass either way), and the NEGATION half of the mirrored-corner
+ * relation between the two sides' offsets (no same-parity mitrable joint there
+ * to negate across). That relation's `M_B == +M_A` half DOES bite there — an
+ * axial-sign slip leaves the same apex-at-the-vertex wedge that `curve_smooth`
+ * measured 4.94% dark on unmitred — and the miter form itself is pinned by the
+ * GLSL source assertion in `materials/line/material-glsl.test.ts` and, on the
+ * TSL side, by the codegen snapshot `tests/__codegen__/line.vertex.glsl.txt`,
+ * which carries the same sum-of-perps expression under mangled `nodeVar` names.
+ * Two fixture pairs in the GLSL/TSL parity harness
  * (`tests/e2e/harnesses/tsl-harness/lines.ts`, asserted in
  * `tests/e2e/tsl-shader-parity.spec.ts`) reach the real shaders with two of the
- * three: `line-join-same-parity-*` with the orientation, and
+ * four: `line-join-same-parity-*` with the orientation, and
  * `line-join-near-plane-*` with the conjunction — the latter puts one leg's far
  * endpoint behind nearCull, so both sides must decline and the mitred render
  * must come out pixel-identical to the unmitred one.
@@ -370,6 +378,34 @@ describe('line join math (vertex-side, #790)', () => {
       const miterLen = R * Math.sqrt(1.25);
       expect(len(resA.cornerOffset)).toBeCloseTo(miterLen, 10);
       expect(len(resB.cornerOffset)).toBeCloseTo(miterLen, 10);
+
+      // Those two facts do not DETERMINE either corner, so the relation between
+      // them has to be asserted in its own right: the dot pins M's component
+      // along perpOwn and |M| pins its length, which leaves the sign of the
+      // AXIAL component free. Reflecting M across perpOwn — negating
+      // dot(M, dirOwn), which moves the corner along its own +R offset line
+      // rather than off it — satisfies both, so at the END-END row side B could
+      // read (11, -2) instead of (5, -10) and every assertion above would still
+      // pass. (Those witness numbers follow parity.b: where B's START is the
+      // shared vertex its corner is the negation, (-5, 10), mirroring to
+      // (-11, 2).) The mirrored-corner algebra is what picks one of the two. At
+      // OPPOSITE parity both sides evaluate the identical (dirIn, dirOut) pair,
+      // hence the identical perpIn + perpOut, so M_B == M_A. At SAME parity B
+      // runs through the joint the other way, so its pair is A's negated AND
+      // swapped, (dirIn_B, dirOut_B) == (-dirOut_A, -dirIn_A); perp is linear
+      // and the SUM is symmetric, so the swap drops out and perpIn + perpOut
+      // simply negates — M_B == -M_A. Either sign tiles, because a side's end
+      // edge is the UNORDERED pair {S + M, S - M} (`materials/line/shader-glsl.ts`
+      // expands by `cornerOffset * aQuadCorner.y`, y = +-1); the parity only
+      // decides which of B's two corners lands on A's +R one. (Both sides are
+      // handed the same joinPixelWidth here, R literally; see
+      // `luxarLineEndPixelWidth`'s own note for why the shader's two sides
+      // agree on it as well.)
+      const relSign = parity.a === parity.b ? -1 : 1;
+      for (const c of [0, 1] as const) {
+        const label = `M_B[${c}] == ${relSign < 0 ? '-' : '+'}M_A[${c}]`;
+        expect(resB.cornerOffset[c], label).toBeCloseTo(relSign * resA.cornerOffset[c], 10);
+      }
     });
   }
 

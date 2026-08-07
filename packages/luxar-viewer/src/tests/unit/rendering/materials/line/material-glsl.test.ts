@@ -238,7 +238,7 @@ describe('LineMaterial', () => {
       expect(material.fragmentShader).toContain('p >= 1.0');
     });
 
-    it('#790 the join block orients the partner leg on atEnd and guards BOTH far endpoints', () => {
+    it('#790 the join block orients on atEnd, guards BOTH far endpoints, and sums the two perps', () => {
       // Orienting on `partnerSharesItsStart` yields the PARTNER's traversal
       // direction, which is the negation of what an END-END or START-START
       // joint needs: a collinear joint then reads turn = -1, the miter limit
@@ -253,6 +253,16 @@ describe('LineMaterial', () => {
       // endpoints, so the two sides test the same pair and branch alike.
       expect(GLSL_LINE_JOIN).toContain('float selfFarDepth');
       expect(GLSL_LINE_JOIN).toContain('farPx.z >= nearCull && selfFarDepth >= nearCull');
+      // ...and the miter point is pinned as a FORM — the symmetric sum of the
+      // two perps, scaled by w / (1 + turn) — because that is what makes the two
+      // sides' offsets +-equal (the mirror's `M_B == +-M_A`). Building the same
+      // corner axially instead, as perpOwn * w + dirOwn * w * tan(theta/2),
+      // keeps both |M| and dot(M, perpOwn) at every parity, so a sign slip on
+      // the axial term (which turns (-5, 10) into (5, 10)) passes every per-side
+      // assertion in the mirror and breaks only the two-sided relation.
+      expect(GLSL_LINE_JOIN).toContain(
+        'return vec3((perpIn + perpOut) * (joinPixelWidth / (1.0 + turn)), 1.0);'
+      );
     });
 
     it('#790 both vertex stages hand luxarLineJoin each END its own segment-constant width', () => {
