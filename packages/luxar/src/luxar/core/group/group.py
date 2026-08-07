@@ -368,10 +368,12 @@ class Group(Node):
         no extent padding to the scene's bounds.
 
         Not supported for meshes (each raises rather than silently degrading):
-        ``additive_lod`` / ``substitutive_lod`` (no coarse stand-in exists for a
-        connected surface), ``partition`` (a BSP cut needs vertex duplication at
-        part boundaries), and adding one under a ``kind=lod`` / ``kind=partition``
-        parent. See ``docs/specs/MESH_NODE_SPEC.md`` §9.
+        ``additive_lod`` (a prefix of an index buffer is a surface with holes, not
+        a coarser surface), ``substitutive_lod`` (structurally fine — only the
+        producer, mesh decimation, is missing), ``partition`` (a BSP cut needs
+        boundary vertices duplicated per part and the label CSR split to match),
+        and adding one under a ``kind=lod`` / ``kind=partition`` parent. See
+        ``docs/specs/MESH_NODE_SPEC.md`` §9.
 
         Args:
             name: Name of the mesh node.

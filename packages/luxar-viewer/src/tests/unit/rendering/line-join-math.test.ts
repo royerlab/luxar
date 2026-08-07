@@ -16,11 +16,13 @@
  * shader TEXT is tied back to this mirror by source assertions in
  * `materials/line/material-glsl.test.ts`.
  *
- * What the browser specs do and do NOT add, precisely: `line-join-artifacts`
- * renders `test_line_joints.luxar.zarr`, every joint of which is a
- * `line_type="polyline"` end->start joint at constant width on a face-on plane,
- * so it is structurally blind to all three of the properties below — the
- * partner-leg orientation (which only bites at a same-parity joint), the
+ * What the browser specs do and do NOT add, precisely: `line-join-artifact`
+ * renders `test_line_joins.luxar.zarr` and scores each of its five joint bands
+ * for local-median outliers and axial flux ripple. Every mitrable joint in that
+ * fixture is a `line_type="polyline"` end->start joint at constant width on a
+ * face-on plane (the one indexed case is a degree-9 hub, which is never
+ * mitred), so it is structurally blind to all three of the properties below —
+ * the partner-leg orientation (which only bites at a same-parity joint), the
  * per-END join width (which needs a taper or foreshortening to straddle the
  * gate), and the near-plane conjunction (every endpoint there sits at the same
  * depth, far in front of the near plane, so both operands pass either way). Two

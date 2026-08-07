@@ -477,10 +477,16 @@ gaps:
 - **No per-element size.** A triangle's extent comes from its own vertices, so
   there is no radius/width/covariance analogue — and a mesh contributes *zero*
   extent padding to scene bounds.
-- **No LOD ladder.** The additive/substitutive machinery reduces a set of
-  independent elements; a connected surface is not one. The mesh analogue is QEM
-  decimation, which is a project rather than a line item.
-- **No `kind=partition`.** A BSP cut needs vertex duplication at part boundaries.
+- **No LOD ladder** — but the two flavours are absent for different reasons. The
+  *additive* prefix ladder reduces a set of independent elements, which a
+  connected surface is not: a prefix of an index buffer is a surface with holes,
+  not a coarser one, so it is excluded on principle. *Substitutive* levels make no
+  independence assumption — a level is an independently-authored
+  `(vertices, faces)` pair chosen by `coverage_fraction` — and are missing only the
+  producer, QEM decimation.
+- **No `kind=partition`.** A BSP cut runs through faces, so each part needs its
+  boundary vertices duplicated and the per-vertex label CSR split to match.
+  Bookkeeping rather than a structural obstacle.
 - **No spatial index** (`ordering` is always `"none"`; the viewer loads a mesh
   whole, so a chunk index has nothing to skip).
 

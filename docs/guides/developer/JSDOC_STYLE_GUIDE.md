@@ -638,7 +638,12 @@ Add to `eslint.config.js`:
 
 ### Coverage Checking
 
-JSDoc coverage checking is not yet automated. Manually review public API files to ensure all exported functions, classes, and interfaces have JSDoc comments.
+JSDoc coverage is part of the baseline-driven `make check-docs` gate. New
+under-documented files fail CI; existing file-level debt is recorded in
+`scripts/docs_baseline.json`. TypeDoc's separate warning set is ratcheted by
+`pnpm run typedoc:check-warnings`. See
+[Documentation Quality Gate](DOCUMENTATION_QUALITY.md) for scope, limitations,
+and baseline-update rules.
 
 ---
 

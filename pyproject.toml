@@ -288,9 +288,9 @@ dependencies = [
 # tests (content-fit CLI, tiled/progressive fitting) still run locally and their
 # code stays covered by fast unit tests (coverage holds at ~87% ≥ the 80% gate).
 [tool.hatch.envs.default.scripts]
-test = "pytest {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
-test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
-test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
+test = "pytest {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
+test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
+test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
 # `scripts/benchmarks` is listed explicitly: a broad `benchmarks/` entry in
 # .gitignore makes ruff's directory walk skip it, but pre-commit still formats
 # those tracked files, so it must be covered here to keep them in sync.
@@ -340,7 +340,12 @@ dependencies = [
 ]
 
 [tool.hatch.envs.docs.scripts]
-build = "sphinx-build -b html docs docs/_build/html"
+# Keep the HTML build deterministic and warning-fatal: force a fresh read of
+# every source so incremental state cannot hide warnings in the required gate.
+build = "sphinx-build -E -a -W --keep-going -b html docs docs/_build/html"
+# External HTTP checks remain opt-in because remote availability is not a
+# reliable merge dependency. Narrow exceptions live in docs/conf.py.
+linkcheck = "sphinx-build -E -a -W --keep-going -b linkcheck docs docs/_build/linkcheck"
 serve = "python -m http.server 8000 --directory docs/_build/html"
 
 # Test matrix for multiple Python versions
@@ -529,7 +534,12 @@ ignore_errors = true
 # Linting configuration is in [tool.ruff] section above
 
 [tool.pytest.ini_options]
-testpaths = ["packages/luxar/src/luxar", "packages/luxar/examples/tests", "stats"]
+testpaths = [
+    "packages/luxar/src/luxar",
+    "packages/luxar/examples/tests",
+    "stats",
+    "scripts/gallery/tests",
+]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

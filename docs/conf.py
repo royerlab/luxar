@@ -2,8 +2,11 @@
 # For the full list of built-in configuration values, see:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import logging
 import os
 import sys
+
+from sphinx.util import logging as sphinx_logging
 
 sys.path.insert(0, os.path.abspath("../packages/luxar/src"))
 
@@ -59,8 +62,23 @@ autodoc_default_options = {
 # Mock imports for packages that may not be installed (e.g., torch, optional deps)
 autodoc_mock_imports = ["torch", "torchvision", "pytorch3d", "scipy"]
 
-# Suppress warnings for missing references
-suppress_warnings = ["ref.any"]
+# Do not suppress reference warnings: the warning-fatal HTML build is the
+# deterministic internal-link gate. External HTTP checking is a separate,
+# opt-in linkcheck build because remote sites are not reliable CI dependencies.
+# Every exception below is narrow and records why linkcheck cannot verify it.
+linkcheck_ignore = [
+    # Literal examples emitted by autodoc; ``host`` and ``port`` are placeholders.
+    r"^http://host:port(?:/.*)?$",
+    # The repository is private, so unauthenticated linkcheck receives 404.
+    # Keep this to the two currently referenced endpoints; review new paths.
+    r"^https://github\.com/royerlab/luxar(?:/issues)?$",
+    # DOI resolves in browsers, but the AIP destination rejects automated probes.
+    r"^https://doi\.org/10\.1063/1\.1751381$",
+    # Khronos serves this page but rejects automated probes with HTTP 403.
+    r"^https://wikis\.khronos\.org/webgl/Debugging$",
+    # TypeDoc creates this target after Sphinx; linkcheck cannot see that output.
+    r"^viewer/index\.html$",
+]
 
 # Autosummary settings
 autosummary_generate = True
@@ -72,6 +90,46 @@ intersphinx_mapping = {
     "numpy": ("https://numpy.org/doc/stable", None),
     "zarr": ("https://zarr.readthedocs.io/en/stable", None),
 }
+
+
+# The HTML build runs with -W (see the `docs:build` script in pyproject.toml),
+# which is what makes it the internal-reference gate. But intersphinx has to
+# reach three third-party sites to load the inventories above, and Sphinx
+# reports an unreachable inventory as an UNTYPED warning — `suppress_warnings`
+# has no name to match it on. Left alone, one bad minute at
+# docs.python.org/numpy.org/readthedocs turns a required check red for reasons
+# that have nothing to do with the pull request, which is the exact failure mode
+# that keeping linkcheck opt-in is meant to avoid.
+#
+# So demote that single record to informational: it still prints, but it no
+# longer counts toward -W. Nothing else is relaxed — unresolved references
+# inside our own documentation are still warnings, and still fatal. If
+# intersphinx ever renames its logger the filter simply stops matching and we
+# are back to today's behavior rather than a broken build.
+class _IntersphinxOutageIsInformational(logging.Filter):
+    """Keep an unreachable intersphinx inventory out of the -W warning count."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "failed to reach any of the inventories" in str(record.msg):
+            record.levelno = logging.INFO
+            record.levelname = "INFO"
+        return True
+
+
+# Attach to the logger intersphinx actually emits on. Although the fetch code
+# lives in `sphinx.ext.intersphinx._load`, that module deliberately defines its
+# LOGGER as `getLogger("sphinx.ext.intersphinx")`, not as a child logger. Sphinx
+# then namespaces it under `sphinx.`, so the real name is
+# `sphinx.sphinx.ext.intersphinx`; ask Sphinx for it instead of hand-writing that
+# doubled prefix, which reads like a typo and invites a well-meaning "fix" that
+# would silently stop the filter from matching. It has to be the emitting
+# logger, not an ancestor: stdlib only runs a logger's own filters, never a
+# parent's, on a record that merely propagates up — and they run before the
+# handlers, so the demotion lands before the warning handler (and thus -W) ever
+# sees the record.
+sphinx_logging.getLogger("sphinx.ext.intersphinx").logger.addFilter(
+    _IntersphinxOutageIsInformational()
+)
 
 # MyST parser settings (for markdown files)
 myst_enable_extensions = [
