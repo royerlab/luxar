@@ -1729,16 +1729,17 @@ def generate_line_joins_test() -> None:
 
     ``curve_smooth``
         120-segment sinusoidal polyline, gentle (~10 degree) turns. The
-        headline #790 case: measured 2026-08-06 in headless Chromium at
-        5.07% dark and 1.35% bright outliers.
+        headline #790 case: measured 2026-08-06 in headless Chromium, with
+        ``dpr=1`` pinned, at 4.94% dark and 3.53% bright outliers. Every
+        figure in this docstring comes from that same pinned frame.
     ``zigzag_right_angle``
         16-segment 90-degree zigzag; sharp bends, still inside a miter
         limit. Its wedge is far worse than the curve's but also far wider,
         and the local-median metric only counts the part of a wedge that is
         still a couple of pixels across, so it barely registers this band
-        (0.13% dark). The axial flux dip (p05 0.743 against 1.000 on the
-        straight bands) is the measure that sees it. See the sensitivity
-        envelope in ``src/tests/helpers/line-join-metrics.ts``.
+        (0.077% dark, 0.077% bright). The axial flux dip (p05 0.749 against
+        1.000 on the straight bands) is the measure that sees it. See the
+        sensitivity envelope in ``src/tests/helpers/line-join-metrics.ts``.
     ``straight_thin``
         Straight polyline with free ends at the base width. Segment length
         0.5 against width 0.15 gives ``L/w = 3.3``, comfortably clear of the

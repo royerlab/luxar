@@ -25,8 +25,9 @@ projecting its world AABB through the live camera. Every band is asserted to
 have a gapless flux profile — a torn tube is a defect at any turn angle — and
 the straight bands additionally at zero outliers and a flat profile; the two
 bending cases are
-**recorded** under documented ceilings — measured 2026-08-06 at 5.07% dark /
-1.35% bright on the curve — which drop to zero when the join geometry lands.
+**recorded** under documented ceilings — measured 2026-08-06, with the device
+pixel ratio pinned, at 4.94% dark / 3.53% bright on the curve — which drop to
+zero when the join geometry lands.
 
 Scope note: the E2E job is currently disabled in CI, so the spec runs only
 under `make test-e2e` locally. What runs on every PR is the unit suite, and it

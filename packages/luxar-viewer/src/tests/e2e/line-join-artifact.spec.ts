@@ -76,19 +76,21 @@ interface BandBox {
   yMax: number;
   /**
    * Inside-pixel floor, set at roughly half the value measured on
-   * 2026-08-06. This is a "the band rendered at all" gate, not a
+   * 2026-08-06 with `dpr=1` pinned (38831 / 39030 / 12960 / 53136 / 7010). This is a "the band rendered at all" gate, not a
    * localisation gate — several bands clear each other's floors, so
    * `expectedWidth` / `expectedHeight` are what actually pin the camera and
    * the projection.
    */
   minInsidePixels: number;
   /**
-   * Projected rectangle the band's AABB must produce, in pixels. The width
-   * is exact: the four horizontal bands all span 18 world units and the hub
-   * spans 3. The height is checked within `RECT_HEIGHT_TOLERANCE_PX`,
-   * because its rounding depends on the canvas's exact device height and
-   * subpixel phase — a mislocated or misprojected rectangle is out by tens
-   * of pixels, not by one.
+   * Projected rectangle the band's AABB must produce, in pixels, as measured
+   * on the pinned `dpr=1` frame. The width is exact: the four horizontal
+   * bands all span 18 world units and the hub spans 3. The height is checked
+   * within `RECT_HEIGHT_TOLERANCE_PX` rather than exactly, because its
+   * rounding depends on the canvas's exact device height and subpixel
+   * phase — note that `straight_thin`'s 3.0-unit box lands on 108 px where
+   * its identically-sized siblings land on 109. A mislocated or misprojected
+   * rectangle is out by tens of pixels, not by one.
    */
   expectedWidth: number;
   expectedHeight: number;
@@ -143,7 +145,7 @@ const LINE_JOIN_BANDS: readonly BandBox[] = [
     yMax: 1.5,
     minInsidePixels: 7000,
     expectedWidth: 648,
-    expectedHeight: 109,
+    expectedHeight: 108,
     spansRect: true,
   },
   {
@@ -185,22 +187,29 @@ const EXPECTED_LINE_SEGMENTS = 120 + 16 + 40 + 20 + 9;
 /**
  * Dark- and bright-outlier ceilings for the two bending cases.
  *
- * Measured 2026-08-06, headless Chromium, at the fixture's pinned framing:
- * `curve_smooth` 5.07% dark / 1.35% bright, `zigzag_right_angle` 0.13% dark
- * / 0.00% bright. The ceilings sit well above those with room for GPU,
- * driver and resolution differences — they are guard rails against a
- * blow-up, not spec values, and they are geometry- and resolution-dependent,
- * so re-measure before tightening them.
+ * Measured 2026-08-06, headless Chromium, at the fixture's pinned framing
+ * with `dpr=1`: `curve_smooth` 4.94% dark / 3.53% bright,
+ * `zigzag_right_angle` 0.077% dark / 0.077% bright. The ceilings sit well
+ * above those with room for GPU, driver and resolution differences — they
+ * are guard rails against a blow-up, not spec values, and they are geometry-
+ * and resolution-dependent, so re-measure before tightening them.
+ *
+ * The bright ceiling is 0.06 rather than 0.04 because pinning the device
+ * pixel ratio moved the curve's bright fraction from 1.35% (taken at the
+ * machine's native DPR) to 3.53%. Pinning is the right call — that is simply
+ * what the pinned frame measures — but it is a reminder that these fractions
+ * shift by whole points when a rendering input changes, so a ceiling needs
+ * real headroom rather than a snug fit.
  *
  * When the miter join lands the dark ceiling drops to zero: a later part of
  * the #790 series is expected to replace it with `toBe(0)`, matching what
  * the straight bands already assert.
  */
 const BEND_DARK_CEILING = 0.08;
-const BEND_BRIGHT_CEILING = 0.04;
+const BEND_BRIGHT_CEILING = 0.06;
 
 /**
- * Floor on the zigzag band's axial flux p05. Measured 0.743; an ideal
+ * Floor on the zigzag band's axial flux p05. Measured 0.749; an ideal
  * join-free zigzag models to 0.898, and the curve barely moves either way
  * (0.860 to 0.855), so this is the one band where the flux profile
  * genuinely discriminates. Set loose in the same guard-rail spirit as the
@@ -212,8 +221,8 @@ const ZIGZAG_FLUX_P05_FLOOR = 0.6;
 /**
  * Ceilings for the never-mitered control. A degree-9 branch point has all
  * nine quads stacked around the hub with cap suppression at 0, so it has no
- * uncovered wedge to begin with; measured 0.11% dark / 0.11% bright, and it
- * is here to stay stable.
+ * uncovered wedge to begin with; measured 0.157% dark / 0.114% bright, and
+ * it is here to stay stable.
  */
 const HUB_OUTLIER_CEILING = 0.01;
 
@@ -232,8 +241,9 @@ interface NdcBox {
  * `waitForLuxarReady` only polls `initialized` and `waitForRenderStable`
  * only watches the frame counter, so neither knows whether the data worker's
  * projection has reached the GPU. Screenshotting before it does produced a
- * bimodal `curve_smooth` dark fraction across repeat runs (~2% on a settled
- * frame, ~5% on a half-committed one) — a race, not noise.
+ * bimodal `curve_smooth` dark fraction across repeat runs (~2% on a
+ * half-committed frame, ~5% once every segment had landed) — a race, not
+ * noise.
  *
  * The 15 s budget is deliberately short: readiness already consumed up to
  * 45 s of the per-test budget, so a longer wait here would be cut off by the
@@ -474,8 +484,8 @@ test.describe('Line-joint artifact measurement (#790)', () => {
     // Note for whoever closes #790: a zero dark fraction on the zigzag would
     // not prove its wedge is closed. That wedge is a 28.8 px-radius quarter
     // disc, far wider than the local-median metric's couple-of-pixels
-    // envelope, so it reads 0.13% today while the far gentler curve reads
-    // 5.07%. The flux dip below is the measure that responds on this band.
+    // envelope, so it reads 0.077% today while the far gentler curve reads
+    // 4.94%. The flux dip below is the measure that responds on this band.
     expect(zigzag.flux.p05, 'zigzag_right_angle axial p05').toBeGreaterThan(ZIGZAG_FLUX_P05_FLOOR);
   });
 });

@@ -176,10 +176,11 @@ under documented ceilings until join geometry lands.
 Read the metrics module header before quoting one of its numbers: the
 local-median count is non-monotone in defect width (a wedge three or more
 pixels across poisons its own median and scores zero), so the gentle
-`curve_smooth` band measures 5.07% dark while the 90°
+`curve_smooth` band measures 4.94% dark while the 90°
 `zigzag_right_angle`, whose wedge is far worse but far wider, measures
-0.13%. For wide wedges the axial flux dip is the measure that responds —
-p05 0.743 on the zigzag against 1.000 on the straight bands.
+0.077%. For wide wedges the axial flux dip is the measure that responds —
+p05 0.749 on the zigzag against 1.000 on the straight bands. (Measured
+with `dpr=1` pinned, headless Chromium, 2026-08-06.)
 
 ## Geometry and storage layout
 

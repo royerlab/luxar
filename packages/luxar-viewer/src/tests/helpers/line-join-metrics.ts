@@ -52,8 +52,8 @@
  * So `darkFraction` is a detector rather than a severity measure, it is
  * non-monotone in defect width, and it is not comparable between bands of
  * different turn angle. The live #790 baseline shows this plainly: the gentle
- * `curve_smooth` band (~10.5° turns) scores ~5.07% while the 90°
- * `zigzag_right_angle` band scores ~0.13%, even though the zigzag's wedge is
+ * `curve_smooth` band (~10.5° turns) scores 4.94% dark while the 90°
+ * `zigzag_right_angle` band scores 0.077%, even though the zigzag's wedge is
  * far the worse defect.
  *
  * The reason is geometric. The uncovered wedge at a turn of angle θ is a
@@ -64,8 +64,10 @@
  * leaves a ~5.3 px chord whose inner ~57% is countable, while the zigzag's
  * 1.571 rad turn passes 3 px only ~2 px out from the centreline and is
  * essentially invisible here. For wedges that wide, read
- * {@link measureAxialFlux}: on that same frame the zigzag's flux p05 is 0.743
- * against 1.000 on the straight bands.
+ * {@link measureAxialFlux}: on that same frame the zigzag's flux p05 is 0.749
+ * against 1.000 on the straight bands. (Every figure quoted here is from the
+ * acceptance spec's pinned frame — `dpr=1`, headless Chromium, 2026-08-06 —
+ * which is what makes them reproducible.)
  *
  * ## Display encoding
  *
