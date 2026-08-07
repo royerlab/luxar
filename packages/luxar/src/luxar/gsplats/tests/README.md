@@ -162,6 +162,7 @@ which (together with `embed_cholesky_packed`) is exercised by
 
 **`test_gsplat_data.py`**:
 - Core GSplatData API (properties, validation, spatial ops, intensity ops)
+- Mixin-composition guard: no `_GSplatDataOps` stub may win the MRO
 
 **`test_gsplat_data_io.py`**:
 - GSplatData I/O-facing surface (culling, `save()` `fitting_info` whitelist, channel-color merge)
