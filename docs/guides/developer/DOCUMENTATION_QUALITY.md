@@ -23,14 +23,17 @@ the documentation checks.
 
 `make check-docs` mirrors the required CI gate:
 
-1. `scripts/check_documentation.py` checks README, Python docstring, TypeScript
+1. `packages/luxar-viewer/scripts/check-overrides.mjs` verifies that pnpm
+   dependency overrides remain single-sourced.
+2. `scripts/check_documentation.py` checks README, Python docstring, TypeScript
    JSDoc, and tracked repository-path completeness against
    `scripts/docs_baseline.json`.
-2. TypeDoc converts and validates the viewer API without emitting output, then
+3. TypeDoc converts and validates the viewer API without emitting output, then
    compares normalized warning messages with
    `packages/luxar-viewer/typedoc-warnings-baseline.json`.
-3. Sphinx builds the HTML documentation with `-W --keep-going`, so every
-   warning and broken internal reference is reported and the build fails.
+4. Sphinx builds the HTML documentation with `-E -a -W --keep-going`, forcing a
+   fresh read of every source so an incremental cache cannot hide warnings or
+   broken internal references.
 
 The required gate does **not** probe external HTTP links. Remote availability,
 rate limits, and anti-bot responses are not deterministic merge dependencies.

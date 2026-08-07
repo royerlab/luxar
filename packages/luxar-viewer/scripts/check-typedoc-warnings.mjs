@@ -249,7 +249,11 @@ function printHumanReport(report, baselinePath) {
   }
 
   if (report.newWarnings.length === 0 && report.errors.length === 0) {
-    console.log(`TypeDoc warnings match ${baselinePath}; no regression detected.`);
+    if (report.fixedWarnings.length === 0) {
+      console.log(`TypeDoc warnings match ${baselinePath}; no regression detected.`);
+    } else {
+      console.log('No new TypeDoc warnings; no regression detected.');
+    }
   }
 }
 
