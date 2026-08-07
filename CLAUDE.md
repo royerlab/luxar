@@ -791,7 +791,10 @@ pnpm agent:debug:visible          # AI debugging with visible browser
 ```
 
 **Running E2E tests in chunks (RECOMMENDED):**
-Instead of running all E2E tests at once (which can timeout or be overwhelming), run them by topic:
+Instead of running all E2E tests at once (which can timeout or be overwhelming), run them by topic.
+Run `pnpm test:generate-fixtures` once first: the Playwright pre-flight requires the generated
+zarr fixtures for EVERY chunk, not just the two that read them directly (set
+`LUXAR_E2E_NO_FIXTURES=1` to skip the check for a chunk you know needs none).
 ```bash
 # Basic functionality
 npx playwright test basic-rendering.spec.ts viewer-initialization.spec.ts
@@ -847,7 +850,7 @@ npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts firs
 - Use `?src=<dataset>&debug` URL format (NOT `?data=`)
 - Use 3D datasets for general tests (4D/nD slicing may show 0 points)
 - Wait for `window.__luxarDebug` before assertions
-- Run `pnpm test:generate-fixtures` before test-fixtures tests
+- Run `pnpm test:generate-fixtures` before any Playwright run (the pre-flight enforces it)
 - See `docs/guides/user/E2E_TESTING_GUIDE.md` and `docs/guides/developer/PLAYWRIGHT_GUIDE.md` for details
 
 ### Cross-Language E2E Testing
@@ -943,7 +946,7 @@ Prefer the no-trailing-slash form in examples and logs as the canonical spelling
 The compiled WASM kernels use fixed-size arrays (for performance) and support a
 **maximum of 16 dimensions** on the fast path. `validate_ndim` **panics** (crate
 is `panic = "abort"`) for `ndim > 16`, so those kernels must never be called above 16D.
-- Functions affected: `calculate_effective_radii`, `mahalanobis_distance`, `compute_gsplats_attenuation`, etc.
+- Functions affected: `calculate_effective_radii`, `mahalanobis_distance`, `project_gsplats_nd_to_3d`, etc.
 - **>16D is fully supported (slower but works), automatically.** The TypeScript
   reference implementations in `wasm/typescript/` are uncapped, and the worker's
   `pickBackend(ctx, ndim)` (`workers/data-worker/state.ts`) transparently routes

@@ -115,7 +115,7 @@ Decoding reverses: decompress → dequantize → reconstruct float32
 
 **See Also:**
 - `../io/README.md` - How encoding integrates with I/O layer
-- `../core/README.md` - Points, Lines, GSplats data structures that use encoding
+- `../core/README.md` - Points, Lines, GSplats, Mesh data structures that use encoding
 
 **Purpose:**
 Unified encoding system with automatic deduplication and intelligent encoding selection.

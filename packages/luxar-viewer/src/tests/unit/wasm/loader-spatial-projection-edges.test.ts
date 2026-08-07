@@ -1,7 +1,6 @@
 /**
  * Edge-case tests for WASM loader (index.ts) and TypeScript-fallback
  * projection helpers. Closes wasm.md gap cluster:
- *   - [wasm.md G8][P5]  compact_by_mask stride > 1 (multi-component data).
  *   - [wasm.md G22][P5] isWasmSupported with WebAssembly.instantiate set to a
  *                       TRUTHY non-function (the documented threat at L118).
  *   - [wasm.md G23][P5] initWasm: dynamic import resolves but `default()` is
@@ -19,54 +18,7 @@
 import { describe, it, expect } from 'vitest';
 import { initWasm, isWasmSupported, setWasmJsUrl } from '../../../wasm';
 import { TypeScriptFallback } from '../../../wasm/typescript';
-import { extract_3d_positions, compact_by_mask } from '../../../wasm/typescript/projection';
-
-describe('compact_by_mask — stride > 1 multi-component [wasm.md G8]', () => {
-  it('[G8] stride=3 (xyz triples): only visible triples copied to output', () => {
-    // 4 points × 3 components; mask hides points 0 and 2.
-    const input = new Float32Array([
-      1,
-      2,
-      3, // point 0 (hidden)
-      4,
-      5,
-      6, // point 1 (visible)
-      7,
-      8,
-      9, // point 2 (hidden)
-      10,
-      11,
-      12, // point 3 (visible)
-    ]);
-    const mask = new Uint8Array([0, 1, 0, 1]);
-    const output = new Float32Array(6).fill(99); // 2 visible × 3 stride
-    const n = compact_by_mask(input, mask, 4, 3, output);
-    expect(n).toBe(2);
-    expect(Array.from(output.slice(0, 6))).toEqual([4, 5, 6, 10, 11, 12]);
-  });
-
-  it('[G8] stride=4 (RGBA quads): preserves component ordering, no off-by-one', () => {
-    // Catches a mutation that swapped `i * stride` and `outIdx * stride`.
-    const input = new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2]);
-    const mask = new Uint8Array([1, 0, 1]);
-    const output = new Float32Array(8);
-    const n = compact_by_mask(input, mask, 3, 4, output);
-    expect(n).toBe(2);
-    expect(output[0]).toBeCloseTo(0.1, 5);
-    expect(output[3]).toBeCloseTo(0.4, 5);
-    expect(output[4]).toBeCloseTo(0.9, 5);
-    expect(output[7]).toBeCloseTo(1.2, 5);
-  });
-
-  it('[G8] stride=1 (degenerate boundary): identical to scalar compaction', () => {
-    const input = new Float32Array([10, 20, 30, 40, 50]);
-    const mask = new Uint8Array([1, 0, 1, 1, 0]);
-    const output = new Float32Array(3);
-    const n = compact_by_mask(input, mask, 5, 1, output);
-    expect(n).toBe(3);
-    expect(Array.from(output)).toEqual([10, 30, 40]);
-  });
-});
+import { extract_3d_positions } from '../../../wasm/typescript/projection';
 
 describe('isWasmSupported — truthy non-function instantiate [wasm.md G22]', () => {
   it('[G22] WebAssembly.instantiate set to a TRUTHY non-function (e.g. {}) returns false', () => {

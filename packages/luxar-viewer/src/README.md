@@ -50,7 +50,7 @@ src/
 ├── styles/                 # CSS architecture (embed-safe library + standalone-app entries)
 ├── tests/                  # unit (vitest) and E2E (playwright) test suites
 ├── themes/                 # runtime theming via CSS custom properties (dark / light / glass)
-├── types/                  # shared TypeScript types for points, lines, gsplats, dims, zarr
+├── types/                  # shared TypeScript types for points, lines, gsplats, mesh, dims, zarr
 ├── ui/                     # panels, overlays, custom GUI framework, layers panel, monitors
 ├── utils/                  # cross-cutting helpers: log, Result, EventGroup, HDR, clamp, …
 ├── wasm/                   # Rust→WASM hot path + pure-TS fallback (spatial, decode, gsplats)
@@ -91,7 +91,7 @@ Per-subpackage one-liners (lifted from each subfolder's own README):
   custom property injection, persistent user preferences, and advanced
   glass-effect themes.
 - [`types/`](./types/README.md) — Shared TypeScript types for nD
-  points, lines, gsplats, dimension metadata, zarr-store schemas,
+  points, lines, gsplats, mesh, dimension metadata, zarr-store schemas,
   animation state, and data-loading monitor contracts.
 - [`ui/`](./ui/README.md) — Responsive UI components for nD
   visualization and control (panels, overlays, custom GUI framework).

@@ -102,7 +102,7 @@ export async function processMeshData(
   viewState: MeshViewState,
   attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
 ): Promise<StagedMeshCommit>;
-export function resetWindingNoticesForTesting(): void; // test seam
+export function resetMeshNoticesForTesting(): void; // test seam (clears BOTH mesh notices)
 ```
 
 Consumers: the per-node loaders in

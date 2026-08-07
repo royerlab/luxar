@@ -1,6 +1,5 @@
 // [data.md/O2][P10] Split from `lines-clipping.test.ts`: clipSegmentToSlice
-// concrete cases + property-based invariants + small math helpers
-// (lerp / lerpVec3 / distance3D) used by the clipper.
+// concrete cases + property-based invariants.
 //
 // The hand-written main-thread clip copy was deleted in W4. These tests
 // now run against `tests/helpers/projection-adapters`, which wraps the
@@ -10,12 +9,7 @@
 // against production code rather than a deleted duplicate.
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import {
-  clipSegmentToSlice,
-  lerp,
-  lerpVec3,
-  distance3D,
-} from '../../../helpers/projection-adapters';
+import { clipSegmentToSlice } from '../../../helpers/projection-adapters';
 
 describe('clipSegmentToSlice', () => {
   // Default 3D display setup: display dims [0, 1, 2] (XYZ)
@@ -299,44 +293,6 @@ describe('clipSegmentToSlice', () => {
 
       expect(result.visible).toBe(true);
     });
-  });
-});
-
-describe('lerp', () => {
-  it('should interpolate between values', () => {
-    expect(lerp(0, 10, 0)).toBe(0);
-    expect(lerp(0, 10, 1)).toBe(10);
-    expect(lerp(0, 10, 0.5)).toBe(5);
-    expect(lerp(0, 10, 0.25)).toBe(2.5);
-  });
-
-  it('should handle negative values', () => {
-    expect(lerp(-10, 10, 0.5)).toBe(0);
-    expect(lerp(-10, -5, 0.5)).toBe(-7.5);
-  });
-});
-
-describe('lerpVec3', () => {
-  it('should interpolate between 3D vectors', () => {
-    const a = [0, 0, 0];
-    const b = [10, 20, 30];
-
-    expect(lerpVec3(a, b, 0)).toEqual([0, 0, 0]);
-    expect(lerpVec3(a, b, 1)).toEqual([10, 20, 30]);
-    expect(lerpVec3(a, b, 0.5)).toEqual([5, 10, 15]);
-  });
-});
-
-describe('distance3D', () => {
-  it('should calculate Euclidean distance', () => {
-    expect(distance3D([0, 0, 0], [1, 0, 0])).toBe(1);
-    expect(distance3D([0, 0, 0], [3, 4, 0])).toBe(5); // 3-4-5 triangle
-    expect(distance3D([0, 0, 0], [1, 1, 1])).toBeCloseTo(Math.sqrt(3), 5);
-  });
-
-  it('should handle negative coordinates', () => {
-    expect(distance3D([-1, 0, 0], [1, 0, 0])).toBe(2);
-    expect(distance3D([0, -2, 0], [0, 2, 0])).toBe(4);
   });
 });
 

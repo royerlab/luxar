@@ -21,10 +21,10 @@
  * Uint8 inputs are scaled by 1/255; Uint16 inputs are scaled by
  * 1/65535.
  *
- * The downstream WASM color helpers (`interpolate_colors_batch`,
- * `compact_by_mask`) and the shaders that consume their output
- * interpret values as `[0, 1]`. Worker and main-thread paths share
- * this helper so the normalization can't drift between them.
+ * The downstream WASM color helpers (e.g. `interpolate_colors_batch`) and the
+ * shaders that consume their output interpret values as `[0, 1]`. Worker and
+ * main-thread paths share this helper so the normalization can't drift between
+ * them.
  */
 export function coerceColorsToFloat32(
   colors: Float32Array | Uint8Array | Uint16Array

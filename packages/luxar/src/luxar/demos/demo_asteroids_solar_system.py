@@ -92,7 +92,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, parse_int_arg
 from luxar.utils.demos import parse_demo_flags
 from luxar.utils.paths import get_demos_output_dir
 
@@ -829,22 +829,13 @@ def build_animated_scene(output_path: Path, cat: dict) -> int:
 # -----------------------------------------------------------------------------
 
 
-def _int_arg(argv: list[str], flag: str, default: int | None) -> int | None:
-    for i, arg in enumerate(argv):
-        if arg == flag and i + 1 < len(argv):
-            return int(argv[i + 1])
-        if arg.startswith(flag + "="):
-            return int(arg.split("=", 1)[1])
-    return default
-
-
 def main() -> None:
     argv = sys.argv[1:]
     flags = parse_demo_flags()
     animate = "--animate" in argv
     recompute = flags["recompute"]
     no_serve = flags["no_serve"]
-    max_asteroids = _int_arg(argv, "--max-asteroids", None)
+    max_asteroids = parse_int_arg("max-asteroids", None, argv)
 
     aprint("=" * 70)
     aprint("THE SOLAR SYSTEM — ~1.5 MILLION REAL ASTEROIDS (JPL SBDB)")

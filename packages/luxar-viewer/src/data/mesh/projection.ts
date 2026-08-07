@@ -27,8 +27,9 @@
  * fetches an unreferenced vertex, so culled vertices cost nothing to draw, and
  * the mesh is resident in full anyway. The only cost is VRAM for currently
  * invisible vertices, bounded by the mesh size, which is already the resident
- * working set. This is what lets the loader keep native-dtype colours: the
- * alternative, `compact_by_mask`, is `&[f32]`-only.
+ * working set. This is what lets the loader keep native-dtype colours: a
+ * generic `&[f32]`-only mask compaction (as the former `compact_by_mask` was)
+ * could not.
  *
  * A `displayDims` change is the one case that also rewrites `position`, because
  * `position` is `displayDims`-derived. That is re-extraction of the projection,
