@@ -218,24 +218,38 @@ def build_scene(
                 # near cells ABSORB the ones behind them and the UMAP lobes
                 # read as depth-ordered structure rather than the flat
                 # order-independent sum that additive (the default)
-                # accumulates. This is a MIXED substitutive ladder (the coarse
-                # levels are lifted gsplats), so the ray-mass unification left
-                # kappa untouched: tau = kappa * rayMass with rayMass the same
-                # peak-alpha the additive branch emits, and kappa=10 keeps
-                # occlusion building up across overlapping cells instead of
-                # saturating on any single one.
+                # accumulates. This being a MIXED substitutive ladder (the
+                # coarse levels are lifted gsplats) is WHY the ray-mass
+                # unification happened — one kappa has to serve both families —
+                # and it deleted a point's world-thickness factor
+                # (R * sqrt(pi/ln 100) = 0.0413 at this radius), multiplying
+                # tau ~24x while leaving the stored 10 in place. 6.5 is a
+                # re-tune, NOT that compensation — the spec's /24 would land
+                # near 0.4, and this stays deliberately heavy because the
+                # screening is what gives the lobes depth. The independence
+                # runs one way: the display gain never enters tau (kappa is
+                # screening strength only), but kappa still moves brightness,
+                # through S(tau). On the finest Points level, at peak falloff
+                # with the sprite at/above the 1.5 px floor, kappa=10 absorbed
+                # 0.98 per cell and its own self-screening
+                # S(tau) = (1 - e^-tau)/tau = 0.25 ate most of the emission;
+                # 6.5 gives 0.92 and S = 0.36, ~1.45x more emission per cell at
+                # peak. Coarse levels run higher tau (merged ray mass).
                 # NB volumetric implies back-to-front depth sorting
-                # (`needsDepthSort`), which this ~1M-point level now pays per
-                # camera move; `?depthSort=0` opts out.
+                # (`needsDepthSort`), which this level's ~1M drawn points now
+                # pay per camera move; `?depthSort=0` opts out.
                 # `intensity` here is the Layers panel's DISPLAY RANGE control,
                 # which is STORED as intensity/offset (intensity = 1/(max-min),
-                # offset = -min/(max-min)) — so 0.4235 is the window
-                # [0, 2.361]. On this direct-colour node the shader then
-                # applies it as a plain colour gain; it only becomes a
-                # scalar-LUT window on colormapped nodes.
+                # offset = -min/(max-min)) — so 4.52 is the window [0, 0.221].
+                # On this direct-colour node the shader then applies it as a
+                # plain colour gain; it only becomes a scalar-LUT window on
+                # colormapped nodes. The previous [0, 2.361] was BOTH an
+                # attenuation (a max above 1 cuts, here to 0.42x) and, even
+                # undone, still ~4.5x short of a readable cloud — so of the
+                # 10.7x total change only 2.36x undoes the cut (#1375).
                 opacity=0.39,
-                intensity=0.4235,
-                absorption=10.0,
+                intensity=4.52,
+                absorption=6.5,
                 blending_mode="volumetric",
                 # Expose the single cells node in the viewer's Layers panel.
                 # With the substitutive-LOD wrapper this rides onto the
