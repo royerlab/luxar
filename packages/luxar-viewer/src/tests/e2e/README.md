@@ -251,9 +251,11 @@ by `playwright.perf.config.ts`). Five preflight checks:
    from the server is therefore a preflight error rather than a later
    viewer timeout.
 4. **Generated zarr fixtures** — every name in the manifest must exist
-   under `tests/fixtures/`, and the first of them must be reachable
-   over HTTP (one probe: they all share a serving root, so they answer
-   the same question). Unlike the examples check this **throws**, and
+   under `tests/fixtures/` and be complete (`.zmetadata` present, which
+   the compiler writes last — otherwise an interrupted generator's stump
+   directory passes for a fixture), and the first of them must be
+   reachable over HTTP (one probe: they all share a serving root, so
+   they answer the same question). Unlike the examples check this **throws**, and
    it is skipped when `LUXAR_E2E_NO_FIXTURES=1` — see
    [Generated zarr fixtures are a hard dependency](#generated-zarr-fixtures-are-a-hard-dependency).
 5. **Output directories** — creates `test-results/` and

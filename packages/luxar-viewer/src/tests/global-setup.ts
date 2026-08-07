@@ -13,7 +13,10 @@ import { existsSync, readdirSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { parseGeneratedFixtureNames } from '../../tools/fixture-manifest';
+import {
+  isGeneratedFixtureComplete,
+  parseGeneratedFixtureNames,
+} from '../../tools/fixture-manifest';
 
 // Use import.meta.url for reliable path resolution in vitest global setup
 const THIS_DIR = resolve(fileURLToPath(import.meta.url), '..');
@@ -175,13 +178,18 @@ export function ensureWasmBuilt(): void {
 export async function setup(): Promise<void> {
   ensureWasmBuilt();
 
-  const missing = EXPECTED_FIXTURES.filter((name) => !existsSync(resolve(FIXTURES_DIR, name)));
+  // Incomplete counts as missing: a generator killed mid-write leaves a directory that
+  // `existsSync` accepts but no decoder can read (see `isGeneratedFixtureComplete`).
+  // Regenerating is the fix for both, so both take the same branch.
+  const missing = EXPECTED_FIXTURES.filter(
+    (name) => !isGeneratedFixtureComplete(resolve(FIXTURES_DIR, name))
+  );
   const stale = areFixturesStale(EXPECTED_FIXTURES);
 
   if (missing.length > 0 || stale) {
     console.log(
       missing.length > 0
-        ? `\n[test-setup] ${missing.length} zarr fixture(s) missing — generating...`
+        ? `\n[test-setup] ${missing.length} zarr fixture(s) missing or incomplete — generating...`
         : '\n[test-setup] zarr fixtures predate the generator/encoder sources — regenerating...'
     );
     runPythonGenerator(
@@ -191,10 +199,12 @@ export async function setup(): Promise<void> {
   }
 
   // Verify fixture generation succeeded before generating expectations from them.
-  const stillMissing = EXPECTED_FIXTURES.filter((name) => !existsSync(resolve(FIXTURES_DIR, name)));
+  const stillMissing = EXPECTED_FIXTURES.filter(
+    (name) => !isGeneratedFixtureComplete(resolve(FIXTURES_DIR, name))
+  );
   if (stillMissing.length > 0) {
     throw new Error(
-      `Fixture generation ran but these are still missing: ${stillMissing.join(', ')}`
+      `Fixture generation ran but these are still missing or incomplete: ${stillMissing.join(', ')}`
     );
   }
 

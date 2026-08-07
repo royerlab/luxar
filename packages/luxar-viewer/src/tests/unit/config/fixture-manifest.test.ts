@@ -1,10 +1,11 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   FIXTURES_REPO_RELATIVE_PATH,
+  isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../../../tools/fixture-manifest';
 
@@ -86,5 +87,44 @@ describe('parseGeneratedFixtureNames', () => {
     const names = parseGeneratedFixtureNames(generator);
     expect(names.length).toBeGreaterThan(0);
     expect(names.every((name) => name.endsWith('.zarr'))).toBe(true);
+  });
+});
+
+describe('isGeneratedFixtureComplete', () => {
+  it('rejects a fixture that does not exist at all', () => {
+    expect(isGeneratedFixtureComplete(path.join(temporaryRoot, 'absent.luxar.zarr'))).toBe(false);
+  });
+
+  it('rejects a directory the generator was interrupted while writing', () => {
+    // The whole point: `existsSync` on the directory says yes, but nothing can read it.
+    const stump = path.join(temporaryRoot, 'interrupted.luxar.zarr');
+    mkdirSync(path.join(stump, 'points'), { recursive: true });
+    writeFileSync(path.join(stump, '.zgroup'), '{"zarr_format": 2}', 'utf-8');
+
+    expect(existsSync(stump)).toBe(true);
+    expect(isGeneratedFixtureComplete(stump)).toBe(false);
+  });
+
+  it('accepts a fixture once consolidated metadata is written', () => {
+    const complete = path.join(temporaryRoot, 'complete.luxar.zarr');
+    mkdirSync(complete, { recursive: true });
+    writeFileSync(path.join(complete, '.zgroup'), '{"zarr_format": 2}', 'utf-8');
+    writeFileSync(path.join(complete, '.zmetadata'), '{"metadata": {}}', 'utf-8');
+
+    expect(isGeneratedFixtureComplete(complete)).toBe(true);
+  });
+
+  it('accepts every fixture the checked-in generator manifest declares', () => {
+    // Guards the predicate against a producer change: if the compiler ever stopped
+    // writing `.zmetadata`, both global setups would demand a regeneration that can
+    // never satisfy them.
+    const fixturesDir = path.join(PROJECT_ROOT, FIXTURES_REPO_RELATIVE_PATH);
+    const names = parseGeneratedFixtureNames(path.join(fixturesDir, 'generate_test_data.py'));
+    const present = names.filter((name) => existsSync(path.join(fixturesDir, name)));
+
+    // Skipped on a checkout where the fixtures were never generated.
+    for (const name of present) {
+      expect(isGeneratedFixtureComplete(path.join(fixturesDir, name)), name).toBe(true);
+    }
   });
 });

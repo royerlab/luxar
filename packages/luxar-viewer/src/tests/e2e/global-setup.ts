@@ -4,7 +4,8 @@
  * This file runs BEFORE any tests and verifies pre-conditions:
  * 1. Servers can be reached, and belong to THIS checkout
  * 2. Required example datasets exist (warn — many specs do not need them)
- * 3. Generated zarr fixtures exist and are served (throw — 18 specs hard-depend on them)
+ * 3. Generated zarr fixtures exist, are complete, and are served (throw — 18 specs
+ *    hard-depend on them)
  * 4. Basic environment checks
  */
 
@@ -19,6 +20,7 @@ import {
 } from '../../../tools/e2e-server-identity';
 import {
   FIXTURES_REPO_RELATIVE_PATH,
+  isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../../tools/fixture-manifest';
 
@@ -45,8 +47,10 @@ const REQUIRED_DATASETS = [
  *
  * Two distinct failure modes, checked separately because their fixes differ:
  *
- *  1. **Never generated** — a clean checkout on which vitest has never run. Every fixture is
- *     missing from disk, so every name is reported and the fix is the generator.
+ *  1. **Never generated, or half generated** — a clean checkout on which vitest has never
+ *     run, or a generator killed mid-write. Both are reported by name and both are fixed by
+ *     rerunning the generator, so they are one check; `isGeneratedFixtureComplete` is what
+ *     keeps an interrupted run's stump directory from passing as a fixture.
  *  2. **Generated but unreachable** — the data server is rooted somewhere other than the
  *     repository, so the specs' `/packages/luxar-viewer/tests/fixtures/...` URLs 404 even
  *     though the files exist. One HTTP probe settles this; probing all ~47 would add 47
@@ -77,14 +81,17 @@ async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string)
   }
   const fixturesDir = path.join(projectRoot, FIXTURES_REPO_RELATIVE_PATH);
   const expected = parseGeneratedFixtureNames(path.join(fixturesDir, 'generate_test_data.py'));
-  const missing = expected.filter((name) => !fs.existsSync(path.join(fixturesDir, name)));
+  const missing = expected.filter(
+    (name) => !isGeneratedFixtureComplete(path.join(fixturesDir, name))
+  );
 
   if (missing.length > 0) {
     const shown = missing.slice(0, 10).map((name) => `   - ${name}`);
     const elided =
       missing.length > shown.length ? `   … and ${missing.length - shown.length} more` : '';
     throw new Error(
-      `${missing.length}/${expected.length} generated zarr fixtures are missing from ${fixturesDir}:\n` +
+      `${missing.length}/${expected.length} generated zarr fixtures are missing or ` +
+        `incomplete in ${fixturesDir}:\n` +
         [...shown, elided].filter(Boolean).join('\n') +
         '\n\nGenerate them with:\n' +
         '  pnpm test:generate-fixtures\n' +

@@ -13,7 +13,8 @@
  * @module tools/fixture-manifest
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * Where the fixtures live, relative to the repository root.
@@ -67,4 +68,24 @@ export function parseGeneratedFixtureNames(generatorPath: string): string[] {
     );
   }
   return [...names].sort();
+}
+
+/**
+ * Whether a fixture directory is COMPLETE, not merely present.
+ *
+ * An existence check alone accepts a directory the generator was interrupted while
+ * writing — Ctrl-C on the last fixture leaves every other one whole, so a plain
+ * `existsSync` sweep reports the whole set ready and the spec that reads the stump dies
+ * on its own 45 s content-wait, which is exactly the opaque failure the preflight exists
+ * to replace.
+ *
+ * `.zmetadata` is the completeness signal because `LuxarZarrCompiler.finalize()` writes it
+ * last, via `zarr.consolidate_metadata()`, after every array and attribute is in place
+ * (`packages/luxar/src/luxar/cli/gsplat_ops/batch_validation.py` reads it the same way for
+ * the same reason). Cheap enough to run per fixture: one `stat` each, no HTTP.
+ *
+ * @param fixturePath Absolute path to a `*.zarr` fixture directory.
+ */
+export function isGeneratedFixtureComplete(fixturePath: string): boolean {
+  return existsSync(join(fixturePath, '.zmetadata'));
 }
