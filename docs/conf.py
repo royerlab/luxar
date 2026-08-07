@@ -2,6 +2,7 @@
 # For the full list of built-in configuration values, see:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import logging
 import os
 import sys
 
@@ -87,6 +88,36 @@ intersphinx_mapping = {
     "numpy": ("https://numpy.org/doc/stable", None),
     "zarr": ("https://zarr.readthedocs.io/en/stable", None),
 }
+
+
+# The HTML build runs with -W (see the `docs:build` script in pyproject.toml),
+# which is what makes it the internal-reference gate. But intersphinx has to
+# reach three third-party sites to load the inventories above, and Sphinx
+# reports an unreachable inventory as an UNTYPED warning — `suppress_warnings`
+# has no name to match it on. Left alone, one bad minute at
+# docs.python.org/numpy.org/readthedocs turns a required check red for reasons
+# that have nothing to do with the pull request, which is the exact failure mode
+# that keeping linkcheck opt-in is meant to avoid.
+#
+# So demote that single record to informational: it still prints, but it no
+# longer counts toward -W. Nothing else is relaxed — unresolved references
+# inside our own documentation are still warnings, and still fatal. Sphinx
+# namespaces its loggers under `sphinx.`, hence the doubled prefix; if that name
+# ever moves, the filter simply stops matching and we are back to today's
+# behavior rather than a broken build.
+class _IntersphinxOutageIsInformational(logging.Filter):
+    """Keep an unreachable intersphinx inventory out of the -W warning count."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "failed to reach any of the inventories" in str(record.msg):
+            record.levelno = logging.INFO
+            record.levelname = "INFO"
+        return True
+
+
+logging.getLogger("sphinx.sphinx.ext.intersphinx").addFilter(
+    _IntersphinxOutageIsInformational()
+)
 
 # MyST parser settings (for markdown files)
 myst_enable_extensions = [

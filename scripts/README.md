@@ -77,22 +77,22 @@ path-like references in tracked package READMEs.
 
 ```bash
 # Check all documentation (ratchet mode: fails only on NEW findings)
-hatch run python scripts/check_documentation.py
+hatch run docs:python scripts/check_documentation.py
 
 # With verbose output
-hatch run python scripts/check_documentation.py --verbose
+hatch run docs:python scripts/check_documentation.py --verbose
 
 # Machine-readable JSON report (includes a `ratchet` block)
-hatch run python scripts/check_documentation.py --json
+hatch run docs:python scripts/check_documentation.py --json
 
 # (Re)write the debt baseline from the current state, then exit 0
-hatch run python scripts/check_documentation.py --update-baseline
+hatch run docs:python scripts/check_documentation.py --update-baseline
 
 # Point at a non-default baseline file
-hatch run python scripts/check_documentation.py --baseline path/to/baseline.json
+hatch run docs:python scripts/check_documentation.py --baseline path/to/baseline.json
 
 # Legacy strict mode: ignore the baseline and fail on ANY finding
-hatch run python scripts/check_documentation.py --no-baseline
+hatch run docs:python scripts/check_documentation.py --no-baseline
 ```
 
 **What it checks:**

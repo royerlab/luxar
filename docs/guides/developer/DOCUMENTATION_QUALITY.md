@@ -36,6 +36,13 @@ Run `hatch run docs:linkcheck` when auditing external links. Any unavoidable
 exception must be a narrow, commented `linkcheck_ignore` entry in
 `docs/conf.py`; broad domain-wide or catch-all exceptions are not acceptable.
 
+The one remote dependency left inside the gate is intersphinx, which fetches
+three third-party inventories. Sphinx reports an unreachable inventory as an
+untyped warning that `suppress_warnings` cannot name, so `docs/conf.py` demotes
+that single record to informational — an outage at `docs.python.org` must not
+fail an unrelated pull request. Unresolved references inside our own
+documentation are untouched and remain fatal.
+
 ## Completeness ratchet
 
 `scripts/check_documentation.py` has the following scope.
