@@ -72,6 +72,7 @@ Scene (root)
 │   ├── Points
 │   ├── Lines
 │   ├── GSplats
+│   ├── Mesh
 │   └── Group (nested)
 └── Points
 ```
@@ -90,10 +91,10 @@ Each node can have:
 - **Points**: Point geometry with positions, colors, radii, sharpness
 - **Lines**: Line/curve geometry with vertices, widths, colors, sharpness
 - **GSplats**: Gaussian splat geometry with centers, amplitudes, cholesky factors, colors
+- **Mesh**: Triangle surfaces with faces, optional per-vertex normals (plus the required `normal_dims` companion), colors, scalars
 - **Overlay**: 2D overlay geometry for annotations and labels
 
 #### Planned Geometry Types
-- **Surfaces**: Triangulated meshes with normals and textures
 - **Volumes**: Volumetric data with transfer functions
 - **Tensors**: Higher-dimensional data with projections
 
@@ -705,7 +706,7 @@ scene.add_points("delaunay_vertices", points.astype(np.float32))
 ### Near Term
 - [x] Line geometry support
 - [x] Gaussian splat geometry support
-- [ ] Surface mesh support
+- [x] Surface mesh support
 - [ ] Custom attributes per vertex
 - [ ] Time-varying data support
 

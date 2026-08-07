@@ -12,9 +12,9 @@ The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURen
 
 - **HDR Rendering Pipeline**: 16-bit float (HalfFloat) buffers for true HDR support
 - **Mega-shader post-processing**: One fused fragment pass for bloom mix, detector noise, EOG, tone mapping, vignette, chromatic lens distortion, and sRGB encoding
-- **Custom Shader System**: Optimized shaders for Points, Lines, and GSplats
+- **Custom Shader System**: Optimized shaders for Points, Lines, GSplats, and Mesh
 - **Line Rendering**: Instanced quad geometry for thick lines with seamless joints
-- **Material Management**: Per-node materials with lifecycle tracking for Points, Lines, and GSplats
+- **Material Management**: Per-node materials with lifecycle tracking for Points, Lines, GSplats, and Mesh
 - **World-Space Point Sizing**: Physically accurate scaling
 - **Anti-Aliasing Options**: FXAA, MSAA, and SSAA support
 

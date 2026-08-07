@@ -3,7 +3,7 @@
 > Thick-line material stack — instanced-quad geometry, shifted-truncated super-Gaussian soft falloff, and continuous polyline joints — paired across the GLSL `ShaderMaterial` and TSL `NodeMaterial` backends.
 
 This folder holds the four-file material stack that renders one of Luxar's
-three first-class geometry types. Each line segment is drawn as an instanced
+four first-class geometry types. Each line segment is drawn as an instanced
 screen-space quad expanded perpendicular to its pixel-space direction; the
 fragment stage shades a shifted-truncated super-Gaussian perpendicular
 cross-section, with per-endpoint cap suppression keeping interior polyline
@@ -152,8 +152,11 @@ targets is correct under every camera. A true fix needs a screen-space
 (per-frame) suppression, a design change at odds with the once-per-commit
 worker architecture — the trade-off is discussed in #795.
 
-The other known artifact is the **outer-side miter wedge**: at a sharp
-bend the two quads leave a small uncovered wedge on the outside of the turn.
+The other known artifact is the **outer-side miter wedge**: at a bend the
+two quads leave an uncovered wedge on the outside of the turn, growing from
+nothing at the centerline to roughly `half_width × turn_angle` at the tube
+edge — negligible on a gentle curve, a quarter disc of the full half-width
+at 90°.
 Closing it needs real join geometry (extending the quads longitudinally by a
 half-width), which is tracked separately (#790).
 
@@ -275,7 +278,7 @@ at build time and emits a single-branch graph, so a mode flip in
 
 | Symbol                                                             | Used for                                                                                                                                                                                        |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clampGamma(g)`                                                    | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all six material constructors).                                                                                             |
+| `clampGamma(g)`                                                    | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
 | `CameraAwareMaterial` interface                                    | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
 | `ColormapAwareMaterial` interface                                  | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
 | `GLSL_SANITIZE_FUNCTIONS`                                          | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
@@ -286,8 +289,8 @@ at build time and emits a single-branch graph, so a mode flip in
 ## `isGammaOne` / `isNoGOG` cross-export
 
 `isGammaOne` now lives in `../_shared/uniform-helpers.ts` (shared by all
-three geometry types — Point/Line/GSplat each gate `LUXAR_GAMMA_ONE` on
-it). `material-glsl.ts` re-exports it alongside the line-local `isNoGOG`,
+four geometry types — Point/Line/GSplat/Mesh each gate `LUXAR_GAMMA_ONE`
+on it). `material-glsl.ts` re-exports it alongside the line-local `isNoGOG`,
 and `material-tsl.ts` imports both from `./material-glsl`. The intent is
 a single source of truth for the `±1e-4` epsilon — both backends decide
 to flip the `LUXAR_GAMMA_ONE` / `LUXAR_NO_GOG` defines at the same
@@ -311,3 +314,4 @@ they remain the readable reference even after the TSL path stabilises.
 - `../../material-manager.ts` — creates the per-node line materials and owns the camera-broadcast loop
 - `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage screen-space expansion math
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
+- `../../../tests/e2e/line-join-artifact.spec.ts` / `../../../tests/helpers/line-join-metrics.ts` — the joint-artifact acceptance measurement described above (#780 / #785 / #790)

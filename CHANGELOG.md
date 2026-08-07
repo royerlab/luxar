@@ -23,11 +23,11 @@ and a nine-ray indexed hub) under a pinned photometry-grade viewer config, and
 `line-join-artifact.spec.ts` measures every band on one frame, locating each by
 projecting its world AABB through the live camera. Every band is asserted to
 have a gapless flux profile — a torn tube is a defect at any turn angle — and
-the straight bands additionally at zero outliers and a flat profile; the two
-bending cases are
-**recorded** under documented ceilings — measured 2026-08-06, with the device
-pixel ratio pinned, at 4.94% dark / 3.53% bright on the curve — which drop to
-zero when the join geometry lands.
+the straight bands additionally at zero outliers and a flat profile. The two
+bending cases are **recorded** under documented ceilings rather than fixed:
+measured 2026-08-06, with the device pixel ratio pinned, at 4.94% dark /
+3.53% bright on the curve. Those ceilings drop to zero when the join geometry
+lands.
 
 Scope note: the E2E job is currently disabled in CI, so the spec runs only
 under `make test-e2e` locally. What runs on every PR is the unit suite, and it
@@ -39,6 +39,41 @@ tests: it is non-monotone in defect width (1 px and 2 px counted, ≥ 3 px
 invisible, because the defect poisons its own median), so its fraction is a
 detector, not a severity measure, and not comparable between bands of different
 turn angle.
+
+#### Four geometry types, said consistently
+
+`grep -ci mesh README.md` returned 0. The lead paragraph, the capabilities table
+and the architecture diagram all still described a three-geometry system, and
+`docs/concepts/architecture.rst` went further, listing "Triangle meshes" under
+*consider alternatives — use three.js*. All now name mesh; the alternatives entry
+is rewritten as the caveat that is actually true (Luxar renders surfaces but does
+not author them, and a mesh gets no LOD or spatial partitioning, so one very
+large surface loads whole). `README.md` gains a Mesh section under Geometry
+Types covering `add_mesh`, the no-per-element-size and `opaque`-by-default
+differences, optional normals, and the §9 exclusions; `docs/api/core.rst` gains
+the missing `luxar.core.Mesh` autoclass entry; `CITATION.cff`'s abstract names
+four types.
+
+`MESH_NODE_SPEC.md`'s §8 integration checklist still showed most of the
+TypeScript / Rust / test half unchecked, long after those phases shipped — every
+box verified against the tree and ticked, with the header saying plainly that §11
+is the delivery record and that the paths are historical. Its shader-variant
+inventory was also two counts stale.
+
+The rest is the same drift a layer down: three demo docstrings saying "two of
+Luxar's three geometry types", the Python subpackage READMEs and module
+docstrings, the viewer package READMEs, shared-helper and source comments
+(picking system, data-loading monitor, layers material), the architecture
+diagrams, the gsplats format spec, the nD-transform and intensity/gamma developer
+specs, and the visualization skill. `INTENSITY_GAMMA_DESIGN.md` needed more than
+a count: mesh does carry the GOG chain, but it deliberately omits the
+zero-contribution early discard, because an opaque surface still has to write
+depth for a fragment that ends up black.
+
+Claims that count the *instanced-quad, depth-sorted, volumetric* families rather
+than the type vocabulary were checked and deliberately left at three — mesh takes
+part in none of those, and the `?debug` synthetic-scene bench injector genuinely
+still builds only points, lines and gsplats.
 
 #### Removed — unreachable accelerated gsplat code paths
 

@@ -2,7 +2,7 @@
 
 Initial-load helpers that walk a zarr scene graph and attach the
 matching THREE.js objects to the scene. One file per first-class
-geometry kind (Points, Lines, GSplats) wraps the `loader-factory.ts`
+geometry kind (Points, Lines, GSplats, Mesh) wraps the `loader-factory.ts`
 construction + placeholder + initial-fetch + commit dance. Two more
 files cover the specialized-`Group` kinds (`load-lod-group-node.ts`
 for `kind="lod"` view-driven LOD selection, `load-partition-group-node.ts`
@@ -13,9 +13,9 @@ recursive walk.
 
 This folder is the **initial-load** path. The per-update path lives
 in the sibling `../../points/handler.ts`, `../../lines/handler.ts`,
-and `../../gsplats/handler.ts` modules. Together the two paths cover
-every way a leaf node gets data: first construction, slice updates,
-and retry-after-failure.
+`../../gsplats/handler.ts`, and `../../mesh/handler.ts` modules.
+Together the two paths cover every way a leaf node gets data: first
+construction, slice updates, and retry-after-failure.
 
 ## Files
 

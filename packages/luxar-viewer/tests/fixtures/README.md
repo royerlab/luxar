@@ -18,11 +18,19 @@ running the generators below. Both paths are explicitly listed in the repo
 | `generate_expectations.py` | Walks every `test_*.zarr` directory, decodes each numeric array with Python's `ArrayDecoder`, and writes `roundtrip_expectations.json` — flat-array shapes, SHA-256 hashes, sample values, stats, and representative first-axis range slices. The Vitest contract tests cross-check the TypeScript `ArrayDecoder` against this snapshot in pure Node (no browser, no GPU). |
 
 The fixture list is parsed at test-startup time from the `FIXTURE_NAMES`
-declaration at the top of `generate_test_data.py` — see
-`src/tests/global-setup.ts`. Adding or renaming a fixture in the Python
-script is sufficient, provided `FIXTURE_NAMES` is updated alongside the
-new `generate_*()` function; no separate TypeScript manifest needs
-updating.
+declaration at the top of `generate_test_data.py` by
+`tools/fixture-manifest.ts`, which both the Vitest global setup and the
+Playwright one read. Adding or renaming a fixture in the Python script is
+sufficient, provided `FIXTURE_NAMES` is updated alongside the new
+`generate_*()` function; no separate TypeScript manifest needs updating.
+
+The two harnesses react differently to a fixture that is missing or was
+left half-written by an interrupted run. Vitest regenerates it; the
+Playwright preflight in `src/tests/e2e/global-setup.ts` throws before any
+spec starts, naming every incomplete fixture and pointing at
+`pnpm test:generate-fixtures`. So an E2E run fails up front with an
+actionable message rather than part-way through a spec that cannot find
+its data — individual specs do not need their own existence guards.
 
 ## Generating fixtures
 

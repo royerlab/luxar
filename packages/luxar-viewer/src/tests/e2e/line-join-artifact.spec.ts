@@ -340,23 +340,6 @@ function ndcBoxToRect(box: NdcBox, frame: CanvasFrameRGBA): PixelRect {
 }
 
 test.describe('Line-joint artifact measurement (#790)', () => {
-  // Fail fast with an actionable message instead of an opaque "measured too
-  // few pixels": this fixture is Python-generated and NOT covered by the
-  // Playwright global-setup (which only checks datasets/examples).
-  test.beforeAll(async () => {
-    const { existsSync } = await import('node:fs');
-    const path = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
-    const specDir = path.dirname(fileURLToPath(import.meta.url));
-    const fixtureDir = path.resolve(specDir, '../../../tests/fixtures/test_line_joins.luxar.zarr');
-    if (!existsSync(fixtureDir)) {
-      throw new Error(
-        `Missing fixture ${fixtureDir} — run \`pnpm test:generate-fixtures\` ` +
-          'from packages/luxar-viewer/ first.'
-      );
-    }
-  });
-
   test('band metrics on a single frame', async ({ page }) => {
     // ?dpr=1 pins the pixel ratio: the local-median metric is non-monotone
     // in defect pixel width, so a different DPR does not scale the answer.
