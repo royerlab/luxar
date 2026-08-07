@@ -7,7 +7,7 @@ eddy-resolving ocean model, so the Gulf Stream, the Kuroshio, the Agulhas
 retroflection and the Antarctic Circumpolar Current emerge from the flow itself
 rather than from any hand-drawn arrows.
 
-Two of Luxar's three geometry types, at global scale:
+Two of Luxar's four geometry types, at global scale:
 
   * **Earth (Points)** — a **jittered Fibonacci sphere** sampled from the NASA
     Blue Marble *land_shallow_topo* texture. The jitter matters: a bare Fibonacci

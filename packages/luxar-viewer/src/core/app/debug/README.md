@@ -22,7 +22,7 @@ Everything here is private to `LuxarApp` — only `app.ts` imports these files
 ```
 debug/
 ├── debug-interface.ts       # installDebugInterface() — populates window.__luxarDebug
-├── debug-state.ts           # computeDebugState() — pure scene-walking snapshot
+├── debug-state.ts           # computeDebugState() + computeDrawOrder() — pure scene walks
 ├── debug-cache-helpers.ts   # buildDebugCacheHelpers() — __luxarDebug.cache.* wrappers
 └── cache-stats-view.ts      # openCacheStatsView() — pops the data-monitor Cache tab
 ```
@@ -71,18 +71,23 @@ Pure helper behind `__luxarDebug.getState()`. Exports
 `computeDebugState(ctx: DebugStateContext): DebugState`, the input-surface
 interface `DebugStateContext`, and the result-shape interfaces (`DebugState`,
 `PointCloudInfo`, `GSplatMeshInfo`, `LineMeshInfo`, `MeshNodeInfo`,
-`GPUPoolDebugStats`, `LODGroupDebugInfo`, `PartitionDebugInfo`).
+`GPUPoolDebugStats`, `LODGroupDebugInfo`, `PartitionDebugInfo`). It also exports
+`computeDrawOrder(scene): DrawOrderEntry[]` and its `DrawOrderEntry` shape, the
+helper behind `__luxarDebug.getDrawOrder()`.
 
 `computeDebugState` walks the scene graph once and tallies per-node detail for
 all four geometry types by inspecting `userData.nodeType`. For the three
 instanced-quad types — Points, Lines, GSplats — it uses
 `InstancedBufferGeometry.instanceCount` as the source of truth, because pooled
 attribute arrays are over-allocated and `drawRange` only covers the 6-index
-base quad. Points additionally fall back to `userData.visiblePointCount` and
-then attribute count when `instanceCount` is absent. Mesh is not instanced, so
-its `meshNodes[]` entries count triangles from the current `drawRange` (falling
-back to the index length, since `drawRange.count` defaults to `Infinity`) and
-read the live shader variant flags off the material's `defines`.
+base quad. Points additionally fall back to `userData.visiblePointCount`, then
+to 0, when the geometry is not instanced or its `instanceCount` is not finite.
+Mesh is not instanced, so its `meshNodes[]` entries count triangles from the
+current `drawRange` (falling back to the index length, since `drawRange.count`
+defaults to `Infinity`) — the draw range is precisely what the nD slice
+compaction narrows, so the index length alone would report the whole surface
+regardless of slice position — and read the live shader variant flags off the
+material's `defines`.
 
 The same traversal also summarises specialized-group containers by their
 `userData.kind`: `kind=lod` groups become `lodGroups[]` (level count + the
@@ -91,8 +96,8 @@ index of the visible child as `activeLevel`, `-1` when none), and
 count).
 
 For lines, the `hasColormap` flag is read structurally from
-`material.defines.USE_COLORMAP` so the result is identical whether the mesh is
-running on the GLSL `ShaderMaterial` or the TSL `NodeMaterial` backend.
+`material.defines.USE_COLORMAP` so the result is identical whether the line mesh
+is running on the GLSL `ShaderMaterial` or the TSL `NodeMaterial` backend.
 
 The returned `DebugState` carries `totalPoints`, `totalGSplats`, `totalLines`,
 `totalTriangles`, `totalElements` (their sum), the per-node arrays
@@ -154,6 +159,7 @@ Available once `installDebugInterface` runs (after `LuxarApp.init()`):
 | `sceneDimsManager`                                                                             | singleton                              | nD dimension state                                                                                                                                                                                                                                                                                    |
 | `workers.getQueueDepth()` / `workers.getStats()`                                               | `getWorkerPool()`                      | Backpressure diagnostic                                                                                                                                                                                                                                                                               |
 | `getState()`                                                                                   | `computeDebugState`                    | JSON-serialisable scene snapshot                                                                                                                                                                                                                                                                      |
+| `getDrawOrder()`                                                                               | `computeDrawOrder`                     | Per-mesh blending bucket, depthWrite, renderOrder and element count, in draw order                                                                                                                                                                                                                    |
 | `renderOnce()`                                                                                 | `animationController.startAnimation()` | Kick a frame for stable screenshots                                                                                                                                                                                                                                                                   |
 | `getSceneLoader()`                                                                             | `SceneLoaderManager.getInstance()`     | Cache inspection root                                                                                                                                                                                                                                                                                 |
 | `getPickingSystem()` / `getOverlayManager()`                                                   | port accessors                         | Live (survive reloads)                                                                                                                                                                                                                                                                                |

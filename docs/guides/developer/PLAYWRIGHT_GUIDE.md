@@ -39,12 +39,21 @@ Standard DOM testing tools don't work for WebGL apps because they can't see insi
 
 ### 1. Prerequisites
 
-Ensure you have Playwright installed (already done if you cloned the repo):
+Ensure you have Playwright installed (already done if you cloned the repo), and
+generate the zarr fixtures 18 specs read — the E2E pre-flight fails the run if
+they are missing:
 
 ```bash
 cd packages/luxar-viewer
 pnpm install
+pnpm test:generate-fixtures
 ```
+
+`pnpm test` (vitest) regenerates the fixtures automatically; Playwright
+deliberately does not, because the generator takes 1–2 minutes. `pnpm
+test:e2e:smoke` and `pnpm test:perf:e2e` set `LUXAR_E2E_NO_FIXTURES=1` because
+none of their specs reads a fixture; set it yourself for a one-off run of specs
+you know need none.
 
 ### 2. Run the Agent Driver (AI Debugging)
 
