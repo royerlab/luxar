@@ -69,7 +69,7 @@ jobs:
           # Run the documentation gate for published docs, documented source,
           # checker/baseline changes, and the build/workflow files that define
           # the gate. Empty change output is treated as relevant (fail-safe).
-          docs_pattern='(^docs/|\.md$|\.rst$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/check-typedoc-warnings(\.test)?\.mjs)$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
+          docs_pattern='(^docs/|\.md$|\.rst$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/(check-overrides\.mjs|check-typedoc-warnings(\.test)?\.mjs))$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
           if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qE "$docs_pattern"; then
             echo "-> documentation-relevant changes: RUN docs-quality"
             echo "docs_relevant=true" >> "$GITHUB_OUTPUT"

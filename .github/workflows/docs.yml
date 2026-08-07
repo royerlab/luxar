@@ -9,6 +9,7 @@ on:
       - 'packages/luxar-viewer/src/**'
       - 'packages/luxar-viewer/typedoc.json'
       - 'packages/luxar-viewer/typedoc-warnings-baseline.json'
+      - 'packages/luxar-viewer/scripts/check-overrides.mjs'
       - 'packages/luxar-viewer/scripts/check-typedoc-warnings.mjs'
       - 'packages/luxar-viewer/scripts/check-typedoc-warnings.test.mjs'
       - 'packages/luxar-viewer/package.json'
