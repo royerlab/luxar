@@ -169,16 +169,17 @@ variation invisibly, while an axial flux profile (cross-section sum along
 the tube, normalised by its own median) sees exactly the smooth
 per-joint dip that was the #780 bead chain and would score zero on the
 outlier metric. The spec asserts what already holds — zero dark and zero
-bright outliers on both straight bands, and a gapless flat flux profile
-on each — and merely records the bend cases under documented ceilings
-until join geometry lands.
+bright outliers on both straight bands, flat flux profiles on both, and a
+gapless flux profile on all five — and merely records the bend cases
+under documented ceilings until join geometry lands.
 
 Read the metrics module header before quoting one of its numbers: the
-local-median count is **non-monotone in defect width** (a wedge three or
-more pixels across poisons its own median and scores zero), so the
-gentle `curve_smooth` band measures ~5% dark while the 90°
+local-median count is non-monotone in defect width (a wedge three or more
+pixels across poisons its own median and scores zero), so the gentle
+`curve_smooth` band measures 5.07% dark while the 90°
 `zigzag_right_angle`, whose wedge is far worse but far wider, measures
-~0.12%. For wide wedges the axial flux dip is the measure that responds.
+0.13%. For wide wedges the axial flux dip is the measure that responds —
+p05 0.743 on the zigzag against 1.000 on the straight bands.
 
 ## Geometry and storage layout
 

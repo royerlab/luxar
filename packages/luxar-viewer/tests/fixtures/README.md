@@ -17,10 +17,12 @@ running the generators below. Both paths are explicitly listed in the repo
 | `generate_test_data.py` | Single source of truth for the fixture set. Each fixture corresponds to one `generate_*` function and writes a `FIXTURES_DIR / "test_*.zarr"` archive using the real Python encoder (`luxar.LuxarZarrCompiler` / `luxar.encoding.ArrayEncoder`). Compression is disabled (`compressor=None`) and `float16_allowed=False` so the output is consumable from Node.js without blosc/numcodecs WASM bindings. |
 | `generate_expectations.py` | Walks every `test_*.zarr` directory, decodes each numeric array with Python's `ArrayDecoder`, and writes `roundtrip_expectations.json` — flat-array shapes, SHA-256 hashes, sample values, stats, and representative first-axis range slices. The Vitest contract tests cross-check the TypeScript `ArrayDecoder` against this snapshot in pure Node (no browser, no GPU). |
 
-The fixture list is parsed at test-startup time from
-`generate_test_data.py` itself (`FIXTURES_DIR / "..."` lines) — see
+The fixture list is parsed at test-startup time from the `FIXTURE_NAMES`
+declaration at the top of `generate_test_data.py` — see
 `src/tests/global-setup.ts`. Adding or renaming a fixture in the Python
-script is sufficient; no separate TypeScript manifest needs updating.
+script is sufficient, provided `FIXTURE_NAMES` is updated alongside the
+new `generate_*()` function; no separate TypeScript manifest needs
+updating.
 
 ## Generating fixtures
 

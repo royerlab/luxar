@@ -21,10 +21,17 @@ The new `test_line_joins.luxar.zarr` fixture puts five joint cases in separate
 world-Y bands (120-segment smooth curve, 90° zigzag, thin and thick straights,
 and a nine-ray indexed hub) under a pinned photometry-grade viewer config, and
 `line-join-artifact.spec.ts` measures every band on one frame, locating each by
-projecting its world AABB through the live camera. Straight bands are asserted
-at zero outliers with a gapless flat flux profile; the two bending cases are
+projecting its world AABB through the live camera. Every band is asserted to
+have a gapless flux profile — a torn tube is a defect at any turn angle — and
+the straight bands additionally at zero outliers and a flat profile; the two
+bending cases are
 **recorded** under documented ceilings — measured 2026-08-06 at 5.07% dark /
 1.35% bright on the curve — which drop to zero when the join geometry lands.
+
+Scope note: the E2E job is currently disabled in CI, so the spec runs only
+under `make test-e2e` locally. What runs on every PR is the unit suite, and it
+pins the metrics themselves — their arithmetic, their degenerate-input
+behaviour and their sensitivity envelope — not the renderer.
 
 The local-median metric's sensitivity envelope is documented and pinned by unit
 tests: it is non-monotone in defect width (1 px and 2 px counted, ≥ 3 px

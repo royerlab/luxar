@@ -9,7 +9,7 @@
  *   - "the two metrics are complementary" proves the #780 bead-chain failure
  *     is invisible to the local-median metric by construction, which is why
  *     the axial flux metric exists at all.
- *   - "sensitivity envelope" PINS the local-median metric's non-monotone
+ *   - "sensitivity envelope" pins the local-median metric's non-monotone
  *     response to defect width (1 px counted, 2 px counted, >= 3 px invisible
  *     because the defect poisons its own median). A change to the default
  *     window that silently moves that envelope must fail here, because
@@ -188,18 +188,74 @@ describe('sensitivity envelope of the local-median metric', () => {
     expect(darkOutliersForNotch(2)).toBeGreaterThan(darkOutliersForNotch(1));
   });
 
-  it('is BLIND to a 3 px notch — the defect poisons its own median', () => {
+  it('is blind to a 3 px notch, because the defect poisons its own median', () => {
     // 3 of the 5 window columns are dark, so the local median goes dark,
     // the mask rejects the pixel, and the defect scores zero. This is the
     // documented non-monotonicity, pinned here on purpose.
     expect(darkOutliersForNotch(3)).toBe(0);
   });
 
-  it('is BLIND to an 8 px notch — a much worse defect, still zero', () => {
-    expect(darkOutliersForNotch(8)).toBe(0);
+  it('is blind to 5 px and 7 px notches — much worse defects, still zero', () => {
+    expect(darkOutliersForNotch(5)).toBe(0);
+    expect(darkOutliersForNotch(7)).toBe(0);
     // Stated as an ordering so the intent survives a refactor: a wider
-    // defect scoring LESS than a narrower one is the whole warning.
-    expect(darkOutliersForNotch(8)).toBeLessThan(darkOutliersForNotch(1));
+    // defect scoring less than a narrower one is the whole warning.
+    expect(darkOutliersForNotch(7)).toBeLessThan(darkOutliersForNotch(1));
+  });
+});
+
+describe('non-default option values', () => {
+  const width = 40;
+  const height = 20;
+
+  it('honours a raised outlier threshold', () => {
+    // A 30-unit dip clears the default threshold of 25 but not a raised 40.
+    const image = punchColumns(makeBand(width, height), width, 20, BAND_VALUE - 30);
+    const atDefault = measureLocalMedianOutliers(image, width, height, WHOLE(width, height));
+    const raised = measureLocalMedianOutliers(image, width, height, WHOLE(width, height), {
+      threshold: 40,
+    });
+    expect(atDefault.darkOutliers).toBeGreaterThan(0);
+    expect(raised.darkOutliers).toBe(0);
+    expect(raised.insidePixels).toBe(atDefault.insidePixels);
+  });
+
+  it('honours a raised background cutoff', () => {
+    // A dim band at luminance 20 is "inside" at the default cutoff of 12
+    // and background at a cutoff of 50.
+    const image = makeBand(width, height, () => 20);
+    const atDefault = measureLocalMedianOutliers(image, width, height, WHOLE(width, height));
+    const raised = measureLocalMedianOutliers(image, width, height, WHOLE(width, height), {
+      backgroundCutoff: 50,
+    });
+    expect(atDefault.insidePixels).toBe(width * BAND_HEIGHT);
+    expect(raised.insidePixels).toBe(0);
+  });
+
+  it('honours a raised background cutoff in the flux profile too', () => {
+    const image = makeBand(width, height, () => 20);
+    expect(measureAxialFlux(image, width, height, WHOLE(width, height), 'x').samples).toBe(width);
+    expect(
+      measureAxialFlux(image, width, height, WHOLE(width, height), 'x', {
+        backgroundCutoff: 50,
+      }).samples
+    ).toBe(0);
+  });
+
+  it('rejects a negative background cutoff in both metrics', () => {
+    // A negative cutoff admits every background pixel as "inside" and
+    // inflates the counts past any floor a caller could set.
+    const image = makeBand(width, height);
+    expect(() =>
+      measureLocalMedianOutliers(image, width, height, WHOLE(width, height), {
+        backgroundCutoff: -1,
+      })
+    ).toThrow(/backgroundCutoff must be >= 0/);
+    expect(() =>
+      measureAxialFlux(image, width, height, WHOLE(width, height), 'x', {
+        backgroundCutoff: -1,
+      })
+    ).toThrow(/backgroundCutoff must be >= 0/);
   });
 });
 
@@ -261,7 +317,7 @@ describe('measureAxialFlux', () => {
   it('does not report a tube with every other 8 px run missing as clean', () => {
     // The exact regression this behaviour exists for: half the line gone.
     // Skipping interior dropouts closed the profile back up into
-    // samples=328, p05=p50=p95=min=1 with zero median outliers, so every
+    // samples=328, p05=p95=min=1 with zero median outliers, so every
     // assertion an acceptance spec can make passed on a broken renderer.
     const width = 128;
     const height = 20;

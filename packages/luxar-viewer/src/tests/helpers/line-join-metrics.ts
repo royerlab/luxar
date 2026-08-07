@@ -28,46 +28,54 @@
  *    failure — scores **zero** local-median outliers while the flux
  *    profile's p05 collapses from 1.0 toward 0.7.
  *
- * A regression in either direction therefore has to move at least one of
- * the two numbers.
+ * Between them they cover narrow and broad defects, but note what neither
+ * sees: both are relative measures, the first against a local median and the
+ * second against the profile's own median, so a uniform dimming of the whole
+ * tube moves neither number. Absolute brightness is not in scope here.
  *
- * ## Sensitivity envelope of the local-median metric (READ THIS)
+ * ## Sensitivity envelope of the local-median metric
  *
  * A local median is a small-scale detector and nothing else. Because the
  * defect sits inside the very window the median is taken over, a wide defect
  * poisons its own reference: once a dark run is at least `(window + 1) / 2`
  * pixels across, the local median goes dark too, the pixel then fails the
- * background mask, and the defect scores **zero**. Measured on a 21-pixel
- * band at the default `window = 5`:
+ * background mask, and the defect scores zero. Measured on a 21-pixel band
+ * at the default `window = 5`, and pinned by the unit tests so a change to
+ * `window` that silently moves the envelope fails:
  *
- * | Notch width | Dark outliers |
- * | ----------- | ------------- |
- * | 1 px        | 19            |
- * | 2 px        | 34            |
- * | 3 px        | 0             |
- * | 5 px        | 0             |
- * | 7 px        | 0             |
+ * - 1 px notch: 19 dark outliers.
+ * - 2 px notch: 34.
+ * - 3 px notch: 0.
+ * - 5 px notch: 0.
+ * - 7 px notch: 0.
  *
- * So `darkFraction` is a **detector, not a severity measure**, it is
- * non-monotone in defect width, and it is **not comparable between bands of
- * different turn angle**. The live #790 baseline shows this plainly: the
- * GENTLE `curve_smooth` band (~10.5° turns, ~1.3 px wedge chord) scores
- * ~5.1% while the 90° `zigzag_right_angle` band — whose wedge is a 7.2
- * px-radius quarter disc, a far worse defect — scores ~0.12%, because its
- * wedge is too wide for the window to see. For wide defects read
- * {@link measureAxialFlux} instead: on that same frame the zigzag's flux p05
- * is 0.714 against 1.000 on the straight bands. The unit tests pin this
- * envelope so a change to `window` that silently alters sensitivity fails.
+ * So `darkFraction` is a detector rather than a severity measure, it is
+ * non-monotone in defect width, and it is not comparable between bands of
+ * different turn angle. The live #790 baseline shows this plainly: the gentle
+ * `curve_smooth` band (~10.5° turns) scores ~5.07% while the 90°
+ * `zigzag_right_angle` band scores ~0.13%, even though the zigzag's wedge is
+ * far the worse defect.
+ *
+ * The reason is geometric. The uncovered wedge at a turn of angle θ is a
+ * sector of the tube's half-width `h`, so the gap it leaves is not one width
+ * — it grows from zero at the centreline to roughly `h·θ` at the tube edge,
+ * and the metric counts only the part of it that is still under ~3 px across.
+ * At the fixture's framing `h` is 28.8 px, so the curve's 0.183 rad turn
+ * leaves a ~5.3 px chord whose inner ~57% is countable, while the zigzag's
+ * 1.571 rad turn passes 3 px only ~2 px out from the centreline and is
+ * essentially invisible here. For wedges that wide, read
+ * {@link measureAxialFlux}: on that same frame the zigzag's flux p05 is 0.743
+ * against 1.000 on the straight bands.
  *
  * ## Display encoding
  *
- * Both metrics operate on DISPLAY-encoded (sRGB) luminance, because that is
- * what a composited screenshot carries. The encoding is monotone, so a
- * defect always registers — but it is also compressive near white: around a
- * typical mid-bright tube value a small relative deviation measures about
- * **2.3x smaller** than it is in linear light (a 4.0% linear ripple reads as
- * ~1.76%). Any future change to the absolute `threshold` must be chosen with
- * that factor in mind.
+ * Both metrics operate on display-encoded (sRGB) luminance, because that is
+ * what a composited screenshot carries. The encoding is monotone, so a defect
+ * always registers — but it is also compressive near white: around a typical
+ * mid-bright tube value a small relative deviation measures about 2.3x
+ * smaller than it is in linear light (a 4.0% linear ripple reads as ~1.76%).
+ * Any future change to the absolute `threshold` must be chosen with that
+ * factor in mind.
  *
  * ## Contract
  *
@@ -120,7 +128,7 @@ export interface LocalMedianOptions {
    * "inside". The test is applied to the pixel's LOCAL MEDIAN, not to the
    * pixel itself: a #790 wedge tick is background-dark on its own yet sits
    * in a bright neighbourhood, and it is precisely the pixel that must be
-   * counted. Default `12`.
+   * counted. Must be `>= 0`. Default `12`.
    */
   backgroundCutoff?: number;
 }
@@ -147,7 +155,7 @@ export interface LocalMedianOutlierResult {
 export interface AxialFluxOptions {
   /**
    * Luminance below which a pixel is treated as background and left out of
-   * the cross-section sum. Default `12`.
+   * the cross-section sum. Must be `>= 0`. Default `12`.
    */
   backgroundCutoff?: number;
 }
@@ -175,12 +183,6 @@ export interface AxialFluxResult {
   profile: number[];
   /** 5th percentile of {@link profile} — the joint-dip detector. */
   p05: number;
-  /**
-   * 50th percentile of {@link profile}. Exactly `1` whenever the profile is
-   * non-empty, because the normaliser uses the same rank — so it carries no
-   * information and asserting on it would be vacuous.
-   */
-  p50: number;
   /** 95th percentile of {@link profile}. */
   p95: number;
   /** Smallest value of {@link profile}. */
@@ -242,12 +244,7 @@ function clipRect(region: PixelRect, width: number, height: number): PixelRect |
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
-/**
- * Nearest-rank percentile of an ascending-sorted array.
- *
- * Using the same rank rule for the normalising median and for `p50` is what
- * makes {@link AxialFluxResult.p50} exactly `1`.
- */
+/** Nearest-rank percentile of an ascending-sorted array. */
 function percentileSorted(sorted: readonly number[], fraction: number): number {
   const n = sorted.length;
   if (n === 0) return 0;
@@ -316,8 +313,8 @@ function neighbourhoodMedian(
  * @returns Counts, fractions and worst deviations. `insidePixels` is `0` for
  *   an empty, out-of-image or all-background region — assert on it rather
  *   than reading a zero outlier count as "clean".
- * @throws If the image size is invalid, the buffer is too short, or `window`
- *   is not an odd integer `>= 3`.
+ * @throws If the image size is invalid, the buffer is too short, `window` is
+ *   not an odd integer `>= 3`, or a threshold/cutoff is negative.
  */
 export function measureLocalMedianOutliers(
   luminance: LuminanceArray,
@@ -348,6 +345,11 @@ export function measureLocalMedianOutliers(
   }
   if (!(threshold >= 0)) {
     throw new Error(`measureLocalMedianOutliers: threshold must be >= 0, got ${threshold}`);
+  }
+  // A negative cutoff would admit every background pixel as "inside" and
+  // inflate `insidePixels` past any floor a caller could set.
+  if (!(cutoff >= 0)) {
+    throw new Error(`measureLocalMedianOutliers: backgroundCutoff must be >= 0, got ${cutoff}`);
   }
 
   const empty: LocalMedianOutlierResult = {
@@ -419,7 +421,7 @@ export function measureLocalMedianOutliers(
  * counted in {@link AxialFluxResult.emptySamples}. Skipping interior holes
  * instead (the obvious implementation) is catastrophic: a tube missing every
  * other 8-pixel run — half the line gone — closes back up into a perfectly
- * flat profile of `p05 = p50 = p95 = 1` and zero median outliers, so every
+ * flat profile of `p05 = p95 = 1` and zero median outliers, so every
  * assertion an acceptance spec could make would pass on a renderer that lost
  * half the geometry.
  *
@@ -436,7 +438,8 @@ export function measureLocalMedianOutliers(
  *   loudly instead of reading as clean. The same holds when more than half
  *   the profile is empty, which leaves the median at zero and the profile
  *   unnormalisable.
- * @throws If the image size is invalid or the buffer is too short.
+ * @throws If the image size is invalid, the buffer is too short, or
+ *   `backgroundCutoff` is negative.
  */
 export function measureAxialFlux(
   luminance: LuminanceArray,
@@ -457,6 +460,11 @@ export function measureAxialFlux(
         `${width * height} needed for ${width}x${height}`
     );
   }
+  // See the twin guard in measureLocalMedianOutliers: a negative cutoff
+  // silently folds the whole background into the cross-section sums.
+  if (!(cutoff >= 0)) {
+    throw new Error(`measureAxialFlux: backgroundCutoff must be >= 0, got ${cutoff}`);
+  }
 
   const empty: AxialFluxResult = {
     insidePixels: 0,
@@ -465,7 +473,6 @@ export function measureAxialFlux(
     medianFlux: 0,
     profile: [],
     p05: 0,
-    p50: 0,
     p95: 0,
     min: 0,
   };
@@ -490,7 +497,7 @@ export function measureAxialFlux(
         count++;
       }
     }
-    raw.push(count > 0 ? sum : 0);
+    raw.push(sum);
     insidePixels += count;
   }
 
@@ -524,7 +531,6 @@ export function measureAxialFlux(
     medianFlux,
     profile,
     p05: percentileSorted(sortedProfile, 0.05),
-    p50: percentileSorted(sortedProfile, 0.5),
     p95: percentileSorted(sortedProfile, 0.95),
     min: sortedProfile[0],
   };

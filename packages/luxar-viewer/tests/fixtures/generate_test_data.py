@@ -1730,28 +1730,32 @@ def generate_line_joins_test() -> None:
     ``curve_smooth``
         120-segment sinusoidal polyline, gentle (~10 degree) turns. The
         headline #790 case: measured 2026-08-06 in headless Chromium at
-        ~5.1% dark and ~1.3% bright outliers.
+        5.07% dark and 1.35% bright outliers.
     ``zigzag_right_angle``
         16-segment 90-degree zigzag; sharp bends, still inside a miter
-        limit. Its wedge is far WORSE than the curve's but far WIDER, so
-        the local-median metric barely registers it (~0.12% dark) — the
-        axial flux dip (p05 ~0.71 against 1.00 on the straight bands) is
-        the measure that sees this band. See the sensitivity envelope in
-        ``src/tests/helpers/line-join-metrics.ts``.
+        limit. Its wedge is far worse than the curve's but also far wider,
+        and the local-median metric only counts the part of a wedge that is
+        still a couple of pixels across, so it barely registers this band
+        (0.13% dark). The axial flux dip (p05 0.743 against 1.000 on the
+        straight bands) is the measure that sees it. See the sensitivity
+        envelope in ``src/tests/helpers/line-join-metrics.ts``.
     ``straight_thin``
         Straight polyline with free ends at the base width. Segment length
-        0.5 against width 0.15 gives ``L/w = 3.3``, so a #780 per-joint
-        notch (axial length ``2 x width``) would sit BETWEEN joints and
-        show as a real ripple in the flux profile.
+        0.5 against width 0.15 gives ``L/w = 3.3``, comfortably clear of the
+        ``L/w >= 2`` a #780 per-joint notch (axial length ``2 x width``)
+        needs to sit between joints rather than merge with its neighbours.
+        This is the more sensitive of the two straight guards.
     ``straight_thick``
-        Straight polyline at 4x the base width, 20 segments. ``L/w = 1.67``
-        deliberately: the notch must be shorter than the segment spacing or
-        consecutive notches overlap into near-uniform dimming, which
-        normalising the flux profile by its own median then removes. A
-        densely subdivided thick band (the first draft used 199 segments,
-        ``L/w = 0.17``) DISABLES this guard rather than strengthening it —
-        simulated through the real metric a fully #780-regressed dense band
-        still scores p05 = 0.98.
+        Straight polyline at 4x the base width, 20 segments, ``L/w = 1.67``.
+        That is below the ``L/w >= 2`` separation criterion, so a #780
+        regression here would partly merge into a broad ripple rather than
+        resolve into discrete notches — the guard still fires (a full
+        regression models to p05 ~0.735 against the 0.9 gate) but it is the
+        weaker of the pair. What must NOT happen is subdividing it further:
+        the first draft used 199 segments (``L/w = 0.17``), where the
+        notches merge into near-uniform dimming that normalising the flux
+        profile by its own median removes entirely — a fully #780-regressed
+        dense band still scores p05 = 0.98, i.e. the guard is disabled.
     ``hub_9ray``
         Nine rays meeting at ONE shared hub vertex (a degree-9 branch
         point). Authored with ``line_type="indexed"`` because joints are
@@ -1766,18 +1770,32 @@ def generate_line_joins_test() -> None:
     pinned) for the same reason as ``test_lift_parity``: without it the spec
     would measure through ACES plus bloom plus jitter.
 
+    On-screen width is four times what the authored width suggests, which
+    matters because the metric's sensitivity depends on pixel sizes. The
+    shader computes ``rawPixelWidth = width * uPerspectiveLineScale / dist``
+    with ``uPerspectiveLineScale = res.y / tan(fov / 2)``, and expands the
+    quad by ``rawPixelWidth`` on EACH side, so the rendered full width is
+    ``4 * authored_width * px_per_world_unit``. At the pinned framing below
+    that is 36 px per world unit, giving 21.6 px for ``straight_thin``,
+    86.4 px for ``straight_thick`` and 57.6 px (28.8 px half-width) for the
+    two bend bands. Measured cross-sections agree: 21.95 and 82.0 px, the
+    latter a few percent under nominal where the perpendicular falloff drops
+    below the background cutoff.
+
     Band world-space AABBs (z = 0) — the measurement rectangles the E2E spec
     projects through the live camera. All four horizontal bands span
     ``x in [-10, 10]`` and their AABB X range is inset exactly 1.0 unit from
     those ends, so the free-end cap ramps stay OUT of the measured region;
-    ``hub_9ray`` is measured whole. Keep this table in sync with
+    ``hub_9ray`` is measured whole. ``curve_smooth`` gets a taller box than
+    its siblings because its 28.8 px half-width plus its 0.7-unit amplitude
+    would otherwise reach the box edge exactly. Keep this table in sync with
     ``LINE_JOIN_BANDS`` in ``src/tests/e2e/line-join-artifact.spec.ts``, and
     the segment counts in sync with ``EXPECTED_LINE_SEGMENTS`` there.
 
     ==================== ============== ==============
     node                 x range        y range
     ==================== ============== ==============
-    curve_smooth         [-9.0,   9.0]  [ 6.5,   9.5]
+    curve_smooth         [-9.0,   9.0]  [ 6.3,   9.7]
     zigzag_right_angle   [-9.0,   9.0]  [ 2.5,   5.5]
     straight_thin        [-9.0,   9.0]  [-1.5,   1.5]
     straight_thick       [-9.0,   9.0]  [-5.5,  -2.5]
@@ -1788,7 +1806,8 @@ def generate_line_joins_test() -> None:
         output = FIXTURES_DIR / "test_line_joins.luxar.zarr"
 
         # Geometry spans x in [-10, 10]; band centers are 4 units apart so
-        # the AABBs above leave a 1-unit gutter between neighbours.
+        # the AABBs above leave a gutter of at least 0.6 units between
+        # neighbours (1.0 everywhere except below curve_smooth's taller box).
         x_min, x_max = -10.0, 10.0
         base_width = 0.15
         thick_width = 4.0 * base_width
@@ -1822,10 +1841,10 @@ def generate_line_joins_test() -> None:
         zigzag = np.column_stack([zig_x, zig_y, zig_z]).astype(np.float32)
 
         # straight_thin / straight_thick: collinear chains with free ends.
-        # Segment length must stay COMPARABLE TO OR LONGER THAN the width
-        # (L/w = 3.3 and 1.67 here) — see the docstring: over-subdivision
-        # merges the #780 notches into uniform dimming and the flux
-        # normalisation then cancels it.
+        # A #780 notch is 2 x width long, so segment length wants L/w >= 2
+        # for notches to stay separated (3.3 here for thin, 1.67 for thick).
+        # See the docstring: over-subdivision merges the notches into uniform
+        # dimming and the flux normalisation then cancels it entirely.
         thin_x = np.linspace(x_min, x_max, 41, dtype=np.float32)
         thin = np.column_stack(
             [thin_x, np.zeros_like(thin_x), np.zeros_like(thin_x)]
@@ -1864,8 +1883,9 @@ def generate_line_joins_test() -> None:
         # test_lift_parity): identity tone response and every non-linear or
         # stochastic post-effect off, camera pinned face-on. fov=47 at
         # distance 23 puts +-10 world units of Y across the viewport
-        # height — about 36 px per world unit at 720p, so the thin band is
-        # ~5 px wide and the thick one ~22 px.
+        # height — 36 px per world unit at 720p. See the docstring for the
+        # 4x factor between authored width and rendered pixel width: the
+        # thin band renders 21.6 px across and the thick one 86.4 px.
         viewer_config = ViewerConfig(
             camera=CameraConfig(
                 position=(0.0, 0.0, 23.0),
