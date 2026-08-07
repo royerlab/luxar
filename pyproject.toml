@@ -300,6 +300,7 @@ format = [
 ]
 lint = [
     "ruff check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
+    "check-complexity",
     "mypy packages/luxar/src/luxar"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
@@ -319,6 +320,9 @@ check-data-manifest = "python scripts/gen_data_manifest.py --check"
 # Audit built demo scenes when present; a checkout without generated scenes is
 # a read-only no-op. The underlying gate is unit-tested in the Python suite.
 check-demo-ladders = "python scripts/check_demo_ladders.py"
+# Ratchet ruff's C901 against scripts/complexity_baseline.json: existing debt is
+# tolerated, a newly over-complex (or newly worse) function fails.
+check-complexity = "python scripts/check_complexity.py {args}"
 check = [
     "format",
     "lint",
@@ -667,5 +671,12 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["luxar"]
 
+# C901 (the rule this limit feeds) is intentionally NOT in `[tool.ruff.lint]
+# select`: ruff has no baseline mechanism, so a bare `select` entry would fail
+# on all 227 pre-existing violations, and the only ruff-native suppression
+# (`per-file-ignores`) is file-granular and would blind the guard to new
+# offenders in those files. Instead `scripts/check_complexity.py` selects C901
+# explicitly and ratchets it against `scripts/complexity_baseline.json`, so THIS
+# value is what the gate enforces for new code. Run `hatch run check-complexity`.
 [tool.ruff.lint.mccabe]
 max-complexity = 10

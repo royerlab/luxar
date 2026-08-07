@@ -1,0 +1,686 @@
+{
+  "_comment": "Cyclomatic-complexity baseline for scripts/check_complexity.py. Regenerate with: hatch run check-complexity --update-baseline. Each key is '<repo-relative-path>::<function-name>' and maps to the descending-sorted complexities of the over-limit functions with that name in that file (a list, because one file may hold several same-named functions). A function not listed here, or one whose complexity exceeds its baselined value, fails the check.",
+  "functions": {
+    "packages/luxar/src/luxar/cli/demo_commands.py::cache_clear": [
+      30
+    ],
+    "packages/luxar/src/luxar/cli/demo_commands.py::demo_deps": [
+      20
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch_merge_command.py::run_batch_merge_cmd": [
+      11
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch_planning.py::_assemble_fit_args": [
+      17
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch_planning.py::plan_batch": [
+      19
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch_planning.py::resolve_merge_recipe_args": [
+      16
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch_recipe_args.py::build_merge_recipe_params": [
+      14
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch_status_validate_cancel.py::run_batch_validate_cmd": [
+      24
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch_submit_slurm.py::submit_batch_jobs": [
+      19
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/benchmark.py::benchmark_gpu": [
+      21
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/fitting_calibrate.py::run_calibrate_command": [
+      32
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/fitting_fit.py::run_fit_volume": [
+      16
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/fitting_recipe_args.py::build_fit_recipe_params": [
+      12
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::compare_quality": [
+      14
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::info_dataset": [
+      20
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::quick_view": [
+      11
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/planner.py::run_content_fit": [
+      30
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/recipe_shared.py::detect_store_encoding": [
+      13
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/recipe_shared.py::parse_lod_breakpoints": [
+      13
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/scene_commands.py::convert_to_scene": [
+      17
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/scene_commands.py::reencode_command": [
+      11
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_additive.py::run_additive_dataset": [
+      14
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_cull.py::run_cull_dataset": [
+      14
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_filter_slice.py::run_filter_dataset": [
+      11
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_merge.py::run_merge_datasets": [
+      11
+    ],
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_transform.py::run_transform_dataset": [
+      47
+    ],
+    "packages/luxar/src/luxar/cli/info_command.py::_print_tree": [
+      17
+    ],
+    "packages/luxar/src/luxar/cli/info_command.py::info": [
+      23
+    ],
+    "packages/luxar/src/luxar/cli/info_command.py::register_info_command": [
+      24
+    ],
+    "packages/luxar/src/luxar/cli/lod.py::lod_recipe": [
+      44
+    ],
+    "packages/luxar/src/luxar/cli/main.py::_run_native_export": [
+      15
+    ],
+    "packages/luxar/src/luxar/cli/main.py::serve": [
+      23
+    ],
+    "packages/luxar/src/luxar/cli/main.py::viewer": [
+      12
+    ],
+    "packages/luxar/src/luxar/cli/serving.py::get_response": [
+      14
+    ],
+    "packages/luxar/src/luxar/cli/utils.py::format_tree_node": [
+      16
+    ],
+    "packages/luxar/src/luxar/cli/utils.py::get_zarr_info": [
+      13
+    ],
+    "packages/luxar/src/luxar/core/dimensions.py::__post_init__": [
+      17
+    ],
+    "packages/luxar/src/luxar/core/group/adders/gsplats.py::add_gsplats_impl": [
+      20
+    ],
+    "packages/luxar/src/luxar/core/group/adders/lines.py::add_lines_impl": [
+      28
+    ],
+    "packages/luxar/src/luxar/core/group/adders/points.py::add_points_impl": [
+      28
+    ],
+    "packages/luxar/src/luxar/core/group/gsplats_pipeline/lod_dispatch.py::add_gsplats_multi_lod_impl": [
+      13
+    ],
+    "packages/luxar/src/luxar/core/group/lod/group.py::_validate_coarsen_dims_spec": [
+      11
+    ],
+    "packages/luxar/src/luxar/core/group/lod/group.py::resolve_additive_axis": [
+      13
+    ],
+    "packages/luxar/src/luxar/core/group/lod/group.py::resolve_coarsen_dims": [
+      13
+    ],
+    "packages/luxar/src/luxar/core/group/lod/group.py::resolve_substitutive_axis": [
+      15
+    ],
+    "packages/luxar/src/luxar/core/group/lod/gsplats.py::resolve_additive_axis_gsplats": [
+      12
+    ],
+    "packages/luxar/src/luxar/core/group/lod/gsplats.py::resolve_substitutive_axis_gsplats": [
+      12
+    ],
+    "packages/luxar/src/luxar/core/group/lod/lines.py::compute_additive_order_lines": [
+      11
+    ],
+    "packages/luxar/src/luxar/core/group/lod/lines.py::identify_polylines": [
+      12
+    ],
+    "packages/luxar/src/luxar/core/group/lod/lines.py::make_additive_lod_lines": [
+      19
+    ],
+    "packages/luxar/src/luxar/core/group/lod/points.py::make_additive_lod_points": [
+      11
+    ],
+    "packages/luxar/src/luxar/core/group/lod/poisson_disk.py::_select_blue_noise_subset": [
+      18
+    ],
+    "packages/luxar/src/luxar/core/group/partition.py::_bsp_tree_sah": [
+      12
+    ],
+    "packages/luxar/src/luxar/core/group/partition.py::median_bsp_polylines": [
+      11
+    ],
+    "packages/luxar/src/luxar/core/group/partition.py::midpoint_bsp_polylines": [
+      11
+    ],
+    "packages/luxar/src/luxar/core/node/node.py::__init__": [
+      17
+    ],
+    "packages/luxar/src/luxar/core/scene/dim_order.py::apply_dim_order": [
+      11
+    ],
+    "packages/luxar/src/luxar/core/viewer_config.py::__post_init__": [
+      12
+    ],
+    "packages/luxar/src/luxar/core/viewer_config.py::to_dict": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py::generate_paper_landscape": [
+      16
+    ],
+    "packages/luxar/src/luxar/demos/demo_arxiv_paper_embeddings.py::generate_paper_landscape": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_arxiv_paper_embeddings.py::main": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_atp_synthase.py::main": [
+      12
+    ],
+    "packages/luxar/src/luxar/demos/demo_atp_synthase.py::parse_pdb_atoms": [
+      12
+    ],
+    "packages/luxar/src/luxar/demos/demo_biodiversity_planetary_scale.py::_pool_gbif": [
+      21
+    ],
+    "packages/luxar/src/luxar/demos/demo_biodiversity_planetary_scale.py::_read_movebank_csv": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_caida_as_topology.py::build_edge_lines": [
+      12
+    ],
+    "packages/luxar/src/luxar/demos/demo_cytoself_protein_landscape.py::_download_from_google_drive": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/demo_cytoself_protein_landscape.py::create_cytoself_scene": [
+      12
+    ],
+    "packages/luxar/src/luxar/demos/demo_cytoself_protein_landscape.py::load_cytoself_images": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/demo_earthquakes_3d.py::is_land": [
+      28
+    ],
+    "packages/luxar/src/luxar/demos/demo_esm3_protein_landscape.py::_compute_esm3_embeddings": [
+      19
+    ],
+    "packages/luxar/src/luxar/demos/demo_esm3_protein_landscape.py::generate_esm3_landscape": [
+      12
+    ],
+    "packages/luxar/src/luxar/demos/demo_esm3_protein_landscape.py::main": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_2d_cmu1_pathology.py::load_cmu1_image": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py::_download_from_google_drive": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_3d_acto3d_heart.py::load_acto3d_heart_data": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_3d_ct_totalsegmentator.py::tissue_group": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_3d_opencell_map4.py::main": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py::add_fading_trail_tracks": [
+      17
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py::load_tracks_from_csv": [
+      21
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py::load_tracks_from_nuclei_files": [
+      16
+    ],
+    "packages/luxar/src/luxar/demos/demo_gsplats_4d_nexrad_supercell.py::main": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_huri_interactome.py::_download_corum_zip_member": [
+      15
+    ],
+    "packages/luxar/src/luxar/demos/demo_huri_interactome.py::load_corum_lookup": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/demo_lsystem_forest.py::interpret": [
+      15
+    ],
+    "packages/luxar/src/luxar/demos/demo_lsystem_forest.py::poisson_disk_sampling": [
+      13
+    ],
+    "packages/luxar/src/luxar/demos/demo_nuclear_pore_complex.py::main": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/demo_nuclear_pore_complex.py::parse_pdb_atoms": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_particle_collision_animated.py::generate_animated_detector_scene": [
+      24
+    ],
+    "packages/luxar/src/luxar/demos/demo_particle_collision_animated.py::generate_detector_geometry": [
+      13
+    ],
+    "packages/luxar/src/luxar/demos/demo_ppi_flow_field.py::apply_overrides": [
+      14
+    ],
+    "packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py::enriched_cluster_names": [
+      12
+    ],
+    "packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py::generate_protein_landscape": [
+      11
+    ],
+    "packages/luxar/src/luxar/demos/demo_spotify_tracks.py::_classify_genre": [
+      13
+    ],
+    "packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py::download_storm_localizations": [
+      19
+    ],
+    "packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py::parse_storm_localizations": [
+      22
+    ],
+    "packages/luxar/src/luxar/demos/demo_tabula_sapiens.py::_load_via_h5ad": [
+      13
+    ],
+    "packages/luxar/src/luxar/demos/demo_tabula_sapiens.py::_load_via_h5ad_download": [
+      19
+    ],
+    "packages/luxar/src/luxar/demos/registry.py::validate_meta": [
+      20
+    ],
+    "packages/luxar/src/luxar/encoding/_encoders/base.py::_validate_input": [
+      18
+    ],
+    "packages/luxar/src/luxar/encoding/_encoders/cholesky.py::encode_cholesky_split": [
+      15
+    ],
+    "packages/luxar/src/luxar/encoding/_encoders/structural.py::_lut_plan": [
+      13
+    ],
+    "packages/luxar/src/luxar/encoding/decoder.py::_encoding_metadata": [
+      14
+    ],
+    "packages/luxar/src/luxar/encoding/decoder.py::decode": [
+      16
+    ],
+    "packages/luxar/src/luxar/encoding/encoder.py::encode": [
+      16
+    ],
+    "packages/luxar/src/luxar/gsplats/_data/composition.py::concatenate": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/_data/composition.py::embed_dimension": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/_data/composition.py::merge_with_channel_colors": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/_data/culling.py::cull": [
+      17
+    ],
+    "packages/luxar/src/luxar/gsplats/_data/filtering.py::filter_by": [
+      35
+    ],
+    "packages/luxar/src/luxar/gsplats/_data/transforms.py::transform": [
+      13
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/env_capture.py::detect_preemptible_gpu_partition": [
+      14
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/local_runner.py::_finalize_output": [
+      13
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/local_runner.py::run_batch_local": [
+      18
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_build_part_for_tile": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_merge_flat": [
+      24
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/merge_orchestrator.py::_merge_partition": [
+      15
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/slurm_gen.py::generate_fit_sbatch": [
+      25
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/status.py::check_batch_status": [
+      18
+    ],
+    "packages/luxar/src/luxar/gsplats/batch/time_estimate.py::_interpolate_train_ms": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/calibration/curve_analysis.py::build_k_grid": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/calibration/curve_analysis.py::find_k_star": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/calibration/driver.py::calibrate": [
+      22
+    ],
+    "packages/luxar/src/luxar/gsplats/culling.py::cull_by_contribution": [
+      16
+    ],
+    "packages/luxar/src/luxar/gsplats/fit_progressive_gsplats.py::fit_progressive_gaussian_splats": [
+      39
+    ],
+    "packages/luxar/src/luxar/gsplats/fit_tiled_gsplats.py::fit_tile": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/fit_tiled_parallel.py::build_worker_cmd": [
+      21
+    ],
+    "packages/luxar/src/luxar/gsplats/fit_tiled_parallel.py::fit_tiled_parallel": [
+      18
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/dynamic_ops/operations.py::apply_dynamic_operations": [
+      16
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/dynamic_ops/peak_finding.py::_find_residual_peaks_tiled": [
+      17
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/initialization.py::initialize_optimization": [
+      36
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/optimization.py::run_optimization_loop": [
+      39
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::_generate_seeds": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::_subsample_seeds_spatially_diverse": [
+      14
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::preprocess_data": [
+      25
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/results.py::finalize_results": [
+      19
+    ],
+    "packages/luxar/src/luxar/gsplats/fitting/validation.py::prepare_fit_config": [
+      56
+    ],
+    "packages/luxar/src/luxar/gsplats/gpu_profile.py::get_gpu_summary": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/gpu_profile.py::recompute_summary": [
+      16
+    ],
+    "packages/luxar/src/luxar/gsplats/gsplat_data.py::__init__": [
+      14
+    ],
+    "packages/luxar/src/luxar/gsplats/interop/classical_splats.py::read_spz": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/interop/inria_export.py::_select_3d": [
+      13
+    ],
+    "packages/luxar/src/luxar/gsplats/io/inspect_gsplats.py::inspect_gsplats_zarr": [
+      16
+    ],
+    "packages/luxar/src/luxar/gsplats/io/load_gsplats.py::load_gsplat_node": [
+      14
+    ],
+    "packages/luxar/src/luxar/gsplats/io/migrate.py::detect_legacy_format": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/io/migrate.py::migrate_format": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/io/save_gsplats.py::write_gsplats_tree": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/io/save_gsplats.py::write_partition_streaming": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/lift.py::_cap_aspect": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/lift.py::_segment_pairs": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/lift.py::lift_lines_to_gsplats": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/lod/_substitutive/greedy.py::_greedy_partition": [
+      20
+    ],
+    "packages/luxar/src/luxar/gsplats/lod/_substitutive/refine.py::l2_refine_mixture": [
+      14
+    ],
+    "packages/luxar/src/luxar/gsplats/lod/additive.py::_resolve_breakpoints": [
+      18
+    ],
+    "packages/luxar/src/luxar/gsplats/lod/additive.py::make_additive_lod": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/lod/substitutive.py::_reduce_one_level": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/lod/substitutive.py::make_substitutive_lod": [
+      35
+    ],
+    "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/benchmark.py::build_profile_data": [
+      28
+    ],
+    "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/benchmark.py::main": [
+      14
+    ],
+    "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/benchmark.py::run_benchmark": [
+      39
+    ],
+    "packages/luxar/src/luxar/gsplats/models/gsplats/cuda/benchmark.py::run_splat_sweep": [
+      15
+    ],
+    "packages/luxar/src/luxar/gsplats/multiscale/decompose.py::decompose_image": [
+      43
+    ],
+    "packages/luxar/src/luxar/gsplats/multiscale/demos/demo_compare_initialization.py::plot_ascii_convergence": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/planner/bsp_boxes.py::plan_partition": [
+      11
+    ],
+    "packages/luxar/src/luxar/gsplats/planner/content_scan.py::scan_content": [
+      19
+    ],
+    "packages/luxar/src/luxar/gsplats/planner/fit_planned_parallel.py::fit_planned_parallel": [
+      22
+    ],
+    "packages/luxar/src/luxar/gsplats/seeds/generate.py::_auto_combine": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/seeds/generate.py::generate_seeds": [
+      23
+    ],
+    "packages/luxar/src/luxar/gsplats/seeds/grid.py::seed_from_grid": [
+      20
+    ],
+    "packages/luxar/src/luxar/gsplats/seeds/multiscale_decomposition.py::seed_from_decomposition": [
+      29
+    ],
+    "packages/luxar/src/luxar/gsplats/tiling.py::compute_tile_specs": [
+      12
+    ],
+    "packages/luxar/src/luxar/gsplats/utils/device.py::resolve_gpu_selection": [
+      15
+    ],
+    "packages/luxar/src/luxar/gsplats/utils/trils.py::embed_cholesky_packed": [
+      19
+    ],
+    "packages/luxar/src/luxar/io/_compiler/bounds.py::expand_bounds_with_transforms": [
+      20
+    ],
+    "packages/luxar/src/luxar/io/_compiler/dataset_writers/colors.py::write_colors": [
+      14
+    ],
+    "packages/luxar/src/luxar/io/_compiler/finalize/lod_backfill.py::finalize_lod_position_bounds": [
+      12
+    ],
+    "packages/luxar/src/luxar/io/_compiler/geometry_writers/lines.py::write_lines": [
+      40
+    ],
+    "packages/luxar/src/luxar/io/_compiler/geometry_writers/mesh.py::write_mesh": [
+      22
+    ],
+    "packages/luxar/src/luxar/io/_compiler/geometry_writers/points.py::write_points": [
+      31
+    ],
+    "packages/luxar/src/luxar/io/_compiler/gsplat_assembly.py::apply_gsplat_group_attrs": [
+      11
+    ],
+    "packages/luxar/src/luxar/io/_compiler/gsplat_assembly.py::validate_gsplat_inputs": [
+      16
+    ],
+    "packages/luxar/src/luxar/io/_compiler/gsplat_assembly.py::write_gsplat_arrays": [
+      11
+    ],
+    "packages/luxar/src/luxar/io/_compiler/gsplat_tree.py::json_safe_value": [
+      12
+    ],
+    "packages/luxar/src/luxar/io/_compiler/gsplat_tree.py::write_gsplat_node": [
+      15
+    ],
+    "packages/luxar/src/luxar/io/_compiler/labels/image_labels.py::normalize_image_label": [
+      12
+    ],
+    "packages/luxar/src/luxar/io/_compiler/node_common.py::validate_render_attrs": [
+      16
+    ],
+    "packages/luxar/src/luxar/io/_ordering/curves/hilbert.py::_get_hilbert_numba_kernel": [
+      13
+    ],
+    "packages/luxar/src/luxar/io/_ordering/curves/hilbert.py::_hilbert_kernel": [
+      12
+    ],
+    "packages/luxar/src/luxar/io/_ordering/lines.py::sort_segments_compound": [
+      13
+    ],
+    "packages/luxar/src/luxar/io/compiler.py::finalize": [
+      13
+    ],
+    "packages/luxar/src/luxar/io/ome_zarr.py::_parse_ngff_metadata": [
+      14
+    ],
+    "packages/luxar/src/luxar/io/ome_zarr.py::discover_ome_zarr_shape": [
+      11
+    ],
+    "packages/luxar/src/luxar/io/volume.py::_load_zarr_volume": [
+      14
+    ],
+    "packages/luxar/src/luxar/io/volume.py::load_volume": [
+      12
+    ],
+    "packages/luxar/src/luxar/mesh/interop/_gltf.py::read_gltf": [
+      28
+    ],
+    "packages/luxar/src/luxar/mesh/interop/_obj.py::read_obj": [
+      13
+    ],
+    "packages/luxar/src/luxar/mesh/interop/_ply_mesh.py::parse_ply_header": [
+      11
+    ],
+    "packages/luxar/src/luxar/mesh/interop/_ply_mesh.py::read_ply_mesh": [
+      12
+    ],
+    "packages/luxar/src/luxar/utils/data_fetch.py::_ensure_one": [
+      15
+    ],
+    "packages/luxar/src/luxar/utils/demos.py::cached_download": [
+      12
+    ],
+    "packages/luxar/src/luxar/utils/demos.py::load_precomputed_bundle": [
+      12
+    ],
+    "packages/luxar/src/luxar/utils/download.py::_parse_remote_zip_directory": [
+      11
+    ],
+    "packages/luxar/src/luxar/utils/download.py::download_zip_member": [
+      24
+    ],
+    "packages/luxar/src/luxar/utils/download.py::robust_download": [
+      66
+    ],
+    "packages/luxar/src/luxar/utils/download.py::verify_file_checksum": [
+      14
+    ],
+    "packages/luxar/src/luxar/utils/process.py::_teardown": [
+      12
+    ],
+    "packages/luxar/src/luxar/validation/base.py::validate_colors_for_writing": [
+      12
+    ],
+    "packages/luxar/src/luxar/validation/nd.py::validate_dimensional_coverage": [
+      12
+    ],
+    "packages/luxar/src/luxar/validation/nd_transforms.py::compose_nd_transforms": [
+      14
+    ],
+    "packages/luxar/src/luxar/validation/types.py::validate_colormap": [
+      11
+    ],
+    "scripts/add_additive_lod_to_demos.py::process_bundle": [
+      13
+    ],
+    "scripts/benchmarks/benchmark_bisect_analyze.py::generate_report": [
+      21
+    ],
+    "scripts/benchmarks/benchmark_bisect_runner.py::run_benchmarks": [
+      11
+    ],
+    "scripts/benchmarks/benchmark_cuda_optimizations.py::compare_results": [
+      14
+    ],
+    "scripts/benchmarks/benchmark_metal_optimizations.py::compare_results": [
+      12
+    ],
+    "scripts/benchmarks/benchmark_seeding_gpu.py::run_benchmark_suite": [
+      11
+    ],
+    "scripts/build_cuda_slurm.py::main": [
+      18
+    ],
+    "scripts/calibrate_gsplat_demos.py::_calibrate_demo": [
+      11
+    ],
+    "scripts/check_documentation.py::_check_markdown_path_references": [
+      30
+    ],
+    "scripts/check_documentation.py::main": [
+      12
+    ],
+    "stats/generate_stats.py::_count_lines_python": [
+      14
+    ],
+    "stats/generate_stats.py::_run_python_tests": [
+      19
+    ],
+    "stats/generate_stats.py::_run_typescript_tests": [
+      20
+    ],
+    "stats/generate_stats.py::analyze_language": [
+      11
+    ],
+    "stats/generate_stats.py::generate_html_report": [
+      30
+    ],
+    "stats/generate_stats.py::generate_markdown_report": [
+      19
+    ]
+  }
+}

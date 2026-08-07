@@ -50,6 +50,7 @@ make test-perf-e2e   # Opt-in Playwright performance suite
 # the same tree, use the read-only scoped targets instead (listed right below it).
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
+make check-complexity   # read-only: ruff C901 ratcheted against scripts/complexity_baseline.json
 make type-check-python  # read-only: mypy
 make security           # read-only: bandit
 make check-typescript   # read-only: typecheck + lint + unit tests

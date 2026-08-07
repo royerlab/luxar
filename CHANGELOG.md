@@ -6,6 +6,41 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Tooling — the complexity limit is now enforced as a ratchet (#1379)
+
+`pyproject.toml` has carried `[tool.ruff.lint.mccabe] max-complexity = 10` since
+early on, but `[tool.ruff.lint] select` never listed `C901`, the rule that limit
+feeds. The setting was therefore inert: no complexity limit was enforced
+anywhere, and it had been cited in a module docstring as a design constraint it
+never was. Simply adding `C901` to `select` was not an option — ruff has no
+baseline mechanism, so it would have failed on all 227 pre-existing violations
+at once, and the only ruff-native suppression (`per-file-ignores`) is
+file-granular and would have blinded the guard to new offenders in the 151 files
+that already hold one.
+
+The new `scripts/check_complexity.py` selects the rule explicitly and diffs the
+findings against a checked-in baseline (`scripts/complexity_baseline.json`, 227
+entries keyed `<repo-relative-path>::<function-name>`), in the same shape as the
+documentation ratchet added in #1341. Pre-existing debt is grandfathered; a
+function that is newly over the limit, or a baselined one whose complexity
+INCREASED, fails the check, while paid-down debt is reported as advisory so the
+baseline can be tightened. Keys deliberately omit line numbers, so an unrelated
+edit above a function never churns the baseline, and a baselined function that
+reappears under a new path at no greater complexity is classified as *moved* —
+also advisory, and itemised old-key-to-new-key — so the repository's continuing
+module-move series do not turn a required check red, including the commonest
+move-and-tidy shape. Move detection is disabled when the scan is restricted to
+explicit target paths, where an unscanned baseline key would otherwise be free
+to absorb a genuinely new function. The gate fails closed throughout: a ruff
+that cannot run is an error rather than a suspiciously clean report, a full scan
+that finds nothing while the baseline is populated is an error rather than 227
+keys' worth of imaginary progress, and `--update-baseline` refuses to replace a
+populated baseline with an empty one. `max-complexity` stays at 10 and is now
+what the gate enforces for new code. The checker runs in
+`hatch run lint` / `hatch run check`, as `make check-complexity`, and — the path
+that actually gates PRs — from the Python test suite. Regenerate with
+`hatch run check-complexity --update-baseline`.
+
 #### Mesh is per-triangle depth sorted
 
 `normal`-mode meshes composited in index order: whichever triangle the writer

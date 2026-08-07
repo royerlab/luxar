@@ -17,6 +17,7 @@ scripts/
 | Script | Purpose |
 |--------|---------|
 | `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings) |
+| `check_complexity.py` | Baseline-driven ratchet over ruff's `C901` cyclomatic-complexity rule (fails only on newly over-complex, or newly worse, functions) |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
 | `set_version.py` | Update the Python and viewer release versions together |
@@ -109,6 +110,70 @@ completeness stage of `make check-docs` and the required `docs-quality` CI job.
 As debt is paid down, regenerate/tighten the baseline with `--update-baseline`
 and commit the smaller file. See
 `docs/guides/developer/DOCUMENTATION_QUALITY.md` for the full model.
+
+---
+
+## Complexity Ratchet
+
+### `check_complexity.py`
+
+Enforces `[tool.ruff.lint.mccabe] max-complexity` (10) as a baseline-driven
+ratchet, the same shape as the documentation ratchet above.
+
+**Purpose:**
+- Run `ruff check --select C901` over the same paths as `hatch run lint`
+- Tolerate the pre-existing over-limit functions recorded in
+  `scripts/complexity_baseline.json` (227 at the time of writing)
+- Fail (exit 1) when a function is newly over the limit, or when a baselined
+  one gets *more* complex
+- Report paid-down debt as advisory (exit 0) so the baseline can be tightened
+- Report a *move* (a baselined function reappearing under a new path at no
+  greater complexity, with or without a tidy-up) as advisory too, itemised
+  old-key-to-new-key, so a module-move series is not a false red. Full runs
+  only — see the restricted-scan note below
+- Fail closed (exit 2) rather than green whenever the scan cannot be trusted: a
+  ruff that did not run, or a FULL run that found nothing while the baseline is
+  populated (a mistyped target, a wrong `--project-root`, a partial checkout).
+  A *restricted* run finding nothing is legitimate — a subtree may simply be
+  clean — so that only warns
+
+`C901` is deliberately not in `[tool.ruff.lint] select`: ruff has no baseline
+mechanism, and its only native suppression (`per-file-ignores`) is
+file-granular, so it would blind the guard to new offenders in the 151 files
+that already hold a violation.
+
+**Usage:**
+
+```bash
+# Check the tree against the baseline (the flagless, gating mode)
+hatch run check-complexity
+make check-complexity
+
+# (Re)write the baseline from the current state, then exit 0
+hatch run check-complexity --update-baseline
+
+# Point at a non-default baseline
+hatch run python scripts/check_complexity.py --baseline path/to/baseline.json
+
+# Restrict the scan to some paths. Baselined keys OUTSIDE them then look
+# vanished, so the run says so instead of inviting --update-baseline (writing a
+# baseline from a restricted scan would drop the rest of the tree's debt; it
+# warns, and refuses outright if the restricted scan found nothing at all).
+# Move detection is switched OFF for a restricted run: an unscanned key must
+# never be allowed to absorb a genuinely new function as a "move".
+hatch run python scripts/check_complexity.py packages/luxar/src
+```
+
+Baseline keys are `<repo-relative-path>::<function-name>` mapping to the
+descending-sorted complexities of the over-limit functions with that name in
+that file — no line numbers, so an unrelated edit above a function never churns
+the baseline. Because a move pairs on the function name alone, a genuinely new
+function can in principle be absorbed by a same-named one vanishing in the same
+run; what the ratchet always guarantees is the bound, not the identity — a pair
+can never increase total debt. The checker runs as part of `hatch run lint` and
+`hatch run check`, and the Python test suite
+(`packages/luxar/src/luxar/tests/test_check_complexity.py`) asserts the real
+tree is regression-free, so the ratchet gates every PR.
 
 ---
 
