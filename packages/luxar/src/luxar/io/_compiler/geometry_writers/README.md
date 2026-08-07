@@ -225,7 +225,7 @@ Both are frozen dataclasses built by the orchestrator and passed in by value.
 
 5. **Lines dual indexing**: Lines are stored as a dual-indexed representation — `vertices` (D-space positions) and `segments` (2×D-space vertex-pair indices). The `line_type` parameter controls how the input `vertices` are interpreted (`"segments"`, `"polyline"`, `"loop"`, `"indexed"`); `convert_to_indexed` normalizes all types to the canonical indexed form. Connectivity is index-based: equal endpoint coordinates in distinct vertex rows do not form a joint. Both `vertices` and `segments` are written with `deduplicate=False` so the viewer's raw chunked-zarr reader never sees an `array_ref`.
 
-6. **Rendering defaults**: Points and Lines stamp the same rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`) via `apply_default_render_attrs`. GSplats stamp the same set plus `truncation_radius` via `apply_gsplat_group_attrs` (NOT `apply_default_render_attrs`). `blending_mode` is deliberately never stamped (it has no identity value).
+6. **Rendering defaults**: Points, Lines and Mesh stamp the same rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`) via `apply_default_render_attrs`. GSplats stamp the same set plus `truncation_radius` via `apply_gsplat_group_attrs` (NOT `apply_default_render_attrs`). `blending_mode` is deliberately never stamped (it has no identity value).
 
 ## Testing
 

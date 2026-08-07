@@ -34,10 +34,10 @@ if TYPE_CHECKING:
 
 
 class Group(Node):
-    """A group node that can contain data children (Points, Lines, GSplats).
+    """A group node that can contain data children (Points, Lines, GSplats, Mesh).
 
-    Groups provide add_points(), add_lines(), and add_gsplats() methods for
-    adding data nodes. They access the root Scene for dimension validation
+    Groups provide add_points(), add_lines(), add_gsplats(), and add_mesh()
+    methods for adding data nodes. They access the root Scene for dimension validation
     and the writer interface.
 
     Groups are created via add_group() on any Node, Scene, or Group::
@@ -397,9 +397,10 @@ class Group(Node):
                 data addressing vertex rows and is never reordered.
             fill: Fill values for scene dimensions absent from ``dim_order``.
             **attrs: Additional attributes — ``opacity``, ``intensity``,
-                ``gamma``, ``colormap``, ``layer``, ``visible``, ``transform``,
-                ``nd_transform``, ``blending_mode``. Note ``volumetric`` blending
-                is rejected — it has no meaning for an opaque surface.
+                ``offset``, ``gamma``, ``colormap``, ``layer``, ``visible``,
+                ``transform``, ``nd_transform``, ``blending_mode``. Note
+                ``volumetric`` blending is rejected — it has no meaning for an
+                opaque surface.
 
         Returns:
             The created Mesh node.

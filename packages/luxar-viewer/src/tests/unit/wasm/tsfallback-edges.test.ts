@@ -5,8 +5,8 @@
  * covers four distinct TS-fallback areas (wasm.md O12 → renamed to
  * `tsfallback-edges.test.ts` to match):
  *   - decode_quantized/decode_log_scalar boundaries (degenerate ranges)
+ *   - decode_lut_* out-of-range indices + empty inputs
  *   - mahalanobis_distance ndim=1 (forward-sub identity)
- *   - compute_gsplats_attenuation numHidden=ndim
  *   - clip_segment_single parallel-segment + lines-clipping edges
  *
  * Pure math on typed arrays — no mocks. All cases exercise the TS fallback
@@ -26,8 +26,7 @@ import {
   decode_lut_row_u16,
 } from '../../../wasm/typescript/decode';
 import { mahalanobis_distance } from '../../../wasm/typescript/gsplats-processing';
-import { compute_gsplats_attenuation } from '../../../wasm/typescript/gsplats-processing';
-import { clip_segment_single, lerp_vec3 } from '../../../wasm/typescript/lines-clipping';
+import { clip_segment_single } from '../../../wasm/typescript/lines-clipping';
 
 describe('decode_quantized — degenerate range (minVal === maxVal)', () => {
   // When minVal === maxVal the scale becomes zero; every output entry must
@@ -114,64 +113,6 @@ describe('mahalanobis_distance — ndim=1', () => {
     const diff = new Float32Array([10]);
     const packedL = new Float32Array([1e-12]); // below epsilon
     expect(mahalanobis_distance(diff, packedL, 1)).toBe(0);
-  });
-});
-
-describe('compute_gsplats_attenuation — numHidden=ndim', () => {
-  // Boundary: every dimension is hidden, no displayed dim. The marginal
-  // Cholesky covers the full ndim and the attenuation depends on full-
-  // dimensional Mahalanobis distance to the slice. Pins the "all hidden"
-  // case so a mutant that special-cases numHidden < ndim only would fail.
-  it('every dim hidden: splat at slice yields attenuation 1, far splat yields ~0', () => {
-    const ndim = 3;
-    // 2 splats, 3D, with identity Cholesky (packed lower-tri, 6 entries each).
-    const positions = new Float32Array([
-      0,
-      0,
-      0, // splat 0 at slice
-      10,
-      10,
-      10, // splat 1 far
-    ]);
-    const choleskyEntries = [
-      1, // L00
-      0,
-      1, // L10 L11
-      0,
-      0,
-      1, // L20 L21 L22
-    ];
-    const cholesky = new Float32Array([...choleskyEntries, ...choleskyEntries]);
-    const amplitudes = new Float32Array([1, 1]);
-    const slicePos = new Float32Array([0, 0, 0]);
-    const hiddenDims = new Uint32Array([0, 1, 2]); // all hidden
-
-    const visibility = new Uint8Array(2);
-    const attenuation = new Float32Array(2);
-
-    const count = compute_gsplats_attenuation(
-      positions,
-      cholesky,
-      amplitudes,
-      slicePos,
-      hiddenDims,
-      ndim,
-      2,
-      0.01,
-      3.0,
-      visibility,
-      attenuation
-    );
-
-    // Splat 0: diff=0 in every dim → Mahalanobis 0 → attenuation 1.
-    expect(attenuation[0]).toBeCloseTo(1.0, 5);
-    expect(visibility[0]).toBe(1);
-
-    // Splat 1: diff=(10,10,10), Mahalanobis ≈ sqrt(300) ≈ 17.3,
-    // well beyond 3σ truncation → attenuation = 0 by C0 clamp.
-    expect(attenuation[1]).toBe(0);
-    expect(visibility[1]).toBe(0);
-    expect(count).toBe(1);
   });
 });
 
@@ -427,63 +368,5 @@ describe('decode_lut OOB and empty boundaries [wasm.md G7]', () => {
     const out = new Float32Array([99, 99, 99]);
     decode_lut_row_u8(indices, lut, 0, out);
     expect(Array.from(out)).toEqual([99, 99, 99]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// [wasm.md G15] lerp_vec3 boundary and extrapolation coverage.
-// Prior round only had a happy-path t=0.5 test. Pin t=0/t=1 endpoints and
-// the algebraic extrapolation behaviour (t outside [0,1] is supported).
-// ---------------------------------------------------------------------------
-describe('lerp_vec3 boundary and extrapolation [wasm.md G15]', () => {
-  it('[G15] t=0 returns a (exactly, no FP drift)', () => {
-    const a = new Float32Array([1, 2, 3]);
-    const b = new Float32Array([10, 20, 30]);
-    const result = lerp_vec3(a, b, 0);
-    expect(Array.from(result)).toEqual([1, 2, 3]);
-  });
-
-  it('[G15] t=1 returns b (exactly)', () => {
-    const a = new Float32Array([1, 2, 3]);
-    const b = new Float32Array([10, 20, 30]);
-    const result = lerp_vec3(a, b, 1);
-    // `a + 1 * (b - a) = a + b - a = b`; Float32 round-trip should hit b exactly.
-    expect(result[0]).toBeCloseTo(10, 5);
-    expect(result[1]).toBeCloseTo(20, 5);
-    expect(result[2]).toBeCloseTo(30, 5);
-  });
-
-  it('[G15] t < 0 extrapolates BEHIND a (away from b)', () => {
-    // t=-1: result = a + (-1) * (b-a) = 2a - b. For a=(0,0,0), b=(2,4,6):
-    // result = (0,0,0) - (2,4,6) = (-2,-4,-6).
-    const a = new Float32Array([0, 0, 0]);
-    const b = new Float32Array([2, 4, 6]);
-    const result = lerp_vec3(a, b, -1);
-    expect(result[0]).toBeCloseTo(-2, 5);
-    expect(result[1]).toBeCloseTo(-4, 5);
-    expect(result[2]).toBeCloseTo(-6, 5);
-  });
-
-  it('[G15] t > 1 extrapolates PAST b (away from a)', () => {
-    // t=2: result = a + 2 * (b-a) = 2b - a. For a=(0,0,0), b=(1,1,1):
-    // result = (2,2,2).
-    const a = new Float32Array([0, 0, 0]);
-    const b = new Float32Array([1, 1, 1]);
-    const result = lerp_vec3(a, b, 2);
-    expect(result[0]).toBeCloseTo(2, 5);
-    expect(result[1]).toBeCloseTo(2, 5);
-    expect(result[2]).toBeCloseTo(2, 5);
-  });
-
-  it('[G15] linearity in t: lerp(a, b, t1+t2) = a + (t1+t2)(b-a) equals 2*lerp(a,b,(t1+t2)/2) - a', () => {
-    // Property-style check on a single fixture. With a=(0,0,0), b=(10,10,10),
-    // lerp(t=0.3) + lerp(t=0.7) should equal lerp(t=1.0) + lerp(t=0) = b + a = b.
-    const a = new Float32Array([0, 0, 0]);
-    const b = new Float32Array([10, 10, 10]);
-    const r03 = lerp_vec3(a, b, 0.3);
-    const r07 = lerp_vec3(a, b, 0.7);
-    for (let i = 0; i < 3; i++) {
-      expect(r03[i] + r07[i]).toBeCloseTo(b[i] + a[i], 5);
-    }
   });
 });

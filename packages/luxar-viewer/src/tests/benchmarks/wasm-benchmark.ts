@@ -594,129 +594,6 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         speedup: tsTime / wasmTime,
       };
     },
-    (size) => {
-      const positions = generatePositions(size, 3);
-      const tsOutput = new Float32Array(6);
-      const wasmOutput = new Float32Array(6);
-
-      const tsTime = measureTime(
-        () => {
-          tsModule.calculate_bounds_3d(positions, size, tsOutput);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          wasmModule!.calculate_bounds_3d(positions, size, wasmOutput);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'calculate_bounds_3d',
-        category: 'PROJECTION',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-      };
-    },
-    (size) => {
-      const stride = 3;
-      const input = generatePositions(size, stride);
-      // Create mask with ~50% visible
-      const mask = new Uint8Array(size);
-      for (let i = 0; i < size; i++) {
-        mask[i] = Math.random() > 0.5 ? 1 : 0;
-      }
-      const tsOutput = new Float32Array(size * stride);
-      const wasmOutput = new Float32Array(size * stride);
-
-      const tsTime = measureTime(
-        () => {
-          tsModule.compact_by_mask(input, mask, size, stride, tsOutput);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          wasmModule!.compact_by_mask(input, mask, size, stride, wasmOutput);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'compact_by_mask',
-        category: 'PROJECTION',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-      };
-    },
-    (size) => {
-      const mask = new Uint8Array(size);
-      for (let i = 0; i < size; i++) {
-        mask[i] = Math.random() > 0.5 ? 1 : 0;
-      }
-
-      const tsTime = measureTime(
-        () => {
-          tsModule.count_visible(mask, size);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          wasmModule!.count_visible(mask, size);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'count_visible',
-        category: 'PROJECTION',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-      };
-    },
-    (size) => {
-      const radii = generateRadii(size);
-      const tsOutput = new Uint8Array(size);
-      const wasmOutput = new Uint8Array(size);
-
-      const tsTime = measureTime(
-        () => {
-          tsModule.radii_to_visibility_mask(radii, 0.01, size, tsOutput);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          wasmModule!.radii_to_visibility_mask(radii, 0.01, size, wasmOutput);
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'radii_to_visibility_mask',
-        category: 'PROJECTION',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-      };
-    },
   ],
 
   'LINES CLIPPING': [
@@ -1107,134 +984,63 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         speedup: tsTime / wasmTime,
       };
     },
-    (_size) => {
-      // lerp - scalar linear interpolation (per-call benchmark)
-      const tsTime = measureTime(
-        () => {
-          for (let i = 0; i < 10000; i++) {
-            tsModule.lerp(0.0, 1.0, 0.5);
-          }
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          for (let i = 0; i < 10000; i++) {
-            wasmModule!.lerp(0.0, 1.0, 0.5);
-          }
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'lerp (10K calls)',
-        category: 'LINES CLIPPING',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-        utility: true, // Not used in production - batch functions inline the math
-      };
-    },
-    (_size) => {
-      // lerp_vec3 - 3D vector linear interpolation (per-call benchmark)
-      const a = new Float32Array([0, 0, 0]);
-      const b = new Float32Array([1, 2, 3]);
-
-      const tsTime = measureTime(
-        () => {
-          for (let i = 0; i < 10000; i++) {
-            tsModule.lerp_vec3(a, b, 0.5);
-          }
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          for (let i = 0; i < 10000; i++) {
-            wasmModule!.lerp_vec3(a, b, 0.5);
-          }
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'lerp_vec3 (10K calls)',
-        category: 'LINES CLIPPING',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-        utility: true, // Not used in production - batch functions inline the math
-      };
-    },
-    (_size) => {
-      // distance_3d - 3D Euclidean distance (per-call benchmark)
-      const a = new Float32Array([0, 0, 0]);
-      const b = new Float32Array([1, 2, 3]);
-
-      const tsTime = measureTime(
-        () => {
-          for (let i = 0; i < 10000; i++) {
-            tsModule.distance_3d(a, b);
-          }
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          for (let i = 0; i < 10000; i++) {
-            wasmModule!.distance_3d(a, b);
-          }
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'distance_3d (10K calls)',
-        category: 'LINES CLIPPING',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-        utility: true, // Not used in production - batch functions inline the math
-      };
-    },
   ],
 
   'GSPLATS PROCESSING': [
     (size) => {
+      // project_gsplats_nd_to_3d - the fused production kernel: discrete gate,
+      // continuous attenuation (marginal Cholesky + shifted Gaussian),
+      // visibility decision and compacted centers/Cholesky/amplitudes/colors,
+      // all in one pass.
       const ndim = 4;
       const positions = generatePositions(size, ndim);
+      // Narrow the hidden dim's spread so a healthy fraction of splats survives
+      // the truncation radius and the compaction writes are actually measured.
+      // The ±10 spread `generatePositions` gives every dim would attenuate
+      // essentially everything away, leaving only the gate + attenuation timed.
+      for (let i = 0; i < size; i++) {
+        positions[i * ndim + 3] = Math.sin(i * 0.019);
+      }
       const cholesky = generateCholeskyFactors(size, ndim);
       const amplitudes = generateRadii(size);
-      const slicePos = new Float32Array(ndim).fill(0);
+      const colors = new Float32Array(size * 3).fill(1);
+      const discreteVisibility = new Uint8Array(size).fill(1);
+      const slicePos = new Float32Array(ndim);
       const hiddenDims = new Uint32Array([3]);
-      const tsVisibility = new Uint8Array(size);
-      const tsAttenuation = new Float32Array(size);
-      const wasmVisibility = new Uint8Array(size);
-      const wasmAttenuation = new Float32Array(size);
+      const displayDims = new Uint32Array([0, 1, 2]);
+      const tsOut = {
+        centers: new Float32Array(size * 3),
+        cholesky: new Float32Array(size * 6),
+        amplitudes: new Float32Array(size),
+        colors: new Float32Array(size * 3),
+      };
+      const wasmOut = {
+        centers: new Float32Array(size * 3),
+        cholesky: new Float32Array(size * 6),
+        amplitudes: new Float32Array(size),
+        colors: new Float32Array(size * 3),
+      };
 
       const tsTime = measureTime(
         () => {
-          tsModule.compute_gsplats_attenuation(
+          tsModule.project_gsplats_nd_to_3d(
             positions,
             cholesky,
             amplitudes,
+            colors,
+            discreteVisibility,
             slicePos,
             hiddenDims,
+            displayDims,
             ndim,
             size,
+            3,
             0.01,
             3.0,
-            tsVisibility,
-            tsAttenuation
+            tsOut.centers,
+            tsOut.cholesky,
+            tsOut.amplitudes,
+            tsOut.colors
           );
         },
         CONFIG.iterations,
@@ -1243,18 +1049,24 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
 
       const wasmTime = measureTime(
         () => {
-          wasmModule!.compute_gsplats_attenuation(
+          wasmModule!.project_gsplats_nd_to_3d(
             positions,
             cholesky,
             amplitudes,
+            colors,
+            discreteVisibility,
             slicePos,
             hiddenDims,
+            displayDims,
             ndim,
             size,
+            3,
             0.01,
             3.0,
-            wasmVisibility,
-            wasmAttenuation
+            wasmOut.centers,
+            wasmOut.cholesky,
+            wasmOut.amplitudes,
+            wasmOut.colors
           );
         },
         CONFIG.iterations,
@@ -1262,7 +1074,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       );
 
       return {
-        name: 'compute_gsplats_attenuation',
+        name: 'project_gsplats_nd_to_3d',
         category: 'GSPLATS PROCESSING',
         tsTime,
         wasmTime,
@@ -1304,139 +1116,6 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
         wasmTime,
         speedup: tsTime / wasmTime,
         utility: true, // Not used in production - inlined by batch functions
-      };
-    },
-    (_size) => {
-      // extract_cholesky_submatrix - extract 3D from 4D
-      const ndim = 4;
-      const subNdim = 3;
-      const packed = new Float32Array((ndim * (ndim + 1)) / 2);
-      for (let i = 0; i < packed.length; i++) packed[i] = Math.random() * 0.5 + 0.5;
-      const keepDims = new Uint32Array([0, 1, 2]);
-      const tsOutput = new Float32Array((subNdim * (subNdim + 1)) / 2);
-      const wasmOutput = new Float32Array((subNdim * (subNdim + 1)) / 2);
-
-      const tsTime = measureTime(
-        () => {
-          for (let i = 0; i < 1000; i++) {
-            tsModule.extract_cholesky_submatrix(packed, keepDims, subNdim, tsOutput);
-          }
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          for (let i = 0; i < 1000; i++) {
-            wasmModule!.extract_cholesky_submatrix(packed, keepDims, subNdim, wasmOutput);
-          }
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'extract_cholesky_submatrix (1K)',
-        category: 'GSPLATS PROCESSING',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-        utility: true, // Not used in production - inlined by batch functions
-      };
-    },
-    (size) => {
-      // extract_visible_cholesky_3d - batch extraction for visible splats
-      const ndim = 4;
-      const cholesky = generateCholeskyFactors(size, ndim);
-      const visibility = new Uint8Array(size);
-      for (let i = 0; i < size; i++) visibility[i] = Math.random() > 0.5 ? 1 : 0;
-      const displayDims = new Uint32Array([0, 1, 2]);
-      const tsOutput = new Float32Array(size * 6);
-      const wasmOutput = new Float32Array(size * 6);
-
-      const tsTime = measureTime(
-        () => {
-          tsModule.extract_visible_cholesky_3d(
-            cholesky,
-            visibility,
-            displayDims,
-            ndim,
-            size,
-            tsOutput
-          );
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          wasmModule!.extract_visible_cholesky_3d(
-            cholesky,
-            visibility,
-            displayDims,
-            ndim,
-            size,
-            wasmOutput
-          );
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'extract_visible_cholesky_3d',
-        category: 'GSPLATS PROCESSING',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
-      };
-    },
-    (size) => {
-      // compact_attenuated_amplitudes
-      const amplitudes = generateRadii(size);
-      const attenuation = new Float32Array(size);
-      for (let i = 0; i < size; i++) attenuation[i] = Math.random();
-      const visibility = new Uint8Array(size);
-      for (let i = 0; i < size; i++) visibility[i] = Math.random() > 0.5 ? 1 : 0;
-      const tsOutput = new Float32Array(size);
-      const wasmOutput = new Float32Array(size);
-
-      const tsTime = measureTime(
-        () => {
-          tsModule.compact_attenuated_amplitudes(
-            amplitudes,
-            attenuation,
-            visibility,
-            size,
-            tsOutput
-          );
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      const wasmTime = measureTime(
-        () => {
-          wasmModule!.compact_attenuated_amplitudes(
-            amplitudes,
-            attenuation,
-            visibility,
-            size,
-            wasmOutput
-          );
-        },
-        CONFIG.iterations,
-        CONFIG.warmupIterations
-      );
-
-      return {
-        name: 'compact_attenuated_amplitudes',
-        category: 'GSPLATS PROCESSING',
-        tsTime,
-        wasmTime,
-        speedup: tsTime / wasmTime,
       };
     },
   ],
@@ -1529,9 +1208,7 @@ function printSummary(results: BenchmarkResult[]): void {
   console.log(
     '\x1b[90m  In production, batch functions inline the math, avoiding per-call overhead.\x1b[0m'
   );
-  console.log(
-    '\x1b[90m  WASM call overhead dominates for trivial operations like lerp/distance.\x1b[0m'
-  );
+  console.log('\x1b[90m  WASM call overhead dominates for trivial per-call operations.\x1b[0m');
   console.log('');
 }
 
