@@ -6,6 +6,8 @@ import logging
 import os
 import sys
 
+from sphinx.util import logging as sphinx_logging
+
 sys.path.insert(0, os.path.abspath("../packages/luxar/src"))
 
 # -- Project information -----------------------------------------------------
@@ -101,10 +103,9 @@ intersphinx_mapping = {
 #
 # So demote that single record to informational: it still prints, but it no
 # longer counts toward -W. Nothing else is relaxed — unresolved references
-# inside our own documentation are still warnings, and still fatal. Sphinx
-# namespaces its loggers under `sphinx.`, hence the doubled prefix; if that name
-# ever moves, the filter simply stops matching and we are back to today's
-# behavior rather than a broken build.
+# inside our own documentation are still warnings, and still fatal. If
+# intersphinx ever renames its logger the filter simply stops matching and we
+# are back to today's behavior rather than a broken build.
 class _IntersphinxOutageIsInformational(logging.Filter):
     """Keep an unreachable intersphinx inventory out of the -W warning count."""
 
@@ -115,7 +116,15 @@ class _IntersphinxOutageIsInformational(logging.Filter):
         return True
 
 
-logging.getLogger("sphinx.sphinx.ext.intersphinx").addFilter(
+# Attach to the logger intersphinx actually emits on. Sphinx namespaces every
+# logger under `sphinx.`, so the real name is `sphinx.sphinx.ext.intersphinx`;
+# ask Sphinx for it instead of hand-writing that doubled prefix, which reads
+# like a typo and invites a well-meaning "fix" that would silently stop the
+# filter from matching. It has to be the emitting logger, not an ancestor:
+# stdlib only runs a logger's own filters, never a parent's, on a record that
+# merely propagates up — and they run before the handlers, so the demotion
+# lands before the warning handler (and thus -W) ever sees the record.
+sphinx_logging.getLogger("sphinx.ext.intersphinx").logger.addFilter(
     _IntersphinxOutageIsInformational()
 )
 
