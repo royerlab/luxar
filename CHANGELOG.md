@@ -33,6 +33,19 @@ rendered-width gate) keep the cost where the benefit is: 0 on thin-line scenes,
 +0.1–0.2 ms/frame at 800k thick segments. Default style is `miter`; a per-node
 `join` attribute and `?lineJoin=none|miter` override it.
 
+`join` is a compositing attribute, so on a partitioned / LOD lines node it is
+written once on the wrapper and inherited by the parts. Three consequences of
+that are now enforced rather than assumed. The **pick** material reads the style
+off the live visual material at retro-registration — the path a first load
+actually takes — so a `join="none"` scene no longer leaves the empty outer wedge
+of every corner pickable, or picks differently on a second dataset load. `join`
+has a validating `Node` property (`validate_line_join`, alongside the sibling
+render-attr validators) instead of an assignment that silently never reached
+disk. And the points / gsplats / mesh adders refuse it: it is one shared writer
+allow-list, so `add_points(..., join="none")` used to write a dead attribute
+nothing would ever read. A `join` on a **Group** is still correct — that is the
+whole point of it compositing.
+
 Net deletion: the per-segment `dirs` table (~32 MB at 2.7M segments), the
 per-endpoint normalize + dot, and `softenCapacitySplitCap`. Measured on the
 `test_line_joins` acceptance harness described below (`line-join-artifact.spec.ts`,

@@ -16,6 +16,10 @@ Exposed:
 * :func:`sync_custom_colormap_attr` — mirror the writer's custom-colormap
   resolution (`ndarray / non-builtin name -> 'custom'`) into the adder's
   attrs dict so the returned node object matches what zarr stores.
+* :func:`reject_lines_only_join` — refuse the lines-only ``join`` attr on a
+  points / gsplats / mesh leaf, where it would write cleanly and do nothing.
+* :func:`reject_lines_only_join_assignment` — the same refusal for the second
+  door into the same attr, the ``node.join = ...`` property setter.
 """
 
 from __future__ import annotations
@@ -50,6 +54,68 @@ COMPOSITING_ATTRS = frozenset(
         "nd_transform",
     }
 )
+
+
+def lines_only_join_reason(geometry_type: str) -> str:
+    """The one explanation of why ``join`` is refused on a non-lines leaf.
+
+    Shared verbatim by both surfaces that can reach the attr — the adders
+    (:func:`reject_lines_only_join`) and the geometry classes' ``join`` setters
+    (:func:`reject_lines_only_join_assignment`) — so a user who trips either one
+    gets the same account of what ``join`` is and where it belongs.
+    """
+    return (
+        "'join' is a lines-only attribute — it selects the join style at a "
+        f"degree-2 polyline joint, and a {geometry_type} node has no polyline "
+        "joints to style, so the viewer would ignore it. Remove it, or set it "
+        "on a lines node (or on a Group above one, from where it composes down)."
+    )
+
+
+def reject_lines_only_join_assignment(
+    geometry_type: str, name: str, value: Any
+) -> None:
+    """Refuse ``node.join = ...`` on a non-lines leaf (issue #790).
+
+    :func:`reject_lines_only_join` closes the add-time door; this closes the
+    assignment-time one, which the ``join`` property inherited from
+    :class:`~luxar.core.node.node.Node` would otherwise leave wide open one line
+    later (``set_join`` assigns through the property, so it is covered too).
+    Called from the ``join`` setter overrides on ``Points`` / ``GSplats`` /
+    ``Mesh``, exactly as the mesh ``volumetric`` blending refusal is.
+    """
+    raise ValueError(
+        f"Cannot set join={value!r} on {geometry_type} '{name}'. "
+        + lines_only_join_reason(geometry_type)
+    )
+
+
+def reject_lines_only_join(
+    geometry_type: str, name: str, attrs: Dict[str, Any]
+) -> None:
+    """Refuse ``join=`` on a non-lines LEAF (issue #790).
+
+    ``KNOWN_RENDER_ATTRS`` in ``io/_compiler/node_common.py`` is one set shared by
+    all four geometry writers, so ``add_points(..., join="none")`` wrote a dead
+    ``join`` into a points ``.zattrs`` with no warning at all — contradicting both
+    the format spec ("Optional, LINES ONLY") and this module's own note above.
+
+    Only a LEAF is refused. A ``join`` on a Group — including a ``kind=partition``
+    / ``kind=lod`` wrapper — is correct and must keep working: it is a compositing
+    attr precisely so it can be authored once on the wrapper and inherited by the
+    lines descendants.
+
+    Refused at the ADDER rather than in the shared writer gate, which is
+    deliberately geometry-blind, and rather than in :func:`validate_line_join`,
+    which validates the VALUE and never sees the geometry type. Same shape and
+    same bar as the mesh ``volumetric`` refusal: a caller mistake with no valid
+    interpretation raises rather than warns.
+    """
+    if "join" in attrs:
+        raise ValueError(
+            f"Cannot add {geometry_type} '{name}' with join={attrs['join']!r}. "
+            + lines_only_join_reason(geometry_type)
+        )
 
 
 def sync_custom_colormap_attr(attrs: Dict[str, Any]) -> None:

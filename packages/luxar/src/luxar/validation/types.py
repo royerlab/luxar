@@ -23,6 +23,7 @@ from ..typing_utils.constants import (
     GAMMA_MIN,
     INTENSITY_MAX,
     INTENSITY_MIN,
+    LINE_JOIN_STYLES,
     OFFSET_MAX,
     OFFSET_MIN,
     OPACITY_MAX,
@@ -626,6 +627,39 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
         )
 
     return cast(BlendingMode, mode)
+
+
+def validate_line_join(style: Any) -> str:
+    """Validate a line join style string.
+
+    Lines-only (issue #790): the strategy the line vertex stage uses at a
+    degree-2 polyline joint. It has no meaning for points, gsplats or mesh,
+    none of which build a screen-space quad per element — the adders for those
+    three refuse it, so this validator does not need to know the geometry type.
+
+    Args:
+        style: Join style to validate. Accepted values are ``"none"`` (leave the
+            two quads alone, so the turn leaves an uncovered wedge) and
+            ``"miter"`` (rotate each quad's end edge onto the shared miter edge
+            so the two tile).
+
+    Returns:
+        Valid join style
+
+    Raises:
+        ValueError: If style is not a known join style
+        TypeError: If style is not a string
+    """
+    if not isinstance(style, str):
+        raise TypeError(f"Line join style must be a string, got {type(style).__name__}")
+
+    if style not in LINE_JOIN_STYLES:
+        raise ValueError(
+            f"Unknown line join style {style!r}. "
+            f"Expected one of {sorted(LINE_JOIN_STYLES)}."
+        )
+
+    return style
 
 
 def validate_colormap(value: Any) -> Union[str, "np.ndarray[Any, Any]"]:
