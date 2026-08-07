@@ -86,7 +86,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -295,18 +295,9 @@ def build_scene(output_path: Path, max_order: int) -> int:
 # -----------------------------------------------------------------------------
 
 
-def _int_arg(argv: list[str], flag: str, default: int) -> int:
-    for i, arg in enumerate(argv):
-        if arg == flag and i + 1 < len(argv):
-            return int(argv[i + 1])
-        if arg.startswith(flag + "="):
-            return int(arg.split("=", 1)[1])
-    return default
-
-
 def main() -> None:
     argv = sys.argv[1:]
-    max_order = _int_arg(argv, "--max-order", DEFAULT_MAX_ORDER)
+    max_order = parse_int_arg("max-order", DEFAULT_MAX_ORDER, argv)
     if max_order < 1:
         raise SystemExit("--max-order must be ≥ 1")
     if max_order > 7:

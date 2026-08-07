@@ -21,20 +21,10 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 from skimage import data, img_as_float32
 
+from luxar.gsplats.demos._demo_common import psnr
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
 from luxar.gsplats.lod import make_additive_lod
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
-
-
-def _psnr(rendered: np.ndarray, target: np.ndarray) -> float:
-    mse = float(np.mean((rendered.astype(np.float64) - target.astype(np.float64)) ** 2))
-    if mse <= 0.0:
-        return float("inf")
-    rng = float(target.max() - target.min())
-    if rng <= 0.0:
-        return float("inf")
-    return 10.0 * float(np.log10(rng**2 / mse))
-
 
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:
@@ -107,7 +97,7 @@ with asection("Coins Progressive Gaussian Splatting Demo"):
             )
             stack_recon[level] = rendered
             stack_resid[level] = V - rendered
-            psnr_val = _psnr(rendered, V)
+            psnr_val = psnr(rendered, V)
             psnrs.append(psnr_val)
             lod_n = result.additive_sublod(level).n_splats
             aprint(

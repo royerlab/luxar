@@ -71,7 +71,7 @@ import type { RendererCapabilities } from '../renderer-capabilities';
  */
 export type { BlendingMode };
 
-/** Point material properties driving cache key + constructor config. */
+/** Point material properties driving the constructor config. */
 export interface PointMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
@@ -84,7 +84,7 @@ export interface PointMaterialProperties {
   radiusScale?: number;
 }
 
-/** Line material properties driving cache key + constructor config. */
+/** Line material properties driving the constructor config. */
 export interface LineMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
@@ -95,7 +95,7 @@ export interface LineMaterialProperties {
   offset: number;
 }
 
-/** GSplat material properties driving cache key + constructor config. */
+/** GSplat material properties driving the constructor config. */
 export interface GSplatMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
@@ -151,8 +151,8 @@ export interface MeshMaterialProperties {
 }
 
 /**
- * The material backend tag used in cache keys and as the index into
- * the factory tables. `'tsl'` selects the `NodeMaterial`-derived
+ * The material backend tag used as the index into the factory
+ * tables. `'tsl'` selects the `NodeMaterial`-derived
  * implementation built for WebGPURenderer; `'glsl'` selects the
  * `ShaderMaterial`-derived implementation for `THREE.WebGLRenderer`.
  */
@@ -170,7 +170,7 @@ export function resolveMaterialBackend(caps: RendererCapabilities | null): Mater
 
 /**
  * Constructor table for the visual material pair of each geometry
- * type. `MaterialManager.get{Point,Line,GSplat}Material` looks up
+ * type. `MaterialManager.get{Point,Line,GSplat,Mesh}Material` looks up
  * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate.
  */
 export const VISUAL_FACTORIES = {
