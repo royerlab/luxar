@@ -143,8 +143,14 @@
       "category": "microscopy",
       "script": "demo_mesh_isosurface_cells3d.py",
       "dataset": "datasets/demos/mesh_isosurface_cells3d.luxar.zarr",
-      "fillTarget": 0.84,
-      "note": "the first SHADED tile. A headlit surface has N.L~1 on every visible facet, so its lit histogram is only 0.06 wide (p10 0.840, p50 0.873, p99 0.903); driving that p99 to the 0.9 target parks the WHOLE subject in the ACES highlight rolloff, which desaturates toward white - membrane saturation measured 0.28 against 0.85 authored. The clip guard cannot catch it either, being a tail test on a distribution with no tail. That is now the auto-exposure flat-subject pass's job: spread 0.063 is well under NARROW_SPREAD_MAX, so it re-targets the median and comes down ~1.5 stops on its own. These are the numbers exposure-policy.ts was calibrated on, so this tile deliberately carries NO exposure override - it is the case that pass exists for. Framing still needs one: the default 0.95 fill clips the slab off the bottom and both sides, and 0.84 fits it whole at 82pct coverage"
+      "orbitUp": "x",
+      "viewAngle": {
+        "azimuth": 45,
+        "elevation": 40
+      },
+      "fillTarget": 0.69,
+      "readme": true,
+      "note": "the first SHADED tile. EXPOSURE: a headlit surface has N.L~1 on every visible facet, so its lit histogram is only 0.06 wide (p10 0.840, p50 0.873, p99 0.903); driving that p99 to the 0.9 target parks the WHOLE subject in the ACES highlight rolloff, which desaturates toward white - membrane saturation measured 0.28 against 0.85 authored. The clip guard cannot catch it either, being a tail test on a distribution with no tail. That is the auto-exposure flat-subject pass's job: spread 0.063 is well under NARROW_SPREAD_MAX, so it re-targets the median and comes down on its own (measured -1.32 stops). These are the numbers exposure-policy.ts was calibrated on, so this tile deliberately carries NO exposure override - it is the case that pass exists for. ORBITUP+VIEWANGLE: the orbit hard-sets cam.up to the orbitUp axis, so the DEFAULT y silently discarded this demo's baked up=(1,0,0) - the shipped animation was rolled ~90deg away from its own poster AND tumbled, subject aspect swinging 0.40..0.92 (130pct) over one rock. orbitUp x matches the baked up and makes the rock a real turntable, but positionForOrbitUp then parks the camera edge-on to this thin slab (aspect ~4.5, lit fraction 0.09, a sliver), so viewAngle 45/40 is REQUIRED alongside it, not optional; together they hold aspect at 1.46..1.50 (2.5pct swing). FILLTARGET: the fill loop closes on an OUTLIER-ROBUST percentile bbox, but what reaches the frame edge is exactly the outliers - detached membrane specks and the slab's far corners - so the robust metric reports a fit while the true extent is cropped. Measured over EVERY orbit frame (the README embeds the animation, not the still), border-lit pixels: 0.84 -> 3389, 0.75 -> 1256, 0.69 -> 0 across all 120 frames. Captured on an NVIDIA RTX PRO 6000; a macOS/Metal run reproduced the same three numbers within 1pct"
     },
     {
       "id": "gsplats_3d_organoid_multichannel",

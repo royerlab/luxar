@@ -71,6 +71,19 @@ README gallery table.
   frames 1:1 (no motion interpolation, which warps fine structure) into a VP9
   WebM master and a smaller animated WebP for the README.
 
+  **The orbit sets `cam.up` from `orbitUp` on every frame, so a scene whose
+  `viewer_config` bakes a non-Y `up` needs `orbitUp` set to match.** The still
+  keeps the baked pose (`F` restores it) but the orbit does not, so leaving the
+  default silently ships an animation rolled away from its own poster, and turns
+  the turntable into a tumble — `mesh_isosurface_cells3d` swung 130% in subject
+  aspect before its `orbitUp: "x"` was set. Setting `orbitUp` also runs
+  `positionForOrbitUp`, which re-parks the camera on an axis and discards the
+  baked framing, so in practice it needs a `viewAngle` next to it.
+
+  **Judge a tile on its orbit frames, not on the still.** The README embeds the
+  animated WebP; the PNG is a byproduct that ships nowhere. A framing tuned on
+  the still can crop at rock extremes the still never visits.
+
 ## Manifest fields
 
 Required: `id` (media + dataset stem), `title` (caption), `geometry`,
