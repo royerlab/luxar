@@ -14,13 +14,14 @@ harness guards against:
      histogram only ~0.06 wide sitting at 0.87 has no tail above CLIP_LUMA.
 
 RELATION TO THE HARNESS: the thresholds below are HAND-SYNCED copies of the
-ones in ``packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts`` —
-nothing asserts they agree, so change both together. Two deliberate
-differences: this scorer reads a lossless PNG while the harness measures a
-JPEG-q70 screenshot (so the two can disagree at the margin), and the FLAT rule
-here adds a ``p50 > FLAT_MID_MIN`` term that the harness's gate does not have
-(the harness converges *onto* TARGET_MID, so the scorer must not flag its own
-successful output).
+ones in ``packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts``, so
+change both together — ``tests/test_score_exposure.py`` parses the numbers out
+of that file and fails if they drift apart. Two deliberate differences: this
+scorer reads a lossless PNG while the harness measures a JPEG-q70 screenshot
+(so the two can disagree at the margin), and the FLAT rule here adds a
+``p50 > FLAT_MID_MIN`` term that the harness's gate does not have (the harness
+converges *onto* TARGET_MID, so the scorer must not flag its own successful
+output).
 
 Metrics per image (over the lit foreground, luma > LIT_THRESHOLD):
   - clipped_frac : fraction of lit pixels with luma > CLIP_LUMA AND low

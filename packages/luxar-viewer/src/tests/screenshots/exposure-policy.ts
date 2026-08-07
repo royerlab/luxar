@@ -11,8 +11,9 @@
  * The tuning constants live here too, so the harness's measurement code and
  * this policy share one definition of each threshold. `scripts/gallery/
  * score_exposure.py` (the offline scorer) keeps HAND-SYNCED Python copies of
- * several of them (including the module-private MIN_LIT_FRACTION) — nothing
- * asserts the two stay in agreement, so change both.
+ * several of them (including the module-private MIN_LIT_FRACTION), so change
+ * both — `scripts/gallery/tests/test_score_exposure.py` parses the numbers out
+ * of THIS file and fails if they drift apart.
  */
 
 /**

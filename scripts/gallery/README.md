@@ -14,6 +14,7 @@ the best for the README gallery (TODO **R19**).
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
 | `../../packages/luxar-viewer/playwright.gallery.config.ts` | Playwright config (GPU flags, viewer + data servers, video recording). |
 | `score_exposure.py` | Offline scorer for the captured stills: flags `OVER` (blown highlights) and `FLAT` (narrow, uniformly over-exposed). Hand-synced with `exposure-policy.ts`. |
+| `tests/` | Unit tests for `score_exposure.py`, incl. a parity test that pins its mirrored thresholds to the ones in `exposure-policy.ts`. On the default Python suite. |
 
 ## Usage
 
@@ -57,8 +58,9 @@ README gallery table.
   and unit-tested). The narrow-spread gate is **empirical** — when it fires, the
   capture log says `(auto, flat subject)`, so a manifest-wide sweep can spot a
   false positive. `score_exposure.py` re-derives the same metrics offline from
-  hand-synced copies of the thresholds (no test asserts the two agree; the
-  scorer's `FLAT` rule also adds a p50 margin the harness gate does not have).
+  hand-synced copies of the thresholds (pinned to `exposure-policy.ts` by
+  `tests/test_score_exposure.py`; the scorer's `FLAT` rule adds a p50 margin the
+  harness gate deliberately does not have).
   Override per demo with `"exposure": <log2 stops>` in the manifest when auto
   misses.
 - **Seamless orbit:** a small-angle **sinusoidal rock** of ±20° about the

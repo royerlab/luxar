@@ -9,6 +9,7 @@ explicit path argument OVERRIDES ``testpaths``. Run in isolation with:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,36 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import score_exposure as se  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+POLICY_TS = (
+    REPO_ROOT
+    / "packages"
+    / "luxar-viewer"
+    / "src"
+    / "tests"
+    / "screenshots"
+    / "exposure-policy.ts"
+)
+
+# Thresholds the scorer mirrors from the capture harness, as
+# {name in exposure-policy.ts: name in score_exposure.py}. Deliberately NOT
+# listed: FLAT_MID_MIN (a scorer-only margin, see its comment) and the harness's
+# iteration/exposure-range knobs (nothing offline consumes them).
+MIRRORED_THRESHOLDS = {
+    "LIT_THRESHOLD": "LIT_THRESHOLD",
+    "CLIP_LUMA": "CLIP_LUMA",
+    "CLIP_SAT_MAX": "SAT_MAX",
+    "CLIP_FRAC_MAX": "CLIP_FRAC_MAX",
+    "NARROW_SPREAD_MAX": "NARROW_SPREAD_MAX",
+    "TARGET_MID": "TARGET_MID",
+    "MIN_LIT_FRACTION": "MIN_LIT_FRAC",
+}
+
+_TS_CONST = re.compile(
+    r"^\s*(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\s*=\s*(-?[\d.]+(?:[eE][-+]?\d+)?)\s*;",
+    re.MULTILINE,
+)
 
 
 def _write(tmp_path: Path, name: str, rgb: np.ndarray) -> Path:
@@ -168,6 +199,34 @@ def test_single_speck_frame_is_not_flat(tmp_path: Path) -> None:
     assert row["spread"] < se.NARROW_SPREAD_MAX
     assert row["p50"] > se.FLAT_MID_MIN
     assert row["verdict"] == "ok"
+
+
+def test_thresholds_match_the_capture_harness() -> None:
+    """The scorer's mirrored thresholds must equal the harness's own.
+
+    ``score_exposure.py`` re-derives the harness's metrics offline from
+    hand-written copies of its constants. If the two drift, the scorer silently
+    scores against a policy the harness no longer implements — so pin them here
+    rather than in a comment. Change a threshold in ``exposure-policy.ts`` and
+    this test names the Python constant that needs the same edit.
+    """
+    if not POLICY_TS.exists():
+        pytest.skip(f"viewer sources not present: {POLICY_TS}")
+    ts_values = {
+        name: float(value) for name, value in _TS_CONST.findall(POLICY_TS.read_text())
+    }
+    missing = sorted(set(MIRRORED_THRESHOLDS) - set(ts_values))
+    assert not missing, (
+        f"not found in {POLICY_TS.name} (renamed or removed?): {missing}"
+    )
+    mismatched = {
+        ts_name: (ts_values[ts_name], getattr(se, py_name))
+        for ts_name, py_name in MIRRORED_THRESHOLDS.items()
+        if getattr(se, py_name) != ts_values[ts_name]
+    }
+    assert not mismatched, (
+        f"score_exposure.py has drifted from exposure-policy.ts (ts, py): {mismatched}"
+    )
 
 
 def test_black_image_scores_empty(tmp_path: Path) -> None:
