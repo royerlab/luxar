@@ -178,7 +178,7 @@ async function collectTypeDocDiagnostics(viewerRoot) {
 
   const project = await application.convert();
   if (project) {
-    application.validate(project);
+    await application.validate(project);
   }
 
   return {
