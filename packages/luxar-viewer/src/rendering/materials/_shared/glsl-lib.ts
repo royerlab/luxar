@@ -211,6 +211,21 @@ float luxarLineJointCapSuppression(float jointCode) {
  * those declarations — GLSL resolves names top-down. `uLineJoin` is declared
  * here, so an including shader must not declare it again.
  */
+/**
+ * Rendered half-width (px) below which the join is skipped.
+ *
+ * The uncovered wedge has area ~theta*R^2/2, so under a couple of pixels it is
+ * sub-pixel and invisible — and a line that thin already sits on the 1.5 px
+ * floor with its intensity faded. Gating on width puts the cost only where the
+ * benefit is: million-segment scenes are thin-line scenes and skip the block.
+ *
+ * Lives HERE, in the dependency-free GLSL block, and is interpolated into the
+ * shader source below AND imported by the TSL twin, so the two backends cannot
+ * drift. (`tsl-helpers.ts` pulls in `three/tsl`; `glsl-lib.ts` imports nothing,
+ * which makes it the safe direction for the shared constant to flow.)
+ */
+export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
+
 export const GLSL_LINE_JOIN = `
 // Join style at degree-2 polyline joints: 0 none, 1 miter. Runtime uniform
 // (not a #define) so the ?lineJoin= override never recompiles a program.
@@ -274,7 +289,7 @@ vec3 luxarLineJoin(
   // sits on the 1.5 px floor with its intensity faded. Gating on width puts
   // the cost only where the benefit is: million-segment scenes are thin-line
   // scenes and skip this entirely.
-  float joinMinHalfWidth = 2.0;
+  float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};
   if (uLineJoin < 0.5 || clampedPixelWidth <= joinMinHalfWidth) return noJoin;
   // A near-clipped endpoint was moved onto the nearCull plane, so it is no
   // longer AT its source vertex and no neighbour meets it there.

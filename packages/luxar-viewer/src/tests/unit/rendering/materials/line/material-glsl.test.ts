@@ -10,6 +10,7 @@ import { LINE_FLOATS_PER_SEGMENT } from '../../../../../rendering/element-textur
 import {
   GLSL_LINE_JOINT_CODE,
   GLSL_LINE_JOIN,
+  LINE_JOIN_MIN_HALF_WIDTH,
 } from '../../../../../rendering/materials/_shared/glsl-lib';
 import {
   LINE_PICK_VERTEX_SHADER,
@@ -124,6 +125,22 @@ describe('LineMaterial', () => {
         expect(src, `${label} must contain no backtick`).not.toContain('`');
         expect(src.length, `${label} should be non-empty`).toBeGreaterThan(0);
       }
+    });
+
+    it('emits the width gate from the SHARED constant, not a second literal', () => {
+      // The threshold used to be hardcoded in the GLSL string while the TSL twin
+      // read a named constant — two sources of truth for one gate. It is now
+      // interpolated from LINE_JOIN_MIN_HALF_WIDTH, which the TSL side imports
+      // from the same module, so the two backends cannot drift. Pinned because a
+      // template interpolation fails SILENTLY: a wrong expression yields
+      // "[object Object]" or "undefined" inside the shader body, which compiles
+      // to a link error far from the cause.
+      expect(GLSL_LINE_JOIN).toContain(
+        `float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};`
+      );
+      expect(GLSL_LINE_JOIN).toContain('float joinMinHalfWidth = 2.0;');
+      expect(GLSL_LINE_JOIN).not.toContain('object Object');
+      expect(GLSL_LINE_JOIN).not.toContain('undefined');
     });
 
     it('should have correct vertex shader with screen-space expansion', () => {

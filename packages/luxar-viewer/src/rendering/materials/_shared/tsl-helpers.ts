@@ -21,6 +21,12 @@
  */
 
 import type { IUniform } from 'three';
+
+// Single source of truth for the join's width gate — see glsl-lib.ts. Imported
+// rather than redeclared so the GLSL and TSL backends cannot drift apart.
+import { LINE_JOIN_MIN_HALF_WIDTH } from './glsl-lib';
+
+export { LINE_JOIN_MIN_HALF_WIDTH };
 import {
   If,
   attribute,
@@ -200,16 +206,6 @@ export function tslLineJointCapSuppression(jointCode: TSLNode): TSLNode {
   const isHub = jointCode.lessThan(-1.5).and(jointCode.greaterThan(-2.5));
   return isFreeEnd.or(isHub).select(float(0.0), float(1.0));
 }
-
-/**
- * Rendered half-width below which the join is skipped. The uncovered wedge has
- * area ~theta*R^2/2 pixels, so under a couple of pixels it is sub-pixel and
- * invisible — and a line that thin already sits on the 1.5 px floor with its
- * intensity faded. Gating on width puts the cost only where the benefit is:
- * million-segment scenes are thin-line scenes and skip the whole block.
- * Shared with the GLSL twin's `joinMinHalfWidth`.
- */
-export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
 
 /**
  * Rendered half-width AT ONE ENDPOINT, in pixels — TSL twin of GLSL's
