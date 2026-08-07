@@ -146,7 +146,8 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import MissingDependencyError, require_module
+from luxar.demos import require_module
+from luxar.demos._roundtrip_common import show_roundtrip_comparison
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -522,73 +523,6 @@ Navigation:
 
 
 # =============================================================================
-# Round-Trip Visualisation
-# =============================================================================
-
-
-def show_roundtrip_comparison(
-    volumes: list[np.ndarray],
-    gsplats_list: list[GSplatData],
-) -> None:
-    """Show original vs round-trip reconstructed volumes side by side."""
-    try:
-        plt = require_module("matplotlib.pyplot")
-    except MissingDependencyError as exc:
-        aprint(f"Skipping --show-roundtrip: {exc}")
-        return
-
-    n_channels = len(volumes)
-
-    with asection("Round-trip reconstruction comparison"):
-        reconstructions = []
-        for i, (volume, gsplats, ch_config) in enumerate(
-            zip(volumes, gsplats_list, CHANNELS[:n_channels])
-        ):
-            with asection(f"Rendering Ch{i}: {ch_config['name']}"):
-                recon = gsplats.render_to_volume(shape=volume.shape, device=DEVICE)
-                reconstructions.append(recon)
-                mse = float(np.mean((volume - recon) ** 2))
-                psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
-                aprint(f"  PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
-
-        fig, axes = plt.subplots(
-            n_channels, 3, figsize=(14, 4.5 * n_channels), squeeze=False
-        )
-
-        for i, (volume, recon, ch_config) in enumerate(
-            zip(volumes, reconstructions, CHANNELS[:n_channels])
-        ):
-            mid_z = volume.shape[0] // 2
-            orig_slice = volume[mid_z]
-            recon_slice = recon[mid_z]
-            diff_slice = np.abs(orig_slice - recon_slice)
-
-            mse = float(np.mean((volume - recon) ** 2))
-            psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
-
-            axes[i, 0].imshow(orig_slice, cmap="gray", vmin=0, vmax=1)
-            axes[i, 0].set_title(f"Original — {ch_config['name']}")
-            axes[i, 0].axis("off")
-
-            axes[i, 1].imshow(recon_slice, cmap="gray", vmin=0, vmax=1)
-            axes[i, 1].set_title(f"Reconstructed (PSNR {psnr:.1f} dB)")
-            axes[i, 1].axis("off")
-
-            im = axes[i, 2].imshow(diff_slice, cmap="inferno", vmin=0, vmax=0.3)
-            axes[i, 2].set_title("|Difference|")
-            axes[i, 2].axis("off")
-            fig.colorbar(im, ax=axes[i, 2], fraction=0.046, pad=0.04)
-
-        fig.suptitle(
-            f"Round-Trip Comparison — z-slice {mid_z}  "
-            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
-            fontsize=14,
-        )
-        plt.tight_layout()
-        plt.show()
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
@@ -637,7 +571,12 @@ def main():
     # Optional round-trip visualisation
     if SHOW_ROUNDTRIP:
         if volumes is not None:
-            show_roundtrip_comparison(volumes, gsplats_list)
+            show_roundtrip_comparison(
+                volumes,
+                gsplats_list,
+                [c["name"] for c in CHANNELS],
+                device=DEVICE,
+            )
         else:
             aprint(
                 "Cannot show round-trip: original volumes not available "
