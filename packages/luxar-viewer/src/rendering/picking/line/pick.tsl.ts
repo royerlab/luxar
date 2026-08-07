@@ -61,6 +61,7 @@ import {
   sanitizeNonNegative,
   type TSLNode,
   sortedIndexNode,
+  tslLineEndPixelWidth,
   tslLineJoin,
   tslLineJointCapSuppression,
 } from '../../materials/_shared/tsl-helpers';
@@ -355,6 +356,25 @@ export function linePickWebGPUFactory(
     const startJoinCap: TSLNode = float(-1.0).toVar();
     const endJoinCap: TSLNode = float(-1.0).toVar();
     if (resolveLineJoin(config.join) > 0.5) {
+      // Per-END widths, not this vertex's: the join's gate must be
+      // segment-constant or the `flat` cap varyings resolve from whichever
+      // corner provokes (see tslLineEndPixelWidth). Geometrically identical —
+      // each equals clampedPixelWidth at the corner that consumes it.
+      const endW_ = (t: TSLNode, mvZ: TSLNode): TSLNode =>
+        clamp(
+          tslLineEndPixelWidth(
+            !!config.isOrtho,
+            mix(startW, endW, t),
+            mvZ,
+            nearCull,
+            uOrthoLineScale,
+            uPerspectiveLineScale
+          ),
+          minPixelWidth,
+          maxPW
+        );
+      const startEndPixelWidth: TSLNode = endW_(tA, mvStart.z).toVar();
+      const endEndPixelWidth: TSLNode = endW_(tB, mvEnd.z).toVar();
       const shared = {
         isOrtho: !!config.isOrtho,
         uLineTex,
@@ -364,7 +384,8 @@ export function linePickWebGPUFactory(
         selfSlot: int(aSortedIndex),
         lineDir,
         pixelLen,
-        clampedPixelWidth,
+        // clampedPixelWidth is deliberately NOT shared: it is per-vertex, and
+        // each call supplies its own END's segment-constant width below.
       };
       tslLineJoin({
         ...shared,
@@ -372,6 +393,7 @@ export function linePickWebGPUFactory(
         reachesVertex: tA.lessThanEqual(0.0),
         jointCode: aStartJointCode,
         sharedNdc: ndcStart,
+        clampedPixelWidth: startEndPixelWidth,
         cornerOffset: startOffset,
         capValue: startJoinCap,
       });
@@ -381,6 +403,7 @@ export function linePickWebGPUFactory(
         reachesVertex: tB.greaterThanEqual(1.0),
         jointCode: aEndJointCode,
         sharedNdc: ndcEnd,
+        clampedPixelWidth: endEndPixelWidth,
         cornerOffset: endOffset,
         capValue: endJoinCap,
       });

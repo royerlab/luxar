@@ -229,6 +229,28 @@ vec3 luxarLinePixelPos(vec3 localPos, float nearCullValue) {
   return vec3(ndc * (0.5 * uResolution), -mv.z);
 }
 
+// Rendered half-width AT ONE ENDPOINT, in pixels, for either projection.
+//
+// The main path's clampedPixelWidth is PER-VERTEX: it interpolates the width
+// and the view depth at the vertex's own t, so the t=0 and t=1 corners of one
+// quad see different values (the same property that forced the pathological
+// cull to gate on a segment-constant max — issue #849). Feeding it to
+// luxarLineJoin would make the join's width gate per-vertex, and both cap
+// varyings are "flat": the two triangles of a quad provoke from different
+// vertices, so a segment whose ends straddle the gate would resolve its cap
+// from whichever corner happened to provoke, and WebGL and WGSL would disagree
+// about which that is.
+//
+// Evaluated at an END this is segment-constant, and it agrees with
+// clampedPixelWidth exactly at the corner that consumes it (t=1 interpolates to
+// mvEnd and endW), so the geometry is unchanged. Both segments meeting at a
+// joint also read the SAME shared vertex, so they still agree on the gate.
+float luxarLineEndPixelWidth(float widthAtEnd, float viewZ, float nearCullValue) {
+  return (uIsOrtho == 1)
+    ? (widthAtEnd * uOrthoLineScale)
+    : (widthAtEnd * uPerspectiveLineScale / max(-viewZ, nearCullValue));
+}
+
 // The corner offset and endpoint cap for one end of one segment.
 //   .xy  this corner's offset in pixel space, ALWAYS valid: the plain
 //        perpendicular half-width whenever no join applies.

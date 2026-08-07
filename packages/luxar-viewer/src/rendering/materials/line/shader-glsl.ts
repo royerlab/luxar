@@ -472,13 +472,25 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // WGSL's "@interpolate(flat)" provokes from the FIRST vertex, so the two
       // backends disagreed as well. Evaluating both ends everywhere makes the
       // two caps segment-constant, which is what "flat" requires.
+      // Per-END widths, not this vertex's: the gate inside luxarLineJoin must be
+      // segment-constant or the "flat" cap varyings below resolve from whichever
+      // corner provokes (see luxarLineEndPixelWidth). Geometrically identical —
+      // each equals clampedPixelWidth at the corner that consumes it.
+      float startEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tA), mvStart.z, nearCull),
+        minPixelWidth, maxPW
+      );
+      float endEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tB), mvEnd.z, nearCull),
+        minPixelWidth, maxPW
+      );
       vec3 startJoin = luxarLineJoin(
         false, tA <= 0.0, aStartJointCode, ndcStart,
-        lineDir, pixelLen, clampedPixelWidth, nearCull
+        lineDir, pixelLen, startEndPixelWidth, nearCull
       );
       vec3 endJoin = luxarLineJoin(
         true, tB >= 1.0, aEndJointCode, ndcEnd,
-        lineDir, pixelLen, clampedPixelWidth, nearCull
+        lineDir, pixelLen, endEndPixelWidth, nearCull
       );
       if (startJoin.z >= 0.0) vCapSuppressStart = startJoin.z;
       if (endJoin.z >= 0.0) vCapSuppressEnd = endJoin.z;

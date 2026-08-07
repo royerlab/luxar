@@ -211,6 +211,34 @@ export function tslLineJointCapSuppression(jointCode: TSLNode): TSLNode {
  */
 export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
 
+/**
+ * Rendered half-width AT ONE ENDPOINT, in pixels — TSL twin of GLSL's
+ * `luxarLineEndPixelWidth`.
+ *
+ * The main path's `clampedPixelWidth` is PER-VERTEX (it interpolates width and
+ * view depth at the vertex's own t), and both cap varyings are `flat`, whose
+ * value comes from one provoking vertex. Gating the join on a per-vertex width
+ * therefore lets a segment whose ends straddle the gate resolve its cap from
+ * whichever corner provokes — and WebGL provokes from the last vertex while
+ * WGSL provokes from the first. Evaluated at an END this is segment-constant,
+ * and equals `clampedPixelWidth` exactly at the corner that consumes it, so the
+ * geometry is unchanged.
+ *
+ * `isOrtho` is the build-time graph variant, so only one branch is emitted.
+ */
+export function tslLineEndPixelWidth(
+  isOrtho: boolean,
+  widthAtEnd: TSLNode,
+  viewZ: TSLNode,
+  nearCull: TSLNode,
+  uOrthoLineScale: TSLNode,
+  uPerspectiveLineScale: TSLNode
+): TSLNode {
+  return isOrtho
+    ? widthAtEnd.mul(uOrthoLineScale)
+    : widthAtEnd.mul(uPerspectiveLineScale).div(max(viewZ.negate(), nearCull));
+}
+
 /** Everything `tslLineJoin` needs from its calling vertex stage. */
 export interface TSLLineJoinArgs {
   /** Build-time camera mode — the line graphs' `config.isOrtho`. */
