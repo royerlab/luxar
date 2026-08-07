@@ -130,8 +130,9 @@ def test_unmigrated_bucket_prefix_contract(tmp_path):
     edit can't silently move a recoverable tile into the deletable bucket."""
     import inspect
 
-    # Inspect the implementation that actually runs the --fix loop (the name
-    # reachable via gsplat_commands is a thin back-compat wrapper).
+    # Inspect the implementation that actually runs the --fix loop; the name
+    # reachable via gsplat_commands is `batch/commands.py`'s thin Typer
+    # registration surface, which only delegates here.
     from luxar.cli.gsplat_ops.batch.status_validate_cancel import (
         run_batch_validate_cmd,
     )
