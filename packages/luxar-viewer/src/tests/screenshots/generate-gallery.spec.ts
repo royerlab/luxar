@@ -270,6 +270,32 @@ async function jumpTimeDimToFrac(page: any, frac: number): Promise<void> {
  * share orientation. For up='z' (CT lying along Z) this gives an upright coronal
  * view instead of the degenerate top-down one from F.
  */
+/**
+ * The world axis the camera's current up-vector most nearly points along.
+ *
+ * Read AFTER framing, so it reflects whatever pose is actually on screen — the
+ * demo's baked `viewer_config` up when it has one, else three.js's (0,1,0). The
+ * rock axis has always been axis-aligned, so a non-axis-aligned baked up is
+ * snapped to its dominant component rather than rejected.
+ *
+ * Falls back to `'y'` when the debug handle or camera is missing, which is the
+ * historical default and keeps a partially-loaded page from throwing here.
+ */
+async function dominantCameraUpAxis(page: any): Promise<'x' | 'y' | 'z'> {
+  const axis = await page.evaluate(() => {
+    const cam = (window as any).__luxarDebug?.camera;
+    if (!cam?.up) return 'y';
+    const { x, y, z } = cam.up;
+    const ax = Math.abs(x);
+    const ay = Math.abs(y);
+    const az = Math.abs(z);
+    if (ax >= ay && ax >= az) return 'x';
+    if (az >= ay) return 'z';
+    return 'y';
+  });
+  return axis as 'x' | 'y' | 'z';
+}
+
 async function positionForOrbitUp(page: any, up: string): Promise<void> {
   await page.evaluate((u: string) => {
     const d = (window as any).__luxarDebug;
@@ -701,7 +727,25 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
     }
   }
 
-  const upAxis = demo?.orbitUp ?? 'y';
+  // Rock axis. An explicit `orbitUp` wins; otherwise DERIVE it from the camera's
+  // own up-vector rather than assuming world-Y.
+  //
+  // This used to be a flat `?? 'y'`, and that default was silently wrong for any
+  // demo whose `viewer_config` bakes a non-Y up. The still keeps the baked pose
+  // (`F` restores it) but the loop below hard-sets `cam.up` every frame, so those
+  // demos shipped an animation ROLLED away from their own poster, with the
+  // turntable degenerating into an in-plane tumble — measured at a 130% swing in
+  // subject aspect over one rock. Three demos were affected and none had opted in
+  // to `orbitUp`, because nothing told them they had to (#1377).
+  //
+  // Deriving it means a baked up is honoured by default and `orbitUp` becomes a
+  // true override. A demo that bakes nothing gets three.js's default camera up,
+  // (0,1,0) -> 'y', so this is a no-op for every previously-correct demo.
+  const upAxis = demo?.orbitUp ?? (await dominantCameraUpAxis(page));
+  console.log(
+    `[${demo?.id ?? 'orbit'}] orbitUp=${upAxis}` +
+      (demo?.orbitUp ? ' (manifest)' : ' (derived from camera up)')
+  );
   const ok = await page.evaluate((up: string) => {
     const debug = (window as any).__luxarDebug;
     const ac = debug?.animationController;
@@ -737,7 +781,6 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
     return true;
   }, upAxis);
   if (!ok) return 0;
-
   fs.mkdirSync(framesDir, { recursive: true });
   const ampRad = (ORBIT_AMPLITUDE_DEG * Math.PI) / 180;
   let tlLastV = -1;
@@ -806,6 +849,85 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
  * (CRF), looping by construction. GitHub renders a committed .webm with a player
  * on the file page; the README embeds the smaller WebP and links to this.
  */
+/**
+ * Warn when the still and the FIRST orbit frame disagree.
+ *
+ * They are the same nominal pose — the rock is `phi0 + amp*sin(0)` at frame 0 —
+ * so they should render near-identically. When they do not, the orbit is showing
+ * the subject from somewhere the poster never does, and since the README embeds
+ * the ANIMATION while reviewers usually look at the still, that divergence ships
+ * unnoticed. It already did: three demos with a baked non-Y camera up had their
+ * animation rolled ~90 deg away from their own poster (#1377), and nothing in
+ * this harness compared the two.
+ *
+ * Normalised cross-correlation on a 256x256 greyscale downscale — deliberately
+ * not SSIM, which is punishing on high-frequency filamentary subjects (a
+ * correctly-matched cosmic-web tile scores 0.57 while correlating at 0.98) and
+ * would cry wolf. Measured separation is wide: 0.98-1.00 when consistent,
+ * 0.52-0.54 when rolled, so 0.85 sits clear of both.
+ *
+ * WARNS rather than fails. A demo may legitimately reorient between still and
+ * orbit (`orbitUp` + `viewAngle` do exactly that on purpose), so this is a "look
+ * at this" signal, not a correctness gate.
+ */
+async function warnIfStillDisagreesWithOrbit(
+  page: any,
+  stillPath: string,
+  frameZeroPath: string,
+  demo: DemoEntry
+): Promise<void> {
+  // Timelapse demos are exempt: the still is deliberately framed at
+  // `timelapse.framePoint` of the time range while orbit frame 0 sits at the
+  // clip's start, so the two show DIFFERENT TIMEPOINTS and correlate ~0.14 even
+  // when the camera agrees perfectly. Comparing them would warn on every
+  // timelapse tile, which is how a guard gets ignored.
+  if (demo.timelapse) return;
+  if (!fs.existsSync(stillPath) || !fs.existsSync(frameZeroPath)) return;
+  const [a, b] = [stillPath, frameZeroPath].map((f) => fs.readFileSync(f).toString('base64'));
+  try {
+    const corr = await page.evaluate(
+      async ([s, f]: [string, string]) => {
+        const grey = async (b64: string) => {
+          const blob = await (await fetch('data:image/png;base64,' + b64)).blob();
+          const img = await createImageBitmap(blob);
+          const c = new OffscreenCanvas(256, 256);
+          const ctx = c.getContext('2d')!;
+          ctx.drawImage(img, 0, 0, 256, 256);
+          const d = ctx.getImageData(0, 0, 256, 256).data;
+          const out = new Float64Array(256 * 256);
+          for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+            out[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          }
+          const mean = out.reduce((p, q) => p + q, 0) / out.length;
+          let ss = 0;
+          for (let i = 0; i < out.length; i++) {
+            out[i] -= mean;
+            ss += out[i] * out[i];
+          }
+          const sd = Math.sqrt(ss / out.length);
+          if (sd > 0) for (let i = 0; i < out.length; i++) out[i] /= sd;
+          return out;
+        };
+        const [ga, gb] = [await grey(s), await grey(f)];
+        let acc = 0;
+        for (let i = 0; i < ga.length; i++) acc += ga[i] * gb[i];
+        return acc / ga.length;
+      },
+      [a, b]
+    );
+    if (corr < 0.85) {
+      console.warn(
+        `[${demo.id}] ⚠️  still and orbit frame 0 disagree (correlation ${corr.toFixed(3)}). ` +
+          'They are the same nominal pose, so the animation is showing a different ' +
+          "orientation than the poster — check 'orbitUp' against the demo's baked " +
+          'viewer_config camera up (see #1377).'
+      );
+    }
+  } catch {
+    // Diagnostic only — never let it break a capture.
+  }
+}
+
 function convertFramesToWebm(framesDir: string, output: string): void {
   // Assemble the real frames 1:1 at ORBIT_FPS — NO minterpolate. Every output
   // frame is a genuine screenshot, so there is no motion-vector warping of fine
@@ -923,6 +1045,7 @@ for (const demo of DEMOS) {
     // assemble the WebM master + animated WebP.
     const framesDir = path.join(OUTPUT_DIR, `_frames_${demo.id}`);
     const n = await captureOrbitFrames(page, framesDir, demo);
+    await warnIfStillDisagreesWithOrbit(page, pngPath, path.join(framesDir, 'f0000.png'), demo);
     await page.close();
     if (n === 0) {
       console.error(`[${demo.id}] orbit capture failed (no camera/controls)`);

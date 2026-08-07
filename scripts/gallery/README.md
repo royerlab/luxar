@@ -64,12 +64,35 @@ README gallery table.
   Override per demo with `"exposure": <log2 stops>` in the manifest when auto
   misses.
 - **Seamless orbit:** a small-angle **sinusoidal rock** of ±20° about the
-  subject's up axis (`"orbitUp"`, default world-Y), captured as 120 explicit
+  subject's up axis (`"orbitUp"`, defaulting to whichever world axis the
+  **camera's own up-vector** most nearly points along — so a scene that bakes
+  `up=(0,0,1)` in its `viewer_config` rocks about Z without being told to),
+  captured as 120 explicit
   per-angle screenshots — not Playwright's passive video, which does not
   reliably record the viewer's rAF repaints in headless. `sin` returns to its
   start, so the loop is seamless with no pre-roll to trim. ffmpeg assembles the
   frames 1:1 (no motion interpolation, which warps fine structure) into a VP9
   WebM master and a smaller animated WebP for the README.
+
+  The orbit **hard-sets `cam.up` every frame**, so that axis has to be right. It
+  used to default to world-Y unconditionally, which silently discarded any baked
+  non-Y up: the still keeps the baked pose (`F` restores it) but the animation
+  did not, so three demos shipped an animation rolled ~90° away from their own
+  poster, turntable degenerating into tumble (#1377). Deriving the default from
+  the camera makes `orbitUp` a true **override**, needed only to rock about
+  something other than the scene's own up. Setting it explicitly also runs
+  `positionForOrbitUp`, which re-parks the camera on an axis and discards the
+  baked framing — so an explicit `orbitUp` usually wants a `viewAngle` beside it,
+  while the derived default leaves framing alone.
+
+  After each capture the harness compares the still against orbit frame 0 — the
+  same nominal pose — and **warns** if they correlate below 0.85. That is the
+  check whose absence let #1377 ship. Timelapse demos are exempt: their still is
+  framed at `timelapse.framePoint` while frame 0 sits at the clip start, so the
+  two legitimately differ.
+
+  **Judge a tile on its orbit frames, not on the still.** The README embeds the
+  animated WebP; the PNG is a byproduct that ships nowhere.
 
 ## Manifest fields
 
@@ -81,7 +104,7 @@ Optional capture hints (see the `DemoEntry` interface in the capture spec for
 the authoritative list and defaults): `exposure` (log2 stops, overrides
 auto-exposure), `autoExpose` / `autoFrame` (set `false` to use the scene's baked
 `viewer_config` instead), `fillTarget`, `zoom`, `distance`, `viewAngle`
-(`{azimuth, elevation}`), `orbitUp` (`'x' | 'y' | 'z'`), `dimensionNav`
+(`{azimuth, elevation}`), `orbitUp` (`'x' | 'y' | 'z'`, default = the camera's own up axis), `dimensionNav`
 (`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
 `readme` (a current top README pick), `note` (free-text human annotation; the
 capture code never reads it).
