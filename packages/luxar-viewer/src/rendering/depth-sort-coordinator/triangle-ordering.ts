@@ -128,7 +128,10 @@ export function computeFaceCentroids(
  * Returns the number of index entries written, or `0` when the ordering was
  * rejected. A rejection leaves the buffer untouched and the callbacks
  * uninvoked; the caller retains ownership of its profiler session, matching
- * {@link import('../element-storage').writeSortedIndexOrdering}'s contract.
+ * `element-storage.ts`'s `writeSortedIndexOrdering` contract. (Written as code
+ * rather than `{@link}`: the symbol is not imported here — only the callbacks type
+ * is — and a `{@link import('…').fn}` form does not resolve, which the TypeDoc
+ * warning ratchet catches.)
  *
  * Rejections are all "the ordering describes a different face set than the one
  * on screen" — a stale-but-whole picture is strictly better than a corrupt one:
