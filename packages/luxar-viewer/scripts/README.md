@@ -15,7 +15,7 @@ scripts/
 ├── check-jsdoc-coverage.ts        # Standalone JSDoc coverage report
 ├── check-overrides.mjs            # pnpm overrides single-source guard
 ├── check-typedoc-warnings.mjs     # Baseline-driven TypeDoc warning ratchet
-├── check-typedoc-warnings.test.mjs # node:test coverage for the warning ratchet
+├── check-typedoc-warnings-tests.mjs # node:test coverage for the warning ratchet
 ├── perf-diff.mjs                  # Markdown delta table from perf-bench JSON
 ├── perf-diff.test.mjs             # tests for perf-diff's buildPerfDiff()
 └── perf/                          # perf-bench capture fixtures / helpers

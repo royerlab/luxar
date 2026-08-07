@@ -11,7 +11,7 @@ on:
       - 'packages/luxar-viewer/typedoc-warnings-baseline.json'
       - 'packages/luxar-viewer/scripts/check-overrides.mjs'
       - 'packages/luxar-viewer/scripts/check-typedoc-warnings.mjs'
-      - 'packages/luxar-viewer/scripts/check-typedoc-warnings.test.mjs'
+      - 'packages/luxar-viewer/scripts/check-typedoc-warnings-tests.mjs'
       - 'packages/luxar-viewer/package.json'
       - 'packages/luxar-viewer/tsconfig*.json'
       - 'scripts/check_documentation.py'

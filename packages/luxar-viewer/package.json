@@ -91,7 +91,7 @@
     "agent:debug:visible": "tsx tools/agent-driver.ts --headless=false",
     "typedoc": "typedoc",
     "typedoc:check-warnings": "node scripts/check-typedoc-warnings.mjs",
-    "test:typedoc-warnings": "node --test scripts/check-typedoc-warnings.test.mjs",
+    "test:typedoc-warnings": "node --test scripts/check-typedoc-warnings-tests.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "check:layers": "depcruise src --config .dependency-cruiser.cjs",
