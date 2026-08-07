@@ -19,18 +19,12 @@ interface WorkerModule {
 interface WasmStubs {
   extract_3d_positions: ReturnType<typeof vi.fn>;
   calculate_effective_radii: ReturnType<typeof vi.fn>;
-  calculate_bounds_3d: ReturnType<typeof vi.fn>;
-  radii_to_visibility_mask: ReturnType<typeof vi.fn>;
   clip_segments_batch: ReturnType<typeof vi.fn>;
   interpolate_clipped_positions: ReturnType<typeof vi.fn>;
   interpolate_colors_batch: ReturnType<typeof vi.fn>;
   interpolate_scalars_batch: ReturnType<typeof vi.fn>;
   calculate_segment_lengths: ReturnType<typeof vi.fn>;
   compute_cap_suppression: ReturnType<typeof vi.fn>;
-  compact_by_mask: ReturnType<typeof vi.fn>;
-  extract_visible_cholesky_3d: ReturnType<typeof vi.fn>;
-  compute_gsplats_attenuation: ReturnType<typeof vi.fn>;
-  compact_attenuated_amplitudes: ReturnType<typeof vi.fn>;
   project_gsplats_nd_to_3d: ReturnType<typeof vi.fn>;
   decode_broadcasted: ReturnType<typeof vi.fn>;
 }
@@ -50,18 +44,12 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
   const wasm: WasmStubs = {
     extract_3d_positions: vi.fn(real.extract_3d_positions.bind(real)),
     calculate_effective_radii: vi.fn(real.calculate_effective_radii.bind(real)),
-    calculate_bounds_3d: vi.fn(real.calculate_bounds_3d.bind(real)),
-    radii_to_visibility_mask: vi.fn(real.radii_to_visibility_mask.bind(real)),
     clip_segments_batch: vi.fn(real.clip_segments_batch.bind(real)),
     interpolate_clipped_positions: vi.fn(real.interpolate_clipped_positions.bind(real)),
     interpolate_colors_batch: vi.fn(real.interpolate_colors_batch.bind(real)),
     interpolate_scalars_batch: vi.fn(real.interpolate_scalars_batch.bind(real)),
     calculate_segment_lengths: vi.fn(real.calculate_segment_lengths.bind(real)),
     compute_cap_suppression: vi.fn(real.compute_cap_suppression.bind(real)),
-    compact_by_mask: vi.fn(real.compact_by_mask.bind(real)),
-    extract_visible_cholesky_3d: vi.fn(real.extract_visible_cholesky_3d.bind(real)),
-    compute_gsplats_attenuation: vi.fn(real.compute_gsplats_attenuation.bind(real)),
-    compact_attenuated_amplitudes: vi.fn(real.compact_attenuated_amplitudes.bind(real)),
     project_gsplats_nd_to_3d: vi.fn(real.project_gsplats_nd_to_3d.bind(real)),
     decode_broadcasted: vi.fn(real.decode_broadcasted.bind(real)),
   };
@@ -476,10 +464,7 @@ describe('projectGSplatsTo3D — happy paths', () => {
       truncate: 3.0,
     });
 
-    // The granular kernels are no longer called for the gsplat path.
-    expect(wasm.compute_gsplats_attenuation).not.toHaveBeenCalled();
-    expect(wasm.extract_visible_cholesky_3d).not.toHaveBeenCalled();
-
+    // The gsplat path runs entirely through the fused kernel.
     expect(wasm.project_gsplats_nd_to_3d).toHaveBeenCalledTimes(1);
     const a = (wasm.project_gsplats_nd_to_3d as any).mock.calls[0];
     // positions, cholesky, amplitudes, colors (white-filled f32), discreteVisibility
