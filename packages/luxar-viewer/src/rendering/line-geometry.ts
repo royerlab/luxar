@@ -209,6 +209,24 @@ export function getLineTexture(geometry: THREE.BufferGeometry): THREE.DataTextur
 }
 
 /**
+ * Largest partner slot a joint code can name and still survive its own storage.
+ *
+ * The code rides an RGBA32F texel, and float32 represents consecutive integers
+ * exactly only to 2^24; the END encoding `-(slot + 3)` has the larger magnitude
+ * and binds first, so `slot + 3 <= 2^24`.
+ *
+ * The AUTHORITATIVE guard is in the projection kernels (`joint_code` in
+ * `wasm/rust/src/lines_clipping.rs` and its TypeScript mirror), because those
+ * emit into Float32Arrays: a code past the bound is rounded at the store and
+ * lands on a valid, in-range slot, which nothing downstream — this function
+ * included — can distinguish from a deliberate one. The check here is a cheap
+ * second bound for codes that did NOT come from the kernel: the TSL parity
+ * harness writes them by hand, and a hand-authored fixture is exactly where an
+ * unrepresentable value would otherwise reach the GPU unnoticed.
+ */
+export const MAX_EXACT_JOINT_SLOT = 16777216 - 3;
+
+/**
  * Capacity clamping keeps only a PREFIX of the projected segment stream, so a
  * joint code emitted for the whole stream can name a partner that was never
  * written. Rewrite any such code to the free-end sentinel: the retained
@@ -221,12 +239,22 @@ export function getLineTexture(geometry: THREE.BufferGeometry): THREE.DataTextur
  * partner is either in the written prefix or it is not. It also covers the case
  * the heuristic explicitly could not — arbitrary indexed neighbours anywhere in
  * the stream, not just the pair straddling the boundary.
+ *
+ * It also enforces the encoding's REPRESENTABILITY bound — see
+ * {@link MAX_EXACT_JOINT_SLOT}.
+ *
+ * Exported for tests: the two rules bind at wildly different scales (the prefix
+ * rule at whatever the node was clamped to, the representability rule only past
+ * 2^24 segments), so driving them through `writeLineTexels` can only ever
+ * exercise the first — the prefix check rejects any large slot before the
+ * exactness check is reached. Asserting them separately is the only way to know
+ * both are live.
  */
-function clampJointCode(code: number, written: number): number {
+export function clampJointCode(code: number, written: number): number {
   // Sentinels (0, -1, -2) carry no slot and always pass through.
   if (code === 0 || code === -1 || code === -2) return code;
   const slot = code > 0 ? code - 1 : -code - 3;
-  return slot < written ? code : 0;
+  return slot < written && slot <= MAX_EXACT_JOINT_SLOT ? code : 0;
 }
 
 /**

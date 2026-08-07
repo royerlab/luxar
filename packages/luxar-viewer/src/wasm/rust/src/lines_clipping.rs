@@ -623,6 +623,19 @@ pub const JOINT_CLIPPED: f32 = -1.0;
 /// Degree->=3 hub: several quads already stack here, so keep the cap.
 pub const JOINT_HUB: f32 = -2.0;
 
+/// Largest partner slot a joint code can name and still survive its own storage.
+///
+/// Codes are emitted into f32 arrays and land in an RGBA32F texel; float32
+/// spaces consecutive integers by 1 only to 2^24, so past that an odd value
+/// rounds to a neighbour and decodes to a DIFFERENT slot. `-(slot + 3)` has the
+/// larger magnitude, so it binds first: `slot + 3 <= 2^24`.
+///
+/// Measured, a 32768-class device (22.35M per-node line capacity) mis-decodes
+/// 12.5% of codes above the bound. Degrading those joints to the free-end
+/// sentinel costs them their miter — strictly better than mitring against an
+/// unrelated segment, which is the flap this whole design exists to prevent.
+pub const MAX_EXACT_JOINT_SLOT: i32 = (1 << 24) - 3;
+
 /// Record one endpoint landing exactly on `vertex`, saturating degree at 3.
 fn register_touch(
     vertex: usize,
@@ -645,10 +658,14 @@ fn register_touch(
 
 /// Joint code for one unclipped endpoint sitting on `vertex`.
 ///
-/// The encoded partner slot is exact in f32: the per-node segment capacity is
-/// `width x maxTextureSize / 6` = 11.17M at the 16384 ceiling, well inside the
-/// 2^24 exact-integer range. Packing the end bit as `(slot << 1) | bit` would
-/// NOT be — it reaches 22.35M — which is why the bit rides the sign instead.
+/// The end bit rides the SIGN rather than packing as `(slot << 1) | bit`
+/// precisely to stay inside f32's exact-integer range: the packed form reaches
+/// 22.35M against a 2^24 = 16.78M ceiling. The sign form keeps the per-node
+/// capacity of 11.17M (`width x maxTextureSize / 6` at the common 16384
+/// ceiling) comfortably exact — but `configureElementTextureLayout` takes the
+/// LIVE renderer capability with no upper bound, so a 32768-class device
+/// reaches 22.35M and the bound has to be ENFORCED, not assumed. See
+/// `MAX_EXACT_JOINT_SLOT`.
 fn joint_code(
     vertex: usize,
     my_code: i32,
@@ -683,7 +700,16 @@ fn joint_code(
     //   is not enough). The old angle-only kernel survived this by returning a
     //   plausible 1.0; a joint code is dereferenced, and a segment mitered
     //   against itself is exactly the asymmetric-join case that produces flaps.
-    if slot < 0 || slot as usize >= visible_count || slot == (my_code >> 1) {
+    // - `slot > MAX_EXACT_JOINT_SLOT`: the outputs below are f32 ARRAYS, so a
+    //   code past 2^24 is rounded AT THE STORE — and it rounds to a valid,
+    //   in-range slot, which no downstream consumer can distinguish from a
+    //   deliberate one. The texel writer's own bound cannot help: it reads the
+    //   already-rounded value. This is the only place the check can live.
+    if slot < 0
+        || slot as usize >= visible_count
+        || slot > MAX_EXACT_JOINT_SLOT
+        || slot == (my_code >> 1)
+    {
         return JOINT_FREE_END;
     }
     // end_bit 0 = the partner's START touches this vertex, 1 = its END does.
@@ -1264,4 +1290,45 @@ mod tests {
 
         assert_eq!(count, 2);
     }
+    #[test]
+    fn slot_past_the_f32_exact_bound_degrades_to_free_end() {
+        // Codes are emitted into f32 arrays, so a slot past 2^24 is rounded AT
+        // THE STORE and lands on a valid neighbouring slot — indistinguishable
+        // downstream from a deliberate reference, and a miter against an
+        // unrelated segment is the flap this design exists to prevent.
+        //
+        // Driven through joint_code directly: reaching it via
+        // compute_joint_codes would need a >16.7M-segment fixture.
+        let num_vertices = 1;
+        let degree = vec![2u8];
+        // Two endpoints meet on vertex 0: mine (slot 5) and a partner whose
+        // slot sits one past the exact bound.
+        let over = MAX_EXACT_JOINT_SLOT + 1;
+        let my_code = 5 << 1; // my slot 5, end_bit 0
+        let partner_code = (over << 1) | 1; // partner's END touches the vertex
+        let code_sum = vec![my_code + partner_code];
+        let visible_count = (over + 1) as usize;
+
+        let out = joint_code(0, my_code, num_vertices, visible_count, &code_sum, &degree);
+        assert_eq!(
+            out, JOINT_FREE_END,
+            "an unrepresentable partner slot must degrade to the free-end sentinel"
+        );
+
+        // Sensitivity control: the largest REPRESENTABLE slot must still encode,
+        // or the assertion above would pass for the wrong reason.
+        let at_bound = MAX_EXACT_JOINT_SLOT;
+        let partner_ok = (at_bound << 1) | 1;
+        let code_sum_ok = vec![my_code + partner_ok];
+        let out_ok = joint_code(
+            0,
+            my_code,
+            num_vertices,
+            (at_bound + 1) as usize,
+            &code_sum_ok,
+            &degree,
+        );
+        assert_eq!(out_ok, -((at_bound + 3) as f32));
+    }
+
 }

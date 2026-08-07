@@ -6,6 +6,40 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Real join geometry for lines: the miter (#790, #795)
+
+Every line segment is one screen-space quad expanded only *perpendicular* to its
+own projected direction, so where a polyline deflects by θ the union of two
+rectangles leaves an uncovered circular sector outside the bend and
+double-covers a lens inside it. #785's cap-suppression scalar could not reach
+that: a multiplier only reshapes intensity where fragments exist, and in the
+wedge there are none.
+
+`texel4.yz` now carry a per-endpoint joint **code** rather than a `[0, 1]`
+scalar — `0` free end, `-1` slice-clipped, `-2` degree-≥3 hub, `+(slot+1)` /
+`-(slot+3)` naming the partner segment's storage slot and which of its endpoints
+is shared (`compute_joint_codes`, replacing `compute_cap_suppression`; the
+paragraph below describes the superseded scalar). Adjacency is derived at
+projection time from the `segments` index pairs, so there is **no on-disk format
+change**. The vertex stage fetches the partner's far endpoint and intersects the
+two ±R offset lines, and the bend term is now derived per frame in **screen
+space** — which is what closes #795, whose stored data-space angle could not
+track the camera.
+
+Because the miter point lies on the segment's own ±R offset line, `vPerpNorm`
+stays an exact perpendicular coordinate and the **fragment stage is unchanged**.
+Guards (miter limit 120°, an overshoot test on the axial reach, and a 2 px
+rendered-width gate) keep the cost where the benefit is: 0 on thin-line scenes,
++0.1–0.2 ms/frame at 800k thick segments. Default style is `miter`; a per-node
+`join` attribute and `?lineJoin=none|miter` override it.
+
+Net deletion: the per-segment `dirs` table (~32 MB at 2.7M segments), the
+per-endpoint normalize + dot, and `softenCapacitySplitCap`. Measured on the new
+`line-join-artifacts` spec, none → miter: a 120-segment sinusoid drops from 233
+to 2 outlier pixels and a right-angle zigzag from 726 to 0, while straight
+polylines come back byte-identical (the miter reduces algebraically to `R·perp`
+at a collinear joint).
+
 #### Four geometry types, said consistently
 
 `grep -ci mesh README.md` returned 0. The lead paragraph, the capabilities table

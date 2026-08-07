@@ -909,7 +909,8 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       };
     },
     (size) => {
-      // compute_joint_codes - per-endpoint cap suppression. Built as one
+      // compute_joint_codes - the per-endpoint joint CODE (a sentinel or a
+      // signed partner-slot reference), not a [0, 1] scalar. Built as one
       // long polyline (segment i joins i-1 and i+1) so the joint-detection
       // path is exercised, not just the clipped-flag fast path.
       const visibility = new Uint8Array(size);

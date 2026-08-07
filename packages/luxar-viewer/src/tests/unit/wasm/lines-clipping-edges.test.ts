@@ -26,6 +26,7 @@ import {
   interpolate_colors_batch,
   calculate_segment_lengths,
   compute_joint_codes,
+  MAX_EXACT_JOINT_SLOT,
   JOINT_CLIPPED,
   JOINT_FREE_END,
 } from '../../../wasm/typescript/lines-clipping';
@@ -340,6 +341,32 @@ describe('calculate_segment_lengths — boundaries and NaN [wasm.md G12]', () =>
     const output = new Float32Array(1);
     calculate_segment_lengths(startPositions, endPositions, 1, output);
     expect(output[0]).toBe(5);
+  });
+});
+
+describe('joint-code f32 representability bound', () => {
+  // The bound itself is exercised as a BRANCH on the Rust side
+  // (`slot_past_the_f32_exact_bound_degrades_to_free_end`), where `joint_code`
+  // is a free function. Its TypeScript mirror is a closure inside
+  // `computeJointCodes`, and reaching the branch through the public kernel
+  // would need a >16.7M-segment fixture — so what is pinned here is the part
+  // that can silently DRIFT between the two hand-written implementations: the
+  // constant, and the arithmetic reason it sits where it does.
+  it('is the largest slot whose END encoding survives a float32 round-trip', () => {
+    const decode = (c: number) => (c > 0 ? Math.trunc(c) - 1 : Math.trunc(-c) - 3);
+    const atEnd = (slot: number) => -(slot + 3);
+    const atStart = (slot: number) => slot + 1;
+
+    expect(MAX_EXACT_JOINT_SLOT).toBe((1 << 24) - 3);
+    // At the bound: both encodings round-trip exactly.
+    expect(decode(Math.fround(atEnd(MAX_EXACT_JOINT_SLOT)))).toBe(MAX_EXACT_JOINT_SLOT);
+    expect(decode(Math.fround(atStart(MAX_EXACT_JOINT_SLOT)))).toBe(MAX_EXACT_JOINT_SLOT);
+    // One past it, the END encoding — the larger magnitude, so the binding one —
+    // rounds to a neighbour and decodes to the WRONG slot. That wrong slot is
+    // in range and indistinguishable downstream, which is why the kernel has to
+    // refuse to emit it rather than letting a consumer notice.
+    const over = MAX_EXACT_JOINT_SLOT + 1;
+    expect(decode(Math.fround(atEnd(over)))).not.toBe(over);
   });
 });
 

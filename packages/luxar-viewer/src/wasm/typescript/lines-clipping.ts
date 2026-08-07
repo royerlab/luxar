@@ -426,6 +426,15 @@ export function calculate_segment_lengths(
 
 /** Free polyline end: keep the soft cap. */
 export const JOINT_FREE_END = 0;
+
+/**
+ * Largest partner slot a joint code can name and still survive its own storage.
+ * Mirrors the Rust `MAX_EXACT_JOINT_SLOT` — see that constant for why the bound
+ * is `slot + 3 <= 2^24` and why it must be enforced rather than assumed (a
+ * 32768-class device reaches a 22.35M per-node line capacity, where a measured
+ * 12.5% of codes above the bound mis-decode).
+ */
+export const MAX_EXACT_JOINT_SLOT = (1 << 24) - 3;
 /** Slice-clipped endpoint: no neighbour will arrive, so suppress the cap. */
 export const JOINT_CLIPPED = -1;
 /** Degree->=3 hub: several quads already stack here, so keep the cap. */
@@ -532,7 +541,12 @@ export function compute_joint_codes(
     //   is not enough). The angle-only scalar this replaced survived the case by
     //   returning a plausible number; a code gets dereferenced, and a segment
     //   mitered against itself is the asymmetric-join case that produces flaps.
-    if (slot < 0 || slot >= visibleCount || slot === myCode >> 1) return JOINT_FREE_END;
+    // - `slot > MAX_EXACT_JOINT_SLOT`: the outputs are Float32Arrays, so a code
+    //   past 2^24 rounds AT THE STORE — and it rounds to a valid, in-range
+    //   slot that no downstream consumer can tell from a deliberate one. The
+    //   texel writer cannot help; it reads the already-rounded value.
+    if (slot < 0 || slot >= visibleCount || slot > MAX_EXACT_JOINT_SLOT || slot === myCode >> 1)
+      return JOINT_FREE_END;
     // endBit 0 = the partner's START touches this vertex, 1 = its END does.
     return (partner & 1) === 0 ? slot + 1 : -(slot + 3);
   };
