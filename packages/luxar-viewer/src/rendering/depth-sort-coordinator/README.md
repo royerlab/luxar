@@ -10,15 +10,15 @@ This module is the **main-thread authority** for the depth-sort subsystem. It se
 
 **There are two APPLY paths, and only the apply differs.** A "center" is a splat/point center, a line segment midpoint, or a triangle centroid — 3 floats either way, so registration, worker and kernel are shared:
 
-| | Instanced (gsplats, points, lines) | Indexed (mesh) |
-|---|---|---|
-| What is permuted | `aSortedIndex`, a per-instance draw-slot indirection | `geometry.index` itself |
-| Buffering | Double-buffered pair + `uSortedIndexSlot` uniform | Single buffer |
-| Cadence | Chunked: one 4 MB slice per rendered frame, flip on completion | Atomic: the whole visible prefix in one write |
-| Why | A half-written INACTIVE buffer is never drawn | A half-written index buffer is not a permutation — it would draw some triangles twice and others not at all |
-| Owner | `rendering/element-storage.ts` | `triangle-ordering.ts` |
+|                  | Instanced (gsplats, points, lines)                             | Indexed (mesh)                                                                                              |
+| ---------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| What is permuted | `aSortedIndex`, a per-instance draw-slot indirection           | `geometry.index` itself                                                                                     |
+| Buffering        | Double-buffered pair + `uSortedIndexSlot` uniform              | Single buffer                                                                                               |
+| Cadence          | Chunked: one 4 MB slice per rendered frame, flip on completion | Atomic: the whole visible prefix in one write                                                               |
+| Why              | A half-written INACTIVE buffer is never drawn                  | A half-written index buffer is not a permutation — it would draw some triangles twice and others not at all |
+| Owner            | `rendering/element-storage.ts`                                 | `triangle-ordering.ts`                                                                                      |
 
-Mesh cannot double-buffer because `geometry.index` is *bound* state: no uniform can select between two index buffers, and reassigning `geometry.index` is the drawn-geometry rebind `applyMeshIndices` exists to avoid. The atomic write costs one upload of a prefix the mesh path already re-uploads on every slice move. Its permutation is applied to the commit's CANONICAL triples (retained on `NodeSortState.triangleSource` only while the node is sorting), never to the live buffer, which would compose successive permutations.
+Mesh cannot double-buffer because `geometry.index` is _bound_ state: no uniform can select between two index buffers, and reassigning `geometry.index` is the drawn-geometry rebind `applyMeshIndices` exists to avoid. The atomic write costs one upload of a prefix the mesh path already re-uploads on every slice move. Its permutation is applied to the commit's CANONICAL triples (retained on `NodeSortState.triangleSource` only while the node is sorting), never to the live buffer, which would compose successive permutations.
 
 ## File Map
 
@@ -52,7 +52,7 @@ The submodule `triangle-ordering.ts` owns:
 
 - `computeFaceCentroids` — the mesh "center" payload for the shared kernel
 - `writeSortedTriangleOrdering` — the atomic index permutation, with the rejections that keep a stale ordering from writing a corrupt one
-- The written-but-undrawn acknowledgement map, so the profiler pass reports *uploaded* only after THREE has drawn the permuted index (issue #713), mirroring `acknowledgeSortedIndexOrderingDraw`
+- The written-but-undrawn acknowledgement map, so the profiler pass reports _uploaded_ only after THREE has drawn the permuted index (issue #713), mirroring `acknowledgeSortedIndexOrderingDraw`
 
 ## Architecture
 
