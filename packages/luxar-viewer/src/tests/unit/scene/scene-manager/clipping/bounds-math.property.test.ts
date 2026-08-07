@@ -19,7 +19,9 @@ import {
   boundingBoxToSphere,
   calculateClippingPlanesFromSphere,
   getBoundingBoxDiagonal,
+  MAX_NEAR_FAR_RATIO,
   minNearForRadius,
+  nearPlaneFloor,
   SPHERE_SAFETY_EXPANSION,
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
 
@@ -109,6 +111,78 @@ describe('bounds-math properties', () => {
         fc.property(radiusArb, distArb, (radius, dist) => {
           const { near } = planesAt(radius, dist);
           expect(near).toBeGreaterThanOrEqual(minNearForRadius(radius * SPHERE_SAFETY_EXPANSION));
+        })
+      );
+    });
+
+    // The invariant the whole depth-precision fix rests on. Depth
+    // quantization on a 24-bit buffer is proportional to (far-near)/(near*far),
+    // so an unbounded ratio is what produced the reported z-fighting once the
+    // camera moved inside the bounding sphere. Asserting it as a PROPERTY (not
+    // just at the reported pose) is what makes it a guarantee: no camera
+    // distance, at any scene scale, can push the ratio past the bound.
+    test('near/far ratio never exceeds MAX_NEAR_FAR_RATIO', () => {
+      fc.assert(
+        fc.property(radiusArb, distArb, (radius, dist) => {
+          const { near, far } = planesAt(radius, dist);
+          // Float slack only — the bound is an equality at the floor.
+          expect(far / near).toBeLessThanOrEqual(MAX_NEAR_FAR_RATIO * (1 + 1e-9));
+        })
+      );
+    });
+
+    // Upper-bound half of the MAX_NEAR_FAR_RATIO derivation, stated as the
+    // thing that actually matters: whenever the FLOOR is what sets `near`,
+    // everything the near plane clips was already being discarded by the
+    // point / line / gsplat vertex shaders, so raising the floor cannot hide
+    // geometry those three types would have drawn. That is what makes the
+    // ratio bound lossless rather than a quality tradeoff.
+    //
+    // Those shaders multiply by `perspectiveNearFade` (see
+    // `materials/_shared/glsl-lib.ts`) and reject the vertex when it drops
+    // below 0.01. The fade is monotone in view depth, so asserting
+    // fade(near) <= 0.01 covers every depth the frustum clips.
+    //
+    // NOTE the margin here is genuinely thin, and asymmetric on purpose:
+    // `far` carries SPHERE_SAFETY_EXPANSION but `nearCull` does not, so with
+    // the camera right at the sphere surface the floor reaches ~1.05x
+    // nearCull -- still inside the fade band's reject region (which extends
+    // to ~1.058x nearCull), but only just. Raising MAX_NEAR_FAR_RATIO's
+    // reciprocal any further would start clipping visible geometry, which is
+    // the upper bound on the constant.
+    const NEAR_FADE_REJECT = 0.01;
+    const smoothstep = (e0: number, e1: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+      return t * t * (3 - 2 * t);
+    };
+
+    // Generates the regime this property is ABOUT: the camera inside the
+    // (safety-expanded) sphere, where the floor is what sets `near`.
+    //
+    // Deliberately NOT `fc.pre(near === floor)` over the wide `distArb`. That
+    // spelling was measured to hold in 0.06% of cases (distArb reaches 1e6
+    // while radiusArb stops at 1e4, so the camera is nearly always far
+    // OUTSIDE the sphere), which left the property executing its body ~0
+    // times in fast-check's default 100 runs — green and proving nothing.
+    // Parameterizing the arbitrary instead of filtering it keeps every
+    // generated case on-topic.
+    const insideFracArb = fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true });
+
+    test('when the floor sets near, the clipped band is already shader-rejected', () => {
+      fc.assert(
+        fc.property(radiusArb, insideFracArb, (radius, insideFrac) => {
+          const R = radius * SPHERE_SAFETY_EXPANSION;
+          // Strictly inside: nextafter-style shave keeps `dist < R` true even
+          // when insideFrac rounds to exactly 1.
+          const dist = R * insideFrac * (1 - Number.EPSILON);
+          const { near, far } = planesAt(radius, dist);
+          // Guard against this property silently going vacuous again: the
+          // whole point is the regime where the floor binds.
+          expect(near).toBe(nearPlaneFloor(R, far));
+          // diagonal = 2 * radius (boundingBoxToSphere inverse), so
+          // nearCull = 1e-3 * 2 * radius. See scene-bounds-cache.ts.
+          const nearCull = 2 * radius * 0.001;
+          expect(smoothstep(nearCull, 2 * nearCull, near)).toBeLessThanOrEqual(NEAR_FADE_REJECT);
         })
       );
     });

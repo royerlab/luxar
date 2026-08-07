@@ -121,8 +121,8 @@ export function validateFOV(fov: number, min: number = 10, max: number = 120): n
 
 /**
  * Absolute last-resort near-plane floor (degenerate / zero-radius
- * scenes only). For any real scene the SCALE-AWARE floor from
- * {@link minNearForRadius} dominates — see the rationale there.
+ * scenes only). For any real scene the DEPTH-PRECISION floor from
+ * {@link nearPlaneFloor} dominates — see the rationale there.
  */
 export const MIN_NEAR_PLANE = 1e-9;
 
@@ -146,9 +146,120 @@ export const MIN_NEAR_RADIUS_FACTOR = 2e-6;
 /**
  * Scale-aware near-plane floor for a scene with the given
  * (safety-expanded) bounding-sphere radius.
+ *
+ * A BACKSTOP only. It bounds `near` away from zero at any scene scale,
+ * but it says nothing about depth-buffer precision — the operative
+ * floor is {@link nearPlaneFloor}, which additionally bounds the
+ * near/far RATIO. Do not clamp to this directly; call
+ * `nearPlaneFloor` so both clipping paths inherit the same bound.
  */
 export function minNearForRadius(expandedRadius: number): number {
   return Math.max(MIN_NEAR_PLANE, expandedRadius * MIN_NEAR_RADIUS_FACTOR);
+}
+
+/**
+ * Largest near/far ratio the near-plane floor will allow.
+ *
+ * The depth buffer is 24-bit fixed point (three allocates
+ * `DEPTH_COMPONENT24` for a render target with no explicit
+ * `depthType`, and `webgl.renderer.logarithmicDepthBuffer` is off), so
+ * depth quantization in world units at eye distance `d` is
+ *
+ *     Δz(d) = d² · (far − near) / (near · far) · 2⁻²⁴
+ *
+ * — inversely proportional to `near`. Left unbounded, the
+ * inside-the-sphere branch of {@link calculateClippingPlanesFromSphere}
+ * pinned `near` to `R · MIN_NEAR_RADIUS_FACTOR` (2e-6 · R), i.e. a
+ * ratio near 6e5:1, which puts Δz at ~4e-2 world units on a
+ * diagonal-100 scene viewed from 8.5 units — coarse enough to z-fight
+ * visibly, and (because `near` tracks camera distance) to POP as the
+ * camera orbits. Only depth-writing geometry is affected (mesh, and
+ * opaque `normal`-mode geometry — see `rendering/blending-state.ts`),
+ * which is exactly where it was reported.
+ *
+ * Why 1000 specifically. A LARGER C means a smaller floor: less
+ * precision, but less clipped. Two constraints put a floor under C, and
+ * only a soft preference (keep precision) pushes from above — so C wants
+ * to be the smallest value satisfying both:
+ *
+ *  - **C > 551, don't clip the zoom target.** At maximum zoom-in the
+ *    orbit target sits at `minDistance = 1e-3 · diagonal`
+ *    (`controls.scaleMultipliers`) = `1.905e-3 · R`, while `far ≈ 1.05 · R`.
+ *    Keeping it in front of the near plane needs `1.05 R / C < 1.905e-3 R`.
+ *  - **C ≥ 992, stay lossless for Points / Lines / GSplats.** All three
+ *    already suppress anything closer than `nearCull = 1e-3 · diagonal`
+ *    via `perspectiveNearFade` (`materials/_shared/glsl-lib.ts`), though
+ *    by two different mechanisms worth knowing before trusting this:
+ *    Points and GSplats REJECT the vertex when the fade drops below 0.01
+ *    (both backends); Lines instead cull only when BOTH endpoints are
+ *    near, clip a half-near segment onto the `nearCull` plane, and apply
+ *    the fade PER-FRAGMENT as a multiply. Either way the fade is what
+ *    governs, and it is under 0.01 below `1.0582 · nearCull`. The worst
+ *    case is the camera ON the sphere surface, where `far = 2R` and the
+ *    floor is largest relative to `nearCull`:
+ *    `2R / C ≤ 1.0582 · 1.905e-3 · R` ⟹ `C ≥ 992`. At C = 1000 the
+ *    frustum cut lands where the fade is 0.007, so the most any of the
+ *    three loses is fragments carrying <1% of their intensity.
+ *
+ * 992 binds. C = 1000 clears it by **0.8%** — deliberately thin, because
+ * every extra unit of C is depth precision given away, and the margin is
+ * *enforced* rather than trusted: the "clipped band is already
+ * shader-rejected" property in `bounds-math.property.test.ts` fails if a
+ * future change to `nearCull`, to the fade band, or to this constant eats
+ * it. (Mesh has no near fade in either backend — verified in the GLSL and
+ * TSL sources — so it is the one type the floor can clip; there is no
+ * value of C that avoids that while still bounding the ratio.)
+ *
+ * Measured payoff at the reported pose (R = 52.5, dist = 8.5, far = 61):
+ * the floor rises 1.05e-4 → 0.061 and depth quantization improves
+ * 4.10e-2 → 7.05e-5 world units, i.e. **581x** finer.
+ *
+ * PERSPECTIVE ONLY — see the `boundNearFarRatio` parameter of
+ * {@link nearPlaneFloor}. An orthographic projection maps eye depth
+ * LINEARLY to the depth buffer, so its resolution is
+ * `(far - near) / 2²⁴` regardless of `near`: the ratio bound buys ortho
+ * nothing, while still clipping a slab in front of the eye that ortho
+ * (unlike perspective) really does draw — `perspectiveNearFade` returns
+ * 1.0 for ortho, so ALL FOUR geometry types render up to `near` there.
+ * Measured on a diagonal-100 scene at the deepest legal orbit distance:
+ * applying the bound under ortho clips 52.7% of the eye-to-target depth
+ * versus 0.105% without it, and changes depth resolution by 0.1%.
+ */
+export const MAX_NEAR_FAR_RATIO = 1000;
+
+/**
+ * The near-plane floor both clipping paths clamp to: the scale-aware
+ * backstop, raised to whatever `far / {@link MAX_NEAR_FAR_RATIO}`
+ * demands for depth-buffer precision.
+ *
+ * Scale-invariant by construction — the bound is derived from `far`,
+ * which is itself scene-scaled — so it keeps the tiny-scene guarantee
+ * `minNearForRadius` was introduced for (#573) without the Z-precision
+ * cost: on a diagonal-0.1 scene at maximum zoom-in, `far / 1000` is
+ * ~5.3e-5 while the closest reachable orbit distance is ~1.7e-4, so
+ * nearby geometry still renders.
+ *
+ * Always `< far` for `far > 0`, so callers can rely on it never
+ * producing an inverted frustum on its own.
+ *
+ * @param expandedRadius - Safety-expanded bounding-sphere radius.
+ * @param far - The far plane the caller is about to apply.
+ * @param boundNearFarRatio - Whether to apply the depth-precision ratio
+ *   bound. TRUE for a perspective projection (where depth resolution is
+ *   `~1/near`); FALSE for an orthographic one, whose depth is linear in
+ *   eye space, so the bound would clip a visible near slab for zero
+ *   precision gain — see {@link MAX_NEAR_FAR_RATIO}. Callers derive it
+ *   from the live camera rather than assuming, because the viewer
+ *   swaps projections at runtime (V key).
+ */
+export function nearPlaneFloor(
+  expandedRadius: number,
+  far: number,
+  boundNearFarRatio: boolean = true
+): number {
+  const scaleFloor = minNearForRadius(expandedRadius);
+  if (!boundNearFarRatio) return scaleFloor;
+  return Math.max(scaleFloor, far / MAX_NEAR_FAR_RATIO);
 }
 
 /**
@@ -179,13 +290,21 @@ export function boundingBoxToSphere(box: BoundingBox): BoundingSphere {
  * edges/corners. The sphere produces smooth near/far values as the camera
  * moves, eliminating the need for exponential smoothing.
  *
+ * `near` is the nearest point on the sphere surface, floored by
+ * {@link nearPlaneFloor} — which is what keeps the near/far ratio (and
+ * therefore depth-buffer precision) bounded once the camera moves INSIDE
+ * the sphere, the regime where the bare surface distance goes to zero.
+ *
  * @param sphere - Scene bounding sphere
  * @param cameraPosition - Camera position in world coordinates
+ * @param boundNearFarRatio - Forwarded to {@link nearPlaneFloor}; pass
+ *   false for an orthographic projection. Defaults to true (perspective).
  * @returns Near and far clipping plane distances
  */
 export function calculateClippingPlanesFromSphere(
   sphere: BoundingSphere,
-  cameraPosition: { x: number; y: number; z: number }
+  cameraPosition: { x: number; y: number; z: number },
+  boundNearFarRatio: boolean = true
 ): { near: number; far: number } {
   const dx = cameraPosition.x - sphere.center.x;
   const dy = cameraPosition.y - sphere.center.y;
@@ -194,11 +313,13 @@ export function calculateClippingPlanesFromSphere(
   const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
 
   const far = dist + R;
-  const minNear = minNearForRadius(R);
+  const minNear = nearPlaneFloor(R, far, boundNearFarRatio);
 
   if (dist < R) {
-    // Inside sphere: use the scale-aware near floor to see all
-    // surrounding geometry
+    // Inside sphere: the surface distance is meaningless (it would be
+    // negative), so the floor IS the near plane. Bounded by the
+    // depth-precision ratio rather than collapsing to
+    // minNearForRadius — see MAX_NEAR_FAR_RATIO.
     return { near: minNear, far };
   }
 

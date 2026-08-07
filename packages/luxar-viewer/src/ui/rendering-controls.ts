@@ -6,6 +6,10 @@ import { PostProcessingManager } from '../rendering';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
 import { config, type RenderingSettings } from '../config';
+import {
+  minNearForRadius,
+  SPHERE_SAFETY_EXPANSION,
+} from '../scene/scene-manager/clipping/bounds-math';
 
 import type { RenderingControllers } from './rendering-controls/types';
 import { log, Modules } from '../utils/log';
@@ -518,6 +522,23 @@ export class RenderingControls {
     // Apply clipping planes if overridden
     if (zarrOverrides.near !== undefined || zarrOverrides.far !== undefined) {
       this.sceneManager.updateClippingPlanes(this.settings.near, this.settings.far);
+
+      // Authored planes and dynamic clipping are mutually exclusive in effect:
+      // the per-frame update recomputes near/far from scene bounds on the very
+      // next frame, so authored values survive for one frame and then vanish
+      // with no diagnostic. Precedence is intentionally NOT changed here —
+      // dynamic clipping is an explicit auto mode and silently disabling it
+      // would be the more surprising behaviour — but the author deserves to
+      // know why their setting appears to be ignored. Pair
+      // `camera.near`/`camera.far` with `dynamic_clipping_enabled=False` in
+      // viewer_config to make them stick.
+      if (this.settings.dynamicClippingEnabled) {
+        log.warning(
+          Modules.RENDERER,
+          'viewer_config sets camera.near/far while dynamic clipping is enabled; ' +
+            'the per-frame update will override them. Set dynamic_clipping_enabled=False to keep them.'
+        );
+      }
     }
 
     // Apply navigation settings if overridden
@@ -614,6 +635,67 @@ export class RenderingControls {
       Modules.UI,
       `Fly speed range updated for scale ${scale.toFixed(1)}: ` +
         `[${newMin.toFixed(2)}, ${newMax.toFixed(1)}], speed=${scaledSpeed.toFixed(1)}`
+    );
+
+    this.updateClippingSliderRanges(scale);
+  }
+
+  /**
+   * Re-range the near/far sliders from the scene scale.
+   *
+   * Their authored range is ABSOLUTE (`near` 0.0001–10, `far` 1–100000) while
+   * every value they ever show is scene-relative, so on any scene that is not
+   * roughly 100 world units across the two disagree. The visible symptom is
+   * under dynamic clipping, where the sliders are read-only live readouts: at a
+   * framed camera on a diagonal-100 scene `near` is ~44, so the number input
+   * reads 44 truthfully while `<input type=range>` clamps its own value and
+   * pins the thumb at the 10 end. On a micron-scale scene the whole useful
+   * range collapses below the 0.0001 minimum instead.
+   *
+   * Ranged off the same scene diagonal the rest of the scale-aware machinery
+   * uses, and bracketing what the clipping policy can actually produce:
+   * `near` bottoms out at `MIN_NEAR_RADIUS_FACTOR · R` (the ortho floor) and
+   * tops out near the framed distance; `far` reaches `dist + R` at the
+   * zoom-out limit. Mirrors the fly-speed re-ranging directly above — same
+   * trigger, same structural cast, same reason.
+   */
+  private updateClippingSliderRanges(scale: number): void {
+    type ChainableNumber = {
+      min(v: number): ChainableNumber;
+      max(v: number): ChainableNumber;
+      step(v: number): ChainableNumber;
+    };
+    const reRange = (
+      controller: (typeof this.controllers)[keyof typeof this.controllers],
+      min: number,
+      max: number,
+      step: number
+    ): void => {
+      if (!controller) return;
+      const ctrl = controller as unknown as ChainableNumber;
+      if (typeof ctrl.min === 'function') ctrl.min(min).max(max).step(step);
+    };
+
+    // R is the safety-expanded radius the clipping policy works in.
+    const R = 0.5 * scale * SPHERE_SAFETY_EXPANSION;
+    const nearMin = minNearForRadius(R);
+    const nearMax = scale; // beyond any near the policy produces while framed
+    const farMin = nearMin * 10;
+    const farMax = scale * config.controls.scaleMultipliers.maxDistanceFactor;
+
+    reRange(this.controllers.nearPlane, nearMin, nearMax, nearMin);
+    reRange(this.controllers.farPlane, farMin, farMax, farMin);
+
+    // Re-assert the live values: `<input type=range>` clamped them to the OLD
+    // bounds, so the thumbs stay stale until the display is refreshed.
+    this.controllers.nearPlane?.updateDisplay();
+    this.controllers.farPlane?.updateDisplay();
+
+    log.info(
+      Modules.UI,
+      `Clipping slider ranges updated for scale ${scale.toFixed(1)}: ` +
+        `near [${nearMin.toExponential(1)}, ${nearMax.toFixed(1)}], ` +
+        `far [${farMin.toExponential(1)}, ${farMax.toFixed(0)}]`
     );
   }
 

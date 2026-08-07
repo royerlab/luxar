@@ -11,7 +11,7 @@ All notable changes to Luxar are documented in this file.
 `grep -ci mesh README.md` returned 0. The lead paragraph, the capabilities table
 and the architecture diagram all still described a three-geometry system, and
 `docs/concepts/architecture.rst` went further, listing "Triangle meshes" under
-*consider alternatives — use three.js*. All now name mesh; the alternatives entry
+_consider alternatives — use three.js_. All now name mesh; the alternatives entry
 is rewritten as the caveat that is actually true (Luxar renders surfaces but does
 not author them, and a mesh gets no LOD or spatial partitioning, so one very
 large surface loads whole). `README.md` gains a Mesh section under Geometry
@@ -36,10 +36,95 @@ a count: mesh does carry the GOG chain, but it deliberately omits the
 zero-contribution early discard, because an opaque surface still has to write
 depth for a fragment that ends up black.
 
-Claims that count the *instanced-quad, depth-sorted, volumetric* families rather
+Claims that count the _instanced-quad, depth-sorted, volumetric_ families rather
 than the type vocabulary were checked and deliberately left at three — mesh takes
 part in none of those, and the `?debug` synthetic-scene bench injector genuinely
 still builds only points, lines and gsplats.
+
+#### Fixed — z-fighting and z-popping from an unbounded near/far ratio
+
+Zooming in far enough to put the camera inside the scene's bounding _sphere_ — an
+ordinary amount of zoom, since the circumscribed sphere is 1.73x the half-side of
+a cube — collapsed the near plane to `2e-6 · R`. On a diagonal-100 scene viewed
+from 8.5 units that is `near = 1.05e-4` against `far = 61`: a **580,000:1 ratio**.
+The depth buffer is 24-bit fixed point, where quantization in world units is
+`d² · (far − near) / (near · far) · 2⁻²⁴`, so that ratio buckets depth at ~4e-2
+world units — coarse enough to z-fight visibly on depth-writing geometry (mesh and
+opaque `normal`-mode geometry), and to _pop_ while orbiting, because `near`
+tracks camera distance and the quantization changes with it.
+
+The near-plane floor is now `nearPlaneFloor(R, far) = max(minNearForRadius(R),
+far / MAX_NEAR_FAR_RATIO)` with `MAX_NEAR_FAR_RATIO = 1000`, shared by the
+auto-adjust and per-frame dynamic paths. On the case above `near` becomes 0.061
+and depth quantization improves 4.10e-2 → 7.05e-5 world units — **581x** finer.
+
+`1000` is derived, not picked. A larger C means a smaller floor, so two
+constraints push C _up_ and only the wish to keep precision pushes down:
+C > 551 keeps the floor in front of the orbit target at maximum zoom-in, and
+C ≥ 992 keeps it inside the band where the Points / Lines / GSplats vertex
+shaders already discard geometry (`perspectiveNearFade` below
+`1.0582 · nearCull`, worst case being the camera on the sphere surface where
+`far = 2R`). The second binds, and 1000 clears it by only **0.8%** —
+deliberately thin, since every extra unit of C is precision given away. Both
+constraints are pinned as executable arithmetic, and the losslessness margin is
+enforced by a property test against the shaders' own reject threshold rather
+than trusted. Being derived from `far` (itself scene-scaled) the floor also
+keeps the tiny-scene guarantee that motivated the radius-proportional floor, so
+`MIN_NEAR_RADIUS_FACTOR` is now a dominated backstop that only surfaces on a
+degenerate zero-radius sphere.
+
+The bound is **perspective-only**. An orthographic projection maps eye depth
+linearly to the depth buffer, so its resolution is `(far − near) / 2²⁴`
+regardless of `near` — and `perspectiveNearFade` returns 1.0 under ortho, so all
+four geometry types render right up to the near plane there. Applying the ratio
+bound under ortho was measured to clip 52.7% of the eye-to-target depth at the
+deepest legal orbit distance for a 0.1% change in depth resolution, so both
+clipping paths now read the live camera and drop the bound for ortho.
+
+#### Fixed — non-finite clipping planes reached the projection matrix
+
+`applyClippingPlanes` rejected `near >= far`, but every comparison against NaN
+is false, so a NaN sailed through into `camera.near` and blanked the view with
+no diagnostic — reachable from snapshot-restore, which writes a captured pair
+straight back, and from any caller that skips `validateRenderingSettings`. Both
+clipping paths now refuse non-finite planes explicitly. The per-frame path also
+treats a non-finite CURRENT value as changed: without that, a camera already
+holding NaN was stuck forever, because the 0.1% change gate compares
+`Math.abs(camera.near - near) / camera.near` and never reopens once that is NaN.
+
+#### Fixed — near/far sliders were ranged absolutely on a scene-relative quantity
+
+Their authored range (`near` 0.0001–10, `far` 1–100000) never matched the values
+they display, which are all scene-relative. Under dynamic clipping the sliders
+are live read-only readouts, so on a diagonal-100 scene at a framed camera
+`near` is ~44: the number input read it truthfully while `<input type=range>`
+clamped its own value and pinned the thumb at the 10 end. On a micron-scale
+scene the entire useful range sat below the 0.0001 minimum instead. Both are now
+re-ranged from the scene diagonal in `updateSceneScale`, alongside the fly-speed
+slider that already worked this way — which also gave that method its first test
+coverage.
+
+#### Changed — authored clipping planes warn when dynamic clipping will override them
+
+`viewer_config` `camera.near` / `camera.far` are applied correctly (after
+auto-adjust), but the per-frame dynamic update recomputes them on the next
+frame, so authored values survived one frame and vanished silently. Precedence
+is deliberately unchanged — dynamic clipping is an explicit auto mode, and
+disabling it behind the author's back would be more surprising — but the case
+now logs a warning naming the fix (`dynamic_clipping_enabled=False`).
+
+#### Fixed — dynamic clipping persisted its transient planes as manual ones
+
+The dynamic-clipping display loop writes the live `camera.near` / `camera.far`
+into the settings object so the greyed-out sliders read out current values, and
+`saveSettingsToStorage` serialized the whole object. So any later change to an
+unrelated control snapshotted whatever pose the camera was in, and the next load
+re-applied those numbers as **fixed manual planes** (`setSceneId` →
+`updateClippingPlanes`) — leaving a scene pinned at e.g. `near = 0.0001`,
+`far = 61` with the Dynamic Clipping checkbox showing unchecked, which is
+untraceable to any user action. `near` / `far` are now omitted from storage while
+dynamic clipping owns them, so defaults + auto-adjust take over on load. With
+dynamic clipping off they are real user intent and persist unchanged.
 
 #### Removed — unreachable accelerated gsplat code paths
 
@@ -100,7 +185,7 @@ one backend only:
   carries the sign of the fragment-space y axis, and GLSL's `dFdy` is bottom-up
   where WGSL's `dpdy` is top-down. Unforced, the flat variant could collapse to
   `uAmbient` on WebGPU while shading correctly on WebGL — and the parity harness
-  compiles TSL *to GLSL*, so it could never see it. (Later measured inert on
+  compiles TSL _to GLSL_, so it could never see it. (Later measured inert on
   Chrome — see the WebGPU A/B entry below; the flip is kept as insurance.)
 - **The stored normal is transformed without three's `transformNormalToView`**,
   whose `transformDirection` normalizes. The writer accepts zero-length normals
@@ -267,7 +352,7 @@ than defaulting inside `composeAttrs`, it keeps `blending_mode` **undefined** th
 composition when no level sets one and lets each consumer apply its own per-type default
 via `defaultBlendingMode(nodeType)`. That is the better shape, and it covers a case the
 alternative did not: it tracks whether a layer's mode is EXPLICIT, so a group layer
-merely *displaying* a neutral default does not push it onto mesh descendants — which
+merely _displaying_ a neutral default does not push it onto mesh descendants — which
 would otherwise flip a mesh under a plain `layer=true` group back to additive at panel
 init. Nearest-setter-wins is untouched either way, which is what keeps
 `group(blending_mode="additive")` working for its mesh children and why §6.3 forbids the
@@ -275,7 +360,7 @@ writer from stamping the mode at all.
 
 #### Blend-mode ownership finishes the job: groups stop overriding what they never set (#1275)
 
-The explicit flag above stopped a plain group layer from *emitting* its displayed
+The explicit flag above stopped a plain group layer from _emitting_ its displayed
 default, but two paths still let a non-owning layer overwrite a descendant's mode:
 
 - **The subtree-drop in `composeEffective` fired unconditionally.** The drop exists so
@@ -368,7 +453,7 @@ Two viewer package READMEs had omitted mesh entirely. `rendering/README.md` gain
 Mesh Material section — the odd one out on purpose (a plain indexed `BufferGeometry`
 rather than an instanced quad, not camera-aware, `opaque` by default) — naming the two
 hazards that fail on exactly one backend and that the parity harness structurally cannot
-see, since it compiles TSL *to* GLSL: the `dFdy`/`dpdy` sign, and
+see, since it compiles TSL _to_ GLSL: the `dFdy`/`dpdy` sign, and
 `transformNormalToView`'s internal normalize turning a legal zero-length normal into a
 whole-triangle NaN. `data/README.md` gains the whole-node-loader section: why mesh does
 NOT stream (a surface is connected, so a chunk of triangles is not independently
@@ -439,7 +524,7 @@ planet.
 The ordering is a containment rule in
 `rendering/depth-sort-coordinator/render-order.ts` firing on inverted geometry: it
 hoists a group whose bounding sphere contains another's so that "embedded content
-composites on top", which assumes *container = background*. Here the data sits on
+composites on top", which assumes _container = background_. Here the data sits on
 a shell **outside** the globe and its 8-tile group sphere is a deliberately loose
 upper bound, so the data was classified as the container and the backdrop as
 embedded content. Filed as #1227.
@@ -467,7 +552,7 @@ dissipation 23:43), and the overnight growth into the mesoscale system that
 flooded Oklahoma City. First atmosphere demo in the suite and the first gsplats
 demo in the `geoscience` category.
 
-Radar data arrives as nested *cones* — 14 discrete elevation tilts, not a
+Radar data arrives as nested _cones_ — 14 discrete elevation tilts, not a
 volume — so the demo regrids polar gates onto a fixed Cartesian storm box with a
 Barnes-weighted `cKDTree` interpolation (scipy only, no Py-ART), geolocating
 every gate through the 4/3-effective-earth beam model and masking cells the beam
@@ -560,7 +645,7 @@ reference, kept in exact parity. Nothing calls them yet — the loader that will
 the next phase (`docs/specs/MESH_NODE_SPEC.md` §11) — so a mesh still writes but
 does not render.
 
-**Whole-triangle cull, not clipping.** A triangle is drawn iff *all three* of its
+**Whole-triangle cull, not clipping.** A triangle is drawn iff _all three_ of its
 vertices pass the nD slab test. Lines clip a segment against the slab and
 interpolate every attribute at the crossing; the exact triangle equivalent is nD
 polygon clipping with fan re-triangulation and per-new-vertex interpolation on
@@ -569,7 +654,7 @@ backends against 803 for segment clipping (the spec puts full nD polygon clippin
 at roughly ~1500), at the price of a ragged, triangle-quantized cut boundary
 instead of a clean planar section. Exact clipping stays out of scope.
 
-**Vertices are never compacted.** `compact_visible_faces` writes *original*
+**Vertices are never compacted.** `compact_visible_faces` writes _original_
 vertex indices, so a slice change rebuilds only the index buffer while the vertex
 attribute buffers stay uploaded in full. `drawElements` never fetches an
 unreferenced vertex, so culled vertices cost nothing to draw, and this avoids a
@@ -579,7 +664,7 @@ not compact native `uint8`/`uint16` vertex colors.
 Two details are load-bearing and both are pinned by mutation-tested cases:
 
 - The TypeScript backend `Math.fround`s its slab bounds. JS computes
-  `slice - tolerance` in f64, where the difference of two f32 values is *exact*,
+  `slice - tolerance` in f64, where the difference of two f32 values is _exact_,
   while Rust rounds it to f32. The gap is under half an ulp — but when the
   rounding goes down, the rounded bound is itself a legal f32 vertex coordinate,
   and a vertex sitting exactly there was visible in WASM and culled in
@@ -646,16 +731,16 @@ Four things in there are easy to get wrong, and each is pinned:
   4x), and `faces` widens to u32 whatever narrow dtype the `INDEX` encoder chose.
   The decoded term is also the only thing bounding `ndim`, which has no cap of its
   own — `n_vertices: 4, ndim: 2^26` passes every count check on a trivial stored
-  footprint. The stored term still reads the *declared* dtype (an external `int64`
+  footprint. The stored term still reads the _declared_ dtype (an external `int64`
   costs 8 bytes per index), and the largest single chunk buffer is SUMMED in rather
   than checked alone: a chunk buffer exists during decode alongside the arrays, and
   zarr v2's `chunks > shape` allowance makes "just under budget on both terms
-  separately, near 2x together" directly constructible. An oversized chunk is *also*
+  separately, near 2x together" directly constructible. An oversized chunk is _also_
   rejected on its own, so one array can never exceed the ceiling even where the sum
   would fit.
 - **The budget fails CLOSED on an encoding it does not recognise.** Four separate
-  bypasses turned out to be one category — *the bytes the loader fetches are not the
-  bytes the handle declares* — and fixing them one at a time kept yielding a fifth,
+  bypasses turned out to be one category — _the bytes the loader fetches are not the
+  bytes the handle declares_ — and fixing them one at a time kept yielding a fifth,
   because an unrecognised encoding fell through to "use the stored shape". The budget
   now keys a `Record<EncodingName, ...>` off the contract's `ENCODING_NAMES`, so adding
   a contract encoding is a compile error at the mesh preflight and an unknown one at
@@ -677,8 +762,8 @@ Four things in there are easy to get wrong, and each is pinned:
   unconditional clear on completion lets a stale settle wipe a REPLACEMENT load's
   latch, after which every `updateView` (a slice scrub, precisely what the latch
   exists for) starts another whole-mesh fetch. The generation token stops a stale
-  completion *publishing* into a disposed loader; the identity check stops it
-  *erasing the latch*. Fixing only the first leaves the duplicate fetches.
+  completion _publishing_ into a disposed loader; the identity check stops it
+  _erasing the latch_. Fixing only the first leaves the duplicate fetches.
 - **An open failure is classified, not assumed deterministic.** Wrapping any
   `vertices`/`faces` open error as `kind: 'Validation'` would have the failure record
   treat a transient network fault as permanent and never retry it. Routed through
@@ -687,7 +772,7 @@ Four things in there are easy to get wrong, and each is pinned:
   `encoding.n_elements` (broadcast) first, then `encoding.original_shape` (LUT /
   per-channel quantization), then the stored shape. Consulting only
   `original_shape` rejects a uniform colour, because the broadcast encoder stamps
-  `n_elements` and *not* `original_shape`: `add_mesh(..., colors=(1, 0, 0))` and any
+  `n_elements` and _not_ `original_shape`: `add_mesh(..., colors=(1, 0, 0))` and any
   incidentally-uniform colour array both land as `shape: [1, 3]` and look like a
   1-row array. The broadcast branch is gated on the encoding NAME as well as the
   count — stricter than needed for writer-produced stores (only the two broadcast
@@ -706,8 +791,8 @@ equals that frame with odd parity, display space is a reflection and every
 projected triangle is uniformly reversed, so two of each triangle's three indices
 are swapped — without it a `double_sided: false` mesh renders inside-out, and an
 open surface vanishes. That reversal is keyed to the current `displayDims` parity
-rather than to the *event* of it changing, so it runs on every index build in an
-odd-parity epoch, initial load included. When the displayed triple is a *different*
+rather than to the _event_ of it changing, so it runs on every index build in an
+odd-parity epoch, initial load included. When the displayed triple is a _different_
 triple than the frame, or the mesh declares no frame at all, projected orientation
 is per-triangle data-dependent and no index post-pass can fix it: the epoch renders
 double-sided with a one-time notice naming the node.
@@ -732,14 +817,14 @@ rather than deleted when this happened, and it was.
 Every existing strategy derives from that type's per-element extent, and a mesh has
 none. Two halves, each with a specific failure mode if copied:
 
-- *Not Lines' `0` for hidden continuous dims.* Lines get away with zero because
+- _Not Lines' `0` for hidden continuous dims._ Lines get away with zero because
   segment clipping interpolates through the slab — a segment crossing the slice
   yields an intersection even at zero thickness. Mesh culls whole triangles with no
   interpolation, so `0` reduces membership to exact float equality with the slice
   plane and the node renders **nothing**. This is the most tempting wrong answer,
   because Lines is the nearest structural sibling; a test asserts mesh and lines
   disagree here rather than merely checking mesh's value.
-- *Not the quarter-cell query reach for hidden discrete dims.* Mesh's slab is a
+- _Not the quarter-cell query reach for hidden discrete dims._ Mesh's slab is a
   membership gate applied after fetch, not a chunk-fetch reach, so it takes the
   half-cell. It is also the only arm that ignores `discreteRole`: mesh issues no
   range query, so membership is the only rule it has, and honouring a `'query'` role
@@ -826,7 +911,7 @@ its own geometry cannot reach it.
 Replacing `geometry.index` on every slice move leaks its GPU buffer: three caches
 attribute buffers in a `WeakMap` keyed by the attribute object and only calls
 `gl.deleteBuffer` from `WebGLAttributes.remove()`, which runs on geometry disposal
-(for whichever index is current then) and when the *wireframe* attribute is replaced —
+(for whichever index is current then) and when the _wireframe_ attribute is replaced —
 never when `index` itself is swapped. The orphaned attribute's `WeakMap` entry is
 collected and its GPU buffer is never freed, so a timelapse scrub orphaned one index
 buffer per move. Mesh is the only type that rewrites its index per epoch (the other
@@ -897,7 +982,7 @@ all, and the descriptor table requires the factory for every drawable kind.
 
 #### Fixed — a `kind=lod` group could be given a display type nothing can load
 
-The LOD path only ever *derived* `display_type` from its finest child, with no
+The LOD path only ever _derived_ `display_type` from its finest child, with no
 check that the result was a type the ladder supports — the partition sibling has
 always had that guard. A geometry type with no LOD ladder was therefore accepted
 and stamped, producing a `kind=lod` group the viewer cannot load, written with no
@@ -920,14 +1005,14 @@ report as "invalid" — but had the same root cause.
 
 `has_image_labels` was missing from `POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` even
 though all three writers stamp it. Passing it explicitly was already an error, but
-reported as an *unknown* attribute rather than a *reserved* one, and the asymmetry
+reported as an _unknown_ attribute rather than a _reserved_ one, and the asymmetry
 made "which flags does this writer own?" unanswerable from the sets alone. All four
 sets now cover every flag their writer stamps.
 
 Mesh additionally reserves `ordering`, which the sibling types deliberately leave
 open. A measurement while adding it corrected a stale claim in that module: the old
 comment said a caller's `ordering=` is "stamped-over" by the writer, and it is not —
-`Node.__init__` re-persists the caller's attrs through `write_group` *after* the
+`Node.__init__` re-persists the caller's attrs through `write_group` _after_ the
 geometry writer has stamped the group, so the caller's value is what lands on disk
 (verified for points, lines and gsplats). Those three keep accepting it because
 `ordering=` is a real request parameter there (`add_gsplats(ordering="hilbert")`
@@ -958,6 +1043,7 @@ bundle, production WASM binary, and worker assets rather than accepting an
 empty or partial `dist/` directory. CI, docs, and both publish workflows also
 read the exact pnpm version from the viewer package's `packageManager` field, so
 release and pull-request builds cannot drift between pnpm patches.
+
 #### Changed — one canonical GSplat truncation radius, 2.75 (#1179, #1181, #1182)
 
 The fitter has stamped `truncation_radius = 2.75` since the truncation
@@ -974,7 +1060,7 @@ each other: `DEFAULT_TRUNCATION_RADIUS` in
 `SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE` (a worker-internal module) is gone in
 favour of the `config/` one, so materials no longer depend on worker internals.
 
-**Behaviour change.** A store that carries *no* `truncation_radius` attribute
+**Behaviour change.** A store that carries _no_ `truncation_radius` attribute
 now renders and culls at 2.75 rather than 3.0. Measured on a 400-splat test
 volume, the tighter kernel integrates ~7% less total mass and differs from the
 3.0 render by ~3% of peak (42 dB PSNR) — visible as slightly dimmer, slightly
@@ -1059,7 +1145,7 @@ snapshot directly and anonymously (250 random parts, 9 of 50 columns projected �
 **Lines whose time coordinate advances along the chain** — new to the repo;
 every previous 4D Lines demo holds `t` constant per polyline. Migration
 worldlines vary it, and the Liang-Barsky clipper handles it: a segment straddling
-the slab is drawn *clipped*, so a boundary segment reads as a whisker that grows
+the slab is drawn _clipped_, so a boundary segment reads as a whisker that grows
 and shrinks as you scrub. Verified arithmetically on a 40-track prototype (520
 segments = 440 within-slice + 80 straddlers), then on real data. Track time is
 binned to a whole decade deliberately: off-grid discrete values are only fetched
@@ -1088,7 +1174,7 @@ textured-shell note below for why it carries no LOD of its own).
 The scrubbable layers do the opposite — real `(taxon, period)` coordinates, so
 scrubbing isolates — and **every reachable slot is materialised**: 9 taxon
 marginals, 13 period marginals, 117 joint cells. That is not an `extend_to_all`
-matter but a consequence of the viewer showing the *intersection* of the
+matter but a consequence of the viewer showing the _intersection_ of the
 non-displayed slices, so a joint-only layer leaves one-slider moves on an empty
 slot. Two density findings, both measured: time is binned by **decade** (at year
 granularity the median populated cell held 244 points and 688 held under 500;
@@ -1109,7 +1195,7 @@ up to its full 1,875,000-point finest level while neighbours stay coarse.
 Two calibration notes, both measured in-browser: the default
 `coverage_fraction = sqrt(N_i/N_finest)` is calibrated for a single lod group
 filling the screen, so with T tiles (each ~0.6 of the viewport diagonal at
-whole-globe) it still selects a mid level; and a threshold placed *on* that 0.6
+whole-globe) it still selects a mid level; and a threshold placed _on_ that 0.6
 metric makes the tiles flap, leaving two levels cross-faded and resident at once
 (1.07M instead of 186k) because the selector's hysteresis is 10% and
 downgrade-only.
@@ -1122,7 +1208,7 @@ lets the globe be a single extended layer. The scrubbable layers stay on real
 `(taxon, period)` slots for the intersection reason above, not because of this
 bug.
 
-Also worth knowing when reusing the recipe: `partition=` must be *omitted* from
+Also worth knowing when reusing the recipe: `partition=` must be _omitted_ from
 the per-tile calls (even the documented `partition=False` bypass trips the
 mutual-exclusion guard, which tests `partition is not None`), and only `opacity`
 propagates from a `kind=lod` group to its children's materials — `intensity` and
@@ -1139,7 +1225,7 @@ brightness up in the same move by lowering the display-range max, which raises
 **a textured shell cannot survive Gaussian merging**: giving the globe a
 substitutive LOD turned its coarsest level into 46k merged splats per 750k-point
 tile, which under volumetric absorption rendered as huge dark ellipsoids. Coarse
-levels read as *density* — meaningful for the diffuse occurrence cloud, wrong for
+levels read as _density_ — meaningful for the diffuse occurrence cloud, wrong for
 a continuous surface — so the globe is a fixed-resolution backdrop instead.
 
 Also fixed while transcribing: `intensity` is capped at 100 by
@@ -1150,7 +1236,7 @@ wrapper's `position_bounds` from a 3-column array in a 5-D scene dropped a whole
 BSP tile, rendering the globe with a wedge missing.
 
 Data handling is documented too, including why the measured 73.0% bird share of
-the filtered sample is *not* GBIF's ~60% (the filters are not taxon-neutral), the
+the filtered sample is _not_ GBIF's ~60% (the filters are not taxon-neutral), the
 per-record `coordinateuncertaintyinmeters` jitter that breaks up
 rounded-coordinate lattices, and the CC-BY/CC0-only license filter.
 
@@ -1197,7 +1283,7 @@ same machine, before BSP and zarr writes.
 
 Along the way, a partition part containing only isolated vertices (an
 indexed graph never draws a vertex no segment references) is now skipped
-instead of degraded to ``segments``: the degrade fabricated visible edges
+instead of degraded to `segments`: the degrade fabricated visible edges
 between distinct isolated vertices, desynced per-vertex attributes on
 odd-sized parts, and crashed outright on one-vertex parts. An indexed
 partition with no edges at all is refused with the same error as the
@@ -1245,7 +1331,7 @@ read as continuous reference lines.
 `flatted`, `ajv`, `diff`). pnpm silently prefers `package.json`, so the
 workspace block had been inert on `main` for two months and nothing looked
 wrong — but Dependabot's updater reads `pnpm-workspace.yaml`, so every viewer
-bump it opened regenerated the lockfile around the *stale* set and then failed
+bump it opened regenerated the lockfile around the _stale_ set and then failed
 `typescript-tests` and `release-readiness` at the first
 `pnpm install --frozen-lockfile` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`. That
 took out #1024, #1025, #1026, #1027 and #1028 together, and would have taken out
@@ -1267,15 +1353,15 @@ from `pnpm-workspace.yaml`, or if the pin block vanishes entirely — the second
 reporting both blocks side by side instead of pnpm's opaque mismatch code, and
 the third closing a hole the first two leave open (both hold trivially at zero
 pins, and `pnpm audit` is `continue-on-error`, so a total pin loss had no gate
-at all). It runs inside `check:ci` and, in `ci.yml`, as its own step *before*
+at all). It runs inside `check:ci` and, in `ci.yml`, as its own step _before_
 `pnpm install --frozen-lockfile` in both `typescript-tests` and
 `release-readiness` — otherwise the frozen install aborts first and the PRs that
 need the explanation never see it.
 
 Because the pins now live in `pnpm-workspace.yaml`, the pnpm floor became
 load-bearing. Measured against that file: 9 and ≤10.4 abort with "packages field
-missing or empty" (it has no `packages:` key), 10.5.0/10.5.1 install *silently
-without the pins* — the lockfile records zero overrides — and 10.5.2+ read them
+missing or empty" (it has no `packages:` key), 10.5.0/10.5.1 install _silently
+without the pins_ — the lockfile records zero overrides — and 10.5.2+ read them
 correctly. So ≥10.6 is a conservative floor, chosen because the 10.5.0 window is
 the one mode that drops the pins without saying so; `engines.pnpm` closes it,
 since pnpm enforces that field itself (`ERR_PNPM_UNSUPPORTED_ENGINE`, no
@@ -1286,7 +1372,7 @@ never run, being tag-triggered pre-launch, so this was a red job waiting to
 happen rather than a silently unpinned release), `engines.pnpm` said
 `>=9.0.0`, and the Makefile's `MIN_PNPM_MAJOR`,
 which documents itself as mirroring `engines.pnpm`, still said `9`. The Makefile
-check now compares major *and* minor, matching the existing Node check, since a
+check now compares major _and_ minor, matching the existing Node check, since a
 major-only test cannot express the 10.6 boundary. The now-obsolete half of the
 pnpm-pinning rationale in `docs.yml` was rewritten to match.
 
@@ -1299,7 +1385,7 @@ so a node reaching that branch while holding datasets could pick a `zarr.Array`
 as its finest child. Two failure modes, both reproducible against the previous
 release: an untyped array crashed the compiler with a bare
 `AttributeError: 'Array' object has no attribute 'keys'`, and — quieter, and
-worse — an array carrying a recognised `type` attr resolved *early* and wrote
+worse — an array carrying a recognised `type` attr resolved _early_ and wrote
 the wrong `display_type` to the wrapper with no error at all. All four
 child-iteration sites in the module now use `group_keys()`.
 
@@ -1416,7 +1502,7 @@ renders as **saturated blue**. Replaying both rules over a generated corpus of
 direct-colour** (asteroid planets 8.3×, `collision/detector_geometry` 10×), and
 not a single colormapped layer.
 
-The window maps the *rendered value*, so it now follows what that value is: a
+The window maps the _rendered value_, so it now follows what that value is: a
 colormapped layer still windows on its scalar range (a linear `[0, 1]` window on
 right-skewed gsplat amplitudes renders near-black), while a direct-colour layer
 starts at the identity. `color_data_range` still sets the slider bounds, so
@@ -1478,7 +1564,7 @@ and world 8, drawn together while the slider read 7. With `scale: 3` at world 7
 (local 2.333) it silently admitted local 2.
 
 The window itself was fine; its documented premise was not. It is calibrated for
-slightly off-grid *data* against an on-grid *target*, and the whole stack
+slightly off-grid _data_ against an on-grid _target_, and the whole stack
 guarantees on-grid targets because discrete navigation snaps to the `k · step`
 grid. A scaling `nd_transform` is the one thing that breaks that guarantee, and
 it breaks it on the query side where no amount of window tuning helps (a strict
@@ -1528,7 +1614,7 @@ way to see whether `nd_transform` had done anything at all. It is now an
 instrument. A ruler along X (one tick = one frame index), a cyan cursor column of
 plain untransformed geometry marking the WORLD index, and one labelled row per
 transform whose markers are 3D point-font digits printing their own LOCAL index
-— so the gap between digit and cursor, read in ticks, *is* the transform. Faint
+— so the gap between digit and cursor, read in ticks, _is_ the transform. Faint
 always-on ghosts mark every slot a row could light (a dark row means "no
 preimage", not "failed to load"), and a `visible_range`-gated readout prints the
 expected local index per row for the current slice. It covers affine
@@ -1585,7 +1671,7 @@ value the readout shows is always the value the thumb represents.
 Auto-framing, scene scale, clipping planes and the near-cull margin all project
 the nD `position_bounds` through `sceneDimsManager`'s displayed dims, which fall
 back to `[0, 1, 2]` when it is uninitialised — and the dimension-navigation UI
-only initialised it *after* the scene load resolved. So any scene whose displayed
+only initialised it _after_ the scene load resolved. So any scene whose displayed
 dims are not the first three (a leading non-displayed time / channel / order
 axis — the common nD shape) was framed around the wrong axes: that axis' extent
 landed on world X, putting the look-at target off to one side of the geometry and
@@ -1627,7 +1713,7 @@ where a hand-crafted zarr never meets the Python compiler.
 blending, which sums every atom along the view ray. A dense atomic shell washes
 toward pastel white that way, and both demos held it back with an intensity
 anti-blowout workaround (0.125 and 0.0625) that left them dim. An atomic
-structure is a *surface*: both nodes now use depth-sorted `normal` blending at
+structure is a _surface_: both nodes now use depth-sorted `normal` blending at
 full exposure (opacity 1.0, intensity 1.0), so the nearest atom wins the pixel.
 Measured at the opening framing as mean CIELAB chroma over the covered pixels,
 the NPC goes 6.2 → 13.1; on ATP the chain hues go 44.8 → 57.8 at lightness
@@ -1644,7 +1730,7 @@ the new look.
 Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`
 straight to stderr, landing out of place in the middle of arbol's hierarchical
 console output (e.g. the Cholesky covariance-certificate escalation warning
-during gsplat scene compiles). Warning *display* is now routed through
+during gsplat scene compiles). Warning _display_ is now routed through
 `aprint` as `⚠️ UserWarning: ... [file.py:299]` tree lines: process-wide in
 every `luxar` CLI run, and scoped around the arbol-tree-producing Python API
 entry points (`LuxarZarrCompiler` write methods, `fit_gaussian_splats`,
@@ -1754,7 +1840,7 @@ The LUT tone-mapping warning in `io/_compiler/colormap.py` now fires **only
 when the author set no `tone_mapping` at all**. Its predicate was
 `!= "Neutral"`, so an explicit `"ACES"` tripped it too — nagging about a
 deliberate decision, while the message itself speaks of "the viewer's
-*default*", which is only what you get by saying nothing. Any explicit value,
+_default_", which is only what you get by saying nothing. Any explicit value,
 `"ACES"` included, now silences it. Fifteen demos move from `Neutral` to an
 explicit `ACES`. Two keep `Neutral` as verified exceptions:
 `demo_gsplats_3d_tribolium_embryo`, whose pairing with `exposure=1.97` was tuned
@@ -1770,7 +1856,7 @@ datasets to pick up the new look.
 #### Changed — five gsplat demos bake their preferred viewer appearance
 
 The blanket `volumetric` + kappa 1.0 default from the bioimaging demo sweep was
-wrong for scenes whose layers are *superimposed over the same specimen*: there,
+wrong for scenes whose layers are _superimposed over the same specimen_: there,
 emission-absorption makes whichever layer draws first occlude the other, so
 channel overlap reads as one channel hiding the rest instead of the colours
 mixing. The multi-channel organoid now composites `additive` (a pure sum, no
@@ -1801,7 +1887,7 @@ entirely absent. `log.*` is a pass-through to `console.*`, so an error passed as
 trailing argument reaches the in-app debug console as an object, and both of that
 console's renderers `JSON.stringify` it. An `Error`'s `name`, `message` and `stack`
 are non-enumerable, so the result is `{}` — and the existing `String(arg)` fallback
-never fires, because stringify *succeeds* at producing that empty object. Browser
+never fires, because stringify _succeeds_ at producing that empty object. Browser
 devtools renders it correctly, which is why this went unnoticed; the in-app console
 is what a user copies into an issue.
 
@@ -1811,7 +1897,7 @@ log sites with no call-site changes. The branch must precede the object branch: 
 still message-less object.
 
 Stack capture was worse than missing. It only ever inspected the first argument,
-which is always the formatted message *string*, so it never found the error behind
+which is always the formatted message _string_, so it never found the error behind
 it — and when it failed it FABRICATED `new Error().stack` whenever the message
 merely contained the word "error", producing a plausible trace rooted inside the
 interceptor. It now scans arguments for a real error, the fabricator is gone,
