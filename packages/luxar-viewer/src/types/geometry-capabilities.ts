@@ -115,18 +115,19 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     gsplats: { lod: true, partition: true, pooled: true, depthSortable: true },
     // Mesh: a connected surface, not a set of independent elements — see
     // docs/specs/MESH_NODE_SPEC.md §2.1 and §9.
-    //   lod           the ADDITIVE prefix ladder reduces independent elements
-    //                 and cannot apply (a prefix of an index buffer is a holed
-    //                 surface, not a coarser one); SUBSTITUTIVE levels assume
-    //                 nothing of the sort and are missing only a producer, the
-    //                 mesh analogue of which is QEM decimation.
+    //   lod           TRUE, and SUBSTITUTIVE only. A kind=lod group holds levels
+    //                 that REPLACE one another, and `luxar.mesh.decimate` is the
+    //                 producer that was missing. The ADDITIVE prefix ladder stays
+    //                 impossible (a prefix of an index buffer is a HOLED surface,
+    //                 not a coarser one) and this flag never gated it — that
+    //                 refusal lives in `loader-factory.ts`.
     //   partition     a BSP cut needs vertex duplication at part boundaries.
     //   pooled        mesh renders as an indexed BufferGeometry, NOT through the
     //                 instanced-quad element-texture stack.
     //   depthSortable sorting a mesh means permuting an index buffer, not an
     //                 instance list, so it registers no per-element centers.
     // Flip a flag here when the corresponding path lands — never at a call site.
-    mesh: { lod: false, partition: false, pooled: false, depthSortable: false },
+    mesh: { lod: true, partition: false, pooled: false, depthSortable: false },
   });
 
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */

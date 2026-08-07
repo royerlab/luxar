@@ -63,7 +63,8 @@ the storage or LOD layers, and pretending otherwise would produce a worse design
 | GPU storage | ❌ No | Indexed triangles, not instanced quads — see §2.1 |
 | Per-element extent | ❌ No | A mesh has no `radii`/`widths`/`amplitudes` analog — see §2.2 |
 | Depth sorting | ⚠️ Deferred | Per-triangle, not per-instance — see §6.3 |
-| LOD / partition groups | ❌ Excluded | See §9 |
+| LOD (substitutive) | ✅ Yes | Levels are decimated surfaces — see §9. The ADDITIVE ladder stays excluded |
+| Partition groups | ❌ Excluded | See §9 |
 
 ### 2.1 The storage layer does not transfer
 
@@ -1417,7 +1418,6 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 | Excluded | Why | Natural follow-up |
 |---|---|---|
 | **Additive LOD ladder** | A prefix of an index buffer is a **holed** surface, not a coarse one. That is the difference from a splat prefix, which genuinely is a sparser approximation of the same field — so the ladder degrades gracefully there and produces a *wrong picture* here. The legitimate refinement scheme is a progressive mesh (base mesh + vertex-split records), which cannot use the prefix-count ladder at all: different data structure, not a widening. | Not a LOD in any form. A deliberate progressive-draw effect IS worth exposing — see **§9.1** — but off the `additive` code path |
-| **Substitutive LOD levels** | Nothing structural, and the machinery makes no independence assumption: a level is an independently-authored `(vertices, faces)` pair, selected by `coverage_fraction`. What is missing is only the PRODUCER. Per-level picking is already solved — the LOD registry hides inactive levels and the picking system skips hidden nodes, so each level is its own pick domain with its own per-vertex label CSR. | `luxar mesh lod` with QEM levels. Viewer side is a two-line widening: flip `GEOMETRY_CAPABILITIES.mesh.lod` and extend `LODGroupMetadata.display_type`. **The cheapest of the LOD family by a wide margin** |
 | **`kind=partition`** | BSP over face centroids, needing vertex duplication at part boundaries plus a per-part split of the per-vertex label CSR. **Bookkeeping, not correctness:** with stored normals split verbatim a duplicated boundary vertex carries an identical position AND normal in both parts, so nothing seams under §6.2's shading — and the derivative variant is per-fragment off the rasterized triangle, hence part-agnostic by construction. Seams arrive only with something RECOMPUTED per part: area-averaged normals, tangent frames, UVs, baked AO. | Highest value for large meshes. Revisit the seam question the moment shading gains any per-part recomputation |
 | **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** — a condition that is now *measured* rather than asserted: `processMeshData` emits a `log.info` for a node whose hidden dims include a continuous one (`noticeContinuousHiddenDim` in `data/scene-loader/process/data-processor-mesh.ts`), naming each such dimension and its unit. Promote when that line starts appearing against real datasets; see TODO item 29 under "Future / Exploratory" for why the deferral is a decision rather than a backlog entry |
 | **Per-triangle depth sorting** | Index-buffer permutation, not instance permutation. The coordinator's double-buffered ordering and chunked apply already exist, and the mesh problem is the *easier* one (permute F triples by face centroid; no per-element extent, no texture indirection). **This is the weakest exclusion in the table**, and the only one with a live user-visible consequence: §6.3's translucent-`normal` warning is its mitigation. | Extend the depth-sort coordinator with an index-permutation path |
@@ -1425,6 +1425,38 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 | **`volumetric` blending** | Not about opacity — about **path length**. Emission–absorption integrates κ over the distance a ray spends inside a participating medium, and a triangle is zero-thickness, so τ = 0 however translucent the surface is. The adjacent feature that DOES make sense — volume rendering bounded by a mesh's front and back faces — is a different thing entirely and is not what this excludes. | — |
 | **Worker projection** | Measure first (§7). | — |
 | ~~**Mesh import formats** (PLY/OBJ/STL/glTF)~~ — **landed** | Independent of the node type, which is why it could ship on its own afterwards. | Shipped as `luxar mesh import` (`luxar/mesh/interop/`), mirroring `gsplat import` |
+
+**Lifted since this table was written: substitutive LOD levels.** The row was right that
+nothing structural blocked them — a level is an independently-authored `(vertices, faces)`
+pair selected by `coverage_fraction`, and the machinery makes no independence assumption —
+but its cost estimate was wrong twice over, in the same way in two places.
+
+It called the viewer side "a two-line widening: flip `GEOMETRY_CAPABILITIES.mesh.lod` and
+extend `LODGroupMetadata.display_type`". Both edits are real and necessary, but flipping
+the capability makes `canDefer` admit mesh children, and the defer dispatch then needs a
+`loadMeshNodeCheap`/`loadMeshNodeExpensive` split the mesh loader did not have. Without it
+the dispatch throws; with the flip but no split, every level loads eagerly at scene open —
+measured 4/4 levels resident at first paint, against 1/4 once the split landed.
+`lod-freshness.ts::countFromUserData` needed a mesh arm too, or the empty-level display
+guard silently no-ops for meshes.
+
+The **Python** side was assumed free and is not, for a reason that only shows up on reading
+`resolve_substitutive_axis`: Points and Lines share one resolver because both coarsen by
+LIFTING to gsplats, so its vocabulary carries `truncation_radius`, `max_aspect`, `device`
+and `seed` — four keys that exist only because of that lift — plus a `method` set of
+Gaussian-mixture reducers. A mesh is decimated instead, so it needs its own resolver
+(`core/group/lod/mesh.py`) with `method` in `{auto, cluster}` and each lift-only key
+refused by name. Widening the shared one would have accepted five words that quietly do
+nothing.
+
+The producer is `luxar.mesh.decimate` (vertex clustering; `qem` is issue #1348), reached
+from `add_mesh(substitutive_lod=…)` or `luxar mesh lod`. Per-level picking needed no work,
+exactly as the row predicted: the LOD registry hides inactive levels and the picking system
+skips hidden nodes.
+
+The **ADDITIVE** ladder row above is untouched and still correct. The `lod` capability flag
+gates `kind=lod` groups, whose levels REPLACE one another; an additive ladder is
+`additive_<i>/` subgroups inside a leaf, refused separately and permanently.
 
 ### 9.1 Reveal ladders — an additive prefix as an EFFECT, never as a LOD
 

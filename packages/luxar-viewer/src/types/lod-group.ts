@@ -33,7 +33,7 @@ export interface LODGroupMetadata {
    * declare that type's `lod` capability in `types/geometry-capabilities`
    * instead, and extend this union only if it comes out `true`.
    */
-  display_type?: 'points' | 'lines' | 'gsplats';
+  display_type?: 'points' | 'lines' | 'gsplats' | 'mesh';
 
   /**
    * Selector mode. Currently only `"coverage"` is supported; the field

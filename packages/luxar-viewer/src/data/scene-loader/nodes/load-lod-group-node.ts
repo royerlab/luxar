@@ -46,6 +46,7 @@ import { log, Modules } from '../../../utils/log';
 import { loadGSplatsNodeCheap, loadGSplatsNodeExpensive } from './load-gsplats-node';
 import { loadPointsNodeCheap, loadPointsNodeExpensive } from './load-points-node';
 import { loadLinesNodeCheap, loadLinesNodeExpensive } from './load-lines-node';
+import { loadMeshNodeCheap, loadMeshNodeExpensive } from './load-mesh-node';
 import { timeLodStageSync } from '../lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-registry';
@@ -379,11 +380,36 @@ export async function loadLodGroupNode(
           () => ctx.releaseLazyPoints(lazyChild.path),
           () => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true
         );
+      } else if (child.type === 'mesh') {
+        const { placeholder, loader } = await loadMeshNodeCheap(
+          child,
+          lodThreeGroup,
+          childLoc,
+          ctx
+        );
+        entryChild = attachLazyChild(
+          placeholder,
+          lazyChild,
+          coverageFraction,
+          ctx,
+          () => loadMeshNodeExpensive(lazyChild, ctx, loader),
+          // No `releaseLazyMesh`, and that is deliberate rather than missing. The
+          // other three release a pooled GPU buffer back to the evictable pool on
+          // demotion; a mesh is `pooled: false` (an indexed BufferGeometry, not the
+          // instanced-quad stack), so there is nothing to hand back and no pool
+          // adapter to hand it to. A demoted level keeps its geometry until the node
+          // is disposed, which is the same lifetime a non-LOD mesh already has.
+          undefined,
+          // No `hasMoreLODs` either: a mesh level is whole-node resident in one
+          // fetch, so it is complete the moment it is ready. The three that pass one
+          // are reporting an ADDITIVE ladder inside the level, which a surface
+          // cannot have.
+          undefined
+        );
       } else {
-        // `canDefer` only admits gsplats/points/lines, so this is the lines
-        // branch. Assert it explicitly so a future 4th deferrable type added to
-        // `canDefer` but not here fails loudly instead of being mis-loaded as
-        // lines.
+        // `canDefer` admits every LOD-capable type, so this is the lines branch.
+        // Assert it explicitly so a future deferrable type added to the capability
+        // table but not here fails loudly instead of being mis-loaded as lines.
         if (child.type !== 'lines') {
           throw new Error(
             `lod_group defer dispatch: unhandled deferrable child type "${child.type}" ` +

@@ -6,6 +6,51 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Mesh gets substitutive LOD
+
+A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
+/ `luxar mesh lod` build the ladder: coarse children are progressively **decimated**
+copies of the surface, the finest child is the original, and the viewer shows exactly
+one at a time by screen coverage. The producer is `luxar.mesh.decimate` — vertex
+clustering, pure NumPy, `method` in `{auto, cluster}`; a `qem` tier is #1348.
+
+The spec called the viewer side "a two-line widening". It was wrong twice, in the same
+way in two places, and both are worth recording.
+
+**Viewer.** Flipping `GEOMETRY_CAPABILITIES.mesh.lod` makes `canDefer` admit mesh
+children, and the defer dispatch then needs a `loadMeshNodeCheap` /
+`loadMeshNodeExpensive` split the mesh loader deliberately did not have (there was no
+second caller until now). Without the split the dispatch throws; with the flip but no
+split, every level loads eagerly at scene open. Measured on a 4-level ladder: **4/4
+levels resident at first paint before, 1/4 after** — and the 8192-triangle original is
+never fetched at all unless the camera asks for it. `countFromUserData` needed a mesh
+arm too, or the empty-level display guard silently no-ops for meshes.
+
+**Python.** Assumed free; it is not. `resolve_substitutive_axis` is shared by Points and
+Lines because both coarsen by LIFTING to gsplats, so its vocabulary carries
+`truncation_radius`, `max_aspect`, `device` and `seed` — four keys that exist only
+because of that lift — plus a `method` set of Gaussian-mixture reducers. A mesh is
+decimated, so it gets its own resolver with each lift-only key refused **by name** and
+`method="kmeans"` refused with the reason. Every one of those is valid on Points and
+Lines, so a caller who tried it made no typo and the generic unknown-key error would
+have misdiagnosed them.
+
+The capability flip is `lod=True`, `partition=False`, and the asymmetry is why those are
+separate columns: `lod` gates `kind=lod` groups, whose levels REPLACE one another, while
+an additive ladder is `additive_<i>/` subgroups inside a leaf. So mesh is LOD-capable
+and an additive prefix stays impossible. `require_lod_display_type`'s mesh-specific
+paragraph is gone with it — it became dead *and* misleading once every contract type was
+LOD-capable, since the only way to reach that branch now is a future type.
+
+Two bugs that only a real write and a real render could find. The level-monotonicity
+check compared each candidate against the previously kept **coarser** level instead of
+the finer one, so every level after the first was dropped and the ladder came out with
+one coarse level — producing a perfectly valid-looking store. And the viewer capability
+flip silently no-opped in one edit pass, which the render probe initially "passed"
+against, because level SELECTION works without it and only deferral does not.
+
+Ten tests asserting "mesh cannot do LOD" were inverted rather than deleted. 13 new ladder
+tests plus viewer coverage, all mutation-checked.
 #### Documentation — pull-request quality gate and warning ratchets (#776)
 
 Documentation-relevant pull requests now report a stable `docs-quality` check.

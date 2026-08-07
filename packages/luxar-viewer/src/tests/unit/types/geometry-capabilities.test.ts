@@ -58,10 +58,29 @@ describe('geometry capabilities', () => {
   it('reports no capability for a type outside the vocabulary', () => {
     // The whole point: a type the table has not classified is excluded from
     // every feature rather than defaulting in.
+    // `mesh` is deliberately NOT one of these: it IS in the vocabulary, so its
+    // answers come from its row and are pinned below. Asserting it here read as
+    // "mesh is unclassified" when what was true was only that its row happened to
+    // be all-false at the time — and it stopped being true.
     for (const predicate of [supportsLod, supportsPartition, isPooledGeometry, isDepthSortable]) {
-      expect(predicate('mesh')).toBe(false);
-      expect(predicate(undefined)).toBe(false);
+      for (const outsider of ['volume', 'group', 'scene', '', undefined, null, 3]) {
+        expect(predicate(outsider), String(outsider)).toBe(false);
+      }
     }
+  });
+
+  it('classifies mesh per capability, not uniformly', () => {
+    // The row the table exists for. Each answer is its own architectural fact:
+    // `lod` is true and means SUBSTITUTIVE only (a kind=lod group holds levels
+    // that replace one another; the additive prefix ladder is refused elsewhere
+    // and stays impossible), while `pooled` names the instanced-quad stack and
+    // can never become true for an indexed surface.
+    expect(GEOMETRY_CAPABILITIES.mesh).toEqual({
+      lod: true,
+      partition: false,
+      pooled: false,
+      depthSortable: false,
+    });
   });
 
   it('the table record is frozen', () => {

@@ -68,10 +68,32 @@ describe('visibleElementCount', () => {
     return { ready: true, object: { userData: { nodeType, loadedViewVersion: 1, ...counts } } };
   }
 
-  it('reads the per-type commit stamp for the three leaf types', () => {
+  it('reads the per-type commit stamp for every leaf type', () => {
     expect(visibleElementCount(stamped('points', { visiblePointCount: 7 }))).toBe(7);
     expect(visibleElementCount(stamped('lines', { visibleSegmentCount: 3 }))).toBe(3);
     expect(visibleElementCount(stamped('gsplats', { visibleSplatCount: 0 }))).toBe(0);
+    expect(visibleElementCount(stamped('mesh', { visibleTriangleCount: 5 }))).toBe(5);
+  });
+
+  it('counts mesh TRIANGLES, not its vertices', () => {
+    // A mesh commits both counts, and they answer different questions. This one
+    // is "did the level commit anything DRAWABLE", so a level with vertices but
+    // no surviving triangle must read as empty — the empty-level display guard
+    // has to redirect away from it. (The ladder's `coverage_fraction` thresholds
+    // are derived from VERTEX counts instead, which is the separate question of
+    // how much detail a level carries. Reading the wrong one here would let a
+    // triangle-less level be displayed because it still had vertices.)
+    expect(
+      visibleElementCount(
+        stamped('mesh', { visibleTriangleCount: 0, visibleVertexCount: 12 })
+      )
+    ).toBe(0);
+  });
+
+  it('returns null for a mesh level that has not committed yet', () => {
+    // Deferred LOD levels attach a placeholder with no counts at all, and a
+    // never-committed level must not be mistaken for a known-empty one.
+    expect(visibleElementCount(child('mesh', 1))).toBeNull();
   });
 
   it('returns null for untracked children (groups / unstamped leaves)', () => {

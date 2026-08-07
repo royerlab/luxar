@@ -477,13 +477,18 @@ gaps:
 - **No per-element size.** A triangle's extent comes from its own vertices, so
   there is no radius/width/covariance analogue — and a mesh contributes *zero*
   extent padding to scene bounds.
-- **No LOD ladder** — but the two flavours are absent for different reasons. The
-  *additive* prefix ladder reduces a set of independent elements, which a
-  connected surface is not: a prefix of an index buffer is a surface with holes,
-  not a coarser one, so it is excluded on principle. *Substitutive* levels make no
-  independence assumption — a level is an independently-authored
-  `(vertices, faces)` pair chosen by `coverage_fraction` — and are missing only the
-  producer, QEM decimation.
+- **No *additive* LOD ladder, but substitutive levels DO work** — and keeping the
+  two flavours apart is the whole story. The *additive* prefix ladder reduces a set
+  of independent elements, which a connected surface is not: a prefix of an index
+  buffer is a surface with holes, not a coarser one, so it is excluded on
+  principle. *Substitutive* levels make no independence assumption — a level is an
+  independently-authored `(vertices, faces)` pair chosen by `coverage_fraction` —
+  and were missing only a producer. That producer is `luxar.mesh.decimate`, so
+  `add_mesh(substitutive_lod=…)` now writes a `kind=lod` group of progressively
+  decimated surfaces. Its vocabulary is shorter than the sibling adders'
+  (`core/group/lod/mesh.py`): no `truncation_radius` / `max_aspect` / `device` /
+  `seed`, because those exist only for geometries that coarsen by lifting to
+  gsplats.
 - **No `kind=partition`.** A BSP cut runs through faces, so each part needs its
   boundary vertices duplicated and the per-vertex label CSR split to match.
   Bookkeeping rather than a structural obstacle.
