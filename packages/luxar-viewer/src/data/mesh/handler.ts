@@ -54,9 +54,15 @@ export interface MeshHandlerCtx {
  * every `updateView`; what varies with the slice is only the nD-slab cull,
  * which lives downstream in `processMeshData` → `projectMeshTo3D`. A
  * reference-identity short-circuit would therefore skip re-projection on
- * every slice move — exactly the freeze this sweep exists to prevent — and
- * `commitMeshGeometry` never stamps `committedData` anyway, so identity would
- * be meaningless. Every sweep must re-project.
+ * every slice move — exactly the freeze this sweep exists to prevent. Every
+ * sweep must re-project.
+ *
+ * Note the hazard is now LIVE rather than merely pointless: `commitMeshGeometry`
+ * DOES stamp `committedData` (the depth-sort coordinator reads its presence as
+ * "this index buffer still holds the commit whose ordering is resolving"), and
+ * the stamped reference is the same one every sweep passes — so adding the fast
+ * path here would match on the second sweep and freeze the mesh at its first
+ * slice. The stamp is not an identity key for mesh; do not use it as one.
  */
 export async function loadAndStage(
   path: string,
