@@ -81,16 +81,22 @@ bound under ortho was measured to clip 52.7% of the eye-to-target depth at the
 deepest legal orbit distance for a 0.1% change in depth resolution, so both
 clipping paths now read the live camera and drop the bound for ortho.
 
-#### Fixed — non-finite clipping planes reached the projection matrix
+#### Hardened — non-finite clipping planes can no longer reach the projection matrix
 
-`applyClippingPlanes` rejected `near >= far`, but every comparison against NaN
-is false, so a NaN sailed through into `camera.near` and blanked the view with
-no diagnostic — reachable from snapshot-restore, which writes a captured pair
-straight back, and from any caller that skips `validateRenderingSettings`. Both
-clipping paths now refuse non-finite planes explicitly. The per-frame path also
-treats a non-finite CURRENT value as changed: without that, a camera already
-holding NaN was stuck forever, because the 0.1% change gate compares
+`applyClippingPlanes` rejected `near >= far`, but every comparison against NaN is
+false, so a NaN would have sailed through into `camera.near` and blanked the view
+with no diagnostic. Both clipping paths now refuse non-finite planes explicitly.
+
+This is defensive rather than a live bug: every present caller passes values that
+already went through `validateRenderingSettings` or the number controller's
+`parseNumber` fallback, so none can deliver a non-finite pair today — that is a
+property of the callers, not of the function's contract.
+
+One consequence is a real fix, though. The per-frame path now treats a non-finite
+CURRENT value as changed: without that, a camera already holding NaN was stuck
+forever, because the 0.1% change gate computes
 `Math.abs(camera.near - near) / camera.near` and never reopens once that is NaN.
+Recovery was impossible, not merely unlikely.
 
 #### Fixed — near/far sliders were ranged absolutely on a scene-relative quantity
 

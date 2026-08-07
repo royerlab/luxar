@@ -121,8 +121,9 @@ export function validateFOV(fov: number, min: number = 10, max: number = 120): n
 
 /**
  * Absolute last-resort near-plane floor (degenerate / zero-radius
- * scenes only). For any real scene the DEPTH-PRECISION floor from
- * {@link nearPlaneFloor} dominates — see the rationale there.
+ * scenes only). Under a perspective projection the depth-precision floor
+ * from {@link nearPlaneFloor} dominates for any real scene; under ortho
+ * the scale-aware {@link minNearForRadius} does — see both.
  */
 export const MIN_NEAR_PLANE = 1e-9;
 
@@ -147,11 +148,23 @@ export const MIN_NEAR_RADIUS_FACTOR = 2e-6;
  * Scale-aware near-plane floor for a scene with the given
  * (safety-expanded) bounding-sphere radius.
  *
- * A BACKSTOP only. It bounds `near` away from zero at any scene scale,
- * but it says nothing about depth-buffer precision — the operative
- * floor is {@link nearPlaneFloor}, which additionally bounds the
- * near/far RATIO. Do not clamp to this directly; call
- * `nearPlaneFloor` so both clipping paths inherit the same bound.
+ * This is the floor that says nothing about depth-buffer precision. Which
+ * role it plays depends on the projection:
+ *
+ *  - **Perspective** — a dominated backstop. {@link nearPlaneFloor} raises
+ *    `near` to `far / MAX_NEAR_FAR_RATIO`, which is always larger (`far >= R`
+ *    always holds, so `far / 1000 >= 1e-3 · R` versus this `2e-6 · R`). It
+ *    surfaces only at `R -> 0`, where it yields `MIN_NEAR_PLANE` and keeps the
+ *    callers' degenerate-frustum guard tripping instead of NaN-ing.
+ *  - **Orthographic** — the OPERATIVE floor. Ortho opts out of the ratio bound
+ *    (linear depth, nothing to gain, real clipping cost), so `nearPlaneFloor`
+ *    returns exactly this value.
+ *
+ * Clipping paths must still go through `nearPlaneFloor` rather than calling
+ * this directly, so the projection decision lives in one place. Reading it
+ * directly is fine for callers that want the LOWEST near the policy can ever
+ * produce — `RenderingControls.updateClippingSliderRanges` does exactly that
+ * to pick the near slider's minimum.
  */
 export function minNearForRadius(expandedRadius: number): number {
   return Math.max(MIN_NEAR_PLANE, expandedRadius * MIN_NEAR_RADIUS_FACTOR);

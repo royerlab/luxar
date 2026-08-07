@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { RenderingControls } from '../../../ui/rendering-controls';
+import { RenderingControls, decadeStep } from '../../../ui/rendering-controls';
 import { config } from '../../../config';
 import { log } from '../../../utils/log';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
@@ -701,6 +701,60 @@ describe('RenderingControls', () => {
       // The whole useful range sat BELOW the old 0.0001 minimum here.
       expect(nearMin).toBeLessThan(0.0001);
       expect(nearMax).toBeCloseTo(0.01, 10);
+    });
+
+    // The step is what the GUI reads the DISPLAYED DECIMAL COUNT off of, via
+    // `String(step)`. My first version passed the range minimum straight
+    // through, which is scene-derived and therefore carries float noise:
+    // `String(1.05e-4)` is "0.00010499999999999999", so a near of 117.5
+    // rendered as "117.50000000000000000000". Asserting min/max alone never saw
+    // it — these assert the rendered string, which is what a user sees.
+    const formatLikeGui = (value: number, step: number): string => {
+      const s = String(step);
+      const dot = s.indexOf('.');
+      return value.toFixed(dot === -1 ? 0 : s.length - dot - 1);
+    };
+
+    it.each([
+      [0.01, 0.01175, 0.02225],
+      [1, 1.175, 2.225],
+      [95.3, 111.9775, 212.0425],
+      [100, 117.5, 222.5],
+      [100000, 117500, 222500],
+    ])('keeps the rendered readout clean at scale %p', (scale, sampleNear, sampleFar) => {
+      const controls = renderingControls as any;
+      mockSceneManager.getSceneScale = vi.fn(() => scale);
+      controls.updateSceneScale();
+
+      const nearStep = controls.controllers.nearPlane.step.mock.calls.at(-1)[0];
+      const farStep = controls.controllers.farPlane.step.mock.calls.at(-1)[0];
+
+      // Exact short decimal: no float noise, no exponential notation.
+      for (const step of [nearStep, farStep]) {
+        expect(String(step)).toMatch(/^(?:0\.0*1|1(?:0*)?)$/);
+        expect(String(step)).not.toContain('e');
+      }
+      // ...so the readout carries a sane number of decimals, not 20 and not 0.
+      for (const [value, step] of [
+        [sampleNear, nearStep],
+        [sampleFar, farStep],
+      ] as const) {
+        const rendered = formatLikeGui(value, step);
+        const decimals = (rendered.split('.')[1] ?? '').length;
+        expect(decimals).toBeLessThanOrEqual(6);
+        expect(Number(rendered)).toBeCloseTo(value, 2);
+      }
+    });
+
+    it('decadeStep floors at 1e-6, where String() would go exponential', () => {
+      expect(String(decadeStep(1e-8))).toBe('0.000001');
+      expect(String(decadeStep(1.05e-4))).toBe('0.0001');
+      expect(String(decadeStep(0.0953))).toBe('0.01');
+      expect(String(decadeStep(222500))).toBe('100000');
+      // Degenerate input must not produce NaN/Infinity as a slider step.
+      for (const bad of [0, -1, NaN, Infinity]) {
+        expect(decadeStep(bad)).toBe(1e-6);
+      }
     });
 
     it('is a no-op when the scene scale is unknown', () => {

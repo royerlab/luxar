@@ -52,9 +52,11 @@ so the per-frame `ensure()` re-walks the graph each frame (see the
   derivation of the constant lives on `MAX_NEAR_FAR_RATIO`; it is not
   restated here, so there is one place to change. Mesh has no near fade
   in either backend and is the one type the floor can clip.
-  `MIN_NEAR_RADIUS_FACTOR` is now dominated everywhere except a
-  zero-radius sphere (where it yields `MIN_NEAR_PLANE`, keeping the
-  degenerate-frustum guard tripping instead of NaN-ing). Re-implemented
+  Under PERSPECTIVE, `MIN_NEAR_RADIUS_FACTOR` is dominated everywhere
+  except a zero-radius sphere (where it yields `MIN_NEAR_PLANE`, keeping
+  the degenerate-frustum guard tripping instead of NaN-ing); under ortho
+  it is the operative floor, since ortho opts out of the ratio bound
+  (next invariant). Re-implemented
   inline by `updateDynamicFromCache` for the zero-alloc per-frame path,
   with a parity test pinning the two to identical values.
 

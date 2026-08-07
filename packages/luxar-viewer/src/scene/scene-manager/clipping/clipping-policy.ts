@@ -83,11 +83,18 @@ export function applyClippingPlanes(camera: LuxarCamera, near: number, far: numb
   // Non-finite check FIRST, and separately from `near >= far`: every comparison
   // against NaN is false, so `NaN >= far` does not reject and a NaN would sail
   // through into the projection matrix, blanking the view with no diagnostic.
-  // Reachable from the snapshot-restore path (`viewer-snapshot.ts` writes a
-  // captured pair straight back) and from any caller that skips
-  // `validateRenderingSettings`. Infinity is refused for the same reason: an
-  // infinite plane yields a degenerate matrix rather than a "see everything"
-  // frustum.
+  // Infinity is refused for the same reason — an infinite plane makes the matrix
+  // degenerate rather than meaning "see everything".
+  //
+  // DEFENSIVE, not currently reachable: every present caller of
+  // `SceneManager.updateClippingPlanes` passes values that already went through
+  // `validateRenderingSettings` (reset / load / zarr paths) or the number
+  // controller's `parseNumber` fallback (the sliders), so none can deliver a
+  // non-finite pair today. The guard exists because that is a property of the
+  // CALLERS, not of this function's contract, and because the sibling
+  // `restoreCamera` (`core/app/snapshot/viewer-snapshot.ts`) shows the shape of
+  // the hazard: it assigns `camera.near` / `camera.far` directly and so bypasses
+  // this validation entirely. Anything routed here in future is covered.
   if (!Number.isFinite(near) || !Number.isFinite(far)) {
     log.warning(
       Modules.SCENE_MANAGER,
