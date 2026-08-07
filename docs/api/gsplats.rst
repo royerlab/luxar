@@ -15,8 +15,9 @@ Main API
 
 .. autoclass:: luxar.gsplats.GSplatData
    :members:
+   :inherited-members:
    :undoc-members:
-   :exclude-members: additive_sublods
+   :exclude-members: additive_sublods, centers, amplitudes, cholesky_factors, colors, stats
    :show-inheritance:
 
 .. autoproperty:: luxar.gsplats.GSplatData.additive_sublods
