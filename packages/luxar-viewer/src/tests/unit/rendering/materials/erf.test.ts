@@ -146,6 +146,25 @@ describe('GLSL / TSL single-source serialization', () => {
     expect(node).toBeDefined();
     expect(typeof node).toBe('object');
   });
+
+  it('the GLSL body, transpiled to JS, is bit-identical to erfPoly', () => {
+    // The strongest string<->mirror equivalence proof available without a
+    // GPU: mechanically rewrite the GLSL body as JS (float -> let,
+    // min/abs -> Math.*) and evaluate it. A structural drift between the
+    // hand-nested GLSL Horner and the mirror's loop shows up as a
+    // non-zero difference somewhere on the grid.
+    const body = GLSL_ERF_FUNCTIONS.replace('float luxarErf(float x) {', '')
+      .replace(/\}\s*$/, '')
+      .replaceAll('float ', 'let ')
+      .replaceAll('min(', 'Math.min(')
+      .replaceAll('abs(', 'Math.abs(');
+    // eslint-disable-next-line no-new-func
+    const glslErf = new Function('x', body) as (x: number) => number;
+    for (let i = 0; i <= 4000; i++) {
+      const x = -5 + (10 * i) / 4000;
+      expect(glslErf(x)).toBe(erfPoly(x));
+    }
+  });
 });
 
 describe('computeRayIntegralFactor (refactored onto erfRef)', () => {

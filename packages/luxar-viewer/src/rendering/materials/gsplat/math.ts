@@ -37,7 +37,7 @@ export const GSPLAT_COV2D_DILATION_DEFAULT = 0.3;
  * For T=3 the shifted form is ≈ 2.433.
  *
  * Uses the shared `erfRef` (A&S 7.1.26, max error 1.5e-7) from
- * `_shared/erf.ts` — the codebase's single erf source.
+ * `_shared/erf.ts` — the viewer's single erf source.
  */
 export function computeRayIntegralFactor(truncate: number): number {
   const SQRT_2PI = Math.sqrt(2 * Math.PI);

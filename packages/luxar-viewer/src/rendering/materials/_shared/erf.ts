@@ -1,6 +1,8 @@
 /**
  * Shared error-function implementations — the single source of truth for
- * every erf in the codebase, CPU and GPU.
+ * every erf in the VIEWER, CPU and GPU. (The Python package carries its
+ * own copy of the same A&S 7.1.26 form in `luxar/gsplats/lift.py` — the
+ * two languages cannot share code, but the constants must stay in sync.)
  *
  * Two implementations live here, each matched to its consumer:
  *
@@ -15,8 +17,9 @@
  *    polynomial on [-3, 3], clamped to ±1 outside. NO exp, NO division:
  *    the fragment-shader form (the volumetric line primitive evaluates
  *    two erfs per fragment on the most fill-heavy geometry type).
- *    Degree-13 constrained least-squares fit with P(3) = 1 EXACTLY, so
- *    the clamp is continuous. Max abs error 5.6e-4 against `erfRef`;
+ *    Degree-13 constrained least-squares fit with P(3) = 1 (to 1e-9 for
+ *    the printed coefficient set), so the clamp is continuous. Max abs
+ *    error 5.4e-4 against the exact erf;
  *    the worst *difference* error `(erf(x1) − erf(x0))` consumers see is
  *    1.4e-3 of the peak when the two arguments are ≥ 0.5 apart (callers
  *    with closer arguments must use a midpoint/Taylor lane instead of
@@ -35,12 +38,10 @@ import { abs, float, min, select } from 'three/tsl';
 import type { TSLNode } from './tsl-helpers';
 
 /** A&S 7.1.26 auxiliary-variable constant: t = 1 / (1 + p·|x|). */
-export const ERF_AS_P = 0.3275911;
+const ERF_AS_P = 0.3275911;
 
 /** A&S 7.1.26 polynomial coefficients (a1..a5). */
-export const ERF_AS_COEFFS = [
-  0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429,
-] as const;
+const ERF_AS_COEFFS = [0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429] as const;
 
 /**
  * CPU reference erf — Abramowitz & Stegun 7.1.26, max abs error 1.5e-7.
@@ -68,8 +69,9 @@ export const ERF_POLY_CLAMP = 3.0;
  * RE-SOLVED against the rounded tail so the printed set itself satisfies
  * P(3) = 1 to 1e-9 (plain rounding of all seven broke the constraint by
  * 9.5e-5). These printed values are what both shader backends and
- * `erfPoly` evaluate, so the TS mirror is bit-faithful to the GPU math
- * up to float32 rounding. Max abs error vs the exact erf: 5.4e-4.
+ * `erfPoly` evaluate; the f64 mirror matches a float32-chained
+ * evaluation to within ~7e-6 (accumulated rounding across the Horner
+ * steps — 1% of the fit error). Max abs error vs the exact erf: 5.4e-4.
  */
 export const ERF_POLY_COEFFS = [
   1.126454454, -0.366866314, 0.099810298, -0.018376255, 0.002118141, -0.000136121, 0.00000369,
@@ -100,6 +102,11 @@ function glslNum(v: number): string {
  * GLSL implementation of `erfPoly` — `float luxarErf(float x)`.
  * Inject once per shader (before `main()`); pure ALU, no exp, no
  * division, so it is safe on the hottest fragment paths.
+ *
+ * NaN caveat: GLSL `min`/`abs` make no IEEE NaN guarantee, so
+ * `luxarErf(NaN)` is implementation-defined on the GPU (the TS mirror
+ * propagates NaN). Callers must sanitize upstream rather than rely on
+ * NaN propagation through this function.
  */
 export const GLSL_ERF_FUNCTIONS = `
 float luxarErf(float x) {
