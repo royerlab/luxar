@@ -407,6 +407,52 @@ class TestCache:
         assert "1 dir(s) removed" in result.stdout
         assert blob.exists()  # still a preview
 
+    def test_cache_clear_counts_a_shared_cache_file_once(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # Same shared cache name, but with a file in it: the directory was
+        # walked once per claimant, so the file was listed — and its bytes
+        # counted, and its "freed" bytes tallied — once per demo.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        shared = next(
+            name
+            for name, n in Counter(
+                name for d in iter_demos() for name in d.caches
+            ).most_common()
+            if n > 1
+        )
+        claimants = [d.key for d in iter_demos() if shared in d.caches]
+        assert len(claimants) > 1
+        cdir = tmp_path / shared
+        cdir.mkdir()
+        (cdir / "data.bin").write_bytes(b"y" * 1024)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", *claimants, "--yes"])
+
+        assert result.exit_code == 0
+        assert "1 item(s), 1.0 KB" in result.stdout
+        assert "Cleared 1.0 KB" in result.stdout
+        assert not cdir.exists()
+
+    def test_cache_clear_reports_the_cache_dir_it_will_remove(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # The summary is printed before anything is unlinked in *both* modes, so
+        # a real run has to look ahead at its own deletions exactly as --dry-run
+        # does; otherwise it removes a directory it never mentioned, and the
+        # same state previews differently from how it clears.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        demo = next(d for d in iter_demos() if d.caches)
+        cdir = tmp_path / demo.caches[0]
+        cdir.mkdir()
+        (cdir / "data.bin").write_bytes(b"y" * 1024)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", demo.key, "--yes"])
+
+        assert result.exit_code == 0
+        assert "1 dir(s) removed" in result.stdout
+        assert not cdir.exists()
+
     def test_cache_clear_orphans(self, runner, tmp_path, monkeypatch) -> None:
         monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
         orphan = tmp_path / "orphan-dir"

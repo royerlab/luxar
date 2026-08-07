@@ -74,9 +74,9 @@ def _empty_dirs(cache_dir: Path, deleted: Optional[set[Path]] = None) -> list[Pa
 
     ``deleted`` names files that are *about to* be unlinked, and so counts them
     as already gone. The real sweep runs after the deletions and needs none of
-    it; ``--dry-run`` previews the sweep beforehand, and without it would miss
-    every directory that the deletions are what empties — above all the cache
-    dir itself.
+    it; both modes print their summary *before* deleting anything, and without
+    it that preview would miss every directory that the deletions are what
+    empties — above all the cache dir itself.
     """
     if not cache_dir.is_dir() or cache_dir.is_symlink():
         return []
@@ -677,16 +677,28 @@ def cache_clear(
                 targets.append((e.path, e.size_bytes, f"ORPHAN {e.path.name}"))
 
     # One cache name can be claimed by several demos (four share
-    # ``gsplats_tribolium``), which puts the same path in the list once per
-    # demo. Sweep — and count — it once.
+    # ``gsplats_tribolium``), so a selection covering more than one claimant
+    # walks that directory once per demo: the same file lands in ``targets``
+    # once per claimant and the same directory in ``cache_dirs``. Delete, sweep
+    # and count each path once — otherwise the summary promises (and the final
+    # tally claims to have freed) several times the bytes actually there.
     cache_dirs = list(dict.fromkeys(cache_dirs))
+    seen: set[Path] = set()
+    unique_targets: list[tuple[Path, int, str]] = []
+    for target in targets:
+        if target[0] in seen:
+            continue
+        seen.add(target[0])
+        unique_targets.append(target)
+    targets = unique_targets
 
     # Empty directories hold no bytes, so they are swept rather than listed as
     # targets (the count/size summary stays a summary of actual data), but they
     # still have to go — see :func:`_empty_dirs`. The sweep happens after the
-    # deletions, so only ``--dry-run`` (which prints before deleting anything)
-    # has to look ahead at the files it is previewing.
-    doomed = {p for p, _, _ in targets} if dry_run else set()
+    # deletions while the summary is printed before them, in both modes, so the
+    # summary has to look ahead at the files it is about to delete — otherwise
+    # a real run silently removes a cache dir it never mentioned.
+    doomed = {p for p, _, _ in targets}
     empties = [p for c in cache_dirs for p in _empty_dirs(c, deleted=doomed)]
 
     if not targets and not empties:
