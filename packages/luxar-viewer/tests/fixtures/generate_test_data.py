@@ -1729,18 +1729,18 @@ def generate_line_joins_test() -> None:
 
     ``curve_smooth``
         120-segment sinusoidal polyline, gentle (~10 degree) turns. The
-        headline #790 case: 4.94% dark and 3.53% bright outliers before the
+        headline #790 case: 4.94% dark and 3.52% bright outliers before the
         miter landed, 0% and 0% after it. Both figures come from the same
-        pinned frame — headless Chromium, ``dpr=1``, the pre-miter column
-        measured 2026-08-06 and the post-miter one 2026-08-07 — as does
+        pinned frame — headless Chromium, ``dpr=1``, both columns measured
+        2026-08-07 (the pre-miter one via ``&lineJoin=none``) — as does
         every other number in this docstring.
     ``zigzag_right_angle``
         16-segment 90-degree zigzag; sharp bends, still inside a miter
         limit. Its wedge is far worse than the curve's but also far wider,
         and the local-median metric only counts the part of a wedge that is
         still a couple of pixels across, so it barely registered this band
-        even unmitred (0.077% dark, 0.077% bright; 0% and 0% mitred). The
-        axial flux dip is the measure that sees it: p05 0.749 unmitred
+        even unmitred (0.076% dark, 0.076% bright; 0% and 0% mitred). The
+        axial flux dip is the measure that sees it: p05 0.780 unmitred
         against 0.985 mitred, with the straight bands at 1.000. See the
         sensitivity envelope in ``src/tests/helpers/line-join-metrics.ts``.
     ``straight_thin``

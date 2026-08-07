@@ -408,6 +408,19 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
       ? float(1.0).greaterThan(0.0)
       : mvFar.z.negate().greaterThanEqual(nearCull).and(selfFarDepth.greaterThanEqual(nearCull));
 
+    // A DEGENERATE partner is the one decline that must not fall back to the
+    // code-implied default. The kernel matches endpoints by vertex index and
+    // never looks at positions, so a zero-length interior segment still earns
+    // this endpoint a slot-bearing code — which means "suppress the cap, a
+    // neighbouring quad meets you". Nothing rasterises there, so the joint
+    // would get neither a miter nor a cap and the #790 wedge reappears. Keep
+    // the cap. Written BEFORE the join block so both backends order the
+    // declines identically; the join block already requires a non-degenerate
+    // partner, so the two are mutually exclusive.
+    If(partnerLen.lessThanEqual(0.0001), () => {
+      capValue.assign(float(0.0));
+    });
+
     If(bothFarInFront.and(partnerLen.greaterThan(0.0001)).and(pixelLen.greaterThan(0.0001)), () => {
       // CANONICAL operand order — incoming edge first, outgoing second — so
       // both segments meeting here evaluate the same expression and take the

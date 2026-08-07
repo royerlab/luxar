@@ -12,8 +12,8 @@
  * bands must show ZERO dark and zero bright outliers, exactly like the two
  * straight bands, and the zigzag's axial flux must stay above 0.9 — the same
  * floor the straight bands hold. Unmitred rendering cannot clear either: it
- * measured 4.94% dark / 3.53% bright on `curve_smooth` and a flux p05 of
- * 0.749 on `zigzag_right_angle`. Alongside that, what was already correct
+ * measured 4.94% dark / 3.52% bright on `curve_smooth` and a flux p05 of
+ * 0.780 on `zigzag_right_angle`. Alongside that, what was already correct
  * must stay correct: both straight bands at zero outliers (#785), every
  * band's flux profile gapless, the straight profiles flat (#780 — no
  * bead-chain dip at interior joints), and the nine-ray hub inside a small
@@ -43,8 +43,9 @@
  * DPR does not scale the metric's answer — it slides the wedge across the
  * window's sensitivity boundary.
  *
- * Every figure quoted below was measured in headless Chromium at `dpr=1`:
- * the unmitred column on 2026-08-06, the mitred one on 2026-08-07.
+ * Every figure quoted below was measured in headless Chromium at `dpr=1`,
+ * both columns on 2026-08-07 — the unmitred one by re-pointing this spec's
+ * URL at `&lineJoin=none` on the same tree.
  */
 
 import type { Page } from '@playwright/test';
@@ -194,17 +195,18 @@ const EXPECTED_LINE_SEGMENTS = 120 + 16 + 40 + 20 + 9;
  * The bend bands are gated on outlier COUNTS below (`toBe(0)`), not on a
  * fraction, so there is no bend ceiling left to name. The zigzag needs this
  * second gate because its wedge is far too wide for the local-median metric
- * to see: unmitred it scored only 0.077% dark, and its flux p05 is what
- * actually responded — 0.749 unmitred against 0.985 mitred (2026-08-07),
+ * to see: unmitred it scored only 0.076% dark, and its flux p05 is what
+ * actually responded — 0.780 unmitred against 0.985 mitred (2026-08-07),
  * with the straight bands at 1.000.
  *
  * 0.9 is the same floor the straight bands hold, and it brackets the whole
- * join-free envelope: the measured unmitred 0.749 is far below it, and even
- * an IDEAL join-free zigzag only models to 0.898. So a regression to
- * unmitred rendering fails here even if the outlier counts somehow did not,
- * while the mitred 0.985 clears it with 0.085 to spare. That margin is the
- * headroom for GPU, driver and resolution differences — do not raise the
- * floor into it.
+ * join-free envelope: the measured unmitred 0.780 sits 0.12 below it, and
+ * even an IDEAL join-free zigzag only models to 0.898 — still under the
+ * floor. So a regression to unmitred rendering fails here even if the
+ * outlier counts somehow did not, while the mitred 0.985 clears it with
+ * 0.085 to spare. Both margins are the headroom for GPU, driver and
+ * resolution differences — do not raise the floor into the upper one, and do
+ * not lower it into the lower one.
  */
 const ZIGZAG_FLUX_P05_FLOOR = 0.9;
 
@@ -438,7 +440,7 @@ test.describe('Line-joint artifact measurement (#790)', () => {
     // #790: the miter closes the outer-side wedge and removes the inner-side
     // double-cover lens, so both bending cases now measure exactly what the
     // straight bands do — not a single tick, dark or bright. Unmitred, the
-    // curve scored 4.94% dark / 3.53% bright here.
+    // curve scored 4.94% dark / 3.52% bright here.
     //
     // Positive control, run 2026-08-07: re-pointing this spec's URL at
     // `&lineJoin=none` reproduces 4.941% dark / 3.520% bright on the curve and
@@ -453,9 +455,9 @@ test.describe('Line-joint artifact measurement (#790)', () => {
 
     // Zero outliers alone would not prove the zigzag's wedge is closed. That
     // wedge is a 28.8 px-radius quarter disc, far wider than the local-median
-    // metric's couple-of-pixels envelope, so unmitred it read only 0.077%
+    // metric's couple-of-pixels envelope, so unmitred it read only 0.076%
     // while the far gentler curve read 4.94%. The flux profile is the measure
-    // that responds on this band: 0.749 unmitred, 0.985 mitred.
+    // that responds on this band: 0.780 unmitred, 0.985 mitred.
     expect(zigzag.flux.p05, 'zigzag_right_angle axial p05').toBeGreaterThan(ZIGZAG_FLUX_P05_FLOOR);
 
     // `curve_smooth`'s flux is deliberately NOT gated. Its p05/p95 measure

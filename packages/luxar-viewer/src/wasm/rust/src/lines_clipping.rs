@@ -585,9 +585,14 @@ pub fn compute_joint_codes(
         }
         let code = (out_idx as i32) << 1;
 
-        output_start[out_idx] = if t1_params[seg_idx] > 0.0 {
-            JOINT_CLIPPED
-        } else {
+        // The SAME predicates the registering pass used, not their complements.
+        // `t <= 0` and `!(t > 0)` agree for every ordinary float but BOTH go
+        // false for NaN, so the complementary spelling let an endpoint that
+        // never registered still read the shared vertex and name a real but
+        // unrelated partner slot. Repeating the predicate makes that desync
+        // structurally impossible: an endpoint reads the tables only if it put
+        // its own code into them.
+        output_start[out_idx] = if t1_params[seg_idx] <= 0.0 {
             joint_code(
                 segments[seg_idx * 2] as usize,
                 code,
@@ -596,10 +601,10 @@ pub fn compute_joint_codes(
                 &code_sum,
                 &degree,
             )
-        };
-        output_end[out_idx] = if t2_params[seg_idx] < 1.0 {
-            JOINT_CLIPPED
         } else {
+            JOINT_CLIPPED
+        };
+        output_end[out_idx] = if t2_params[seg_idx] >= 1.0 {
             joint_code(
                 segments[seg_idx * 2 + 1] as usize,
                 code | 1,
@@ -608,6 +613,8 @@ pub fn compute_joint_codes(
                 &code_sum,
                 &degree,
             )
+        } else {
+            JOINT_CLIPPED
         };
 
         out_idx += 1;
@@ -634,6 +641,11 @@ pub const JOINT_HUB: f32 = -2.0;
 /// 12.5% of codes above the bound. Degrading those joints to the free-end
 /// sentinel costs them their miter — strictly better than mitring against an
 /// unrelated segment, which is the flap this whole design exists to prevent.
+///
+/// "Strictly better" holds only because BOTH sides degrade: `joint_code` tests
+/// this endpoint's own slot as well as its partner's, so a pair straddling the
+/// bound cannot end up with one side mitring alone against an edge the other
+/// never rotated.
 pub const MAX_EXACT_JOINT_SLOT: i32 = (1 << 24) - 3;
 
 /// Record one endpoint landing exactly on `vertex`, saturating degree at 3.
@@ -687,27 +699,30 @@ fn joint_code(
     // Three ways the difference can fail to name a real partner:
     //
     // - `slot < 0` / `slot >= visible_count`: the sum did not contain `my_code`,
-    //   so the difference is arbitrary. That happens when the registering pass
-    //   skipped this endpoint but this pass did not — the two run on the
-    //   complementary tests `t <= 0` / `!(t > 0)`, which agree for every
-    //   ordinary float but BOTH go false for NaN. The predecessor kernel bounded
-    //   the same arithmetic against its direction table's length; keep an
-    //   equivalent bound here so a code can never name a slot outside the stream
-    //   it indexes, independent of the texel writer's capacity clamp.
+    //   so the difference is arbitrary. Both passes now run the IDENTICAL
+    //   `t <= 0` / `t >= 1` tests, so an endpoint can no longer read tables it
+    //   never registered in — but the predecessor kernel bounded the same
+    //   arithmetic against its direction table's length, and keeping an
+    //   equivalent bound here means a code can never name a slot outside the
+    //   stream it indexes, independent of the texel writer's capacity clamp.
     // - `slot == my slot`: a zero-length or looping segment registered BOTH of
     //   its own endpoints here, so the difference is its own other endpoint (the
     //   two codes differ only in the end bit, which is why comparing whole codes
     //   is not enough). The old angle-only kernel survived this by returning a
     //   plausible 1.0; a joint code is dereferenced, and a segment mitered
     //   against itself is exactly the asymmetric-join case that produces flaps.
-    // - `slot > MAX_EXACT_JOINT_SLOT`: the outputs below are f32 ARRAYS, so a
-    //   code past 2^24 is rounded AT THE STORE — and it rounds to a valid,
-    //   in-range slot, which no downstream consumer can distinguish from a
-    //   deliberate one. The texel writer's own bound cannot help: it reads the
-    //   already-rounded value. This is the only place the check can live.
+    // - either slot past `MAX_EXACT_JOINT_SLOT`: the outputs below are f32
+    //   ARRAYS, so a code past 2^24 is rounded AT THE STORE — and it rounds to
+    //   a valid, in-range slot, which no downstream consumer can distinguish
+    //   from a deliberate one. The texel writer's own bound cannot help: it
+    //   reads the already-rounded value. This is the only place the check can
+    //   live. BOTH slots are tested, not just the partner's: the pair degrades
+    //   together only if each side asks the same question, and my own slot is
+    //   what the partner's code has to name.
     if slot < 0
         || slot as usize >= visible_count
         || slot > MAX_EXACT_JOINT_SLOT
+        || (my_code >> 1) > MAX_EXACT_JOINT_SLOT
         || slot == (my_code >> 1)
     {
         return JOINT_FREE_END;
@@ -1181,34 +1196,49 @@ mod tests {
         assert_eq!(out_end[0], JOINT_FREE_END);
     }
 
-    /// A NaN clip parameter makes the registering pass and the reading pass
-    /// disagree: `t <= 0` is false (no registration) but `!(t > 0)` is true (it
-    /// still reads), so the code-sum difference does not contain this endpoint's
-    /// own code and decodes to an arbitrary slot. `slot < 0` alone is not enough
-    /// — the difference is NEGATIVE only when the unregistered endpoint's own
-    /// code is the larger one. Here the NaN endpoint is slot 0 while the two
-    /// endpoints actually registered on its vertex are slots 1 and 2, so the
-    /// difference is large and POSITIVE and decodes to slot 3 in a 3-segment
-    /// scene. The bound against `visible_count` is what rejects it; the
-    /// predecessor kernel bounded the same arithmetic against its direction
-    /// table's length.
+    /// A NaN clip parameter must not read a vertex it never registered on.
+    ///
+    /// Both passes run the SAME `t <= 0` test, so a NaN endpoint registers
+    /// nothing and reports `JOINT_CLIPPED`. With the reading pass on the
+    /// complement `!(t > 0)` — which is also false for NaN — the endpoint read
+    /// anyway, and the code-sum difference (which does not contain its own
+    /// code) decoded to an arbitrary slot. `slot < 0` alone never caught that:
+    /// the difference is negative only when the unregistered endpoint's own
+    /// code is the larger one.
     #[test]
-    fn test_joint_codes_nan_clip_param_cannot_name_an_out_of_range_slot() {
+    fn test_joint_codes_nan_clip_param_reads_nothing() {
         // v5 is touched by the STARTS of slots 1 and 2 (degree 2, code_sum =
-        // 2 + 4 = 6). Slot 0 also starts on v5 but carries a NaN t1, so it reads
-        // v5 without having registered: 6 - 0 = 6 -> slot 3, out of range.
-        let mut out_start = vec![9.0f32; 3];
-        let mut out_end = vec![9.0f32; 3];
+        // 2 + 4 = 6). Slot 0 also starts on v5 but carries a NaN t1. Four
+        // segments, so the bogus 6 - 0 = 6 -> slot 3 the old complement
+        // produced would be IN range and would name real-but-unrelated
+        // segment 3; the `visible_count` bound cannot see it.
+        let mut out_start = vec![9.0f32; 4];
+        let mut out_end = vec![9.0f32; 4];
         compute_joint_codes(
-            &[5, 8, 5, 6, 5, 7],
-            &[1, 1, 1],
-            &[f32::NAN, 0.0, 0.0],
-            &[1.0, 1.0, 1.0],
-            3,
+            &[5, 8, 5, 6, 5, 7, 0, 1],
+            &[1, 1, 1, 1],
+            &[f32::NAN, 0.0, 0.0, 0.0],
+            &[1.0, 1.0, 1.0, 1.0],
+            4,
             9,
             &mut out_start,
             &mut out_end,
         );
+
+        // The NaN endpoint registered nothing, so it reads nothing.
+        assert_eq!(out_start[0], JOINT_CLIPPED);
+
+        // The other slots are unaffected. v5 still holds exactly the two
+        // endpoints that DID register (slots 1 and 2), so they pair with each
+        // other at their STARTs: +(slot + 1).
+        assert_eq!(out_start[1], 3.0); // slot 1 start joins slot 2's START
+        assert_eq!(out_start[2], 2.0); // slot 2 start joins slot 1's START
+        assert_eq!(out_start[3], JOINT_FREE_END); // v0 is touched once
+        for v in out_end.iter() {
+            assert_eq!(*v, JOINT_FREE_END); // every END sits on its own vertex
+        }
+
+        // Belt and braces: no code may name a slot outside the stream.
         for (i, v) in out_start.iter().chain(out_end.iter()).enumerate() {
             let slot = if *v > 0.5 {
                 *v as i32 - 1
@@ -1218,7 +1248,7 @@ mod tests {
                 continue; // a sentinel names no slot
             };
             assert!(
-                (0..3).contains(&slot),
+                (0..4).contains(&slot),
                 "output {} named out-of-range slot {} (code {})",
                 i,
                 slot,
@@ -1329,6 +1359,27 @@ mod tests {
             &degree,
         );
         assert_eq!(out_ok, -((at_bound + 3) as f32));
-    }
 
+        // The OTHER side of that same pair must degrade too. Seen from the
+        // over-bound endpoint, the partner (slot 5) is representable and the
+        // partner bound alone would let it miter — against an edge slot 5 never
+        // rotated, which is precisely the one-sided flap. Its OWN slot is what
+        // has to be rejected.
+        let my_over_code = over << 1;
+        let their_code = (5 << 1) | 1;
+        let code_sum_over = vec![my_over_code + their_code];
+        let out_over = joint_code(
+            0,
+            my_over_code,
+            num_vertices,
+            (over + 1) as usize,
+            &code_sum_over,
+            &degree,
+        );
+        assert_eq!(
+            out_over, JOINT_FREE_END,
+            "an endpoint whose OWN slot is unrepresentable must degrade too, \
+             or only one side of the pair loses its miter"
+        );
+    }
 }

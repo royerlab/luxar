@@ -53,7 +53,7 @@
  * non-monotone in defect width, and it is not comparable between bands of
  * different turn angle. The pre-miter #790 baseline showed this plainly: the
  * gentle `curve_smooth` band (~10.5° turns) scored 4.94% dark while the 90°
- * `zigzag_right_angle` band scored 0.077%, even though the zigzag's wedge was
+ * `zigzag_right_angle` band scored 0.076%, even though the zigzag's wedge was
  * far the worse defect. (Both read 0% on the mitred renderer, which is what
  * the acceptance spec now asserts.)
  *
@@ -66,11 +66,11 @@
  * 1.571 rad turn passes 3 px only ~2 px out from the centreline and was
  * essentially invisible here. For wedges that wide, read
  * {@link measureAxialFlux}: on that same frame the zigzag's flux p05 was
- * 0.749 against 1.000 on the straight bands, and it rose to 0.985 once the
+ * 0.780 against 1.000 on the straight bands, and it rose to 0.985 once the
  * miter landed. (Every figure quoted here is from the acceptance spec's
- * pinned frame — `dpr=1`, headless Chromium; the pre-miter column measured
- * 2026-08-06 and the post-miter one 2026-08-07 — which is what makes them
- * reproducible.)
+ * pinned frame — `dpr=1`, headless Chromium, both columns measured
+ * 2026-08-07, the pre-miter one via `&lineJoin=none` on the same tree —
+ * which is what makes them reproducible.)
  *
  * ## Display encoding
  *

@@ -507,7 +507,7 @@ function buildJoinTexelSource(): LineTexelSource {
  *   DIMMER than with the join disabled. That inversion is what the parity spec
  *   asserts against.
  *   Widths are unchanged at 0.1 x uOrthoLineScale 64 = 6.4 px half-width, clear
- *   of the 2 px rendered-width gate.
+ *   of the 2 px rendered-HALF-width gate.
  *
  * Codes follow compute_joint_codes: seg 0's END meets seg 1's END, so
  * seg0.endJointCode = -(1 + 3) = -4 and seg1.endJointCode = -(0 + 3) = -3; both

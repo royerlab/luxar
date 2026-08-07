@@ -29,9 +29,11 @@ track the camera.
 Because the miter point lies on the segment's own ±R offset line, `vPerpNorm`
 stays an exact perpendicular coordinate and the **fragment stage is unchanged**.
 Guards (miter limit 120°, an overshoot test on the axial reach, and a 2 px
-rendered-width gate) keep the cost where the benefit is: 0 on thin-line scenes,
-+0.1–0.2 ms/frame at 800k thick segments. Default style is `miter`; a per-node
-`join` attribute and `?lineJoin=none|miter` override it.
+rendered-HALF-width gate, i.e. 4 px rendered width) keep the cost where the
+benefit is: a joint pays one extra texel fetch and one extra projection per
+vertex, and the width gate skips the block entirely below that threshold, so
+thin-line scenes — the million-segment ones — pay nothing. Default style is
+`miter`; a per-node `join` attribute and `?lineJoin=none|miter` override it.
 
 `join` is a compositing attribute, so on a partitioned / LOD lines node it is
 written once on the wrapper and inherited by the parts. Three consequences of
@@ -47,14 +49,17 @@ nothing would ever read. A `join` on a **Group** is still correct — that is th
 whole point of it compositing.
 
 Net deletion: the per-segment `dirs` table (~32 MB at 2.7M segments), the
-per-endpoint normalize + dot, and `softenCapacitySplitCap`. Measured on the
-`test_line_joins` acceptance harness described below (`line-join-artifact.spec.ts`,
-headless Chromium, `dpr=1` pinned, 2026-08-07 against the 2026-08-06 unmitred
-baseline): the 120-segment sinusoid goes from 4.94% dark / 3.53% bright outlier
-pixels to **zero of each**, and the right-angle zigzag's axial flux p05 rises
-from 0.749 to 0.985 against a straight-band 1.000. Both straight bands are
-unchanged at zero outliers and a flat profile — the miter reduces algebraically
-to `R·perp` at a collinear joint — and the nine-ray hub control holds at
+per-endpoint normalize + dot, and the f64-vs-f32 care those needed to keep the
+two backends bit-identical — integer index arithmetic agrees trivially.
+
+Measured on the `test_line_joins` acceptance harness described below
+(`line-join-artifact.spec.ts`, headless Chromium, `dpr=1` pinned, both columns
+2026-08-07 — the unmitred one re-measured on the same tree via
+`&lineJoin=none`): the 120-segment sinusoid goes from 4.94% dark / 3.52% bright
+outlier pixels to **zero of each**, and the right-angle zigzag's axial flux p05
+rises from 0.780 to 0.985 against a straight-band 1.000. Both straight bands
+are unchanged at zero outliers and a flat profile — the miter reduces
+algebraically to `R·perp` at a collinear joint — and the nine-ray hub control holds at
 0.157% / 0.114%. The spec now asserts those zeros, so unmitred rendering cannot
 come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
 under `make test-e2e`.)
@@ -88,8 +93,8 @@ projecting its world AABB through the live camera. Every band is asserted to
 have a gapless flux profile — a torn tube is a defect at any turn angle — and
 the straight bands additionally at zero outliers and a flat profile. The two
 bending cases were first **recorded** under documented ceilings rather than
-fixed: measured 2026-08-06, with the device pixel ratio pinned, at 4.94% dark /
-3.53% bright on the curve. Once the join geometry landed in the entry above
+fixed: measured with the device pixel ratio pinned at 4.94% dark / 3.52% bright
+on the curve. Once the join geometry landed in the entry above
 those ceilings were replaced by zero-outlier assertions, plus a 0.9 axial-flux
 floor on the zigzag, whose wedge is too wide for the outlier metric to see.
 
@@ -2263,7 +2268,8 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   fixed: the suppression angle is measured in data space once per commit
   while quad tiling/overlap is a screen-space, per-camera fact (#795 tracks a
   real screen-space suppression), and the outer-side miter wedge at sharp
-  bends remains.
+  bends remains. (Both were subsequently closed — see the screen-space miter
+  join entry at the top of this file.)
 
 #### Added — manifest-driven demo-data fetch (R17 step 1)
 

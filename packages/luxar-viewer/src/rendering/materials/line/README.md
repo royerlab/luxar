@@ -190,7 +190,8 @@ the directions read in a canonical order (incoming edge first):
   must be in front of the near plane (testing only the partner's has each side
   testing a different point, so one side can miter alone against nothing), and
   this endpoint must actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
-- a **rendered-width gate** of 2 px: the wedge has area ~θ·R²/2, so below
+- a **rendered-HALF-width gate** of 2 px (`LINE_JOIN_MIN_HALF_WIDTH`), i.e.
+  4 px of rendered width: the wedge has area ~θ·R²/2, so below
   that it is sub-pixel and the line is already pinned to the 1.5 px floor
   with its intensity faded. The cost then lands only where the benefit is —
   million-segment scenes are thin-line scenes and skip the block entirely.
@@ -233,8 +234,8 @@ The before/after on that harness:
 
 | Band                 | Unmitred                  | Mitred          |
 | -------------------- | ------------------------- | --------------- |
-| `curve_smooth`       | 4.94% dark / 3.53% bright | 0 / 0           |
-| `zigzag_right_angle` | flux p05 0.749            | flux p05 0.985  |
+| `curve_smooth`       | 4.94% dark / 3.52% bright | 0 / 0           |
+| `zigzag_right_angle` | flux p05 0.780            | flux p05 0.985  |
 | `straight_thin`      | 0 / 0, flat profile       | unchanged       |
 | `straight_thick`     | 0 / 0, flat profile       | unchanged       |
 | `hub_9ray` (control) | 0.157% / 0.114%           | 0.157% / 0.114% |
@@ -244,9 +245,9 @@ local-median count is non-monotone in defect width (a wedge three or more
 pixels across poisons its own median and scores zero), which is why the
 gentle `curve_smooth` band measured 4.94% dark unmitred while the 90°
 `zigzag_right_angle`, whose wedge is far worse but far wider, measured
-only 0.077% — and why the zigzag is gated on its flux profile instead.
-(Measured in headless Chromium with `dpr=1` pinned: the unmitred column
-2026-08-06, the mitred one 2026-08-07. The E2E job is not part of the
+only 0.076% — and why the zigzag is gated on its flux profile instead.
+(Both columns measured in headless Chromium with `dpr=1` pinned on
+2026-08-07, the unmitred one via `&lineJoin=none`. The E2E job is not part of the
 per-PR CI run; the spec runs under `make test-e2e`.)
 
 ## Geometry and storage layout

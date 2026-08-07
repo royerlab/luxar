@@ -23,6 +23,20 @@
 const SEGMENT_PARALLEL_EPSILON = 1e-7;
 
 /**
+ * `f32::max` / `f32::min`, which IGNORE a NaN operand and return the other —
+ * unlike `Math.max` / `Math.min`, which propagate it.
+ *
+ * The t-param accumulation below must match the Rust kernel exactly, and this
+ * mirror is not a fallback: it is the PRODUCTION backend above 16 dimensions,
+ * so a NaN t-param is producible here and not on WASM (a NaN tolerance or
+ * slice position makes both in-slab tests fail and the same-side rejection
+ * miss, so `tMin`/`tMax` come out NaN). Propagating it would leave a segment
+ * with NaN clip parameters that the two backends then disagree about.
+ */
+const maxIgnoringNaN = (a: number, b: number): number => (b > a ? b : a);
+const minIgnoringNaN = (a: number, b: number): number => (b < a ? b : a);
+
+/**
  * Clip a single segment to the nD slice and return interpolation parameters.
  *
  * Returns [visible, t1, t2] where:
@@ -110,11 +124,11 @@ export function clip_segment_single(
 
     // Clip t1 (entry) and t2 (exit)
     if (dv > 0) {
-      t1 = Math.max(t1, tMin);
-      t2 = Math.min(t2, tMax);
+      t1 = maxIgnoringNaN(t1, tMin);
+      t2 = minIgnoringNaN(t2, tMax);
     } else {
-      t1 = Math.max(t1, tMax);
-      t2 = Math.min(t2, tMin);
+      t1 = maxIgnoringNaN(t1, tMax);
+      t2 = minIgnoringNaN(t2, tMin);
     }
 
     if (t1 >= t2) {
@@ -214,11 +228,11 @@ export function clip_segments_batch(
       const tMax = (sliceMax - v1Val) / dv;
 
       if (dv > 0) {
-        t1 = Math.max(t1, tMin);
-        t2 = Math.min(t2, tMax);
+        t1 = maxIgnoringNaN(t1, tMin);
+        t2 = minIgnoringNaN(t2, tMax);
       } else {
-        t1 = Math.max(t1, tMax);
-        t2 = Math.min(t2, tMin);
+        t1 = maxIgnoringNaN(t1, tMax);
+        t2 = minIgnoringNaN(t2, tMin);
       }
 
       if (t1 >= t2) {
@@ -432,13 +446,78 @@ export const JOINT_FREE_END = 0;
  * Mirrors the Rust `MAX_EXACT_JOINT_SLOT` — see that constant for why the bound
  * is `slot + 3 <= 2^24` and why it must be enforced rather than assumed (a
  * 32768-class device reaches a 22.35M per-node line capacity, where a measured
- * 12.5% of codes above the bound mis-decode).
+ * 12.5% of codes above the bound mis-decode). Both sides of a pair are tested
+ * against it, so a joint straddling the bound degrades on BOTH endpoints and
+ * never leaves one of them mitring alone.
  */
 export const MAX_EXACT_JOINT_SLOT = (1 << 24) - 3;
 /** Slice-clipped endpoint: no neighbour will arrive, so suppress the cap. */
 export const JOINT_CLIPPED = -1;
 /** Degree->=3 hub: several quads already stack here, so keep the cap. */
 export const JOINT_HUB = -2;
+
+/**
+ * Joint code for one unclipped endpoint sitting on `vertex`.
+ *
+ * Mirrors the Rust `joint_code`; exposed (that twin is private) because the
+ * `MAX_EXACT_JOINT_SLOT` boundary is only reachable through a >16.7M-segment
+ * scene, which no unit test can build.
+ *
+ * @param vertex - Source vertex index the endpoint lands on
+ * @param myCode - This endpoint's own `(slot << 1) | endBit` code
+ * @param numVertices - Length of the touch tables
+ * @param visibleCount - Number of visible segments (bounds a named slot)
+ * @param codeSum - Per-vertex sum of the codes registered on it
+ * @param degree - Per-vertex count of registered endpoints, saturating at 3
+ * @returns The joint code, or a sentinel when no partner can be named
+ */
+export function jointCodeForEndpoint(
+  vertex: number,
+  myCode: number,
+  numVertices: number,
+  visibleCount: number,
+  codeSum: Int32Array,
+  degree: Uint8Array
+): number {
+  if (vertex >= numVertices) return JOINT_FREE_END; // unregistered
+  const d = degree[vertex];
+  if (d < 2) return JOINT_FREE_END;
+  if (d > 2) return JOINT_HUB;
+  const partner = codeSum[vertex] - myCode;
+  const slot = partner >> 1;
+  // Three ways the difference can fail to name a real partner:
+  //
+  // - out of range: the sum did not contain `myCode`, so the difference is
+  //   arbitrary. Both passes now run the IDENTICAL `t <= 0` / `t >= 1` tests,
+  //   so an endpoint can no longer read tables it never registered in — but
+  //   the predecessor kernel bounded the same arithmetic against its
+  //   direction table's length, and keeping an equivalent bound means a code
+  //   can never name a slot outside the stream it indexes, independent of the
+  //   texel writer's capacity clamp.
+  // - `slot === my slot`: a zero-length or looping segment registered BOTH of
+  //   its own endpoints here, so the difference is its own other endpoint (the
+  //   two codes differ only in the end bit, which is why comparing whole codes
+  //   is not enough). The angle-only scalar this replaced survived the case by
+  //   returning a plausible number; a code gets dereferenced, and a segment
+  //   mitered against itself is the asymmetric-join case that produces flaps.
+  // - either slot past `MAX_EXACT_JOINT_SLOT`: the outputs are Float32Arrays,
+  //   so a code past 2^24 rounds AT THE STORE — and it rounds to a valid,
+  //   in-range slot that no downstream consumer can tell from a deliberate
+  //   one. The texel writer cannot help; it reads the already-rounded value.
+  //   BOTH slots are tested, not just the partner's: the pair degrades
+  //   together only if each side asks the same question, and my own slot is
+  //   what the partner's code has to name.
+  if (
+    slot < 0 ||
+    slot >= visibleCount ||
+    slot > MAX_EXACT_JOINT_SLOT ||
+    myCode >> 1 > MAX_EXACT_JOINT_SLOT ||
+    slot === myCode >> 1
+  )
+    return JOINT_FREE_END;
+  // endBit 0 = the partner's START touches this vertex, 1 = its END does.
+  return (partner & 1) === 0 ? slot + 1 : -(slot + 3);
+}
 
 /**
  * Per-endpoint **joint code** (drives the shader's join geometry and cap).
@@ -518,47 +597,39 @@ export function compute_joint_codes(
 
   const visibleCount = outIdx;
 
-  const jointCode = (vertex: number, myCode: number): number => {
-    if (vertex >= numVertices) return JOINT_FREE_END; // unregistered
-    const d = degree[vertex];
-    if (d < 2) return JOINT_FREE_END;
-    if (d > 2) return JOINT_HUB;
-    const partner = codeSum[vertex] - myCode;
-    const slot = partner >> 1;
-    // Three ways the difference can fail to name a real partner:
-    //
-    // - out of range: the sum did not contain `myCode`, so the difference is
-    //   arbitrary. That happens when the registering pass skipped this endpoint
-    //   but this pass did not — the two run on the complementary tests `t <= 0`
-    //   / `!(t > 0)`, which agree for every ordinary float but BOTH go false for
-    //   NaN. The predecessor kernel bounded the same arithmetic against its
-    //   direction table's length; keep an equivalent bound so a code can never
-    //   name a slot outside the stream it indexes, independent of the texel
-    //   writer's capacity clamp.
-    // - `slot === my slot`: a zero-length or looping segment registered BOTH of
-    //   its own endpoints here, so the difference is its own other endpoint (the
-    //   two codes differ only in the end bit, which is why comparing whole codes
-    //   is not enough). The angle-only scalar this replaced survived the case by
-    //   returning a plausible number; a code gets dereferenced, and a segment
-    //   mitered against itself is the asymmetric-join case that produces flaps.
-    // - `slot > MAX_EXACT_JOINT_SLOT`: the outputs are Float32Arrays, so a code
-    //   past 2^24 rounds AT THE STORE — and it rounds to a valid, in-range
-    //   slot that no downstream consumer can tell from a deliberate one. The
-    //   texel writer cannot help; it reads the already-rounded value.
-    if (slot < 0 || slot >= visibleCount || slot > MAX_EXACT_JOINT_SLOT || slot === myCode >> 1)
-      return JOINT_FREE_END;
-    // endBit 0 = the partner's START touches this vertex, 1 = its END does.
-    return (partner & 1) === 0 ? slot + 1 : -(slot + 3);
-  };
-
   outIdx = 0;
   for (let segIdx = 0; segIdx < numSegments; segIdx++) {
     if (visibility[segIdx] === 0) continue;
     const code = outIdx << 1;
+    // The SAME predicates the registering pass used, not their complements.
+    // `t <= 0` and `!(t > 0)` agree for every ordinary float but BOTH go false
+    // for NaN, so the complementary spelling let an endpoint that never
+    // registered still read the shared vertex and name a real but unrelated
+    // partner slot. Repeating the predicate makes that desync structurally
+    // impossible: an endpoint reads the tables only if it put its own code
+    // into them.
     outputStart[outIdx] =
-      t1Params[segIdx] > 0.0 ? JOINT_CLIPPED : jointCode(segments[segIdx * 2], code);
+      t1Params[segIdx] <= 0.0
+        ? jointCodeForEndpoint(
+            segments[segIdx * 2],
+            code,
+            numVertices,
+            visibleCount,
+            codeSum,
+            degree
+          )
+        : JOINT_CLIPPED;
     outputEnd[outIdx] =
-      t2Params[segIdx] < 1.0 ? JOINT_CLIPPED : jointCode(segments[segIdx * 2 + 1], code | 1);
+      t2Params[segIdx] >= 1.0
+        ? jointCodeForEndpoint(
+            segments[segIdx * 2 + 1],
+            code | 1,
+            numVertices,
+            visibleCount,
+            codeSum,
+            degree
+          )
+        : JOINT_CLIPPED;
     outIdx++;
   }
 

@@ -168,9 +168,16 @@ vec2 luxarElementIdParts() {
  * endpoint cap kept — a free end and a hub, where several quads already stack.
  * Everything else suppresses it: a slice-clipped endpoint because no neighbour
  * will ever arrive there, and a slot-bearing code because a neighbouring quad
- * does meet it. Defaulting a slot-bearing code the other way is the #780 bead
- * chain (measured: an interior joint bottoms out at 0.5 instead of 1.0, and a
- * dense polyline loses ~40% of its total brightness).
+ * is EXPECTED to meet it. Defaulting a slot-bearing code the other way is the
+ * #780 bead chain (measured: an interior joint bottoms out at 0.5 instead of
+ * 1.0, and a dense polyline loses ~40% of its total brightness).
+ *
+ * "Expected" and not "does", because the kernel is position-blind: it matches
+ * endpoints by vertex index, so a zero-length neighbour still earns a
+ * slot-bearing code while rasterising nothing to meet this endpoint with.
+ * `luxarLineJoin` detects that case from the partner's screen-space length and
+ * overrides the code-implied suppression back to "keep the cap" — the code
+ * alone cannot tell the two apart.
  *
  * Codes are exact small integers out of an RGBA32F texel fetched without
  * filtering; the half-integer midpoints are for defensiveness only.
@@ -365,7 +372,15 @@ vec3 luxarLineJoin(
   // A.far} — the same pair — so both sides take the same branch. Ortho has no
   // 1/z singularity, so the whole test stays inert there.
   bool bothFarInFront = (uIsOrtho == 1) || (farPx.z >= nearCull && selfFarDepth >= nearCull);
-  if (!bothFarInFront || partnerLen <= 0.0001 || pixelLen <= 0.0001) return noJoin;
+  // A DEGENERATE partner is the one decline that must not fall back to the
+  // code-implied default. The kernel matches endpoints by vertex index and
+  // never looks at positions, so a zero-length interior segment still earns
+  // this endpoint a slot-bearing code — which means "suppress the cap, a
+  // neighbouring quad meets you". Nothing rasterises there, so the joint would
+  // get neither a miter nor a cap and the #790 wedge reappears. Keep the cap.
+  // Tested FIRST so both backends order the declines identically.
+  if (partnerLen <= 0.0001) return vec3(perpendicular * joinPixelWidth, 0.0);
+  if (!bothFarInFront || pixelLen <= 0.0001) return noJoin;
 
   // CANONICAL operand order — incoming edge first, outgoing second — so both
   // segments meeting here evaluate the same expression and, crucially, take

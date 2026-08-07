@@ -1256,23 +1256,30 @@ describe('WASM vs TypeScript Comparison', () => {
       //   slot   4:  v6 -> v7         start trimmed (t1 > 0)
       //   culled:    v7 -> v8         invisible, must not anchor a joint
       //   slot   5:  v9 -> v9         degenerate: must not name itself
-      const segments = new Uint32Array([0, 1, 1, 2, 4, 3, 5, 3, 6, 7, 7, 8, 9, 9]);
-      const visibility = new Uint8Array([1, 1, 1, 1, 1, 0, 1]);
-      const t1Params = new Float32Array([0, 0, 0, 0, 0.25, 0, 0]);
-      const t2Params = new Float32Array([1, 1, 1, 1, 1, 1, 1]);
+      //   slots 6,7,8: v10 x3         degree-3 hub (one START, two ENDs)
+      //
+      // The hub is the branch where the two backends are written differently —
+      // Rust `match`es on the degree, TypeScript runs two `if`s — so it has to
+      // be in the CROSS-backend fixture and not only in the per-backend ones.
+      const segments = new Uint32Array([
+        0, 1, 1, 2, 4, 3, 5, 3, 6, 7, 7, 8, 9, 9, 10, 11, 12, 10, 13, 10,
+      ]);
+      const visibility = new Uint8Array([1, 1, 1, 1, 1, 0, 1, 1, 1, 1]);
+      const t1Params = new Float32Array([0, 0, 0, 0, 0.25, 0, 0, 0, 0, 0]);
+      const t2Params = new Float32Array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
 
-      const tsStart = new Float32Array(6).fill(99);
-      const tsEnd = new Float32Array(6).fill(99);
-      const wasmStart = new Float32Array(6).fill(99);
-      const wasmEnd = new Float32Array(6).fill(99);
+      const tsStart = new Float32Array(9).fill(99);
+      const tsEnd = new Float32Array(9).fill(99);
+      const wasmStart = new Float32Array(9).fill(99);
+      const wasmEnd = new Float32Array(9).fill(99);
 
       const tsCount = tsModule.compute_joint_codes(
         segments,
         visibility,
         t1Params,
         t2Params,
-        7,
         10,
+        14,
         tsStart,
         tsEnd
       );
@@ -1281,13 +1288,13 @@ describe('WASM vs TypeScript Comparison', () => {
         visibility,
         t1Params,
         t2Params,
-        7,
         10,
+        14,
         wasmStart,
         wasmEnd
       );
 
-      expect(tsCount).toBe(6);
+      expect(tsCount).toBe(9);
       expect(wasmCount).toBe(tsCount);
       // Codes are exact small integers, so this is toEqual, not almost-equal.
       expect(Array.from(wasmStart)).toEqual(Array.from(tsStart));
@@ -1302,7 +1309,114 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(tsStart[4]).toBe(-1); // trimmed off its vertex
       expect(tsStart[5]).toBe(0); // degenerate self-registering segment
       expect(tsEnd[5]).toBe(0);
+
+      // The hub, from all three of its endpoints. Asserted on BOTH backends'
+      // arrays: the -2 sentinel has to be present, not merely agreed on.
+      for (const out of [tsStart, wasmStart]) expect(out[6]).toBe(-2);
+      for (const out of [tsEnd, wasmEnd]) {
+        expect(out[7]).toBe(-2);
+        expect(out[8]).toBe(-2);
+      }
+      expect(tsStart.includes(-2) || tsEnd.includes(-2)).toBe(true);
+      expect(wasmStart.includes(-2) || wasmEnd.includes(-2)).toBe(true);
     });
+
+    it.skipIf(!wasmFilesExist)('compute_joint_codes agrees on NaN clip params', () => {
+      // A NaN t-param registers nothing (`t <= 0` is false for NaN) and must
+      // therefore read nothing either — both passes run the SAME predicate. On
+      // the old complementary spelling the endpoint read anyway and the
+      // code-sum difference decoded to slot 3, a real but unrelated segment in
+      // this 4-segment scene, so the `visibleCount` bound could not see it.
+      //
+      // TypeScript is the PRODUCTION backend above 16 dimensions, so this is
+      // exactly the kind of input only one of the two backends ever sees in
+      // the field — which is why it belongs in the cross-backend fixture.
+      const segments = new Uint32Array([5, 8, 5, 6, 5, 7, 0, 1]);
+      const visibility = new Uint8Array([1, 1, 1, 1]);
+      const t1Params = new Float32Array([NaN, 0, 0, 0]);
+      const t2Params = new Float32Array([1, 1, 1, 1]);
+
+      const tsStart = new Float32Array(4).fill(99);
+      const tsEnd = new Float32Array(4).fill(99);
+      const wasmStart = new Float32Array(4).fill(99);
+      const wasmEnd = new Float32Array(4).fill(99);
+
+      tsModule.compute_joint_codes(segments, visibility, t1Params, t2Params, 4, 9, tsStart, tsEnd);
+      wasmModule!.compute_joint_codes(
+        segments,
+        visibility,
+        t1Params,
+        t2Params,
+        4,
+        9,
+        wasmStart,
+        wasmEnd
+      );
+
+      expect(Array.from(wasmStart)).toEqual(Array.from(tsStart));
+      expect(Array.from(wasmEnd)).toEqual(Array.from(tsEnd));
+      expect(tsStart[0]).toBe(-1); // JOINT_CLIPPED — never registered, never reads
+      expect(tsStart[1]).toBe(3); // the two that DID register pair with each other
+      expect(tsStart[2]).toBe(2);
+    });
+
+    it.skipIf(!wasmFilesExist)(
+      'compute_joint_codes agrees on duplicate and zero-length segments',
+      () => {
+        // Two IDENTICAL index pairs, plus a zero-length segment.
+        //
+        //   slots 0,1: v0 -> v1 twice   duplicates: each vertex reaches
+        //                               degree 2, so they name each other
+        //   slot   2:  v2 -> v2         zero length: registers both of its own
+        //                               endpoints on one vertex
+        //
+        // The kernel is position-blind and matches by index, so a duplicate is
+        // indistinguishable from an ordinary joint here — that is deliberate,
+        // and the point of the case is that both backends say so identically.
+        const segments = new Uint32Array([0, 1, 0, 1, 2, 2]);
+        const visibility = new Uint8Array([1, 1, 1]);
+        const t1Params = new Float32Array([0, 0, 0]);
+        const t2Params = new Float32Array([1, 1, 1]);
+
+        const tsStart = new Float32Array(3).fill(99);
+        const tsEnd = new Float32Array(3).fill(99);
+        const wasmStart = new Float32Array(3).fill(99);
+        const wasmEnd = new Float32Array(3).fill(99);
+
+        tsModule.compute_joint_codes(
+          segments,
+          visibility,
+          t1Params,
+          t2Params,
+          3,
+          3,
+          tsStart,
+          tsEnd
+        );
+        wasmModule!.compute_joint_codes(
+          segments,
+          visibility,
+          t1Params,
+          t2Params,
+          3,
+          3,
+          wasmStart,
+          wasmEnd
+        );
+
+        expect(Array.from(wasmStart)).toEqual(Array.from(tsStart));
+        expect(Array.from(wasmEnd)).toEqual(Array.from(tsEnd));
+
+        // v0 holds the two duplicates' STARTs, v1 their two ENDs.
+        expect(tsStart[0]).toBe(2); // names slot 1 at its START: +(1 + 1)
+        expect(tsStart[1]).toBe(1); // names slot 0 at its START: +(0 + 1)
+        expect(tsEnd[0]).toBe(-4); // names slot 1 at its END: -(1 + 3)
+        expect(tsEnd[1]).toBe(-3); // names slot 0 at its END: -(0 + 3)
+        // The zero-length segment must not name itself.
+        expect(tsStart[2]).toBe(0);
+        expect(tsEnd[2]).toBe(0);
+      }
+    );
   });
 
   // ============================================================================
