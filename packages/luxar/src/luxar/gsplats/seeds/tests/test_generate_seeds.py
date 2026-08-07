@@ -4,7 +4,9 @@ Tests for the generate_seeds() unified entry point function.
 All seeding methods now return GSplatData with scale-informed Gaussian shapes.
 """
 
+import importlib
 import importlib.util
+import sys
 import warnings
 
 import numpy as np
@@ -372,3 +374,31 @@ class TestReproducibility:
         """Test default parameters work."""
         result = generate_seeds(simple_2d_image)
         validate_gsplatdata(result, 2, simple_2d_image.shape)
+
+
+class TestEdgesImportNotSwallowed:
+    """The `edges` seeder is a real module imported eagerly like the other
+    three; the old lazy 'edges.py may not exist yet' guard that turned a
+    genuine ImportError into a warning plus silently-missing seeds is gone."""
+
+    def test_edges_imported_at_module_level(self) -> None:
+        """generate.py binds the real seed_from_edges at import time."""
+        from luxar.gsplats.seeds import generate as gen
+        from luxar.gsplats.seeds.edges import seed_from_edges
+
+        assert gen.seed_from_edges is seed_from_edges
+
+    def test_edges_import_error_propagates(self, monkeypatch) -> None:
+        """A genuine ImportError from inside edges.py must propagate, not be
+        swallowed into a warning + silently-missing seeds."""
+        from luxar.gsplats.seeds import generate as gen
+
+        # A None entry in sys.modules makes importing edges raise ImportError,
+        # standing in for a broken transitive import / missing optional dep.
+        monkeypatch.setitem(sys.modules, "luxar.gsplats.seeds.edges", None)
+        try:
+            with pytest.raises(ImportError):
+                importlib.reload(gen)
+        finally:
+            monkeypatch.undo()
+            importlib.reload(gen)

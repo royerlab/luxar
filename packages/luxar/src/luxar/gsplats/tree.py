@@ -340,8 +340,8 @@ def without_meta_key(node: GSplatNode, key: str) -> GSplatNode:
     Unlike :func:`map_leaves` (which copies group ``meta`` verbatim), this scrubs
     a key from leaves AND group nodes. Its use is dropping the ``coverage_fraction``
     LOD-switch threshold after a geometry transform so the writer re-derives it: a
-    stale threshold on a *group* node (a ``multiscale`` partition child, or a
-    ``mosaic`` per-part lod group) is otherwise re-applied verbatim by the
+    stale threshold on a *group* node (an ``overview`` partition child, or an
+    ``adaptive`` per-part lod group) is otherwise re-applied verbatim by the
     serializer. (Coverage fractions are count-ratios, hence invariant to
     scale/rotate/translate — so this re-derives the same value; it is retained as a
     safety net for transforms that also re-ladder and change per-level counts.)
