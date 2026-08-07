@@ -419,17 +419,6 @@ export interface MeshUserData {
   visibleVertexCount: number;
 
   /**
-   * Whether any per-vertex alpha is below fully opaque (scanned once at the first
-   * commit; `undefined` until then).
-   *
-   * The §6.3 unsorted-translucency notice needs it long after load — the Layers panel
-   * can switch a node into `normal` with no `LoadedMeshData` in reach — and it cannot
-   * be recovered from the geometry, whose `color` attribute is padded to 4 components
-   * for `uint8`/`uint16` regardless of what was authored.
-   */
-  meshTranslucentVertexAlpha?: boolean;
-
-  /**
    * Marks the material as already node-owned, so the layers panel and the LOD
    * cross-fade mutate it directly instead of cloning on first interaction.
    *
