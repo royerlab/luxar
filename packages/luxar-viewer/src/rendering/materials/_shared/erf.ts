@@ -26,10 +26,12 @@
  *    the difference — see the volumetric line fragment shader).
  *
  * The GLSL string and the TSL builder are BOTH generated from
- * `ERF_POLY_COEFFS` with the same `toFixed(9)` serialization, so the two
- * backends cannot drift (the tsl-shader-parity harness and the codegen
- * snapshots depend on the literals matching). Same single-source pattern
- * as `falloff.ts` / `volumetric.ts`.
+ * `ERF_POLY_COEFFS`, so the two backends cannot drift in VALUE. The
+ * guarantee is value-level, not textual: GLSL literals are serialized
+ * here with `toFixed(9)`, while the TSL path passes the same numbers to
+ * `float()` and Three's code generator owns their formatting (numeric
+ * parity is what the tsl-shader-parity harness verifies). Same
+ * single-source pattern as `falloff.ts` / `volumetric.ts`.
  *
  * @module rendering/materials/_shared/erf
  */
@@ -78,9 +80,11 @@ export const ERF_POLY_COEFFS = [
 ] as const;
 
 /**
- * TS mirror of the shader polynomial (same coefficients, same clamp).
- * Use `erfRef` when accuracy matters; use this to predict exactly what
- * the GPU computes.
+ * TS mirror of the shader polynomial (same coefficients, same clamp),
+ * evaluated in float64. Use `erfRef` when accuracy matters; use this to
+ * predict the GPU result to within accumulated float32 rounding
+ * (measured ≤ ~7e-6 — see the coefficient docblock, and the ~5e-6
+ * worst case observed against a real GPU).
  */
 export function erfPoly(x: number): number {
   const ax = Math.min(Math.abs(x), ERF_POLY_CLAMP);
@@ -121,9 +125,10 @@ float luxarErf(float x) {
 `;
 
 /**
- * TSL twin of `luxarErf`, built from the SAME coefficients so WGSL and
- * GLSL emit identical literals. Branchless (`select`, not `If`) so it is
- * legal both inside and outside an `Fn()` body.
+ * TSL twin of `luxarErf`, built from the SAME coefficient values (the
+ * code generator owns literal formatting — see the module header).
+ * Branchless (`select`, not `If`) so it is legal both inside and
+ * outside an `Fn()` body.
  */
 export function erfPolyTSL(x: TSLNode): TSLNode {
   const ax = min(abs(x), float(ERF_POLY_CLAMP));
