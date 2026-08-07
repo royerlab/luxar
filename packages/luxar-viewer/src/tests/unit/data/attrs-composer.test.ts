@@ -77,6 +77,34 @@ describe('composeAttrs', () => {
     expect(composeAttrs([{ blending_mode: undefined }]).blending_mode).toBeUndefined();
   });
 
+  it('uses nearest-set join (later overrides earlier)', () => {
+    // Lines-only, and compositing for the same reason blending_mode is: the
+    // author sets `join` once on a partition / LOD wrapper and every internal
+    // child must inherit it (COMPOSITING_ATTRS in core/group/compositing.py).
+    // Without this the wrapper's `join="none"` never reached the leaf and
+    // every part rendered mitred — the opposite of what was asked.
+    expect(composeAttrs([{ join: 'none' }]).join).toBe('none');
+    expect(composeAttrs([{ join: 'none' }, { join: 'miter' }]).join).toBe('miter');
+    // Unset child keeps the wrapper's choice — the partition case.
+    expect(composeAttrs([{ join: 'none' }, { opacity: 0.5 }]).join).toBe('none');
+  });
+
+  it('leaves join undefined when no level in the chain sets one', () => {
+    // Unset must stay `undefined` so `createLinesNode` applies
+    // DEFAULT_LINE_JOIN rather than a value invented here.
+    expect(composeAttrs([]).join).toBeUndefined();
+    expect(composeAttrs([{ opacity: 0.5 }, { gamma: 2 }]).join).toBeUndefined();
+    expect(composeAttrs([{ join: undefined }]).join).toBeUndefined();
+  });
+
+  it('passes a malformed join through unnormalized', () => {
+    // Deliberately NOT validated here: `createLinesNode` runs the winning
+    // value through `parseLineJoinStyle` and warns once. Normalizing in both
+    // places would warn twice and hide the authored spelling from the log.
+    expect(composeAttrs([{ join: 'mitre' }]).join).toBe('mitre');
+    expect(composeAttrs([{ join: '' }]).join).toBe('');
+  });
+
   it('clamps opacity to [0, 1]', () => {
     expect(composeAttrs([{ opacity: 2.0 }]).opacity).toBe(1);
     expect(composeAttrs([{ opacity: -0.5 }]).opacity).toBe(0);
@@ -255,6 +283,7 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
       intensity: 1.0,
       offset: 0.0,
       blending_mode: undefined,
+      join: undefined,
     });
   });
 

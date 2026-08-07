@@ -34,13 +34,17 @@ rendered-width gate) keep the cost where the benefit is: 0 on thin-line scenes,
 `join` attribute and `?lineJoin=none|miter` override it.
 
 Net deletion: the per-segment `dirs` table (~32 MB at 2.7M segments), the
-per-endpoint normalize + dot, and `softenCapacitySplitCap`. A/B'd none → miter
-on this branch's own scratch fixture: a 120-segment sinusoid drops from 233 to 2
-outlier pixels and a right-angle zigzag from 726 to 0, while straight polylines
-come back byte-identical (the miter reduces algebraically to `R·perp` at a
-collinear joint). That fixture was superseded by the `test_line_joins` fixture
-and `line-join-artifact.spec.ts` described below, which is the acceptance
-harness going forward — the two figures above are not reproducible from it.
+per-endpoint normalize + dot, and `softenCapacitySplitCap`. Measured on the
+`test_line_joins` acceptance harness described below (`line-join-artifact.spec.ts`,
+headless Chromium, `dpr=1` pinned, 2026-08-07 against the 2026-08-06 unmitred
+baseline): the 120-segment sinusoid goes from 4.94% dark / 3.53% bright outlier
+pixels to **zero of each**, and the right-angle zigzag's axial flux p05 rises
+from 0.749 to 0.985 against a straight-band 1.000. Both straight bands are
+unchanged at zero outliers and a flat profile — the miter reduces algebraically
+to `R·perp` at a collinear joint — and the nine-ray hub control holds at
+0.157% / 0.114%. The spec now asserts those zeros, so unmitred rendering cannot
+come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
+under `make test-e2e`.)
 
 #### Documentation — pull-request quality gate and warning ratchets (#776)
 
@@ -70,11 +74,11 @@ and a nine-ray indexed hub) under a pinned photometry-grade viewer config, and
 projecting its world AABB through the live camera. Every band is asserted to
 have a gapless flux profile — a torn tube is a defect at any turn angle — and
 the straight bands additionally at zero outliers and a flat profile. The two
-bending cases are **recorded** under documented ceilings rather than fixed:
-measured 2026-08-06, with the device pixel ratio pinned, at 4.94% dark /
-3.53% bright on the curve. Those are pre-miter numbers — the join geometry
-landed in the entry above, and the ceilings have not yet been re-measured
-against the mitred renderer, so they still stand in the spec as upper bounds.
+bending cases were first **recorded** under documented ceilings rather than
+fixed: measured 2026-08-06, with the device pixel ratio pinned, at 4.94% dark /
+3.53% bright on the curve. Once the join geometry landed in the entry above
+those ceilings were replaced by zero-outlier assertions, plus a 0.9 axial-flux
+floor on the zigzag, whose wedge is too wide for the outlier metric to see.
 
 Scope note: the E2E job is currently disabled in CI, so the spec runs only
 under `make test-e2e` locally. What runs on every PR is the unit suite, and it

@@ -224,23 +224,30 @@ count sees the narrow one-to-two-pixel wedge tick but tracks any smooth
 variation invisibly, while an axial flux profile (cross-section sum along
 the tube, normalised by its own median) sees exactly the smooth
 per-joint dip that was the #780 bead chain and would score zero on the
-outlier metric. The spec asserts what already holds — zero dark and zero
-bright outliers on both straight bands, flat flux profiles on both, and a
-gapless flux profile on all five — and records the bend cases under
-documented ceilings. Those ceilings were recorded against the unmitred
-renderer and have not been re-measured since the miter landed, so they
-now stand as pre-miter upper bounds rather than as a description of what
-the bend bands look like today.
+outlier metric. The spec asserts a gapless flux profile on all five bands,
+zero dark and zero bright outliers plus a flat flux profile on both
+straight bands — and, since the miter landed, zero outliers on the two
+bend bands as well, so a regression to unmitred rendering fails it.
 
-Read the metrics module header before quoting one of its numbers, and
-read them as the pre-miter figures they are: the local-median count is
-non-monotone in defect width (a wedge three or more pixels across poisons
-its own median and scores zero), so the gentle `curve_smooth` band
-measured 4.94% dark while the 90° `zigzag_right_angle`, whose wedge is
-far worse but far wider, measured 0.077%. For wide wedges the axial flux
-dip is the measure that responds — p05 0.749 on the zigzag against 1.000
-on the straight bands. (Measured pre-miter with `dpr=1` pinned, headless
-Chromium, 2026-08-06.)
+The before/after on that harness:
+
+| Band                 | Unmitred                  | Mitred          |
+| -------------------- | ------------------------- | --------------- |
+| `curve_smooth`       | 4.94% dark / 3.53% bright | 0 / 0           |
+| `zigzag_right_angle` | flux p05 0.749            | flux p05 0.985  |
+| `straight_thin`      | 0 / 0, flat profile       | unchanged       |
+| `straight_thick`     | 0 / 0, flat profile       | unchanged       |
+| `hub_9ray` (control) | 0.157% / 0.114%           | 0.157% / 0.114% |
+
+Read the metrics module header before quoting one of its numbers. The
+local-median count is non-monotone in defect width (a wedge three or more
+pixels across poisons its own median and scores zero), which is why the
+gentle `curve_smooth` band measured 4.94% dark unmitred while the 90°
+`zigzag_right_angle`, whose wedge is far worse but far wider, measured
+only 0.077% — and why the zigzag is gated on its flux profile instead.
+(Measured in headless Chromium with `dpr=1` pinned: the unmitred column
+2026-08-06, the mitred one 2026-08-07. The E2E job is not part of the
+per-PR CI run; the spec runs under `make test-e2e`.)
 
 ## Geometry and storage layout
 

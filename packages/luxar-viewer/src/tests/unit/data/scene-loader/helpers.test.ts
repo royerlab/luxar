@@ -101,4 +101,33 @@ describe('applyEffectiveAttrs', () => {
     // Composed opacity: 0.5 (root) * 0.5 (intermediate) * 0.5 (leaf) = 0.125
     expect(result.opacity).toBeCloseTo(0.125, 5);
   });
+
+  it("carries a wrapper's join down to a leaf that does not set one", () => {
+    // The partition case: `add_lines(..., join="none", partition={...})`
+    // writes `join` on the WRAPPER only (COMPOSITING_ATTRS), so if it does
+    // not compose, every part silently renders with the default miter.
+    const leaf: SceneNode = {
+      path: 'tracks/part_0',
+      type: 'lines',
+      attrs: { type: 'lines' } as SceneNode['attrs'],
+      children: [],
+      hasSpatialIndex: false,
+    };
+    const root: SceneNode = {
+      path: '',
+      type: 'group',
+      attrs: { type: 'group' } as SceneNode['attrs'],
+      children: [
+        {
+          path: 'tracks',
+          type: 'group',
+          attrs: { type: 'group', kind: 'partition', join: 'none' } as SceneNode['attrs'],
+          children: [leaf],
+          hasSpatialIndex: false,
+        },
+      ],
+      hasSpatialIndex: false,
+    };
+    expect(applyEffectiveAttrs(root, leaf).join).toBe('none');
+  });
 });
