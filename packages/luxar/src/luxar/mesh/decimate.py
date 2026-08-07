@@ -58,7 +58,7 @@ the topology underneath it, and two co-planar opaque triangles z-fight.
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -70,7 +70,14 @@ class DecimatedMesh(NamedTuple):
     vertices: NDArray[np.float32]
     faces: NDArray[np.uint32]
     normals: NDArray[np.float32] | None
-    colors: NDArray[np.uint8] | None
+    # Whatever dtype came in — uint8 / uint16 / float32 are all valid mesh
+    # colours, and the averaging round-trips the input dtype rather than
+    # forcing one (see :func:`_average_per_cluster`).
+    colors: NDArray[Any] | None
+    # Appended rather than slotted next to `colors` because this is a
+    # NamedTuple: an earlier position would silently reassign every positional
+    # construction site.
+    scalars: Any = None
 
 
 def _cluster_keys(
@@ -176,7 +183,8 @@ def decimate_cluster(
     target_vertices: int,
     normals: NDArray[np.float32] | None = None,
     normal_dims: tuple[int, ...] | None = None,
-    colors: NDArray[np.uint8] | None = None,
+    colors: NDArray[Any] | None = None,
+    scalars: Any = None,
     spatial_dims: tuple[int, ...] | None = None,
     max_iterations: int = 24,
 ) -> DecimatedMesh:
@@ -199,7 +207,21 @@ def decimate_cluster(
             silently produced garbage: a 2-dim coarsening made ``np.cross`` return
             scalars (which then broke the accumulation), and a 4-dim one made it
             raise.
-        colors: Optional ``(V, C)`` uint8, averaged within each cluster.
+        colors: Optional ``(V, C)`` per-vertex colours — uint8, uint16 or float32
+            are all valid mesh colours — averaged within each cluster. The input
+            dtype round-trips: integers are rounded and clipped to their own
+            range, floats are left unclipped (an HDR colour exceeds 1.0
+            legitimately).
+        scalars: Optional per-vertex ``(V,)`` (or ``(V, 1)``) values, averaged
+            within each cluster like ``colors`` but NOT re-quantized: an integral
+            input comes back float32, which is what ``write_scalars`` stores
+            anyway, so a 0/1 field keeps its fractional cluster means instead of
+            being hard-classified on the coarse levels only. A coarse level that
+            dropped scalars entirely would carry the caller's ``colormap`` with
+            nothing to map, so it would render unmapped while the finest level is
+            mapped — a visible pop at every LOD switch. A non-array (uniform
+            broadcast) value is passed through untouched: it applies to every
+            vertex, so there is nothing to merge.
         spatial_dims: Which columns are spatial. Defaults to the first ``min(3, D)``.
         max_iterations: Bisection budget for the cell-size search.
 
@@ -224,7 +246,7 @@ def decimate_cluster(
     )
 
     if vertices.shape[0] <= target_vertices:
-        return DecimatedMesh(vertices, faces, normals, colors)
+        return DecimatedMesh(vertices, faces, normals, colors, scalars)
 
     v64 = vertices.astype(np.float64)
     spatial = np.asarray(spatial_dims, dtype=np.intp)
@@ -255,7 +277,7 @@ def decimate_cluster(
     best: DecimatedMesh | None = None
     for _ in range(max_iterations):
         candidate = _cluster_once(
-            v64, faces, spatial_dims, guess, normals, normal_dims, colors
+            v64, faces, spatial_dims, guess, normals, normal_dims, colors, scalars
         )
         count = candidate.vertices.shape[0]
         # A candidate with no surviving triangle is not a usable level regardless of
@@ -280,7 +302,9 @@ def decimate_cluster(
 
     if best is None:
         # Every probe overshot. Return the least-reduced one we can still build.
-        best = _cluster_once(v64, faces, spatial_dims, lo, normals, normal_dims, colors)
+        best = _cluster_once(
+            v64, faces, spatial_dims, lo, normals, normal_dims, colors, scalars
+        )
     if best.faces.shape[0] == 0:
         # Reachable only for input that has no surface to begin with — every
         # triangle collinear, or every vertex coincident — since any real triangle
@@ -293,6 +317,56 @@ def decimate_cluster(
     return best
 
 
+def _average_per_cluster(
+    values: NDArray[Any],
+    inverse: NDArray[np.int64],
+    counts: NDArray[np.float64],
+    n_clusters: int,
+    *,
+    quantize: bool,
+) -> NDArray[Any]:
+    """Cluster-mean of a per-vertex attribute, cast back to a sensible dtype.
+
+    The mean itself is float64 whatever came in; the CAST is what has to respect
+    the input, and hardcoding ``uint8`` there was wrong in both directions. Mesh
+    colours are uint8, uint16 or float32 (``MESH_NODE_SPEC.md`` §2), so a float32
+    SDR colour in [0, 1] truncated to 0 — every coarse level black — and a uint16
+    one was clipped at 255, i.e. black again against a 65535-scale sibling.
+
+    ``quantize`` says whether the input dtype is the STORAGE dtype:
+
+    * Colours pass ``True``. An integer colour dtype really is the on-disk scale,
+      so the mean is rounded (truncation biases every average downward) and
+      clipped to that dtype's range.
+    * Scalars pass ``False``. ``write_scalars`` casts to float32 unconditionally,
+      so an integer scalars array never reaches disk as an integer and rounding
+      it only throws the cluster mean away — and ``np.rint`` is half-to-even, so
+      a 0/1 field averaging to exactly 0.5 rounds DOWN. The coarse levels would
+      come back hard-classified against a blended finest level: the same pop
+      again. Integral input therefore becomes float32 (its on-disk dtype) and
+      floating input keeps its own.
+
+    Floats are never clipped: an HDR colour above 1.0 is legitimate data and a
+    scalar field has no bounded range to clip to.
+
+    Shape-agnostic beyond the first axis, so it serves both ``(V, C)`` colours
+    and ``(V,)`` / ``(V, 1)`` scalars.
+    """
+    flat = values.reshape(values.shape[0], -1)
+    acc = np.zeros((n_clusters, flat.shape[1]), dtype=np.float64)
+    for col in range(flat.shape[1]):
+        acc[:, col] = np.bincount(
+            inverse, weights=flat[:, col].astype(np.float64), minlength=n_clusters
+        )
+    mean = acc / np.maximum(counts, 1)[:, None]
+    integral = np.issubdtype(values.dtype, np.integer)
+    if integral and quantize:
+        info = np.iinfo(values.dtype)
+        mean = np.clip(np.rint(mean), info.min, info.max)
+    out_dtype = np.dtype(np.float32) if integral and not quantize else values.dtype
+    return mean.astype(out_dtype).reshape((n_clusters, *values.shape[1:]))
+
+
 def _cluster_once(
     v64: NDArray[np.float64],
     faces: NDArray[np.uint32],
@@ -300,7 +374,8 @@ def _cluster_once(
     cell: float,
     normals: NDArray[np.float32] | None,
     normal_dims: tuple[int, ...] | None,
-    colors: NDArray[np.uint8] | None,
+    colors: NDArray[Any] | None,
+    scalars: Any = None,
 ) -> DecimatedMesh:
     """One clustering pass at a fixed cell size."""
     keys = _cluster_keys(v64, spatial_dims, max(cell, 1e-12))
@@ -329,19 +404,25 @@ def _cluster_once(
         _, keep = np.unique(canonical, axis=0, return_index=True)
         new_f = new_f[np.sort(keep)]
 
-    # Average the colours over the FULL cluster set, before any compaction below,
-    # so every contributing fine vertex is counted exactly once.
+    # Average the colours and the scalars over the FULL cluster set, before any
+    # compaction below, so every contributing fine vertex is counted exactly once.
     new_colors = None
     if colors is not None:
-        acc = np.zeros((n_clusters, colors.shape[1]), dtype=np.float64)
-        for col in range(colors.shape[1]):
-            acc[:, col] = np.bincount(
-                inverse,
-                weights=colors[:, col].astype(np.float64),
-                minlength=n_clusters,
-            )
-        new_colors = np.clip(acc / np.maximum(counts, 1)[:, None], 0, 255).astype(
-            np.uint8
+        new_colors = _average_per_cluster(
+            colors, inverse, counts, n_clusters, quantize=True
+        )
+
+    # A scalar field is merged exactly like a colour is — it IS the colour, one
+    # colormap lookup later. Only a genuinely per-vertex array is averaged; a
+    # uniform broadcast value applies to every vertex, so it is forwarded as-is
+    # (the same distinction the adder draws for a uniform colour).
+    scalars_per_vertex = isinstance(scalars, np.ndarray) and scalars.shape[:1] == (
+        v64.shape[0],
+    )
+    new_scalars = scalars
+    if scalars_per_vertex:
+        new_scalars = _average_per_cluster(
+            scalars, inverse, counts, n_clusters, quantize=False
         )
 
     # Drop representatives no surviving face references. They are not harmless
@@ -358,6 +439,8 @@ def _cluster_once(
             new_v = new_v[referenced]
             if new_colors is not None:
                 new_colors = new_colors[referenced]
+            if scalars_per_vertex:
+                new_scalars = new_scalars[referenced]
 
     new_normals = None
     if normals is not None and normal_dims is not None:
@@ -370,6 +453,7 @@ def _cluster_once(
         faces=new_f,
         normals=new_normals,
         colors=new_colors,
+        scalars=new_scalars,
     )
 
 

@@ -161,6 +161,134 @@ class TestDecimateCluster:
         north = r.vertices[:, 2] > 0.8
         assert int(r.colors[north][:, 0].min()) > 200, "the pole must stay red"
 
+    @pytest.mark.parametrize(
+        "dtype, full",
+        [(np.uint8, 255.0), (np.uint16, 65535.0), (np.float32, 1.0)],
+    )
+    def test_colors_come_back_in_their_INPUT_dtype(self, dtype, full) -> None:
+        """Mesh colours are uint8, uint16 OR float32, and all three must survive.
+
+        The averaging is dtype-agnostic float64, so only the cast at the end knew
+        anything about the input — and it was hardcoded to uint8 with a [0, 255]
+        clip. Float32 SDR colours in [0, 1] truncated to 0, so every coarse level
+        rendered BLACK against a coloured finest one; uint16 clipped at 255, which
+        on a 65535 scale is black too. Both are silent: the arrays are the right
+        shape and the level loads fine.
+
+        The uint8 row is a BASELINE, not coverage: it passed before the fix too.
+        Only the uint16 and float32 rows discriminate.
+        """
+        v, f = octasphere(3)
+        colors = np.zeros((len(v), 3), dtype)
+        colors[:, 0] = dtype(0.8 * full)
+        r = decimate_cluster(v, f, target_vertices=80, colors=colors)
+        assert r.colors is not None
+        assert r.colors.dtype == dtype, "the level must not change the colour scale"
+        # A constant field: every cluster mean is the exact input value, so this
+        # is an equality and not a tolerance. Rounding bias has nowhere to hide.
+        assert float(r.colors[:, 0].min()) == pytest.approx(0.8 * full, abs=1e-6)
+        assert float(r.colors[:, 0].max()) == pytest.approx(0.8 * full, abs=1e-6)
+        assert float(r.colors[:, 1].max()) == 0.0, "an untouched channel stays 0"
+
+    def test_an_HDR_float_colour_is_not_clipped(self) -> None:
+        # The other half of the dtype rule: an integer dtype clips to its own
+        # range, a float one does not clip at all, because a float colour above
+        # 1.0 is legitimate HDR data (docs/guides/user/HDR_GUIDE.md) and clipping
+        # it would quietly tone-map the coarse levels only.
+        v, f = octasphere(3)
+        colors = np.full((len(v), 3), 3.5, np.float32)
+        r = decimate_cluster(v, f, target_vertices=80, colors=colors)
+        assert r.colors is not None
+        assert float(r.colors.max()) == pytest.approx(3.5, abs=1e-6)
+
+    def test_colors_and_scalars_are_MEANS_not_a_representative_pick(self) -> None:
+        """The discriminator between averaging and picking one member per cluster.
+
+        Every other assertion here (dtype, range, compaction, a pure pole) holds
+        for a decimator that simply keeps one vertex's value per cluster. A
+        two-valued field is what separates them: a cluster straddling the two
+        populations must come back with a THIRD value that is in neither input.
+        """
+        v, f = octasphere(3)
+        northern = v[:, 2] > 0
+        scalars = northern.astype(np.float32)
+        colors = np.zeros((len(v), 3), np.uint8)
+        colors[northern, 0] = 255
+        r = decimate_cluster(v, f, target_vertices=80, colors=colors, scalars=scalars)
+        assert r.scalars is not None and r.colors is not None
+        blended_scalars = (r.scalars > 1e-6) & (r.scalars < 1.0 - 1e-6)
+        assert int(blended_scalars.sum()) > 0, (
+            f"no cluster blended the two scalar values: {np.unique(r.scalars)}"
+        )
+        red = r.colors[:, 0].astype(np.int64)
+        assert int(((red > 0) & (red < 255)).sum()) > 0, (
+            f"no cluster blended the two colours: {np.unique(red)}"
+        )
+
+    def test_an_integer_cluster_mean_ROUNDS_for_colours(self) -> None:
+        """Round, not truncate — and the difference is a whole LSB per cluster.
+
+        Exercised on the helper directly because it needs a cluster of known
+        composition: two of three members at 1 averages to 0.667, which rounds
+        to 1 and truncates to 0. A grid cannot be asked for that cluster.
+        """
+        from ..decimate import _average_per_cluster
+
+        values = np.array([[0], [1], [1]], np.uint8)
+        inverse = np.zeros(3, np.int64)
+        counts = np.array([3.0])
+        out = _average_per_cluster(values, inverse, counts, 1, quantize=True)
+        assert out.dtype == np.uint8
+        assert int(out[0, 0]) == 1, "truncation would give 0"
+
+    def test_integer_SCALARS_keep_their_fractional_mean(self) -> None:
+        """Scalars are not quantized by their input dtype; colours are.
+
+        `write_scalars` casts to float32 unconditionally, so an integer scalars
+        array never reaches disk as an integer — rounding it would only throw the
+        cluster mean away, and `np.rint` is half-to-even, so a 0/1 field
+        averaging to 0.5 would round DOWN to 0. The coarse levels would render
+        hard-classified against a blended finest level: the pop again.
+        """
+        v, f = octasphere(3)
+        scalars = (v[:, 2] > 0).astype(np.int32)
+        r = decimate_cluster(v, f, target_vertices=80, scalars=scalars)
+        assert r.scalars is not None
+        assert r.scalars.dtype == np.float32, "float32 is the on-disk dtype anyway"
+        fractional = (r.scalars > 1e-6) & (r.scalars < 1.0 - 1e-6)
+        assert int(fractional.sum()) > 0, (
+            f"integer scalars were re-quantized: {np.unique(r.scalars)}"
+        )
+
+    def test_scalars_are_averaged_and_compacted_alongside_colors(self) -> None:
+        """A coarse level without scalars carries a colormap it cannot use.
+
+        `colormap` rides on every child of the ladder, and the viewer maps only
+        when `has_scalars` — so a level that dropped them renders unmapped while
+        the finest renders mapped, which is a visible pop at every LOD switch.
+        """
+        v, f = octasphere(3)
+        scalars = v[:, 2].astype(np.float32)  # z, exactly [-1, 1] on the sphere
+        colors = np.zeros((len(v), 3), np.uint8)
+        r = decimate_cluster(v, f, target_vertices=80, colors=colors, scalars=scalars)
+        assert r.scalars is not None
+        # Compacted with the vertices, not left at the pre-compaction cluster
+        # count — a length mismatch is a hard write-side rejection.
+        assert r.scalars.shape == (len(r.vertices),)
+        assert r.scalars.dtype == np.float32
+        # A mean of values in [-1, 1] stays in [-1, 1]; nothing may be invented.
+        assert float(r.scalars.min()) >= -1.0 - 1e-6
+        assert float(r.scalars.max()) <= 1.0 + 1e-6
+        # And the field still tracks the geometry: the north pole keeps a high z.
+        north = r.vertices[:, 2] > 0.8
+        assert float(r.scalars[north].min()) > 0.7
+
+    def test_a_uniform_scalar_is_passed_through_untouched(self) -> None:
+        # Not per-vertex data: it applies to every vertex, so there is nothing to
+        # merge and the coarse level must carry the same value.
+        v, f = octasphere(3)
+        assert decimate_cluster(v, f, target_vertices=80, scalars=0.25).scalars == 0.25
+
     def test_a_barrier_dimension_never_merges(self) -> None:
         """Two timepoints at identical positions must stay separate vertices.
 
@@ -182,9 +310,13 @@ class TestDecimateCluster:
 
     def test_input_already_below_target_is_returned_unchanged(self) -> None:
         v, f = octasphere(1)
-        r = decimate_cluster(v, f, target_vertices=10_000)
+        scalars = v[:, 0].astype(np.float32)
+        r = decimate_cluster(v, f, target_vertices=10_000, scalars=scalars)
         np.testing.assert_array_equal(r.vertices, v)
         np.testing.assert_array_equal(r.faces, f)
+        # The early return must forward the optional channels too, or a level
+        # that happened to need no reduction would lose its scalars.
+        np.testing.assert_array_equal(r.scalars, scalars)
 
     @pytest.mark.parametrize(
         "kwargs, match",

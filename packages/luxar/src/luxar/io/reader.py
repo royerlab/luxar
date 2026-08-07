@@ -14,6 +14,7 @@ import zarr
 
 from ..core.dimensions import Dimensions
 from ..core.transforms import read_transform_from_zarr
+from ..core.viewer_config import ViewerConfig
 from ..encoding.compression import WIDTH_AWARE_DEFAULT
 from ..encoding.decoder import ArrayDecoder
 from ..typing_utils.constants import LUXAR_VERSION_CURRENT
@@ -224,6 +225,27 @@ class LuxarScene:
         return Dimensions.from_dict(dims_data)
 
     @property
+    def viewer_config(self) -> Optional[ViewerConfig]:
+        """Scene viewer configuration if defined.
+
+        The read-only mirror of :attr:`luxar.core.scene.Scene.viewer_config`, and
+        parsed the same way — the attr is a plain dict on disk, so a consumer
+        that means to CARRY the config into a new scene (``luxar mesh lod``
+        rewriting a ladder, say) needs the object, not the dict. Losing it is not
+        cosmetic: a scene that dropped ``tone_mapping`` silently falls back to
+        the viewer's ACES default, which shifts the hues of a custom colormap
+        LUT.
+
+        Returns:
+            The parsed :class:`~luxar.core.viewer_config.ViewerConfig`, or
+            ``None`` when the scene declares none.
+        """
+        vc_dict = self._root.attrs.get("viewer_config")
+        if vc_dict is None:
+            return None
+        return ViewerConfig.from_dict(vc_dict)
+
+    @property
     def nodes(self) -> List[Dict[str, Any]]:
         """List all nodes with metadata.
 
@@ -331,6 +353,36 @@ class LuxarScene:
         if not self.has_node(name):
             raise KeyError(f"Node not found: {name}")
         return dict(self._root[name].attrs)
+
+    def get_colormap_lut(self, name: str) -> Optional[np.ndarray]:
+        """Get a node's custom colormap LUT, or ``None`` if it has none.
+
+        A node whose ``colormap`` attr is the sentinel ``"custom"`` carries the
+        actual colors in a ``colormap_lut`` dataset — the writer resolves any
+        colormap that is not one of the builtin names (an ndarray LUT, but also
+        a plain matplotlib/colorcet name) to that pair, so the viewer needs
+        neither library at display time.
+
+        Returned raw, not through ``_decode_array``: the LUT is written as a
+        plain unencoded ``(256, 3)`` uint8 dataset, so there is no encoding
+        header for the decoder to read.
+
+        Args:
+            name: Name of the node
+
+        Returns:
+            The ``(256, 3)`` uint8 LUT, or ``None`` when the node has no
+            ``colormap_lut`` dataset (a builtin or absent colormap).
+
+        Raises:
+            KeyError: If node doesn't exist
+        """
+        if not self.has_node(name):
+            raise KeyError(f"Node not found: {name}")
+        group = self._root[name]
+        if "colormap_lut" not in group:
+            return None
+        return np.asarray(group["colormap_lut"][:])
 
     def get_group(self, name: str) -> Dict[str, Any]:
         """Get group node metadata with parsed transform.

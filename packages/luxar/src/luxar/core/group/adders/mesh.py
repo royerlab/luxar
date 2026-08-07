@@ -185,6 +185,41 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
         )
 
 
+def _validate_scalar_data_range(name: str, value: Any) -> Optional[tuple[float, float]]:
+    """Check the internal ``_scalar_data_range`` plumbing key (or pass ``None``).
+
+    Internal, but reachable: it is a keyword like any other, and an ill-formed
+    one used to travel all the way to ``write_scalars``, where ``bounds[1]``
+    raised a bare ``IndexError`` — a type the adder's ValueError/TypeError funnel
+    does not catch, so the exception escaped mid-write with the vertices and
+    faces already on disk. Everything it can be wrong about is cheap to check
+    here, before anything is written.
+
+    Reversed and non-finite pairs are refused rather than repaired: the pair is
+    also the scalars quantization range, so a silently swapped or NaN window
+    would encode the whole field wrongly with no diagnostic.
+    """
+    if value is None:
+        return None
+    try:
+        lo, hi = (float(v) for v in value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Mesh '{name}': _scalar_data_range must be a (min, max) pair of "
+            f"numbers; got {value!r}"
+        ) from exc
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        raise ValueError(
+            f"Mesh '{name}': _scalar_data_range must be finite; got ({lo}, {hi})"
+        )
+    if lo > hi:
+        raise ValueError(
+            f"Mesh '{name}': _scalar_data_range is reversed — ({lo}, {hi}). It is "
+            "also the scalars quantization range, so the order is load-bearing."
+        )
+    return (lo, hi)
+
+
 def add_mesh_impl(
     group: "Group",
     *,
@@ -219,6 +254,14 @@ def add_mesh_impl(
         _reject_structure_params(name, attrs)
         _reject_volumetric_blending(name, attrs)
         _reject_energy_stamps(name, attrs)
+        # Consumed HERE, at the top, so nothing downstream — the substitutive
+        # wrapper, the attr gate, the returned node object — ever sees the
+        # private key. Validated because it is a real parameter with a real
+        # shape: a 1-tuple used to reach the writer and raise a bare IndexError,
+        # which this funnel does not catch, leaving a half-written node.
+        scalar_data_range = _validate_scalar_data_range(
+            name, attrs.pop("_scalar_data_range", None)
+        )
 
         scene = group._find_scene()
 
@@ -276,25 +319,45 @@ def add_mesh_impl(
 
         scene._validate_data_dimensions(vert_arr, name, data_type="vertices")
 
-        final_extend_dims = scene._resolve_extend_to_all(
-            extend_to_all, vert_arr, "mesh"
-        )
-        if final_extend_dims:
-            attrs["extend_to_all"] = final_extend_dims
-            aprint(f"  📡 Extending visibility across: {final_extend_dims}")
-
-        parent_node = parent or group
-
         # Substitutive-LOD branch — coarse levels are DECIMATED meshes under a
         # kind=lod Group whose finest child is the original surface. Placed after
         # validation (so a malformed mesh fails the same way either path) and
         # before the write (the wrapper writes every child itself, including the
         # finest, so falling through would write the leaf twice).
         #
+        # ALSO before the `extend_to_all` resolution below, which is why the
+        # sibling adders dispatch their structural branches here too: that
+        # resolution lands in `attrs`, and the wrapper takes `**attrs` alongside
+        # its own `extend_to_all=` parameter — so resolving first made every
+        # `extend_to_all="all"` ladder a "multiple values for keyword argument"
+        # TypeError. The wrapper forwards the RAW value to each child's
+        # `add_mesh`, which resolves it per child.
+        #
         # `vert_arr` is already dim_order-transformed, so children are written
         # with dim_order=None/fill=None to avoid double application.
         if substitutive_lod is not None:
+            # Run the CHILD's gates here and throw the results away, purely to
+            # keep the fail-fast pre-write gate intact. Every one of them runs
+            # again inside `child_0` — but by then every level has been decimated
+            # and `add_lod_group` has created the zarr group, so a bad
+            # `extend_to_all`, `colormap` or `blending_mode` surfaced as a
+            # childless kind=lod group in an incomplete store rather than as a
+            # clean refusal that wrote nothing. Same validators the children run,
+            # so the two cannot disagree about what is accepted.
+            #
+            # `extend_to_all` is guarded on `is not None` because that branch is
+            # the one that emits the advisory candidate warning, which must fire
+            # exactly once. The attr gate gets a COPY, since it is the child
+            # write's job to consume the real dict.
+            from ....io._compiler.node_common import (
+                MESH_RESERVED_ATTRS,
+                validate_render_attrs,
+            )
             from ..lod.mesh import resolve_substitutive_axis_mesh
+
+            if extend_to_all is not None:
+                scene._resolve_extend_to_all(extend_to_all, vert_arr, "mesh")
+            validate_render_attrs(dict(attrs), reserved_attrs=MESH_RESERVED_ATTRS)
 
             substitutive_spec = resolve_substitutive_axis_mesh(substitutive_lod)
             if substitutive_spec is not None:
@@ -313,10 +376,20 @@ def add_mesh_impl(
                     image_labels=image_labels,
                     parent=parent,
                     extend_to_all=extend_to_all,
+                    scalar_data_range=scalar_data_range,
                     spec=substitutive_spec,
                     scene=scene,
                     **attrs,
                 )
+
+        final_extend_dims = scene._resolve_extend_to_all(
+            extend_to_all, vert_arr, "mesh"
+        )
+        if final_extend_dims:
+            attrs["extend_to_all"] = final_extend_dims
+            aprint(f"  📡 Extending visibility across: {final_extend_dims}")
+
+        parent_node = parent or group
 
         writer = group._require_scene_writer(scene)
         path = f"{parent_node.path}/{name}" if parent_node.path else name
@@ -332,6 +405,7 @@ def add_mesh_impl(
             double_sided=double_sided,
             labels=labels,
             image_labels=image_labels,
+            _scalar_data_range=scalar_data_range,
             **attrs,
         )
 
@@ -371,6 +445,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     image_labels: Any,
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
+    scalar_data_range: Optional[tuple[float, float]],
     spec: Dict[str, Any],
     scene: Any,
     **attrs: Any,
@@ -380,8 +455,9 @@ def add_mesh_substitutive_lod_wrapper_impl(
     The Mesh peer of ``add_points_substitutive_lod_wrapper_impl`` and much
     smaller than it, because Points and Lines coarsen by lifting to gsplats —
     scalar→RGB baking, mass-preserving amplitudes, an anisotropy cap — and a mesh
-    is simply decimated. What is shared is the SHAPE: a ``kind=lod`` group,
-    children coarsest→finest, viewport-relative ``coverage_fraction`` per child
+    is simply decimated (its per-vertex colours and scalars are averaged per
+    cluster, so both reach every level). What is shared is the SHAPE: a
+    ``kind=lod`` group, children coarsest→finest, viewport-relative ``coverage_fraction`` per child
     from :func:`luxar.core.group.lod.group.coverage_fractions`, compositing attrs
     on the group and everything else on the children.
 
@@ -444,6 +520,15 @@ def add_mesh_substitutive_lod_wrapper_impl(
         and colors.shape[0] == n_vertices
         else None
     )
+    # Same discriminator, same reason. Scalars ARE the colour of a colormapped
+    # mesh, and `colormap` is a child attr copied onto every level — so a coarse
+    # level without scalars carries a colormap with nothing to map and renders
+    # unmapped against a mapped finest level, which is a pop at every switch.
+    per_vertex_scalars = (
+        scalars
+        if isinstance(scalars, np.ndarray) and scalars.shape[:1] == (n_vertices,)
+        else None
+    )
 
     coarse: List[Any] = []
     previous = 0
@@ -460,6 +545,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
             # over any number of dims while a normal always lives in exactly three.
             normal_dims=tuple(normal_dims) if normal_dims is not None else None,
             colors=per_vertex_colors,
+            scalars=per_vertex_scalars,
             spatial_dims=spatial_dims,
         )
         count = int(level.vertices.shape[0])
@@ -495,6 +581,10 @@ def add_mesh_substitutive_lod_wrapper_impl(
             dim_order=None,
             fill=None,
             substitutive_lod=None,
+            # Re-supplied because the adder popped it on the way in; a leaf's
+            # own range equals the field's, so this only matters when the
+            # caller set one explicitly.
+            _scalar_data_range=scalar_data_range,
             **attrs,
         )
 
@@ -517,6 +607,23 @@ def add_mesh_substitutive_lod_wrapper_impl(
     child_attrs.pop("coverage_fraction", None)
     lod_attrs.setdefault("display_type", "mesh")
 
+    # ONE display window for the whole ladder, stamped on every child. Each
+    # level would otherwise stamp its own min/max, and cluster-averaging
+    # strictly CONTRACTS the range — so the viewer, which windows a level's
+    # colormap on its stamped `scalar_data_range`, would map the same value to a
+    # different colour at every level and the surface would recolour as you
+    # zoom. That is the pop this ladder exists to avoid, one layer down. Same
+    # rule the gsplat lift states for its beads ("share the finest node's
+    # scalar_data_range, not a per-segment one"). An explicit caller value
+    # (already validated by the adder) wins. A UNIFORM scalar needs none: every
+    # level carries the same single value already.
+    field_range = scalar_data_range
+    if field_range is None and per_vertex_scalars is not None:
+        field_range = (
+            float(np.min(per_vertex_scalars)),
+            float(np.max(per_vertex_scalars)),
+        )
+
     parent_node = parent or group
     aprint(
         f"  📐 Substitutive-LOD '{name}': {len(coarse)} decimated levels + original "
@@ -536,6 +643,11 @@ def add_mesh_substitutive_lod_wrapper_impl(
             # Averaged per cluster when per-vertex; the original uniform value
             # otherwise, since every vertex shares it and nothing needs merging.
             colors=level.colors if per_vertex_colors is not None else colors,
+            # Averaged per cluster like the colours, for the same reason: the
+            # colormap rides on every child, so a level without scalars is a
+            # level the colormap cannot reach.
+            scalars=level.scalars if per_vertex_scalars is not None else scalars,
+            _scalar_data_range=field_range,
             shading=shading,
             double_sided=double_sided,
             extend_to_all=extend_to_all,
@@ -546,8 +658,9 @@ def add_mesh_substitutive_lod_wrapper_impl(
         )
 
     # Finest child: the original surface, with everything the coarse levels
-    # cannot carry — scalars (the decimator averages colours, not scalars) and
-    # the label channels.
+    # cannot carry — the label channels, which are per-vertex CSR text and have
+    # no meaningful merge (colours and scalars are both averaged, so those DO
+    # reach every level).
     lod_group_node.add_mesh(
         f"child_{len(coarse)}",
         vert_arr,
@@ -556,6 +669,10 @@ def add_mesh_substitutive_lod_wrapper_impl(
         normal_dims=normal_dims,
         colors=colors,
         scalars=scalars,
+        # Passed explicitly even though the finest child's own range already
+        # equals it: stamping it here is what makes the ladder's single shared
+        # window visible at the one level that could have got away without it.
+        _scalar_data_range=field_range,
         shading=shading,
         double_sided=double_sided,
         labels=labels,

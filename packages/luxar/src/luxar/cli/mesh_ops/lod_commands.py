@@ -65,25 +65,53 @@ def run_lod(
     method: str,
     overwrite: bool,
 ) -> List[int]:
-    """Write ``input_path``'s mesh as a substitutive ladder. Returns the counts."""
+    """Write ``input_path``'s mesh as a substitutive ladder. Returns the counts.
+
+    ``output_path`` is normalized to ``<stem>.luxar.zarr`` — the store the
+    compiler actually writes — before any guard or deletion looks at it.
+    """
     from luxar import LuxarZarrCompiler
 
-    # Before the deletion, for the reason `mesh import` documents: `--overwrite`
-    # removes the output first, so an output that IS the input would delete the
-    # source and only then discover there is nothing to read.
-    if output_path.resolve() == input_path.resolve():
-        raise ValueError(
-            f"--output must differ from the input ({input_path}); this command "
-            "writes a new scene rather than editing one in place."
-        )
-    if output_path.exists():
-        if not overwrite:
-            raise FileExistsError(
-                f"{output_path} already exists. Pass --overwrite to replace it."
-            )
-        shutil.rmtree(output_path) if output_path.is_dir() else output_path.unlink()
-
+    from ...core.group.lod.mesh import resolve_substitutive_axis_mesh
+    from ...core.viewer_config import ViewerConfig
+    from ...io._compiler.node_common import KNOWN_RENDER_ATTRS
     from ...io.reader import LuxarScene
+    from ...utils.paths import normalize_zarr_path
+
+    # NORMALIZE FIRST, and guard the normalized path only. `LuxarZarrCompiler`
+    # applies exactly this normalization to whatever it is handed, so the store
+    # it writes is `<stem>.luxar.zarr` — guarding the raw argument guards a path
+    # nothing ever writes to. Three real data-loss cases came of that:
+    # `--output scene` next to `scene.luxar.zarr` slipped the same-path check and
+    # rewrote the INPUT; an existing `out.luxar.zarr` slipped the exists check and
+    # was replaced without `--overwrite`; and an output normalizing onto the
+    # directory that holds the input rmtree'd the source. Each reported itself
+    # only afterwards, as "Scene not found" from the read-back below.
+    output_path = normalize_zarr_path(output_path, ".luxar.zarr")
+
+    # Before the deletion, for the reason `mesh import` documents: `--overwrite`
+    # removes the output first, so an output that IS the input — or a directory
+    # CONTAINING it, where `rmtree` takes the whole tree — would delete the
+    # source and only then discover there is nothing to read. The relation is
+    # checked BOTH ways, because the message promises a path outside the input's
+    # tree: a destination INSIDE the source store survived the one-directional
+    # check and wrote a whole nested scene into it.
+    source_resolved = input_path.resolve()
+    destination = output_path.resolve()
+    if (
+        destination == source_resolved
+        or destination in source_resolved.parents
+        or source_resolved in destination.parents
+    ):
+        raise ValueError(
+            f"Output {output_path} is the input scene itself, or a directory "
+            "containing it, or a path inside it. Writing there would destroy or "
+            "corrupt the source; choose an output path outside the input's tree."
+        )
+    if output_path.exists() and not overwrite:
+        raise FileExistsError(
+            f"{output_path} already exists. Pass --overwrite to replace it."
+        )
 
     with asection(f"Building a mesh LOD ladder from {input_path}"):
         source = LuxarScene.load(input_path)
@@ -97,7 +125,6 @@ def run_lod(
             )
         node_path = _pick_mesh(source, input_path, node_name)
         data = source.get_mesh(node_path)
-        attrs = source.get_node_metadata(node_path)
         aprint(
             f"Source {node_path!r}: {data.vertices.shape[0]:,} vertices, "
             f"{data.faces.shape[0]:,} faces"
@@ -108,11 +135,91 @@ def run_lod(
             "compression_factor": compression_factor,
             "method": method,
         }
+        # Validated HERE rather than inside `add_mesh`, because the deletion
+        # below is irreversible: `--method qem` used to remove an existing output
+        # and only then discover the method does not exist. This is the very
+        # validator `add_mesh` runs, so the two cannot disagree about what is
+        # accepted.
+        resolve_substitutive_axis_mesh(spec)
+
+        # The authored ATTRS of the source node: the placement (transform /
+        # nd_transform), the nD visibility broadcast, and the render attrs.
+        # Forwarding only `shading`/`double_sided` dropped all of it silently —
+        # most sharply the transform, which put the coarsened surface somewhere
+        # else in the scene with nothing saying so.
+        #
+        # What still does NOT come across is the per-vertex LABEL channels
+        # (`labels` / `image_labels`): `MeshData` has no field for them, so the
+        # reader never surfaces them and this round trip cannot carry what it
+        # cannot read. A labelled source therefore comes back unlabelled rather
+        # than half-labelled, which is at least uniform across every level.
+        #
+        # An allow-list rather than "everything outside MESH_RESERVED_ATTRS":
+        # that set is the keys the writer refuses FROM A CALLER, and the store
+        # carries stamps that never pass through that gate — the derived
+        # `scalar_data_range` / `color_data_range` the array writers put straight
+        # onto the group, and the `content_hash` finalize adds to every node.
+        # Each of those is rejected as an unknown attribute on the way back in,
+        # so an exclusion list would break this command every time a new stamp
+        # lands. `shading` / `double_sided` stay explicit arguments below.
+        #
+        # `data.metadata`, NOT `get_node_metadata`: `get_mesh` has already turned
+        # the stored column-major 16-list back into a 4x4 matrix, which is the
+        # convention `add_mesh` expects — handing back the raw list would
+        # transpose the transform on the round trip.
+        #
+        # The compositing keys among these (transform, opacity, blending_mode, …)
+        # land on the `kind=lod` WRAPPER group rather than the children: the
+        # adder splits `COMPOSITING_ATTRS` onto the wrapper, which is where a
+        # per-layer setting belongs and where the viewer inherits it from.
+        forwardable = KNOWN_RENDER_ATTRS | {
+            "transform",
+            "nd_transform",
+            "extend_to_all",
+        }
+        forwarded = {k: v for k, v in data.metadata.items() if k in forwardable}
+
+        # `colormap='custom'` is a SENTINEL, not a name: the writer resolves any
+        # non-builtin colormap — an ndarray LUT, but also a plain matplotlib or
+        # colorcet name like 'magma' — to a `colormap_lut` dataset plus that
+        # word. Forwarding the word alone reaches the resolver as a name and
+        # raises "Unknown colormap 'custom'", so a `magma` mesh could not be
+        # laddered at all; accepting it would have been worse, silently
+        # substituting the default LUT. Handing back the ARRAY is lossless: the
+        # writer re-resolves it to the same LUT plus the same sentinel on every
+        # child.
+        if forwarded.get("colormap") == "custom":
+            lut = source.get_colormap_lut(node_path)
+            if lut is None:
+                raise ValueError(
+                    f"Mesh node {node_path!r} declares colormap='custom' but has no "
+                    "'colormap_lut' dataset, so its colors cannot be reproduced. "
+                    "The store is inconsistent; re-write the source scene."
+                )
+            forwarded["colormap"] = lut
+
+        # Everything above this line reads or validates; the destination is
+        # destroyed only once the write is certain to be attempted.
+        if output_path.exists():
+            shutil.rmtree(output_path) if output_path.is_dir() else output_path.unlink()
+
         # The LEAF name, not the full path: the ladder is written at the scene
         # root, so a nested source node keeps its own name rather than inventing
         # a group hierarchy the user did not ask for.
+        # The scene-level viewer config travels with the scene, and dropping it
+        # undoes the colormap fidelity above on exactly the scenes that have a
+        # custom LUT: with no `tone_mapping` the viewer applies its ACES default,
+        # which intentionally shifts hues, and the compiler re-emits the notice
+        # saying so. `luxar mesh import` states ACES explicitly, so the
+        # documented import → lod pipeline lost it too. Same fallback and same
+        # reasoning as that command: ACES is the house default, and saying so
+        # keeps the "nothing was chosen" notice quiet.
+        viewer_config = source.viewer_config or ViewerConfig(tone_mapping="ACES")
+
         with LuxarZarrCompiler(str(output_path)) as compiler:
-            scene = compiler.create_scene(dimensions=source.dimensions)
+            scene = compiler.create_scene(
+                dimensions=source.dimensions, viewer_config=viewer_config
+            )
             scene.add_mesh(
                 node_path.rsplit("/", 1)[-1],
                 data.vertices,
@@ -120,9 +227,11 @@ def run_lod(
                 normals=data.normals,
                 normal_dims=data.normal_dims,
                 colors=data.colors,
-                shading=attrs.get("shading"),
-                double_sided=bool(attrs.get("double_sided", True)),
+                scalars=data.scalars,
+                shading=data.metadata.get("shading"),
+                double_sided=bool(data.metadata.get("double_sided", True)),
                 substitutive_lod=spec,
+                **forwarded,
             )
 
     # Read back rather than trusting the write: the ladder's whole value is that

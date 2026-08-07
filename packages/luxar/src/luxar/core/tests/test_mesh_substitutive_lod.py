@@ -180,6 +180,277 @@ class TestLadderShape:
         )
         assert all(c["has_colors"] for c in children)
 
+    def test_scalars_reach_every_level_of_a_colormapped_ladder(
+        self, tmp_path: Path
+    ) -> None:
+        # `colormap` is a child attr, copied onto every level; the viewer maps
+        # only where `has_scalars` is set. A ladder whose coarse levels lost
+        # their scalars therefore renders them UNMAPPED against a mapped finest
+        # level — the LOD switch changes the colours of the surface.
+        from luxar.io.reader import LuxarScene
+
+        verts, faces = octasphere(4)
+        scalars = verts[:, 2].astype(np.float32)  # z, exactly [-1, 1]
+        store = tmp_path / "sc.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "surf",
+                verts,
+                faces,
+                scalars=scalars,
+                colormap="viridis",
+                substitutive_lod={"levels": 2},
+            )
+        children = ladder_children(read_nodes(store))
+        assert len(children) >= 2
+        assert all(c["has_scalars"] for c in children), (
+            "a level with the colormap but no scalars renders unmapped"
+        )
+        assert all(c["colormap"] == "viridis" for c in children)
+
+        loaded = LuxarScene.load(store)
+        for idx, child in enumerate(children):
+            values = loaded.get_mesh(f"surf/child_{idx}").scalars
+            assert values is not None
+            assert values.shape[0] == child["n_vertices"]
+            # Cluster means of values in [-1, 1] stay in [-1, 1]: a level may
+            # not invent a value the colormap would map outside the source range.
+            assert float(values.min()) >= -1.0 - 1e-3
+            assert float(values.max()) <= 1.0 + 1e-3
+        # Averaged, not flattened to a constant: the coarsest level still spans
+        # most of the range, so the colormap still shows the field.
+        coarsest = loaded.get_mesh("surf/child_0").scalars
+        assert float(coarsest.max() - coarsest.min()) > 1.0
+
+    def test_every_level_stamps_the_SAME_scalar_data_range(
+        self, tmp_path: Path
+    ) -> None:
+        """One display window for the whole ladder, not one per level.
+
+        The viewer windows each level's colormap on that level's stamped
+        `scalar_data_range`, and cluster-averaging strictly CONTRACTS the range —
+        measured [0, 2.0] / [0, 1.04] / [0, 1.61] / [0, 100] down a real ladder.
+        The coarsest then maps 2.0 to the top of the LUT and the finest maps the
+        same 2.0 to t=0.02: the surface recolours as you zoom, which is the pop
+        the ladder exists to avoid, reintroduced one layer down.
+
+        A PEAKED field is what makes it visible: one hot vertex whose value no
+        cluster mean can reach.
+        """
+        from luxar.io.reader import LuxarScene
+
+        verts, faces = octasphere(4)
+        scalars = np.zeros(len(verts), np.float32)
+        scalars[0] = 100.0  # the peak: averaged away on every coarse level
+        scalars[1:4] = 2.0
+        store = tmp_path / "range.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "surf",
+                verts,
+                faces,
+                scalars=scalars,
+                colormap="viridis",
+                substitutive_lod={"levels": 3},
+            )
+        children = ladder_children(read_nodes(store))
+        assert len(children) >= 3
+        ranges = [tuple(c["scalar_data_range"]) for c in children]
+        assert len(set(ranges)) == 1, f"levels window on different ranges: {ranges}"
+        assert ranges[0] == pytest.approx((0.0, 100.0))
+
+        # The window is not free: it is also the quantization range, so a coarse
+        # level's own (much smaller) values must still decode faithfully.
+        loaded = LuxarScene.load(store)
+        coarse = loaded.get_mesh("surf/child_0").scalars
+        assert float(coarse.max()) < 100.0, "the peak must average away"
+        assert float(coarse.max()) > 0.0, "…without taking the field with it"
+
+    def test_the_private_range_key_never_reaches_disk(self, tmp_path: Path) -> None:
+        # `_scalar_data_range` is plumbing for the scalars writer, not an
+        # attribute; a private key on a node is something every reader and the
+        # viewer would have to know to ignore.
+        verts, faces = octasphere(3)
+        nodes = write_ladder(
+            tmp_path,
+            verts,
+            faces,
+            scalars=verts[:, 2].astype(np.float32),
+            colormap="viridis",
+            substitutive_lod={"levels": 2},
+        )
+        assert all("_scalar_data_range" not in attrs for attrs in nodes.values())
+
+
+class TestScalarDataRangeIsInternal:
+    """`_scalar_data_range` is mesh plumbing, not a node attribute.
+
+    It was briefly listed in the SHARED `_ALLOWED_NODE_ATTRS`, which is
+    geometry-blind: only the mesh writer pops it, so on points / lines / gsplats
+    it sailed through the gate and landed on disk as a private key sitting next
+    to the `scalar_data_range` it exists to override. And nothing checked its
+    shape, so a 1-tuple reached the writer and raised a bare `IndexError` — a
+    type the adder's ValueError/TypeError funnel does not catch, so it escaped
+    mid-write with the vertices and faces already written.
+    """
+
+    def scene_dims(self) -> Any:
+        return Dimensions.default_3d()
+
+    @pytest.mark.parametrize("geometry", ["points", "lines"])
+    def test_a_sibling_geometry_refuses_the_key_outright(
+        self, tmp_path: Path, geometry: str
+    ) -> None:
+        store = tmp_path / f"{geometry}.luxar.zarr"
+        positions = np.random.default_rng(0).random((12, 3)).astype(np.float32)
+        with pytest.raises(ValueError, match="Unknown node attribute"):
+            with LuxarZarrCompiler(store) as compiler:
+                scene = compiler.create_scene(dimensions=self.scene_dims())
+                if geometry == "points":
+                    scene.add_points("node", positions, _scalar_data_range=(0.0, 5.0))
+                else:
+                    scene.add_lines(
+                        "node",
+                        positions,
+                        np.full(12, 0.1, np.float32),
+                        _scalar_data_range=(0.0, 5.0),
+                    )
+        # The gate is pre-write, so nothing of the refused node reached disk.
+        assert not (store / "node").exists()
+
+    @pytest.mark.parametrize(
+        "bad", [(1.0,), "foo", 3.5, (1.0, 0.0), (float("nan"), 1.0)]
+    )
+    def test_a_malformed_range_is_refused_before_anything_is_written(
+        self, tmp_path: Path, bad: Any
+    ) -> None:
+        # A 1-tuple and a string used to raise IndexError/ValueError from inside
+        # the writer, past the adder's funnel and past the point of no return; a
+        # reversed pair and a NaN were swallowed silently by the widening, which
+        # then encoded the field over a nonsense quantization window.
+        verts, faces = octasphere(3)
+        store = tmp_path / "bad.luxar.zarr"
+        with pytest.raises(ValueError, match="_scalar_data_range"):
+            with LuxarZarrCompiler(store) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_mesh(
+                    "surf",
+                    verts,
+                    faces,
+                    scalars=verts[:, 2].astype(np.float32),
+                    colormap="viridis",
+                    _scalar_data_range=bad,
+                )
+        assert not (store / "surf").exists(), "a refused mesh must write nothing"
+
+
+class TestExtendToAll:
+    """`extend_to_all=` and `substitutive_lod=` must compose.
+
+    They did not. The adder resolved the extension into `attrs` and then handed
+    the wrapper both an `extend_to_all=` argument and `**attrs`, so any ladder on
+    a scene with a non-displayed dimension died with "got multiple values for
+    keyword argument 'extend_to_all'" — a TypeError funnelled into a ValueError
+    about a mesh that was perfectly valid. The sibling adders dispatch their
+    structural branches BEFORE that resolution, which is why they never hit it.
+    """
+
+    def write(
+        self, tmp_path: Path, extend: Any, **kwargs: Any
+    ) -> Dict[str, Dict[str, Any]]:
+        from luxar import Dimension, Dimensions
+
+        verts, faces = octasphere_4d(4, 0.0)
+        dims = Dimensions(
+            [
+                Dimension(
+                    name="x", unit="um", range=(-2.0, 2.0), step=0.1, display=True
+                ),
+                Dimension(
+                    name="y", unit="um", range=(-2.0, 2.0), step=0.1, display=True
+                ),
+                Dimension(
+                    name="z", unit="um", range=(-2.0, 2.0), step=0.1, display=True
+                ),
+                Dimension(
+                    name="t", unit="s", range=(0.0, 9.0), step=1.0, display=False
+                ),
+            ]
+        )
+        store = tmp_path / "e.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_mesh(
+                "surf",
+                verts,
+                faces,
+                extend_to_all=extend,
+                substitutive_lod={"levels": 2},
+                **kwargs,
+            )
+        return read_nodes(store)
+
+    @pytest.mark.parametrize("extend", ["all", ["t"]])
+    def test_the_ladder_builds_and_every_child_carries_the_resolution(
+        self, tmp_path: Path, extend: Any
+    ) -> None:
+        nodes = self.write(tmp_path / str(extend), extend)
+        assert nodes["surf"]["kind"] == "lod"
+        children = ladder_children(nodes)
+        assert len(children) >= 2
+        # Resolved PER CHILD: the wrapper forwards the raw value down, and each
+        # child's own `add_mesh` turns it into the concrete dimension list.
+        assert all(c.get("extend_to_all") == ["t"] for c in children), (
+            f"levels missing the resolved extension: "
+            f"{[c.get('extend_to_all') for c in children]}"
+        )
+
+    def test_an_INVALID_attr_is_also_refused_before_anything_is_written(
+        self, tmp_path: Path
+    ) -> None:
+        """The pre-write gate covers the ATTRS, not just `extend_to_all`.
+
+        A typo'd `colormap` (or `blending`, or any unknown key) is caught by the
+        same `validate_render_attrs` the child write runs — but the child runs it
+        after the decimation and after `add_lod_group` created the group, so it
+        left the same childless kind=lod group in an incomplete store.
+        """
+        verts, faces = octasphere(3)
+        store = tmp_path / "attr.luxar.zarr"
+        with pytest.raises(ValueError, match="magmaa|Unknown|colormap"):
+            with LuxarZarrCompiler(store) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_mesh(
+                    "surf",
+                    verts,
+                    faces,
+                    scalars=verts[:, 2].astype(np.float32),
+                    colormap="magmaa",
+                    substitutive_lod={"levels": 2},
+                )
+        assert not (store / "surf").exists(), (
+            "a refused mesh must not leave a half-built LOD group behind"
+        )
+
+    def test_an_INVALID_value_is_refused_before_anything_is_written(
+        self, tmp_path: Path
+    ) -> None:
+        """The fail-fast pre-write gate must survive the dispatch move.
+
+        The children re-resolve `extend_to_all`, so a bad value is caught either
+        way — but only inside `child_0`, i.e. after every level has been
+        decimated and after `add_lod_group` created the zarr group. That left
+        `surf` behind as a childless kind=lod group in a store flagged
+        incomplete, where the plain-leaf path writes nothing at all.
+        """
+        with pytest.raises(ValueError, match="extend_to_all"):
+            self.write(tmp_path, "everything")
+        assert not (tmp_path / "e.luxar.zarr" / "surf").exists(), (
+            "a refused mesh must not leave a half-built LOD group behind"
+        )
+
 
 class TestDegenerateLadders:
     def test_a_surface_too_coarse_to_reduce_falls_back_to_a_plain_leaf(self, tmp_path):

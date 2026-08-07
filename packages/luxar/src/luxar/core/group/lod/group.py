@@ -329,14 +329,6 @@ SUBSTITUTIVE_METHODS = frozenset(
 #: that validates and then raises is worse than one that never validated.
 MESH_SUBSTITUTIVE_METHODS = frozenset({"auto", "cluster"})
 
-#: Which reduction methods each geometry admits, keyed by the display name the
-#: resolvers already pass for error messages. Consulted by
-#: :func:`resolve_substitutive_axis`; a geometry absent here falls back to the
-#: mixture set, which is the safe default for the three that lift.
-SUBSTITUTIVE_METHODS_BY_GEOMETRY: Dict[str, frozenset] = {
-    "Mesh": MESH_SUBSTITUTIVE_METHODS,
-}
-
 #: Default mesh coarsening method. ``auto`` resolves to ``cluster`` today — the
 #: only implemented tier — and becomes a real size-derived choice when ``qem``
 #: lands (#1348). Kept as the default anyway so that upgrade is not a
@@ -492,12 +484,11 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     if levels < 1:
         raise ValueError(f"levels must be >= 1, got {levels}")
 
-    allowed = SUBSTITUTIVE_METHODS_BY_GEOMETRY.get(geometry, SUBSTITUTIVE_METHODS)
     method = str(kwargs.pop("method", DEFAULT_SUBSTITUTIVE_METHOD)).replace("-", "_")
-    if method not in allowed:
+    if method not in SUBSTITUTIVE_METHODS:
         raise ValueError(
             f"substitutive_lod for {geometry}: method must be one of "
-            f"{sorted(allowed)}; got {method!r}"
+            f"{sorted(SUBSTITUTIVE_METHODS)}; got {method!r}"
         )
 
     if "truncation_radius" in kwargs:

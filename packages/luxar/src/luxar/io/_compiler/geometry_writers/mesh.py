@@ -124,7 +124,16 @@ def write_mesh(
     # writers: validators needing the store (image_labels, custom colormap LUT
     # resolution) still run post-write.
     #
-    # 0a. Pure attr validators + reserved writer-stamp collisions.
+    # 0a. Pure attr validators + reserved writer-stamp collisions — after
+    # consuming the one INTERNAL key mesh takes: the explicit display window an
+    # LOD level stamps in place of its own contracted min/max. Popped before the
+    # validator rather than declared in the shared `_ALLOWED_NODE_ATTRS`,
+    # because that list is global: allowing it there let the key through
+    # `write_points` / `write_lines` / `write_group`, none of which pop it, and
+    # it landed on disk as a private attr sitting next to the range it exists to
+    # replace. Only mesh consumes it, so only mesh admits it; every other writer
+    # gives the ordinary unknown-attribute rejection.
+    scalar_bounds = attrs.pop("_scalar_data_range", None)
     validate_render_attrs(attrs, reserved_attrs=MESH_RESERVED_ATTRS)
     # 0b. Node path: an empty path would resolve require_group("") to the scene
     # ROOT and clobber it.
@@ -300,7 +309,14 @@ def write_mesh(
         metadata["has_colors"] = True
 
     if scalars is not None:
-        write_scalars(group, scalars, None, n_vertices, ctx.dataset_ctx)
+        write_scalars(
+            group,
+            scalars,
+            None,
+            n_vertices,
+            ctx.dataset_ctx,
+            bounds=scalar_bounds,
+        )
         metadata["has_scalars"] = True
 
     # Write the colormap LUT when `colormap` is a custom array.

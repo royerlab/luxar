@@ -49,8 +49,23 @@ one coarse level — producing a perfectly valid-looking store. And the viewer c
 flip silently no-opped in one edit pass, which the render probe initially "passed"
 against, because level SELECTION works without it and only deferral does not.
 
-Ten tests asserting "mesh cannot do LOD" were inverted rather than deleted. 13 new ladder
-tests plus viewer coverage, all mutation-checked.
+Ten tests asserting "mesh cannot do LOD" were inverted rather than deleted, and the ladder
+plus its decimator now carry ~40 tests of their own alongside the viewer coverage.
+
+Per-vertex **colours and scalars are both averaged per cluster**, and every level stamps
+the SOURCE field's `scalar_data_range` rather than its own — so a colormapped mesh maps
+the same value to the same colour at every level. Both halves are needed: the colormap
+rides on every child, so a level without scalars renders unmapped, and cluster-averaging
+strictly contracts the range, so per-level windows recolour the surface as you zoom. The
+averaging round-trips the input dtype (uint8, uint16 and float32 colours all survive) but
+deliberately does NOT re-quantize integer scalars, which reach disk as float32 anyway.
+`luxar mesh lod` carries the source node's `transform`, colormap (as its LUT, for a
+non-builtin palette) and compositing attrs across, plus the scene's `viewer_config`,
+instead of forwarding only `shading`/`double_sided` — per-vertex labels stay the one
+thing it cannot carry, because the reader does not surface them. It normalizes
+`--output` to `<stem>.luxar.zarr` before every path guard, and validates the method and
+the attrs before `--overwrite` deletes anything.
+
 #### Documentation — pull-request quality gate and warning ratchets (#776)
 
 Documentation-relevant pull requests now report a stable `docs-quality` check.
