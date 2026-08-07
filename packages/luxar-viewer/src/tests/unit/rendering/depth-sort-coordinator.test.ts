@@ -3674,3 +3674,208 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(root.metadata?.info).toMatch(/sched$/);
   });
 });
+
+/**
+ * The INDEXED (mesh) apply, driven through the real coordinator.
+ *
+ * `triangle-ordering.test.ts` pins the write in isolation. What can only be
+ * seen here is the coordinator's ownership of it: that a resolved ordering
+ * reaches `geometry.index` at all, and that a COMMIT supersedes a pending one.
+ * The second is not the same case as sort-supersedes-sort — the commit rewrites
+ * the index buffer itself (`updateMeshGeometry` runs before
+ * `noteDepthSortCommit`), so an ordering left in the acknowledgement map would
+ * be reported as uploaded on the next draw even though nothing of it survives.
+ */
+function makeIndexedMesh(faceCount: number, blendingMode: string): THREE.Mesh {
+  const geometry = new THREE.BufferGeometry();
+  const triples = new Uint32Array(faceCount * 3);
+  for (let i = 0; i < triples.length; i++) triples[i] = i;
+  geometry.setIndex(new THREE.BufferAttribute(triples.slice(), 1, false));
+  geometry.setDrawRange(0, faceCount * 3);
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 10);
+  const material = new THREE.Material();
+  material.userData.blendingMode = blendingMode;
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.userData.nodeType = 'mesh';
+  mesh.userData.committedData = { some: 'source' };
+  return mesh;
+}
+
+/** The canonical triples a mesh commit hands over as the permutation source. */
+function sourceTriples(faceCount: number): Uint32Array {
+  const src = new Uint32Array(faceCount * 3);
+  for (let i = 0; i < src.length; i++) src[i] = i;
+  return src;
+}
+
+/**
+ * A REAL profiler from the coordinator's post-reset module graph — the same
+ * idiom the instanced lifecycle tests use. A hand-written double would not pin
+ * the applied/scheduled label, which is the whole observable here.
+ */
+async function freshProfiler(): Promise<UpdateProfiler> {
+  const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+  return new UpdateProfiler();
+}
+
+function drawnTriples(mesh: THREE.Mesh, faceCount: number): string[] {
+  const a = mesh.geometry.index!.array;
+  const out: string[] = [];
+  for (let f = 0; f < faceCount; f++) out.push(`${a[f * 3]},${a[f * 3 + 1]},${a[f * 3 + 2]}`);
+  return out;
+}
+
+describe('depth-sort coordinator — the indexed (mesh) apply', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('permutes geometry.index when the ordering resolves', async () => {
+    const coord = await loadCoordinator();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
+
+    const mesh = makeIndexedMesh(3, 'normal');
+    const centers = new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]);
+    coord.noteDepthSortCommit(mesh, centers, 3, sourceTriples(3));
+    await flush();
+
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+    sortResolvers[0]({ generation, ordering: new Uint32Array([2, 0, 1]) });
+    await flush();
+
+    // Faces are (0,1,2) (3,4,5) (6,7,8); the ordering moves whole triples.
+    expect(drawnTriples(mesh, 3)).toEqual(['6,7,8', '0,1,2', '3,4,5']);
+    expect(requestRender).toHaveBeenCalled();
+  });
+
+  it('drops an ordering whose generation was superseded', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeIndexedMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3, sourceTriples(3));
+    await flush();
+    const stale = mockApi.sort.mock.calls[0][0].generation as number;
+    // A newer commit lands before the first sort resolves.
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3, sourceTriples(3));
+    await flush();
+
+    sortResolvers[0]({ generation: stale, ordering: new Uint32Array([2, 0, 1]) });
+    await flush();
+    // Untouched: the stale ordering describes the previous commit's faces.
+    expect(drawnTriples(mesh, 3)).toEqual(['0,1,2', '3,4,5', '6,7,8']);
+  });
+
+  it('a COMMIT supersedes an ordering written but not yet drawn', async () => {
+    // The reviewer-found gap. `updateMeshGeometry` has already overwritten the
+    // index buffer by the time the commit reaches the coordinator, so the
+    // pending acknowledgement must be abandoned — otherwise the next render
+    // closes its profiler pass as UPLOADED for a permutation nothing kept.
+    const profiler = await freshProfiler();
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeIndexedMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3, sourceTriples(3));
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    await flush();
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(0); // written, awaiting its first draw
+
+    // The next commit rewrites the index and registers afresh.
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3, sourceTriples(3));
+    await flush();
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/sched$/); // abandoned, NOT uploaded
+
+    // And a later draw must not resurrect it as a second, applied sample.
+    simulateMeshRender(mesh);
+    expect(root.count).toBe(1);
+  });
+
+  it('a commit that turns commutative also abandons the pending ordering', async () => {
+    // The release branch's peer of the case above — same requirement, reached
+    // through the other arm of the commit.
+    const profiler = await freshProfiler();
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeIndexedMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3, sourceTriples(3));
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    await flush();
+
+    (mesh.material as THREE.Material).userData.blendingMode = 'opaque';
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3, sourceTriples(3));
+    await flush();
+    expect(profiler.getDepthSortTimings().count).toBe(1);
+    expect(profiler.getDepthSortTimings().metadata?.info).toMatch(/sched$/);
+  });
+
+  it('reports the ordering as applied once the mesh is drawn', async () => {
+    // The positive control for the two abandonment cases: without it they
+    // would pass against a coordinator that never reports applied at all.
+    const profiler = await freshProfiler();
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeIndexedMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3, sourceTriples(3));
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    await flush();
+
+    simulateMeshRender(mesh);
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/up$/);
+  });
+
+  it('releasing the node abandons a pending indexed ordering', async () => {
+    const profiler = await freshProfiler();
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeIndexedMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(9), 3, sourceTriples(3));
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    await flush();
+
+    coord.releaseDepthSortNode(mesh);
+    expect(profiler.getDepthSortTimings().count).toBe(1);
+    expect(profiler.getDepthSortTimings().metadata?.info).toMatch(/sched$/);
+  });
+});
