@@ -66,12 +66,28 @@ export interface ClippingCtx {
 const RATIO_WARN_THRESHOLD = 10000;
 
 /**
+ * A camera plane the 0.1%-change gate in {@link updateDynamicFromCache}
+ * cannot reason about, and which must therefore count as "changed" so a
+ * healthy value can be written back.
+ *
+ * NaN fails every comparison, so `Math.abs(NaN - near) / NaN > 0.001` is
+ * false. A NEGATIVE current value is just as sticky and less obvious: the
+ * quotient `Math.abs(current - near) / current` is then negative, so the
+ * gate stays shut for every possible new value. `restoreCamera`
+ * (`core/app/snapshot/viewer-snapshot.ts`) assigns a snapshot's planes to
+ * the camera verbatim, so a poisoned pair really can arrive.
+ */
+function isUnusablePlane(value: number): boolean {
+  return !Number.isFinite(value) || value <= 0;
+}
+
+/**
  * Apply explicit near/far to the camera with validation. Logs a
  * Z-precision warning when far/near > 10000.
  *
  * This is the only path that can produce a pathological ratio: the two
  * bounds-derived paths clamp to `nearPlaneFloor`, which caps the ratio
- * at `MAX_NEAR_FAR_RATIO` (1000) by construction. So the warning lives
+ * at `MAX_NEAR_FAR_RATIO` by construction. So the warning lives
  * here, where MANUAL slider values and zarr-authored `camera.near` /
  * `camera.far` arrive, and `updateDynamicFromCache` deliberately does
  * NOT route through it — a per-frame call has nothing to warn about and
@@ -262,15 +278,15 @@ export function updateDynamicFromCache(ctx: ClippingCtx): void {
   // Only update when values changed > 0.1% — avoids thrashing the projection
   // matrix on sub-pixel camera moves.
   //
-  // A non-finite CURRENT value counts as changed. Otherwise a camera already
-  // holding NaN is stuck forever: `Math.abs(NaN - near) / NaN > 0.001` is
-  // false, so the gate never reopens and no healthy value can ever be written
-  // back. The guard above stops us writing bad values; this is what lets us
-  // recover from one.
+  // A non-finite or non-positive CURRENT value counts as changed — see
+  // `isUnusablePlane`. Otherwise a camera already holding one is stuck
+  // forever, because the relative-change quotient can never exceed the
+  // threshold. The guard above stops us writing bad values; this is what lets
+  // us recover from one.
   const nearChanged =
-    !Number.isFinite(ctx.camera.near) || Math.abs(ctx.camera.near - near) / ctx.camera.near > 0.001;
+    isUnusablePlane(ctx.camera.near) || Math.abs(ctx.camera.near - near) / ctx.camera.near > 0.001;
   const farChanged =
-    !Number.isFinite(ctx.camera.far) || Math.abs(ctx.camera.far - far) / ctx.camera.far > 0.001;
+    isUnusablePlane(ctx.camera.far) || Math.abs(ctx.camera.far - far) / ctx.camera.far > 0.001;
 
   if (nearChanged || farChanged) {
     ctx.camera.near = near;

@@ -429,8 +429,8 @@ test.describe('Position Bounds and Clipping Planes', () => {
     // And the consequence that actually matters: depth quantization at the
     // eye distance, on the 24-bit depth buffer, expressed as a fraction of
     // the scene radius. Measured ~7.6e-4 of the radius with the unbounded
-    // floor versus ~1.3e-6 with the bound, so this threshold sits ~2 orders
-    // below the fixed value and ~2 above the broken one — it discriminates
+    // floor versus ~1.3e-6 with the bound, so this threshold sits ~1 order
+    // above the fixed value and ~2 below the broken one — it discriminates
     // rather than merely passing.
     const deltaZ =
       ((info.dist * info.dist * (info.far - info.near)) / (info.near * info.far)) *

@@ -419,8 +419,9 @@ describe('bounds-math', () => {
     });
 
     it('dominates the minNearForRadius backstop for every non-degenerate sphere', () => {
-      // far >= R always holds (far = dist + R, dist >= 0), so far/1000 is
-      // always >= 1e-3*R, which is 500x the 2e-6*R backstop. The backstop
+      // far >= R always holds (far = dist + R, dist >= 0), so
+      // far/MAX_NEAR_FAR_RATIO is always >= 8.3e-4*R, which is ~420x the
+      // 2e-6*R backstop. The backstop
       // therefore only ever surfaces at R -> 0. Pinning this keeps the
       // Math.max in nearPlaneFloor honest: if someone raises
       // MIN_NEAR_RADIUS_FACTOR back into the dominant position, the

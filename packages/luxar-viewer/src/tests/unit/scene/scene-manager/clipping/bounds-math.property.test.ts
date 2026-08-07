@@ -162,7 +162,7 @@ describe('bounds-math properties', () => {
     //
     //   dist - R > (dist + R) / C   ⟺   dist > R · (C + 1) / (C - 1)
     //
-    // i.e. out to dist ≈ 1.002 · R for C = 1000. That last 0.2% matters,
+    // i.e. out to dist ≈ 1.0017 · R at C = 1200. That last fraction matters,
     // because it is where the floor sits HIGHEST relative to `nearCull` and so
     // where the losslessness margin is thinnest — the true worst case is there,
     // not on the sphere surface (fade 0.00755 vs 0.00725). An earlier version

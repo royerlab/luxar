@@ -470,6 +470,36 @@ describe('updateDynamicFromCache', () => {
     }
   );
 
+  // A FINITE but non-positive current plane is the sticky case a plain
+  // `Number.isFinite` hatch misses: `Math.abs(current - near) / current` is
+  // NEGATIVE for a negative `current`, so the > 0.001 gate is false for every
+  // possible new value and the camera stays poisoned forever. `restoreCamera`
+  // (`core/app/snapshot/viewer-snapshot.ts`) writes a snapshot's planes onto
+  // the camera verbatim, so such a pair really can arrive. As above, the
+  // other plane is pinned to the value the formula will produce so only the
+  // hatch under test can unstick the camera.
+  it.each([['near'], ['far']] as const)('recovers a camera whose %s is negative', (poisoned) => {
+    const bad = -1;
+    const scene = new THREE.Scene();
+    scene.userData = { positionBounds: { min: [-10, -10, -10], max: [10, 10, 10] } };
+    const camera = makeCamera(new THREE.Vector3(0, 0, 100), 0.1, 1000);
+    const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
+    ctx.boundsCache.ensure(scene);
+    const expected = calculateClippingPlanesFromSphere(ctx.boundsCache.getSphere()!, {
+      x: 0,
+      y: 0,
+      z: 100,
+    });
+
+    camera.near = poisoned === 'near' ? bad : expected.near;
+    camera.far = poisoned === 'far' ? bad : expected.far;
+
+    updateDynamicFromCache(ctx);
+
+    expect(camera.near).toBeCloseTo(expected.near, 10);
+    expect(camera.far).toBeCloseTo(expected.far, 10);
+  });
+
   // INFINITE bounds are the case where the non-finite guard on the COMPUTED
   // pair is load-bearing: near and far are both Infinity, and
   // `Math.abs(0.1 - Infinity) / 0.1` really is > 0.001, so the change gate

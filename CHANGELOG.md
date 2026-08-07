@@ -55,11 +55,11 @@ tracks camera distance and the quantization changes with it.
 
 The near-plane floor is now `nearPlaneFloor(R, far) = max(minNearForRadius(R),
 far / MAX_NEAR_FAR_RATIO)` with `MAX_NEAR_FAR_RATIO = 1200`, shared by the
-auto-adjust and per-frame dynamic paths, with `MAX_NEAR_FAR_RATIO = 1200`. On
+auto-adjust and per-frame dynamic paths. On
 the case above `near` becomes 0.0508 and depth quantization improves
 4.10e-2 → 8.47e-5 world units — **485x** finer.
 
-`1000` is derived, not picked. A larger C means a smaller floor, so two
+`1200` is derived, not picked. A larger C means a smaller floor, so two
 constraints push C _up_ and only the wish to keep precision pushes down:
 C > 551 keeps the floor in front of the orbit target at maximum zoom-in, and
 C ≥ 993 keeps it inside the band where the Points / Lines / GSplats vertex
