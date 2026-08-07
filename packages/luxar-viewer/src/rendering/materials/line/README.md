@@ -44,7 +44,10 @@ either `uPerspectiveLineScale = resY / tan(fov/2)` or
 `uOrthoLineScale = 2·resY / frustumHeight` (precomputed CPU-side so the
 shader has no `tan()` or projection-mode divide), clamps to
 `[1.5 px, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
-offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × clampedPixelWidth`.
+offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × startJoinWidth` /
+`endJoinWidth` — the clamped pixel half-width of the END this corner sits at,
+which is segment-constant and equals the per-vertex clamp exactly at the corner
+it is consumed at (the join below needs it segment-constant; see there).
 The fragment stage shades
 `capFactor × perpFalloff × edgeAA × widthScale × vWidthFade × nearFade` (the near
 fade is computed PER-FRAGMENT from the interpolated view depth `vViewZ` — a
@@ -173,16 +176,19 @@ coordinate and the super-Gaussian cross-section is unchanged.
 Both sides of a joint must take the same branch, or one rotated edge has
 nothing to tile against and rasterises as a flap. The guards are therefore
 computed from operands that are identical on either side — the shared
-vertex's width and depth, and `min()` over the two lengths — with the
-directions read in a canonical order (incoming edge first):
+vertex's width, the depths of the joint's two FAR endpoints (NOT the shared
+vertex's own; see the bullet below), and `min()` over the two lengths — with
+the directions read in a canonical order (incoming edge first):
 
 - miter limit `grow = sqrt(2/(1+turn)) ≤ 2` (θ ≤ 120°)
 - overshoot on the **axial** reach `R·tan(θ/2) ≤ ½·min(pixelLen, partnerLen)`
   — not on `|M|`, which is ≈R always and would disable the join on every
   polyline whose segments are shorter than twice the tube radius, i.e.
   exactly the dense-curve case
-- the partner must be in front of the near plane, and this endpoint must
-  actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
+- BOTH far endpoints of the joint — the partner's and this segment's own —
+  must be in front of the near plane (testing only the partner's has each side
+  testing a different point, so one side can miter alone against nothing), and
+  this endpoint must actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
 - a **rendered-width gate** of 2 px: the wedge has area ~θ·R²/2, so below
   that it is sub-pixel and the line is already pinned to the 1.5 px floor
   with its intensity faded. The cost then lands only where the benefit is —
@@ -197,11 +203,14 @@ Where the block is skipped, the code-implied cap above applies instead, which
 is exact for the straight and gentle joints that dominate real polyline data
 and are projection-invariant anyway.
 
-**Currently the miter geometry lives on the visual GLSL path only.** The TSL
-factory and both picking shaders decode the joint code identically — so the
-endpoint cap agrees across all four — but do not yet build the join. Until
-they do, a mitred joint is a pixel-level difference between the WebGL2 visual
-path and the other three.
+All four stages build the join from one source: the visual and pick GLSL vertex
+shaders share `GLSL_LINE_JOIN`'s `luxarLineJoin`, and the visual and pick TSL
+factories share its twin `tslLineJoin` (`_shared/tsl-helpers.ts`). Parity tests
+assert the two backends agree on the VISUAL join — end→start, END–END, and a
+tapered perspective joint (`line-join-*` in the TSL harness) — so a mitred
+joint is not a WebGL2/WebGPU difference. The pick stages run the same helper by
+construction, but no pick fixture carries a slot-bearing joint code, so a
+mitred corner's pick footprint is not pixel-pinned on either backend.
 
 ## Geometry and storage layout
 

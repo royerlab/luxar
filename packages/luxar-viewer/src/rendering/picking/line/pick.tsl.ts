@@ -317,7 +317,6 @@ export function linePickWebGPUFactory(
 
     const minPixelWidth = float(1.5);
     const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0)).toVar();
-    const clampedPixelWidth: TSLNode = clamp(rawPixelWidth, minPixelWidth, maxPW);
     const vWidthFadeVal: TSLNode = rawPixelWidth
       .lessThanEqual(maxPW)
       .select(float(1.0), maxPW.div(max(rawPixelWidth, float(1e-4))).toVar());
@@ -331,27 +330,43 @@ export function linePickWebGPUFactory(
     // sentinel only half the quad and leave a visible wedge (issue #849).
     // Gate on the MAX of the pixel width at both clipped endpoints so all
     // four vertices take the same branch.
+    //
+    // The same two endpoint widths give the quad's per-END clamped half-widths
+    // (visual-factory parity, shader-tsl.ts): a per-VERTEX clamp would reach the
+    // join block, which drives two `flat` cap varyings, so its width-gated
+    // decisions must be segment-constant. A no-op at the corner each offset is
+    // consumed at. Ortho width is depth-independent and tA/tB are the constants
+    // 0/1 there, so that graph stays free of perspective-only nodes.
     let pathological: TSLNode | null = null;
-    if (!config.isOrtho) {
+    let startJoinWidth: TSLNode;
+    let endJoinWidth: TSLNode;
+    if (config.isOrtho) {
+      startJoinWidth = clamp(startW.mul(uOrthoLineScale), minPixelWidth, maxPW).toVar();
+      endJoinWidth = clamp(endW.mul(uOrthoLineScale), minPixelWidth, maxPW).toVar();
+    } else {
       const startPixelWidth: TSLNode = mix(startW, endW, tA)
         .mul(uPerspectiveLineScale)
-        .div(max(mvStart.z.negate(), nearCull));
+        .div(max(mvStart.z.negate(), nearCull))
+        .toVar();
       const endPixelWidth: TSLNode = mix(startW, endW, tB)
         .mul(uPerspectiveLineScale)
-        .div(max(mvEnd.z.negate(), nearCull));
+        .div(max(mvEnd.z.negate(), nearCull))
+        .toVar();
       const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
       pathological = startDepth
         .lessThan(nearCull.mul(2.0))
         .and(endDepth.lessThan(nearCull.mul(2.0)))
         .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
+      startJoinWidth = clamp(startPixelWidth, minPixelWidth, maxPW).toVar();
+      endJoinWidth = clamp(endPixelWidth, minPixelWidth, maxPW).toVar();
     }
 
     // Join geometry (#790) — visual-factory parity, so the pick quad is the
     // SAME quad the eye sees at a mitred corner. Both ends are evaluated on
     // every vertex to keep the two `flat` cap varyings segment-constant; see
     // shader-tsl.ts / shader-glsl.ts.
-    const startOffset: TSLNode = vec2(perpendicular.mul(clampedPixelWidth)).toVar();
-    const endOffset: TSLNode = vec2(perpendicular.mul(clampedPixelWidth)).toVar();
+    const startOffset: TSLNode = vec2(perpendicular.mul(startJoinWidth)).toVar();
+    const endOffset: TSLNode = vec2(perpendicular.mul(endJoinWidth)).toVar();
     const startJoinCap: TSLNode = float(-1.0).toVar();
     const endJoinCap: TSLNode = float(-1.0).toVar();
     if (resolveLineJoin(config.join) > 0.5) {
@@ -364,14 +379,19 @@ export function linePickWebGPUFactory(
         selfSlot: int(aSortedIndex),
         lineDir,
         pixelLen,
-        clampedPixelWidth,
       };
+      // `selfFarDepth` is the ORIGINAL (pre-clipping) depth of the segment's
+      // OTHER endpoint — the near-plane guard needs both far endpoints of the
+      // joint, so the start call passes the END's depth and the end call the
+      // START's.
       tslLineJoin({
         ...shared,
         atEnd: false,
         reachesVertex: tA.lessThanEqual(0.0),
         jointCode: aStartJointCode,
         sharedNdc: ndcStart,
+        joinPixelWidth: startJoinWidth,
+        selfFarDepth: endDepth,
         cornerOffset: startOffset,
         capValue: startJoinCap,
       });
@@ -381,6 +401,8 @@ export function linePickWebGPUFactory(
         reachesVertex: tB.greaterThanEqual(1.0),
         jointCode: aEndJointCode,
         sharedNdc: ndcEnd,
+        joinPixelWidth: endJoinWidth,
+        selfFarDepth: startDepth,
         cornerOffset: endOffset,
         capValue: endJoinCap,
       });

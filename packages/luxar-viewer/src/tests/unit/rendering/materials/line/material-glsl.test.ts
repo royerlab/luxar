@@ -166,9 +166,12 @@ describe('LineMaterial', () => {
 
       // Check for screen-space expansion with aspect ratio handling
       expect(material.vertexShader).toContain('perpendicular');
-      // pixel width is now `clampedPixelWidth`/`rawPixelWidth`/`vPixelWidth`
+      // pixel width is `rawPixelWidth` (what `vPixelWidth` / `vWidthFade`
+      // carry) plus the two per-END clamps the quad actually expands by,
       // because the vertex shader applies a max-pixel-width clamp.
-      expect(material.vertexShader).toContain('clampedPixelWidth');
+      expect(material.vertexShader).toContain('rawPixelWidth');
+      expect(material.vertexShader).toContain('startJoinWidth');
+      expect(material.vertexShader).toContain('endJoinWidth');
       // `pixelDir` is computed directly from NDC endpoints — `pixelStart`
       // / `pixelEnd` no longer exist (the +0.5 bias cancels under
       // subtraction).
@@ -216,6 +219,44 @@ describe('LineMaterial', () => {
       // Check for discard outside line width
       expect(material.fragmentShader).toContain('discard');
       expect(material.fragmentShader).toContain('p >= 1.0');
+    });
+
+    it('#790 the join block orients the partner leg on atEnd and guards BOTH far endpoints', () => {
+      // Orienting on `partnerSharesItsStart` yields the PARTNER's traversal
+      // direction, which is the negation of what an END-END or START-START
+      // joint needs: a collinear joint then reads turn = -1, the miter limit
+      // rejects it, and clamp(turn, 0, 1) keeps the soft cap (#780 dimming).
+      // The numeric pin is tests/unit/rendering/line-join-math.test.ts; this
+      // ties the shader text to that mirror.
+      expect(GLSL_LINE_JOIN).toContain(
+        'vec2 partnerDelta = atEnd ? (farPx.xy - sharedPx) : (sharedPx - farPx.xy);'
+      );
+      expect(GLSL_LINE_JOIN).not.toMatch(/partnerDelta\s*=\s*partnerSharesItsStart/);
+      // ...and the near-plane guard is the CONJUNCTION over both far
+      // endpoints, so the two sides test the same pair and branch alike.
+      expect(GLSL_LINE_JOIN).toContain('float selfFarDepth');
+      expect(GLSL_LINE_JOIN).toContain('farPx.z >= nearCull && selfFarDepth >= nearCull');
+    });
+
+    it('#790 both vertex stages hand luxarLineJoin each END its own segment-constant width', () => {
+      // The join writes two `flat` cap varyings, so a per-VERTEX width lets the
+      // t=0 and t=1 corners of a tapered / foreshortened segment straddle the
+      // 2 px gate and disagree — resolved from the provoking vertex alone,
+      // which WebGL takes from the last vertex and WGSL from the first.
+      const material = new LineMaterial();
+      const stages: Array<[string, string]> = [
+        ['visual vertex', material.vertexShader],
+        ['pick vertex', LINE_PICK_VERTEX_SHADER],
+      ];
+      for (const [label, src] of stages) {
+        expect(src, `${label}: start end`).toContain(
+          'lineDir, pixelLen, startJoinWidth, endDepth, nearCull'
+        );
+        expect(src, `${label}: end end`).toContain(
+          'lineDir, pixelLen, endJoinWidth, startDepth, nearCull'
+        );
+        expect(src, `${label}: no per-vertex width`).not.toContain('clampedPixelWidth');
+      }
     });
   });
 

@@ -241,10 +241,23 @@ export interface TSLLineJoinArgs {
   /** This segment's unit direction in pixel space. */
   readonly lineDir: TSLNode;
   readonly pixelLen: TSLNode;
-  readonly clampedPixelWidth: TSLNode;
+  /**
+   * THIS END's clamped pixel half-width — segment-constant, NOT the calling
+   * vertex's. Both width-dependent decisions below (the 2 px gate and the
+   * axial-overshoot guard) feed a `flat` cap varying, so a per-vertex width
+   * would let the t=0 and t=1 corners of a tapered or foreshortened segment
+   * answer differently and hand the cap to the provoking vertex alone (WGSL
+   * provokes first, WebGL last — so the backends would disagree too).
+   */
+  readonly joinPixelWidth: TSLNode;
+  /**
+   * View-space depth (-mvZ) of THIS segment's far endpoint, i.e. the one that
+   * is NOT the shared vertex, taken from the UNCLIPPED endpoint depths.
+   */
+  readonly selfFarDepth: TSLNode;
   /**
    * OUT — a vec2 `.toVar()` the caller pre-set to `perpendicular *
-   * clampedPixelWidth`. Overwritten with the miter point only where the join
+   * joinPixelWidth`. Overwritten with the miter point only where the join
    * actually applies, so every skipped path keeps the shipped expansion.
    */
   readonly cornerOffset: TSLNode;
@@ -292,7 +305,8 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     sharedNdc,
     lineDir,
     pixelLen,
-    clampedPixelWidth,
+    joinPixelWidth,
+    selfFarDepth,
     cornerOffset,
     capValue,
   } = args;
@@ -317,7 +331,7 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     .or(jointCode.lessThan(-2.5))
     .and(partnerSlot.notEqual(selfSlot));
 
-  const gate: TSLNode = clampedPixelWidth
+  const gate: TSLNode = joinPixelWidth
     .greaterThan(float(LINE_JOIN_MIN_HALF_WIDTH))
     .and(reachesVertex)
     .and(namesAPartner);
@@ -345,19 +359,32 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     ).toVar();
     const sharedPx: TSLNode = vec2(sharedNdc.mul(uResolution.mul(0.5))).toVar();
 
-    // The partner runs FROM the shared vertex TO its far endpoint when it
-    // shares its start, and the other way when it shares its end.
-    const partnerDelta: TSLNode = vec2(
-      partnerSharesItsStart.select(farPx.sub(sharedPx), sharedPx.sub(farPx))
-    ).toVar();
-    // (partnerSharesItsStart stays a runtime node — it is decoded from the
-    // per-endpoint joint code, unlike `atEnd` which the caller fixes.)
+    // Orient the partner leg on THIS segment's traversal sense — on `atEnd`,
+    // NOT on which of the partner's endpoints is the shared one. With
+    // dirIn = atEnd ? lineDir : partnerDir (and dirOut its mirror) the chain
+    // runs through the joint the way THIS segment traverses it, so the partner
+    // leg must point AWAY from the shared vertex when this segment ARRIVES
+    // there and INTO it when this segment LEAVES it. Orienting on
+    // partnerSharesItsStart is only right for end->start / start->end chains:
+    // at an END-END or START-START joint it negates the direction this joint
+    // needs, so a collinear joint reads turn = -1, the miter limit rejects it,
+    // and clamp(turn, 0, 1) keeps the soft cap (the #780 dimming). `atEnd` is a
+    // build-time JS boolean, so this ternary folds at graph-build time;
+    // partnerSharesItsStart stays a runtime `.select()` above because it is
+    // decoded per-endpoint from the joint code and only chooses the TEXEL.
+    const partnerDelta: TSLNode = vec2(atEnd ? farPx.sub(sharedPx) : sharedPx.sub(farPx)).toVar();
     const partnerLen: TSLNode = length(partnerDelta).toVar();
-    const partnerInFront: TSLNode = isOrtho
+    // BOTH far endpoints must clear the near plane, not just the fetched one:
+    // testing only the partner's makes each side test a DIFFERENT point, so for
+    // A running front->shared meeting B running shared->behind, A declines while
+    // B miters alone and B's rotated edge has nothing to tile against. With the
+    // conjunction A tests {A.far, B.far} and B tests {B.far, A.far} — the same
+    // pair — so both take the same branch. Inert under ortho (no 1/z).
+    const bothFarInFront: TSLNode = isOrtho
       ? float(1.0).greaterThan(0.0)
-      : mvFar.z.negate().greaterThanEqual(nearCull);
+      : mvFar.z.negate().greaterThanEqual(nearCull).and(selfFarDepth.greaterThanEqual(nearCull));
 
-    If(partnerInFront.and(partnerLen.greaterThan(0.0001)).and(pixelLen.greaterThan(0.0001)), () => {
+    If(bothFarInFront.and(partnerLen.greaterThan(0.0001)).and(pixelLen.greaterThan(0.0001)), () => {
       // CANONICAL operand order — incoming edge first, outgoing second — so
       // both segments meeting here evaluate the same expression and take the
       // same branch. A branch disagreement leaves one diagonal edge with
@@ -384,7 +411,7 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
       // tests read operands identical from either side, so the two quads
       // always agree on whether this joint is mitred.
       const grow: TSLNode = sqrt(float(2.0).div(max(turn.add(1.0), float(1e-6)))).toVar();
-      const axialReach: TSLNode = clampedPixelWidth
+      const axialReach: TSLNode = joinPixelWidth
         .mul(sqrt(max(grow.mul(grow).sub(1.0), float(0.0))))
         .toVar();
       If(
@@ -399,7 +426,7 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
           // nothing may dim it.
           const perpIn: TSLNode = vec2(dirIn.y.negate(), dirIn.x);
           const perpOut: TSLNode = vec2(dirOut.y.negate(), dirOut.x);
-          cornerOffset.assign(perpIn.add(perpOut).mul(clampedPixelWidth.div(turn.add(1.0))));
+          cornerOffset.assign(perpIn.add(perpOut).mul(joinPixelWidth.div(turn.add(1.0))));
           capValue.assign(float(1.0));
         }
       );

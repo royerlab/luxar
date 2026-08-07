@@ -1730,7 +1730,7 @@ def generate_line_joints_test() -> None:
         straight_1w    straight polyline, segment length = width     (dense control)
         curve_smooth   ~120-segment sinusoid, gentle bends           (PRIMARY TARGET)
         zigzag_90      right-angle zigzag                            (sharp bends)
-        star_hub       9-ray hub, degree-9 joint                     (must not regress)
+        star_hub       9 rays meeting at a point, all ends FREE      (must not regress)
         free_ends      isolated segments, no joints at all           (must not regress)
 
     The two STRAIGHT bands are the metrics' own null control: collinear quads
@@ -1851,9 +1851,12 @@ def generate_line_joints_test() -> None:
                 up = not up
             polyline("zigzag_90", plane(np.stack([zx, zy], axis=1)), width)
 
-            # Degree-9 hub: nine rays from one point, each its own polyline, so
-            # the shared vertex has degree 9 and can never be mitered (the
-            # kernel emits the hub sentinel). Must be untouched by the fix.
+            # Nine rays radiating from one point, each its OWN node — so they
+            # merely coincide in space and nothing joins them: every ray is a
+            # one-segment polyline with two FREE ends (code 0), and no
+            # degree->=3 hub sentinel is produced anywhere in this band. What it
+            # pins is therefore that a dense cluster of free ends is untouched
+            # by the join, at nine different angles through one point.
             hub = np.array([120.0, band_y["star_hub"]])
             for k in range(9):
                 a = np.pi * (0.08 + 0.84 * k / 8.0)

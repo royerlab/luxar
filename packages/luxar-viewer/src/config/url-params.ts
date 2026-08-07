@@ -219,14 +219,14 @@ export interface UrlParams {
   dpr: number | null;
 
   /**
-   * Force a line join style for the session (`?lineJoin=none|overlap|miter`).
+   * Force a line join style for the session (`?lineJoin=none|miter`).
    *
    * Overrides whatever each node authored, which is exactly its purpose: it is
    * a debugging and workaround lever, so it must win over the scene file.
    * Precedence is `?lineJoin=` > authored node attribute > the built-in
    * default. `null` (missing or unrecognised) means "no override" — distinct
    * from `'none'`, which is an explicit request for no join geometry. See
-   * `rendering/materials/line/join-style.ts`.
+   * `types/line-join.ts`.
    */
   lineJoin: LineJoinStyle | null;
 }

@@ -252,7 +252,22 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vElementId = luxarElementIdParts();
         return;
       }
-      float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
+      // The two clamped pixel half-widths the quad expands by, one per END —
+      // visual-shader parity (shader-glsl.ts carries the full rationale): a
+      // per-VERTEX clamp of rawPixelWidth would reach luxarLineJoin, which
+      // drives two "flat" cap varyings, so its width-gated decisions must be
+      // segment-constant or the four corners of a tapered / foreshortened
+      // segment disagree. Reuses the endpoint widths the #849 cull already
+      // computed. A no-op at the corner each offset is consumed at (tEff == tA
+      // and mvPos == mvStart at t=0, symmetrically at t=1).
+      float startJoinWidth = clamp(
+        (uIsOrtho == 1) ? mix(startW, endW, tA) * uOrthoLineScale : startPixelWidth,
+        minPixelWidth, maxPW
+      );
+      float endJoinWidth = clamp(
+        (uIsOrtho == 1) ? mix(startW, endW, tB) * uOrthoLineScale : endPixelWidth,
+        minPixelWidth, maxPW
+      );
       vWidthFade = (rawPixelWidth <= maxPW) ? 1.0 : (maxPW / max(rawPixelWidth, 1e-4));
       vPixelWidth = rawPixelWidth;
       vPerpNorm = aQuadCorner.y;
@@ -262,16 +277,19 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // (and the plain-perpendicular corner outside it picks a segment that no
       // longer draws there). Same shared helper, same operands, so the two
       // stages agree by construction rather than by two copies of the math
-      // staying in sync. Both ends are evaluated on every vertex so the two
-      // "flat" cap varyings stay segment-constant — see shader-glsl.ts for why
-      // a per-corner write splits the quad along its diagonal.
+      // staying in sync. Both ends are evaluated on every vertex, each with its
+      // OWN width, so the two "flat" cap varyings stay segment-constant — see
+      // shader-glsl.ts for why a per-corner write splits the quad along its
+      // diagonal. The trailing depth is the segment's FAR endpoint (the END's
+      // for the start call, the START's for the end call), taken from the
+      // ORIGINAL pre-clipping depths for the helper's near-plane guard.
       vec3 startJoin = luxarLineJoin(
         false, tA <= 0.0, aStartJointCode, ndcStart,
-        lineDir, pixelLen, clampedPixelWidth, nearCull
+        lineDir, pixelLen, startJoinWidth, endDepth, nearCull
       );
       vec3 endJoin = luxarLineJoin(
         true, tB >= 1.0, aEndJointCode, ndcEnd,
-        lineDir, pixelLen, clampedPixelWidth, nearCull
+        lineDir, pixelLen, endJoinWidth, startDepth, nearCull
       );
       if (startJoin.z >= 0.0) vCapSuppressStart = startJoin.z;
       if (endJoin.z >= 0.0) vCapSuppressEnd = endJoin.z;

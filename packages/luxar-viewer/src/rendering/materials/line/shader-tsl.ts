@@ -489,8 +489,6 @@ export function lineWebGPUFactory(
 
     const minPixelWidth = float(1.5);
     const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0)).toVar();
-    const clampedPixelWidth: TSLNode = clamp(rawPixelWidth, minPixelWidth, maxPW);
-
     // Width fade for clamped extreme cases. `.toVar()` on the
     // expression branch so select() picks the right concrete value.
     const vWidthFadeVal: TSLNode = rawPixelWidth
@@ -507,19 +505,39 @@ export function lineWebGPUFactory(
     // the clamp — the quad is partially sentinelled and a visible wedge
     // survives (issue #849). Gate on the MAX of the pixel width at both
     // clipped endpoints so all four vertices take the same branch.
+    // The same two endpoint widths also give the quad's per-END clamped
+    // half-widths. Deliberately not a per-VERTEX clamp of rawPixelWidth (width
+    // interpolates and the perspective divide uses this vertex's depth): the
+    // join drives two `flat` cap varyings, so its width-gated decisions must be
+    // segment-constant or the four corners of a tapered / foreshortened segment
+    // disagree. A no-op where each offset is CONSUMED: at a t=0 vertex
+    // tEff == tA and mvPos == mvStart, so the per-vertex clamp equals
+    // startJoinWidth exactly (symmetrically at t=1). Under ortho the width is
+    // depth-independent and tA/tB are the constants 0/1 (segment clipping is
+    // perspective-only), so the ortho graph gets startW/endW directly and no
+    // perspective-only node.
     let pathological: TSLNode | null = null;
-    if (!config.isOrtho) {
+    let startJoinWidth: TSLNode;
+    let endJoinWidth: TSLNode;
+    if (config.isOrtho) {
+      startJoinWidth = clamp(startW.mul(uOrthoLineScale), minPixelWidth, maxPW).toVar();
+      endJoinWidth = clamp(endW.mul(uOrthoLineScale), minPixelWidth, maxPW).toVar();
+    } else {
       const startPixelWidth: TSLNode = mix(startW, endW, tA)
         .mul(uPerspectiveLineScale)
-        .div(max(mvStart.z.negate(), nearCull));
+        .div(max(mvStart.z.negate(), nearCull))
+        .toVar();
       const endPixelWidth: TSLNode = mix(startW, endW, tB)
         .mul(uPerspectiveLineScale)
-        .div(max(mvEnd.z.negate(), nearCull));
+        .div(max(mvEnd.z.negate(), nearCull))
+        .toVar();
       const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
       pathological = startDepth
         .lessThan(nearCull.mul(2.0))
         .and(endDepth.lessThan(nearCull.mul(2.0)))
         .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
+      startJoinWidth = clamp(startPixelWidth, minPixelWidth, maxPW).toVar();
+      endJoinWidth = clamp(endPixelWidth, minPixelWidth, maxPW).toVar();
     }
 
     // === Join geometry at degree-2 polyline joints (#790) ===
@@ -535,8 +553,8 @@ export function lineWebGPUFactory(
     // quad provoke from different vertices, so a per-corner cap write would
     // split the quad along its diagonal (and WebGL's last-vertex rule and
     // WGSL's first-vertex one would disagree). See shader-glsl.ts.
-    const startOffset: TSLNode = vec2(perpendicular.mul(clampedPixelWidth)).toVar();
-    const endOffset: TSLNode = vec2(perpendicular.mul(clampedPixelWidth)).toVar();
+    const startOffset: TSLNode = vec2(perpendicular.mul(startJoinWidth)).toVar();
+    const endOffset: TSLNode = vec2(perpendicular.mul(endJoinWidth)).toVar();
     const startJoinCap: TSLNode = float(-1.0).toVar();
     const endJoinCap: TSLNode = float(-1.0).toVar();
     if (resolveLineJoin(config.join) > 0.5) {
@@ -549,17 +567,21 @@ export function lineWebGPUFactory(
         selfSlot: int(aSortedIndex),
         lineDir,
         pixelLen,
-        clampedPixelWidth,
       };
       // `reachesVertex`: a near-clipped endpoint was moved onto the nearCull
       // plane, so it is no longer AT its source vertex and no neighbour meets
-      // it there.
+      // it there. `selfFarDepth` is the ORIGINAL (pre-clipping) depth of the
+      // segment's OTHER endpoint — the near-plane guard needs both far
+      // endpoints of the joint, so the start call passes the END's depth and
+      // the end call the START's.
       tslLineJoin({
         ...shared,
         atEnd: false,
         reachesVertex: tA.lessThanEqual(0.0),
         jointCode: aStartJointCode,
         sharedNdc: ndcStart,
+        joinPixelWidth: startJoinWidth,
+        selfFarDepth: endDepth,
         cornerOffset: startOffset,
         capValue: startJoinCap,
       });
@@ -569,6 +591,8 @@ export function lineWebGPUFactory(
         reachesVertex: tB.greaterThanEqual(1.0),
         jointCode: aEndJointCode,
         sharedNdc: ndcEnd,
+        joinPixelWidth: endJoinWidth,
+        selfFarDepth: startDepth,
         cornerOffset: endOffset,
         capValue: endJoinCap,
       });

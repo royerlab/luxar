@@ -363,10 +363,13 @@ test.describe('line join artifacts (#785 / #790)', () => {
       ).toBeGreaterThanOrEqual(N[b].meanFlux * 0.995);
     }
 
-    // --- 2. Bands with no degree-2 joint must not move at all. `star_hub` is
-    // a degree-9 vertex (the kernel emits the hub sentinel, which the join
-    // block rejects) and `free_ends` has no joints whatsoever, so a change in
-    // either means the partner decode is reaching something it should not.
+    // --- 2. Bands with no degree-2 joint must not move at all. Both are FREE
+    // ends: `star_hub`'s nine rays are nine separate nodes, so each is a
+    // one-segment polyline whose two ends carry the free-end sentinel (the rays
+    // merely coincide in space — nothing joins them, and the degree->=3 hub
+    // sentinel is never produced here), and `free_ends` is isolated segments.
+    // So this pins that a free end is untouched by the join; a change in either
+    // means the partner decode is reaching something it should not.
     for (const b of ['star_hub', 'free_ends'] as Band[]) {
       expect(
         Math.abs(M[b].darkOutliers - N[b].darkOutliers),
