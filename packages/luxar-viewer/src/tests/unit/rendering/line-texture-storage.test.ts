@@ -56,10 +56,15 @@ function makeSource(count: number, withScalars = false, withAlphas = false): Lin
     startSharpness[i] = 0.1 * i;
     endSharpness[i] = 0.05 * i;
     segmentLengths[i] = 1.5 + i;
-    // Continuous scalars, deliberately fractional: a writer that accidentally
-    // quantises suppression back to the old boolean contract must fail.
-    startJointCode[i] = 0.25 + 0.5 * (i % 2);
-    endJointCode[i] = 0.25 + 0.5 * ((i + 1) % 2);
+    // A real polyline chain: every interior endpoint names its neighbour's
+    // storage slot, the two outer ends are free. `-(slot + 3)` at a start
+    // (the partner's END is shared) and `+(slot + 1)` at an end (its START
+    // is), so both signs of the encoding ride through the writer. These must
+    // be well-formed codes, not the continuous [0, 1] scalar texel4.yz used to
+    // carry — a fractional value is no longer a legal input and the writer
+    // rejects it.
+    startJointCode[i] = i === 0 ? 0 : -(i - 1 + 3);
+    endJointCode[i] = i === count - 1 ? 0 : i + 1 + 1;
     if (startScalars && endScalars) {
       startScalars[i] = 0.05 * i;
       endScalars[i] = 0.07 * i;
@@ -147,8 +152,8 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
       expect(arr[o + 13]).toBe(src.endColors[p3 + 1]);
       expect(arr[o + 14]).toBe(src.endColors[p3 + 2]);
       expect(arr[o + 15]).toBe(src.endSharpness[i]);
-      // texel 4: segmentLength, startJointCode, endJointCode, 0
-      // (suppression is a continuous [0, 1] Float32 scalar, copied verbatim).
+      // texel 4: segmentLength, startJointCode, endJointCode, 0 (the codes are
+      // exact small integers, copied verbatim — every one here is in range).
       expect(arr[o + 16]).toBe(src.segmentLengths[i]);
       expect(arr[o + 17]).toBe(src.startJointCode[i]);
       expect(arr[o + 18]).toBe(src.endJointCode[i]);

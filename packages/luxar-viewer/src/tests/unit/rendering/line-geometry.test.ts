@@ -161,6 +161,26 @@ describe('clampJointCode — the two independent write-time guards', () => {
     expect(clampJointCode(enc.atStart(MAX_EXACT_JOINT_SLOT + 1), written)).toBe(0);
   });
 
+  it('rule 3: drops a malformed code that decodes to a negative or fractional slot', () => {
+    // The two bounds above are both UPPER bounds, so on their own they accept
+    // 0.75: it decodes to slot -0.25, passes `slot < written` and `slot <=
+    // MAX_EXACT_JOINT_SLOT`, and reaches the shader — which reads it as
+    // partner-bearing (> 0.5) and truncates to partnerSlot = int(0.75) - 1 =
+    // -1, an out-of-range texelFetch. The kernel never emits a fractional
+    // code, but the kernel is not the only producer (the TSL parity harness
+    // hand-authors them), which is precisely why this guard exists.
+    expect(clampJointCode(0.75, 1_000_000)).toBe(0);
+    expect(clampJointCode(0.25, 1_000_000)).toBe(0);
+    expect(clampJointCode(-2.75, 1_000_000)).toBe(0); // decodes to slot -0.25
+    expect(clampJointCode(enc.atStart(3) + 0.5, 1_000_000)).toBe(0);
+    expect(clampJointCode(NaN, 1_000_000)).toBe(0);
+    expect(clampJointCode(Infinity, 1_000_000)).toBe(0);
+    expect(clampJointCode(-Infinity, 1_000_000)).toBe(0);
+    // The well-formed neighbours of those values still ride through.
+    expect(clampJointCode(enc.atStart(0), 1)).toBe(enc.atStart(0));
+    expect(clampJointCode(enc.atEnd(0), 1)).toBe(enc.atEnd(0));
+  });
+
   it('the boundary slot really does survive a float32 round-trip, and the next one does not', () => {
     // Pins WHY MAX_EXACT_JOINT_SLOT is where it is, so the constant cannot be
     // nudged without this failing.
