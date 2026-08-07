@@ -878,9 +878,15 @@ buffer, which is a natural but separate extension (§9). Until then:
   per-vertex alpha below fully opaque** (either makes the surface translucent, §6.2) may show incorrect
   inter-triangle ordering, and the loader logs a one-time warning naming the node
   (`commit-mesh-geometry.ts`, re-evaluated by the Layers panel after a mode/opacity edit). Both arms key
-  on what is observable rather than on what was authored: at `opacity 0.995` `normal` still writes depth
-  and still occludes correctly, and an RGBA array whose alpha is uniformly opaque composites exactly
-  like an RGB one — neither warns.
+  on what is observable rather than on what was authored, and neither warns at `opacity 0.995` with a
+  uniformly-opaque (or absent) alpha channel: `depthWrite` is still on there, which does not make the
+  compositing *exact* — a depth-writing translucent fragment drops what is behind it — but with every
+  fragment at least 99% opaque the dropped term is bounded by `1 − opacity`, so the surface renders as
+  the opaque one it nearly is. Below the threshold `depthWrite` goes off and the error stops being
+  bounded: unsorted alpha-over swaps almost the whole contribution of two overlapping faces. An RGBA
+  array whose alpha is uniformly opaque likewise composites exactly like an RGB one. Per-vertex alpha
+  gets no matching tolerance — one vertex's alpha says nothing about the rest, so any value below fully
+  opaque warns.
 
 Making `opaque` the mesh default is a deliberate asymmetry — it is the only mode that is unconditionally
 correct without sorting, and it is what a surface should look like.

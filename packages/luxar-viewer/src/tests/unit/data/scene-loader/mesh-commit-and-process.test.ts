@@ -393,6 +393,31 @@ describe('commitMeshGeometry — the unsorted-translucency notice (§6.3)', () =
     warn.mockRestore();
   });
 
+  it('pins the threshold: silent just above it, warning just below', async () => {
+    // The band [0.99, 1) is a DELIBERATE blind spot, not an oversight. `depthWrite` is
+    // still on there, which does not make the compositing exact — the front fragment
+    // drops what is behind it — but with no per-vertex alpha every fragment is >= 99%
+    // opaque, so the dropped term is under 1% and the surface renders as the opaque one
+    // it nearly is. One step below, `depthWrite` goes off and nothing bounds the error:
+    // unsorted alpha-over swaps almost the whole contribution of two overlapping faces.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce('/just_opaque', {
+      ...ATTRS,
+      blending_mode: 'normal',
+      opacity: 0.995,
+    } as MeshMetadata);
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+
+    await commitOnce('/just_translucent', {
+      ...ATTRS,
+      blending_mode: 'normal',
+      opacity: 0.98,
+    } as MeshMetadata);
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes('/just_translucent') && m.includes('§6.3'))).toBe(true);
+    warn.mockRestore();
+  });
+
   it('fires on a post-load mode switch, with no further commit', async () => {
     // The gap the commit-only siting left: a STATIC mesh — one whose slice never moves,
     // so it never commits again — could be switched to `normal` in the Layers panel and

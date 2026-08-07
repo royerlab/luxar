@@ -142,12 +142,19 @@ translucency caveat (§6.3) — which the commit path now warns about once per n
 the console rather than only here.
 
 Note the warning's two arms are not the same condition. The opacity arm keys on
-`normalModeDepthWrite` (`>= 0.99`), the threshold where `normal` actually stops
-depth-writing. The per-vertex-alpha arm fires at **any** opacity, because at
-`opacity = 1` a translucent fragment still writes depth and rejects whatever is
-behind it — dropout rather than mis-ordering, and strictly worse. Both arms key on
-what is observable rather than on what was authored: an RGBA colour array whose
-alpha is uniformly opaque composites like an RGB one, so it stays silent.
+`normalModeDepthWrite` (`>= 0.99`), the threshold where `normal` stops depth-writing.
+Depth-writing does not make the compositing exact above it — a translucent fragment
+that writes depth still drops whatever is behind it — but that arm only fires with no
+per-vertex alpha, so every fragment is at least `opacity` opaque and the dropped term
+is bounded by `1 − opacity`. Below the threshold nothing bounds it: unsorted
+alpha-over swaps almost the whole contribution of two overlapping faces.
+
+The per-vertex-alpha arm fires at **any** opacity, because at `opacity = 1` a
+translucent fragment still writes depth and rejects whatever is behind it — dropout
+rather than mis-ordering, and unbounded, since one vertex's alpha says nothing about
+the rest. Both arms key on what is observable rather than on what was authored: an
+RGBA colour array whose alpha is uniformly opaque composites like an RGB one, so it
+stays silent.
 
 ## Testing
 

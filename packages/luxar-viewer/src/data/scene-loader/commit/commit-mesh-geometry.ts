@@ -69,17 +69,25 @@ export function resetTranslucencyNoticesForTesting(): void {
  * **The predicate is two independent clauses, and neither is `opacity < 1`.**
  *
  * The opacity arm reuses {@link normalModeDepthWrite} (the `>= 0.99` threshold)
- * rather than testing `< 1` directly. That threshold is where `normal` mode actually
- * turns `depthWrite` off, i.e. the observable onset of the artifact, and it is the
- * same predicate the material's own blending state keys on — so the warning and the
- * behaviour it warns about cannot drift apart.
+ * rather than testing `< 1` directly, and it is the same predicate the material's own
+ * blending state keys on — so the warning and the behaviour it warns about cannot drift
+ * apart. Above the threshold the compositing is not *exact*: a depth-writing translucent
+ * fragment still drops whatever is behind it. But this arm only fires with NO per-vertex
+ * alpha, so every fragment there is at least `opacity` opaque and the dropped term is
+ * bounded by `1 - opacity`, i.e. under 1% — the surface renders as the opaque one it
+ * nearly is. Below the threshold `depthWrite` goes off and the artifact stops being
+ * bounded: unsorted alpha-over swaps almost the whole contribution of two overlapping
+ * faces, which is the thing worth naming.
  *
  * The per-vertex-alpha arm is deliberately UNCONDITIONAL in opacity, because at
  * `opacity = 1` the failure is worse rather than absent: `depthWrite` is on while
  * `transparent` is true, so a translucent fragment writes depth and whatever is behind
  * it is depth-REJECTED. That is dropout, not mis-ordering, and the opacity arm cannot
- * see it. It keys on alpha that is actually below opaque, not on the presence of a 4th
- * channel — an all-opaque RGBA array composites exactly like an RGB one.
+ * see it. It gets no `1 - opacity`-style tolerance either, because one vertex's alpha
+ * says nothing about the rest: a single translucent vertex is an unbounded dropout
+ * wherever the surface folds over itself. It keys on alpha that is actually below
+ * opaque, not on the presence of a 4th channel — an all-opaque RGBA array composites
+ * exactly like an RGB one.
  *
  * Both inputs are read LIVE off the material rather than from the authored attrs: the
  * Layers panel can switch a node into `normal` or drag its opacity long after load,
