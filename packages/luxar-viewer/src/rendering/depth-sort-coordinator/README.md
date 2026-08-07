@@ -4,16 +4,30 @@
 
 ## Purpose
 
-Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-mesh sorting** (the permutation of `aSortedIndex`) is driven by the `SortWorker` (Phase 2); **cross-mesh (inter-node) ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
+Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-node sorting** is driven by the `SortWorker` (Phase 2); **cross-node ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
 
-This module is the **main-thread authority** for the depth-sort subsystem. It serves every texture-backed geometry with an `aSortedIndex` indirection — **gsplats, points, and lines** — via a geometry-agnostic mechanism: projected 3D centers in, back-to-front permutation out. The commit call sites (`commit-gsplats-geometry.ts`, `commit-points-geometry.ts`, `commit-lines-geometry.ts`) and the app lifecycle (init/dispose) are far apart, so all talk to this module instead of threading a coordinator object through constructors.
+This module is the **main-thread authority** for the depth-sort subsystem. It serves **all four geometry types** via a geometry-agnostic mechanism: projected 3D centers in, back-to-front permutation out. The commit call sites (`commit-gsplats-geometry.ts`, `commit-points-geometry.ts`, `commit-lines-geometry.ts`, `commit-mesh-geometry.ts`) and the app lifecycle (init/dispose) are far apart, so all talk to this module instead of threading a coordinator object through constructors.
+
+**There are two APPLY paths, and only the apply differs.** A "center" is a splat/point center, a line segment midpoint, or a triangle centroid — 3 floats either way, so registration, worker and kernel are shared:
+
+| | Instanced (gsplats, points, lines) | Indexed (mesh) |
+|---|---|---|
+| What is permuted | `aSortedIndex`, a per-instance draw-slot indirection | `geometry.index` itself |
+| Buffering | Double-buffered pair + `uSortedIndexSlot` uniform | Single buffer |
+| Cadence | Chunked: one 4 MB slice per rendered frame, flip on completion | Atomic: the whole visible prefix in one write |
+| Why | A half-written INACTIVE buffer is never drawn | A half-written index buffer is not a permutation — it would draw some triangles twice and others not at all |
+| Owner | `rendering/element-storage.ts` | `triangle-ordering.ts` |
+
+Mesh cannot double-buffer because `geometry.index` is *bound* state: no uniform can select between two index buffers, and reassigning `geometry.index` is the drawn-geometry rebind `applyMeshIndices` exists to avoid. The atomic write costs one upload of a prefix the mesh path already re-uploads on every slice move. Its permutation is applied to the commit's CANONICAL triples (retained on `NodeSortState.triangleSource` only while the node is sorting), never to the live buffer, which would compose successive permutations.
 
 ## File Map
 
 ```
 depth-sort-coordinator/
-└── render-order.ts    — Cross-node renderOrder assignment: BSP partition traversal +
-                         centroid fallback, ONE global scale
+├── render-order.ts      — Cross-node renderOrder assignment: BSP partition traversal +
+│                          centroid fallback, ONE global scale
+└── triangle-ordering.ts — The INDEXED (mesh) apply: face centroids + atomic index
+                           permutation + the draw-acknowledgement lifecycle
 ```
 
 The main facade `rendering/depth-sort-coordinator.ts` owns:
@@ -21,7 +35,7 @@ The main facade `rendering/depth-sort-coordinator.ts` owns:
 - SortWorker spawn + initialization + disposal
 - Per-node **generation** tracking (bumped on every non-noop commit)
 - Single-in-flight-per-node sort rule + queue-exactly-one re-sort
-- Ordering application via `writeSortedIndexOrdering` (element-storage)
+- Ordering application: `writeSortedIndexOrdering` (element-storage) for the instanced types, `writeSortedTriangleOrdering` (`triangle-ordering.ts`) for mesh
 - Per-frame camera-motion re-sort scheduler (angle/translation thresholds)
 - Offline-capture entry point (`resortForCapture` / `isCaptureQuiescent`) — pose-fresh sort + drain to quiescence when the rAF loop is stopped
 - Blending-mode switch hook (TO sorted: reprocess; AWAY: release)
@@ -33,6 +47,12 @@ The submodule `render-order.ts` owns:
 - BSP tree back-to-front traversal (exact, Fuchs–Kedem–Naylor)
 - Centroid fallback (view-space z)
 - One global scale (wrapper groups by mean view-z, parts by BSP rank or centroid)
+
+The submodule `triangle-ordering.ts` owns:
+
+- `computeFaceCentroids` — the mesh "center" payload for the shared kernel
+- `writeSortedTriangleOrdering` — the atomic index permutation, with the rejections that keep a stale ordering from writing a corrupt one
+- The written-but-undrawn acknowledgement map, so the profiler pass reports *uploaded* only after THREE has drawn the permuted index (issue #713), mirroring `acknowledgeSortedIndexOrderingDraw`
 
 ## Architecture
 

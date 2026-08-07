@@ -62,7 +62,7 @@ the storage or LOD layers, and pretending otherwise would produce a worse design
 | nD slicing | ⚠️ Partial | Reuses the slab *semantics*, **not** the clipping algorithm, and needs **its own tolerance strategy** (the Lines one is derived from segment interpolation and would render nothing) — see §5, §5.2.1 |
 | GPU storage | ❌ No | Indexed triangles, not instanced quads — see §2.1 |
 | Per-element extent | ❌ No | A mesh has no `radii`/`widths`/`amplitudes` analog — see §2.2 |
-| Depth sorting | ⚠️ Deferred | Per-triangle, not per-instance — see §6.3 |
+| Depth sorting | ⚠️ Partial | Registration/worker/kernel reused; the APPLY is per-triangle index permutation, not per-instance — see §6.3 |
 | LOD / partition groups | ❌ Excluded | See §9 |
 
 ### 2.1 The storage layer does not transfer
@@ -79,7 +79,8 @@ index buffer, drawn once. Consequently the mesh vertical does **not** use:
 - `element-texture-layout.ts` / `element-storage.ts`
 - the `gpu-buffer-pool` per-geometry adapters
 - `aSortedIndex` addressing
-- the depth-sort coordinator's per-instance permutation
+- the depth-sort coordinator's per-instance APPLY (its registration, worker and
+  kernel *are* shared — see §6.3)
 
 This is not a gap to be closed later; it is the correct shape for the primitive.
 
@@ -816,9 +817,9 @@ model is deliberately minimal and light-free:
     the line shader's `LUXAR_MAX_RGB_CONTRIBUTION` branch (`vec4(gammaColor * a, a)`).
   - `opaque` (mesh default) → a hard alpha **cutout**, see below.
 
-  ⚠️ For `normal`, the unsorted-translucency caveat of §6.3 (no per-triangle depth sort in v1) **compounds**
-  with per-vertex alpha: partially-transparent authored vertices make the missing sort visible, not just a
-  uniform `opacity < 1`.
+  For `normal`, per-triangle depth sorting orders the triangles back-to-front (§6.3), so per-vertex
+  alpha composites correctly. What sorting cannot fix is INTERPENETRATING triangles — a residual shared
+  with the other three types, and the reason `opaque` remains the mesh default.
 
   The max-premultiply and the opaque-cutout emissions are distinct per-mode shader variants — a GLSL
   `#define` exactly like the siblings' `LUXAR_MAX_RGB_CONTRIBUTION` branch (and a graph-baked TSL twin) —
@@ -828,8 +829,9 @@ model is deliberately minimal and light-free:
   either way the harness snapshots each mode separately, which is the point here.)
 - **`opaque` (the mesh default) → alpha is a hard cutout, not smooth transparency.** Decision, stated
   rather than left silent: `opaque` is depth-writing and order-independent (`shaderOutputMode: 'opaque'`,
-  `blending-state.ts`), which is precisely why it is the only mode unconditionally correct without
-  per-triangle sorting (§6.3) — and smooth partial transparency is contradictory there. So under `opaque`
+  `blending-state.ts`), which is precisely why it is the only mode correct with no sorting at all —
+  including when depth sorting is switched off (§6.3) — and smooth partial transparency is
+  contradictory there. So under `opaque`
   the coverage `a = vAlpha · uOpacity` acts as a **hard, order-independent cutout**:
 
   ```glsl
@@ -848,7 +850,7 @@ model is deliberately minimal and light-free:
   change. With authored per-vertex RGBA alpha it instead **erodes** — as `opacity` drops, more vertices
   fall below the cutoff and the surface eats away — never a uniform fade. Either way, animating opacity on
   a default mesh does not cross-fade; a user who wants a *smooth* opacity fade selects `normal` instead
-  (and accepts its §6.3 unsorted caveat).
+  (which is depth sorted, §6.3).
 
   ⚠️ **This chain is *not* currently shared.** `materials/_shared/` provides only sanitizers,
   near-fade, sorted-index addressing (`glsl-lib.ts`, `tsl-helpers.ts`) and the
@@ -875,25 +877,35 @@ inheritance reason at the end of this section. An **explicitly-authored** per-no
 the viewer fallback coexist: the fallback remains the handler for a mode inherited from an ancestor and
 for pre-existing stores.
 
-`normal` on a mesh is drawn **without per-triangle depth sorting** in v1. The depth-sort coordinator
-sorts *instances* via `aSortedIndex`; the mesh analog is permuting triangle triples in the index
-buffer, which is a natural but separate extension (§9). Until then:
+`normal` on a mesh **is** per-triangle depth sorted. The registration, the SortWorker and the sort
+kernel are shared with the other three types — a triangle's "center" is its vertex centroid, which is
+3 floats per element exactly like a splat center or a segment midpoint. Only the APPLY differs, and it
+differs structurally: the instanced types permute the `aSortedIndex` draw-slot indirection, while a
+mesh has no indirection to permute and its ordering is written into `geometry.index` itself
+(`rendering/depth-sort-coordinator/triangle-ordering.ts`).
 
-- `opaque` (the default for mesh, unlike the other types) depth-tests and depth-writes, and is
-  therefore correct;
-- `normal` with `opacity` below the `depthWrite` threshold (`normalModeDepthWrite`, `>= 0.99`) **or any
-  per-vertex alpha below fully opaque** (either makes the surface translucent, §6.2) may show incorrect
-  inter-triangle ordering, and the loader logs a one-time warning naming the node
-  (`commit-mesh-geometry.ts`, re-evaluated by the Layers panel after a mode/opacity edit). Both arms key
-  on what is observable rather than on what was authored, and neither warns at `opacity 0.995` with a
-  uniformly-opaque (or absent) alpha channel: `depthWrite` is still on there, which does not make the
-  compositing *exact* — a depth-writing translucent fragment drops what is behind it — but with every
-  fragment at least 99% opaque the dropped term is bounded by `1 − opacity`, so the surface renders as
-  the opaque one it nearly is. Below the threshold `depthWrite` goes off and the error stops being
-  bounded: unsorted alpha-over swaps almost the whole contribution of two overlapping faces. An RGBA
-  array whose alpha is uniformly opaque likewise composites exactly like an RGB one. Per-vertex alpha
-  gets no matching tolerance — one vertex's alpha says nothing about the rest, so any value below fully
-  opaque warns.
+Two consequences of that difference are worth stating, because they are not free choices:
+
+- **The write is atomic, never chunked.** The instanced path streams a new ordering into an inactive
+  twin attribute and flips a `uSortedIndexSlot` uniform on completion, so no frame ever samples a
+  half-applied permutation. `geometry.index` is BOUND state, not sampled state — a shader cannot select
+  between two index buffers, and reassigning `geometry.index` is the drawn-geometry rebind
+  `applyMeshIndices` exists to avoid. So the whole visible prefix is written in one pass, because a
+  partially-permuted index buffer is **not a permutation**: some triangles would be drawn twice and
+  others not at all, a wrong picture rather than a stale one. The cost is bounded by a quantity the
+  mesh path already pays — `applyMeshIndices` re-uploads the same prefix on every slice move.
+- **The permutation is applied to the canonical triples, not to the live buffer.** The index buffer
+  already holds the previous permutation, so permuting it again would compose the two. The coordinator
+  retains the commit's `ProjectedMeshData.indices` for exactly as long as the node is being sorted.
+
+What remains correct-by-depth-buffer rather than by sorting:
+
+- `opaque` (the default for mesh, unlike the other types) depth-tests and depth-writes, so it is
+  correct whatever the index order is — which is why it is still the default, and why it stays correct
+  when depth sorting is switched off (`?depthSort=0`) or the SortWorker is unavailable.
+- Sorting is per-primitive, so **interpenetrating** triangles still cannot be ordered correctly. That
+  residual is shared with the other three types (overlapping quads have it too) and is inherent to any
+  primitive-granularity sort.
 
 Making `opaque` the mesh default is a deliberate asymmetry — it is the only mode that is unconditionally
 correct without sorting, and it is what a surface should look like.
@@ -975,10 +987,13 @@ Standard mechanism: `pickingSystem.allocatePickId()`, a shadow `THREE.Mesh` shar
 `BufferGeometry` with the pick material, registered via `pickingSystem.registerNode` — exactly as
 points / lines / gsplats do it.
 
-v1 picks at **vertex granularity**. Mesh has no depth sort and therefore no sorted-index indirection
-(§9 defers per-triangle sorting), so — unlike the other three types — the mesh pick vertex shader does
-**not** bind `aSortedIndex` and does **not** call the shared `luxarElementIdParts()` helper (which reads
-`aSortedIndex`). Instead it splits `uint(gl_VertexID)` into low/high 16-bit halves exactly as that
+v1 picks at **vertex granularity**. Mesh has no sorted-index indirection — its depth-sort ordering
+permutes `geometry.index` itself (§6.3) — so unlike the other three types the mesh pick vertex shader
+does **not** bind `aSortedIndex` and does **not** call the shared `luxarElementIdParts()` helper (which
+reads it). That is not a gap the sort has to close: for an indexed draw `gl_VertexID` (WGSL
+`@builtin(vertex_index)`) IS the value fetched from the index buffer, so the element ordinal is
+**invariant under any permutation of the triples**. Depth sorting a mesh therefore cannot desynchronise
+picking from rendering, which is the failure the instanced types' slot-syncing exists to prevent. Instead it splits `uint(gl_VertexID)` into low/high 16-bit halves exactly as that
 helper does and writes them into the same `flat out highp vec2 vElementId` varying the readback already
 understands:
 
@@ -1082,7 +1097,7 @@ need a de-indexed pick geometry or per-corner attributes plus barycentrics — a
 
 **FACE granularity** (e.g. highlighting a whole triangle) is deferred: it needs either a de-indexed pick
 geometry or a per-corner face-id attribute, **plus** a compacted→original face map to stay stable under
-§5.4 compaction. It is a natural follow-up, pairing with the §9 per-triangle-sort / partition work.
+§5.4 compaction. It is a natural follow-up, pairing with the §9 partition work.
 
 ---
 
@@ -1402,17 +1417,20 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 Each of these is a deliberate exclusion, not an oversight. Each should surface clearly — an error, or
 for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rather than silently misbehave.
 
-> This section carried two code follow-ups it OVERSTATED its own compliance on. **Both have
-> now landed**, so the paragraph above is true as written:
+> This section carried two code follow-ups it OVERSTATED its own compliance on, and the
+> §6.3 exclusion one of them mitigated has since been **lifted**:
 >
-> - §6.3's translucent-`normal` warning is implemented in `commit-mesh-geometry.ts`, so the
->   per-triangle-depth-sort exclusion below does surface rather than silently misbehave.
 > - The `add_mesh` refusal message no longer justifies refusing substitutive LOD with
 >   additive's reason. It used to read "the additive/substitutive ladder reduces independent
 >   elements (a surface is connected)" — true of the additive flavour, false of the
 >   substitutive one. The two flavours now get the two separate reasons the rows below give
 >   (`_reject_specialized_parent` / `_reject_structure_params` in
 >   `packages/luxar/src/luxar/core/group/adders/mesh.py`).
+> - §6.3's translucent-`normal` warning was implemented in `commit-mesh-geometry.ts`, and has
+>   since been **removed** — not regressed. It existed as the named mitigation for the
+>   per-triangle-depth-sort exclusion, and that exclusion no longer exists (§6.3, and the note
+>   under the table below). What is left to say about an unsorted `normal` mesh is exactly what
+>   is true of the other three types with depth sorting switched off, and none of them warn.
 
 | Excluded | Why | Natural follow-up |
 |---|---|---|
@@ -1420,11 +1438,19 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 | **Substitutive LOD levels** | Nothing structural, and the machinery makes no independence assumption: a level is an independently-authored `(vertices, faces)` pair, selected by `coverage_fraction`. What is missing is only the PRODUCER. Per-level picking is already solved — the LOD registry hides inactive levels and the picking system skips hidden nodes, so each level is its own pick domain with its own per-vertex label CSR. | `luxar mesh lod` with QEM levels. Viewer side is a two-line widening: flip `GEOMETRY_CAPABILITIES.mesh.lod` and extend `LODGroupMetadata.display_type`. **The cheapest of the LOD family by a wide margin** |
 | **`kind=partition`** | BSP over face centroids, needing vertex duplication at part boundaries plus a per-part split of the per-vertex label CSR. **Bookkeeping, not correctness:** with stored normals split verbatim a duplicated boundary vertex carries an identical position AND normal in both parts, so nothing seams under §6.2's shading — and the derivative variant is per-fragment off the rasterized triangle, hence part-agnostic by construction. Seams arrive only with something RECOMPUTED per part: area-averaged normals, tangent frames, UVs, baked AO. | Highest value for large meshes. Revisit the seam question the moment shading gains any per-part recomputation |
 | **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** — a condition that is now *measured* rather than asserted: `processMeshData` emits a `log.info` for a node whose hidden dims include a continuous one (`noticeContinuousHiddenDim` in `data/scene-loader/process/data-processor-mesh.ts`), naming each such dimension and its unit. Promote when that line starts appearing against real datasets; see TODO item 29 under "Future / Exploratory" for why the deferral is a decision rather than a backlog entry |
-| **Per-triangle depth sorting** | Index-buffer permutation, not instance permutation. The coordinator's double-buffered ordering and chunked apply already exist, and the mesh problem is the *easier* one (permute F triples by face centroid; no per-element extent, no texture indirection). **This is the weakest exclusion in the table**, and the only one with a live user-visible consequence: §6.3's translucent-`normal` warning is its mitigation. | Extend the depth-sort coordinator with an index-permutation path |
 | **Spatial index** | Not merely "see §7": a chunk of faces is not independently meaningful, because the index buffer references vertices anywhere in the array — so a face chunk draws only with the whole vertex buffer resident, or after the same remap/duplicate bookkeeping the partition row describes. An efficiency cliff, not an impossibility: partial loading is achievable, it just forfeits most of the bandwidth win a chunk index exists to buy. Moot in practice as well, since the 512 MiB per-node byte budget binds first (≈22.4M vertices for a 3D float32 mesh, measured), well under §7's ≤-few-million-triangle expectation. | Mirror the lines dual-index loader over faces |
 | **`volumetric` blending** | Not about opacity — about **path length**. Emission–absorption integrates κ over the distance a ray spends inside a participating medium, and a triangle is zero-thickness, so τ = 0 however translucent the surface is. The adjacent feature that DOES make sense — volume rendering bounded by a mesh's front and back faces — is a different thing entirely and is not what this excludes. | — |
 | **Worker projection** | Measure first (§7). | — |
 | ~~**Mesh import formats** (PLY/OBJ/STL/glTF)~~ — **landed** | Independent of the node type, which is why it could ship on its own afterwards. | Shipped as `luxar mesh import` (`luxar/mesh/interop/`), mirroring `gsplat import` |
+
+**Lifted since this table was written:** *per-triangle depth sorting*. It was the weakest exclusion
+here, and the only one with a live user-visible consequence. It turned out to be almost entirely reuse
+— the registration, the SortWorker and the sort kernel are geometry-agnostic and a triangle's centroid
+is 3 floats like any other center — with one genuinely different piece: the apply permutes
+`geometry.index` atomically instead of streaming an `aSortedIndex` indirection, because a half-written
+index buffer is not a permutation. See §6.3 and
+`rendering/depth-sort-coordinator/triangle-ordering.ts`. `GEOMETRY_CAPABILITIES.mesh.depthSortable` is
+now `true`.
 
 ### 9.1 Reveal ladders — an additive prefix as an EFFECT, never as a LOD
 

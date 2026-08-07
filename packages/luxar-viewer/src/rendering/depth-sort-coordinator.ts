@@ -3,11 +3,18 @@
  * (depth-sorting Phases 2-3,
  * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5-§6).
  *
- * Serves every texture-backed geometry with an `aSortedIndex`
- * indirection — gsplats, points, and lines. The mechanism is
- * geometry-agnostic (projected 3D centers in — segment midpoints for
- * lines — back-to-front permutation out); only the commit call sites
- * differ.
+ * Serves all four geometry types. The mechanism is geometry-agnostic
+ * (projected 3D centers in — segment midpoints for lines, face centroids
+ * for mesh — back-to-front permutation out); the commit call sites and
+ * the APPLY differ.
+ *
+ * Two apply paths, because there are two ways to draw a permutation:
+ * - **Instanced** (gsplats, points, lines): rewrite the `aSortedIndex`
+ *   draw-slot indirection, double-buffered and streamed in slices —
+ *   `rendering/element-storage.ts`.
+ * - **Indexed** (mesh): rewrite `geometry.index` itself, atomically —
+ *   `depth-sort-coordinator/triangle-ordering.ts`, which explains why the
+ *   double-buffered streaming trick does not transfer.
  *
  * Module-scoped live authority (the `element-texture-layout.ts` pattern):
  * the commit paths (`commit-gsplats-geometry.ts`,
@@ -76,6 +83,12 @@ import {
   collectRenderOrderSlot,
   setRenderOrderDisplayDimsAccessor,
 } from './depth-sort-coordinator/render-order';
+import {
+  acknowledgeTriangleOrderingDraw,
+  cancelAllTriangleOrderingApplies,
+  cancelTriangleOrderingApply,
+  writeSortedTriangleOrdering,
+} from './depth-sort-coordinator/triangle-ordering';
 import { config } from '../config';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 import { withTimeout } from '../workers/worker-pool/timeout/with-timeout';
@@ -142,6 +155,25 @@ interface NodeSortState {
    * "worker has centers, no sort ever left" — dispatch one now.
    */
   registered: boolean;
+  /**
+   * MESH ONLY: the canonical (unpermuted, winding-corrected) index triples
+   * of the current commit's visible faces, which a resolved ordering
+   * permutes into `geometry.index`.
+   *
+   * The instanced types need no equivalent because their ordering is a
+   * draw-slot indirection written from scratch each time — nothing composes.
+   * A mesh's index buffer, by contrast, already holds the PREVIOUS
+   * permutation, so permuting it again would compose the two and produce
+   * garbage. Keeping the canonical list is what makes each apply
+   * independent of the last.
+   *
+   * Set on every order-dependent mesh commit and cleared on every release
+   * branch, so a mesh only doubles its index memory while it is actually
+   * being sorted. The array is the projection's own output (already a fresh
+   * copy per epoch — `ProjectedMeshData.indices`), so holding it costs a
+   * reference rather than a copy.
+   */
+  triangleSource?: Uint32Array;
 }
 
 let worker: Worker | null = null;
@@ -386,7 +418,13 @@ function ensureDrawAcknowledgementHook(mesh: THREE.Mesh): void {
 
   const previous = mesh.onAfterRender;
   const hook: THREE.Mesh['onAfterRender'] = (...args) => {
-    acknowledgeSortedIndexOrderingDraw(args[3] as THREE.InstancedBufferGeometry);
+    const geometry = args[3];
+    acknowledgeSortedIndexOrderingDraw(geometry as THREE.InstancedBufferGeometry);
+    // The indexed (mesh) apply acknowledges at the same point and for the
+    // same reason. Both are keyed by geometry and both no-op when the
+    // geometry has nothing pending, so calling each unconditionally is
+    // cheaper than discriminating the node type on every rendered frame.
+    acknowledgeTriangleOrderingDraw(geometry);
     previous.apply(mesh, args);
   };
   drawAcknowledgementHooks.set(mesh, hook);
@@ -401,10 +439,16 @@ function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
 }
 
 /**
- * True when the mesh's LIVE mode is order-dependent as rendered. All
- * three geometry types implement the real volumetric math (gsplats
- * phase 1, points phase 3, lines phase 4), so the requested mode IS
- * the rendered mode and `needsDepthSort` judges it directly.
+ * True when the mesh's LIVE mode is order-dependent as rendered.
+ *
+ * `userData.blendingMode` is the RESOLVED mode for every type, which is
+ * what makes one predicate enough across four of them. The three emissive
+ * types implement the real volumetric math (gsplats phase 1, points phase
+ * 3, lines phase 4), so their requested mode IS the rendered mode. Mesh
+ * has no volumetric (a triangle is a zero-thickness surface with no path
+ * length to absorb over — §6.3) and the mesh material maps that request
+ * onto `opaque` before stamping, so the sorted set for mesh is exactly
+ * `normal`.
  */
 function isLiveOrderDependent(mode: BlendingMode | undefined): boolean {
   if (!mode) return false;
@@ -412,8 +456,8 @@ function isLiveOrderDependent(mode: BlendingMode | undefined): boolean {
 }
 
 /**
- * Record a non-noop commit of a sortable node (gsplats, points, or
- * lines). Always bumps the node's generation
+ * Record a non-noop commit of a sortable node (any of the four geometry
+ * types). Always bumps the node's generation
  * (dropping any in-flight sort's result). When the node's LIVE effective
  * blending mode is order-dependent, transfers the projected centers to
  * the SortWorker and requests one sort from the current camera pose.
@@ -431,6 +475,11 @@ function isLiveOrderDependent(mode: BlendingMode | undefined): boolean {
  *   `data.positions` only on the sorted path. The thunk MUST return a
  *   freshly allocated array: the returned buffer is transferred, and a
  *   `subarray` view of a live array would detach that array with it.
+ *
+ * `triangleSource` — MESH ONLY: the canonical visible index triples a
+ * resolved ordering permutes into `geometry.index`. Omitted by the three
+ * instanced types, whose ordering is a draw-slot indirection with nothing
+ * to permute FROM. See {@link NodeSortState.triangleSource}.
  */
 /**
  * Module-scoped monotonic generation source. Generations must be unique
@@ -448,7 +497,8 @@ let nextGeneration = 0;
 export function noteDepthSortCommit(
   mesh: THREE.Mesh,
   centers3: Float32Array | (() => Float32Array),
-  count: number
+  count: number,
+  triangleSource?: Uint32Array
 ): void {
   const nodeId = mesh.uuid;
   let state = nodeStates.get(nodeId);
@@ -466,6 +516,12 @@ export function noteDepthSortCommit(
   }
   ensureDrawAcknowledgementHook(mesh);
   state.generation = ++nextGeneration;
+  // Rebound to THIS commit's triples before the release branch below, which
+  // drops it again: a stale source outliving its commit is the one way the
+  // indexed apply can write a corrupt permutation, and the generation check
+  // alone would not catch it (the ordering and the source would be from
+  // different commits while the generation matched the newer one).
+  state.triangleSource = triangleSource;
 
   // Push the geometry's (possibly just-normalised) slot to the materials
   // NOW, not only on the next per-frame pump: the commit's writers may
@@ -483,6 +539,10 @@ export function noteDepthSortCommit(
     // centers for a node that may not sort again for a long time —
     // and the recorded pose with it (see clearSortPose's invariant).
     clearSortPose(state);
+    // Drop the retained triples too: an unsorted mesh must not keep a
+    // second copy of its index alive for the rest of the session.
+    state.triangleSource = undefined;
+    cancelTriangleOrderingApply(mesh.geometry);
     releaseWorkerNode(nodeId);
     return;
   }
@@ -694,10 +754,21 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       const stillCommitted = hasCommittedData(mesh);
       if (result && result.generation === current.generation && stillCommitted) {
         const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-        if (geometry?.getAttribute?.('aSortedIndex')) {
-          // Ordering upload = 4 bytes/splat through the attribute
-          // update-range machinery (the architecture's headline number).
-          const bytes = result.ordering.length * 4;
+        // Which apply path this node uses. A retained `triangleSource` is
+        // the mesh signal and it is set by the SAME commit whose generation
+        // just matched, so the two can never describe different face sets.
+        const triangleSource = current.triangleSource;
+        const applicable =
+          triangleSource !== undefined || !!geometry?.getAttribute?.('aSortedIndex');
+        if (applicable) {
+          // Ordering upload: 4 bytes/splat through the attribute
+          // update-range machinery (the architecture's headline number) on
+          // the instanced path. The indexed path uploads THREE index
+          // entries per face instead, at the index buffer's own width
+          // (Uint16 under 65536 vertices — see `createMeshIndexAttribute`).
+          const bytes = triangleSource
+            ? result.ordering.length * 3 * (geometry.index?.array.BYTES_PER_ELEMENT ?? 4)
+            : result.ordering.length * 4;
           // Timing split (perf campaign): kernelMs = inside the backend
           // call (incl. wasm-bindgen boundary copies for compiled WASM);
           // boundaryMs = worker-side overhead around it; queueMs =
@@ -716,54 +787,68 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
             queueMs: Math.max(0, roundTripMs - result.workerMs),
             info: formatOrderingBytes(bytes, false),
           });
-          // Large orderings apply CHUNKED across frames (element-storage
-          // routes internally, perf lever L8): this call only STAGES the
-          // pending state; the per-frame pump in evaluateDepthSortPerFrame
-          // streams the slices, one per rendered frame. Hand the profiler
-          // session to that lifecycle so the pass spans dispatch→applied:
-          // onApplied (post-render acknowledgement) ends it as UPLOADED;
-          // onAbandoned (superseded/cancelled/demoted/released/disposed) ends it as
-          // scheduled. writeSortedIndexOrdering invokes neither unless it
-          // accepts the ordering (returns > 0) — issue #713.
+          // Hand the profiler session to the apply's lifecycle so the pass
+          // spans dispatch→applied: onApplied (post-render acknowledgement)
+          // ends it as UPLOADED; onAbandoned
+          // (superseded/cancelled/demoted/released/disposed) ends it as
+          // scheduled. Neither writer invokes either unless it ACCEPTS the
+          // ordering (returns > 0) — issue #713.
           const resolvedAt = performance.now();
-          const staged = writeSortedIndexOrdering(
-            geometry,
-            result.ordering,
-            result.ordering.length,
-            session
-              ? {
-                  onApplied: () => {
-                    const appliedAt = performance.now();
-                    session.setMetadata({
-                      applyMs: Math.max(0, appliedAt - resolvedAt),
-                      info: formatOrderingBytes(bytes, true),
+          const applyCallbacks = session
+            ? {
+                onApplied: () => {
+                  const appliedAt = performance.now();
+                  session.setMetadata({
+                    applyMs: Math.max(0, appliedAt - resolvedAt),
+                    info: formatOrderingBytes(bytes, true),
+                  });
+                  // The dedicated MONOTONIC completion stream records only
+                  // orderings that actually became drawable — not merely
+                  // worker resolves that were staged and later abandoned.
+                  // It uses the dispatch-time profiler/generation, matching
+                  // the session's reset-isolation contract (issue #711).
+                  if (profiler && profiler._currentGeneration() === profilerGeneration) {
+                    profiler.recordDepthSortCompletion({
+                      lastMs: Math.max(0, appliedAt - dispatchedAt),
+                      kernelMs: result.kernelMs,
+                      boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
+                      queueMs: Math.max(0, roundTripMs - result.workerMs),
+                      splats: result.ordering.length,
                     });
-                    // The dedicated MONOTONIC completion stream records only
-                    // orderings that actually became drawable — not merely
-                    // worker resolves that were staged and later abandoned.
-                    // It uses the dispatch-time profiler/generation, matching
-                    // the session's reset-isolation contract (issue #711).
-                    if (profiler && profiler._currentGeneration() === profilerGeneration) {
-                      profiler.recordDepthSortCompletion({
-                        lastMs: Math.max(0, appliedAt - dispatchedAt),
-                        kernelMs: result.kernelMs,
-                        boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
-                        queueMs: Math.max(0, roundTripMs - result.workerMs),
-                        splats: result.ordering.length,
-                      });
-                    }
-                    session.end();
-                  },
-                  onAbandoned: () => session.end(),
-                }
-              : undefined
-          );
+                  }
+                  session.end();
+                },
+                onAbandoned: () => session.end(),
+              }
+            : undefined;
+          // Instanced: large orderings apply CHUNKED across frames
+          // (element-storage routes internally, perf lever L8) — this call
+          // only STAGES the pending state and the per-frame pump streams
+          // the slices. Indexed: the write is atomic and complete on
+          // return, because a half-permuted index buffer is not a
+          // permutation (triangle-ordering.ts).
+          const staged = triangleSource
+            ? writeSortedTriangleOrdering(
+                geometry,
+                triangleSource,
+                result.ordering,
+                result.ordering.length,
+                applyCallbacks
+              )
+            : writeSortedIndexOrdering(
+                geometry,
+                result.ordering,
+                result.ordering.length,
+                applyCallbacks
+              );
           if (staged > 0) {
             // Handed off BEFORE the throwing `requestRender()` below, so a
             // throw there can't route into .catch and close the pass early.
             applyOwnsSession = true;
-            // Bootstrap the pump's requestRender chain (the per-frame pump
-            // keeps the on-demand loop alive between slices).
+            // Instanced: bootstrap the pump's requestRender chain (the
+            // per-frame pump keeps the on-demand loop alive between
+            // slices). Indexed: the permutation is already in the buffer,
+            // so this is the one frame it needs to reach the screen.
             requestRender?.();
           }
         }
@@ -870,7 +955,14 @@ function pumpChunkedOrderingApplies(): void {
     // way they can desync.
     syncSortedIndexSlot(state.mesh);
 
-    if (!hasPendingSortedIndexOrderingApply(geometry)) continue;
+    if (!hasPendingSortedIndexOrderingApply(geometry)) {
+      // The indexed (mesh) path has nothing to stream — its write is atomic
+      // — but a DEMOTED node's written-but-undrawn ordering still owns a
+      // profiler session nobody else will close. A no-op unless one is
+      // actually pending, so this costs a map miss on every other node.
+      if (!hasCommittedData(state.mesh)) cancelTriangleOrderingApply(geometry);
+      continue;
+    }
     if (!hasCommittedData(state.mesh)) {
       // LOD demotion — the geometry went back to the pool, so the
       // remaining slices describe a population this mesh no longer
@@ -1182,8 +1274,8 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
 
 /**
  * React to a sortable layer's blending mode changing at runtime (the
- * LayersPanel compose chain — spec §5.4). Wired for all three geometry
- * types (gsplats, points, lines).
+ * LayersPanel compose chain — spec §5.4). Wired for all four geometry
+ * types.
  *
  * Switching TO a sorted mode cannot simply "register+sort": the
  * SortWorker has no centers for a node that was order-independent at its
@@ -1237,7 +1329,12 @@ export function noteDepthSortBlendingModeSwitch(
       // clear is the same hygiene as the commit path's release branch.
       state.generation = ++nextGeneration;
       clearSortPose(state);
+      // …and so is dropping the retained triples: an opaque mesh has no
+      // reason to keep a second copy of its index alive. A switch back
+      // re-commits (the branch above), which re-supplies them.
+      state.triangleSource = undefined;
     }
+    cancelTriangleOrderingApply(mesh.geometry);
     releaseWorkerNode(mesh.uuid);
   }
 }
@@ -1256,7 +1353,13 @@ export function releaseDepthSortNode(mesh: THREE.Mesh): void {
   // doesn't pin the geometry + its (up to 40 MB) ordering until the
   // pool's next identity write.
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
-  if (geometry) cancelSortedIndexOrderingApply(geometry);
+  if (geometry) {
+    cancelSortedIndexOrderingApply(geometry);
+    // Indexed peer: closes a written-but-undrawn ordering's profiler
+    // session. Nothing to undo in the buffer itself — see
+    // `cancelTriangleOrderingApply`.
+    cancelTriangleOrderingApply(geometry);
+  }
   releaseWorkerNode(nodeId);
 }
 
@@ -1272,6 +1375,7 @@ export function releaseAllDepthSortNodes(): void {
   // Same orphan hazard as releaseDepthSortNode, swept globally (a
   // dataset switch tears everything down anyway).
   cancelAllSortedIndexOrderingApplies();
+  cancelAllTriangleOrderingApplies();
   api?.releaseAllNodes().catch(() => {});
 }
 
@@ -1282,8 +1386,10 @@ export function releaseAllDepthSortNodes(): void {
 export function disposeDepthSort(): void {
   nodeStates.clear();
   // Module-state reset completeness: in-flight chunked applies hold
-  // geometry + ordering references in element-storage's map.
+  // geometry + ordering references in element-storage's map, and the
+  // indexed path's acknowledgement map holds geometry + profiler closures.
   cancelAllSortedIndexOrderingApplies();
+  cancelAllTriangleOrderingApplies();
   // Drop the per-slice render-continuation hook so a dispose/re-init does
   // not keep the old app's requestRender closure alive.
   setSortedIndexApplyRequestRender(null);
