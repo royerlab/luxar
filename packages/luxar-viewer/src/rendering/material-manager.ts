@@ -119,17 +119,19 @@ export type LuxarMegaShaderMaterial = MegaShaderMaterial | MegaShaderTSLMaterial
  * Manages all materials in the scene with lifecycle tracking and
  * global camera-uniform updates. Supports points, lines, gsplats and mesh.
  *
- * ALL visual materials are PER NODE (each carries the node's own
- * element texture — `uPointTex` / `uLineTex` / `uSplatTex`) and are never
- * cached: sharing one would rebind a node's texture onto another node's mesh at
- * every commit. The historical line-material LRU was the last cached kind and
- * died with the lines texture-storage migration.
+ * ALL visual materials are PER NODE and are never cached. Point, line and
+ * gsplat materials each carry the node's own element texture (`uPointTex` /
+ * `uLineTex` / `uSplatTex`), so sharing one would rebind a node's texture onto
+ * another node's mesh at every commit; a mesh material carries no element
+ * texture but holds per-node shading state instead (see
+ * {@link MaterialManager.getMeshMaterial}). The historical line-material LRU
+ * was the last cached kind and died with the lines texture-storage migration.
  */
 export class MaterialManager {
   private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
   /**
    * Renderer capabilities — drives the GLSL vs. TSL dispatch in the
-   * three `getXMaterial` factories. `SceneManager.setupRenderer` calls
+   * four `getXMaterial` factories. `SceneManager.setupRenderer` calls
    * {@link setCaps} once the renderer is alive; before that hook
    * fires, the manager defaults to the WebGL2 path so unit tests
    * that touch material creation don't need to know about caps.

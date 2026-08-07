@@ -170,7 +170,7 @@ export function resolveMaterialBackend(caps: RendererCapabilities | null): Mater
 
 /**
  * Constructor table for the visual material pair of each geometry
- * type. `MaterialManager.get{Point,Line,GSplat}Material` looks up
+ * type. `MaterialManager.get{Point,Line,GSplat,Mesh}Material` looks up
  * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate.
  */
 export const VISUAL_FACTORIES = {
