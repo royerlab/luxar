@@ -73,11 +73,25 @@ const awaitingDraw = new Map<THREE.BufferGeometry, SortedIndexApplyCallbacks>();
  * display space as `position`.
  *
  * The centroid is the natural per-triangle "center" for the sort kernel, which
- * orders by view-space z of a point: it is the mean of the three vertices, so a
- * triangle's sort key is the mean of its vertices' depths. That is the standard
- * choice and it is exact for the case that matters (non-interpenetrating
- * triangles of a surface); it is only approximate for triangles that overlap in
- * depth, which no per-primitive sort can order correctly anyway.
+ * orders by view-space z of a point: a triangle's sort key is the mean of its
+ * vertices' depths. It is the standard choice, and it is an **approximation** —
+ * worth being precise about, because there are two distinct ways it falls short
+ * and only one of them is inherent to per-primitive sorting:
+ *
+ * - **Centroid order can disagree with the true order even for disjoint
+ *   triangles.** Two triangles that never intersect can overlap in screen space
+ *   with one consistently in front across the shared region, while their
+ *   centroids — which may both lie outside that region — rank the other way.
+ *   That is a property of reducing a triangle to one depth sample, not of
+ *   sorting per primitive: an exact answer needs a per-fragment method (depth
+ *   peeling, OIT) or a BSP split of the geometry.
+ * - **Interpenetrating triangles have no correct order at all**, since the
+ *   front-most one changes across the shared region. No primitive-granularity
+ *   sort can fix that, whatever key it uses.
+ *
+ * Both are the same residual the other three geometry types carry (their quads
+ * sort by a single center too), and both are why `opaque` — depth-correct per
+ * fragment — remains the mesh default.
  *
  * Allocates fresh on every call, deliberately: the buffer is TRANSFERRED to the
  * SortWorker (detached), so a reused scratch array would be destroyed under its

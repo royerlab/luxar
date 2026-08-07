@@ -818,8 +818,9 @@ model is deliberately minimal and light-free:
   - `opaque` (mesh default) → a hard alpha **cutout**, see below.
 
   For `normal`, per-triangle depth sorting orders the triangles back-to-front (§6.3), so per-vertex
-  alpha composites correctly. What sorting cannot fix is INTERPENETRATING triangles — a residual shared
-  with the other three types, and the reason `opaque` remains the mesh default.
+  alpha composites in a sane order rather than in authoring order. It is an approximation, not an
+  exact solve — see §6.3 for the two ways a centroid key falls short — and that is the reason
+  `opaque`, which is depth-correct per fragment, remains the mesh default.
 
   The max-premultiply and the opaque-cutout emissions are distinct per-mode shader variants — a GLSL
   `#define` exactly like the siblings' `LUXAR_MAX_RGB_CONTRIBUTION` branch (and a graph-baked TSL twin) —
@@ -898,14 +899,20 @@ Two consequences of that difference are worth stating, because they are not free
   already holds the previous permutation, so permuting it again would compose the two. The coordinator
   retains the commit's `ProjectedMeshData.indices` for exactly as long as the node is being sorted.
 
-What remains correct-by-depth-buffer rather than by sorting:
+**Sorting by centroid is an approximation, and it is worth being precise about how.** The kernel ranks
+each element by the view-space z of ONE point, so:
 
-- `opaque` (the default for mesh, unlike the other types) depth-tests and depth-writes, so it is
-  correct whatever the index order is — which is why it is still the default, and why it stays correct
-  when depth sorting is switched off (`?depthSort=0`) or the SortWorker is unavailable.
-- Sorting is per-primitive, so **interpenetrating** triangles still cannot be ordered correctly. That
-  residual is shared with the other three types (overlapping quads have it too) and is inherent to any
-  primitive-granularity sort.
+- Two triangles that never intersect can still be ordered wrongly: they may overlap in screen space
+  with one consistently in front across the shared region while their centroids — possibly both
+  outside that region — rank the other way. This is a consequence of reducing a triangle to a single
+  depth sample; an exact answer needs a per-fragment method (depth peeling, OIT) or a BSP split.
+- **Interpenetrating** triangles have no correct order at all, since which one is in front changes
+  across the shared region. No primitive-granularity sort can fix that with any key.
+
+Both residuals are shared with the other three geometry types, whose quads sort by a single center for
+the same reason. And both are why `opaque` stays the mesh default: it depth-tests and depth-writes, so
+it is exactly correct per fragment whatever the index order is — and it stays correct when depth
+sorting is switched off (`?depthSort=0`) or the SortWorker is unavailable.
 
 Making `opaque` the mesh default is a deliberate asymmetry — it is the only mode that is unconditionally
 correct without sorting, and it is what a surface should look like.

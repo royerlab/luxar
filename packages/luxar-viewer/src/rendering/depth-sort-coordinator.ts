@@ -516,6 +516,16 @@ export function noteDepthSortCommit(
   }
   ensureDrawAcknowledgementHook(mesh);
   state.generation = ++nextGeneration;
+  // A commit SUPERSEDES any indexed ordering that was written but not yet
+  // drawn — `updateMeshGeometry` has already overwritten the index buffer by
+  // the time this runs, so that ordering will never reach a frame. Without
+  // this the next render would acknowledge it and report an obsolete
+  // permutation as uploaded (a false 'Depth Sort' completion sample), or leave
+  // the session open until some later draw. The instanced path does the same
+  // thing from its identity write; this is the indexed peer of it, and it must
+  // fire on EVERY commit, not only the release branch below — a commit that
+  // stays order-dependent overwrites the buffer just as thoroughly.
+  cancelTriangleOrderingApply(mesh.geometry);
   // Rebound to THIS commit's triples before the release branch below, which
   // drops it again: a stale source outliving its commit is the one way the
   // indexed apply can write a corrupt permutation, and the generation check
@@ -540,9 +550,9 @@ export function noteDepthSortCommit(
     // and the recorded pose with it (see clearSortPose's invariant).
     clearSortPose(state);
     // Drop the retained triples too: an unsorted mesh must not keep a
-    // second copy of its index alive for the rest of the session.
+    // second copy of its index alive for the rest of the session. (The
+    // pending indexed apply was already cancelled above, for every commit.)
     state.triangleSource = undefined;
-    cancelTriangleOrderingApply(mesh.geometry);
     releaseWorkerNode(nodeId);
     return;
   }
