@@ -47,6 +47,14 @@ export function normalizeDiagnostic(message, viewerRoot = process.cwd()) {
     .trim();
 }
 
+/** Add an explicit error when TypeDoc conversion produced no project. */
+export function ensureConversionError(converted, errors) {
+  if (!converted && errors.length === 0) {
+    return ['TypeDoc conversion produced no project'];
+  }
+  return errors;
+}
+
 /** Return multiset additions/removals while preserving duplicate warning counts. */
 export function diffWarningMultisets(currentWarnings, baselineWarnings) {
   const subtract = (left, right) => {
@@ -250,8 +258,9 @@ async function main() {
   const viewerRoot = process.cwd();
   const baselinePath = path.resolve(viewerRoot, options.baseline);
   const diagnostics = await collectTypeDocDiagnostics(viewerRoot);
+  const errors = ensureConversionError(diagnostics.converted, diagnostics.errors);
 
-  if (!diagnostics.converted || diagnostics.errors.length > 0) {
+  if (errors.length > 0) {
     const report = {
       summary: {
         current: diagnostics.warnings.length,
@@ -259,7 +268,7 @@ async function main() {
         new: 0,
         fixed: 0,
       },
-      errors: diagnostics.errors,
+      errors,
       newWarnings: [],
       fixedWarnings: [],
     };

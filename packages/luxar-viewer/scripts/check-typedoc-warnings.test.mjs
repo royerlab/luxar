@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   diagnosticLevel,
   diffWarningMultisets,
+  ensureConversionError,
   loadWarningBaseline,
   normalizeDiagnostic,
   parseArgs,
@@ -39,6 +40,12 @@ test('parses checker arguments and rejects an omitted baseline path', () => {
   assert.throws(() => parseArgs(['--baseline']), /requires a path/);
   assert.throws(() => parseArgs(['--baseline', '--json']), /requires a path/);
   assert.throws(() => parseArgs(['--unknown']), /Unknown argument/);
+});
+
+test('reports an unexplained conversion failure explicitly', () => {
+  assert.deepEqual(ensureConversionError(false, []), ['TypeDoc conversion produced no project']);
+  assert.deepEqual(ensureConversionError(false, ['compiler error']), ['compiler error']);
+  assert.deepEqual(ensureConversionError(true, []), []);
 });
 
 test('warning differences preserve duplicate counts', () => {
