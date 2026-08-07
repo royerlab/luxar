@@ -39,7 +39,7 @@ print("Data validated and ready for writing")
 This package ensures data integrity throughout the Luxar pipeline by validating inputs at critical points, providing clear error messages that help users quickly identify and fix issues.
 
 **See Also:**
-- `../core/README.md` - Scene, Points, Lines, GSplats classes that use validation
+- `../core/README.md` - Scene, Points, Lines, GSplats, Mesh classes that use validation
 - `../typing_utils/README.md` - Constants (GAMMA_MIN, SHARPNESS_MAX, etc.) used in validation
 
 ## Modules

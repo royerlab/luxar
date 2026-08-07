@@ -228,7 +228,7 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
 
       // Per-node GOG. Identical chain to the sibling shaders (§6.2 notes it is
       // copied rather than shared — _shared/ carries the sanitizers and the
-      // define helpers, but each of the six shader files writes this tail out).
+      // define helpers, but each of the eight shader files writes this tail out).
       #ifdef LUXAR_NO_GOG
       mediump vec3 adjusted = vColor;
       #else

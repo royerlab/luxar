@@ -1,17 +1,17 @@
 # luxar.core.group.adders
 
 Per-leaf adder implementations for `Group`. Each geometry type (Points,
-Lines, GSplats) has its own module here holding the body of
+Lines, GSplats, Mesh) has its own module here holding the body of
 `Group.add_<type>` along with its partition-wrapper and multi-LOD-wrapper
-helpers.
+helpers (mesh has neither — it refuses both).
 
 ## Overview
 
 The orchestrator file `core/group/group.py` keeps the public method
 signatures + docstrings and delegates to the free functions in this folder.
 Every function takes the calling `group: Group` as its first argument and is
-otherwise keyword-only, so `Group.add_points` / `add_lines` / `add_gsplats`
-are thin one-line delegates over the matching `*_impl` here.
+otherwise keyword-only, so `Group.add_points` / `add_lines` / `add_gsplats` /
+`add_mesh` are thin one-line delegates over the matching `*_impl` here.
 
 This split keeps `group.py` focused on the public API surface while the
 (substantial) add logic — input coercion, `dim_order` application,
