@@ -38,6 +38,14 @@ GSplats
    :undoc-members:
    :show-inheritance:
 
+Mesh
+----
+
+.. autoclass:: luxar.core.Mesh
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Dimensions
 ----------
 

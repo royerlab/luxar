@@ -358,9 +358,9 @@ def write_lines(
     if colors is not None:
         if isinstance(colors, np.ndarray):
             validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
-        # Use the canonical COLOR helper (shared with Points / GSplats)
-        # so the default-precision and color_mode-detection logic is
-        # symmetric across all three geometry types.
+        # Use the canonical COLOR helper (shared with Points / GSplats /
+        # Mesh) so the default-precision and color_mode-detection logic is
+        # symmetric across all four geometry types.
         write_colors(
             group,
             colors,

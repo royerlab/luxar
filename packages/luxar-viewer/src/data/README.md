@@ -199,7 +199,7 @@ SceneLoader is split into focused, testable modules:
 
 **Node Factories** (`scene-loader/nodes/`):
 
-- Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data
+- Creates THREE.js scene nodes (Points, Lines, GSplats, Mesh) from loaded data
 - Geometry creation with proper dtype handling (Float32, Uint8, Float16)
 - Material creation and colormap application
 - Transform application and validation
