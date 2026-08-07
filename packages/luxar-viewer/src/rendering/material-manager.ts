@@ -117,19 +117,21 @@ export type LuxarMegaShaderMaterial = MegaShaderMaterial | MegaShaderTSLMaterial
 
 /**
  * Manages all materials in the scene with lifecycle tracking and
- * global camera-uniform updates. Supports points, lines, and gsplats.
+ * global camera-uniform updates. Supports points, lines, gsplats and mesh.
  *
- * ALL visual materials are PER NODE (each carries the node's own
- * element texture — `uPointTex` / `uLineTex` / `uSplatTex`) and are never
- * cached: sharing one would rebind a node's texture onto another node's mesh at
- * every commit. The historical line-material LRU was the last cached kind and
- * died with the lines texture-storage migration.
+ * ALL visual materials are PER NODE and are never cached. Point, line and
+ * gsplat materials each carry the node's own element texture (`uPointTex` /
+ * `uLineTex` / `uSplatTex`), so sharing one would rebind a node's texture onto
+ * another node's mesh at every commit; a mesh material carries no element
+ * texture but holds per-node shading state instead (see
+ * {@link MaterialManager.getMeshMaterial}). The historical line-material LRU
+ * was the last cached kind and died with the lines texture-storage migration.
  */
 export class MaterialManager {
   private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
   /**
    * Renderer capabilities — drives the GLSL vs. TSL dispatch in the
-   * three `getXMaterial` factories. `SceneManager.setupRenderer` calls
+   * four `getXMaterial` factories. `SceneManager.setupRenderer` calls
    * {@link setCaps} once the renderer is alive; before that hook
    * fires, the manager defaults to the WebGL2 path so unit tests
    * that touch material creation don't need to know about caps.
@@ -139,14 +141,14 @@ export class MaterialManager {
    * Materials whose `dispose` event we have already wired a listener for.
    * Separate from `registeredMaterials` because `register()` /
    * `getXMaterial()` can be called repeatedly with the same instance
-   * (cache hits, clones re-registered explicitly), and a second
+   * (a re-`register()`, or a clone re-registered explicitly), and a second
    * `addEventListener('dispose', ...)` would silently stack listeners on
    * THREE's EventDispatcher.
    */
   private subscribedMaterials = new WeakSet<THREE.Material & CameraAwareMaterial>();
   /**
    * Diagnostic: cumulative wall-clock time spent constructing
-   * materials (Point/Line/GSplat). Useful as a proxy for "how much
+   * materials (Point/Line/GSplat/Mesh). Useful as a proxy for "how much
    * time does the user spend waiting for material-creation work" —
    * first-use stutter shows up as a single large delta on the
    * affected animation frame. Exposed in `getCacheStats()`.
@@ -218,9 +220,9 @@ export class MaterialManager {
    * fresh material that the node owns for its lifetime (the node
    * factory stamps `_layerMaterialCloned: true`, so LayersPanel /
    * LOD-cross-fade mutate it directly instead of clone-on-first-use).
-   * `pointMaterialCache` stays permanently empty — it remains in the
-   * lifecycle/stats context shapes shared with lines, where an empty
-   * map is a truthful no-op. Mirrors {@link getGSplatMaterial}.
+   * There is no material cache: every material is per-node, so
+   * `getCacheStats()` reports only registry size and create-time, never a
+   * cache size. Mirrors {@link getGSplatMaterial}.
    *
    * Dispatches to `PointTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -267,9 +269,8 @@ export class MaterialManager {
    * that the node owns for its lifetime (the node factory stamps
    * `_layerMaterialCloned: true`, so LayersPanel / LOD-cross-fade
    * mutate it directly instead of clone-on-first-use).
-   * `lineMaterialCache` stays permanently empty — it remains in the
-   * lifecycle/stats context shapes, where an empty map is a truthful
-   * no-op. Mirrors {@link getPointMaterial} / {@link getGSplatMaterial}.
+   * There is no material cache: every material is per-node. Mirrors
+   * {@link getPointMaterial} / {@link getGSplatMaterial}.
    *
    * Dispatches to `LineTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -313,9 +314,7 @@ export class MaterialManager {
    * fresh material that the node owns for its lifetime (the node
    * factory stamps `_layerMaterialCloned: true`, so LayersPanel /
    * LOD-cross-fade mutate it directly instead of clone-on-first-use).
-   * `gsplatMaterialCache` stays permanently empty — it remains in the
-   * lifecycle/stats context shapes shared with points/lines, where an
-   * empty map is a truthful no-op.
+   * There is no material cache: every material is per-node.
    *
    * Dispatches to `GSplatTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -366,10 +365,10 @@ export class MaterialManager {
    * Deliberately does NOT enter `registeredMaterials`: a mesh has no screen-space
    * size, so it has no `updateCameraParams` to broadcast to. It is tracked in
    * `staticMaterials` instead, which keeps disposal and the stats counters honest
-   * without a per-frame no-op call per node. There is no fourth empty
-   * `meshMaterialCache` either — the three vestigial maps exist only to keep
-   * `getCacheStats()`'s historical shape, and adding to them would be inventing a
-   * cache that never existed.
+   * without a per-frame no-op call per node. There is no `meshMaterialCache`
+   * either: no type has a material cache — every material is per-node, so
+   * `getCacheStats()` reports only registry size and create-time, never a cache
+   * size.
    *
    * Dispatches to `MeshTSLMaterial` when the active renderer reports
    * `caps.apiSurface === 'webgpu'`, otherwise the GLSL `MeshMaterial`.
