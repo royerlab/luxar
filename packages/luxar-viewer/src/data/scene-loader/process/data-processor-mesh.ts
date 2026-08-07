@@ -149,12 +149,15 @@ const noticedContinuousHidden = new Set<string>();
  * the experiment. Promote exact clipping when it starts appearing on real data; leave it
  * deferred while it does not.
  *
- * **Hidden-and-continuous already IS §9's "continuous hidden spatial" condition**, so the
+ * **Hidden-and-continuous tracks §9's "continuous hidden spatial" condition closely**, so the
  * filter below is not a loose proxy for it. `DimensionMetadata.spatial` does exist, but the
- * writer's own invariant makes it redundant here: `core/dimensions.py` forces a
- * non-displayed, non-spatial dimension to be discrete, so anything that reaches this loop
- * hidden and continuous was authored `spatial=true`. Testing the flag as well would narrow
- * nothing, and would silently drop evidence from a scene whose metadata omits it.
+ * writer's own invariant makes it near-redundant here: `core/dimensions.py` forces a dimension
+ * AUTHORED non-displayed and non-spatial to be discrete, so an axis authored hidden can only
+ * reach this loop with `spatial=true`. The one gap is runtime rather than authoring — a dimension
+ * authored `display=true, spatial=false` keeps the flag false and becomes hidden the moment the
+ * user swaps display axes. That argues for reporting it, not filtering it out: testing the flag
+ * would narrow nothing on the authored case while dropping evidence both there and from any
+ * scene whose metadata omits it.
  *
  * The name and unit are reported because one judgement is genuinely left over that no flag
  * can make: a dimension may be *declared* spatial and still be a time axis, where a slab is

@@ -509,8 +509,10 @@ then a mesh whose hidden dims are continuous and spatial is a poor fit for this 
 loader says so once, by name — `noticeContinuousHiddenDim` in
 `data/scene-loader/process/data-processor-mesh.ts` logs an `info` line naming every such dimension
 and its unit, deduplicated per node **and** dimension (a node's not-yet-reported dimensions are
-named together in one line, and an axis that becomes hidden later still gets its own). That line is
-also the evidence gate on §9's deferral of exact clipping.
+named together in one line, and an axis that becomes hidden later still gets its own). One
+carve-out, so silence is not over-read: a dimension listed in `extend_to_all` is slice-invariant, so
+its membership slab is infinite and the approximation cannot bite — it is deliberately NOT reported.
+That line is also the evidence gate on §9's deferral of exact clipping.
 
 ### 5.3 Consequence, stated plainly
 
