@@ -497,7 +497,8 @@ describe('mesh_culling: compact_visible_faces', () => {
   });
 
   it('treats any non-zero mask value as visible', () => {
-    // Matches every sibling mask consumer (`compact_by_mask`, `count_visible`).
+    // Matches the mask convention every sibling kernel used (e.g. the former
+    // `compact_by_mask` / `count_visible`): any non-zero byte counts as visible.
     const output = new Uint32Array(3);
     const kept = compact_visible_faces(
       new Uint32Array([0, 1, 2]),

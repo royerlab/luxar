@@ -50,7 +50,7 @@ Replaces the current "Intensity" slider (which uses log10 scale with `hdrMultipl
 
 ### Per-Node Controls (in shaders)
 
-Each data node (Points, Lines, GSplats) gets three rendering parameters:
+Each data node (Points, Lines, GSplats, Mesh) gets three rendering parameters:
 
 | Parameter     | Python field | TS metadata field | Default | Range         | Purpose                                 |
 |---------------|--------------|-------------------|---------|---------------|-----------------------------------------|
@@ -62,8 +62,8 @@ Each data node (Points, Lines, GSplats) gets three rendering parameters:
 contribution (how transparent the node is). Intensity controls color brightness (gain).
 With additive blending, opacity scales the alpha channel while intensity scales the color.
 
-The shader applies the **GOG (Gain-Offset-Gamma)** model in all three material types
-(Points, Lines, GSplats):
+The shader applies the **GOG (Gain-Offset-Gamma)** model in all four material types
+(Points, Lines, GSplats, Mesh):
 
 ```glsl
 // Per-node color adjustment (applied before blending, all node types)
@@ -72,10 +72,12 @@ adjusted = max(adjusted, vec3(0.0));            // Clip negatives (no negative l
 adjusted = pow(adjusted, vec3(1.0 / gamma));    // Nonlinear curve
 ```
 
-Early discard after offset saves GPU work across all node types:
+Early discard after offset saves GPU work on Points, Lines and GSplats. Mesh omits it:
+an opaque surface must still write depth, so a fragment that ends up black has to be
+drawn rather than thrown away.
 
 ```glsl
-// All node types: discard zero-contribution fragments after offset
+// Points / Lines / GSplats: discard zero-contribution fragments after offset
 if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
 ```
 
@@ -258,7 +260,7 @@ color = ACESFilmicToneMapping(color);  // or Reinhard, AgX, Neutral, etc.
 
 All features described in this document are **fully implemented**:
 
-- Per-node GOG model (`intensity`, `offset`, `gamma`) in all three material shaders
+- Per-node GOG model (`intensity`, `offset`, `gamma`) in all four material shaders
 - Global EOG (`exposure`, `global_offset`, `global_gamma`) in the custom mega-shader
 - `hdrMultiplier` removed from all shaders, MaterialManager, and config
 - Python `ViewerConfig` updated with `exposure`, `global_offset`, `global_gamma`
@@ -271,7 +273,7 @@ All features described in this document are **fully implemented**:
 ### Python
 - `packages/luxar/src/luxar/core/node/node.py` — `intensity` and `offset` properties
 - `packages/luxar/src/luxar/core/viewer_config.py` — `exposure`, `global_offset`, `global_gamma` fields (replaced `hdr_multiplier`)
-- `packages/luxar/src/luxar/io/compiler.py` — writes defaults for all three geometry write methods
+- `packages/luxar/src/luxar/io/_compiler/node_common.py` — `apply_default_render_attrs` writes the defaults for the Points/Lines/Mesh writers; GSplats via `gsplat_assembly.py`
 - `packages/luxar/src/luxar/validation/types.py` — validators for intensity, offset
 - `packages/luxar/src/luxar/typing_utils/constants.py` — range constants
 
@@ -285,6 +287,8 @@ Dual-stack: each geometry has a parallel GLSL (WebGL2 path) and TSL (WebGPU path
 - `packages/luxar-viewer/src/rendering/materials/line/material-tsl.ts` — GOG uniforms (WebGPU)
 - `packages/luxar-viewer/src/rendering/materials/gsplat/material-glsl.ts` — GOG uniforms (WebGL2)
 - `packages/luxar-viewer/src/rendering/materials/gsplat/material-tsl.ts` — GOG uniforms (WebGPU)
+- `packages/luxar-viewer/src/rendering/materials/mesh/material-glsl.ts` — GOG uniforms (WebGL2)
+- `packages/luxar-viewer/src/rendering/materials/mesh/material-tsl.ts` — GOG uniforms (WebGPU)
 
 ### TypeScript (post-processing + scene management)
 - `packages/luxar-viewer/src/rendering/post-processing/mega/material.ts` — EOG uniforms and tone-mapping mode `#define` (WebGL2 path)

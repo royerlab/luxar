@@ -1016,7 +1016,7 @@ scene conversion is required.
 ### Embedded Format (Luxar Scene)
 
 **Purpose**: Multi-object visualization with scene graph, transforms, and
-side-by-side geometry layers (Points, Lines, GSplats).
+side-by-side geometry layers (Points, Lines, GSplats, Mesh).
 
 **Structure**: See `packages/luxar/src/luxar/core/README.md`. The gsplat node
 subtree is BYTE-IDENTICAL to its standalone counterpart — both go through

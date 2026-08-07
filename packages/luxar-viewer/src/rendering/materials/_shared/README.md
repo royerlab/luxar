@@ -1,14 +1,16 @@
 # Shared Material Infrastructure
 
-> Cross-cutting helpers used by the Point / Line / GSplat material stacks (both GLSL `ShaderMaterial` and TSL `NodeMaterial` variants) and their picking counterparts.
+> Cross-cutting helpers used by the Point / Line / GSplat / Mesh material stacks (both GLSL `ShaderMaterial` and TSL `NodeMaterial` variants) and their picking counterparts.
 
 This folder holds the small, geometry-agnostic pieces that the per-geometry
-material wrappers in `../point/`, `../line/`, and `../gsplat/` compose. Nothing
+material wrappers in `../point/`, `../line/`, `../gsplat/` and `../mesh/`
+compose. Nothing
 here renders a pixel on its own — each module either declares a contract the
 materials implement (`CameraAwareMaterial`, `ColormapAwareMaterial`, `ShaderSource`),
-encapsulates math/string content that would otherwise be copy-pasted across six
+encapsulates math/string content that would otherwise be copy-pasted across eight
 material wrappers, or branches the dual-stack WebGL2 / WebGPU dispatch in one
-place (`buildMaterial`).
+place (`buildMaterial`). Mesh takes only a subset — it is not camera-aware and
+has no near-fade — so each module below records which types actually reach it.
 
 ## Module map
 
@@ -20,7 +22,7 @@ place (`buildMaterial`).
 | `colormap-aware-material.ts` | `ColormapAwareMaterial` interface + guard. Two setters (`setColormapTexture`, `setScalarRange`) so the colormap helpers never reach into `material.uniforms` directly                                                                                                                                                                                                                          |
 | `camera-uniforms.ts`         | Pure math shared by visual + picking materials: `computePointSizeFactor`, `computeMaxPointSize`, `computeFocalLength`. Branches on `isOrtho` so callers don't special-case projection                                                                                                                                                                                                          |
 | `uniform-helpers.ts`         | `clampGamma(g)` — single source of truth for the `Math.max(0.001, g ?? 1.0)` clamp used in every material constructor; `isGammaOne(g)` — `abs(g - 1) < 1e-4` fast-path test that gates the `LUXAR_GAMMA_ONE` define (GLSL) / `gammaOne` flag (TSL) so the shader skips `pow(color, 1/gamma)` when gamma is unity                                                                               |
-| `glsl-lib.ts`                | `GLSL_SANITIZE_FUNCTIONS` GLSL3 snippet (`isInvalidFloat`, `sanitizePositive`, `sanitizeNonNegative`) prepended to every Point / Line / GSplat visual _and_ picking GLSL shader, plus `GLSL_NEAR_FADE_FUNCTIONS` (`perspectiveNearFade` — the unified near handling all three geometry types share)                                                                                            |
+| `glsl-lib.ts`                | `GLSL_SANITIZE_FUNCTIONS` GLSL3 snippet (`isInvalidFloat`, `sanitizePositive`, `sanitizeNonNegative`) prepended to every visual _and_ picking GLSL shader of all four geometry types, plus `GLSL_NEAR_FADE_FUNCTIONS` (`perspectiveNearFade` — the unified near handling the three instanced-quad types share; a mesh has no per-element size to fade, so it does not use it)                  |
 | `tsl-helpers.ts`             | TSL counterparts to the GLSL sanitisers (`sanitizePositive`, `sanitizeNonNegative`, `invalidFloatTSL`), the near-fade twins (`perspectiveNearFadeTSL` runtime-uniform / `perspectiveNearFadeStaticTSL` compile-time-ortho), plus `proxyIUniform(node)` — wraps a TSL `UniformNode` in an `IUniform`-shaped getter/setter so the `material.uniforms.uX.value = Y` API works under both backends |
 
 ## The `ShaderSource` GLSL/TSL parity pattern

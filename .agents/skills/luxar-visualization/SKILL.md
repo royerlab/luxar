@@ -11,7 +11,7 @@ description: >-
 
 # Build a Luxar visualization
 
-Luxar compiles nD scientific scenes (Points, Lines, GSplats) to a `.luxar.zarr`
+Luxar compiles nD scientific scenes (Points, Lines, GSplats, Mesh) to a `.luxar.zarr`
 archive served to a WebGL viewer. This skill builds a scene from a dataset.
 
 **The repo's demos and examples are the canonical know-how** — when in doubt, read a
@@ -51,6 +51,7 @@ for every method signature, `**attrs`, transforms, and overlays.
 | --- | --- | --- |
 | Point cloud, particles, cells | `add_points` | `positions` (N,D) |
 | Trajectories, skeletons, vectors, meshedges | `add_lines` | `vertices` (N,D) + `widths` |
+| Triangle surfaces, isosurfaces | `add_mesh` | `vertices` (V,D) + `faces` (F,3); optional normals (with `normal_dims`), colors, scalars |
 | Volumes / dense nD images (fitted to Gaussians) | `add_gsplats*` | centers/amplitudes/cholesky, or a fitted `.gsplats.zarr` |
 
 For raw volumes, fit Gaussian splats first — see the **`luxar-gsplat-pipeline`**

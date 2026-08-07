@@ -18,6 +18,7 @@ import {
   createMeshDefaultColorAttribute,
   createMeshIndexAttribute,
   createMeshGeometry,
+  hasTranslucentVertexAlpha,
   updateMeshGeometry,
 } from '../../../rendering/mesh-geometry';
 
@@ -67,6 +68,48 @@ describe('createMeshColorAttribute — the WebGPU dtype rules', () => {
     expect(attr.itemSize).toBe(3);
     expect(attr.normalized).toBe(false);
     expect(attr.array).toBe(src);
+  });
+});
+
+describe('hasTranslucentVertexAlpha — the §6.3 notice keys on VALUES, not on the channel count', () => {
+  it('is false for RGB, whatever the colours are', () => {
+    expect(hasTranslucentVertexAlpha(new Uint8Array([255, 0, 0, 0, 255, 0]), 3, 2)).toBe(false);
+  });
+
+  it('is false for a colourless mesh', () => {
+    expect(hasTranslucentVertexAlpha(null, undefined, 3)).toBe(false);
+  });
+
+  it('is false for an RGBA array whose alpha is fully opaque', () => {
+    // The false positive this exists to prevent: a writer that always emits four
+    // channels, or a broadcast (r, g, b, 255), composites exactly like RGB.
+    expect(hasTranslucentVertexAlpha(new Uint8Array([1, 2, 3, 255, 4, 5, 6, 255]), 4, 2)).toBe(
+      false
+    );
+    expect(hasTranslucentVertexAlpha(new Uint16Array([1, 2, 3, 65535]), 4, 1)).toBe(false);
+    expect(hasTranslucentVertexAlpha(new Float32Array([0.1, 0.2, 0.3, 1.0]), 4, 1)).toBe(false);
+  });
+
+  it('is true as soon as ONE vertex is translucent, per dtype scale', () => {
+    // Full opacity is dtype-dependent — 254 is translucent for uint8 and nothing at
+    // all for uint16, which is exactly the mistake a single hardcoded 255 would make.
+    expect(hasTranslucentVertexAlpha(new Uint8Array([1, 2, 3, 255, 4, 5, 6, 254]), 4, 2)).toBe(
+      true
+    );
+    expect(hasTranslucentVertexAlpha(new Uint16Array([1, 2, 3, 254]), 4, 1)).toBe(true);
+    expect(hasTranslucentVertexAlpha(new Float32Array([0.1, 0.2, 0.3, 0.99]), 4, 1)).toBe(true);
+  });
+
+  it('does not treat an HDR alpha above 1.0 as translucent', () => {
+    expect(hasTranslucentVertexAlpha(new Float32Array([2, 2, 2, 4]), 4, 1)).toBe(false);
+  });
+
+  it('scans only the first `vertexCount` vertices', () => {
+    // The colour buffer can be a capacity-sized allocation; zeros past the live count
+    // are not authored alpha.
+    const colors = new Uint8Array([1, 2, 3, 255, 0, 0, 0, 0]);
+    expect(hasTranslucentVertexAlpha(colors, 4, 1)).toBe(false);
+    expect(hasTranslucentVertexAlpha(colors, 4, 2)).toBe(true);
   });
 });
 

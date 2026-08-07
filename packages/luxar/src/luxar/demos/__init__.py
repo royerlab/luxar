@@ -1,7 +1,8 @@
 """Luxar Demos - Self-contained demonstration scripts.
 
 This package contains executable demo scripts that showcase Luxar's capabilities.
-Each demo is completely self-contained with all generation code in a single file.
+Each demo keeps the code that makes it distinctive in its own file, and reaches
+into this package for the shared plumbing helpers re-exported below.
 
 To run a demo:
     hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py
@@ -31,6 +32,7 @@ from ..utils.demos import (
     load_precomputed_gsplats,
     parse_demo_flags,
     parse_int_arg,
+    parse_path_arg,
     require_local_data,
     stack_colorings,
     warn_if_no_cuda_gpu,
@@ -72,6 +74,7 @@ __all__ = [
     "load_precomputed_gsplats",
     "parse_demo_flags",
     "parse_int_arg",
+    "parse_path_arg",
     "require_local_data",
     "require_module",
     "stack_colorings",

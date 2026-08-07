@@ -24,7 +24,7 @@ src/
 ├── mesh_culling.rs         — whole-triangle nD slab culling for indexed surfaces
 ├── gsplats_processing.rs   — Mahalanobis distance, marginal Cholesky, attenuation
 ├── effective_radii.rs      — Pythagorean radius shrinkage when slicing through hidden dims
-├── projection.rs           — extract 3D positions, bounds, compact-by-mask
+├── projection.rs           — extract 3D positions through display_dims
 ├── depth_sort.rs           — back-to-front splat ordering (depth-sorting Phase 2)
 └── decode.rs               — quantized / log / LUT / broadcast decoders
 ```
@@ -76,12 +76,11 @@ The kernels share a small bag of tricks documented inline:
 - **Loop fusion** — visibility and norm computation collapsed into a single
   pass over the per-element inner loop (see
   `gsplats_processing.rs::mahalanobis_distance_internal`).
-- **Branchless mask writes** — `output_mask[i] = visible as u8; count +=
-visible as u32;` instead of an `if/else`.
 - **Fixed-size lookup arrays** in place of `HashSet<u32>` for `display_dims`
   (see `lines_clipping.rs`, `effective_radii.rs`).
-- **Stride-specialised fast paths** for `stride == 1` and `stride == 3` in
-  `projection.rs::compact_by_mask`.
+- **Unrolled fixed-width copies** in the compaction loops rather than a generic
+  stride loop (see `lines_clipping.rs::interpolate_colors_batch`, which unrolls
+  the three colour channels).
 
 Manual SIMD via the `wide` crate was benchmarked and dropped: LLVM
 auto-vectorisation under `wasm-opt -O3 --enable-simd` matches or beats it on
@@ -111,16 +110,15 @@ D: both OUT, opposite sides → clip both (segment crosses slab)
 E: both OUT, same side       → invisible
 ```
 
-| Function                           | Purpose                                                                                                                                                                                                    |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clip_segment_single`              | Reference single-segment clipper. Returns `[visible, t1, t2]` as a 3-vec for JS interop.                                                                                                                   |
-| `clip_segments_batch`              | Workhorse: clips `num_segments` segments in one WASM call into `output_visibility`, `output_t1`, `output_t2`.                                                                                              |
-| `interpolate_clipped_positions`    | After batch clip, compute 3D start/end positions for visible segments via `display_dims`.                                                                                                                  |
-| `interpolate_scalars_batch`        | Same compaction for per-vertex scalar attributes (widths, sharpness, …).                                                                                                                                   |
-| `interpolate_colors_batch`         | RGB version with the inner loop unrolled across the three channels.                                                                                                                                        |
-| `calculate_segment_lengths`        | Euclidean 3D length per visible segment (for LOD / dash patterns).                                                                                                                                         |
-| `compute_cap_suppression`          | Per-endpoint cap suppression in [0, 1] per visible segment: 1 for a slice-clipped endpoint or a straight-through interior joint, 0 for a free end / branch point / sharp bend, cos(turn angle) in between. |
-| `lerp`, `lerp_vec3`, `distance_3d` | Scalar math helpers exposed for the TS fallback to share semantics.                                                                                                                                        |
+| Function                        | Purpose                                                                                                                                                                                                    |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clip_segment_single`           | Reference single-segment clipper. Returns `[visible, t1, t2]` as a 3-vec for JS interop.                                                                                                                   |
+| `clip_segments_batch`           | Workhorse: clips `num_segments` segments in one WASM call into `output_visibility`, `output_t1`, `output_t2`.                                                                                              |
+| `interpolate_clipped_positions` | After batch clip, compute 3D start/end positions for visible segments via `display_dims`.                                                                                                                  |
+| `interpolate_scalars_batch`     | Same compaction for per-vertex scalar attributes (widths, sharpness, …).                                                                                                                                   |
+| `interpolate_colors_batch`      | RGB version with the inner loop unrolled across the three channels.                                                                                                                                        |
+| `calculate_segment_lengths`     | Euclidean 3D length per visible segment (for LOD / dash patterns).                                                                                                                                         |
+| `compute_cap_suppression`       | Per-endpoint cap suppression in [0, 1] per visible segment: 1 for a slice-clipped endpoint or a straight-through interior joint, 0 for a free end / branch point / sharp bend, cos(turn angle) in between. |
 
 The batch path replaces the `HashSet<u32>` of display dims with a fixed-size
 `[bool; 16]` lookup. `dv.abs() < 1e-7` short-circuits the
@@ -156,8 +154,9 @@ Two properties are load-bearing and easy to "simplify" away:
 - **No vertex compaction.** Only the index buffer is rebuilt on a slice change;
   vertex attribute buffers are uploaded once, in full. `drawElements` never
   fetches an unreferenced vertex, so culled vertices cost nothing to draw. This
-  is also why `projection::compact_by_mask` is unusable here — it is `&[f32]`-only
-  and could not compact native `uint8`/`uint16` vertex colors.
+  is also why a generic `&[f32]`-only mask-compaction helper (such as the former
+  `projection::compact_by_mask`) would not fit here — it could not compact native
+  `uint8`/`uint16` vertex colors.
 - **The explicit `is_finite` test.** It looks subsumed by the range comparison
   (`NaN` fails both; `±Inf` fails against any finite bound), but an infinite
   `tolerance` makes `slab_max = +Inf`, and `+Inf <= +Inf` is _true_.
@@ -186,13 +185,10 @@ via Cholesky-Crout. This is what `compute_marginal_cholesky` (private,
 `#[inline]`) does, and it is what the TypeScript fallback must mirror exactly
 to keep parity tests green.
 
-| Function                        | Purpose                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mahalanobis_distance`          | Forward substitution on packed `L`: solve `L·y = diff`, return `‖y‖`.                                                                                                                                                                                                                                                                                            |
-| `extract_cholesky_submatrix`    | **Raw** row/col extraction — correct only for block-diagonal L. Documented as such; callers should prefer the attenuation helpers below.                                                                                                                                                                                                                         |
-| `compute_gsplats_attenuation`   | Per-splat: build hidden-dim diff vector, compute correct marginal Cholesky for hidden dims, Mahalanobis distance, then a C⁰-continuous shifted Gaussian `scale · max(0, exp(-D²/2) - exp(-trunc²/2))`. Writes `output_visibility` and `output_attenuation`.                                                                                                      |
-| `extract_visible_cholesky_3d`   | For each visible splat, compute the correct marginal Cholesky over `display_dims` (≤3) and pack into `[L00, L10, L11, L20, L21, L22]` ready for the renderer; with fewer than 3 display dims the missing rows get zero off-diagonals and a phantom diagonal equal to the geometric mean of the real pivots (NOT an epsilon — see `compute_display_cholesky_3d`). |
-| `compact_attenuated_amplitudes` | Compact `amplitudes[i] * attenuation[i]` over the visibility mask.                                                                                                                                                                                                                                                                                               |
+| Function                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mahalanobis_distance`     | Forward substitution on packed `L`: solve `L·y = diff`, return `‖y‖`.                                                                                                                                                                                                                                                                                                                                                                                     |
+| `project_gsplats_nd_to_3d` | Fused single pass: per splat apply the discrete-visibility gate, compute continuous attenuation (marginal Cholesky over the hidden dims + C⁰-continuous shifted Gaussian `scale · max(0, exp(-D²/2) - exp(-trunc²/2))`), decide visibility, and write COMPACTED display-marginal Cholesky (`[L00, L10, L11, L20, L21, L22]`, phantom-padded below 3 display dims — see `compute_display_cholesky_3d`), centers, attenuated amplitudes, and RGB(A) colors. |
 
 The shifted Gaussian truncation eliminates a popping artifact at the
 splat boundary that a raw `exp(-D²/2)` would produce when splats cross the
@@ -224,15 +220,11 @@ bucket, degenerate depth ranges fall back to the identity ordering. Input is
 always projected 3D centers, so the 16-dimension cap does not apply. See
 `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5.
 
-### `projection.rs` — extraction, bounds, compaction
+### `projection.rs` — extraction
 
-| Function                   | Purpose                                                                                                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `extract_3d_positions`     | Project nD positions to 3D by indexing through `display_dims` (≤3); fills unused output dims with `0.0`.                                                     |
-| `calculate_bounds_3d`      | Single-pass min/max sweep into a 6-element bounds buffer `[minX, minY, minZ, maxX, maxY, maxZ]`. Returns `0` and zero bounds on empty input.                 |
-| `compact_by_mask`          | Stride-specialised compaction. Fast paths for `stride=1` (scalars) and `stride=3` (vec3) with an unrolled vec3 copy; generic fallback for arbitrary strides. |
-| `count_visible`            | `popcount`-style scan over a `u8` mask.                                                                                                                      |
-| `radii_to_visibility_mask` | `mask[i] = radii[i] > threshold` (strictly greater — `radii[i] == threshold` is treated as hidden).                                                          |
+| Function               | Purpose                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| `extract_3d_positions` | Project nD positions to 3D by indexing through `display_dims` (≤3); fills unused output dims with `0.0`. |
 
 ### `decode.rs` — array decoding
 

@@ -170,6 +170,36 @@ export function createMeshColorAttribute(
 }
 
 /**
+ * Whether a colour array carries any per-vertex alpha BELOW fully opaque.
+ *
+ * The RGBA arm of the §6.3 translucency notice keys on this rather than on the mere
+ * PRESENCE of a 4th channel: an RGBA array whose alpha is uniformly opaque — a writer
+ * that always emits four channels, a broadcast `(r, g, b, 255)` — composites exactly
+ * like an RGB one, so warning about it would be noise about a scene that renders
+ * correctly.
+ *
+ * "Fully opaque" is dtype-dependent, and the values are the same ones
+ * {@link createMeshColorAttribute} pads RGB with: `255` / `65535` normalize to `1.0`,
+ * and `float32` alpha is already in that scale. An HDR alpha above `1.0` is not
+ * translucent either, hence the strict `<`.
+ *
+ * One pass over the alphas. Callers cache the answer: the colour array is uploaded
+ * once per node, while the commit that asks runs on every slice move.
+ */
+export function hasTranslucentVertexAlpha(
+  colors: MeshColorArray | null,
+  colorComponents: 3 | 4 | undefined,
+  vertexCount: number
+): boolean {
+  if (!colors || colorComponents !== 4) return false;
+  const opaque = colors instanceof Float32Array ? 1.0 : colors instanceof Uint8Array ? 255 : 65535;
+  for (let v = 0; v < vertexCount; v++) {
+    if (colors[v * 4 + 3] < opaque) return true;
+  }
+  return false;
+}
+
+/**
  * The opaque-white fallback bound when a node has no `colors` array.
  *
  * Bound rather than omitted, and that is load-bearing: an *unbound* `color`

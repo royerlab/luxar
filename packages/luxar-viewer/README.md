@@ -426,7 +426,8 @@ pnpm test:with-fixtures  # Generate test fixtures, then run tests
 # Prerequisite: examples + fixtures must exist. Run once locally:
 #   make run-examples
 #   pnpm test:generate-fixtures
-# Or use `make test-e2e` from the repo root which orchestrates this.
+# `make test-e2e` does NOT run those for you — it only installs
+# node_modules; the pre-flight aborts the run if the fixtures are absent.
 # E2E is currently disabled in GitHub CI (browser/GPU reliability);
 # `pnpm test:e2e:smoke` is the subset the workflow re-enable would
 # run (also useful locally for quick verification).
