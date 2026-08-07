@@ -233,3 +233,132 @@ class TestVocabulary:
                 tmp_path / method, verts, faces, substitutive_lod={"method": method}
             )
             assert nodes["surf"]["kind"] == "lod", method
+
+
+def octasphere_4d(subdivisions: int, w: float) -> Tuple[np.ndarray, np.ndarray]:
+    """The sphere with a 4th column pinned at ``w`` — a categorical axis."""
+    verts, faces = octasphere(subdivisions)
+    padded = np.hstack([verts, np.full((len(verts), 1), w, dtype=np.float32)])
+    return padded.astype(np.float32), faces
+
+
+class TestCoarsenDims:
+    """`coarsen_dims` must be RESOLVED against the scene, not silently dropped.
+
+    The resolver accepts dimension NAMES and the `"display"` convention and its
+    docstring says the adder resolves them. An earlier version only honoured an
+    already-integer list and passed `None` for anything else, so
+    `coarsen_dims=["x", "y", "z", "time"]` quietly became "coarsen the first three
+    columns and treat time as a hard barrier" — the opposite of the request, with
+    no warning anywhere.
+    """
+
+    def dims_4d(self):
+        from luxar import Dimension, Dimensions
+
+        return Dimensions(
+            [
+                Dimension(name=n, unit="um", range=(-2.0, 2.0), step=0.1, display=d)
+                for n, d in (("x", True), ("y", True), ("z", True), ("t", False))
+            ]
+        )
+
+    def write(self, tmp_path, verts, faces, coarsen):
+        from luxar import LuxarZarrCompiler
+
+        store = tmp_path / "cd.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=self.dims_4d())
+            scene.add_mesh(
+                "surf",
+                verts,
+                faces,
+                substitutive_lod={"levels": 2, "coarsen_dims": coarsen},
+            )
+        return ladder_children(read_nodes(store))
+
+    def test_named_dims_coarsen_the_axes_they_name(self, tmp_path):
+        # A 2-dim coarsening makes z a hard BARRIER, and a barrier compares exact
+        # values — on a sphere almost every z is distinct, so hardly anything
+        # merges. Naming `["x", "y"]` must therefore produce a visibly different
+        # (much less reduced) ladder than the 3-dim default.
+        #
+        # This is the discriminator the bug fails: with names dropped, `["x","y"]`
+        # fell back to the first three columns and came out IDENTICAL to the
+        # default. Measured — named 2-dim gives [144, 258], the default [26, 66,
+        # 258] — so the two are not close enough to confuse.
+        verts, faces = octasphere_4d(3, 0.0)
+        two_dim = self.write(tmp_path / "xy", verts, faces, ["x", "y"])
+        three_dim = self.write(tmp_path / "xyz", verts, faces, ["x", "y", "z"])
+
+        assert two_dim[0]["n_vertices"] > three_dim[0]["n_vertices"] * 2, (
+            "naming only x and y must barrier z and reduce far less — if the names "
+            f"were dropped both would coarsen x/y/z and agree "
+            f"({[c['n_vertices'] for c in two_dim]} vs "
+            f"{[c['n_vertices'] for c in three_dim]})"
+        )
+
+    def test_names_and_indices_agree(self, tmp_path):
+        # The same request written both ways must produce the same ladder. This is
+        # what fails when names silently fall back to the default.
+        verts, faces = octasphere_4d(3, 0.0)
+        # x/y specifically, because that is the case whose fallback was silent:
+        # a 3-dim request coincides with the default and would agree either way.
+        by_name = self.write(tmp_path / "n", verts, faces, ["x", "y"])
+        by_index = self.write(tmp_path / "i", verts, faces, [0, 1])
+        assert [c["n_vertices"] for c in by_name] == [c["n_vertices"] for c in by_index]
+
+
+class TestNormalFrame:
+    """Coarse normals come from `normal_dims`, never from the coarsening axes.
+
+    They are different quantities: `spatial_dims` is which axes the grid merges
+    over and may be any number of them, while a normal always lives in exactly
+    three. Deriving one from the other produced garbage rather than an error — a
+    2-dim coarsening made `np.cross` return scalars, a 4-dim one made it raise.
+    """
+
+    def test_a_two_dim_coarsening_still_produces_usable_normals(self, tmp_path):
+        from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+        verts, faces = octasphere(3)
+        normals = verts / np.linalg.norm(verts, axis=1, keepdims=True)
+        dims = Dimensions(
+            [
+                Dimension(name=n, unit="um", range=(-2.0, 2.0), step=0.1, display=True)
+                for n in ("x", "y", "z")
+            ]
+        )
+        store = tmp_path / "nf.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_mesh(
+                "surf",
+                verts,
+                faces,
+                normals=normals.astype(np.float32),
+                normal_dims=[0, 1, 2],
+                substitutive_lod={"levels": 2, "coarsen_dims": [0, 1]},
+            )
+        children = ladder_children(read_nodes(store))
+        assert len(children) >= 2
+        assert all(c["has_normals"] for c in children), (
+            "every level keeps normals; a 2-dim coarsening must not make the "
+            "normal recomputation collapse"
+        )
+
+    def test_the_decimator_refuses_normals_without_a_three_axis_frame(self):
+        from luxar.mesh.decimate import decimate_cluster
+
+        verts, faces = octasphere(3)
+        normals = (verts / np.linalg.norm(verts, axis=1, keepdims=True)).astype(
+            np.float32
+        )
+        with pytest.raises(ValueError, match="normal_dims"):
+            decimate_cluster(
+                verts,
+                faces,
+                target_vertices=40,
+                normals=normals,
+                normal_dims=(0, 1),
+            )

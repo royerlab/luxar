@@ -112,7 +112,9 @@ class TestDecimateCluster:
     def test_normals_are_recomputed_from_the_COARSE_surface(self) -> None:
         """Not averaged from the fine one, which would describe the wrong surface."""
         v, f = octasphere(4)
-        r = decimate_cluster(v, f, target_vertices=150, normals=np.zeros_like(v))
+        r = decimate_cluster(
+            v, f, target_vertices=150, normals=np.zeros_like(v), normal_dims=(0, 1, 2)
+        )
         assert r.normals is not None
         np.testing.assert_allclose(np.linalg.norm(r.normals, axis=1), 1.0, atol=1e-4)
         # On a sphere the outward normal IS the position, so agreement here shows the
@@ -264,3 +266,35 @@ class TestDecimateCluster:
         bad[0, 0] = len(v) + 5
         with pytest.raises(ValueError, match="out of range"):
             decimate_cluster(v, bad, target_vertices=20)
+
+
+def test_the_cell_search_is_robust_to_non_monotone_cluster_counts() -> None:
+    """The search is a heuristic, and its RESULT is validated rather than assumed.
+
+    A comment here once justified bisection by claiming the occupied-cell count
+    falls monotonically as `cell` grows. It does not: `floor(p / cell)` grids at
+    different spacings are not nested, so 10.1 and 10.9 share a cell at 2.0 (both
+    floor to 5) and split at 2.1 (4 and 5) — a COARSER grid yielding MORE
+    clusters. Bisection can therefore skip an interval holding a tighter fit.
+
+    What must survive that is the CONTRACT, not the tightness: whatever comes back
+    is a real surface with at least `target_vertices` vertices. This asserts the
+    contract across a sweep of targets, on geometry with the near-coincident
+    coordinate pairs that make the grids disagree.
+    """
+    v, f = octasphere(4)
+    # Nudge one axis so many vertex pairs sit close enough to straddle a cell
+    # boundary at some spacings and share one at others.
+    v = v.copy()
+    v[::3, 0] += 1e-3
+
+    for target in (20, 50, 120, 300, 700):
+        r = decimate_cluster(v, f, target_vertices=target)
+        assert r.vertices.shape[0] >= target, (
+            f"target {target}: got {r.vertices.shape[0]} vertices — the search may "
+            "return a LOOSER fit than optimal, but never one below the target"
+        )
+        assert r.faces.shape[0] > 0, f"target {target}: no surviving triangle"
+        assert int(r.faces.max()) < r.vertices.shape[0], (
+            f"target {target}: face index out of range"
+        )

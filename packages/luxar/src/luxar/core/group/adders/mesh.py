@@ -314,6 +314,7 @@ def add_mesh_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     spec=substitutive_spec,
+                    scene=scene,
                     **attrs,
                 )
 
@@ -371,6 +372,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     spec: Dict[str, Any],
+    scene: Any,
     **attrs: Any,
 ) -> Union["Group", Mesh]:
     """Write a mesh whose coarse LOD levels are DECIMATED copies of the surface.
@@ -398,18 +400,29 @@ def add_mesh_substitutive_lod_wrapper_impl(
     is the same degenerate-path behaviour the Points wrapper has.
     """
     from ....mesh.decimate import decimate_cluster
-    from ..lod.group import coverage_fractions
+    from ..lod.group import coverage_fractions, resolve_coarsen_dims
 
     n_vertices = int(vert_arr.shape[0])
+    ndim = int(vert_arr.shape[1])
     compression_factor = int(spec["compression_factor"])
     levels = int(spec["levels"])
 
     # `coarsen_dims` is the authoring name for the decimator's `spatial_dims` —
     # the dims the reduction may merge across; the complement are hard barriers.
-    coarsen = spec.get("coarsen_dims")
-    spatial_dims: Optional[tuple] = None
-    if isinstance(coarsen, (list, tuple)) and all(isinstance(x, int) for x in coarsen):
-        spatial_dims = tuple(int(x) for x in coarsen)
+    #
+    # Resolved against the SCENE, through the same helper Points and Lines use, so
+    # dimension NAMES and the `"display"` default work as the resolver's docstring
+    # promises. An earlier version only accepted an already-integer list and
+    # silently passed `None` for anything else, which turned
+    # `coarsen_dims=["x", "y", "z", "time"]` into "coarsen the first three columns
+    # and treat time as a barrier" — the opposite of the request, with no warning.
+    #
+    # The `None` return needs translating rather than forwarding: it means
+    # "coarsen over ALL dims" to the resolver, and "default to the first three" to
+    # the decimator. Those coincide for a 3D mesh and diverge for anything else,
+    # so `None` becomes an explicit all-columns tuple here.
+    coarsen = resolve_coarsen_dims(scene, ndim, spec.get("coarsen_dims"))
+    spatial_dims: tuple = coarsen if coarsen is not None else tuple(range(ndim))
 
     # Coarsest first, so the ladder reads the way it is written out. Counts must
     # come out strictly ASCENDING in that order, which is what the comparison
@@ -427,6 +440,9 @@ def add_mesh_substitutive_lod_wrapper_impl(
             faces_arr.reshape(-1, 3).astype(np.uint32),
             target_vertices=target,
             normals=normals if normals is not None else None,
+            # The normal FRAME, which is not the coarsening axes — a grid may merge
+            # over any number of dims while a normal always lives in exactly three.
+            normal_dims=tuple(normal_dims) if normal_dims is not None else None,
             colors=colors if isinstance(colors, np.ndarray) else None,
             spatial_dims=spatial_dims,
         )

@@ -103,6 +103,7 @@ def decimate_cluster(
     *,
     target_vertices: int,
     normals: NDArray[np.float32] | None = None,
+    normal_dims: tuple[int, ...] | None = None,
     colors: NDArray[np.uint8] | None = None,
     spatial_dims: tuple[int, ...] | None = None,
     max_iterations: int = 24,
@@ -118,6 +119,14 @@ def decimate_cluster(
         normals: Optional ``(V, 3)``. Recomputed from the coarse geometry rather
             than averaged: an averaged normal describes the FINE surface and would
             light the coarse one wrongly at exactly the creases clustering moved.
+        normal_dims: The three dimension indices ``normals`` describes. **Required
+            with** ``normals``, and NOT interchangeable with ``spatial_dims`` — the
+            two answer different questions. ``spatial_dims`` is which axes the grid
+            merges over, and may be any number of them; ``normal_dims`` is the
+            3-axis frame a normal vector lives in. Deriving one from the other
+            silently produced garbage: a 2-dim coarsening made ``np.cross`` return
+            scalars (which then broke the accumulation), and a 4-dim one made it
+            raise.
         colors: Optional ``(V, C)`` uint8, averaged within each cluster.
         spatial_dims: Which columns are spatial. Defaults to the first ``min(3, D)``.
         max_iterations: Bisection budget for the cell-size search.
@@ -163,6 +172,18 @@ def decimate_cluster(
         spatial_dims = tuple(range(min(3, d)))
     if not spatial_dims or any(i < 0 or i >= d for i in spatial_dims):
         raise ValueError(f"spatial_dims {spatial_dims} out of range for {d} dims")
+    if normals is not None:
+        if normal_dims is None or len(tuple(normal_dims)) != 3:
+            raise ValueError(
+                "normals require normal_dims naming exactly 3 dimensions (got "
+                f"{normal_dims!r}). They are recomputed from the COARSE surface, "
+                "which needs the frame they are defined in — spatial_dims cannot "
+                "stand in for it, since a grid may coarsen over any number of axes."
+            )
+        if any(i < 0 or i >= d for i in normal_dims):
+            raise ValueError(
+                f"normal_dims {tuple(normal_dims)} out of range for {d} dims"
+            )
 
     if vertices.shape[0] <= target_vertices:
         return DecimatedMesh(vertices, faces, normals, colors)
@@ -173,15 +194,31 @@ def decimate_cluster(
         np.max(v64[:, spatial].max(axis=0) - v64[:, spatial].min(axis=0)) or 1.0
     )
 
-    # Bisect the cell size. Coarser cells -> fewer vertices, monotonically, which is
-    # what makes bisection valid here. Seeded from the ideal cubic packing so the
+    # Search the cell size by bisection, seeded from the ideal cubic packing so the
     # first probe is usually within a factor of two.
+    #
+    # The occupied-cell count trends downward as `cell` grows but is NOT pointwise
+    # monotone, so this is a heuristic search rather than a proof-carrying binary
+    # search — an earlier comment here claimed monotonicity and was wrong.
+    # `floor(p / cell)` grids at different spacings are not nested: 10.1 and 10.9
+    # share a cell at 2.0 (both floor to 5) and split at 2.1 (4 and 5), so a
+    # COARSER grid can yield MORE clusters. Bisection can therefore skip an
+    # interval holding a tighter fit.
+    #
+    # That costs fit quality, not correctness, and the difference matters: every
+    # candidate is VALIDATED before it can become `best` (at least `target_vertices`
+    # vertices, at least one surviving triangle), and the caller additionally
+    # requires each ladder level to be strictly coarser than the last. So a missed
+    # interval yields a level that is less tight than it could have been, never one
+    # that is wrong.
     ratio = max(target_vertices / vertices.shape[0], 1e-9)
     lo, hi = extent * 1e-6, extent
     guess = extent * (ratio ** (1.0 / len(spatial_dims)))
     best: DecimatedMesh | None = None
     for _ in range(max_iterations):
-        candidate = _cluster_once(v64, faces, spatial_dims, guess, normals, colors)
+        candidate = _cluster_once(
+            v64, faces, spatial_dims, guess, normals, normal_dims, colors
+        )
         count = candidate.vertices.shape[0]
         # A candidate with no surviving triangle is not a usable level regardless of
         # its vertex count, so it must not become `best` — it would be returned as a
@@ -205,7 +242,7 @@ def decimate_cluster(
 
     if best is None:
         # Every probe overshot. Return the least-reduced one we can still build.
-        best = _cluster_once(v64, faces, spatial_dims, lo, normals, colors)
+        best = _cluster_once(v64, faces, spatial_dims, lo, normals, normal_dims, colors)
     if best.faces.shape[0] == 0:
         # Reachable only for input that has no surface to begin with — every
         # triangle collinear, or every vertex coincident — since any real triangle
@@ -224,6 +261,7 @@ def _cluster_once(
     spatial_dims: tuple[int, ...],
     cell: float,
     normals: NDArray[np.float32] | None,
+    normal_dims: tuple[int, ...] | None,
     colors: NDArray[np.uint8] | None,
 ) -> DecimatedMesh:
     """One clustering pass at a fixed cell size."""
@@ -241,7 +279,6 @@ def _cluster_once(
         )
     centroid /= np.maximum(counts, 1)[:, None]
 
-    spatial = np.asarray(spatial_dims, dtype=np.intp)
     new_v = centroid
     new_f = inverse[faces.reshape(-1)].reshape(faces.shape).astype(np.uint32)
     a, b, c = new_f[:, 0], new_f[:, 1], new_f[:, 2]
@@ -285,8 +322,10 @@ def _cluster_once(
                 new_colors = new_colors[referenced]
 
     new_normals = None
-    if normals is not None:
-        new_normals = _recompute_normals(new_v[:, spatial], new_f, new_v.shape[0])
+    if normals is not None and normal_dims is not None:
+        # The NORMAL frame, not the coarsening axes — see `decimate_cluster`.
+        frame = np.asarray(tuple(normal_dims), dtype=np.intp)
+        new_normals = _recompute_normals(new_v[:, frame], new_f, new_v.shape[0])
 
     return DecimatedMesh(
         vertices=new_v.astype(np.float32),
