@@ -105,7 +105,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import cached_download, launch_viewer
+from luxar.demos import cached_download, launch_viewer, parse_int_arg, parse_path_arg
 from luxar.utils._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -716,32 +716,12 @@ def build_scene(
 # -----------------------------------------------------------------------------
 
 
-def _int_arg(argv: list[str], flag: str, default: int) -> int:
-    """Parse ``--flag N`` / ``--flag=N`` from argv as an int, else ``default``."""
-    for i, arg in enumerate(argv):
-        if arg == flag and i + 1 < len(argv):
-            return int(argv[i + 1])
-        if arg.startswith(flag + "="):
-            return int(arg.split("=", 1)[1])
-    return default
-
-
-def _path_arg(argv: list[str], flag: str) -> Path | None:
-    """Parse ``--flag PATH`` / ``--flag=PATH`` from argv, else ``None``."""
-    for i, arg in enumerate(argv):
-        if arg == flag and i + 1 < len(argv):
-            return Path(argv[i + 1]).expanduser()
-        if arg.startswith(flag + "="):
-            return Path(arg.split("=", 1)[1]).expanduser()
-    return None
-
-
 def main() -> None:
     """Fetch FlyWire data, load neurons + edges, and build/serve the scene."""
     argv = sys.argv[1:]
-    min_syn = _int_arg(argv, "--min-synapses", DEFAULT_MIN_SYNAPSES)
-    max_edges = _int_arg(argv, "--max-edges", DEFAULT_MAX_EDGES)
-    cache_dir = _path_arg(argv, "--cache-dir") or CACHE_DIR
+    min_syn = parse_int_arg("min-synapses", DEFAULT_MIN_SYNAPSES, argv)
+    max_edges = parse_int_arg("max-edges", DEFAULT_MAX_EDGES, argv)
+    cache_dir = parse_path_arg("cache-dir", argv) or CACHE_DIR
 
     aprint("=" * 70)
     aprint("FLYWIRE — adult Drosophila brain connectome")

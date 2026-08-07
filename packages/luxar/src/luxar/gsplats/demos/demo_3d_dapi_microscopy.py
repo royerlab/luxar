@@ -53,6 +53,7 @@ import numpy as np
 import zarr
 from arbol import Arbol, aprint, asection
 
+from luxar.gsplats.demos._demo_common import ellipsoid_wireframe_from_L
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.metal import is_metal_available
@@ -84,60 +85,6 @@ NLM_PATCH_DISTANCE = 5
 
 # Setup Arbol
 Arbol.max_depth = 5
-
-
-# --- Helper: oriented 3D ellipsoid wireframe from covariance ---
-def ellipsoid_wireframe_from_L(
-    mu_zyx: np.ndarray, L: np.ndarray, t: float = 2.0, n_pts: int = 32
-) -> np.ndarray:
-    """
-    Build a wireframe approximating the 3D ellipsoid corresponding to the level set
-    (x-μ)^T Σ^{-1} (x-μ) = t^2, where Σ = L L^T (full cov in voxel units).
-
-    Returns wireframe points as (n_wireframe_pts, 3) array of (z,y,x) coordinates.
-    Creates circular wireframes along the three principal planes.
-    """
-    Sigma = L @ L.T  # (3,3)
-    # Eigen-decompose Sigma for principal axes
-    evals, evecs = np.linalg.eigh(Sigma)  # evals >= 0
-    evals = np.clip(evals, 1e-12, None)
-    # Radii along principal axes at level t: r_i = t * sqrt(lambda_i)
-    radii = t * np.sqrt(evals)  # (3,)
-
-    # Create wireframe circles in the three principal planes
-    theta = np.linspace(0, 2 * np.pi, n_pts, endpoint=False)
-    cos_theta = np.cos(theta)
-    sin_theta = np.sin(theta)
-
-    wireframe_pts = []
-
-    # XY plane (z=0 in principal coords)
-    circle_xy = np.zeros((n_pts, 3))
-    circle_xy[:, 0] = radii[0] * cos_theta  # x-axis in principal coords
-    circle_xy[:, 1] = radii[1] * sin_theta  # y-axis in principal coords
-    circle_xy[:, 2] = 0  # z-axis
-    # Transform to data coordinates
-    pts_xy = (evecs @ circle_xy.T).T + mu_zyx[None, :]
-    wireframe_pts.append(pts_xy)
-
-    # XZ plane (y=0 in principal coords)
-    circle_xz = np.zeros((n_pts, 3))
-    circle_xz[:, 0] = radii[0] * cos_theta
-    circle_xz[:, 1] = 0
-    circle_xz[:, 2] = radii[2] * sin_theta
-    pts_xz = (evecs @ circle_xz.T).T + mu_zyx[None, :]
-    wireframe_pts.append(pts_xz)
-
-    # YZ plane (x=0 in principal coords)
-    circle_yz = np.zeros((n_pts, 3))
-    circle_yz[:, 0] = 0
-    circle_yz[:, 1] = radii[1] * cos_theta
-    circle_yz[:, 2] = radii[2] * sin_theta
-    pts_yz = (evecs @ circle_yz.T).T + mu_zyx[None, :]
-    wireframe_pts.append(pts_yz)
-
-    # Combine all wireframes
-    return np.vstack(wireframe_pts).astype(np.float32)
 
 
 with asection("3D DAPI Gaussian Splatting Demo"):
