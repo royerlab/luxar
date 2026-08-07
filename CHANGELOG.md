@@ -6,6 +6,16 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### CAIDA country coloring parses current organization snapshots (#1373)
+
+The CAIDA AS-topology demo expected a space in the upstream
+`# format: org_id` / `# format: aut` section headers, but current
+`as-org2info` snapshots use `# format:org_id` / `# format:aut`. The parser now
+accepts either whitespace form, so organization names and country codes reach
+node colors and hover labels again. A snapshot missing either required section
+now raises an actionable error instead of silently producing an all-unknown
+country view.
+
 #### Mesh is per-triangle depth sorted
 
 `normal`-mode meshes composited in index order: whichever triangle the writer

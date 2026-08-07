@@ -149,6 +149,9 @@ AS_REL_INDEX_URL = "https://publicdata.caida.org/datasets/as-relationships/seria
 AS_ORG_INDEX_URL = "https://publicdata.caida.org/datasets/as-organizations/"
 AS_REL_FILE_PATTERN = re.compile(r'href="(\d{8}\.as-rel2\.txt\.bz2)"')
 AS_ORG_FILE_PATTERN = re.compile(r'href="(\d{8}\.as-org2info\.txt\.gz)"')
+AS_ORG_SECTION_PATTERN = re.compile(
+    r"^\s*#\s*format\s*:\s*(org_id|aut)(?:\||\s|$)", re.IGNORECASE
+)
 
 LAYOUT_CACHE_FILENAME = "layout_3d.npz"
 
@@ -210,10 +213,14 @@ def parse_as_org(path: Path) -> pd.DataFrame:
     """Return a DataFrame indexed by ASN with ``org_name`` and ``country``.
 
     The CAIDA as-org2info file has two sections separated by format-comment
-    headers:
-        # format: org_id|changed|name|country|source         (organizations)
-        # format: aut|changed|aut_name|org_id|opaque_id|source  (ASes → org_id)
-    We stream once, tracking which section we're in, and join.
+    headers. Current snapshots omit whitespace after the colon, while older or
+    hand-authored fixtures may include it::
+
+        # format:org_id|changed|name|country|source         (organizations)
+        # format:aut|changed|aut_name|org_id|opaque_id|source  (ASes → org_id)
+
+    We stream once, accept either whitespace form, track the active section,
+    and join the ASN records to their organizations.
     """
     org_info: dict[str, tuple[str, str]] = {}
     asn_to_org: dict[str, str] = {}
@@ -223,12 +230,14 @@ def parse_as_org(path: Path) -> pd.DataFrame:
         opener = gzip.open if path.suffix == ".gz" else open
         with opener(path, "rt", encoding="utf-8", errors="replace") as f:
             for raw in f:
-                line = raw.rstrip("\n")
-                if line.startswith("#"):
-                    if "format: org_id" in line:
-                        mode = "org"
-                    elif "format: aut" in line:
-                        mode = "aut"
+                line = raw.rstrip("\r\n")
+                section_match = AS_ORG_SECTION_PATTERN.match(line)
+                if section_match:
+                    mode = (
+                        "org" if section_match.group(1).lower() == "org_id" else "aut"
+                    )
+                    continue
+                if line.lstrip().startswith("#"):
                     continue
                 if not line.strip():
                     continue
@@ -239,6 +248,18 @@ def parse_as_org(path: Path) -> pd.DataFrame:
                 elif mode == "aut" and len(parts) >= 4:
                     asn, _changed, _aut_name, org_id = parts[:4]
                     asn_to_org[asn.strip()] = org_id.strip()
+
+        if not org_info or not asn_to_org:
+            missing = []
+            if not org_info:
+                missing.append("organization records")
+            if not asn_to_org:
+                missing.append("ASN-to-organization records")
+            raise ValueError(
+                f"CAIDA AS-organization file {path} contains no parsed "
+                f"{' or '.join(missing)}; expected '# format:org_id|...' and "
+                "'# format:aut|...' section headers"
+            )
 
         rows = []
         for asn, org_id in asn_to_org.items():
