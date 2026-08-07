@@ -148,6 +148,26 @@ class TestLadderShape:
         )
         assert len(two) == 3, "2 coarse levels + the original"
 
+    def test_a_UNIFORM_color_reaches_every_level(self, tmp_path):
+        # A uniform colour is not per-vertex data, so there is nothing to average
+        # — it must be forwarded verbatim to every level. Discriminating on
+        # `isinstance(colors, np.ndarray)` got this wrong twice: a uniform TUPLE
+        # fell through to `None` and left the coarse levels colourless against a
+        # coloured finest one (a visible colour pop on every LOD switch), and a
+        # uniform NDARRAY of shape (3,) reached the decimator, where
+        # `colors.shape[1]` raised a bare IndexError the adder does not catch.
+        verts, faces = octasphere(3)
+        children = ladder_children(
+            write_ladder(
+                tmp_path, verts, faces, colors=(200, 0, 0), substitutive_lod=True
+            )
+        )
+        assert len(children) >= 2
+        assert all(c["has_colors"] for c in children), (
+            "every level keeps the uniform colour; a colourless coarse level "
+            "renders default white and pops on the LOD switch"
+        )
+
     def test_colors_survive_to_the_coarse_levels(self, tmp_path):
         # Averaged per cluster by the decimator; the point here is only that they
         # are CARRIED — a level that silently lost its colours would render black

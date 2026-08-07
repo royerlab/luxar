@@ -429,6 +429,22 @@ def add_mesh_substitutive_lod_wrapper_impl(
     # below enforces — against the previously KEPT (coarser) level, and against
     # the original at the top. Comparing the other way round drops every level
     # after the first, since each is legitimately larger than the one before it.
+    # PER-VERTEX colours are averaged per cluster by the decimator; a UNIFORM
+    # colour is not per-vertex data at all and must be forwarded verbatim to every
+    # level instead. `isinstance(colors, np.ndarray)` was the wrong discriminator
+    # for that and failed two ways: a uniform TUPLE fell through to `None`, so the
+    # coarse levels came out colourless against a coloured finest one (a visible
+    # colour pop on every LOD switch), and a uniform NDARRAY of shape (3,) reached
+    # the decimator, where `colors.shape[1]` raised a bare `IndexError` that the
+    # adder's ValueError/TypeError funnel does not even catch.
+    per_vertex_colors = (
+        colors
+        if isinstance(colors, np.ndarray)
+        and colors.ndim == 2
+        and colors.shape[0] == n_vertices
+        else None
+    )
+
     coarse: List[Any] = []
     previous = 0
     for power in range(levels, 0, -1):
@@ -443,7 +459,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
             # The normal FRAME, which is not the coarsening axes — a grid may merge
             # over any number of dims while a normal always lives in exactly three.
             normal_dims=tuple(normal_dims) if normal_dims is not None else None,
-            colors=colors if isinstance(colors, np.ndarray) else None,
+            colors=per_vertex_colors,
             spatial_dims=spatial_dims,
         )
         count = int(level.vertices.shape[0])
@@ -517,7 +533,9 @@ def add_mesh_substitutive_lod_wrapper_impl(
             # Normals are recomputed from the COARSE surface, so they describe the
             # same axis triple the input's did.
             normal_dims=normal_dims if level.normals is not None else None,
-            colors=level.colors,
+            # Averaged per cluster when per-vertex; the original uniform value
+            # otherwise, since every vertex shares it and nothing needs merging.
+            colors=level.colors if per_vertex_colors is not None else colors,
             shading=shading,
             double_sided=double_sided,
             extend_to_all=extend_to_all,
