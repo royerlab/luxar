@@ -60,7 +60,7 @@ The submodule `triangle-ordering.ts` owns:
 
 Both files are **module-scoped singletons** (the `element-texture-layout.ts` pattern):
 
-- Commit paths (three geometry types) and app lifecycle are far apart
+- Commit paths (all four geometry types) and app lifecycle are far apart
 - All callers talk to this module via exported functions
 - No coordinator object is threaded through constructors
 
@@ -257,7 +257,7 @@ It **suppresses the `requestRender` wake** for the duration (depth-counted / ree
 
 ### Blending-Mode Switch Hook (noteDepthSortBlendingModeSwitch)
 
-Reacts to a sortable layer's blending mode changing at runtime (the LayersPanel compose chain). Wired for all three geometry types (gsplats, points, lines).
+Reacts to a sortable layer's blending mode changing at runtime (the LayersPanel compose chain). Wired for all four geometry types (gsplats, points, lines, mesh).
 
 **Flow**:
 
@@ -272,7 +272,7 @@ Reacts to a sortable layer's blending mode changing at runtime (the LayersPanel 
    - Clear the node's recorded pose: `clearSortPose(state)` (hygiene)
    - Release worker-side registration: `releaseWorkerNode(nodeId)`
 
-**Sorted modes = normal ∪ volumetric (`needsDepthSort`), for all three geometry types**. A switch BETWEEN two sorted modes (e.g. normal→volumetric) is deliberately a no-op here: the ordering stays valid; the projection/output change is the material's problem (TSL rebuild / GLSL define recompile).
+**Sorted modes = normal ∪ volumetric (`needsDepthSort`)**, for the three emissive types; mesh has no `volumetric` (its material maps the request onto `opaque`), so its sorted set is just `normal`. A switch BETWEEN two sorted modes (e.g. normal→volumetric) is deliberately a no-op here: the ordering stays valid; the projection/output change is the material's problem (TSL rebuild / GLSL define recompile).
 
 ### Node Release (releaseDepthSortNode / releaseAllDepthSortNodes)
 

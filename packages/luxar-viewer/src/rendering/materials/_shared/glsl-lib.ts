@@ -78,9 +78,10 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
  * arbitrary index.
  *
  * Separate from {@link GLSL_SORTED_INDEX} because mesh needs the split WITHOUT
- * the ordering attributes: its pick id is `gl_VertexID` (mesh has no depth sort
- * and therefore no `aSortedIndex` indirection — spec §6.5), so injecting the
- * whole sorted-index block would declare two attributes the geometry does not
+ * the ordering attributes: its pick id is `gl_VertexID` (mesh IS depth sorted,
+ * but its ordering permutes `geometry.index` itself, so there is no
+ * `aSortedIndex` indirection to read — spec §6.5), so injecting the whole
+ * sorted-index block would declare two attributes the geometry does not
  * carry. Declaring an unbound attribute is not merely wasteful on WebGPU — the
  * vertex-buffer layout is cached from the attribute set at first draw.
  *
