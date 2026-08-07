@@ -1,6 +1,6 @@
 # luxar.gsplats.batch
 
-Batch fitting orchestration for large OME-Zarr datasets, fanning a whole nD timelapse (T×C × tiles/boxes) across **either** a multi-GPU local machine (`batch-fit run`) **or** a Slurm cluster (`batch-fit submit`). Generates Slurm array jobs, runs a local subprocess pool, captures execution environments, estimates wall times from GPU profiles, tracks job status, and orchestrates the post-batch streaming merge. Planning (dataset discovery + decomposition + manifest) is shared by both execution backends and lives in `cli/gsplat_ops/batch_planning.py` (CLI layer); this package owns the manifest, the two execution backends, and the merge.
+Batch fitting orchestration for large OME-Zarr datasets, fanning a whole nD timelapse (T×C × tiles/boxes) across **either** a multi-GPU local machine (`batch-fit run`) **or** a Slurm cluster (`batch-fit submit`). Generates Slurm array jobs, runs a local subprocess pool, captures execution environments, estimates wall times from GPU profiles, tracks job status, and orchestrates the post-batch streaming merge. Planning (dataset discovery + decomposition + manifest) is shared by both execution backends and lives in `cli/gsplat_ops/batch/planning.py` (CLI layer); this package owns the manifest, the two execution backends, and the merge.
 
 ## Key Classes and Functions
 

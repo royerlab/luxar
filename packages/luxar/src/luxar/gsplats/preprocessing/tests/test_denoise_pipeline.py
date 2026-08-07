@@ -104,7 +104,7 @@ def _make_denoise_ctx(volume, denoise_h):
     """Build a minimal valid FitPipelineCtx with denoise enabled."""
     from pathlib import Path
 
-    from luxar.cli.gsplat_ops.fitting_fit_utils import FitPipelineCtx
+    from luxar.cli.gsplat_ops.fitting.fit_utils import FitPipelineCtx
 
     return FitPipelineCtx(
         input_path=Path("in.zarr"),
@@ -168,7 +168,7 @@ def _make_denoise_ctx(volume, denoise_h):
 
 class TestDenoiseConfigInjection:
     def test_manual_h_records_global_range_and_injects_it(self):
-        from luxar.cli.gsplat_ops.fitting_fit_utils import (
+        from luxar.cli.gsplat_ops.fitting.fit_utils import (
             assemble_fit_config,
             resolve_denoise_h,
         )
@@ -192,7 +192,7 @@ class TestDenoiseConfigInjection:
         # calibrate_nlm_h is heavy external compute, so patch it and assert the
         # WHOLE-volume range is still captured for per-tile normalization.
         import luxar.gsplats.preprocessing as _preproc
-        from luxar.cli.gsplat_ops.fitting_fit_utils import resolve_denoise_h
+        from luxar.cli.gsplat_ops.fitting.fit_utils import resolve_denoise_h
 
         rng = np.random.RandomState(1)
         volume = (rng.rand(6, 16, 16) * 300 + 10).astype(np.float32)
@@ -210,7 +210,7 @@ class TestDenoiseConfigInjection:
         assert ctx.denoise_norm_range == (float(volume.min()), float(volume.max()))
 
     def test_no_denoise_returns_none_range(self):
-        from luxar.cli.gsplat_ops.fitting_fit_utils import resolve_denoise_h
+        from luxar.cli.gsplat_ops.fitting.fit_utils import resolve_denoise_h
 
         volume = np.zeros((4, 8, 8), dtype=np.float32)
         ctx = _make_denoise_ctx(volume, denoise_h=0.05)

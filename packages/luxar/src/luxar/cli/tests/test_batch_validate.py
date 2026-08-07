@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from luxar.cli.gsplat_ops.batch_validation import validate_tile as _validate_tile
+from luxar.cli.gsplat_ops.batch.validation import validate_tile as _validate_tile
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.io.save_gsplats import save_gsplats, write_gsplats_tree
 from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
@@ -132,7 +132,7 @@ def test_unmigrated_bucket_prefix_contract(tmp_path):
 
     # Inspect the implementation that actually runs the --fix loop (the name
     # reachable via gsplat_commands is a thin back-compat wrapper).
-    from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
+    from luxar.cli.gsplat_ops.batch.status_validate_cancel import (
         run_batch_validate_cmd,
     )
 
@@ -203,8 +203,8 @@ def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(
     touching the legitimate `{tile}.empty` marker, and the liveness probe must
     receive the bare token (`.empty`/`.old` stripped).
     """
-    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
-    from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
+    import luxar.cli.gsplat_ops.batch.status_validate_cancel as bsvc
+    from luxar.cli.gsplat_ops.batch.status_validate_cancel import (
         run_batch_validate_cmd,
     )
     from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
@@ -272,8 +272,8 @@ def test_validate_report_counts_stray_staging_empty_markers(
     toward STALE_TMP even without --fix, so the report is honest; neither is
     deleted in report mode.
     """
-    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
-    from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
+    import luxar.cli.gsplat_ops.batch.status_validate_cancel as bsvc
+    from luxar.cli.gsplat_ops.batch.status_validate_cancel import (
         run_batch_validate_cmd,
     )
     from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
@@ -325,8 +325,8 @@ def test_validate_fix_keeps_staging_of_running_attempt(tmp_path, capsys, monkeyp
     zarr writer can end with a corrupt store being promoted by that attempt's
     atomic claim. Live (or unverifiable) staging is counted as ACTIVE and kept.
     """
-    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
-    from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
+    import luxar.cli.gsplat_ops.batch.status_validate_cancel as bsvc
+    from luxar.cli.gsplat_ops.batch.status_validate_cancel import (
         run_batch_validate_cmd,
     )
     from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
@@ -372,7 +372,7 @@ def test_staging_attempt_live_token_parsing(monkeypatch):
     """Token → liveness routing: local host+pid, Slurm jobid, legacy, unknown."""
     import socket as socket_mod
 
-    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
+    import luxar.cli.gsplat_ops.batch.status_validate_cancel as bsvc
 
     host = socket_mod.gethostname()
 
@@ -396,7 +396,7 @@ def test_staging_attempt_live_token_parsing(monkeypatch):
 
 def test_staging_attempt_live_slurm_token(monkeypatch):
     """Slurm tokens are probed via squeue; no squeue means 'cannot verify'."""
-    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
+    import luxar.cli.gsplat_ops.batch.status_validate_cancel as bsvc
 
     class _Res:
         def __init__(self, rc, out, err=""):
