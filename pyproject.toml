@@ -596,6 +596,7 @@ source_modules = [
     "luxar.io",
     "luxar.core",
     "luxar.encoding",
+    "luxar.mesh",
 ]
 forbidden_modules = ["luxar.cli"]
 # CLI-behaviour tests colocated under domain packages legitimately import the

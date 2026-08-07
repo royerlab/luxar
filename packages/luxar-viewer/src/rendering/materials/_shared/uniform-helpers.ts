@@ -1,6 +1,6 @@
 /**
  * Tiny shared helpers for uniform-value normalization used by the
- * Point / Line / GSplat material pairs (both GLSL and TSL variants).
+ * Point / Line / GSplat / Mesh material pairs (both GLSL and TSL variants).
  *
  * The audit that surfaced these helpers explicitly limited the scope
  * to drift points that already appear in every material constructor;
@@ -17,8 +17,9 @@
  * The shader computes `pow(color, 1.0 / gamma)`, which divides by
  * zero when `gamma == 0`. A lower bound of `0.001` matches what each
  * material constructor was clamping inline before this helper
- * existed; using one helper across all six files (Point/Line/GSplat
- * × GLSL/TSL) keeps the clamp identical if the bound ever changes.
+ * existed; using one helper across all eight files (Point/Line/
+ * GSplat/Mesh × GLSL/TSL) keeps the clamp identical if the bound
+ * ever changes.
  */
 export function clampGamma(gamma: number | undefined): number {
   return Math.max(0.001, gamma ?? 1.0);
@@ -30,8 +31,8 @@ export function clampGamma(gamma: number | undefined): number {
  * `pow(color, 1.0 / gamma)` calls — `pow(x, 1) == x` — by compiling in
  * the `LUXAR_GAMMA_ONE` define (GLSL) / `gammaOne` config flag (TSL).
  *
- * Shared across all three geometry types (Point / Line / GSplat) ×
- * both backends so the fast-path threshold is identical everywhere.
+ * Shared across all four geometry types (Point / Line / GSplat / Mesh)
+ * × both backends so the fast-path threshold is identical everywhere.
  *
  * DELIBERATELY no hysteresis (2026-07 debt-remediation decision):
  * crossing the boundary flips the LUXAR_GAMMA_ONE define and costs one
@@ -55,8 +56,8 @@ export function isGammaOne(gamma: number): boolean {
  * `vColor` range — by compiling in the `LUXAR_NO_GOG` define (GLSL) /
  * `noGOG` config flag (TSL).
  *
- * Shared across all three geometry types (Point / Line / GSplat) ×
- * both backends, like {@link isGammaOne}, so the fast-path threshold
+ * Shared across all four geometry types (Point / Line / GSplat / Mesh)
+ * × both backends, like {@link isGammaOne}, so the fast-path threshold
  * is identical everywhere.
  */
 export function isNoGOG(intensity: number, offset: number): boolean {

@@ -307,35 +307,6 @@ export function interpolate_clipped_positions(
 }
 
 /**
- * Linear interpolation helper (scalar).
- */
-export function lerp(a: number, b: number, t: number): number {
-  return a + t * (b - a);
-}
-
-/**
- * Linear interpolation for 3D vectors.
- * Returns interpolated vector as Float32Array [x, y, z].
- */
-export function lerp_vec3(a: Float32Array, b: Float32Array, t: number): Float32Array {
-  return new Float32Array([
-    a[0] + t * (b[0] - a[0]),
-    a[1] + t * (b[1] - a[1]),
-    a[2] + t * (b[2] - a[2]),
-  ]);
-}
-
-/**
- * Calculate 3D Euclidean distance.
- */
-export function distance_3d(a: Float32Array, b: Float32Array): number {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const dz = b[2] - a[2];
-  return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-/**
  * Batch interpolate scalar attributes for visible segments.
  *
  * @param values - Per-vertex attribute values [numVertices]

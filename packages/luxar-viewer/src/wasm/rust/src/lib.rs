@@ -5,7 +5,7 @@
 //! - nD visibility computation for Points, Lines, and GSplats
 //! - Effective radius calculation for nD hypersphere slicing
 //! - Data decoding (quantized, log-space, LUT)
-//! - nD to 3D projection and bounds calculation
+//! - nD to 3D projection
 //!
 //! ## Performance Optimizations
 //!
@@ -33,7 +33,7 @@
 //!
 //! - `effective_radii` - Effective radius calculation for nD slicing
 //! - `decode` - Data decoding (quantized, LUT, log-space)
-//! - `projection` - nD to 3D projection and bounds
+//! - `projection` - nD to 3D projection
 //! - `gsplats_processing` - GSplat nD->3D projection, attenuation, Cholesky
 //! - `lines_clipping` - Line segment clipping for nD slicing
 //! - `mesh_culling` - Whole-triangle nD visibility culling for mesh surfaces
@@ -81,17 +81,10 @@ pub use decode::{
 };
 pub use depth_sort::sort_splats_by_depth;
 pub use effective_radii::calculate_effective_radii;
-pub use gsplats_processing::{
-    compact_attenuated_amplitudes, compute_gsplats_attenuation, extract_cholesky_submatrix,
-    extract_visible_cholesky_3d, mahalanobis_distance, project_gsplats_nd_to_3d,
-};
+pub use gsplats_processing::{mahalanobis_distance, project_gsplats_nd_to_3d};
 pub use lines_clipping::{
     calculate_segment_lengths, clip_segment_single, clip_segments_batch, compute_cap_suppression,
-    distance_3d, interpolate_clipped_positions, interpolate_colors_batch,
-    interpolate_scalars_batch, lerp, lerp_vec3,
+    interpolate_clipped_positions, interpolate_colors_batch, interpolate_scalars_batch,
 };
 pub use mesh_culling::{compact_visible_faces, mesh_vertex_visibility_mask};
-pub use projection::{
-    calculate_bounds_3d, compact_by_mask, count_visible, extract_3d_positions,
-    radii_to_visibility_mask,
-};
+pub use projection::extract_3d_positions;

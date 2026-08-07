@@ -10,7 +10,7 @@ migrate legacy inputs. For the exhaustive field-level specs, see
 
 | Format | Extension | What it holds | Version attr | Current version |
 |---|---|---|---|---|
-| Scene container | `.luxar.zarr` | The scene graph (points / lines / gsplats nodes, groups, transforms, dimensions) | `luxar_version` | **v0.1** |
+| Scene container | `.luxar.zarr` | The scene graph (points / lines / gsplats / mesh nodes, groups, transforms, dimensions) | `luxar_version` | **v0.1** |
 | Standalone gsplats | `.gsplats.zarr` | A detached Gaussian-splat node-tree (leaf, additive ladder, `kind=lod`, `kind=partition`, nested) | `format_version` (with `format_type="gsplats_zarr"`) | **v3.3** |
 
 The two version numbers are **unrelated** — the scene container being at v0.1 says

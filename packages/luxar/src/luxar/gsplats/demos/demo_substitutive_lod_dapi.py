@@ -33,6 +33,7 @@ import sys
 import numpy as np
 from arbol import Arbol, aprint, asection
 
+from luxar.gsplats.demos._demo_common import psnr
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod import make_substitutive_lod
@@ -52,16 +53,6 @@ SEED = 42
 # ───────────────────────────────────────────────────────────────────
 
 Arbol.max_depth = 5
-
-
-def _psnr(rendered: np.ndarray, target: np.ndarray) -> float:
-    mse = float(np.mean((rendered.astype(np.float64) - target.astype(np.float64)) ** 2))
-    if mse <= 0.0:
-        return float("inf")
-    rng = float(target.max() - target.min())
-    if rng <= 0.0:
-        return float("inf")
-    return 10.0 * float(np.log10(rng**2 / mse))
 
 
 def _rel_l2(rendered: np.ndarray, target: np.ndarray) -> float:
@@ -169,7 +160,7 @@ def main() -> None:
             aprint(f"Fitted {fitted.n_splats} splats")
             rendered_full = _render_data(fitted, V.shape)
             full_rel_l2 = _rel_l2(rendered_full, V)
-            full_psnr = _psnr(rendered_full, V)
+            full_psnr = psnr(rendered_full, V)
             aprint(
                 f"Full reconstruction: rel_l2={full_rel_l2:.4f}, PSNR={full_psnr:.2f} dB"
             )
@@ -210,8 +201,8 @@ def main() -> None:
                 rendered_cull = _render_data(culled[level_idx], V.shape)
                 rs = _rel_l2(rendered_sub, V)
                 rc = _rel_l2(rendered_cull, V)
-                ps = _psnr(rendered_sub, V)
-                pc = _psnr(rendered_cull, V)
+                ps = psnr(rendered_sub, V)
+                pc = psnr(rendered_cull, V)
                 sub_rel.append(rs)
                 cull_rel.append(rc)
                 sub_psnrs.append(ps)

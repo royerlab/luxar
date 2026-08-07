@@ -5,7 +5,7 @@ Unit tests for the `luxar.core` package covering scene graph classes, transforms
 ## What's Tested
 
 - **Scene structure** - Scene creation, hierarchy, group nesting, validation, and persisted dimension reassignment
-- **Data nodes** - Points, Lines, GSplats creation and metadata
+- **Data nodes** - Points, Lines, GSplats, Mesh creation and metadata
 - **Transforms** - Identity, translate, rotate, scale, compose, inverse, look_at, serialization
 - **Dimensions** - Dimension/Dimensions creation, validation, categorical dimensions, spatial flags
 - **dim_order** - Mapping lower-dimensional data into higher-dimensional scenes

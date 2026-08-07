@@ -1,7 +1,8 @@
 """Colors (``COLOR`` semantic type) zarr serializer.
 
-Canonical writer for the ``COLOR`` semantic type across all three geometry types
-(Points, Lines, GSplats), keeping default-precision selection identical everywhere.
+Canonical writer for the ``COLOR`` semantic type across all four geometry types
+(Points, Lines, GSplats, Mesh), keeping default-precision selection identical
+everywhere.
 """
 
 from __future__ import annotations

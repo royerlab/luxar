@@ -211,9 +211,9 @@ async function waitForLuxarReady(page: any, timeout = 60000): Promise<void> {
 }
 
 async function waitForDataLoaded(page: any, timeout = 60000): Promise<void> {
-  // Geometry-agnostic: totalElements = points + gsplats + lines, so this works
-  // for Points, Lines, GSplats, and mixed scenes (totalPoints alone stays 0
-  // for a pure Lines demo like dipc_3d_genome).
+  // Geometry-agnostic: totalElements sums points + gsplats + lines + triangles,
+  // so this works for all four geometry types and mixed scenes (totalPoints alone
+  // stays 0 for a pure Lines demo like dipc_3d_genome, or a pure Mesh one).
   await page.waitForFunction(
     () => {
       const debug = (window as any).__luxarDebug;

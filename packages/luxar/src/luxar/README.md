@@ -11,7 +11,7 @@ Core Luxar Python package and public API exports.
 
 | Subpackage | Purpose |
 |---|---|
-| `core/` | Scene graph nodes (Scene, Group, Points, Lines, GSplats), dimensions, transforms, viewer config |
+| `core/` | Scene graph nodes (Scene, Group, Points, Lines, GSplats, Mesh), dimensions, transforms, viewer config |
 | `io/` | Zarr compiler (`LuxarZarrCompiler`), reader (`LuxarScene`), writer utilities |
 | `encoding/` | Semantic type-based encoding (quantization, broadcasting, LUT) |
 | `colormaps/` | Colormap definitions and utilities |

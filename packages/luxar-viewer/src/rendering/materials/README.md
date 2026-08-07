@@ -112,10 +112,12 @@ than by omission (each bullet below records its own exception):
   `ColormapAwareMaterial`. Point and GSplat additionally consume
   `computePointSizeFactor` / `computeMaxPointSize` / `computeFocalLength`
   from `camera-uniforms.ts`.
-- **Parallel picking counterparts** in `../picking/{point,line,gsplat}/` with
-  the same four-file shape. Mesh's is still to come: its element ordinal is
-  `gl_VertexID` rather than an element-texture texel, so it needs its own pair
-  (MESH_NODE_SPEC.md §6.5).
+- **Parallel picking counterparts** in `../picking/{point,line,gsplat,mesh}/`
+  with the same four-file shape — except Mesh, a six-file variant: its element
+  ordinal is `gl_VertexID` rather than an element-texture texel, which adds
+  `provoking-vertex.ts` (the two backends read a `flat` varying from different
+  triangle corners) and `pick-mode.ts` (a surface's cutout and depth
+  consequences derived in one place) (MESH_NODE_SPEC.md §6.5).
 - **Single parity harness** (`tsl-shader-parity.spec.ts`) renders the same
   scene through both backends and pixel-compares for every geometry.
 

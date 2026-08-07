@@ -3,11 +3,12 @@ message: "If you use Luxar, please cite it as below."
 title: "Luxar: Gaussian splatting and interactive web visualization for multidimensional scientific data"
 abstract: >-
   Luxar is an open-source, Python-first system that compiles arbitrary
-  n-dimensional scientific data — points, lines, and Gaussian splats — into
-  compact, spatially indexed Zarr archives served to a browser-based WebGL
-  viewer with HDR rendering, progressive streaming, and native n-dimensional
-  navigation. It includes a pipeline for fitting microscopy volumes to Gaussian
-  splats as a compact, continuous, GPU-renderable representation.
+  n-dimensional scientific data — points, lines, Gaussian splats, and triangle
+  meshes — into compact, spatially indexed Zarr archives served to a
+  browser-based WebGL viewer with HDR rendering, progressive streaming, and
+  native n-dimensional navigation. It includes a pipeline for fitting
+  microscopy volumes to Gaussian splats as a compact, continuous,
+  GPU-renderable representation.
 type: software
 authors:
   - family-names: Royer
