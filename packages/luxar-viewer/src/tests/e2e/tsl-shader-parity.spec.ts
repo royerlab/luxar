@@ -207,8 +207,11 @@ function assertCrossingBandCentered(pixels: number[], label: string): void {
  * Count pixels whose strongest channel moved by more than 32/255 between two
  * renders. The whole-frame `meanAbsDiff` dilutes a small footprint away: the
  * join wedge is ~20 px on a 64x64 buffer, a mean abs diff of well under 1.
- * Shared by the three join fixtures, which all need "the join block actually
- * changed the image" as their non-vacuity tooth.
+ * Shared by the five join fixture pairs, in two opposite directions. Four of
+ * them need "the join block actually changed the image" as their non-vacuity
+ * tooth (> 10); the near-plane pair needs the negation — both sides decline, so
+ * the count must be exactly 0 — and its `-control-` pair supplies the > 10 that
+ * keeps that zero from being vacuous.
  */
 function stronglyChangedPixels(a: readonly number[], b: readonly number[]): number {
   let n = 0;
@@ -985,7 +988,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     }
   });
 
-  test('line join across the near plane: both sides decline, so the mitred render IS the unmitred one', async ({
+  test('line join across the near plane: both sides decline, so the mitred render IS the unmitred one, and a lowered-plane control that proves it', async ({
     page,
   }) => {
     await bootHarness(page);
@@ -1011,9 +1014,22 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // `none` build computes. So the two renders must be IDENTICAL, and that
     // equality is the assertion: it is zero only while the conjunction holds.
     //
-    // Nothing else can be doing the declining, or the gate would be vacuous:
-    // the turn is 0.6 (grow = 1.12, inside the miter limit), the axial reach
-    // is 3.2 px against overshoot allowances of 5 px and 7.5 px, and both
+    // Nothing else can be doing the declining, or the gate would be vacuous.
+    // The `-control-*` pair below is this same joint with nothing changed but
+    // `nearCull`, lowered to 0.2 so the guard is TRUE, and it RENDERS a
+    // difference — so under this camera, this geometry and these joint codes
+    // the block IS reached and DOES mitre. That is what the control witnesses,
+    // and no more: both partner-naming ends sit at the shared vertex (depth
+    // 1.0, in front of either plane) and render at 6.4 px of half-width under
+    // either, so those three carry over and the equality here cannot be a
+    // joint code, a storage slot or a closed width gate.
+    //
+    // Everything that reads `nearCull` ITSELF does differ between the two
+    // pairs — the near-plane segment clip, the `bothBehind` cull, the
+    // overshoot allowances — so for those the analytic reading is the only
+    // evidence, and it must not be deleted as redundant with the control: the
+    // turn is 0.6 (grow = 1.12, inside the miter limit), the axial reach is
+    // 3.2 px against overshoot allowances of 5 px and 7.5 px, and both
     // partner-naming ends render at 6.4 px of half-width, 3.2x the 2 px gate.
     // See `line-join-near-plane-*` in `harnesses/tsl-harness/lines.ts`.
     const glslMiter = await runGLSL(page, 'line-join-near-plane-miter');
@@ -1055,6 +1071,78 @@ test.describe('TSL ↔ GLSL shader parity', () => {
         changed,
         `${backend}: with the far endpoint behind nearCull the join must be a no-op (got ${changed} strongly-changed px) — a non-zero count is one segment mitering alone`
       ).toBe(0);
+    }
+
+    // THE CONTROL, and the reason the assertion above is a gate and not a
+    // tautology. Same fixture, same camera, same geometry, same joint codes;
+    // `nearCull` alone drops to 0.2, under segment 0's 0.3 far endpoint, so
+    // `bothFarInFront` reads true on both sides and the joint IS mitred. (The
+    // lower plane also stops the near-plane SEGMENT clip firing and lets
+    // segment 0's leg project at its full 35 px, but both follow from
+    // `nearCull` and so are shared by the miter and none members of this pair —
+    // they cancel out of the comparison.) See `NEAR_PLANE_CONTROL_JOIN`.
+    const glslCtlMiter = await runGLSL(page, 'line-join-near-plane-control-miter');
+    const tslCtlMiter = await runTSL(page, 'line-join-near-plane-control-miter');
+    const glslCtlNone = await runGLSL(page, 'line-join-near-plane-control-none');
+    const tslCtlNone = await runTSL(page, 'line-join-near-plane-control-none');
+
+    assertBothRendered(glslCtlMiter, tslCtlMiter.pixels, 'line-join-near-plane-control-miter');
+    assertBothRendered(glslCtlNone, tslCtlNone.pixels, 'line-join-near-plane-control-none');
+
+    // The usual cross-backend parity, both styles — the control is a parity
+    // fixture in its own right (an accepted join on a perspective camera whose
+    // partner projection runs under a nearCull the plane no longer clamps).
+    expect(
+      meanAbsDiffPerCoveredPixel(glslCtlMiter, tslCtlMiter.pixels),
+      'line-join-near-plane-control-miter: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+    const ctlMiterDiff = meanAbsDiff(glslCtlMiter, tslCtlMiter.pixels);
+    expect(
+      ctlMiterDiff,
+      `line-join-near-plane-control-miter: GLSL vs TSL mean abs diff ${ctlMiterDiff.toFixed(2)} on the 0-255 scale`
+    ).toBeLessThan(2.0);
+    expect(
+      meanAbsDiffPerCoveredPixel(glslCtlNone, tslCtlNone.pixels),
+      'line-join-near-plane-control-none: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+    const ctlNoneDiff = meanAbsDiff(glslCtlNone, tslCtlNone.pixels);
+    expect(
+      ctlNoneDiff,
+      `line-join-near-plane-control-none: GLSL vs TSL mean abs diff ${ctlNoneDiff.toFixed(2)}`
+    ).toBeLessThan(2.0);
+
+    // The non-vacuity proof for the `toBe(0)` above: with the guard satisfied
+    // the very same joint mitres, and the shared mitred corner at
+    // (-3.2, 6.4) px against segment 0's plain perpendicular of (0, 6.4) — and
+    // against segment 1's of (-5.12, 3.84), the same 3.2 px of shear — shears
+    // each quad's end edge over a wedge of ~theta*R^2/2 = 19 px. Measured, the
+    // control moves 83 pixels by more than 32/255, so the same floor of 10 px
+    // the other join pairs use has better than 8x margin; putting
+    // NEAR_PLANE_CONTROL_CULL back to 0.6 drops that count to 0, which is the
+    // measurement that makes this a control rather than a second copy of the
+    // pair above.
+    //
+    // The 19 px derivation is a LOWER bound here, deliberately: it is the one
+    // uncovered sector on the OUTSIDE of the bend, while the render moves four
+    // edges. `cornerOffset * aQuadCorner.y` applies the miter point
+    // symmetrically, so each quad's end edge ROTATES about the shared vertex —
+    // 3.2 px of axial shear on both flanks of both tubes, four triangles of
+    // 0.5 * 6.4 * 3.2 = 10.24 px, ~41 px of geometry. The outer wedge goes
+    // unlit -> lit; the inner double-covered lens is repartitioned between the
+    // two quads, and since these fixtures draw with NoBlending, which quad owns
+    // an overlapping pixel is itself visible. The endpoint cap is NOT part of
+    // it, unlike the taper pair: a mitred joint derives 1.0, exactly the
+    // code-implied default `none` keeps for a slot-bearing code, so this
+    // comparison is pure geometry.
+    for (const [backend, miter, none] of [
+      ['GLSL', glslCtlMiter, glslCtlNone],
+      ['TSL', tslCtlMiter.pixels, tslCtlNone.pixels],
+    ] as const) {
+      const changed = stronglyChangedPixels(miter, none);
+      expect(
+        changed,
+        `${backend}: with nearCull under both far endpoints the SAME joint must visibly differ from none, i.e. the block is reached (got ${changed} strongly-changed px) — this is what makes the no-op assertion above a gate rather than a join that is never reached`
+      ).toBeGreaterThan(10);
     }
   });
 

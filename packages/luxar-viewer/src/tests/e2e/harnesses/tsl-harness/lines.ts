@@ -4,7 +4,7 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * behind-camera + ortho-near culling, sorted-index permutation) plus
  * the line-pick counterparts + multi-row, cap-suppression, clipping-remap,
- * and exact-near-plane boundary variants. 32 registry entries.
+ * and exact-near-plane boundary variants. 34 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -648,6 +648,11 @@ function buildTaperJoinTexelSource(): LineTexelSource {
  * outer ends free.
  */
 const NEAR_PLANE_CULL = 0.6;
+/**
+ * The lowered plane of {@link NEAR_PLANE_CONTROL_JOIN} — under segment 0's 0.3
+ * far endpoint, so the same joint mitres instead of declining.
+ */
+const NEAR_PLANE_CONTROL_CULL = 0.2;
 const NEAR_PLANE_A_START = perspectivePixelPos(-35, 0, 0.3);
 const NEAR_PLANE_SHARED = perspectivePixelPos(0, 0, 1);
 const NEAR_PLANE_B_END = perspectivePixelPos(9, 12, 1.5);
@@ -700,6 +705,59 @@ const NEAR_PLANE_JOIN: JoinFixture = {
   isOrtho: false,
   buildCamera: buildBehindCamera,
   nearCull: NEAR_PLANE_CULL,
+};
+
+/**
+ * CONTROL for {@link NEAR_PLANE_JOIN}: the SAME joint with the cull plane
+ * lowered under segment 0's far endpoint, so the guard is TRUE and both sides
+ * mitre. This pair must therefore DIFFER, and that difference is what makes the
+ * pair above a gate rather than a tautology.
+ *
+ * `-miter` == `-none` is satisfied by every way the join block can fail to RUN
+ * at all: the rendered-width gate closed, a joint code that decodes to a
+ * sentinel or the wrong storage slot, a segment culled or a quad projected off
+ * screen. The equality assertion cannot tell any of those from the near-plane
+ * guard doing its job, and an analytic argument about the turn and the widths
+ * only shows the block SHOULD be reached — nothing rendered showed that it is,
+ * under this fixture's exact camera and uniforms. Here it visibly is.
+ *
+ * `nearCull` is the right thing to move, and the only thing moved. It IS the
+ * guard's threshold, so lowering it flips exactly the predicate under test; and
+ * it lives in the uniforms rather than the geometry, so the control reuses
+ * {@link buildNearPlaneJoinTexelSource} verbatim and needs no second set of
+ * position constants that could drift out of step with the first. Hence the
+ * spread: the two fixtures are the same object but for this one number.
+ *
+ * The lower plane changes more than the guard, but every one of those changes is
+ * driven by `nearCull`, which `uLineJoin` does not touch — so the whole class is
+ * shared by BOTH members of the control pair and cancels out of the
+ * miter-vs-none comparison. The ones a reader would otherwise be surprised by:
+ *   Segment 0's start sits at view depth 0.3 >= 0.2, so tA stays 0 and the
+ *   near-plane SEGMENT clip does not fire at all; both partner-naming ends (the
+ *   shared vertex, depth 1.0) keep `reachesVertex` either way.
+ *   `luxarLinePixelPos` divides by max(clip.w, nearCull), so segment 0's far
+ *   endpoint now projects at its full 35 px from the shared vertex instead of
+ *   the 17.5 px the 0.6 plane clamped it to, and segment 0's RENDERED leg is
+ *   35 px rather than the 10 px the clip left.
+ *   The fragment stage's near fade is smoothstep(nearCull, 2*nearCull, depth) on
+ *   the interpolated view depth, so the joint's own fade rises from 0.74 to 1.0.
+ *   `luxarLineEndPixelWidth` divides by max(-viewZ, nearCull) as well, so
+ *   segment 0's FREE-END corner half-width goes 10.67 px -> 21.33 px (its 0.3
+ *   depth is no longer clamped to the plane), with `vPixelWidth` following.
+ *
+ * What the guard then sees, and why the joint is mitred rather than merely
+ * accepted: both operands (segment 0's far endpoint at 0.3 and segment 1's at
+ * 1.5) clear 0.2, so `bothFarInFront` is true on both sides. The turn is still
+ * 0.6 — the clip only ever moved segment 0's start ALONG its own line, so
+ * dirIn = (1, 0) either way — giving grow = sqrt(2/1.6) = 1.12 <= 2 and an axial
+ * reach of 6.4 * 0.5 = 3.2 px, now against overshoot allowances of
+ * 0.5 * min(35, 15) = 7.5 px from segment 0's side and 0.5 * min(15, 35) = 7.5 px
+ * from segment 1's (the 0.6 plane's were 5 px and 7.5 px). Both partner-naming
+ * ends still render at 0.1 * 64 / 1.0 = 6.4 px of half-width, 3.2x the 2 px gate.
+ */
+const NEAR_PLANE_CONTROL_JOIN: JoinFixture = {
+  ...NEAR_PLANE_JOIN,
+  nearCull: NEAR_PLANE_CONTROL_CULL,
 };
 
 /**
@@ -848,6 +906,14 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // segment 0 miter alone and flap. See {@link NEAR_PLANE_JOIN}.
   'line-join-near-plane-miter': joinEntry(NEAR_PLANE_JOIN, 1.0),
   'line-join-near-plane-none': joinEntry(NEAR_PLANE_JOIN, 0.0),
+  // CONTROL for the pair above: the same joint with nearCull lowered to 0.2,
+  // under segment 0's 0.3 far endpoint, so the guard is true and both sides
+  // MITRE. The parity spec requires this pair to DIFFER — which is what proves
+  // the block is reached under that fixture's camera and uniforms, so its
+  // pixel-identity is the guard declining and not the join being skipped for
+  // some unrelated reason. See {@link NEAR_PLANE_CONTROL_JOIN}.
+  'line-join-near-plane-control-miter': joinEntry(NEAR_PLANE_CONTROL_JOIN, 1.0),
+  'line-join-near-plane-control-none': joinEntry(NEAR_PLANE_CONTROL_JOIN, 0.0),
   // Multi-row texture-orientation parity: the segment renders from
   // STORAGE SLOT 1 of a 2-row texture (row 0 is a green decoy). Both
   // backends must resolve the same row — a Y-flip mismatch between the

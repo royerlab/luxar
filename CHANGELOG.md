@@ -90,6 +90,11 @@ invisible, because the defect poisons its own median), so its fraction is a
 detector, not a severity measure, and not comparable between bands of different
 turn angle.
 
+The TSL parity suite's near-plane join pair asserts that the mitred render IS
+the unmitred one — an equality that every way of never reaching the join block
+would satisfy too — so it is now backed by a control at a lowered cull plane
+which must visibly differ, making that equality a gate rather than a tautology.
+
 #### Four geometry types, said consistently
 
 `grep -ci mesh README.md` returned 0. The lead paragraph, the capabilities table
