@@ -12,7 +12,7 @@ Luxar is a **high-performance system for compiling and visualizing arbitrary-siz
 * **Arbitrary dimensionality** (3D, 4D, 5D, nD) with intuitive navigation
 * **Memory efficiency** through progressive loading and intelligent caching
 * **High quality rendering** with HDR support and post-processing effects
-* **Multi-primitive scenes**: Points, lines, Gaussian splats, and triangle meshes
+* **Multi-primitive scenes**: Points, lines, Gaussian splats, and triangle meshes (the meshes are shaded; the other three are emissive)
 
 **Key Innovation**: Combine spatial indexing with nD hypersphere slicing to enable interactive exploration of datasets that don't fit in memory.
 
@@ -536,7 +536,7 @@ Consider Alternatives For:
 
 * ❌ **Small datasets** (<10K points) - overhead not worth it, use matplotlib/plotly
 * ❌ **Real-time streaming** - Luxar is for static datasets, not live data streams
-* ❌ **Mesh authoring / CAD** - Luxar *renders* triangle meshes (``add_mesh``), but it does not edit or generate them, and a mesh gets no level-of-detail or spatial partitioning (see ``docs/specs/MESH_NODE_SPEC.md`` §9), so one very large surface loads whole and up front, with no progressive refinement
+* ❌ **Mesh authoring / CAD** - Luxar *renders* triangle meshes (``add_mesh``, ``luxar mesh import``), but it does not edit them, and a mesh gets no level-of-detail or spatial partitioning (see ``docs/specs/MESH_NODE_SPEC.md`` §9), so one very large surface loads whole and up front, with no progressive refinement
 * ❌ **2D plots** - Use specialized 2D libraries (bokeh, plotly)
 
 Common Workflows

@@ -47,7 +47,7 @@ Simple type aliases for improved readability.
 - **Scene**: `NodePath`, `NodeAttributes`, `SceneHierarchy`, `GroupAttrs`
 - **Dimensions**: `DimensionRange`, `DimensionIndex`, `DimensionIndices`, `CategoryList`
 - **Colors**: `ColorValue`, `ColorRGB`, `ColorRGBA`
-- **Metadata**: `PointsMetadata`, `LinesMetadata`, `GSplatsMetadata`, `SceneMetadata`
+- **Metadata**: `PointsMetadata`, `LinesMetadata`, `GSplatsMetadata`, `MeshMetadata`, `SceneMetadata`
 - **Validation**: `ValidationResult`
 
 **Purpose**: Simplify complex type annotations

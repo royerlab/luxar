@@ -716,12 +716,11 @@ Mesh nodes contain triangle-surface data — isosurfaces, segmentation boundarie
 organ and cortical meshes. They are the only node type that describes a
 *connected, opaque surface* rather than a set of soft per-element primitives.
 
-Mesh is fully renderable: the Python writer/reader/`luxar info`, the viewer's
-loader and shaded material pair, and vertex-granularity picking have all landed
-(see `docs/specs/MESH_NODE_SPEC.md` §11). The format contract still names the two
-sets separately — `geometry_types` (the writable leaf vocabulary) and
-`loader_types` (the viewer-drawable subset) — because a type becomes authorable
-before it becomes drawable, but they agree on all four today.
+✅ **Writable and renderable.** Mesh nodes are written, read and reported by
+`luxar info`, and the viewer loads, shades and picks them too — the whole
+vertical ships today (see `docs/specs/MESH_NODE_SPEC.md` §11). The format contract
+still distinguishes the two: `geometry_types` (the writable leaf vocabulary) and
+`loader_types` (the viewer-drawable subset) — and both now include `mesh`.
 
 Two structural differences from the other three types:
 
@@ -882,7 +881,8 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls.
+mode's κ), blending mode, and colormap controls, plus three mesh-only shading
+controls (ambient, shade falloff, alpha cutoff).
 
 ```javascript
 {
@@ -1094,7 +1094,7 @@ consumers must treat missing and `"none"` identically.
 
 #### Per-Element Labels (CSR-style)
 
-Optional per-element string labels for hover tooltips (GPU picking). Available on all node types (points, lines, gsplats, mesh — mesh labels are per-vertex, since picking returns the vertex ordinal). When present, `.zattrs` includes `"has_labels": true`.
+Optional per-element string labels for hover tooltips (GPU picking). Available on all four geometry node types (points, lines, gsplats, mesh — per-vertex for lines and mesh). When present, `.zattrs` includes `"has_labels": true`.
 
 **label_offsets/** Array:
 - **Shape:** `(N+1,)` where N = number of elements
@@ -1116,11 +1116,11 @@ Empty strings are treated as null labels (no tooltip shown on hover). Labels are
 #### Per-Element Image Labels (CSR-style)
 
 Optional per-element **image** labels for hover thumbnails, written via the
-`image_labels=` parameter of `add_points` / `add_lines` / `add_gsplats` /
-`add_mesh` (accepts pre-encoded bytes, PIL images, `(H, W[, C])` uint8 numpy
-arrays, or file paths; PIL images and numpy arrays are encoded to WebP, while
-bytes and file contents are stored as-is — a PNG file stays PNG). When present,
-`.zattrs` includes `"has_image_labels": true`.
+`image_labels=` parameter of `add_points` / `add_lines` / `add_gsplats` / `add_mesh`
+(accepts pre-encoded bytes, PIL images, `(H, W[, C])` uint8 numpy arrays, or
+file paths; PIL images and numpy arrays are encoded to WebP, while bytes and
+file contents are stored as-is — a PNG file stays PNG). When present, `.zattrs`
+includes `"has_image_labels": true`.
 
 **image_label_offsets/** Array:
 - **Shape:** `(N+1,)` where N = number of elements
@@ -1622,7 +1622,8 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 
 ## Future Extensions (Planned)
 
-- Support for meshes, volumes
-- Material system with shading models
+- Support for volumes
+- Material system with shading models (mesh ships one deliberately minimal,
+  light-free headlight — lights and richer shading models are still ahead)
 - Temporal interpolation for smooth animations
 - Multi-resolution spatial indices for LOD

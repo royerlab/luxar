@@ -82,15 +82,11 @@ import type { EncodingName } from '../../types/format-contract';
  * `.zarray` + `.zattrs` and nothing else. Optional entries are `undefined` when
  * the node's presence flags say the array is absent.
  *
- * The label/image-label CSR arrays are included even though *this* loader never
- * fetches them. Picking has landed (`rendering/picking/mesh/`) and returns the vertex
- * ordinal that indexes this CSR, and the read itself lives outside this package — the
- * shared lazy loaders in `data/loaders/picking/` (`label-loader.ts` and
- * `image-label-loader.ts`) that every hover path uses, mesh included (the pick-result
- * handler keys on node path and element id, with no per-type branch), and that resolve
- * a label only once something is hovered. The arrays are part of the node's declared
- * footprint regardless, so budgeting them here keeps the ceiling over the whole node
- * rather than over the subset this loader happens to pull.
+ * The label/image-label CSR arrays are included even though this loader never
+ * fetches them: picking resolves a vertex ordinal that indexes the CSR directly,
+ * and the shared lazy `loaders/picking/label-loader.ts` reads the arrays on first
+ * hover. They are still part of the node's declared footprint, so budgeting them
+ * keeps the ceiling honest about what the node ultimately pulls.
  */
 export interface MeshArrayHandles {
   vertices: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -845,9 +841,9 @@ export async function preflightMesh(
   // NOT reachable through the loader, which opens an optional array only when its
   // flag is set, so asserting it here would be testing a state production cannot
   // construct. The label CSR arrays are checked as a PAIR for the same reason the
-  // others are checked at all: this loader never fetches them, but the hover path's
-  // shared label loader does, and a `has_labels` with one array missing is a store
-  // that fails confusingly there rather than here.
+  // others are checked at all: this loader never fetches them, but a `has_labels`
+  // with one array missing is a store whose first hover would fail confusingly
+  // inside the lazy label loader instead of here, at load.
   for (const [flagName, flag, required] of [
     ['has_normals', attrs.has_normals, [arrays.normals] as const],
     ['has_colors', attrs.has_colors, [arrays.colors] as const],

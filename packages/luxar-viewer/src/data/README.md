@@ -46,7 +46,7 @@ data/
 │   ├── points-spatial-index-loader.ts # Loads points using chunk-based spatial queries
 │   ├── points-progressive-loader.ts   # Composite-pattern multi-LOD facade
 │   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
-│   ├── handler.ts                     # Per-kind dispatch entry (createLoader/deriveViewState/process/commit)
+│   ├── handler.ts                     # Per-kind load + stage wiring for updateView (`loadAndStage` + its handler ctx)
 │   ├── lod-refinement.ts              # Sequential LOD-tier refinement helpers
 │   ├── projection.ts                  # nD → 3D projection (main-thread, WASM-accelerated; single impl)
 │   └── effective-radius-calculator.ts # query-tolerance + should-apply helpers (+ TS-ref effective-radii)
@@ -55,7 +55,7 @@ data/
 │   ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
 │   ├── lines-progressive-loader.ts    # Composite-pattern multi-LOD facade
 │   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
-│   ├── handler.ts                     # Per-kind dispatch entry (createLoader/deriveViewState/process/commit)
+│   ├── handler.ts                     # Per-kind load + stage wiring for updateView (`loadAndStage` + its handler ctx)
 │   ├── lod-refinement.ts              # Sequential LOD-tier refinement helpers
 │   └── projection.ts                  # createEmptyLinesData only (nD→3D math lives in workers/data-worker/projection/lines.ts)
 │
@@ -63,9 +63,17 @@ data/
 │   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility
 │   ├── chunk-index-loader.ts            # `chunk_bounds` zarr probe + array-bounds prefetcher registration
 │   ├── gsplats-progressive-loader.ts    # Composite-pattern multi-LOD facade (loads N LODs sequentially)
-│   ├── handler.ts                       # Per-kind dispatch entry (createLoader/deriveViewState/process/commit)
+│   ├── handler.ts                       # Per-kind load + stage wiring for updateView (`loadAndStage` + its handler ctx)
 │   ├── lod-refinement.ts                # Sequential LOD-tier refinement helpers
 │   └── projection.ts                    # createEmptyGSplatsData only (nD→3D math lives in workers/data-worker/projection/gsplats.ts)
+│
+├── mesh/                          # Mesh geometry — whole-node loader (no spatial index, no LOD by design; MESH_NODE_SPEC §7/§9)
+│   ├── handler.ts                        # Per-kind load + stage wiring for updateView (`loadAndStage` + its handler ctx)
+│   ├── mesh-whole-node-loader.ts         # Whole-node loader — loads the entire mesh at once (`ordering: 'none'`, no chunk index)
+│   ├── preflight.ts                      # Metadata-only Stage 1 (shapes, dtypes, encodings, attribute presence)
+│   ├── projection.ts                     # nD → 3D: extract_3d_positions + whole-triangle nD cull + winding post-pass
+│   ├── validate.ts                       # Load-time mesh attribute/topology validation
+│   └── README.md                         # Mesh loader documentation
 │
 ├── transforms/                    # nD transform helpers
 │   └── nd-transform.ts            # Inverse-query for non-displayed dimensions
@@ -103,7 +111,7 @@ data/
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
 │   ├── abort-error.ts             # isAbortError — "superseded, not failed" classifier
 │   ├── chunk-bounds-loader.ts     # Shared chunk_bounds zarr probe
-│   ├── color-loader.ts            # Shared color-range loader (points, lines, gsplats)
+│   ├── color-loader.ts            # Shared color-range loader (points, lines, gsplats, mesh)
 │   ├── extend-to-all-preflight.ts # Resolves extend_to_all dim names → indices
 │   ├── spatial-facade.ts          # Shared loadX/updateView facade orchestration (incl. S-cache restore/store)
 │   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
@@ -1329,6 +1337,8 @@ _For implementation details, see the source files in this directory._
   index, projection.
 - [loaders](./loaders/README.md) — Unified loader infrastructure
   (`SpatialQueryBuilder`, `RangeLoader`, tolerance).
+- [mesh](./mesh/README.md) — Mesh whole-node loader, metadata preflight,
+  whole-triangle nD cull.
 - [nav](./nav/) — Multi-strategy directory navigation
   (`DirectoryNavigator`).
 - [points](./points/README.md) — Points spatial-index loader and

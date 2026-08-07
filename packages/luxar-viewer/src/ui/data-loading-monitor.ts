@@ -2061,11 +2061,13 @@ export class DataLoadingMonitor {
     const qps = this.cachedRates.queriesPerSec;
 
     // Dataset totals + visible counts come from the scene graph, identically
-    // for points / lines / gsplats. Visible counts are refreshed each update
+    // for every geometry type. Visible counts are refreshed each update
     // cycle by `updateVisibleCountsInMonitor` after nD clipping / LOD refine.
     // The display layer keeps per-type NAMED fields (each rendered with its own
     // label, unit noun and DOM id), so this is where the kind-keyed aggregation
-    // model is projected onto them.
+    // model is projected onto them. Only three are projected here: mesh has no
+    // headline field of its own — its triangle counts are shown per node in the
+    // scene-graph tree (`templates.ts`, `faceCount`).
     const { totalByType, visibleByType } = this.sceneGraphState;
     const datasetSize = totalByType.points;
     const visiblePoints = visibleByType.points;
