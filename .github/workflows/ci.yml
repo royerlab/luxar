@@ -60,7 +60,7 @@ jobs:
           # docs_only iff there IS at least one change and EVERY changed path is a
           # top-level/nested *.md or lives under docs/. A single non-doc file
           # (code, config, tests, lockfiles, workflows) forces the full suite.
-          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvE '(\.md$|^docs/)'; then
+          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvE '(\.[Mm][Dd]$|^docs/)'; then
             echo "-> non-doc changes present: FULL CI"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           else
@@ -73,7 +73,7 @@ jobs:
           # the gate. Any deletion also runs it because package READMEs may name
           # tracked files of any type; --no-renames makes a rename include a
           # deletion. Empty change output is treated as relevant (fail-safe).
-          docs_pattern='(^docs/|\.md$|\.rst$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/(check-overrides\.mjs|check-typedoc-warnings(-tests)?\.mjs))$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
+          docs_pattern='(^docs/|\.[Mm][Dd]$|\.[Rr][Ss][Tt]$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/(check-overrides\.mjs|check-typedoc-warnings(-tests)?\.mjs))$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
           if [ -z "$changed" ] || [ -n "$deleted" ] || printf '%s\n' "$changed" | grep -qE "$docs_pattern"; then
             echo "-> documentation-relevant changes: RUN docs-quality"
             echo "docs_relevant=true" >> "$GITHUB_OUTPUT"

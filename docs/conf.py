@@ -116,14 +116,17 @@ class _IntersphinxOutageIsInformational(logging.Filter):
         return True
 
 
-# Attach to the logger intersphinx actually emits on. Sphinx namespaces every
-# logger under `sphinx.`, so the real name is `sphinx.sphinx.ext.intersphinx`;
-# ask Sphinx for it instead of hand-writing that doubled prefix, which reads
-# like a typo and invites a well-meaning "fix" that would silently stop the
-# filter from matching. It has to be the emitting logger, not an ancestor:
-# stdlib only runs a logger's own filters, never a parent's, on a record that
-# merely propagates up — and they run before the handlers, so the demotion
-# lands before the warning handler (and thus -W) ever sees the record.
+# Attach to the logger intersphinx actually emits on. Although the fetch code
+# lives in `sphinx.ext.intersphinx._load`, that module deliberately defines its
+# LOGGER as `getLogger("sphinx.ext.intersphinx")`, not as a child logger. Sphinx
+# then namespaces it under `sphinx.`, so the real name is
+# `sphinx.sphinx.ext.intersphinx`; ask Sphinx for it instead of hand-writing that
+# doubled prefix, which reads like a typo and invites a well-meaning "fix" that
+# would silently stop the filter from matching. It has to be the emitting
+# logger, not an ancestor: stdlib only runs a logger's own filters, never a
+# parent's, on a record that merely propagates up — and they run before the
+# handlers, so the demotion lands before the warning handler (and thus -W) ever
+# sees the record.
 sphinx_logging.getLogger("sphinx.ext.intersphinx").logger.addFilter(
     _IntersphinxOutageIsInformational()
 )
