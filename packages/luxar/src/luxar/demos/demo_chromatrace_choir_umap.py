@@ -43,7 +43,6 @@ DEMO_META = {
 }
 
 import json
-import re
 import sys
 import tempfile
 import zipfile
@@ -54,7 +53,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, parse_path_arg
 from luxar.utils._umap_utils import format_label, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -463,16 +462,6 @@ def build_scene(
 # ----------------------------------------------------------------------
 
 
-def _parse_data_arg(argv: list[str]) -> Path | None:
-    for i, arg in enumerate(argv):
-        if arg == "--data" and i + 1 < len(argv):
-            return Path(argv[i + 1]).expanduser()
-        m = re.match(r"^--data=(.+)$", arg)
-        if m:
-            return Path(m.group(1)).expanduser()
-    return None
-
-
 def main() -> None:
     aprint("=" * 70)
     aprint("CHROMATRACE 3D UMAP — CHOIR bio-term annotations")
@@ -480,7 +469,7 @@ def main() -> None:
     aprint("~60k cells • 88 bio-terms • 8 bio-groups")
     aprint("")
 
-    explicit_data = _parse_data_arg(sys.argv[1:])
+    explicit_data = parse_path_arg("data", sys.argv[1:])
     coords, attributes, category_maps, term_colors, groups = load_chromatrace_data(
         explicit_data
     )

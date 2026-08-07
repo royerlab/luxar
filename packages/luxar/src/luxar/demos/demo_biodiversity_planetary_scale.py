@@ -621,9 +621,6 @@ FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
-# NOTE: parse_int_arg prepends the "--" itself. Passing "--n-points" here makes
-# it look for "----n-points", which never matches, so the flag is silently
-# ignored and every run builds at the default size.
 N_POINTS = parse_int_arg("n-points", DEFAULT_N_POINTS)
 N_PARTS = parse_int_arg("n-parts", 0)  # 0 -> derived from N_POINTS
 
