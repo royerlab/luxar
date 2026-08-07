@@ -27,7 +27,6 @@ import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
 import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
-import { noticeUnsortedTranslucency } from '../../data/scene-loader/commit/commit-mesh-geometry';
 import type { GeometryTypeName } from '../../types/format-contract';
 import {
   defaultBlendingMode,
@@ -287,14 +286,36 @@ export class LayerApplyEngine {
       const blendingMode = eff.blending_mode ?? defaultBlendingMode(leaf.type);
       this.applyBlendingStateToMaterial(mat, blendingMode);
       // Depth sorting: a sortable layer switching blending mode may need
-      // to start (TO an effective sorted mode: clear the noop stamp +
-      // reprocess so the next commit registers with the SortWorker) or
-      // stop (AWAY: release) depth sorting. Only types that register
+      // to start (TO an effective sorted mode: clear the committed-data
+      // stamp + reprocess so the next commit registers with the SortWorker)
+      // or stop (AWAY: release) depth sorting. Only types that register
       // per-element centers with the coordinator qualify (gsplats/points
-      // centers, lines segment midpoints) — see `depthSortable` in
-      // `types/geometry-capabilities`.
+      // centers, lines segment midpoints, mesh face centroids) — see
+      // `depthSortable` in `types/geometry-capabilities`.
+      //
+      // BOTH arguments must be the RESOLVED mode, which is why the new one is
+      // re-read off the material AFTER `applyBlendingStateToMaterial` rather
+      // than passing the requested `blendingMode`. `prevBlendingMode` above was
+      // already resolved (it came off `userData`), so passing the request here
+      // made the pair asymmetric — invisible for the three emissive types,
+      // whose request IS their resolved mode, and wrong for mesh, which maps
+      // the unsupported `volumetric` onto `opaque`:
+      //   normal → volumetric  looked like sorted → sorted, so the node kept
+      //     its worker registration and retained `triangleSource` after the
+      //     material had gone opaque and would never sort again;
+      //   opaque → volumetric  looked like a switch INTO a sorted mode and
+      //     triggered a full clear + O(N) reprocess for nothing.
+      // The coordinator's own `liveBlendingMode` reads the resolved mode, so
+      // this is also what makes the hook and the per-frame scheduler agree.
+      // The `?? blendingMode` covers the generic fallback arm of
+      // `applyBlendingStateToMaterial` (a material without `applyBlendingMode`,
+      // kept for external/future materials): that arm never stamps
+      // `userData.blendingMode`, so reading the material alone would leave the
+      // value unchanged and silently make this hook a no-op for such a node.
       if (isDepthSortable(obj.userData?.nodeType)) {
-        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, blendingMode, prevBlendingMode);
+        const resolvedMode =
+          (mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode;
+        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, resolvedMode, prevBlendingMode);
       }
     }
     this.deps.requestRender();
@@ -318,9 +339,6 @@ export class LayerApplyEngine {
 
   applyOpacity(layer: LayerInfo): void {
     this.applyComposed(layer);
-    // The other half of §6.3's predicate: dragging opacity below the depthWrite
-    // threshold makes an already-`normal` mesh translucent without touching the mode.
-    this.noticeMeshTranslucency(layer);
   }
 
   applyAbsorption(layer: LayerInfo): void {
@@ -364,28 +382,6 @@ export class LayerApplyEngine {
 
   applyBlendingMode(layer: LayerInfo): void {
     this.applyComposed(layer);
-    this.noticeMeshTranslucency(layer);
-  }
-
-  /**
-   * Re-evaluate the unsorted-translucency notice after a panel-driven change (§6.3).
-   *
-   * The notice otherwise fires only from `commitMeshGeometry`, so switching a loaded
-   * mesh to `normal` — or dragging its opacity down — would never warn on a STATIC
-   * mesh, one whose slice never moves and which therefore never commits again. Reading
-   * the mode and opacity live off the material does not help if nothing calls the
-   * predicate; this is the missing call.
-   *
-   * Cheap to run unconditionally: the predicate returns immediately for any non-`normal`
-   * mode, and it is de-duplicated per node, so a slider drag evaluates a couple of
-   * comparisons per frame and warns at most once.
-   */
-  private noticeMeshTranslucency(layer: LayerInfo): void {
-    for (const leaf of this.getAffectedDataLeaves(layer.path)) {
-      if (leaf.type !== 'mesh') continue;
-      const obj = this.getMesh(leaf.path);
-      if (obj) noticeUnsortedTranslucency(obj as THREE.Mesh, leaf.path);
-    }
   }
 
   /**
