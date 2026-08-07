@@ -1,14 +1,13 @@
 /**
  * Project GSplats from nD to 3D with Mahalanobis-based visibility filtering.
  *
- * Uses WASM batch functions for high performance:
- * 1. compute_gsplats_attenuation - computes visibility and attenuation
- * 2. extract_3d_positions - extracts 3D centers (via displayDims)
- * 3. extract_visible_cholesky_3d - extracts 3D Cholesky submatrices
- * 4. compact_attenuated_amplitudes - compacts amplitudes by visibility
- * 5. compact_by_mask - compacts other arrays by visibility
- *
- * WASM batch functions provide 3-5x speedup over per-splat TypeScript loops.
+ * Runs the fused `project_gsplats_nd_to_3d` kernel: a single pass over the
+ * splats applies the discrete-visibility gate, computes continuous attenuation
+ * (marginal Cholesky + shifted Gaussian), decides visibility, and writes the
+ * compacted centers, 3D Cholesky, attenuated amplitudes, and colors. This
+ * replaces the former multi-call pipeline (see the body comment below),
+ * eliminating ~5 extra passes and the repeated large-array copies across the
+ * WASM boundary.
  */
 
 import { transfer } from 'comlink';
