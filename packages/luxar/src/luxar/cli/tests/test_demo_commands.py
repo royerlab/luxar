@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from collections import Counter
 from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
+from luxar.cli.demo_commands import _status
 from luxar.demos._dependencies import DependencySpec
 from luxar.demos.registry import iter_demos
 
@@ -291,6 +294,118 @@ class TestCache:
         assert result.exit_code == 0
         assert not download.exists()
         assert pkl.exists()  # --no-computed preserved the pickle
+
+    def test_cache_clear_removes_a_leaked_staging_dir(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # A download killed mid-flight (SIGKILL/OOM/power loss) leaks the private
+        # staging dir it streams into. Unlinking the staged file is not enough:
+        # the empty dir keeps the cache dir alive, so the demo reports as cached
+        # forever and a second clear finds nothing to do.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        demo = next(d for d in iter_demos() if d.caches)
+        cdir = tmp_path / demo.caches[0]
+        staging = cdir / ".archive.zip.ab12cd"
+        staging.mkdir(parents=True)
+        (staging / "part").write_bytes(b"z" * 128)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", demo.key, "--yes"])
+
+        assert result.exit_code == 0
+        assert not cdir.exists()
+        assert _status(demo) != "cached"
+
+    def test_cache_clear_removes_an_already_empty_leaked_dir(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # Same leak, but killed before a byte was staged: no file to list, so the
+        # command must still act rather than report "nothing to clear".
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        demo = next(d for d in iter_demos() if d.caches)
+        cdir = tmp_path / demo.caches[0]
+        (cdir / ".archive.zip.ab12cd").mkdir(parents=True)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", demo.key, "--yes"])
+
+        assert result.exit_code == 0
+        assert "Nothing to clear" not in result.stdout
+        assert not cdir.exists()
+        assert _status(demo) != "cached"
+
+    @pytest.mark.skipif(
+        getattr(os, "geteuid", lambda: 1)() == 0,
+        reason="root ignores the permission bits that make rmdir fail",
+    )
+    def test_cache_clear_survives_a_directory_it_cannot_remove(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # The sweep runs *after* the files are gone. An rmdir that raises there
+        # (read-only parent here; a Windows cwd lock or a concurrent staging
+        # mkdtemp in the field) must be reported like any other failed removal,
+        # not abort the command over the summary of what was already cleared.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        demo = next(d for d in iter_demos() if d.caches)
+        cdir = tmp_path / demo.caches[0]
+        blob = cdir / "data.bin"
+        locked = cdir / "locked"
+        (locked / "staging").mkdir(parents=True)
+        blob.write_bytes(b"y" * 1024)
+        locked.chmod(0o555)  # cannot unlink `staging` out of `locked`
+        try:
+            result = runner.invoke(app, ["demo", "cache", "clear", demo.key, "--yes"])
+        finally:
+            locked.chmod(0o755)  # never poison the tmp_path teardown
+
+        assert result.exit_code == 0
+        assert not blob.exists()  # the deletions still happened
+        assert "Cleared 1.0 KB" in result.stdout  # ...and were still reported
+        assert "Could not remove" in result.stdout
+        assert f"{demo.caches[0]}/locked/staging" in result.stdout
+
+    def test_cache_clear_sweeps_a_shared_cache_dir_once(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # Several demos declare the same cache name, which puts that one path in
+        # the sweep list once per demo. The count must be of directories, not of
+        # demos claiming them.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        shared = next(
+            name
+            for name, n in Counter(
+                name for d in iter_demos() for name in d.caches
+            ).most_common()
+            if n > 1
+        )
+        claimants = [d.key for d in iter_demos() if shared in d.caches]
+        assert len(claimants) > 1
+        cdir = tmp_path / shared
+        (cdir / ".archive.zip.ab12cd").mkdir(parents=True)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", *claimants, "--dry-run"])
+
+        assert result.exit_code == 0
+        # The leaked staging dir + the cache dir itself — once each, however
+        # many demos claim the name.
+        assert "2 dir(s) removed" in result.stdout
+
+    def test_cache_clear_dry_run_previews_the_emptied_cache_dir(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        # Nothing under the cache dir is empty *yet*, but clearing its file
+        # leaves it empty and the sweep then removes it — so the preview has to
+        # look ahead at the deletions it is previewing.
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        demo = next(d for d in iter_demos() if d.caches)
+        cdir = tmp_path / demo.caches[0]
+        cdir.mkdir()
+        blob = cdir / "data.bin"
+        blob.write_bytes(b"y" * 1024)
+
+        result = runner.invoke(app, ["demo", "cache", "clear", demo.key, "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "1 dir(s) removed" in result.stdout
+        assert blob.exists()  # still a preview
 
     def test_cache_clear_orphans(self, runner, tmp_path, monkeypatch) -> None:
         monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)

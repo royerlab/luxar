@@ -9,6 +9,7 @@ time. Extra CLI args after the key are forwarded verbatim to the demo script.
 from __future__ import annotations
 
 import importlib
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -57,6 +58,41 @@ def _safe_output_paths(info: DemoInfo) -> list[Path]:
         return registry.demo_output_paths(info)
     except RuntimeError:
         return []
+
+
+def _empty_dirs(cache_dir: Path, deleted: Optional[set[Path]] = None) -> list[Path]:
+    """Directories a sweep of ``cache_dir`` would remove, deepest first.
+
+    A download killed between ``tempfile.mkdtemp`` and its cleanup (SIGKILL, OOM,
+    power loss) leaks the private staging directory that
+    ``luxar.demos._graph_common.download_file`` streams into. Once its staged
+    file is cleared the directory holds no bytes, so it is never a deletion
+    *target* — but it keeps the cache dir non-empty, and a cache dir that never
+    becomes empty is never removed, so :func:`_status` reports the demo as
+    ``cached`` forever. ``cache_dir`` itself is included once nothing is left
+    under it, for the same reason.
+
+    ``deleted`` names files that are *about to* be unlinked, and so counts them
+    as already gone. The real sweep runs after the deletions and needs none of
+    it; ``--dry-run`` previews the sweep beforehand, and without it would miss
+    every directory that the deletions are what empties — above all the cache
+    dir itself.
+    """
+    if not cache_dir.is_dir() or cache_dir.is_symlink():
+        return []
+    gone = deleted if deleted is not None else set()
+    removable: set[Path] = set()
+    # Bottom-up: a directory is removable when it holds no files (that are not
+    # already on their way out) and every subdirectory is itself removable.
+    # ``os.walk`` does not follow symlinks, so a symlinked subdirectory is never
+    # walked and never counted as removable.
+    for parent, subdirs, files in os.walk(cache_dir, topdown=False):
+        path = Path(parent)
+        if all(path / f in gone for f in files) and all(
+            path / s in removable for s in subdirs
+        ):
+            removable.add(path)
+    return sorted(removable, reverse=True)
 
 
 def _status(info: DemoInfo) -> str:
@@ -617,8 +653,10 @@ def cache_clear(
             if (is_computed and computed) or (not is_computed and downloads):
                 targets.append((f, f.stat().st_size, f"{demo_key}/{f.name}"))
 
+    cache_dirs: list[Path] = []
     for d in selected:
         for cache_dir in registry.demo_cache_dirs(d):
+            cache_dirs.append(cache_dir)
             _add_dir_files(cache_dir, d.key)
         if outputs:
             for p in _safe_output_paths(d):
@@ -638,7 +676,20 @@ def cache_clear(
             if not e.demo_keys:
                 targets.append((e.path, e.size_bytes, f"ORPHAN {e.path.name}"))
 
-    if not targets:
+    # One cache name can be claimed by several demos (four share
+    # ``gsplats_tribolium``), which puts the same path in the list once per
+    # demo. Sweep — and count — it once.
+    cache_dirs = list(dict.fromkeys(cache_dirs))
+
+    # Empty directories hold no bytes, so they are swept rather than listed as
+    # targets (the count/size summary stays a summary of actual data), but they
+    # still have to go — see :func:`_empty_dirs`. The sweep happens after the
+    # deletions, so only ``--dry-run`` (which prints before deleting anything)
+    # has to look ahead at the files it is previewing.
+    doomed = {p for p, _, _ in targets} if dry_run else set()
+    empties = [p for c in cache_dirs for p in _empty_dirs(c, deleted=doomed)]
+
+    if not targets and not empties:
         aprint("Nothing to clear for that selection.")
         raise typer.Exit(0)
 
@@ -646,6 +697,8 @@ def cache_clear(
     aprint(f"🗑️  [Luxar] {len(targets)} item(s), {format_memory_size(total)}:")
     for _path, size, label in targets:
         aprint(f"   {format_memory_size(size):>10}  {label}")
+    if empties:
+        aprint(f"   {format_memory_size(0):>10}  {len(empties)} dir(s) removed")
 
     if dry_run:
         aprint("\n(--dry-run: nothing deleted)")
@@ -664,11 +717,19 @@ def cache_clear(
             not_removed.append(label)
         else:
             freed += size
-    # Remove now-empty cache dirs left behind by file deletions.
-    for d in selected:
-        for cache_dir in registry.demo_cache_dirs(d):
-            if cache_dir.exists() and not any(cache_dir.iterdir()):
-                cache_dir.rmdir()
+    # Sweep empty directories — those left behind by the file deletions above,
+    # and any leaked staging dir that was already empty — deepest first, so a
+    # cache dir emptied of everything is itself removed. A directory can refuse
+    # to go (read-only parent, a Windows process holding it as its cwd, a
+    # concurrent demo run staging into it between this listing and the rmdir);
+    # that is a report line like any other failed removal, never a traceback
+    # thrown over a summary the user has already earned.
+    for cache_dir in cache_dirs:
+        for empty in _empty_dirs(cache_dir):
+            try:
+                empty.rmdir()
+            except OSError:
+                not_removed.append(str(empty.relative_to(cache_dir.parent)))
     aprint(f"✅ Cleared {format_memory_size(freed)}.")
     if not_removed:
         aprint(
