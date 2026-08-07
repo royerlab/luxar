@@ -196,6 +196,68 @@ class TestDecimateCluster:
         with pytest.raises(ValueError, match=match):
             decimate_cluster(v, f, **kwargs)
 
+    def test_a_faceless_input_is_refused(self) -> None:
+        # Without this the 50 vertices come back as ~8 orphan representatives that
+        # no face references — a "surface" with nothing to draw, which then blows up
+        # downstream in coverage_fractions with no clue which mesh caused it.
+        v = np.zeros((50, 3), np.float32)
+        with pytest.raises(ValueError, match="no faces"):
+            decimate_cluster(v, np.zeros((0, 3), np.uint32), target_vertices=10)
+
+    def test_coincident_vertices_are_refused_not_silently_emptied(self) -> None:
+        """Every triangle collapsing must raise, not return a face-less level.
+
+        Returning it would satisfy "a DecimatedMesh came back" while producing a
+        level a kind=lod group cannot use at all: `coverage_fractions` raises on a
+        zero-count level, so the failure would surface later and further away.
+        """
+        faces = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]], np.uint32)
+        with pytest.raises(ValueError, match="no surface|degenerate"):
+            decimate_cluster(np.zeros((9, 3), np.float32), faces, target_vertices=4)
+
+    def test_collinear_input_keeps_its_index_valid_faces(self) -> None:
+        """The refusal is INDEX degeneracy, deliberately not zero AREA.
+
+        Collinear vertices stay distinct at a fine enough spacing, so their faces
+        survive with three different corners and zero area. That is left alone on
+        purpose: nothing downstream breaks (a zero-area triangle rasterizes to
+        nothing, which is the truth about a line), and an area threshold would be a
+        new way to wrongly reject legitimately thin geometry.
+        """
+        v = np.array([[i, 0, 0] for i in range(9)], np.float32)
+        faces = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]], np.uint32)
+        r = decimate_cluster(v, faces, target_vertices=4)
+        assert len(r.faces) > 0
+        assert all(len(set(t.tolist())) == 3 for t in r.faces)
+
+    def test_every_returned_level_has_at_least_one_triangle(self) -> None:
+        v, f = octasphere(4)
+        for target in (2000, 400, 100, 20, 4):
+            assert len(decimate_cluster(v, f, target_vertices=target).faces) > 0
+
+    def test_the_search_does_not_burn_its_whole_iteration_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each bisection step is a full O(V log V) reclustering, so passes cost.
+
+        A small target cannot be hit within the 10% window a grid allows (20
+        vertices permits a window of 2), so before the bracket-convergence exit this
+        ran all 24 iterations and returned exactly the same mesh as 12.
+        """
+        from .. import decimate as module
+
+        calls = {"n": 0}
+        original = module._cluster_once
+
+        def counting(*args: object, **kwargs: object) -> object:
+            calls["n"] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, "_cluster_once", counting)
+        v, f = octasphere(4)
+        decimate_cluster(v, f, target_vertices=20)
+        assert calls["n"] < 24, f"search used the full budget ({calls['n']} passes)"
+
     def test_out_of_range_face_index_is_refused(self) -> None:
         v, f = octasphere(2)
         bad = f.copy()

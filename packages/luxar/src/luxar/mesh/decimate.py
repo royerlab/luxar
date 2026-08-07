@@ -11,9 +11,15 @@ substitutive ladder (``docs/specs/MESH_NODE_SPEC.md`` §9).
 
 ``cluster`` (this module) is quadric-weighted vertex clustering: snap vertices to a
 grid, collapse each occupied cell to one representative, reindex the faces, drop
-the triangles that collapsed to a line. It is O(V log V), fully vectorized, and
-cannot fail — properties that matter because the writer's cap is 2**27 vertices and
-a Python edge-collapse loop is unusable at that scale.
+the triangles that collapsed to a line. It is O(V log V) per pass and fully
+vectorized, which matters because the writer's cap is 2**27 vertices and a Python
+edge-collapse loop is unusable at that scale. It has no quality-driven failure mode
+— no seeding, no convergence criterion, nothing to diverge — and refuses only input
+that is not a surface at all (no faces, or every vertex coincident).
+
+The grid spacing is found by bisection, so the cost is several passes rather than
+one. Measured ~0.2 MV/s per pass, with the bracket-convergence exit keeping it to a
+handful of passes rather than the full iteration budget.
 
 The quadric is what makes it worth more than a centroid snap. Placing each
 representative at the minimizer of the summed squared distance to its cell's
@@ -202,13 +208,18 @@ def decimate_cluster(
         max_iterations: Bisection budget for the cell-size search.
 
     Returns:
-        A :class:`DecimatedMesh`. Never empty: if the search cannot reach the target
-        without collapsing the surface away, the finest achievable level is
-        returned instead, because a `kind=lod` group with an empty level cannot
-        derive coverage fractions at all.
+        A :class:`DecimatedMesh` with at least one triangle. The search prefers the
+        coarsest spacing that still leaves ``target_vertices``, and falls back to the
+        least-reduced level it can build rather than returning something emptier.
 
     Raises:
-        ValueError: If inputs are malformed or ``target_vertices`` < 4.
+        ValueError: If inputs are malformed, ``target_vertices`` < 4, or the input
+            surface is degenerate enough that no triangle survives. That last case
+            is an error rather than an empty result on purpose: a ``kind=lod`` group
+            derives its switch thresholds from element counts, and
+            :func:`luxar.core.group.lod.group.coverage_fractions` raises on a
+            zero-count level — so returning one here would only move the failure
+            somewhere with less context about which mesh caused it.
     """
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
@@ -216,6 +227,11 @@ def decimate_cluster(
         raise ValueError(f"vertices must be (V, D>=2), got {vertices.shape}")
     if faces.ndim != 2 or faces.shape[1] != 3:
         raise ValueError(f"faces must be (F, 3), got {faces.shape}")
+    if faces.shape[0] == 0:
+        raise ValueError(
+            "cannot decimate a mesh with no faces: there is no surface to coarsen, "
+            "and every vertex would come back unreferenced"
+        )
     if target_vertices < 4:
         raise ValueError(
             f"target_vertices must be at least 4 (a tetrahedron is the smallest "
@@ -262,19 +278,39 @@ def decimate_cluster(
             v64, faces, vertex_quadrics, spatial_dims, guess, normals, colors
         )
         count = candidate.vertices.shape[0]
-        if count >= target_vertices:
+        # A candidate with no surviving triangle is not a usable level regardless of
+        # its vertex count, so it must not become `best` — it would be returned as a
+        # surface with nothing to draw.
+        if candidate.faces.shape[0] and count >= target_vertices:
             best = candidate
             if count <= target_vertices * 1.1:
                 break
             lo = guess
         else:
             hi = guess
+        # Stop once the bracket itself has converged, not just when the count lands
+        # inside the 10% window. A grid cannot hit a SMALL target within 10% at all
+        # (20 vertices allows a window of 2), so without this the search burns the
+        # whole budget refining a spacing that no longer changes the result — and
+        # every pass is a full O(V log V) reclustering, which is minutes at the
+        # 2**27 vertices this function exists to handle.
+        if hi - lo <= lo * 1e-3:
+            break
         guess = 0.5 * (lo + hi)
 
     if best is None:
         # Every probe overshot. Return the least-reduced one we can still build.
         best = _cluster_once(
             v64, faces, vertex_quadrics, spatial_dims, lo, normals, colors
+        )
+    if best.faces.shape[0] == 0:
+        # Reachable only for input that has no surface to begin with — every
+        # triangle collinear, or every vertex coincident — since any real triangle
+        # survives at a fine enough spacing and `lo` is 1e-6 of the extent.
+        raise ValueError(
+            f"decimation collapsed every triangle of a {vertices.shape[0]}-vertex, "
+            f"{faces.shape[0]}-face mesh, leaving no surface. The input is "
+            "degenerate (collinear or coincident vertices) rather than merely fine."
         )
     return best
 
