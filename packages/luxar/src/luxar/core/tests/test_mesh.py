@@ -313,18 +313,22 @@ def test_mesh_blending_mode_setter_also_rejects_volumetric(tmp_path) -> None:
         assert mesh.blending_mode == "additive"
 
 
-def test_mesh_under_a_lod_group_is_rejected(tmp_path) -> None:
-    """Refused at ADD time, before any array lands on disk.
+def test_mesh_under_a_lod_group_is_accepted(tmp_path) -> None:
+    """A mesh IS a valid substitutive level, now that a producer exists.
 
-    The finalize-time LOD guard would also catch this, but only after the mesh's
-    vertices and faces are already written — so the store would be left with a
-    partial node. Failing here keeps the write fail-fast.
+    This was a refusal until `luxar.mesh.decimate` landed, and the refusal was
+    correct at the time: a `kind=lod` group's levels must each be an independently
+    renderable stand-in for the finer one, and nothing could produce a coarser
+    surface. Hand-assembling the ladder is the same thing `substitutive_lod=` does
+    internally, so it has to work.
+
+    The ADDITIVE flavour is untouched by this and remains impossible — see
+    `test_additive_ladder_is_still_refused_with_its_own_reason`.
     """
     with LuxarZarrCompiler(tmp_path / "lod.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         lod = scene.add_lod_group("ladder")
-        with pytest.raises(ValueError, match="kind=lod"):
-            lod.add_mesh("child_0", _V, _F)
+        lod.add_mesh("child_0", _V, _F, coverage_fraction=0.0)
 
 
 def test_mesh_under_a_partition_group_is_rejected(tmp_path) -> None:
@@ -343,40 +347,31 @@ def test_mesh_under_a_partition_group_is_rejected(tmp_path) -> None:
             part.add_mesh("part_0", _V, _F)
 
 
-def test_lod_refusal_distinguishes_the_two_ladder_flavours(tmp_path) -> None:
-    """The REASON is pinned, not just the fact of the refusal.
+def test_additive_ladder_is_still_refused_with_its_own_reason(tmp_path) -> None:
+    """The two flavours were never refused for the same reason, and still are not.
 
-    Every other assertion in this file matches a short structural substring
-    (``"kind=lod"``), which is why the justification was free to rot: the message
-    spent months telling users that substitutive LOD reduces independent elements
-    and is therefore impossible for a surface. Only the additive flavour works that
-    way. Substitutive levels are independently-authored ``(vertices, faces)`` pairs
-    chosen by ``coverage_fraction`` — the machinery makes no independence assumption
-    and the only missing piece is a decimator (spec §9).
+    The message spent months telling users that SUBSTITUTIVE LOD reduces
+    independent elements and is therefore impossible for a surface. Only the
+    additive flavour works that way, and the distinction turned out to be the
+    whole story: substitutive levels needed a decimator and now have one, while an
+    additive prefix of an index buffer is a *holed* surface and can never be a
+    coarse one.
 
-    "Impossible" and "not written yet" are different answers to a user asking
-    whether to wait for it, so the distinction is worth a test.
+    So the surviving refusal must keep naming ITS reason, and must not have been
+    widened back into a blanket "mesh has no LOD".
     """
     with LuxarZarrCompiler(tmp_path / "why.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        lod = scene.add_lod_group("ladder")
         with pytest.raises(ValueError) as excinfo:
-            lod.add_mesh("child_0", _V, _F)
+            scene.add_mesh("m", _V, _F, additive_lod=True)
 
     message = str(excinfo.value)
-    assert "ADDITIVE" in message and "SUBSTITUTIVE" in message
-    # The additive arm is excluded on principle: a prefix of an index buffer is a
-    # holed surface, not a coarse one.
+    assert "additive_lod" in message
+    # Excluded on principle: a prefix of an index buffer is a holed surface.
     assert "holes" in message
-    # The substitutive arm is excluded only for want of a producer.
-    assert "no producer" in message
-    # ...and must NOT be blamed on the independence assumption that only the
-    # additive ladder makes. This is the exact sentence that was wrong. Scoped to the
-    # substitutive clause on purpose: "the ADDITIVE ladder reduces independent
-    # elements" is accurate, and the sibling copy of this rationale in
-    # ``typing_utils/geometry_capabilities.py`` says exactly that.
-    _additive_arm, substitutive_arm = message.split("SUBSTITUTIVE", 1)
-    assert "independent elements" not in substitutive_arm
+    # And NOT by appeal to a missing producer — that was the substitutive arm's
+    # reason, and it no longer applies to anything.
+    assert "no producer" not in message
 
 
 def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
@@ -424,9 +419,11 @@ def test_mesh_names_the_reason_for_the_lod_and_partition_parameters(tmp_path) ->
     hint. Right outcome, misleading reason: the same defect the ``kind=lod`` parent
     message carried, in the arm a user is far more likely to hit.
     """
+    # `substitutive_lod` left this table when the decimator landed — it is a real
+    # mesh parameter now, and `test_substitutive_lod_writes_a_decimated_ladder`
+    # covers it. The two that remain are refused for genuinely different reasons.
     reasons = {
         "additive_lod": "holes",
-        "substitutive_lod": "no producer",
         "partition": "boundary vertices",
     }
     with LuxarZarrCompiler(tmp_path / "params.luxar.zarr") as compiler:
@@ -448,17 +445,19 @@ def test_partition_group_rejects_mesh_display_type(tmp_path) -> None:
             scene.add_partition_group("p", display_type="mesh", max_elements=100)
 
 
-def test_lod_group_rejects_explicit_mesh_display_type(tmp_path) -> None:
-    """The explicit-kwarg route is gated too, not only the finalize back-fill.
+def test_lod_group_accepts_explicit_mesh_display_type(tmp_path) -> None:
+    """``display_type='mesh'`` is now a valid kind=lod group, by every route.
 
     ``display_type`` is an accepted node attr, so it rides in through ``**attrs``
-    and reaches zarr without passing the back-fill at all — the back-fill only
-    ever sees groups that supplied nothing.
+    and reaches zarr without passing the finalize back-fill at all. It used to be
+    refused there; the gate still exists and still refuses a LOD-less type, but no
+    contract type is LOD-less any more (see
+    ``typing_utils/tests/test_geometry_capabilities.py``).
     """
     with LuxarZarrCompiler(tmp_path / "ld.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        with pytest.raises(ValueError, match="display_type for a kind=lod group"):
-            scene.add_lod_group("l", display_type="mesh")
+        group = scene.add_lod_group("l", display_type="mesh")
+        group.add_mesh("child_0", _V, _F, coverage_fraction=1.0)
 
 
 # =============================================================================
@@ -805,35 +804,29 @@ def test_face_index_width_escalates_past_uint16(tmp_path) -> None:
     )
 
 
-def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_refused(
+def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_accepted(
     tmp_path,
 ) -> None:
-    """The indirection case that ONLY the finalize back-fill catches.
+    """The indirection case, which the finalize back-fill resolves to `mesh`.
 
-    `add_mesh`'s add-time guard inspects the IMMEDIATE parent, so a mesh whose
-    parent is a plain group that itself sits inside a `kind=lod` group sails past
-    it — and the resolved display type still walks down to `mesh`. This is the case
-    that makes the multi-route guard necessary rather than redundant: with only the
-    add-time check, this store would be written with `display_type="mesh"` and load
-    nowhere.
-
-    Unlike the direct case the failure surfaces at finalize, so it is raised from
-    the compiler's context-manager exit rather than from `add_mesh`.
+    A mesh whose parent is a plain group that itself sits inside a `kind=lod` group
+    is invisible to `add_mesh`'s immediate-parent guard, and the back-fill still
+    walks down to `display_type="mesh"`. That combination used to be the argument
+    for the multi-route guard; now it simply resolves to a display type that is
+    legal, and the store finalizes.
     """
-    with pytest.raises(ValueError, match="display_type"):
-        with LuxarZarrCompiler(tmp_path / "nested.luxar.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            inner = scene.add_lod_group("ladder").add_group("inner")
-            inner.add_mesh("c0", _V, _F)
+    with LuxarZarrCompiler(tmp_path / "nested.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        inner = scene.add_lod_group("ladder").add_group("inner")
+        inner.add_mesh("c0", _V, _F)
 
 
-def test_mesh_under_nested_lod_groups_is_refused(tmp_path) -> None:
-    """A lod-inside-lod ladder is refused at the innermost add, not silently nested."""
+def test_mesh_under_nested_lod_groups_is_accepted(tmp_path) -> None:
+    """A lod-inside-lod ladder of meshes writes, the same as for the other types."""
     with LuxarZarrCompiler(tmp_path / "ll.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         inner = scene.add_lod_group("l1").add_lod_group("l2")
-        with pytest.raises(ValueError, match="kind=lod"):
-            inner.add_mesh("c0", _V, _F)
+        inner.add_mesh("c0", _V, _F, coverage_fraction=1.0)
 
 
 # =============================================================================

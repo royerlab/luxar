@@ -4,13 +4,12 @@ Pure function taking a ``group: Group`` parameter as the first arg. Called by
 ``Group.add_mesh`` (a thin signature + docstring + delegate) in
 ``core/group/group.py``.
 
-Notably shorter than its siblings, and structurally so: mesh has no
-``additive_lod`` / ``substitutive_lod`` / ``partition`` branches, because none of
-those paths exist for a mesh yet — for three different reasons, spelled out in the
-rejections below and in MESH_NODE_SPEC.md §9. What remains is the
-single-leaf write path the other adders reach after their LOD/partition
-dispatch — plus one rejection those adders never need, since a specialized-group
-parent is the one way a mesh could end up somewhere it cannot be rendered.
+Shorter than its siblings, and structurally so. Mesh has a ``substitutive_lod``
+branch like the other three, but no ``additive_lod`` and no ``partition``, for two
+different reasons spelled out in the rejections below and in MESH_NODE_SPEC.md §9.
+Its substitutive branch is also much smaller than the Points/Lines one, because
+those coarsen by LIFTING to gsplats (scalar baking, amplitude conservation, an
+anisotropy cap) while a mesh is simply decimated.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ import numpy as np
 from arbol import aprint
 
 from ...mesh import Mesh
-from ..compositing import sync_custom_colormap_attr
+from ..compositing import COMPOSITING_ATTRS, sync_custom_colormap_attr
 from ..dim_order import apply_dim_order_positions
 
 if TYPE_CHECKING:
@@ -39,43 +38,24 @@ if TYPE_CHECKING:
 
 
 def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
-    """Refuse to write a mesh leaf under a ``kind=lod`` / ``kind=partition`` group.
+    """Refuse to write a mesh leaf under a ``kind=partition`` group.
 
-    Mesh supports neither (spec §9), and the two group kinds fail differently if
-    a mesh slips in:
+    ``kind=lod`` used to be refused here too and no longer is: a mesh IS a valid
+    substitutive level now that a producer exists (``luxar.mesh.decimate``), and
+    ``substitutive_lod=`` builds exactly this shape — a ``kind=lod`` group whose
+    children are progressively decimated meshes. The additive prefix ladder stays
+    impossible for a surface, but that was never what this guard covered:
+    ``kind=lod`` holds levels that REPLACE one another, while an additive ladder
+    is ``additive_<i>/`` subgroups inside a leaf. See
+    :data:`_UNSUPPORTED_STRUCTURE_PARAMS` for the flavour that is still refused.
 
-    * ``kind=partition`` — ``add_partition_group`` already rejects
-      ``display_type='mesh'``, but nothing stops a caller from creating a
-      ``points`` partition and then adding a mesh child into it, which would make
-      the group's declared display type a lie.
-    * ``kind=lod`` — there is no mesh LOD producer, and the display type resolved
-      from a mesh child is refused by the LOD guard. That guard fires at finalize,
-      i.e. AFTER the mesh's arrays are on disk; catching it here keeps the failure
-      fail-fast and leaves no partial node.
-
-    Both are caller mistakes with no valid interpretation, so they raise rather
-    than warn.
-
-    The two LOD flavours are refused for DIFFERENT reasons and the message says so
-    (spec §9). The additive prefix ladder is excluded on principle — a prefix of an
-    index buffer is a *holed* surface, not a coarse one, which is why it degrades
-    gracefully for independent elements and produces a wrong picture here.
-    Substitutive levels are excluded only for want of a producer: that machinery
-    makes no independence assumption at all, since a level is an
-    independently-authored ``(vertices, faces)`` pair chosen by
-    ``coverage_fraction``. Conflating the two (as this message once did) tells a
-    user the feature is impossible when it is merely unwritten.
+    ``kind=partition`` remains refused. ``add_partition_group`` already rejects
+    ``display_type='mesh'``, but nothing stops a caller from creating a ``points``
+    partition and then adding a mesh child into it, which would make the group's
+    declared display type a lie. It is a caller mistake with no valid
+    interpretation, so it raises rather than warns.
     """
     kind = parent_node.attrs.get("kind")
-    if kind == "lod":
-        raise ValueError(
-            f"Cannot add mesh '{name}' to a kind=lod group. Mesh has no LOD "
-            "ladder yet, for two different reasons: an ADDITIVE prefix ladder "
-            "cannot apply at all (a prefix of an index buffer is a surface with "
-            "holes in it, not a coarser surface), while SUBSTITUTIVE levels are "
-            "structurally fine and simply have no producer — mesh decimation does "
-            "not exist yet. Add the mesh to a plain group instead."
-        )
     if kind == "partition":
         raise ValueError(
             f"Cannot add mesh '{name}' to a kind=partition group. Mesh has no "
@@ -85,18 +65,14 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
         )
 
 
-# Reason per structural parameter the sibling adders take and mesh does not. Same
-# three exclusions as the parent-group refusals above and as ``Group.add_mesh``'s
-# docstring, worded for a caller who passed the knob; insertion order decides which
-# one a multi-parameter call is told about.
+# Reason per structural parameter the sibling adders take and mesh does not.
+# ``substitutive_lod`` left this table when the decimator landed — mesh now takes
+# it as a real parameter. Worded for a caller who passed the knob; insertion order
+# decides which one a multi-parameter call is told about.
 _UNSUPPORTED_STRUCTURE_PARAMS: Dict[str, str] = {
     "additive_lod": (
         "an ADDITIVE prefix ladder cannot apply at all — a prefix of an index "
         "buffer is a surface with holes in it, not a coarser surface"
-    ),
-    "substitutive_lod": (
-        "SUBSTITUTIVE levels are structurally fine and simply have no producer — "
-        "mesh decimation does not exist yet"
     ),
     "partition": (
         "a BSP cut runs through faces, so each part needs its boundary vertices "
@@ -227,8 +203,9 @@ def add_mesh_impl(
     extend_to_all: Optional[Union[List[str], str]] = None,
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
+    substitutive_lod: Any = None,
     **attrs: Any,
-) -> Mesh:
+) -> Union[Mesh, "Group"]:
     try:
         # Fail-fast pre-write gate: reject invalid names (empty/'/'/dot-prefixed —
         # an empty name resolves to the zarr ROOT group and would clobber the
@@ -308,6 +285,38 @@ def add_mesh_impl(
 
         parent_node = parent or group
 
+        # Substitutive-LOD branch — coarse levels are DECIMATED meshes under a
+        # kind=lod Group whose finest child is the original surface. Placed after
+        # validation (so a malformed mesh fails the same way either path) and
+        # before the write (the wrapper writes every child itself, including the
+        # finest, so falling through would write the leaf twice).
+        #
+        # `vert_arr` is already dim_order-transformed, so children are written
+        # with dim_order=None/fill=None to avoid double application.
+        if substitutive_lod is not None:
+            from ..lod.mesh import resolve_substitutive_axis_mesh
+
+            substitutive_spec = resolve_substitutive_axis_mesh(substitutive_lod)
+            if substitutive_spec is not None:
+                return add_mesh_substitutive_lod_wrapper_impl(
+                    group,
+                    name=name,
+                    vert_arr=vert_arr,
+                    faces_arr=faces_arr,
+                    normals=normals,
+                    normal_dims=normal_dims,
+                    colors=colors,
+                    scalars=scalars,
+                    shading=shading,
+                    double_sided=double_sided,
+                    labels=labels,
+                    image_labels=image_labels,
+                    parent=parent,
+                    extend_to_all=extend_to_all,
+                    spec=substitutive_spec,
+                    **attrs,
+                )
+
         writer = group._require_scene_writer(scene)
         path = f"{parent_node.path}/{name}" if parent_node.path else name
         metadata = writer.write_mesh(
@@ -343,3 +352,185 @@ def add_mesh_impl(
     except (ValueError, TypeError) as e:
         aprint(f"Failed to add mesh node '{name}': {e}")
         raise ValueError(f"Could not add mesh '{name}': {e}") from e
+
+
+def add_mesh_substitutive_lod_wrapper_impl(
+    group: "Group",
+    *,
+    name: str,
+    vert_arr: np.ndarray,
+    faces_arr: np.ndarray,
+    normals: Any,
+    normal_dims: Optional[Sequence[int]],
+    colors: Any,
+    scalars: Any,
+    shading: Optional[str],
+    double_sided: bool,
+    labels: Any,
+    image_labels: Any,
+    parent: Optional["Node"],
+    extend_to_all: Optional[Union[List[str], str]],
+    spec: Dict[str, Any],
+    **attrs: Any,
+) -> Union["Group", Mesh]:
+    """Write a mesh whose coarse LOD levels are DECIMATED copies of the surface.
+
+    The Mesh peer of ``add_points_substitutive_lod_wrapper_impl`` and much
+    smaller than it, because Points and Lines coarsen by lifting to gsplats —
+    scalar→RGB baking, mass-preserving amplitudes, an anisotropy cap — and a mesh
+    is simply decimated. What is shared is the SHAPE: a ``kind=lod`` group,
+    children coarsest→finest, viewport-relative ``coverage_fraction`` per child
+    from :func:`luxar.core.group.lod.group.coverage_fractions`, compositing attrs
+    on the group and everything else on the children.
+
+    **Level targets are vertex counts**, ``V / K**i``, because that is the
+    currency the decimator's search is expressed in. Triangle count would be an
+    equally defensible proxy for rendered detail (and is roughly ``2V`` on a
+    closed manifold), but mixing the two would mean asking for one and thresholding
+    on the other.
+
+    A requested level is DROPPED rather than written when it cannot be a real
+    level: below the decimator's 4-vertex floor, or reducing to no fewer vertices
+    than the level before it. Writing it anyway would put two identical surfaces
+    in the ladder and give ``coverage_fractions`` a duplicate ratio, which is not
+    strictly ascending and raises. If every level drops — a surface already too
+    coarse to reduce — the ladder is abandoned and a plain leaf is written, which
+    is the same degenerate-path behaviour the Points wrapper has.
+    """
+    from ....mesh.decimate import decimate_cluster
+    from ..lod.group import coverage_fractions
+
+    n_vertices = int(vert_arr.shape[0])
+    compression_factor = int(spec["compression_factor"])
+    levels = int(spec["levels"])
+
+    # `coarsen_dims` is the authoring name for the decimator's `spatial_dims` —
+    # the dims the reduction may merge across; the complement are hard barriers.
+    coarsen = spec.get("coarsen_dims")
+    spatial_dims: Optional[tuple] = None
+    if isinstance(coarsen, (list, tuple)) and all(isinstance(x, int) for x in coarsen):
+        spatial_dims = tuple(int(x) for x in coarsen)
+
+    # Coarsest first, so the ladder reads the way it is written out. Counts must
+    # come out strictly ASCENDING in that order, which is what the comparison
+    # below enforces — against the previously KEPT (coarser) level, and against
+    # the original at the top. Comparing the other way round drops every level
+    # after the first, since each is legitimately larger than the one before it.
+    coarse: List[Any] = []
+    previous = 0
+    for power in range(levels, 0, -1):
+        target = n_vertices // (compression_factor**power)
+        if target < 4:
+            continue
+        level = decimate_cluster(
+            vert_arr,
+            faces_arr.reshape(-1, 3).astype(np.uint32),
+            target_vertices=target,
+            normals=normals if normals is not None else None,
+            colors=colors if isinstance(colors, np.ndarray) else None,
+            spatial_dims=spatial_dims,
+        )
+        count = int(level.vertices.shape[0])
+        # Strictly between the previous (coarser) level and the original, or it
+        # adds nothing: a duplicate count would also give `coverage_fractions` a
+        # repeated ratio, which is not strictly ascending and raises.
+        if count <= previous or count >= n_vertices:
+            continue
+        coarse.append(level)
+        previous = count
+
+    if not coarse:
+        aprint(
+            f"  📐 Substitutive-LOD '{name}': no level reduced the surface "
+            f"({n_vertices:,} vertices at K={compression_factor}) — writing a "
+            "plain mesh leaf instead."
+        )
+        return add_mesh_impl(
+            group,
+            name=name,
+            vertices=vert_arr,
+            faces=faces_arr,
+            normals=normals,
+            normal_dims=normal_dims,
+            colors=colors,
+            scalars=scalars,
+            shading=shading,
+            double_sided=double_sided,
+            labels=labels,
+            image_labels=image_labels,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            dim_order=None,
+            fill=None,
+            substitutive_lod=None,
+            **attrs,
+        )
+
+    counts = [int(c.vertices.shape[0]) for c in coarse] + [n_vertices]
+    explicit = spec.get("coverage_fractions")
+    if explicit is not None:
+        if len(explicit) != len(counts):
+            raise ValueError(
+                f"coverage_fractions has {len(explicit)} entries but the LOD ladder "
+                f"has {len(counts)} levels ({len(coarse)} decimated + 1 original). "
+                "Levels that could not reduce the surface are dropped, so the ladder "
+                "can be shorter than the requested `levels`."
+            )
+        coverage_vals = list(explicit)
+    else:
+        coverage_vals = coverage_fractions(counts)
+
+    lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
+    child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+    child_attrs.pop("coverage_fraction", None)
+    lod_attrs.setdefault("display_type", "mesh")
+
+    parent_node = parent or group
+    aprint(
+        f"  📐 Substitutive-LOD '{name}': {len(coarse)} decimated levels + original "
+        f"(vertex counts coarsest→finest={counts}, K={compression_factor})"
+    )
+    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
+
+    for idx, level in enumerate(coarse):
+        lod_group_node.add_mesh(
+            f"child_{idx}",
+            level.vertices,
+            level.faces,
+            normals=level.normals,
+            # Normals are recomputed from the COARSE surface, so they describe the
+            # same axis triple the input's did.
+            normal_dims=normal_dims if level.normals is not None else None,
+            colors=level.colors,
+            shading=shading,
+            double_sided=double_sided,
+            extend_to_all=extend_to_all,
+            dim_order=None,
+            fill=None,
+            coverage_fraction=coverage_vals[idx],
+            **child_attrs,
+        )
+
+    # Finest child: the original surface, with everything the coarse levels
+    # cannot carry — scalars (the decimator averages colours, not scalars) and
+    # the label channels.
+    lod_group_node.add_mesh(
+        f"child_{len(coarse)}",
+        vert_arr,
+        faces_arr,
+        normals=normals,
+        normal_dims=normal_dims,
+        colors=colors,
+        scalars=scalars,
+        shading=shading,
+        double_sided=double_sided,
+        labels=labels,
+        image_labels=image_labels,
+        extend_to_all=extend_to_all,
+        dim_order=None,
+        fill=None,
+        coverage_fraction=coverage_vals[-1],
+        **child_attrs,
+    )
+
+    return lod_group_node

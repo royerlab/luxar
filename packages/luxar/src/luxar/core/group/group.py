@@ -349,8 +349,9 @@ class Group(Node):
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
+        substitutive_lod: Optional[Union[bool, Dict[str, Any]]] = None,
         **attrs: Any,
-    ) -> "Mesh":
+    ) -> Union["Mesh", "Group"]:
         """Add a triangle mesh (surface) node to this group.
 
         The surface geometry type: nD ``vertices`` plus a ``faces`` triangle-index
@@ -358,13 +359,19 @@ class Group(Node):
         a triangle's extent comes from its own vertices — so it also contributes
         no extent padding to the scene's bounds.
 
+        ``substitutive_lod`` IS supported: it writes a ``kind=lod`` group whose
+        coarse children are progressively DECIMATED copies of the surface and whose
+        finest child is the original. Its vocabulary is shorter than the sibling
+        adders' — no ``truncation_radius`` / ``max_aspect`` / ``device`` / ``seed``,
+        because those exist only for geometries that coarsen by lifting to gsplats,
+        and ``method`` is ``{'auto', 'cluster'}`` rather than the Gaussian-mixture
+        reducers. See :func:`luxar.core.group.lod.mesh.resolve_substitutive_axis_mesh`.
+
         Not supported for meshes (each raises rather than silently degrading):
         ``additive_lod`` (a prefix of an index buffer is a surface with holes, not
-        a coarser surface), ``substitutive_lod`` (structurally fine — only the
-        producer, mesh decimation, is missing), ``partition`` (a BSP cut needs
-        boundary vertices duplicated per part and the label CSR split to match),
-        and adding one under a ``kind=lod`` / ``kind=partition`` parent. See
-        ``docs/specs/MESH_NODE_SPEC.md`` §9.
+        a coarser surface), ``partition`` (a BSP cut needs boundary vertices
+        duplicated per part and the label CSR split to match), and adding one
+        under a ``kind=partition`` parent. See ``docs/specs/MESH_NODE_SPEC.md`` §9.
 
         Args:
             name: Name of the mesh node.
@@ -405,7 +412,8 @@ class Group(Node):
                 opaque surface.
 
         Returns:
-            The created Mesh node.
+            The created Mesh node — or, with ``substitutive_lod``, the ``kind=lod``
+            Group wrapping the ladder (matching ``add_points`` / ``add_lines``).
         """
         from .adders.mesh import add_mesh_impl
 
@@ -426,6 +434,7 @@ class Group(Node):
             extend_to_all=extend_to_all,
             dim_order=dim_order,
             fill=fill,
+            substitutive_lod=substitutive_lod,
             **attrs,
         )
 
