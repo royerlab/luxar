@@ -791,7 +791,10 @@ pnpm agent:debug:visible          # AI debugging with visible browser
 ```
 
 **Running E2E tests in chunks (RECOMMENDED):**
-Instead of running all E2E tests at once (which can timeout or be overwhelming), run them by topic:
+Instead of running all E2E tests at once (which can timeout or be overwhelming), run them by topic.
+Run `pnpm test:generate-fixtures` once first: the Playwright pre-flight requires the generated
+zarr fixtures for EVERY chunk, not just the two that read them directly (set
+`LUXAR_E2E_NO_FIXTURES=1` to skip the check for a chunk you know needs none).
 ```bash
 # Basic functionality
 npx playwright test basic-rendering.spec.ts viewer-initialization.spec.ts
@@ -847,7 +850,7 @@ npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts firs
 - Use `?src=<dataset>&debug` URL format (NOT `?data=`)
 - Use 3D datasets for general tests (4D/nD slicing may show 0 points)
 - Wait for `window.__luxarDebug` before assertions
-- Run `pnpm test:generate-fixtures` before test-fixtures tests
+- Run `pnpm test:generate-fixtures` before any Playwright run (the pre-flight enforces it)
 - See `docs/guides/user/E2E_TESTING_GUIDE.md` and `docs/guides/developer/PLAYWRIGHT_GUIDE.md` for details
 
 ### Cross-Language E2E Testing
