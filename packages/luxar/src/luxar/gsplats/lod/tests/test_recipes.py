@@ -87,9 +87,9 @@ def test_recipe_params_additive_method_defaults_to_auto():
     assert RecipeParams().additive_method == "auto"
 
 
-def test_partitioned_counts_breakpoints_clamp_to_small_parts():
+def test_tiles_counts_breakpoints_clamp_to_small_parts():
     """REGRESSION (pre-existing footgun): explicit `counts:` breakpoints larger
-    than a small BSP part used to abort the WHOLE partitioned build with
+    than a small BSP part used to abort the WHOLE tiles build with
     'largest breakpoint exceeds N'. Per-part ladders now clamp the counts to
     each part's own size instead."""
     data = _make_random_gsplat()  # 400 splats
@@ -99,8 +99,8 @@ def test_partitioned_counts_breakpoints_clamp_to_small_parts():
     assert total_splats(tree) == 400
 
 
-def test_pyramid_counts_breakpoints_clamp_to_coarse_levels():
-    """Same footgun on the pyramid: coarser substitutive levels are smaller by
+def test_levels_counts_breakpoints_clamp_to_coarse_levels():
+    """Same footgun on levels: coarser substitutive levels are smaller by
     K^s, so counts sized for the finest level used to abort the build."""
     data = _make_random_gsplat()  # 400 splats; K=4,L=2 → levels 400/100/25
     params = _params(breakpoints=[50, 300])
@@ -109,8 +109,8 @@ def test_pyramid_counts_breakpoints_clamp_to_coarse_levels():
     assert res.flattened().n_splats == 400
 
 
-def test_pyramid_counts_breakpoints_typo_scale_raises():
-    """Counts exceeding the FULL dataset (the finest pyramid level) are a typo
+def test_levels_counts_breakpoints_typo_scale_raises():
+    """Counts exceeding the FULL dataset (the finest level) are a typo
     and must still abort loudly — the per-level clamp applies only to the
     coarser (smaller-by-K^s) levels, never to the whole-dataset check."""
     data = _make_random_gsplat()  # 400 splats
@@ -119,8 +119,8 @@ def test_pyramid_counts_breakpoints_typo_scale_raises():
         build_recipe(data, "levels", params)
 
 
-def test_partitioned_counts_breakpoints_typo_scale_raises():
-    """The same union-level typo guard on the partitioned recipe: counts must
+def test_tiles_counts_breakpoints_typo_scale_raises():
+    """The same union-level typo guard on the tiles recipe: counts must
     fit the WHOLE dataset even though every individual part clamps."""
     data = _make_random_gsplat()  # 400 splats
     params = _params(max_elements=120, breakpoints=[1_000_000])
@@ -128,7 +128,7 @@ def test_partitioned_counts_breakpoints_typo_scale_raises():
         build_recipe(data, "tiles", params)
 
 
-def test_stream_breakpoints_flow_through_partitioned():
+def test_stream_breakpoints_flow_through_tiles():
     """A `stream:<c>` spec sizes each part's ladder against ITS OWN N."""
     data = _make_random_gsplat()  # 400 splats
     params = _params(max_elements=120, breakpoints="stream:30")
@@ -149,7 +149,7 @@ def test_all_recipe_names_build():
         result = build_recipe(data, recipe, _params())
         # Strong: the build must carry the full splat set, not merely be non-None.
         # Matrix recipes return GSplatData (count == N); composed recipes return a
-        # node tree whose leaves total >= N (multiscale adds a coarse cap).
+        # node tree whose leaves total >= N (overview adds a coarse cap).
         if isinstance(result, GSplatData):
             assert result.flattened().n_splats == 400, recipe
         else:
@@ -169,7 +169,7 @@ def test_matrix_recipes_are_dimension_agnostic(ndim: int):
 
 
 def test_partition_recipes_support_4d():
-    """partitioned/multiscale require >=3 dims (BSP); 4D must build and conserve."""
+    """tiles/overview/adaptive require >=2 dims (BSP); 4D must build and conserve."""
     data = _make_random_gsplat(n=400, ndim=4)
     part = build_recipe(data, "tiles", _params(max_elements=120))
     assert isinstance(part, GSplatPartition)
@@ -212,7 +212,7 @@ def test_substitutive_is_lod_group_matrix():
     assert res.tree.__class__ is GSplatLodGroup
 
 
-def test_pyramid_is_substitutive_times_additive():
+def test_levels_is_substitutive_times_additive():
     data = _make_random_gsplat(n=256)
     res = build_recipe(
         data, "levels", _params(compression_factor=4, levels=2, n_lods=2)
@@ -223,7 +223,7 @@ def test_pyramid_is_substitutive_times_additive():
         assert 1 <= lev.n_additive_lods <= 2
 
 
-def test_partitioned_is_partition_of_laddered_leaves():
+def test_tiles_is_partition_of_laddered_leaves():
     data = _make_random_gsplat(n=400)
     res = build_recipe(data, "tiles", _params(max_elements=120, n_lods=3))
     assert isinstance(res, GSplatPartition)
@@ -237,7 +237,7 @@ def test_partitioned_is_partition_of_laddered_leaves():
     assert total_splats(res) == 400
 
 
-def test_partitioned_clamps_ladder_on_small_parts():
+def test_tiles_clamps_ladder_on_small_parts():
     # tiny parts must not produce empty equal-count LOD bins
     data = _make_random_gsplat(n=20)
     res = build_recipe(data, "tiles", _params(max_elements=4, n_lods=8))
@@ -246,8 +246,8 @@ def test_partitioned_clamps_ladder_on_small_parts():
     assert total_splats(res) == 20
 
 
-def test_multiscale_stamps_coverage_fractions_by_default():
-    """multiscale always pre-stamps the coarse↔fine selector thresholds on the
+def test_overview_stamps_coverage_fractions_by_default():
+    """overview always pre-stamps the coarse↔fine selector thresholds on the
     children's meta as viewport-relative ``coverage_fraction`` values
     (``sqrt(N_i/N_finest)``): the coarse cap gets 0.0 (always-eligible floor) and
     the fine partition gets 1.0 (fills-screen)."""
@@ -260,7 +260,7 @@ def test_multiscale_stamps_coverage_fractions_by_default():
     assert fine.meta["coverage_fraction"] > coarse.meta["coverage_fraction"]
 
 
-def test_multiscale_is_unbalanced_lod_over_partition():
+def test_overview_is_unbalanced_lod_over_partition():
     data = _make_random_gsplat(n=400)
     res = build_recipe(
         data, "overview", _params(max_elements=120, n_lods=3, compression_factor=4)
@@ -277,10 +277,10 @@ def test_multiscale_is_unbalanced_lod_over_partition():
     assert total_splats(fine) == 400
 
 
-def test_mosaic_is_partition_of_substitutive_lod_groups():
-    """`mosaic` = a kind=partition whose EVERY part is its own substitutive lod
+def test_adaptive_is_partition_of_substitutive_lod_groups():
+    """`adaptive` = a kind=partition whose EVERY part is its own substitutive lod
     group (per-part coarse↔fine swap) — the per-part substitutive sibling of
-    `partitioned` (additive parts) and `multiscale` (one global cap)."""
+    `tiles` (additive parts) and `overview` (one global cap)."""
     data = _make_random_gsplat(n=400)
     res = build_recipe(
         data, "adaptive", _params(max_elements=120, compression_factor=4, levels=2)
@@ -425,7 +425,7 @@ def test_adaptive_recipe_rejects_volume_refine():
 
 def test_additive_ladders_default_on_everywhere():
     """Project convention: additive LODs by default. The substitutive recipe
-    ladders every level; mosaic ladders every per-part level; the multiscale
+    ladders every level; adaptive ladders every per-part level; the overview
     coarse cap is laddered; --no-additive (additive_ladders=False) restores
     bare leaves."""
     data = _make_random_gsplat(n=400)
@@ -436,7 +436,7 @@ def test_additive_ladders_default_on_everywhere():
         data, "levels", _params(levels=1, n_lods=3, additive_ladders=False)
     )
     assert all(lev.n_additive_lods == 1 for lev in off.substitutive_levels)
-    # mosaic: per-part lod-group children are multi-sublod leaves
+    # adaptive: per-part lod-group children are multi-sublod leaves
     mos = build_recipe(data, "adaptive", _params(levels=1, n_lods=2, max_elements=150))
     laddered_leaves = [
         leaf
@@ -444,8 +444,8 @@ def test_additive_ladders_default_on_everywhere():
         for leaf in iter_leaves(part)
         if len(leaf.additive_sublods) > 1
     ]
-    assert laddered_leaves, "mosaic parts carry no additive ladders"
-    # multiscale: the coarse cap (first child) is a laddered leaf
+    assert laddered_leaves, "adaptive parts carry no additive ladders"
+    # overview: the coarse cap (first child) is a laddered leaf
     ms = build_recipe(data, "overview", _params(levels=1, n_lods=2, max_elements=150))
     cap = ms.children[0]
     assert isinstance(cap, GSplatLeaf) and len(cap.additive_sublods) > 1

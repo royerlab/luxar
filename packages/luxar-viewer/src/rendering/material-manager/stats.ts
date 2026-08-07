@@ -5,10 +5,11 @@
  * them; this module builds the returned object shape for
  * `getCacheStats()`.
  *
- * Nothing here reports a cache size. Every material is per-node — each carries
- * its own texture uniform, so two nodes can never share one — which means there
- * is no material cache left to measure. See `getPointMaterial` for the full
- * reasoning.
+ * Nothing here reports a cache size. Every material is per-node — point, line
+ * and gsplat materials each carry their own texture uniform, a mesh material
+ * its own shading state, so two nodes can never share one — which means there
+ * is no material cache left to measure. See `getPointMaterial` /
+ * `getMeshMaterial` for the full reasoning.
  *
  * @module rendering/material-manager/stats
  */

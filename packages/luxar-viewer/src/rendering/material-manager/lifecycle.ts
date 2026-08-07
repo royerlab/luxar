@@ -4,9 +4,9 @@
  * to evict Three's cached `RenderObject` without actually tearing
  * down the material.
  *
- * MaterialManager keeps ownership of the registries / caches; this
- * module operates on them via a `LifecycleCtx` so the helpers don't
- * pull in a back-reference to the orchestrator.
+ * MaterialManager keeps ownership of the registries; this module
+ * operates on them via a `LifecycleCtx` so the helpers don't pull in a
+ * back-reference to the orchestrator.
  *
  * @module rendering/material-manager/lifecycle
  */
@@ -45,7 +45,7 @@ export interface LifecycleCtx {
 
 /**
  * Subscribe to a material's `dispose` event so the manager can clean
- * up its registry / cache entries automatically. THREE.Material's
+ * up its registry entries automatically. THREE.Material's
  * EventDispatcher fires `dispose` synchronously inside `dispose()`,
  * so by the time `super.dispose()` returns, the manager has already
  * forgotten about this material.
