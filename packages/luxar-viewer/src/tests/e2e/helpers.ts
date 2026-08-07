@@ -1282,6 +1282,75 @@ async function captureElementScreenshotDataUrl(page: Page, selector: string): Pr
   return `data:image/png;base64,${png.toString('base64')}`;
 }
 
+/** A whole decoded frame: raw interleaved RGBA bytes plus its dimensions. */
+export interface CanvasFrameRGBA {
+  width: number;
+  height: number;
+  rgba: Uint8ClampedArray;
+}
+
+/**
+ * Capture a rendered element ONCE and return its full-frame RGBA bytes.
+ *
+ * Use this when a spec needs whole-image analysis (histograms, per-region
+ * statistics) rather than a handful of point samples — measuring several
+ * regions of one identical frame is the point, and re-screenshotting per
+ * region would let an unrelated frame difference masquerade as a defect.
+ *
+ * The screenshot route (rather than a direct `gl.readPixels`) is required
+ * for the reason spelled out on `captureElementScreenshotDataUrl` above:
+ * with `preserveDrawingBuffer: false` the WebGL drawing buffer may already
+ * be cleared. The PNG is decoded in-page and handed back as base64 RGBA so
+ * the whole frame crosses the CDP bridge exactly once.
+ *
+ * @param page Playwright page.
+ * @param selector Element to capture; defaults to the viewer canvas.
+ * @returns Decoded pixel dimensions and the interleaved RGBA buffer.
+ */
+export async function captureCanvasRGBA(page: Page, selector = 'canvas'): Promise<CanvasFrameRGBA> {
+  const dataUrl = await captureElementScreenshotDataUrl(page, selector);
+
+  const decoded = await page.evaluate(async (url: string) => {
+    const img = new Image();
+    img.decoding = 'sync';
+    const loaded = new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('captureCanvasRGBA: failed to decode screenshot'));
+    });
+    img.src = url;
+    await loaded;
+
+    const width = img.naturalWidth;
+    const height = img.naturalHeight;
+    if (width <= 0 || height <= 0) {
+      throw new Error(`captureCanvasRGBA: empty screenshot ${width}x${height}`);
+    }
+
+    const off = document.createElement('canvas');
+    off.width = width;
+    off.height = height;
+    const ctx = off.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('captureCanvasRGBA: 2D context unavailable');
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, width, height).data;
+
+    // Chunked: String.fromCharCode.apply blows the stack on a multi-MB buffer.
+    let binary = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < data.length; i += CHUNK) {
+      binary += String.fromCharCode.apply(null, data.subarray(i, i + CHUNK) as unknown as number[]);
+    }
+    return { width, height, base64: btoa(binary) };
+  }, dataUrl);
+
+  const buf = Buffer.from(decoded.base64, 'base64');
+  return {
+    width: decoded.width,
+    height: decoded.height,
+    rgba: new Uint8ClampedArray(buf.buffer, buf.byteOffset, buf.byteLength),
+  };
+}
+
 export async function samplePixelsAt(
   page: Page,
   selector: string,

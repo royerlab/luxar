@@ -17,10 +17,20 @@ running the generators below. Both paths are explicitly listed in the repo
 | `generate_test_data.py` | Single source of truth for the fixture set. Each fixture corresponds to one `generate_*` function and writes a `FIXTURES_DIR / "test_*.zarr"` archive using the real Python encoder (`luxar.LuxarZarrCompiler` / `luxar.encoding.ArrayEncoder`). Compression is disabled (`compressor=None`) and `float16_allowed=False` so the output is consumable from Node.js without blosc/numcodecs WASM bindings. |
 | `generate_expectations.py` | Walks every `test_*.zarr` directory, decodes each numeric array with Python's `ArrayDecoder`, and writes `roundtrip_expectations.json` — flat-array shapes, SHA-256 hashes, sample values, stats, and representative first-axis range slices. The Vitest contract tests cross-check the TypeScript `ArrayDecoder` against this snapshot in pure Node (no browser, no GPU). |
 
-The fixture list is parsed at test-startup time from
-`generate_test_data.py` itself (`FIXTURES_DIR / "..."` lines) — see
-`src/tests/global-setup.ts`. Adding or renaming a fixture in the Python
-script is sufficient; no separate TypeScript manifest needs updating.
+The fixture list is parsed at test-startup time from the `FIXTURE_NAMES`
+declaration at the top of `generate_test_data.py` by
+`tools/fixture-manifest.ts`, which both the Vitest global setup and the
+Playwright one read. Adding or renaming a fixture in the Python script is
+sufficient, provided `FIXTURE_NAMES` is updated alongside the new
+`generate_*()` function; no separate TypeScript manifest needs updating.
+
+The two harnesses react differently to a fixture that is missing or was
+left half-written by an interrupted run. Vitest regenerates it; the
+Playwright preflight in `src/tests/e2e/global-setup.ts` throws before any
+spec starts, naming every incomplete fixture and pointing at
+`pnpm test:generate-fixtures`. So an E2E run fails up front with an
+actionable message rather than part-way through a spec that cannot find
+its data — individual specs do not need their own existence guards.
 
 ## Generating fixtures
 
@@ -72,6 +82,7 @@ expectations.
 | `test_lines.luxar.zarr` | Lines geometry (vertices, widths, optional colors and segments). |
 | `test_gsplats.luxar.zarr` | GSplats (Gaussian Splats) geometry (centers, amplitudes, Cholesky factors, colors). |
 | `test_labelled_points.luxar.zarr` | Small labelled-points dataset used by the `hover-tooltip.spec.ts` E2E spec. |
+| `test_line_joins.luxar.zarr` | Five polyline-joint cases in separate world-Y bands (smooth curve, 90° zigzag, thin and thick straights, nine-ray indexed hub) under a photometry-grade pinned viewer config. Acceptance fixture for `line-join-artifact.spec.ts` (issues #780 / #785 / #790). |
 
 ## Files
 
