@@ -70,7 +70,9 @@ EXCLUDED = frozenset({"__init__.py", "_dependencies.py"})
 #: Shared helpers that must always be scanned. Pinned so that excluding one
 #: (or breaking the discovery below) fails loudly instead of quietly shrinking
 #: the guarded set — the failure mode this module was written to prevent.
-REQUIRED_SHARED_HELPERS = frozenset({"_interop_common.py", "_roundtrip_common.py"})
+REQUIRED_SHARED_HELPERS = frozenset(
+    {"_graph_common.py", "_interop_common.py", "_roundtrip_common.py"}
+)
 
 #: A floor, not a count: the registry holds ~80 demos, so anything near zero
 #: means discovery broke rather than that demos were deleted.
