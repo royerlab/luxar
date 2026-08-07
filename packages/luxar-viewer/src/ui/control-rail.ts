@@ -30,6 +30,13 @@ import { RailOverlay } from './control-rail/rail-overlay';
 import { isPanelVisible, escapeHtml } from './control-rail/dom-helpers';
 import type { ControlRailItem } from './control-rail/types';
 
+/**
+ * Rail item descriptors, re-exported so callers configuring a rail need only
+ * import from `ui/control-rail`: {@link ControlRailItem} (one icon button) plus
+ * the two optional shapes it composes — `ControlRailPopover` (a rich, lazily
+ * built panel anchored to the item) and `ControlRailToggle` (a compact toggle
+ * shown inside the item's flyout).
+ */
 export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './control-rail/types';
 export { RAIL_ICONS } from './control-rail/icons';
 

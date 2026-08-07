@@ -1,7 +1,7 @@
 Luxar Documentation
 ===================
 
-Welcome to Luxar's documentation! Luxar is a high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes containing points, lines, and Gaussian splats. Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
+Welcome to Luxar's documentation! Luxar is a high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes containing points, lines, Gaussian splats, and triangle meshes. Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
 
 Quick Start
 -----------
@@ -50,7 +50,7 @@ Features
 --------
 
 * **nD Visualization**: Handle arbitrary-dimensional data with interactive slicing
-* **Three Geometry Types**: Points (soft-edged spheres), Lines (width-tapered curves), and Gaussian Splats (oriented Gaussians)
+* **Four Geometry Types**: Points (soft-edged spheres), Lines (width-tapered curves), Gaussian Splats (oriented Gaussians), and Mesh (shaded triangle surfaces)
 * **Performance**: 100K-10M points at 60 FPS with WebGL rendering
 * **Compression**: 4-40x data compression with lossy/lossless options
 * **Streaming**: Memory-efficient lazy loading with intelligent caching

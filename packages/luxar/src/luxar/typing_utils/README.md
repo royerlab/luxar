@@ -47,7 +47,7 @@ Simple type aliases for improved readability.
 - **Scene**: `NodePath`, `NodeAttributes`, `SceneHierarchy`, `GroupAttrs`
 - **Dimensions**: `DimensionRange`, `DimensionIndex`, `DimensionIndices`, `CategoryList`
 - **Colors**: `ColorValue`, `ColorRGB`, `ColorRGBA`
-- **Metadata**: `PointsMetadata`, `LinesMetadata`, `GSplatsMetadata`, `SceneMetadata`
+- **Metadata**: `PointsMetadata`, `LinesMetadata`, `GSplatsMetadata`, `MeshMetadata`, `SceneMetadata`
 - **Validation**: `ValidationResult`
 
 **Purpose**: Simplify complex type annotations
@@ -57,7 +57,7 @@ Enumeration types and configuration classes.
 
 **Key Enums:**
 - `BlendingMode`: Rendering blend modes (normal, additive, max, opaque, luminous, volumetric)
-- `NodeType`: Scene graph node types (scene, group, points, lines, gsplats)
+- `NodeType`: Scene graph node types (scene, group, points, lines, gsplats, mesh)
 - `PhysicalUnit`: Supported physical units (nm, um, mm, etc.)
 
 **Key Classes:**

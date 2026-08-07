@@ -45,7 +45,7 @@ with LuxarZarrCompiler('my_scene.luxar.zarr') as compiler:
 **Key Concepts:**
 - **Scene**: Root container defining dimensions
 - **Nodes**: Hierarchical organization (groups can contain groups/data)
-- **DataNodes**: Points, Lines, GSplats - the actual renderable data
+- **DataNodes**: Points, Lines, GSplats, Mesh - the actual renderable data
 - **Transforms**: 4x4 matrices for positioning/rotation/scaling
 - **Dimensions**: Support nD data with keyboard navigation
 
@@ -60,7 +60,7 @@ The root node of the scene hierarchy. Provides builder methods for constructing 
 - Scene-level dimension definitions
 - Broadcasting support for nD data
 - Hierarchical organization with groups
-- Support for Points, Lines, and GSplats data
+- Support for Points, Lines, GSplats, and Mesh data
 
 **Usage Example:**
 ```python
@@ -458,12 +458,12 @@ Represents 2D *surfaces* embedded in nD — the one thing the other three types
 cannot express. Points, Lines and GSplats are all soft, emissive, per-element
 primitives; a surface is connected, opaque and shaded.
 
-Mesh is **fully renderable**: the Python writer/reader/`luxar info`, the viewer's
-loader and material pair, picking (at vertex granularity), and the Layers-panel
-appearance controls have all landed (`docs/specs/MESH_NODE_SPEC.md` §11). The
-format contract still names the writable and drawable sets separately —
-`geometry_types` vs `loader_types` — because a type becomes authorable before it
-becomes drawable, but they agree on all four today.
+✅ **Writable and renderable.** The Python writer, reader and `luxar info` handle
+mesh, and so do the viewer's loader, shaded material and picking — the whole
+vertical ships today (`docs/specs/MESH_NODE_SPEC.md` §11). The format contract
+still names the two sets separately — `geometry_types` (writable) vs
+`loader_types` (viewer-drawable) — because a type becomes authorable before it
+becomes drawable; today both sets include `mesh`.
 
 **Key Features:**
 - nD `vertices` plus a `faces` triangle-index array (`(F, 3)` or flat `(3F,)`)
@@ -817,7 +817,8 @@ Node (base class)
  └── DataNode (abstract base for data nodes)
       ├── Points (point data)
       ├── Lines (curve/line data)
-      └── GSplats (Gaussian splat data)
+      ├── GSplats (Gaussian splat data)
+      └── Mesh (triangle surface data)
 ```
 
 ## Dependencies
@@ -837,15 +838,15 @@ Node (base class)
 ## Testing
 
 Tests are located in `core/tests/`:
-- `test_compositing.py` - Partition/LOD wrapper compositing primitives
 - `test_datanode_types.py` - DataNode types: cross-type parity matrix, Lines and GSplats
-- `test_dim_order.py` - dim_order dimension mapping on add_points / add_lines / add_gsplats
 - `test_dimension_metadata.py` - Dimension functionality (current Dimension class)
 - `test_dimensions.py` - Scene-level dimensions
 - `test_extend_to_all.py` - extend_to_all functionality in Scene.add_points()
-- `test_group.py` - Group class with add_* methods
+- `test_graft_compositing_attrs.py` - attr routing when a nested `.gsplats.zarr` is grafted into a scene
 - `test_gsplats_extend_to_all.py` - extend_to_all functionality in Scene.add_gsplats()
 - `test_hdr_colors.py` - Edge case tests for HDR color support
+- `test_lines_extend_to_all.py` - extend_to_all functionality in Scene.add_lines()
+- `test_mesh.py` - Mesh DataNode: add_mesh round-trips (topology, normals/normal_dims, colors, labels), shading/double_sided resolution, and the volumetric-blending / LOD / partition refusals
 - `test_node_properties.py` - Node properties and method chaining
 - `test_node_rendering.py` - Rendering attributes for Node class
 - `test_overlays.py` - Screen-space overlays (add_text / add_image / add_html)
@@ -856,7 +857,15 @@ Tests are located in `core/tests/`:
 - `test_scene_structure.py` - Scene graph structure
 - `test_spatial_dimensions.py` - Spatial dimension functionality (spatial flag)
 - `test_transforms.py` - Transform utilities and functionality
+- `test_transforms_properties.py` - Property-based tests for the transform composition algebra
 - `test_viewer_config.py` - ViewerConfig, CameraConfig, and related dataclasses
+
+The `Group` side lives one level down, in `core/tests/group/`:
+- `test_group.py` - Group class with add_* methods
+- `test_compositing.py` - Partition/LOD wrapper compositing primitives
+- `test_dim_order.py` - dim_order dimension mapping on add_points / add_lines / add_gsplats
+- `test_gsplats_volume_budget.py` - splat-budget resolution in add_gsplats_from_volume (int count vs float ratio)
+- `lod/`, `partition/` - the two specialized group kinds
 
 Run tests:
 ```bash

@@ -116,6 +116,11 @@ from .gsplat_commands import app_gsplat  # noqa: E402
 
 app.add_typer(app_gsplat, name="gsplat")
 
+# Add mesh subcommands (import)
+from .mesh_commands import app_mesh  # noqa: E402
+
+app.add_typer(app_mesh, name="mesh")
+
 # Add demo subcommands (list / info / run / run-all / cache)
 from .demo_commands import app_demo  # noqa: E402
 

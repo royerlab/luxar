@@ -1,6 +1,6 @@
 # Unified Loader Architecture
 
-**Status**: All geometry loaders use RangeLoader plus the per-type accumulators under `data/accumulators/`.
+**Status**: The three spatial-index loaders (Points, Lines, GSplats) use RangeLoader plus the per-type accumulators under `data/accumulators/`. The mesh whole-node loader shares RangeLoader and the color helpers but has no accumulator — it fetches the node once in full rather than assembling per-view ranges.
 
 ## Overview
 

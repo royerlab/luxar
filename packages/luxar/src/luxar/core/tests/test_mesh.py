@@ -282,9 +282,9 @@ def test_mesh_with_volumetric_blending_is_rejected(tmp_path) -> None:
 def test_mesh_accepts_the_blending_modes_it_does_support(tmp_path) -> None:
     """The acceptance half — otherwise the check above could be "reject every mode".
 
-    B3 renders unshaded and ignores ``blending_mode`` entirely; these still have to be
-    WRITABLE, because the material that honours them lands in a later phase and the
-    scenes authored now must not need rewriting.
+    These have to be WRITABLE independently of what any given viewer phase draws —
+    the mesh material honours them today, and the scenes authored before it did must
+    not need rewriting.
     """
     with LuxarZarrCompiler(tmp_path / "modes.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
