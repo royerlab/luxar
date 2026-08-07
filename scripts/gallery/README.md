@@ -87,6 +87,16 @@ README gallery table.
   baked framing — so an explicit `orbitUp` usually wants a `viewAngle` beside it,
   while the derived default leaves framing alone.
 
+  **Timelapse demos need the rAF loop re-frozen every frame.** The orbit freezes
+  it once at setup, but a timelapse slice load restarts it, and a live loop runs
+  `controls.update()`, which re-derives the camera from the controls' stored
+  spherical state and snaps it back to the pre-orbit pose. Before this was
+  handled, a 4D tile's camera sat at the baked pose in 6 of 8 frames — it barely
+  orbited at all while its time dimension advanced (#1383). The reset lands
+  *after* the per-frame `page.evaluate` returns, so re-applying the pose inside
+  that evaluate does not help; the loop has to be stopped. The freeze is gated on
+  the demo being a timelapse, so captures that were never broken are untouched.
+
   After each capture the harness compares the still against orbit frame 0 — the
   same nominal pose — and **warns** if they correlate below 0.85. That is the
   check whose absence let #1377 ship. Timelapse demos are exempt: their still is
