@@ -846,7 +846,7 @@ Tests are located in `core/tests/`:
 - `test_gsplats_extend_to_all.py` - extend_to_all functionality in Scene.add_gsplats()
 - `test_hdr_colors.py` - Edge case tests for HDR color support
 - `test_lines_extend_to_all.py` - extend_to_all functionality in Scene.add_lines()
-- `test_mesh.py` - Mesh DataNode: add_mesh round-trips (topology, normals/normal_dims, colors, labels), shading/double_sided resolution, and the volumetric-blending / LOD / partition refusals
+- `test_mesh.py` - Mesh DataNode: add_mesh round-trips (topology, normals/normal_dims, colors, labels), shading/double_sided resolution, the `partition=` split (face conservation, vertex duplication, per-vertex attribute gathering), and the volumetric-blending / LOD refusals
 - `test_node_properties.py` - Node properties and method chaining
 - `test_node_rendering.py` - Rendering attributes for Node class
 - `test_overlays.py` - Screen-space overlays (add_text / add_image / add_html)

@@ -6,6 +6,33 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Mesh — `kind=partition` (spec §9.2)
+
+`add_mesh(partition=True | {"max_elements": N, "rule": "median"|"midpoint"|"sah"})`
+splits a surface into independently drawable, frustum-cullable parts under a
+`kind=partition` wrapper — the fourth geometry type joining Points / Lines /
+GSplats, and the last of the mesh spec's structural exclusions that was
+bookkeeping rather than correctness.
+
+- **Faces are never cut.** The BSP splits on face centroids, so a triangle is the
+  indivisible unit and `max_elements` counts FACES.
+- **Parts are re-indexed, not sliced** (`luxar/mesh/split.py`). A triangle is three
+  references into a shared vertex table, so each part gathers the vertices its own
+  faces use and renumbers those faces against the gathered table. A vertex on the
+  cut is duplicated into both parts — the cost that makes each part stand alone.
+  The writer reports the measured duplication factor.
+- **Every per-vertex attribute follows its vertices**, including the per-vertex
+  label CSR (`normals`, `colors`, `scalars`, `labels`); a uniform RGB triple or a
+  colormap name is passed through untouched.
+- **No seams.** Duplicated boundary vertices carry identical position *and*
+  identical stored normal, and the derivative shading variant is per-fragment.
+  Revisit if shading ever gains a per-part recomputation (area-averaged normals,
+  tangent frames, UVs, baked AO).
+- `GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both the Python and
+  TypeScript sides; `image_labels` is refused alongside `partition=`.
+
+Mesh still has **no LOD ladder** — a separate axis, and unaffected by this.
+
 #### Documentation — pull-request quality gate and warning ratchets (#776)
 
 Documentation-relevant pull requests now report a stable `docs-quality` check.

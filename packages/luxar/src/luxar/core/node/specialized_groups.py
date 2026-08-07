@@ -73,18 +73,20 @@ def add_partition_group_impl(
     """Body of :meth:`Node.add_partition_group`."""
     # DO NOT widen to GEOMETRY_TYPES. This asks a CAPABILITY question — which
     # geometry types have a spatial-partition path — not the leaf-vocabulary
-    # question, and the two differ (mesh is writable but unpartitionable, spec
-    # §9). The answer lives in one table so it cannot drift between here and the
-    # LOD guard; a new type opts in by flipping its row, not by editing callers.
+    # question. The two happen to agree today (all four types are partitionable
+    # since mesh gained `luxar.mesh.split`), but they are different questions and
+    # a future type may answer them differently. The answer lives in one table so
+    # it cannot drift between here and the LOD guard; a new type opts in by
+    # flipping its row, not by editing callers.
     if not supports_partition(display_type):
         valid = " / ".join(repr(t) for t in partition_capable_types())
         raise ValueError(
             f"display_type for a partition group must be one of {valid}, got "
             f"{display_type!r}. A geometry type is excluded here until it has a "
             "spatial-partition path: partitioning splits geometry across parts, "
-            "so a type whose elements cannot be divided independently (a mesh's "
-            "faces share vertices across any cut) would be silently corrupted "
-            "rather than merely unsupported."
+            "so a type whose elements cannot be divided into independently "
+            "drawable pieces would be silently corrupted rather than merely "
+            "unsupported."
         )
     if not isinstance(max_elements, int) or max_elements < 1:
         raise ValueError(f"max_elements must be an int >= 1, got {max_elements!r}")

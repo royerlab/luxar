@@ -96,11 +96,13 @@ export interface GeometryCapabilities {
  *
  * Points / Lines / GSplats are uniformly capable — they are all soft, emissive,
  * per-element primitives drawn as instanced quads. `mesh` is the row that proves
- * the table earns its keep: it is uniformly INCAPABLE, but not for one blanket
- * reason. `pooled` is architectural — a mesh is an indexed `BufferGeometry`, so
- * there is nothing to pool. `lod` is not: substitutive levels need only a
- * decimator on the writer side and a widened `LODGroupMetadata.display_type`
- * here. The row comment below gives each flag its own reason; do not read
+ * the table earns its keep: its flags are MIXED, and each is false (or true) for
+ * its own reason. `pooled` is architectural — a mesh is an indexed
+ * `BufferGeometry`, so there is nothing to pool. `lod` is not: substitutive
+ * levels need only a decimator on the writer side and a widened
+ * `LODGroupMetadata.display_type` here. And `partition` was false only for want
+ * of the bookkeeping to duplicate vertices across a cut, which is exactly why it
+ * is now true. The row comment below gives each flag its own reason; do not read
  * "impossible" into a column that means "not yet".
  *
  * Readonly + frozen: every predicate reads this object live, so a mutation
@@ -120,13 +122,18 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     //                 surface, not a coarser one); SUBSTITUTIVE levels assume
     //                 nothing of the sort and are missing only a producer, the
     //                 mesh analogue of which is QEM decimation.
-    //   partition     a BSP cut needs vertex duplication at part boundaries.
+    //   partition     TRUE. A BSP cut runs between faces, never through one,
+    //                 and each part gathers + renumbers the vertices its own
+    //                 faces use (luxar.mesh.split on the writer side). Vertices
+    //                 on the cut are duplicated, which is what makes each part
+    //                 independently drawable; the seam stays invisible because
+    //                 both copies carry identical position AND normal.
     //   pooled        mesh renders as an indexed BufferGeometry, NOT through the
     //                 instanced-quad element-texture stack.
     //   depthSortable sorting a mesh means permuting an index buffer, not an
     //                 instance list, so it registers no per-element centers.
     // Flip a flag here when the corresponding path lands — never at a call site.
-    mesh: { lod: false, partition: false, pooled: false, depthSortable: false },
+    mesh: { lod: false, partition: true, pooled: false, depthSortable: false },
   });
 
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */

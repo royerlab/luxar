@@ -89,10 +89,20 @@ def test_established_types_support_lod_and_partition(geometry_type: str) -> None
     assert supports_partition(geometry_type)
 
 
-def test_mesh_supports_neither_lod_nor_partition() -> None:
-    """Mesh has no ladder and no spatial split (MESH_NODE_SPEC.md §9)."""
+def test_mesh_partitions_but_has_no_lod_ladder() -> None:
+    """Mesh's row is MIXED, and each flag is set for its own reason (spec §9).
+
+    Pinned by name because this is the row that keeps the table honest: a sweep
+    that widened the vocabulary must not carry mesh's `lod` along with it, and
+    the `partition` flag must not be read as "mesh is fully capable".
+
+    ``partition`` is true because a BSP cut runs between faces and each part
+    re-indexes its own vertices (`luxar.mesh.split`, spec §9.2). ``lod`` is still
+    false: the additive prefix flavour cannot apply to a surface at all, and
+    substitutive levels want only a producer (mesh decimation).
+    """
+    assert supports_partition("mesh")
     assert not supports_lod("mesh")
-    assert not supports_partition("mesh")
 
 
 @pytest.mark.parametrize(

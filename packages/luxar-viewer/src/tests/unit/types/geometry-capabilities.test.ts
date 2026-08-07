@@ -58,10 +58,31 @@ describe('geometry capabilities', () => {
   it('reports no capability for a type outside the vocabulary', () => {
     // The whole point: a type the table has not classified is excluded from
     // every feature rather than defaulting in.
+    //
+    // These probes must be genuinely OUT of the vocabulary. This test used to
+    // pass `'mesh'`, which is IN it — the assertion held only because mesh
+    // happened to be all-false at the time, so the test was really pinning
+    // mesh's capabilities under a name that promised something else. It broke
+    // the moment mesh gained `partition`, which is the correct outcome for a
+    // mesh-capability test and the wrong one for this test.
     for (const predicate of [supportsLod, supportsPartition, isPooledGeometry, isDepthSortable]) {
-      expect(predicate('mesh')).toBe(false);
+      expect(predicate('volume')).toBe(false);
+      expect(predicate('group')).toBe(false);
+      expect(predicate('')).toBe(false);
       expect(predicate(undefined)).toBe(false);
+      expect(predicate(null)).toBe(false);
+      expect(predicate(42)).toBe(false);
     }
+  });
+
+  it('mesh is partitionable but has no LOD ladder and is not pooled', () => {
+    // Mesh's row is the one with MIXED flags, so it is the row worth pinning
+    // by name: each flag is false (or true) for its own reason, and a sweep
+    // that widened the vocabulary must not carry mesh along with it.
+    expect(supportsPartition('mesh')).toBe(true);
+    expect(supportsLod('mesh')).toBe(false);
+    expect(isPooledGeometry('mesh')).toBe(false);
+    expect(isDepthSortable('mesh')).toBe(false);
   });
 
   it('the table record is frozen', () => {

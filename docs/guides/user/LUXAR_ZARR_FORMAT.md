@@ -811,8 +811,11 @@ Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
 Points (see *Per-Element Labels*).
 
 **Not written for a mesh node:** no spatial index (`ordering` is always `"none"`),
-and a mesh may not be a child of a `kind=lod` or `kind=partition` group — the
-writer refuses both rather than producing a store nothing can load.
+and a mesh may not be a child of a `kind=lod` group — the writer refuses that
+rather than producing a store nothing can load. A mesh **may** be a child of a
+`kind=partition` group; `add_mesh(partition=…)` writes exactly that, with each
+part carrying its own gathered-and-renumbered vertex table (vertices on a cut are
+duplicated between neighbouring parts).
 
 ## Scalar Colormap Attributes
 

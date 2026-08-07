@@ -536,7 +536,7 @@ Consider Alternatives For:
 
 * ❌ **Small datasets** (<10K points) - overhead not worth it, use matplotlib/plotly
 * ❌ **Real-time streaming** - Luxar is for static datasets, not live data streams
-* ❌ **Mesh authoring / CAD** - Luxar *renders* triangle meshes (``add_mesh``, ``luxar mesh import``), but it does not edit them, and a mesh gets no level-of-detail or spatial partitioning (see ``docs/specs/MESH_NODE_SPEC.md`` §9), so one very large surface loads whole and up front, with no progressive refinement
+* ❌ **Mesh authoring / CAD** - Luxar *renders* triangle meshes (``add_mesh``, ``luxar mesh import``), but it does not edit them, and a mesh gets no level-of-detail (see ``docs/specs/MESH_NODE_SPEC.md`` §9), so a single surface loads whole and up front with no progressive refinement. Spatial partitioning **is** available (``add_mesh(partition=…)``), which splits a large surface into frustum-cullable parts — but each part still loads whole
 * ❌ **2D plots** - Use specialized 2D libraries (bokeh, plotly)
 
 Common Workflows
