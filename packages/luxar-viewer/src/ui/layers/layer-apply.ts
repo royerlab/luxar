@@ -292,8 +292,24 @@ export class LayerApplyEngine {
       // per-element centers with the coordinator qualify (gsplats/points
       // centers, lines segment midpoints, mesh face centroids) — see
       // `depthSortable` in `types/geometry-capabilities`.
+      //
+      // BOTH arguments must be the RESOLVED mode, which is why the new one is
+      // re-read off the material AFTER `applyBlendingStateToMaterial` rather
+      // than passing the requested `blendingMode`. `prevBlendingMode` above was
+      // already resolved (it came off `userData`), so passing the request here
+      // made the pair asymmetric — invisible for the three emissive types,
+      // whose request IS their resolved mode, and wrong for mesh, which maps
+      // the unsupported `volumetric` onto `opaque`:
+      //   normal → volumetric  looked like sorted → sorted, so the node kept
+      //     its worker registration and retained `triangleSource` after the
+      //     material had gone opaque and would never sort again;
+      //   opaque → volumetric  looked like a switch INTO a sorted mode and
+      //     triggered a full clear + O(N) reprocess for nothing.
+      // The coordinator's own `liveBlendingMode` reads the resolved mode, so
+      // this is also what makes the hook and the per-frame scheduler agree.
       if (isDepthSortable(obj.userData?.nodeType)) {
-        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, blendingMode, prevBlendingMode);
+        const resolvedMode = mat.userData?.blendingMode as BlendingMode | undefined;
+        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, resolvedMode, prevBlendingMode);
       }
     }
     this.deps.requestRender();
