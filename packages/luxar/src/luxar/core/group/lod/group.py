@@ -305,9 +305,43 @@ DEFAULT_SUBSTITUTIVE_K: int = 4
 DEFAULT_SUBSTITUTIVE_LEVELS: int = 3
 DEFAULT_SUBSTITUTIVE_METHOD: str = "auto"
 #: Accepted substitutive reduction methods (passed to make_substitutive_lod).
+#:
+#: Every one of these is a GAUSSIAN-MIXTURE reducer: it merges elements into
+#: fewer, larger representative Gaussians. Points and Lines admit them only
+#: because both LIFT to gsplats before coarsening — the set is a property of the
+#: reduction, not of the geometry that asked for it.
 SUBSTITUTIVE_METHODS = frozenset(
     {"auto", "kmeans", "kmeans_lloyd", "greedy", "greedy_lloyd"}
 )
+
+#: Mesh coarsening methods. Disjoint from the mixture set above except for
+#: ``auto``, and that is the whole point of keeping the two apart.
+#:
+#: Mesh is the first geometry that does NOT lift to gsplats: a surface is
+#: coarsened by DECIMATION (merge vertices, reindex faces, drop the triangles
+#: that collapsed), which has no mixture to reduce and no ``kmeans`` to run.
+#: Accepting ``method="kmeans"`` on a mesh would be accepting a word that names
+#: nothing the code can do, so it is refused with the reason rather than
+#: silently mapped onto something else.
+#:
+#: ``qem`` — Garland-Heckbert edge collapse — is the tier this set is shaped to
+#: admit next (issue #1348). It is not listed until it exists: a method name
+#: that validates and then raises is worse than one that never validated.
+MESH_SUBSTITUTIVE_METHODS = frozenset({"auto", "cluster"})
+
+#: Which reduction methods each geometry admits, keyed by the display name the
+#: resolvers already pass for error messages. Consulted by
+#: :func:`resolve_substitutive_axis`; a geometry absent here falls back to the
+#: mixture set, which is the safe default for the three that lift.
+SUBSTITUTIVE_METHODS_BY_GEOMETRY: Dict[str, frozenset] = {
+    "Mesh": MESH_SUBSTITUTIVE_METHODS,
+}
+
+#: Default mesh coarsening method. ``auto`` resolves to ``cluster`` today — the
+#: only implemented tier — and becomes a real size-derived choice when ``qem``
+#: lands (#1348). Kept as the default anyway so that upgrade is not a
+#: behaviour change for anyone who wrote ``method="auto"``.
+DEFAULT_MESH_SUBSTITUTIVE_METHOD: str = "auto"
 
 
 def _validate_coarsen_dims_spec(value: Any) -> Any:
@@ -458,10 +492,12 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     if levels < 1:
         raise ValueError(f"levels must be >= 1, got {levels}")
 
+    allowed = SUBSTITUTIVE_METHODS_BY_GEOMETRY.get(geometry, SUBSTITUTIVE_METHODS)
     method = str(kwargs.pop("method", DEFAULT_SUBSTITUTIVE_METHOD)).replace("-", "_")
-    if method not in SUBSTITUTIVE_METHODS:
+    if method not in allowed:
         raise ValueError(
-            f"method must be one of {sorted(SUBSTITUTIVE_METHODS)}; got {method!r}"
+            f"substitutive_lod for {geometry}: method must be one of "
+            f"{sorted(allowed)}; got {method!r}"
         )
 
     if "truncation_radius" in kwargs:
