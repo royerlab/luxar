@@ -19,11 +19,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import {
   processMeshData,
-  resetWindingNoticesForTesting,
+  resetMeshNoticesForTesting,
 } from '../../../../data/scene-loader/process/data-processor-mesh';
-import { commitMeshGeometry } from '../../../../data/scene-loader/commit/commit-mesh-geometry';
+import {
+  commitMeshGeometry,
+  noticeUnsortedTranslucency,
+  resetTranslucencyNoticesForTesting,
+} from '../../../../data/scene-loader/commit/commit-mesh-geometry';
 import { createEmptyMeshNode } from '../../../../rendering/node-factory/create-mesh-node';
+import { LayerApplyEngine } from '../../../../ui/layers/layer-apply';
 import { log } from '../../../../utils/log';
+import type { SceneNode } from '../../../../data/data-loader-types';
+import type { LayerInfo, LayerStateManager } from '../../../../ui/layers/layer-state';
 import type {
   LoadedMeshData,
   MeshDataLoader,
@@ -92,7 +99,7 @@ function loadedAtW(w: number): LoadedMeshData {
 /** Build a 4D view (displayDims [0,1,2], hidden dim 3) with per-dim metadata. */
 function viewWithDim(
   toleranceW: number,
-  dim3: { name: string; discrete?: boolean; step?: number }
+  dim3: { name: string; discrete?: boolean; step?: number; unit?: string }
 ): MeshViewState {
   // Full DimensionMetadata objects (unit/scale are required fields) so a single
   // `as MeshViewState` cast suffices, matching the VIEW const above.
@@ -111,7 +118,7 @@ function viewWithDim(
 
 describe('processMeshData — the undecidable-winding notice', () => {
   beforeEach(() => {
-    resetWindingNoticesForTesting();
+    resetMeshNoticesForTesting();
     vi.restoreAllMocks();
   });
 
@@ -271,9 +278,468 @@ describe('commitMeshGeometry', () => {
   });
 });
 
+describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gate)', () => {
+  beforeEach(() => {
+    resetMeshNoticesForTesting();
+    // Restore here, not with a trailing `mockRestore()` per test: a failing assertion
+    // throws before the trailing call runs, leaving the spy installed so the NEXT test
+    // sees this one's calls and fails for a reason that has nothing to do with it.
+    vi.restoreAllMocks();
+  });
+
+  it('reports a continuous hidden dim, naming it and its unit', async () => {
+    // The measurement behind §9's deferral of exact nD clipping: a continuous hidden
+    // dim is exactly when the whole-triangle slab stops being a true cut. The name and
+    // unit are in the message for the one judgement no metadata flag can make — a dim
+    // can be declared spatial and still be a time axis, and only the name says so.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    // A real unit, because the unit is half of what the message exists to convey — it
+    // is what lets a reader tell a spatial axis from a temporal one. The test was named
+    // for it and did not assert it.
+    const view = viewWithDim(1.0, { name: 'z2', step: 1, unit: 'um' });
+    await processMeshData('/continuous', loadedAtW(0), view, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    const messages = info.mock.calls.map((c) => String(c[1]));
+    const hit = messages.find((m) => m.includes('/continuous') && m.includes('§5.2.1'));
+    expect(hit).toBeDefined();
+    expect(hit).toContain('z2');
+    expect(hit).toContain('[um]');
+  });
+
+  it('names every continuous hidden dim, batched into one line', async () => {
+    // Two continuous hidden axes are one node's worth of evidence, so they are named
+    // together in a single line rather than one line each — the shape §5.2.1 states.
+    // Both must appear: WHICH axes turn up hidden-and-continuous is the entire payload,
+    // so a message that reported only the first would lose half the measurement.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const data: LoadedMeshData = {
+      // One triangle in 5D, all three vertices at hidden (z2, z3) = (0, 0).
+      vertices: new Float32Array([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0]),
+      faces: new Uint32Array([0, 1, 2]),
+      normals: null,
+      colors: null,
+      scalars: undefined,
+      vertexCount: 3,
+      faceCount: 1,
+      ndim: 5,
+    };
+    // z3 carries no unit, so it also covers the bracket-less arm of the description.
+    const view = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0, 0],
+      tolerance: [1e10, 1e10, 1e10, 1, 1],
+      dimensions: [
+        { name: 'x', unit: '', scale: 1 },
+        { name: 'y', unit: '', scale: 1 },
+        { name: 'z', unit: '', scale: 1 },
+        { name: 'z2', unit: 'um', scale: 1, step: 1 },
+        { name: 'z3', unit: '', scale: 1, step: 1 },
+      ],
+    } as MeshViewState;
+    await processMeshData('/two-axes', data, view, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain('z2 [um]');
+    expect(hits[0]).toContain('z3');
+  });
+
+  it('stays silent when the hidden dim is discrete — the dominant real case', async () => {
+    // Time/channel hidden dims get a TRUE cut from the half-cell membership rule, so
+    // there is nothing to report. If this fired here the signal would be worthless:
+    // almost every mesh in the wild has a discrete hidden dim or none at all.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    await processMeshData(
+      '/discrete',
+      loadedAtW(0),
+      viewWithDim(0.5, { name: 't', discrete: true, step: 1 }),
+      { normal_dims: [0, 1, 2], double_sided: false }
+    );
+    expect(info.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§5.2.1'))).toBe(false);
+  });
+
+  it('stays silent when the continuous hidden dim is extend_to_all', async () => {
+    // An extended dim is slice-invariant, so its membership slab is infinite
+    // (EXTEND_TO_ALL_TOLERANCE) and there is no finite thickness to report. Reporting it
+    // would put the one case the approximation provably cannot bite into the evidence.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    await processMeshData(
+      '/extended',
+      loadedAtW(0),
+      viewWithDim(1.0, { name: 'z2', step: 1, unit: 'um' }),
+      { normal_dims: [0, 1, 2], double_sided: false, extend_to_all: ['z2'] }
+    );
+    expect(info.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§5.2.1'))).toBe(false);
+  });
+
+  it('reports the same axis again when it comes back with a different unit', async () => {
+    // The dedup key is the message text — name AND unit — not the name alone. A dataset
+    // switch that reuses a node path and an axis name but changes the unit is new
+    // evidence: the unit is half of what the reader classifies on, so suppressing the
+    // second line would hide exactly the distinction the message exists to draw.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    for (const unit of ['s', 'um']) {
+      const view = viewWithDim(1.0, { name: 'w', step: 1, unit });
+      await processMeshData('/reload', loadedAtW(0), view, {
+        normal_dims: [0, 1, 2],
+        double_sided: false,
+      });
+    }
+    const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
+    expect(hits).toHaveLength(2);
+    expect(hits[0]).toContain('[s]');
+    expect(hits[1]).toContain('[um]');
+  });
+
+  it('reports a NEWLY hidden dimension, even after the node was already noticed', async () => {
+    // The failure keying by path alone would cause, and the one that matters most:
+    // this notice exists to COLLECT evidence about which axes turn up
+    // hidden-and-continuous. A 4D mesh that first reports a continuous time axis would
+    // then have the early return suppress a continuous Z forever once displayDims
+    // changed — so the one configuration the measurement is looking for is the one it
+    // would never see.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const first = viewWithDim(1.0, { name: 'time', step: 1 });
+    await processMeshData('/swaps', loadedAtW(0), first, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+
+    // Same node, different displayDims: dim 2 ("z") is now hidden and continuous.
+    // Built as a new literal rather than mutated, because `displayDims` is readonly.
+    const second: MeshViewState = {
+      ...viewWithDim(1.0, { name: 'time', step: 1 }),
+      displayDims: [0, 1, 3],
+    };
+    await processMeshData('/swaps', loadedAtW(0), second, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+
+    const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
+    expect(hits).toHaveLength(2);
+    expect(hits[0]).toContain('time');
+    expect(hits[1]).toContain('z');
+  });
+
+  it('reports once per node, not once per slice move', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    for (let i = 0; i < 3; i++) {
+      await processMeshData('/scrub', loadedAtW(0), viewWithDim(1.0, { name: 'z2', step: 1 }), {
+        normal_dims: [0, 1, 2],
+        double_sided: false,
+      });
+    }
+    const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
+    expect(hits).toHaveLength(1);
+  });
+});
+
+/**
+ * Commit one triangle into a fresh scene, optionally with per-vertex RGBA.
+ *
+ * `vertexAlpha` is the authored alpha byte on every vertex — `255` is the fully-opaque
+ * RGBA array that must NOT warn.
+ */
+async function commitOnce(
+  path: string,
+  attrs: MeshMetadata,
+  opts: {
+    rgba?: boolean;
+    vertexAlpha?: number;
+    mesh?: THREE.Mesh;
+    root?: THREE.Group;
+  } = {}
+): Promise<THREE.Mesh> {
+  const root = opts.root ?? new THREE.Group();
+  const mesh = opts.mesh ?? createEmptyMeshNode(path, attrs, {} as MeshDataLoader, null);
+  if (!opts.mesh) root.add(mesh);
+  const a = opts.vertexAlpha ?? 128;
+  const data: LoadedMeshData = opts.rgba
+    ? {
+        ...loaded(),
+        colors: new Uint8Array([255, 0, 0, a, 0, 255, 0, a, 0, 0, 255, a]),
+        colorComponents: 4,
+      }
+    : loaded();
+  const staged = await processMeshData(path, data, VIEW, {
+    normal_dims: [0, 1, 2],
+    double_sided: false,
+  });
+  commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+  return mesh;
+}
+
+describe('commitMeshGeometry — the unsorted-translucency notice (§6.3)', () => {
+  const loader = {} as MeshDataLoader;
+
+  beforeEach(() => {
+    resetTranslucencyNoticesForTesting();
+    // A test that fails before its own `mockRestore` would otherwise leave the spy
+    // installed, and the next `spyOn` would inherit its recorded calls — one red test
+    // cascading into a second, unrelated one.
+    vi.restoreAllMocks();
+  });
+
+  it('fires for `normal` below the depthWrite threshold', async () => {
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce('/translucent', {
+      ...ATTRS,
+      blending_mode: 'normal',
+      opacity: 0.5,
+    } as MeshMetadata);
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes('/translucent') && m.includes('§6.3'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('fires for per-vertex RGBA even at full node opacity', async () => {
+    // The arm the opacity test cannot cover, and the WORSE failure: at opacity 1
+    // `depthWrite` is on while `transparent` is true, so a translucent fragment
+    // writes depth and geometry behind it is depth-REJECTED rather than merely
+    // mis-ordered.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce(
+      '/vertex_alpha',
+      { ...ATTRS, has_colors: true, blending_mode: 'normal', opacity: 1.0 } as MeshMetadata,
+      { rgba: true }
+    );
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes('/vertex_alpha') && m.includes('RGBA'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('stays SILENT for the opaque default, even with per-vertex RGBA', async () => {
+    // The anti-flood case, and the one that matters most in practice: mesh defaults
+    // to `opaque`, which depth-tests and depth-writes and is therefore correct at any
+    // opacity. A predicate that keyed on translucency alone would warn on every
+    // ordinary RGBA mesh — on EVERY slice move, since this runs per commit.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce('/opaque_rgba', { ...ATTRS, has_colors: true, opacity: 0.3 } as MeshMetadata, {
+      rgba: true,
+    });
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('stays silent for an RGBA array whose alpha is fully opaque', async () => {
+    // The channel COUNT is not the condition — the alpha VALUES are. A writer that
+    // always emits four channels, or a broadcast `(r, g, b, 255)`, gives an RGBA array
+    // that composites exactly like an RGB one, so `normal` is depth-correct and there
+    // is nothing to warn about.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce(
+      '/opaque_alpha',
+      { ...ATTRS, has_colors: true, blending_mode: 'normal', opacity: 1.0 } as MeshMetadata,
+      { rgba: true, vertexAlpha: 255 }
+    );
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('stays silent for `normal` at full opacity with no vertex alpha', async () => {
+    // Opaque-in-practice `normal`: depthWrite is on and nothing is translucent, so
+    // there is no ordering artifact to warn about.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce('/solid_normal', {
+      ...ATTRS,
+      blending_mode: 'normal',
+      opacity: 1.0,
+    } as MeshMetadata);
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('pins the threshold: silent just above it, warning just below', async () => {
+    // The band [0.99, 1) is a DELIBERATE blind spot, not an oversight. `depthWrite` is
+    // still on there, which does not make the compositing exact — the front fragment
+    // drops what is behind it — but with no per-vertex alpha every fragment is >= 99%
+    // opaque, so the dropped term is under 1% and the surface renders as the opaque one
+    // it nearly is. One step below, `depthWrite` goes off and nothing bounds the error:
+    // unsorted alpha-over swaps almost the whole contribution of two overlapping faces.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce('/just_opaque', {
+      ...ATTRS,
+      blending_mode: 'normal',
+      opacity: 0.995,
+    } as MeshMetadata);
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+
+    await commitOnce('/just_translucent', {
+      ...ATTRS,
+      blending_mode: 'normal',
+      opacity: 0.98,
+    } as MeshMetadata);
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes('/just_translucent') && m.includes('§6.3'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('fires on a post-load mode switch, with no further commit', async () => {
+    // The gap the commit-only siting left: a STATIC mesh — one whose slice never moves,
+    // so it never commits again — could be switched to `normal` in the Layers panel and
+    // never warn. Reading the mode LIVE off the material does not help if nothing calls
+    // the predicate. This asserts the predicate is reachable from that path.
+    const root = new THREE.Group();
+    const mesh = await commitOnce('/static', { ...ATTRS, opacity: 0.4 } as MeshMetadata, {
+      root,
+    });
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    // Nothing has committed since; only the material's mode changes.
+    (mesh.material as THREE.Material).userData.blendingMode = 'normal';
+    noticeUnsortedTranslucency(mesh, '/static');
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('de-duplicates by node IDENTITY, so a reused path is not suppressed', async () => {
+    // Keyed by path, a dataset switch that reused a node path left the NEW mesh
+    // permanently silent for the tab's lifetime — while the comment claimed the
+    // opposite. Two distinct objects at the same path must each get their notice.
+    const attrs = { ...ATTRS, blending_mode: 'normal', opacity: 0.5 } as MeshMetadata;
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    for (let i = 0; i < 2; i++) {
+      // A fresh scene each time — the dataset-switch shape.
+      await commitOnce('/reused', attrs, { root: new THREE.Group() });
+    }
+    const hits = warn.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§6.3'));
+    expect(hits).toHaveLength(2);
+    warn.mockRestore();
+  });
+
+  it('warns ONCE per node across repeated commits', async () => {
+    // `commitMeshGeometry` runs on every slice move. Without the de-dup set a scrub
+    // through a hidden dimension would emit one warning per frame.
+    const root = new THREE.Group();
+    const attrs = { ...ATTRS, blending_mode: 'normal', opacity: 0.5 } as MeshMetadata;
+    const mesh = createEmptyMeshNode('/scrubbed', attrs, loader, null);
+    root.add(mesh);
+
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    for (let i = 0; i < 3; i++) {
+      await commitOnce('/scrubbed', attrs, { mesh, root });
+    }
+    const hits = warn.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§6.3'));
+    expect(hits).toHaveLength(1);
+    warn.mockRestore();
+  });
+});
+
+/**
+ * The panel half of the same notice.
+ *
+ * Beside the commit tests rather than under `tests/unit/ui/` because it is one contract:
+ * a mesh whose slice never moves never commits again, so the predicate is only useful if
+ * a panel edit REACHES it. Driven through the real {@link LayerApplyEngine} (and the
+ * real mesh material behind it) so removing either hook turns these red.
+ */
+describe('LayerApplyEngine — the panel half of the translucency notice (§6.3)', () => {
+  beforeEach(() => {
+    resetTranslucencyNoticesForTesting();
+    vi.restoreAllMocks();
+  });
+
+  function meshLayer(overrides: Partial<LayerInfo>): LayerInfo {
+    return {
+      path: '/surface',
+      name: 'surface',
+      type: 'mesh',
+      visible: true,
+      opacity: 1,
+      absorption: 0,
+      ambient: 0.1,
+      shadeExponent: 1,
+      alphaCutoff: 0,
+      displayMin: 0,
+      displayMax: 1,
+      dataMin: 0,
+      dataMax: 1,
+      gamma: 1,
+      blendingMode: 'opaque',
+      blendingModeExplicit: false,
+      selected: true,
+      ...overrides,
+    } as LayerInfo;
+  }
+
+  function engineFor(root: THREE.Group, layer: LayerInfo): LayerApplyEngine {
+    const sceneGraph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        { name: 'surface', path: layer.path, type: 'mesh', attrs: { layer: true }, children: [] },
+      ],
+    } as unknown as SceneNode;
+    return new LayerApplyEngine({
+      getRootGroup: () => root,
+      getSceneGraph: () => sceneGraph,
+      // `getLayer` is the only state these two paths reach.
+      state: {
+        getLayer: (p: string) => (p === layer.path ? layer : undefined),
+      } as unknown as LayerStateManager,
+      requestRender: () => {},
+    });
+  }
+
+  it('warns when the Blend control switches a loaded mesh to `normal`', async () => {
+    const root = new THREE.Group();
+    // Authored default `opaque` at a low opacity: silent through the commit.
+    await commitOnce('/surface', { ...ATTRS, opacity: 0.4 } as MeshMetadata, { root });
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    // What the Blend dropdown does: an EXPLICIT user pick, then one engine apply.
+    const layer = meshLayer({
+      opacity: 0.4,
+      blendingMode: 'normal',
+      blendingModeExplicit: true,
+    });
+    engineFor(root, layer).applyBlendingMode(layer);
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes('/surface') && m.includes('§6.3'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('warns when the Opacity slider drags an already-`normal` mesh below the threshold', async () => {
+    const root = new THREE.Group();
+    // `normal` but fully opaque, so the commit is silent — only the drag makes it
+    // translucent, and only the engine knows.
+    await commitOnce(
+      '/surface',
+      { ...ATTRS, blending_mode: 'normal', opacity: 1.0 } as MeshMetadata,
+      { root }
+    );
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const layer = meshLayer({
+      opacity: 0.4,
+      blendingMode: 'normal',
+      blendingModeExplicit: true,
+    });
+    engineFor(root, layer).applyOpacity(layer);
+    const messages = warn.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§6.3'));
+    // Once, not once per slider tick.
+    expect(messages).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it('stays silent when the panel leaves a mesh `opaque`', async () => {
+    const root = new THREE.Group();
+    await commitOnce('/surface', { ...ATTRS, opacity: 1.0 } as MeshMetadata, { root });
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const layer = meshLayer({ opacity: 0.2, blendingMode: 'opaque', blendingModeExplicit: true });
+    engineFor(root, layer).applyOpacity(layer);
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+    warn.mockRestore();
+  });
+});
+
 describe('processMeshData — membership tolerance', () => {
   beforeEach(() => {
-    resetWindingNoticesForTesting();
+    resetMeshNoticesForTesting();
     vi.restoreAllMocks();
   });
 
