@@ -9,23 +9,34 @@ outright. Decimation is the operation that produces a genuinely coarser SURFACE,
 and its absence — not any structural objection — is the only reason mesh had no
 substitutive ladder (``docs/specs/MESH_NODE_SPEC.md`` §9).
 
-``cluster`` (this module) is quadric-weighted vertex clustering: snap vertices to a
-grid, collapse each occupied cell to one representative, reindex the faces, drop
-the triangles that collapsed to a line. It is O(V log V) per pass and fully
-vectorized, which matters because the writer's cap is 2**27 vertices and a Python
-edge-collapse loop is unusable at that scale. It has no quality-driven failure mode
-— no seeding, no convergence criterion, nothing to diverge — and refuses only input
-that is not a surface at all (no faces, or every vertex coincident).
+``cluster`` (this module) is vertex clustering: snap vertices to a grid, collapse
+each occupied cell to its centroid, reindex the faces, drop the triangles that
+collapsed to a line. It is O(V log V) per pass and fully vectorized, which matters
+because the writer's cap is 2**27 vertices and a Python edge-collapse loop is
+unusable at that scale. It has no quality-driven failure mode — no seeding, no
+convergence criterion, nothing to diverge — and refuses only input that is not a
+surface at all (no faces, or every vertex coincident).
 
 The grid spacing is found by bisection, so the cost is several passes rather than
 one. Measured ~0.2 MV/s per pass, with the bracket-convergence exit keeping it to a
 handful of passes rather than the full iteration budget.
 
-The quadric is what makes it worth more than a centroid snap. Placing each
-representative at the minimizer of the summed squared distance to its cell's
-incident planes keeps creases and thin sheets where a centroid would round them
-off — and creases are exactly what Luxar's target data (isosurfaces, segmentation
-boundaries) is made of.
+**The representative is the plain centroid, and a Garland-Heckbert quadric
+placement was tried and removed.** The theory says the quadric minimizer preserves
+creases a centroid rounds off, and the algebra does work — three orthogonal planes
+solve to their exact corner. It moved vertices (up to 0.067 on a unit sphere, most
+of them by something) but improved no measurable quality: same vertex counts, same
+face counts, same topology, different positions that were not better positions. On
+a closed sphere the centroid was marginally BETTER (mean radial error 0.00659
+against 0.00667); on a sharp wedge the two agreed to five decimals, because a
+crease is two
+planes, giving a rank-2 system that is singular and falls back to the centroid
+anyway; on a cube the two were bit-identical, because a cube's corner is a lone
+vertex in its cell and the centroid already lands on it exactly. Rank-3 cells, the
+only case where the quadric can differ, are rare enough on real sampled surfaces
+that nothing observable changed. It is recorded here so the next person does not
+re-derive it: the win is real in the literature and absent at this grid resolution,
+where the cell is already smaller than the features being preserved.
 
 **Clustering does not preserve manifoldness, and cannot.** When a cell swallows two
 sheets that were separate on the fine surface, their triangles land on the same
@@ -36,7 +47,8 @@ non-manifold edges at one. That is a property of the algorithm rather than a def
 here, it renders correctly either way (a non-manifold edge is still just triangles),
 and it is the concrete reason to keep an edge-collapse tier around rather than a
 vague appeal to quality: edge collapse can refuse a collapse that would break the
-link condition, and clustering has no such veto to exercise.
+link condition, and clustering has no such veto to exercise. That argument stands
+independently of the quadric note above — it is about topology, not placement.
 
 Related: dropping the DUPLICATE triangles clustering produces is not cosmetic. With
 them the sphere above measures chi=86 with 96 non-manifold edges; without them,
@@ -59,103 +71,6 @@ class DecimatedMesh(NamedTuple):
     faces: NDArray[np.uint32]
     normals: NDArray[np.float32] | None
     colors: NDArray[np.uint8] | None
-
-
-def _face_quadrics(
-    vertices: NDArray[np.float64], faces: NDArray[np.uint32]
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Per-face plane quadric ``K = p pᵀ`` (as its 10 unique entries) and area.
-
-    ``vertices`` must be the SPATIAL columns only, shape ``(V, 3)``. A plane is a
-    3D notion, and a mesh's vertex array is nD — passing all of it here is how a 4D
-    (timelapse) mesh reaches ``np.cross`` with four components and raises.
-
-    ``p = [nx, ny, nz, d]`` with ``n`` unit-length and ``d = -n·v0``, so ``pᵀ[v,1]``
-    is the signed distance from ``v`` to the face's plane and ``[v,1]ᵀ K [v,1]`` is
-    its square. Summing K over the faces around a vertex gives the standard
-    Garland-Heckbert quadric; the minimizer of that sum is where the representative
-    belongs.
-
-    Faces are weighted by AREA. Without it a dense cluster of slivers outvotes the
-    one large triangle that actually defines the surface there.
-    """
-    v0 = vertices[faces[:, 0]]
-    e1 = vertices[faces[:, 1]] - v0
-    e2 = vertices[faces[:, 2]] - v0
-    cross = np.cross(e1, e2)
-    norm = np.linalg.norm(cross, axis=1)
-    area = 0.5 * norm
-    # A degenerate face has no plane; give it a zero normal so its quadric is zero
-    # and it contributes nothing rather than producing NaN.
-    safe = np.where(norm > 0, norm, 1.0)
-    n = cross / safe[:, None]
-    n[norm <= 0] = 0.0
-    d = -np.einsum("ij,ij->i", n, v0)
-    p = np.concatenate([n, d[:, None]], axis=1)
-    return p, area
-
-
-# Index pairs of the upper triangle of a symmetric 4x4, in row-major order. Storing
-# 10 numbers instead of 16 halves the accumulation traffic, which is the hot loop.
-_TRI_I, _TRI_J = np.triu_indices(4)
-
-
-def _accumulate_vertex_quadrics(
-    n_vertices: int,
-    faces: NDArray[np.uint32],
-    p: NDArray[np.float64],
-    area: NDArray[np.float64],
-) -> NDArray[np.float64]:
-    """Sum each face's area-weighted quadric onto its three corners -> ``(V, 10)``."""
-    packed = area[:, None] * (p[:, _TRI_I] * p[:, _TRI_J])
-    out = np.zeros((n_vertices, 10), dtype=np.float64)
-    for corner in range(3):
-        np.add.at(out, faces[:, corner], packed)
-    return out
-
-
-def _unpack_quadrics(packed: NDArray[np.float64]) -> NDArray[np.float64]:
-    """``(M, 10)`` upper-triangle storage -> ``(M, 4, 4)`` symmetric matrices."""
-    full = np.zeros((packed.shape[0], 4, 4), dtype=np.float64)
-    full[:, _TRI_I, _TRI_J] = packed
-    full[:, _TRI_J, _TRI_I] = packed
-    return full
-
-
-def _solve_representatives(
-    quadrics: NDArray[np.float64], fallback: NDArray[np.float64]
-) -> NDArray[np.float64]:
-    """Place each representative at its quadric's minimizer, else the centroid.
-
-    The minimizer solves ``A x = -b`` with ``A = Q[:3,:3]``, ``b = Q[:3,3]``. ``A`` is
-    singular whenever the cell's planes do not pin all three axes — a flat patch
-    (one plane), a straight crease (two), an isolated vertex (none) — which is
-    common, not exceptional. Those cells fall back to the centroid, which is the
-    right answer for them precisely because the quadric expresses no preference
-    along the unconstrained directions.
-
-    Solved as one batched ``np.linalg.solve`` over the well-conditioned cells rather
-    than a Python loop; ``np.linalg.cond`` is checked instead of catching
-    ``LinAlgError`` because a *nearly* singular system returns a huge finite answer
-    that would fling a vertex far outside the mesh.
-    """
-    out = fallback.copy()
-    a = quadrics[:, :3, :3]
-    b = quadrics[:, :3, 3]
-    with np.errstate(all="ignore"):
-        cond = np.linalg.cond(a)
-    ok = np.isfinite(cond) & (cond < 1e8)
-    if np.any(ok):
-        # `b` must be a stack of COLUMN vectors: numpy's solve reads a trailing
-        # (k, 3) as one 3-column matrix per system, not k right-hand sides.
-        solved = np.linalg.solve(a[ok], -b[ok][..., None])[..., 0]
-        # The caller additionally clamps each representative to its own cluster's
-        # bounding box: a well-conditioned quadric on a near-flat patch is legitimate
-        # but can still place a vertex far outside the local geometry, which reads as
-        # a spike on the coarse level.
-        out[ok] = solved
-    result: NDArray[np.float64] = out
-    return result
 
 
 def _cluster_keys(
@@ -192,7 +107,7 @@ def decimate_cluster(
     spatial_dims: tuple[int, ...] | None = None,
     max_iterations: int = 24,
 ) -> DecimatedMesh:
-    """Reduce ``vertices`` toward ``target_vertices`` by quadric vertex clustering.
+    """Reduce ``vertices`` toward ``target_vertices`` by vertex clustering.
 
     Args:
         vertices: ``(V, D)`` positions, D >= 2.
@@ -254,14 +169,6 @@ def decimate_cluster(
 
     v64 = vertices.astype(np.float64)
     spatial = np.asarray(spatial_dims, dtype=np.intp)
-    if len(spatial_dims) == 3:
-        p, area = _face_quadrics(v64[:, spatial], faces)
-        vertex_quadrics = _accumulate_vertex_quadrics(vertices.shape[0], faces, p, area)
-    else:
-        # A plane quadric needs exactly three spatial axes. With two (a planar mesh)
-        # there is no normal direction to preserve, so every cell falls back to its
-        # centroid — which for a flat surface is what the quadric would pick anyway.
-        vertex_quadrics = np.zeros((vertices.shape[0], 10), dtype=np.float64)
     extent = float(
         np.max(v64[:, spatial].max(axis=0) - v64[:, spatial].min(axis=0)) or 1.0
     )
@@ -274,9 +181,7 @@ def decimate_cluster(
     guess = extent * (ratio ** (1.0 / len(spatial_dims)))
     best: DecimatedMesh | None = None
     for _ in range(max_iterations):
-        candidate = _cluster_once(
-            v64, faces, vertex_quadrics, spatial_dims, guess, normals, colors
-        )
+        candidate = _cluster_once(v64, faces, spatial_dims, guess, normals, colors)
         count = candidate.vertices.shape[0]
         # A candidate with no surviving triangle is not a usable level regardless of
         # its vertex count, so it must not become `best` — it would be returned as a
@@ -300,9 +205,7 @@ def decimate_cluster(
 
     if best is None:
         # Every probe overshot. Return the least-reduced one we can still build.
-        best = _cluster_once(
-            v64, faces, vertex_quadrics, spatial_dims, lo, normals, colors
-        )
+        best = _cluster_once(v64, faces, spatial_dims, lo, normals, colors)
     if best.faces.shape[0] == 0:
         # Reachable only for input that has no surface to begin with — every
         # triangle collinear, or every vertex coincident — since any real triangle
@@ -318,7 +221,6 @@ def decimate_cluster(
 def _cluster_once(
     v64: NDArray[np.float64],
     faces: NDArray[np.uint32],
-    vertex_quadrics: NDArray[np.float64],
     spatial_dims: tuple[int, ...],
     cell: float,
     normals: NDArray[np.float32] | None,
@@ -339,23 +241,8 @@ def _cluster_once(
         )
     centroid /= np.maximum(counts, 1)[:, None]
 
-    summed = np.zeros((n_clusters, 10), dtype=np.float64)
-    np.add.at(summed, inverse, vertex_quadrics)
     spatial = np.asarray(spatial_dims, dtype=np.intp)
-    placed = _solve_representatives(_unpack_quadrics(summed), centroid[:, spatial])
-
-    new_v = centroid.copy()
-    new_v[:, spatial] = placed
-    # Keep every representative inside its cluster's own bounding box. A quadric
-    # minimizer on a near-flat patch is legitimate but can sit far outside the local
-    # geometry, which shows up as a spike on the coarse level.
-    for axis, col in enumerate(spatial):
-        lo = np.full(n_clusters, np.inf)
-        hi = np.full(n_clusters, -np.inf)
-        np.minimum.at(lo, inverse, v64[:, col])
-        np.maximum.at(hi, inverse, v64[:, col])
-        new_v[:, col] = np.clip(new_v[:, col], lo, hi)
-
+    new_v = centroid
     new_f = inverse[faces.reshape(-1)].reshape(faces.shape).astype(np.uint32)
     a, b, c = new_f[:, 0], new_f[:, 1], new_f[:, 2]
     new_f = new_f[(a != b) & (b != c) & (a != c)]
