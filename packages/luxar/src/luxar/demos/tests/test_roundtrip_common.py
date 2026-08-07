@@ -311,6 +311,39 @@ class TestLayout:
         assert f"z-slice {MID_Z}" in recorder.suptitle
         assert f"{total:,} total splats" in recorder.suptitle
 
+    def test_extra_gsplats_are_not_counted_in_the_total(
+        self, recorder: _Recorder
+    ) -> None:
+        # The total must describe the rows actually drawn. Surplus entries are
+        # ignored the same way surplus channel_names are.
+        volume, gsplats = _make_exact_pair(seed=27)
+        spare = _make_gsplats(n=7, seed=28)
+
+        show_roundtrip_comparison(
+            [volume], [gsplats, spare], ["drawn", "unused"], device="cpu"
+        )
+
+        assert recorder.subplots_calls[0]["nrows"] == 1
+        assert recorder.suptitle is not None
+        assert f"({len(gsplats.amplitudes):,} total splats)" in recorder.suptitle
+
+    def test_rows_of_different_depth_each_use_their_own_mid_slice(
+        self, recorder: _Recorder
+    ) -> None:
+        # Each row slices its own volume, so the suptitle must name every slice
+        # drawn rather than whichever one the last row left behind.
+        tall, gsplats = _make_exact_pair(seed=29)
+        short = tall[:4]  # depth 4 -> mid-z 2, against the tall volume's 3
+
+        show_roundtrip_comparison(
+            [tall, short], [gsplats, gsplats], ["tall", "short"], device="cpu"
+        )
+
+        assert np.array_equal(recorder.images[(0, 0)], tall[3])
+        assert np.array_equal(recorder.images[(1, 0)], short[2])
+        assert recorder.suptitle is not None
+        assert "z-slice 3/2" in recorder.suptitle
+
 
 class TestPanelContents:
     def test_columns_show_original_then_reconstruction_at_mid_z(

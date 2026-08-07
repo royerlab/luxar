@@ -45,15 +45,15 @@ def show_roundtrip_comparison(
         gsplats_list: Per-channel fitted splats, parallel to ``volumes``.
         channel_names: Display names for the channels. The figure has one row
             per entry in ``volumes``, so extra names are simply unused (callers
-            may pass a whole channel table); too few is an error.
+            may pass a whole channel table); too few is an error. Extra
+            ``gsplats_list`` entries are likewise ignored, splat total included.
         device: Render device passed to ``render_to_volume`` ("cuda", "mps",
             "cpu"). ``None`` auto-detects the fastest available backend.
 
     Raises:
         ValueError: If ``gsplats_list`` or ``channel_names`` has fewer entries
             than ``volumes``. Both are consumed by ``zip``, which would
-            truncate silently and leave reserved-but-blank rows in the figure
-            plus an understated splat total in the suptitle.
+            truncate silently and leave reserved-but-blank rows in the figure.
     """
     n_channels = len(volumes)
     short = [
@@ -96,10 +96,12 @@ def show_roundtrip_comparison(
             n_channels, 3, figsize=(14, 4.5 * n_channels), squeeze=False
         )
 
+        mid_zs = [volume.shape[0] // 2 for volume in volumes]
+
         for i, (volume, recon, name) in enumerate(
             zip(volumes, reconstructions, channel_names)
         ):
-            mid_z = volume.shape[0] // 2
+            mid_z = mid_zs[i]
             orig_slice = volume[mid_z]
             recon_slice = recon[mid_z]
             diff_slice = np.abs(orig_slice - recon_slice)
@@ -120,9 +122,18 @@ def show_roundtrip_comparison(
             axes[i, 2].axis("off")
             fig.colorbar(im, ax=axes[i, 2], fraction=0.046, pad=0.04)
 
+        # Rows may sit at different z if the volumes differ in depth, so name
+        # every slice drawn rather than whichever one the last row happened to
+        # use; the count covers the drawn rows only.
+        z_label = (
+            str(mid_zs[0])
+            if len(set(mid_zs)) == 1
+            else "/".join(str(z) for z in mid_zs)
+        )
+        total_splats = sum(len(g.amplitudes) for g in gsplats_list[:n_channels])
         fig.suptitle(
-            f"Round-Trip Comparison — z-slice {mid_z}  "
-            f"({sum(len(g.amplitudes) for g in gsplats_list):,} total splats)",
+            f"Round-Trip Comparison — z-slice {z_label}  "
+            f"({total_splats:,} total splats)",
             fontsize=14,
         )
         plt.tight_layout()
