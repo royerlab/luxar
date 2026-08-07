@@ -97,6 +97,7 @@ The authoritative list is the directory itself — run
 | **hover-overlay.spec.ts** | Hover-overlay DOM rendering + CSS transitions (direct OverlayManager probe) |
 | **hover-tooltip.spec.ts** | Full hover pipeline: mouse → GPU pick → label → tooltip DOM |
 | **keyboard-input-system.spec.ts** | Fly controls, shortcuts, modifiers |
+| **line-join-artifacts.spec.ts** | ⭐ #785/#790 joint-artifact measurement — per-band local-median outliers AND axial flux ripple, A/B'd on a live `uLineJoin` flip (needs generate-fixtures) |
 | **layers-panel.spec.ts** | Layers panel UI |
 | **line-perf-bench.spec.ts** | Line-rendering frame-time benchmark, WebGL vs WebGPU (opt-in: `pnpm test:perf:e2e`) |
 | **line-renderer-compare-perf.spec.ts** | WebGL vs WebGPU FPS comparison on line-heavy scenes (developer diagnostic, JSON artifact) |

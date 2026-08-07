@@ -822,6 +822,12 @@ npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
 pnpm test:generate-fixtures
 npx playwright test geometry-types.spec.ts blending-modes.spec.ts colormap-system.spec.ts \
   post-processing-pipeline.spec.ts rendering-controls.spec.ts ortho-mode.spec.ts
+# Line joint artifacts (#785/#790) — measures each joint topology as its own
+# band with TWO metrics (local-median outliers + axial flux ripple; the first
+# is structurally blind to the #780 bead-notch class the second catches).
+# WebGL only: it A/Bs a live uLineJoin flip, and the TSL backend bakes the
+# join style into the graph instead.
+npx playwright test line-join-artifacts.spec.ts
 
 # Data & I/O
 npx playwright test data-integrity.spec.ts dataset-switching.spec.ts real-dataset-loading.spec.ts \

@@ -82,6 +82,7 @@ FIXTURE_NAMES: list[str] = [
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
     "test_labelled_points.luxar.zarr",
+    "test_line_joints.luxar.zarr",
     "test_lines.luxar.zarr",
     "test_lines_blending_modes.luxar.zarr",
     "test_lines_categorical.luxar.zarr",
@@ -1716,6 +1717,159 @@ def generate_lines_test() -> None:
 
         aprint(f"  Created {output}")
         aprint(f"  Vertices: {vertices.shape}, Widths: {widths.shape}")
+
+
+def generate_line_joints_test() -> None:
+    """Line-joint artifact case set for the #785/#790 measurement spec.
+
+    One face-on plane holding every joint topology as a vertically separated
+    band, so the spec can auto-detect each band by scanning for lit rows and
+    measure it independently:
+
+        straight_4w    straight polyline, segment length = 4x width  (control)
+        straight_1w    straight polyline, segment length = width     (dense control)
+        curve_smooth   ~120-segment sinusoid, gentle bends           (PRIMARY TARGET)
+        zigzag_90      right-angle zigzag                            (sharp bends)
+        star_hub       9-ray hub, degree-9 joint                     (must not regress)
+        free_ends      isolated segments, no joints at all           (must not regress)
+
+    The two STRAIGHT bands are the metrics' own null control: collinear quads
+    tile exactly under any camera, so both must read clean before AND after the
+    fix. A metric that flags them is measuring something other than the joint.
+
+    Geometry lies in the dim0/dim1 plane at dim2 = 0 with the camera baked
+    face-on, so dim0 -> screen x and dim1 -> screen y with no foreshortening and
+    the projected turn angle equals the authored one. That keeps the measurement
+    independent of the data-space/screen-space distinction #795 is about.
+
+    Spatial ordering is left ON (the default). The prototype had to disable it,
+    because it inferred the partner from storage ADJACENCY and Hilbert ordering
+    permutes segment storage order; the shipped kernel stores an explicit
+    partner slot, so it is ordering-invariant. Keeping the default here means
+    the fixture would catch a regression back to an adjacency assumption.
+    """
+    with asection("Generating line-joint artifact fixture"):
+        output = FIXTURES_DIR / "test_line_joints.luxar.zarr"
+        if output.exists():
+            shutil.rmtree(output)
+
+        # World layout: x spans the frame, each band gets its own y row.
+        x0, x1 = 8.0, 232.0
+        width = 2.0  # world half-width; ~9 px on screen at the baked camera
+        band_y = {
+            "straight_4w": 78.0,
+            "straight_1w": 52.0,
+            "curve_smooth": 20.0,
+            "zigzag_90": -18.0,
+            "star_hub": -50.0,
+            "free_ends": -80.0,
+        }
+        cam_distance = 237.0
+        cam_target = (120.0, 0.0, 0.0)
+        # Well clear of clipping in every channel, so a deficit is measurable
+        # rather than hidden under saturation.
+        body = (0.62, 0.62, 0.70)
+
+        def plane(xy: np.ndarray) -> np.ndarray:
+            out = np.zeros((len(xy), 3), dtype=np.float32)
+            out[:, 0] = xy[:, 0]
+            out[:, 1] = xy[:, 1]
+            return out
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(output, compressor=None) as compiler:
+            scene = compiler.create_scene(
+                dimensions=dims,
+                viewer_config=ViewerConfig(
+                    camera=CameraConfig(
+                        position=(cam_target[0], cam_target[1], cam_distance),
+                        target=cam_target,
+                        up=(0.0, 1.0, 0.0),
+                        fov=45.0,
+                    ),
+                    # A measurement wants the least non-linear transfer
+                    # available: ACES' filmic rolloff would compress exactly
+                    # the deficits being counted. This is the narrow case
+                    # Neutral exists for.
+                    tone_mapping="Neutral",
+                    exposure=0.0,
+                    background_color="#000000",
+                ),
+            )
+
+            def polyline(name: str, pts: np.ndarray, w: float) -> None:
+                scene.add_lines(
+                    name,
+                    vertices=pts.astype(np.float32),
+                    widths=float(w),
+                    sharpness=0.5,
+                    colors=np.tile(np.asarray(body, dtype=np.float32), (len(pts), 1)),
+                    line_type="polyline",
+                    blending_mode="additive",
+                )
+
+            # Controls: straight polylines at two segment densities.
+            for name, seg_len in (("straight_4w", 4.0 * width), ("straight_1w", width)):
+                n = int((x1 - x0) / seg_len) + 1
+                xy = np.stack(
+                    [
+                        np.linspace(x0, x0 + seg_len * (n - 1), n),
+                        np.full(n, band_y[name]),
+                    ],
+                    axis=1,
+                )
+                polyline(name, plane(xy), width)
+
+            # Primary target: a gently-bending smooth curve, ~120 segments.
+            n = 121
+            xs = np.linspace(x0, x1, n)
+            ys = band_y["curve_smooth"] + 7.0 * np.sin(np.linspace(0, 4.0 * np.pi, n))
+            polyline("curve_smooth", plane(np.stack([xs, ys], axis=1)), width)
+
+            # Sharp bends: a right-angle zigzag. 90 deg is INSIDE the 120 deg
+            # miter limit, so this exercises the miter at its most extreme
+            # accepted angle rather than the fallback.
+            step = 10.0
+            zx: list[float] = []
+            zy: list[float] = []
+            xc, up = x0, True
+            while xc <= x1:
+                zx += [xc, xc]
+                zy += (
+                    [band_y["zigzag_90"], band_y["zigzag_90"] + step]
+                    if up
+                    else [band_y["zigzag_90"] + step, band_y["zigzag_90"]]
+                )
+                xc += step
+                up = not up
+            polyline("zigzag_90", plane(np.stack([zx, zy], axis=1)), width)
+
+            # Degree-9 hub: nine rays from one point, each its own polyline, so
+            # the shared vertex has degree 9 and can never be mitered (the
+            # kernel emits the hub sentinel). Must be untouched by the fix.
+            hub = np.array([120.0, band_y["star_hub"]])
+            for k in range(9):
+                a = np.pi * (0.08 + 0.84 * k / 8.0)
+                tip = hub + 13.0 * np.array([np.cos(a), np.sin(a)])
+                polyline(f"star_ray_{k}", plane(np.stack([hub, tip])), width)
+
+            # Free ends: isolated segments, no joints at all. Must be untouched.
+            for k in range(6):
+                sx = x0 + k * 38.0
+                seg = np.array(
+                    [[sx, band_y["free_ends"]], [sx + 26.0, band_y["free_ends"]]]
+                )
+                polyline(f"free_end_{k}", plane(seg), width)
+
+        aprint(f"  Created {output}")
+        aprint(f"  Bands: {', '.join(band_y)}")
 
 
 def generate_lines_categorical_test() -> None:
@@ -3876,6 +4030,7 @@ def main() -> None:
         generate_lines_test()
         aprint("")
 
+        generate_line_joints_test()
         generate_lines_categorical_test()
         aprint("")
 
