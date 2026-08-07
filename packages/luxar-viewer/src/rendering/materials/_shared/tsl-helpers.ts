@@ -21,6 +21,12 @@
  */
 
 import type { IUniform } from 'three';
+
+// Single source of truth for the join's width gate — see glsl-lib.ts. Imported
+// rather than redeclared so the GLSL and TSL backends cannot drift apart.
+import { LINE_JOIN_MIN_HALF_WIDTH } from './glsl-lib';
+
+export { LINE_JOIN_MIN_HALF_WIDTH };
 import {
   If,
   attribute,
@@ -202,14 +208,32 @@ export function tslLineJointCapSuppression(jointCode: TSLNode): TSLNode {
 }
 
 /**
- * Rendered half-width below which the join is skipped. The uncovered wedge has
- * area ~theta*R^2/2 pixels, so under a couple of pixels it is sub-pixel and
- * invisible — and a line that thin already sits on the 1.5 px floor with its
- * intensity faded. Gating on width puts the cost only where the benefit is:
- * million-segment scenes are thin-line scenes and skip the whole block.
- * Shared with the GLSL twin's `joinMinHalfWidth`.
+ * Rendered half-width AT ONE ENDPOINT, in pixels — TSL twin of GLSL's
+ * `luxarLineEndPixelWidth`.
+ *
+ * The rendered width is otherwise PER-VERTEX (it interpolates width and view
+ * depth at the vertex's own t), and both cap varyings are `flat`, whose value
+ * comes from one provoking vertex. Gating the join on a per-vertex width
+ * therefore lets a segment whose ends straddle the gate resolve its cap from
+ * whichever corner provokes — and WebGL provokes from the last vertex while
+ * WGSL provokes from the first. Evaluated at an END this is segment-constant,
+ * and equals the per-vertex value exactly at the corner that consumes it, so
+ * the geometry is unchanged.
+ *
+ * `isOrtho` is the build-time graph variant, so only one branch is emitted.
  */
-export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
+export function tslLineEndPixelWidth(
+  isOrtho: boolean,
+  widthAtEnd: TSLNode,
+  viewZ: TSLNode,
+  nearCull: TSLNode,
+  uOrthoLineScale: TSLNode,
+  uPerspectiveLineScale: TSLNode
+): TSLNode {
+  return isOrtho
+    ? widthAtEnd.mul(uOrthoLineScale)
+    : widthAtEnd.mul(uPerspectiveLineScale).div(max(viewZ.negate(), nearCull));
+}
 
 /** Everything `tslLineJoin` needs from its calling vertex stage. */
 export interface TSLLineJoinArgs {

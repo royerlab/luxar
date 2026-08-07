@@ -437,29 +437,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         vViewZ = 0.0;
         return;
       }
-      // The two clamped pixel half-widths the quad expands by, one per END.
-      // Deliberately NOT the per-vertex clamp of rawPixelWidth: the width
-      // interpolates along the segment and the perspective divide uses this
-      // vertex's own depth, while luxarLineJoin drives the two "flat" cap
-      // varyings — so a per-vertex width lets the t=0 and t=1 corners of a
-      // tapered or foreshortened segment straddle the 2 px gate or the
-      // axial-overshoot guard and disagree on the cap. Same #849 reasoning as
-      // segMaxPixelWidth, and the same two endpoint widths reused (the
-      // perspective ones are already computed above; ortho width is
-      // depth-independent and tA/tB are 0/1 there, segment clipping being
-      // perspective-only). Geometrically a no-op where each offset is
-      // CONSUMED: at a t=0 vertex tEff == tA and mvPos == mvStart, so the
-      // per-vertex clamp equals startJoinWidth exactly, and symmetrically at
-      // t=1. Only the DECISIONS — and the far end's discarded offset — become
-      // segment-constant, which is what "flat" requires.
-      float startJoinWidth = clamp(
-        (uIsOrtho == 1) ? mix(startW, endW, tA) * uOrthoLineScale : startPixelWidth,
-        minPixelWidth, maxPW
-      );
-      float endJoinWidth = clamp(
-        (uIsOrtho == 1) ? mix(startW, endW, tB) * uOrthoLineScale : endPixelWidth,
-        minPixelWidth, maxPW
-      );
       // Fade intensity in proportion to the clamp so the giant quad
       // doesn't overcontribute. fade=1 when not clamped, →0 as the
       // raw width grows past the clamp by a factor.
@@ -493,21 +470,35 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // diagonally wherever the refined value differed from the default — and
       // WGSL's "@interpolate(flat)" provokes from the FIRST vertex, so the two
       // backends disagreed as well. Evaluating both ends everywhere makes the
-      // two caps segment-constant, which is what "flat" requires — and for the
-      // same reason each end gets its OWN width (above) rather than this
-      // vertex's.
+      // two caps segment-constant, which is what "flat" requires.
       //
-      // The last argument is the segment's FAR endpoint depth, from the
+      // Per-END widths, not this vertex's: the gate inside luxarLineJoin must be
+      // segment-constant or the "flat" cap varyings below resolve from whichever
+      // corner provokes (see luxarLineEndPixelWidth). Geometrically identical —
+      // each equals the per-vertex clamped width at the corner that consumes it
+      // (at a t=0 vertex tEff == tA and mvPos == mvStart, symmetrically at t=1),
+      // so only the DECISIONS become segment-constant. Same #849 reasoning as
+      // segMaxPixelWidth above.
+      //
+      // The trailing depth argument is the segment's FAR endpoint, from the
       // ORIGINAL pre-clipping depths: the near-plane guard inside the helper
       // needs both far endpoints of the joint, so the start call passes the
       // END's depth and the end call the START's.
+      float startEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tA), mvStart.z, nearCull),
+        minPixelWidth, maxPW
+      );
+      float endEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tB), mvEnd.z, nearCull),
+        minPixelWidth, maxPW
+      );
       vec3 startJoin = luxarLineJoin(
         false, tA <= 0.0, aStartJointCode, ndcStart,
-        lineDir, pixelLen, startJoinWidth, endDepth, nearCull
+        lineDir, pixelLen, startEndPixelWidth, endDepth, nearCull
       );
       vec3 endJoin = luxarLineJoin(
         true, tB >= 1.0, aEndJointCode, ndcEnd,
-        lineDir, pixelLen, endJoinWidth, startDepth, nearCull
+        lineDir, pixelLen, endEndPixelWidth, startDepth, nearCull
       );
       if (startJoin.z >= 0.0) vCapSuppressStart = startJoin.z;
       if (endJoin.z >= 0.0) vCapSuppressEnd = endJoin.z;

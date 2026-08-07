@@ -473,8 +473,8 @@ void main() {
 	nodeVar87 = ( ( mix( nodeVar69, nodeVar70, nodeVar62 ) * nodeUniform20 ) / max( ( - nodeVar49.z ), nodeVar54 ) );
 	nodeVar88 = ( ( mix( nodeVar69, nodeVar70, nodeVar65 ) * nodeUniform20 ) / max( ( - nodeVar50.z ), nodeVar54 ) );
 	nodeVar89 = max( nodeVar87, nodeVar88 );
-	nodeVar90 = clamp( nodeVar87, 1.5, nodeVar85 );
-	nodeVar91 = clamp( nodeVar88, 1.5, nodeVar85 );
+	nodeVar90 = clamp( ( ( mix( nodeVar69, nodeVar70, nodeVar62 ) * nodeUniform20 ) / max( ( - nodeVar49.z ), nodeVar54 ) ), 1.5, nodeVar85 );
+	nodeVar91 = clamp( ( ( mix( nodeVar69, nodeVar70, nodeVar65 ) * nodeUniform20 ) / max( ( - nodeVar50.z ), nodeVar54 ) ), 1.5, nodeVar85 );
 	nodeVar92 = ( nodeVar83 * vec2( nodeVar90 ) );
 	nodeVar93 = ( nodeVar83 * vec2( nodeVar91 ) );
 	nodeVar94 = -1.0;

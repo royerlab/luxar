@@ -498,8 +498,8 @@ void main() {
 	nodeVar95 = ( ( mix( nodeVar77, nodeVar78, nodeVar70 ) * nodeUniform25 ) / max( ( - nodeVar57.z ), nodeVar62 ) );
 	nodeVar96 = ( ( mix( nodeVar77, nodeVar78, nodeVar73 ) * nodeUniform25 ) / max( ( - nodeVar58.z ), nodeVar62 ) );
 	nodeVar97 = max( nodeVar95, nodeVar96 );
-	nodeVar98 = clamp( nodeVar95, 1.5, nodeVar93 );
-	nodeVar99 = clamp( nodeVar96, 1.5, nodeVar93 );
+	nodeVar98 = clamp( ( ( mix( nodeVar77, nodeVar78, nodeVar70 ) * nodeUniform25 ) / max( ( - nodeVar57.z ), nodeVar62 ) ), 1.5, nodeVar93 );
+	nodeVar99 = clamp( ( ( mix( nodeVar77, nodeVar78, nodeVar73 ) * nodeUniform25 ) / max( ( - nodeVar58.z ), nodeVar62 ) ), 1.5, nodeVar93 );
 	nodeVar100 = ( nodeVar91 * vec2( nodeVar98 ) );
 	nodeVar101 = ( nodeVar91 * vec2( nodeVar99 ) );
 	nodeVar102 = -1.0;

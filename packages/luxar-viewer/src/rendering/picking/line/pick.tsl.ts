@@ -61,6 +61,7 @@ import {
   sanitizeNonNegative,
   type TSLNode,
   sortedIndexNode,
+  tslLineEndPixelWidth,
   tslLineJoin,
   tslLineJointCapSuppression,
 } from '../../materials/_shared/tsl-helpers';
@@ -330,20 +331,8 @@ export function linePickWebGPUFactory(
     // sentinel only half the quad and leave a visible wedge (issue #849).
     // Gate on the MAX of the pixel width at both clipped endpoints so all
     // four vertices take the same branch.
-    //
-    // The same two endpoint widths give the quad's per-END clamped half-widths
-    // (visual-factory parity, shader-tsl.ts): a per-VERTEX clamp would reach the
-    // join block, which drives two `flat` cap varyings, so its width-gated
-    // decisions must be segment-constant. A no-op at the corner each offset is
-    // consumed at. Ortho width is depth-independent and tA/tB are the constants
-    // 0/1 there, so that graph stays free of perspective-only nodes.
     let pathological: TSLNode | null = null;
-    let startJoinWidth: TSLNode;
-    let endJoinWidth: TSLNode;
-    if (config.isOrtho) {
-      startJoinWidth = clamp(startW.mul(uOrthoLineScale), minPixelWidth, maxPW).toVar();
-      endJoinWidth = clamp(endW.mul(uOrthoLineScale), minPixelWidth, maxPW).toVar();
-    } else {
+    if (!config.isOrtho) {
       const startPixelWidth: TSLNode = mix(startW, endW, tA)
         .mul(uPerspectiveLineScale)
         .div(max(mvStart.z.negate(), nearCull))
@@ -357,19 +346,41 @@ export function linePickWebGPUFactory(
         .lessThan(nearCull.mul(2.0))
         .and(endDepth.lessThan(nearCull.mul(2.0)))
         .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
-      startJoinWidth = clamp(startPixelWidth, minPixelWidth, maxPW).toVar();
-      endJoinWidth = clamp(endPixelWidth, minPixelWidth, maxPW).toVar();
     }
+
+    // The quad's per-END clamped half-widths, via the shared
+    // `tslLineEndPixelWidth` (GLSL twin: `luxarLineEndPixelWidth`) —
+    // visual-factory parity, shader-tsl.ts. A per-VERTEX clamp would reach the
+    // join block, which drives two `flat` cap varyings, so its width-gated
+    // decisions must be segment-constant. A no-op at the corner each offset is
+    // consumed at.
+    const endPixelWidthAt = (tEnd: TSLNode, mvZ: TSLNode): TSLNode =>
+      clamp(
+        tslLineEndPixelWidth(
+          !!config.isOrtho,
+          mix(startW, endW, tEnd),
+          mvZ,
+          nearCull,
+          uOrthoLineScale,
+          uPerspectiveLineScale
+        ),
+        minPixelWidth,
+        maxPW
+      );
+    const startEndPixelWidth: TSLNode = endPixelWidthAt(tA, mvStart.z).toVar();
+    const endEndPixelWidth: TSLNode = endPixelWidthAt(tB, mvEnd.z).toVar();
 
     // Join geometry (#790) — visual-factory parity, so the pick quad is the
     // SAME quad the eye sees at a mitred corner. Both ends are evaluated on
     // every vertex to keep the two `flat` cap varyings segment-constant; see
     // shader-tsl.ts / shader-glsl.ts.
-    const startOffset: TSLNode = vec2(perpendicular.mul(startJoinWidth)).toVar();
-    const endOffset: TSLNode = vec2(perpendicular.mul(endJoinWidth)).toVar();
+    const startOffset: TSLNode = vec2(perpendicular.mul(startEndPixelWidth)).toVar();
+    const endOffset: TSLNode = vec2(perpendicular.mul(endEndPixelWidth)).toVar();
     const startJoinCap: TSLNode = float(-1.0).toVar();
     const endJoinCap: TSLNode = float(-1.0).toVar();
     if (resolveLineJoin(config.join) > 0.5) {
+      // The width is deliberately NOT shared between the two calls: each end
+      // supplies its OWN segment-constant half-width (computed above).
       const shared = {
         isOrtho: !!config.isOrtho,
         uLineTex,
@@ -390,7 +401,7 @@ export function linePickWebGPUFactory(
         reachesVertex: tA.lessThanEqual(0.0),
         jointCode: aStartJointCode,
         sharedNdc: ndcStart,
-        joinPixelWidth: startJoinWidth,
+        joinPixelWidth: startEndPixelWidth,
         selfFarDepth: endDepth,
         cornerOffset: startOffset,
         capValue: startJoinCap,
@@ -401,7 +412,7 @@ export function linePickWebGPUFactory(
         reachesVertex: tB.greaterThanEqual(1.0),
         jointCode: aEndJointCode,
         sharedNdc: ndcEnd,
-        joinPixelWidth: endJoinWidth,
+        joinPixelWidth: endEndPixelWidth,
         selfFarDepth: startDepth,
         cornerOffset: endOffset,
         capValue: endJoinCap,

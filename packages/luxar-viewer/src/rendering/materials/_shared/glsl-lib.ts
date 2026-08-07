@@ -188,6 +188,21 @@ float luxarLineJointCapSuppression(float jointCode) {
 `;
 
 /**
+ * Rendered half-width (px) below which the join is skipped.
+ *
+ * The uncovered wedge has area ~theta*R^2/2, so under a couple of pixels it is
+ * sub-pixel and invisible — and a line that thin already sits on the 1.5 px
+ * floor with its intensity faded. Gating on width puts the cost only where the
+ * benefit is: million-segment scenes are thin-line scenes and skip the block.
+ *
+ * Lives HERE, in the dependency-free GLSL block, and is interpolated into the
+ * shader source below AND imported by the TSL twin, so the two backends cannot
+ * drift. (`tsl-helpers.ts` pulls in `three/tsl`; `glsl-lib.ts` imports nothing,
+ * which makes it the safe direction for the shared constant to flow.)
+ */
+export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
+
+/**
  * Screen-space join geometry at degree-2 polyline joints (#790), shared by the
  * visual and picking GLSL vertex stages.
  *
@@ -206,10 +221,11 @@ float luxarLineJointCapSuppression(float jointCode) {
  * what the eye sees, so this lives here rather than being written twice.
  *
  * REQUIRED GLOBALS (same implicit-context pattern as `GLSL_SORTED_INDEX`):
- * `uLineTex`, `uResolution`, `uIsOrtho`, `modelViewMatrix`,
- * `projectionMatrix`, and `luxarSortedIndex()`. Include this block AFTER
- * those declarations — GLSL resolves names top-down. `uLineJoin` is declared
- * here, so an including shader must not declare it again.
+ * `uLineTex`, `uResolution`, `uIsOrtho`, `uOrthoLineScale`,
+ * `uPerspectiveLineScale`, `modelViewMatrix`, `projectionMatrix`, and
+ * `luxarSortedIndex()`. Include this block AFTER those declarations — GLSL
+ * resolves names top-down. `uLineJoin` is declared here, so an including
+ * shader must not declare it again.
  */
 export const GLSL_LINE_JOIN = `
 // Join style at degree-2 polyline joints: 0 none, 1 miter. Runtime uniform
@@ -227,6 +243,28 @@ vec3 luxarLinePixelPos(vec3 localPos, float nearCullValue) {
   float wG = (uIsOrtho == 1) ? 1.0 : nearCullValue;
   vec2 ndc = clip.xy / max(clip.w, wG);
   return vec3(ndc * (0.5 * uResolution), -mv.z);
+}
+
+// Rendered half-width AT ONE ENDPOINT, in pixels, for either projection.
+//
+// The rendered width is otherwise PER-VERTEX: it interpolates the width and the
+// view depth at the vertex's own t, so the t=0 and t=1 corners of one quad see
+// different values (the same property that forced the pathological cull to gate
+// on a segment-constant max — issue #849). Feeding a per-vertex width to
+// luxarLineJoin would make the join's width gate per-vertex, and both cap
+// varyings are "flat": the two triangles of a quad provoke from different
+// vertices, so a segment whose ends straddle the gate would resolve its cap
+// from whichever corner happened to provoke, and WebGL and WGSL would disagree
+// about which that is.
+//
+// Evaluated at an END this is segment-constant, and it agrees with the
+// per-vertex value exactly at the corner that consumes it (t=1 interpolates to
+// mvEnd and endW), so the geometry is unchanged. Both segments meeting at a
+// joint also read the SAME shared vertex, so they still agree on the gate.
+float luxarLineEndPixelWidth(float widthAtEnd, float viewZ, float nearCullValue) {
+  return (uIsOrtho == 1)
+    ? (widthAtEnd * uOrthoLineScale)
+    : (widthAtEnd * uPerspectiveLineScale / max(-viewZ, nearCullValue));
 }
 
 // The corner offset and endpoint cap for one end of one segment.
@@ -251,11 +289,10 @@ vec3 luxarLineJoin(
   vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
   vec3 noJoin = vec3(perpendicular * joinPixelWidth, -1.0);
 
-  // The wedge has area ~theta*R^2/2 pixels, so below a couple of pixels of
-  // half-width it is sub-pixel and invisible — and a line that thin already
-  // sits on the 1.5 px floor with its intensity faded. Gating on width puts
-  // the cost only where the benefit is: million-segment scenes are thin-line
-  // scenes and skip this entirely.
+  // The gate value is the shared LINE_JOIN_MIN_HALF_WIDTH, interpolated in from
+  // the TypeScript constant above (which the TSL twin imports) so the two
+  // backends cannot drift; its declaration carries the sub-pixel-wedge
+  // rationale.
   //
   // The width MUST be this end's own, not the calling vertex's: .z feeds a
   // "flat" varying, so both this gate and the axial-overshoot guard below have
@@ -264,7 +301,7 @@ vec3 luxarLineJoin(
   // decided by the provoking vertex alone — which WebGL takes from the last
   // vertex and WGSL from the first. Same reasoning as the #849 segment-constant
   // pathological cull at the call sites.
-  float joinMinHalfWidth = 2.0;
+  float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};
   if (uLineJoin < 0.5 || joinPixelWidth <= joinMinHalfWidth) return noJoin;
   // A near-clipped endpoint was moved onto the nearCull plane, so it is no
   // longer AT its source vertex and no neighbour meets it there.

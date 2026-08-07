@@ -44,8 +44,9 @@ either `uPerspectiveLineScale = resY / tan(fov/2)` or
 `uOrthoLineScale = 2·resY / frustumHeight` (precomputed CPU-side so the
 shader has no `tan()` or projection-mode divide), clamps to
 `[1.5 px, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
-offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × startJoinWidth` /
-`endJoinWidth` — the clamped pixel half-width of the END this corner sits at,
+offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × startEndPixelWidth` /
+`endEndPixelWidth` — the clamped pixel half-width of the END this corner sits at
+(from the shared `luxarLineEndPixelWidth` / `tslLineEndPixelWidth` helper),
 which is segment-constant and equals the per-vertex clamp exactly at the corner
 it is consumed at (the join below needs it segment-constant; see there).
 The fragment stage shades

@@ -393,8 +393,8 @@ describe('line join math (vertex-side, #790)', () => {
     // whichever corner that is, three of the four corners are then rasterised
     // with a cap their own end never derived.
     const cornerWidths = [1.8, 6.0] as const; // clamped width at t=0 and at t=1
-    const startJoinWidth = cornerWidths[0];
-    const endJoinWidth = cornerWidths[1];
+    const startEndPixelWidth = cornerWidths[0];
+    const endEndPixelWidth = cornerWidths[1];
 
     // Middle segment of a polyline: a partner at each end.
     const self = { slot: 1, start: [0, 100] as Vec2, end: [100, 100] as Vec2 };
@@ -403,8 +403,8 @@ describe('line join math (vertex-side, #790)', () => {
 
     /** Mirror of the call site: which width each end's call is given. */
     const capsAtCorner = (corner: 0 | 1, mode: 'per-end' | 'per-vertex') => {
-      const wStart = mode === 'per-end' ? startJoinWidth : cornerWidths[corner];
-      const wEnd = mode === 'per-end' ? endJoinWidth : cornerWidths[corner];
+      const wStart = mode === 'per-end' ? startEndPixelWidth : cornerWidths[corner];
+      const wEnd = mode === 'per-end' ? endEndPixelWidth : cornerWidths[corner];
       const startSide = sideInput(
         leg(false, self.end, self.slot),
         startPartner,

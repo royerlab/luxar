@@ -10,6 +10,7 @@ import { LINE_FLOATS_PER_SEGMENT } from '../../../../../rendering/element-textur
 import {
   GLSL_LINE_JOINT_CODE,
   GLSL_LINE_JOIN,
+  LINE_JOIN_MIN_HALF_WIDTH,
 } from '../../../../../rendering/materials/_shared/glsl-lib';
 import {
   LINE_PICK_VERTEX_SHADER,
@@ -126,6 +127,22 @@ describe('LineMaterial', () => {
       }
     });
 
+    it('emits the width gate from the SHARED constant, not a second literal', () => {
+      // The threshold used to be hardcoded in the GLSL string while the TSL twin
+      // read a named constant — two sources of truth for one gate. It is now
+      // interpolated from LINE_JOIN_MIN_HALF_WIDTH, which the TSL side imports
+      // from the same module, so the two backends cannot drift. Pinned because a
+      // template interpolation fails SILENTLY: a wrong expression yields
+      // "[object Object]" or "undefined" inside the shader body, which compiles
+      // to a link error far from the cause.
+      expect(GLSL_LINE_JOIN).toContain(
+        `float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};`
+      );
+      expect(GLSL_LINE_JOIN).toContain('float joinMinHalfWidth = 2.0;');
+      expect(GLSL_LINE_JOIN).not.toContain('object Object');
+      expect(GLSL_LINE_JOIN).not.toContain('undefined');
+    });
+
     it('should have correct vertex shader with screen-space expansion', () => {
       const material = new LineMaterial();
 
@@ -170,8 +187,8 @@ describe('LineMaterial', () => {
       // carry) plus the two per-END clamps the quad actually expands by,
       // because the vertex shader applies a max-pixel-width clamp.
       expect(material.vertexShader).toContain('rawPixelWidth');
-      expect(material.vertexShader).toContain('startJoinWidth');
-      expect(material.vertexShader).toContain('endJoinWidth');
+      expect(material.vertexShader).toContain('startEndPixelWidth');
+      expect(material.vertexShader).toContain('endEndPixelWidth');
       // `pixelDir` is computed directly from NDC endpoints — `pixelStart`
       // / `pixelEnd` no longer exist (the +0.5 bias cancels under
       // subtraction).
@@ -250,11 +267,20 @@ describe('LineMaterial', () => {
       ];
       for (const [label, src] of stages) {
         expect(src, `${label}: start end`).toContain(
-          'lineDir, pixelLen, startJoinWidth, endDepth, nearCull'
+          'lineDir, pixelLen, startEndPixelWidth, endDepth, nearCull'
         );
         expect(src, `${label}: end end`).toContain(
-          'lineDir, pixelLen, endJoinWidth, startDepth, nearCull'
+          'lineDir, pixelLen, endEndPixelWidth, startDepth, nearCull'
         );
+        // Each width comes from the shared per-END helper...
+        expect(src, `${label}: shared end-width helper`).toContain(
+          'luxarLineEndPixelWidth(mix(startW, endW, tA), mvStart.z, nearCull)'
+        );
+        expect(src, `${label}: shared end-width helper`).toContain(
+          'luxarLineEndPixelWidth(mix(startW, endW, tB), mvEnd.z, nearCull)'
+        );
+        // ...and the per-VERTEX clamped width is gone entirely, so nothing can
+        // route it into the join.
         expect(src, `${label}: no per-vertex width`).not.toContain('clampedPixelWidth');
       }
     });

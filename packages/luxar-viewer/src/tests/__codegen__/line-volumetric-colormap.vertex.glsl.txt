@@ -428,8 +428,8 @@ void main() {
 	nodeVar77 = ( nodeVar64 * nodeUniform24 );
 	nodeVar78 = max( nodeUniform25, ( 1.5 + 1.0 ) );
 	nodeVar79 = ( nodeVar78 / max( nodeVar77, 0.0001 ) );
-	nodeVar80 = clamp( ( nodeVar62 * nodeUniform24 ), 1.5, nodeVar78 );
-	nodeVar81 = clamp( ( nodeVar63 * nodeUniform24 ), 1.5, nodeVar78 );
+	nodeVar80 = clamp( ( mix( nodeVar62, nodeVar63, 0.0 ) * nodeUniform24 ), 1.5, nodeVar78 );
+	nodeVar81 = clamp( ( mix( nodeVar62, nodeVar63, 1.0 ) * nodeUniform24 ), 1.5, nodeVar78 );
 	nodeVar82 = ( nodeVar76 * vec2( nodeVar80 ) );
 	nodeVar83 = ( nodeVar76 * vec2( nodeVar81 ) );
 	nodeVar84 = -1.0;
