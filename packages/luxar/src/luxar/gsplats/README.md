@@ -1099,7 +1099,18 @@ gsplats/
 ├── fit_progressive_gsplats.py     # Progressive fitting (iterative refinement)
 ├── fit_tiled_gsplats.py           # Tiled fitting for large volumes (fit_tile, fit_tiled)
 ├── tiling.py                      # Tile geometry and cosine apodization (TileSpec, cosine_window)
-├── gsplat_data.py                 # GSplatData / AdditiveSubLOD dataclasses, save/load, transforms
+├── gsplat_data.py                 # GSplatData container (construction/repr) + AdditiveSubLOD / SubstitutiveLevel
+├── _data/                         # Internal GSplatData domain mixins (see _data/README.md)
+│   ├── base.py                    # _GSplatDataOps cross-mixin base + shared color/read-only helpers
+│   ├── metrics.py                 # _SplatArrayMixin: computed metrics shared with AdditiveSubLOD
+│   ├── lod_views.py               # LOD matrix views, per-level constructors, node-tree bridge
+│   ├── composition.py             # concatenate / combine_as_new_dimension / embed / partition builders
+│   ├── transforms.py              # transform / translate / center_at_centroid (+ per-level map helpers)
+│   ├── intensity.py               # amplitude & color edits (scale/normalize/clamp/reweight/with_colors)
+│   ├── filtering.py               # filter / filter_by / slice_by
+│   ├── culling.py                 # cull (heuristic + contribution-based)
+│   ├── io_adapter.py              # save / load adapter onto luxar.gsplats.io
+│   └── render.py                  # render_to_volume adapter onto luxar.gsplats.rendering
 ├── culling.py                     # Contribution-based splat culling (CullResult, cull_by_contribution)
 ├── metrics.py                     # Quality metrics (PSNR, SSIM, MSE, relative L2)
 ├── calibration.py                 # Blind-spot CV calibration (cv_mask, donut_median_fill,
