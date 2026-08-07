@@ -265,12 +265,14 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // staying in sync. Both ends are evaluated on every vertex so the two
       // "flat" cap varyings stay segment-constant — see shader-glsl.ts for why
       // a per-corner write splits the quad along its diagonal.
+      // Third argument: THIS segment's OTHER endpoint's PRE-CLIP depth, for the
+      // two-sided near-plane guard — visual-shader parity, see luxarLineJoin.
       vec3 startJoin = luxarLineJoin(
-        false, tA <= 0.0, aStartJointCode, ndcStart,
+        false, tA <= 0.0, endDepth, aStartJointCode, ndcStart,
         lineDir, pixelLen, clampedPixelWidth, nearCull
       );
       vec3 endJoin = luxarLineJoin(
-        true, tB >= 1.0, aEndJointCode, ndcEnd,
+        true, tB >= 1.0, startDepth, aEndJointCode, ndcEnd,
         lineDir, pixelLen, clampedPixelWidth, nearCull
       );
       if (startJoin.z >= 0.0) vCapSuppressStart = startJoin.z;

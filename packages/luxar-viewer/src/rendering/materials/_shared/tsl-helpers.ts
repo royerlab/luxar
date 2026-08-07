@@ -234,6 +234,14 @@ export interface TSLLineJoinArgs {
   readonly atEnd: boolean;
   /** False when near-clipping moved this endpoint off its source vertex. */
   readonly reachesVertex: TSLNode;
+  /**
+   * PRE-CLIP view-space depth of THIS segment's OTHER endpoint — `endDepth` at
+   * the start call, `startDepth` at the end one. Feeds the two-sided near-plane
+   * guard (#1346); see `tslLineJoin` for why the PRE-clip value is the only
+   * correct one. REQUIRED rather than optional so a dropped argument is a
+   * `pnpm typecheck` failure instead of a silently one-sided guard.
+   */
+  readonly thisFarDepth: TSLNode;
   /** texel4.y at the start vertex, texel4.z at the end one. */
   readonly jointCode: TSLNode;
   /** NDC of the shared vertex (ndcStart / ndcEnd). */
@@ -288,6 +296,7 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     selfSlot,
     atEnd,
     reachesVertex,
+    thisFarDepth,
     jointCode,
     sharedNdc,
     lineDir,
@@ -353,56 +362,91 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     // (partnerSharesItsStart stays a runtime node — it is decoded from the
     // per-endpoint joint code, unlike `atEnd` which the caller fixes.)
     const partnerLen: TSLNode = length(partnerDelta).toVar();
-    const partnerInFront: TSLNode = isOrtho
+
+    // NEAR-PLANE GUARD, TWO-SIDED (#1346) — twin of the GLSL block's. Testing
+    // only the PARTNER's far endpoint let the two sides of one joint disagree:
+    // segment A running from the front to the shared vertex, segment B running
+    // from it to a point behind the near-cull plane. A saw B's far endpoint
+    // behind and fell back to the plain perpendicular; B saw A's far endpoint
+    // in front, its own shared endpoint unclipped, and mitred ALONE — a wedge
+    // on one side of the joint and B's rotated edge protruding on the other.
+    // Each side therefore also tests ITS OWN far endpoint, so both evaluate
+    // the identical conjunction.
+    //
+    // `thisFarDepth` MUST be the PRE-CLIP view depth of this segment's other
+    // endpoint: that is bit-for-bit what the partner computes for this segment
+    // when it fetches the stored position from `uLineTex` and projects it with
+    // the same `modelViewMatrix`. Never "simplify" it to the near-clipped
+    // depth — the two sides would then compare different operands, which is
+    // the whole bug.
+    //
+    // Under build-time ortho BOTH halves are constant-true (NDC clipping is the
+    // sole cull authority there), so the pair collapses to the single
+    // `float(1.0).greaterThan(0.0)` the one-sided guard already emitted —
+    // adding the second test costs the ortho graph nothing, not even a token.
+    const bothFarEndsInFront: TSLNode = isOrtho
       ? float(1.0).greaterThan(0.0)
-      : mvFar.z.negate().greaterThanEqual(nearCull);
+      : thisFarDepth.greaterThanEqual(nearCull).and(mvFar.z.negate().greaterThanEqual(nearCull));
 
-    If(partnerInFront.and(partnerLen.greaterThan(0.0001)).and(pixelLen.greaterThan(0.0001)), () => {
-      // CANONICAL operand order — incoming edge first, outgoing second — so
-      // both segments meeting here evaluate the same expression and take the
-      // same branch. A branch disagreement leaves one diagonal edge with
-      // nothing to tile against, which rasterises as a flap.
-      const partnerDir: TSLNode = vec2(partnerDelta.div(partnerLen)).toVar();
-      const dirIn: TSLNode = atEnd ? lineDir : partnerDir;
-      const dirOut: TSLNode = atEnd ? partnerDir : lineDir;
-      const turn: TSLNode = dot(dirIn, dirOut).toVar();
+    If(
+      bothFarEndsInFront.and(partnerLen.greaterThan(0.0001)).and(pixelLen.greaterThan(0.0001)),
+      () => {
+        // CANONICAL operand order — incoming edge first, outgoing second — so
+        // both segments meeting here evaluate the same expression and take the
+        // same branch. A branch disagreement leaves one diagonal edge with
+        // nothing to tile against, which rasterises as a flap.
+        const partnerDir: TSLNode = vec2(partnerDelta.div(partnerLen)).toVar();
+        const dirIn: TSLNode = atEnd ? lineDir : partnerDir;
+        const dirOut: TSLNode = atEnd ? partnerDir : lineDir;
+        const turn: TSLNode = dot(dirIn, dirOut).toVar();
 
-      // The endpoint cap, DERIVED rather than stored: the kernel's old
-      // scalar was clamp(-dot(away_a, away_b), 0, 1), which with
-      // away_mine = -lineDir and away_partner = +partnerDir is exactly
-      // clamp(dot(lineDir, partnerDir), 0, 1) — the same dot the miter limit
-      // needs anyway. Deriving it frees texel4.yz to carry the partner code,
-      // and it is measured in SCREEN space, so unlike the stored data-space
-      // angle it tracks the camera (#795).
-      capValue.assign(clamp(turn, 0.0, 1.0));
+        // The endpoint cap, DERIVED rather than stored: the kernel's old
+        // scalar was clamp(-dot(away_a, away_b), 0, 1), which with
+        // away_mine = -lineDir and away_partner = +partnerDir is exactly
+        // clamp(dot(lineDir, partnerDir), 0, 1) — the same dot the miter limit
+        // needs anyway. Deriving it frees texel4.yz to carry the partner code,
+        // and it is measured in SCREEN space, so unlike the stored data-space
+        // angle it tracks the camera (#795).
+        capValue.assign(clamp(turn, 0.0, 1.0));
 
-      // Miter limit |M|/R = sqrt(2/(1 + turn)) <= 2 (theta <= 120 deg), and
-      // an overshoot guard on the AXIAL reach R*tan(theta/2), NOT on |M|
-      // (which is ~R always): gating on the magnitude would disable the join
-      // on every polyline whose segments are shorter than twice the tube
-      // radius — exactly the dense-curve case this issue is about. Both
-      // tests read operands identical from either side, so the two quads
-      // always agree on whether this joint is mitred.
-      const grow: TSLNode = sqrt(float(2.0).div(max(turn.add(1.0), float(1e-6)))).toVar();
-      const axialReach: TSLNode = clampedPixelWidth
-        .mul(sqrt(max(grow.mul(grow).sub(1.0), float(0.0))))
-        .toVar();
-      If(
-        grow.lessThanEqual(2.0).and(axialReach.lessThanEqual(min(pixelLen, partnerLen).mul(0.5))),
-        () => {
-          // Intersection of the two segments' +R offset lines. It reduces to
-          // R * perp at a collinear joint, so a straight polyline is
-          // unchanged. The miter point lies ON this segment's own +R offset
-          // line, which is why the resulting trapezoid keeps vPerpNorm an
-          // exact perpendicular coordinate and the super-Gaussian
-          // cross-section is untouched. A mitred joint tiles exactly, so
-          // nothing may dim it.
-          const perpIn: TSLNode = vec2(dirIn.y.negate(), dirIn.x);
-          const perpOut: TSLNode = vec2(dirOut.y.negate(), dirOut.x);
-          cornerOffset.assign(perpIn.add(perpOut).mul(clampedPixelWidth.div(turn.add(1.0))));
-          capValue.assign(float(1.0));
-        }
-      );
-    });
+        // Miter limit |M|/R = sqrt(2/(1 + turn)) <= 2 (theta <= 120 deg), and
+        // an overshoot guard on the AXIAL reach R*tan(theta/2), NOT on |M|
+        // (which is ~R always): gating on the magnitude would disable the join
+        // on every polyline whose segments are shorter than twice the tube
+        // radius — exactly the dense-curve case this issue is about. Both
+        // tests read operands identical from either side, so the two quads
+        // always agree, TO ROUNDING, on whether this joint is mitred — the
+        // same quantity is reached by different float expressions on the two
+        // sides, so a joint tuned within an ulp of grow == 2.0 can still split.
+        //
+        // min(pixelLen, partnerLen) is honest only BECAUSE the near-plane guard
+        // above is two-sided: a segment whose far endpoint is near-clipped
+        // contributes a SHORTENED pixelLen on its own side but its full stored
+        // length on the partner's, so the two sides would take the min over
+        // different pairs. With the symmetric guard any near-clipped endpoint on
+        // either segment rejects the joint on BOTH sides, so a clipped pixelLen
+        // never reaches this comparison.
+        const grow: TSLNode = sqrt(float(2.0).div(max(turn.add(1.0), float(1e-6)))).toVar();
+        const axialReach: TSLNode = clampedPixelWidth
+          .mul(sqrt(max(grow.mul(grow).sub(1.0), float(0.0))))
+          .toVar();
+        If(
+          grow.lessThanEqual(2.0).and(axialReach.lessThanEqual(min(pixelLen, partnerLen).mul(0.5))),
+          () => {
+            // Intersection of the two segments' +R offset lines. It reduces to
+            // R * perp at a collinear joint, so a straight polyline is
+            // unchanged. The miter point lies ON this segment's own +R offset
+            // line, which is why the resulting trapezoid keeps vPerpNorm an
+            // exact perpendicular coordinate and the super-Gaussian
+            // cross-section is untouched. A mitred joint tiles exactly, so
+            // nothing may dim it.
+            const perpIn: TSLNode = vec2(dirIn.y.negate(), dirIn.x);
+            const perpOut: TSLNode = vec2(dirOut.y.negate(), dirOut.x);
+            cornerOffset.assign(perpIn.add(perpOut).mul(clampedPixelWidth.div(turn.add(1.0))));
+            capValue.assign(float(1.0));
+          }
+        );
+      }
+    );
   });
 }

@@ -472,12 +472,17 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // WGSL's "@interpolate(flat)" provokes from the FIRST vertex, so the two
       // backends disagreed as well. Evaluating both ends everywhere makes the
       // two caps segment-constant, which is what "flat" requires.
+      //
+      // The third argument is THIS segment's OTHER endpoint's PRE-CLIP depth
+      // (endDepth at the start, startDepth at the end), which the two-sided
+      // near-plane guard needs — see luxarLineJoin. Pre-clip, because that is
+      // the value the partner derives for this segment from uLineTex.
       vec3 startJoin = luxarLineJoin(
-        false, tA <= 0.0, aStartJointCode, ndcStart,
+        false, tA <= 0.0, endDepth, aStartJointCode, ndcStart,
         lineDir, pixelLen, clampedPixelWidth, nearCull
       );
       vec3 endJoin = luxarLineJoin(
-        true, tB >= 1.0, aEndJointCode, ndcEnd,
+        true, tB >= 1.0, startDepth, aEndJointCode, ndcEnd,
         lineDir, pixelLen, clampedPixelWidth, nearCull
       );
       if (startJoin.z >= 0.0) vCapSuppressStart = startJoin.z;

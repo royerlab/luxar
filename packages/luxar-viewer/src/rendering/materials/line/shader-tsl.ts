@@ -554,10 +554,16 @@ export function lineWebGPUFactory(
       // `reachesVertex`: a near-clipped endpoint was moved onto the nearCull
       // plane, so it is no longer AT its source vertex and no neighbour meets
       // it there.
+      //
+      // `thisFarDepth` is this segment's OTHER endpoint's PRE-CLIP depth, so it
+      // differs per end and cannot live in `shared`. Pre-clip, because that is
+      // the value the partner derives for this segment from `uLineTex` — see
+      // `tslLineJoin` for the two-sided near-plane guard it feeds.
       tslLineJoin({
         ...shared,
         atEnd: false,
         reachesVertex: tA.lessThanEqual(0.0),
+        thisFarDepth: endDepth,
         jointCode: aStartJointCode,
         sharedNdc: ndcStart,
         cornerOffset: startOffset,
@@ -567,6 +573,7 @@ export function lineWebGPUFactory(
         ...shared,
         atEnd: true,
         reachesVertex: tB.greaterThanEqual(1.0),
+        thisFarDepth: startDepth,
         jointCode: aEndJointCode,
         sharedNdc: ndcEnd,
         cornerOffset: endOffset,

@@ -237,6 +237,7 @@ vec3 luxarLinePixelPos(vec3 localPos, float nearCullValue) {
 vec3 luxarLineJoin(
   bool atEnd,             // this vertex sits at the segment's END (t == 1)
   bool reachesVertex,     // near-clipping did NOT move this endpoint
+  float thisFarDepth,     // PRE-CLIP view depth of THIS segment's OTHER endpoint
   float jointCode,        // texel4.y at the start, texel4.z at the end
   vec2 sharedNdc,         // NDC of the shared vertex (ndcStart / ndcEnd)
   vec2 lineDir,           // this segment's unit direction, pixel space
@@ -296,8 +297,25 @@ vec3 luxarLineJoin(
     ? (farPx.xy - sharedPx)
     : (sharedPx - farPx.xy);
   float partnerLen = length(partnerDelta);
+  // NEAR-PLANE GUARD, TWO-SIDED (#1346). Testing only the PARTNER's far
+  // endpoint let the two sides of one joint disagree: segment A running from
+  // the front to the shared vertex, segment B running from it to a point
+  // behind the near-cull plane. A saw B's far endpoint behind and fell back to
+  // the plain perpendicular; B saw A's far endpoint in front, its own shared
+  // endpoint unclipped, and mitred ALONE — a wedge on one side of the joint
+  // and B's rotated edge protruding on the other. Each side therefore also
+  // tests ITS OWN far endpoint, so both evaluate the identical conjunction.
+  //
+  // thisFarDepth MUST be the PRE-CLIP view depth of this segment's other
+  // endpoint: that is bit-for-bit what the partner computes for this segment
+  // when it fetches the stored position from uLineTex and projects it with the
+  // same modelViewMatrix. Never "simplify" it to the near-clipped depth — the
+  // two sides would then compare different operands, which is the whole bug.
+  bool thisFarInFront = (uIsOrtho == 1) || (thisFarDepth >= nearCull);
   bool partnerInFront = (uIsOrtho == 1) || (farPx.z >= nearCull);
-  if (!partnerInFront || partnerLen <= 0.0001 || pixelLen <= 0.0001) return noJoin;
+  if (!(thisFarInFront && partnerInFront) || partnerLen <= 0.0001 || pixelLen <= 0.0001) {
+    return noJoin;
+  }
 
   // CANONICAL operand order — incoming edge first, outgoing second — so both
   // segments meeting here evaluate the same expression and, crucially, take
@@ -324,7 +342,16 @@ vec3 luxarLineJoin(
   // magnitude disables the join on every polyline whose segments are shorter
   // than twice the tube radius, i.e. exactly the dense-curve case this issue
   // is about. Both tests read the same operands from either side, so the two
-  // quads always agree on whether this joint is mitred.
+  // quads always agree, TO ROUNDING, on whether this joint is mitred — the same
+  // quantity is reached by different float expressions on the two sides, so a
+  // joint tuned within an ulp of grow == 2.0 can still split.
+  //
+  // min(pixelLen, partnerLen) is honest only BECAUSE the near-plane guard above
+  // is two-sided: a segment whose far endpoint is near-clipped contributes a
+  // SHORTENED pixelLen on its own side but its full stored length on the
+  // partner's, so the two sides would take the min over different pairs. With
+  // the symmetric guard any near-clipped endpoint on either segment rejects the
+  // joint on BOTH sides, so a clipped pixelLen never reaches this comparison.
   float grow = sqrt(2.0 / max(1.0 + turn, 1e-6));
   float axialReach = clampedPixelWidth * sqrt(max(grow * grow - 1.0, 0.0));
   if (grow > 2.0 || axialReach > 0.5 * min(pixelLen, partnerLen)) {

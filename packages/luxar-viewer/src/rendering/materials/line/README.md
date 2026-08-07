@@ -181,8 +181,13 @@ directions read in a canonical order (incoming edge first):
   — not on `|M|`, which is ≈R always and would disable the join on every
   polyline whose segments are shorter than twice the tube radius, i.e.
   exactly the dense-curve case
-- the partner must be in front of the near plane, and this endpoint must
-  actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
+- **both** far endpoints in front of the near-cull plane — each side passes its
+  own other endpoint's **pre-clip** depth in, which is what the partner reads
+  for it out of `uLineTex`, so the conjunction is identical on either side.
+  Testing only the partner's let one segment mitre alone (#1346): with `B`
+  running off behind the plane, `A` saw `B`'s far endpoint behind and fell back
+  while `B` saw `A`'s in front and mitred
+- this endpoint must actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
 - a **rendered-width gate** of 2 px: the wedge has area ~θ·R²/2, so below
   that it is sub-pixel and the line is already pinned to the 1.5 px floor
   with its intensity faded. The cost then lands only where the benefit is —
@@ -197,11 +202,12 @@ Where the block is skipped, the code-implied cap above applies instead, which
 is exact for the straight and gentle joints that dominate real polyline data
 and are projection-invariant anyway.
 
-**Currently the miter geometry lives on the visual GLSL path only.** The TSL
-factory and both picking shaders decode the joint code identically — so the
-endpoint cap agrees across all four — but do not yet build the join. Until
-they do, a mitred joint is a pixel-level difference between the WebGL2 visual
-path and the other three.
+**All four stages build the same quad**: the visual and picking GLSL vertex
+shaders both call `luxarLineJoin` from the shared `glsl-lib.ts` block, and the
+visual and picking TSL factories both call its twin `tslLineJoin` in
+`tsl-helpers.ts`. One implementation per language, so a pick footprint cannot
+drift from what the eye sees, and the cross-backend pixel claim is pinned by the
+`line-join-*` fixtures in the GLSL↔TSL parity harness.
 
 ## Geometry and storage layout
 

@@ -30,8 +30,11 @@ Because the miter point lies on the segment's own ±R offset line, `vPerpNorm`
 stays an exact perpendicular coordinate and the **fragment stage is unchanged**.
 Guards (miter limit 120°, an overshoot test on the axial reach, and a 2 px
 rendered-width gate) keep the cost where the benefit is: 0 on thin-line scenes,
-+0.1–0.2 ms/frame at 800k thick segments. Default style is `miter`; a per-node
-`join` attribute and `?lineJoin=none|miter` override it.
++0.1–0.2 ms/frame at 800k thick segments. The near-plane guard is two-sided
+(#1346) — each side tests BOTH far endpoints, not just the partner's — so the two
+quads cannot disagree at a joint next to the camera plane and leave one segment
+mitering alone. Default style is `miter`; a per-node `join` attribute and
+`?lineJoin=none|miter` override it.
 
 Net deletion: the per-segment `dirs` table (~32 MB at 2.7M segments), the
 per-endpoint normalize + dot, and `softenCapacitySplitCap`. Measured on the new

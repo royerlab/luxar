@@ -111,6 +111,30 @@ function assertBothRendered(glsl: number[], tsl: number[], name: string): void {
 }
 
 /**
+ * Count pixels whose worst channel differs by more than 32/255 between two
+ * frames — the metric the line-join tests compare renders with, in BOTH
+ * directions ("must differ" and "must be identical").
+ *
+ * A whole-frame `meanAbsDiff` cannot express either claim. The wedge a miter
+ * closes is ~theta*R^2/2 px on a 6.4 px half-width joint; averaged over all
+ * 4096 pixels of a 64x64 viewport that is a mean abs diff of only ~0.5 — under
+ * the 2.0 codegen tolerance the cross-backend checks use, so a mean would call
+ * a fully broken join "identical" and a correct one "unchanged". Measured on the
+ * ortho fixture, the miter moves 24 pixels by more than 32/255 (peak 254) out of
+ * ~460 covered, so a floor of 10 has better than 2x margin while staying far
+ * above anything a no-op could produce.
+ */
+function strongly(a: readonly number[], b: readonly number[]): number {
+  let n = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    let d = 0;
+    for (let c = 0; c < 4; c++) d = Math.max(d, Math.abs(a[i + c] - b[i + c]));
+    if (d > 32) n++;
+  }
+  return n;
+}
+
+/**
  * Mean absolute per-channel difference normalized by COVERED pixels —
  * quadruplets where either buffer differs from its own background
  * (first pixel). The whole-buffer `meanAbsDiff` dilutes errors by
@@ -760,24 +784,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     //    CHANGE the image. If the join block were skipped — a mis-decoded
     //    partner slot, a width gate that never opens, a graph variant built
     //    with the wrong style — tests 1 and 2 would both pass while comparing
-    //    two identical unmitred renders.
-    //
-    //    COUNT strongly-changed pixels rather than taking a whole-frame mean.
-    //    The wedge this closes is ~theta*R^2/2 px on a 6.4 px half-width joint;
-    //    averaged over all 4096 pixels of the viewport that is a mean abs diff
-    //    of only ~0.5, indistinguishable from tolerance. Measured, the miter
-    //    moves 24 pixels by more than 32/255 (peak 254) out of ~460 covered, so
-    //    a floor of 10 has better than 2x margin while still being far above
-    //    anything a no-op could produce.
-    const strongly = (a: readonly number[], b: readonly number[]): number => {
-      let n = 0;
-      for (let i = 0; i < a.length; i += 4) {
-        let d = 0;
-        for (let c = 0; c < 4; c++) d = Math.max(d, Math.abs(a[i + c] - b[i + c]));
-        if (d > 32) n++;
-      }
-      return n;
-    };
+    //    two identical unmitred renders. See `strongly` for why this is a
+    //    COUNT and not a mean.
     const glslChanged = strongly(glslMiter, glslNone);
     const tslChanged = strongly(tslMiter.pixels, tslNone.pixels);
     expect(
@@ -788,6 +796,105 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       tslChanged,
       `TSL: miter must visibly differ from none (got ${tslChanged} strongly-changed px) — a 0 here means the graph was built without join geometry`
     ).toBeGreaterThan(10);
+  });
+
+  test('line join near the camera plane: the guard is two-sided (miter == none), and its control still mitres', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    // The PERSPECTIVE joint of #1346: segment A runs from the front to the
+    // shared vertex, segment B runs from it to a point BEHIND `uNearCull` while
+    // B's own shared endpoint stays unclipped. See
+    // `tests/helpers/line-join-near-plane-scenario.ts` — the same module the
+    // vitest mirror (`line-join-near-plane-symmetry.test.ts`) consumes, so the
+    // GPU and the numbers agree by construction.
+    const glslMiter = await runGLSL(page, 'line-join-nearplane-miter');
+    const tslMiter = await runTSL(page, 'line-join-nearplane-miter');
+    const glslNone = await runGLSL(page, 'line-join-nearplane-none');
+    const tslNone = await runTSL(page, 'line-join-nearplane-none');
+
+    // Non-vacuity, as the neighbouring test does it: both frames must actually
+    // contain a rendered line, or "identical" below would be two blank buffers.
+    assertBothRendered(glslMiter, tslMiter.pixels, 'line-join-nearplane-miter');
+    assertBothRendered(glslNone, tslNone.pixels, 'line-join-nearplane-none');
+
+    // 1. The two backends agree, the usual cross-backend claim.
+    const miterDiff = meanAbsDiff(glslMiter, tslMiter.pixels);
+    expect(
+      miterDiff,
+      `line-join-nearplane-miter: GLSL vs TSL mean abs diff ${miterDiff.toFixed(2)}`
+    ).toBeLessThan(2.0);
+    const noneDiff = meanAbsDiff(glslNone, tslNone.pixels);
+    expect(
+      noneDiff,
+      `line-join-nearplane-none: GLSL vs TSL mean abs diff ${noneDiff.toFixed(2)}`
+    ).toBeLessThan(2.0);
+
+    // 2. THE ASSERTION THAT PINS #1346, and note it is the exact OPPOSITE shape
+    //    of the ortho `line-join-miter` test above: there `miter` must DIFFER
+    //    from `none`, here it must be IDENTICAL. That is what makes it sharp.
+    //    With the near-plane guard two-sided, B's far endpoint being behind the
+    //    plane rejects the joint on BOTH sides, so each quad keeps its plain
+    //    perpendicular expansion AND its cap sentinel — the SAME geometry the
+    //    `none` render builds, and bit-identically so on both backends: GLSL
+    //    returns the very `noJoin` vector it would never have overwritten, and
+    //    the TSL graph simply leaves the perpendicular offset its prologue
+    //    pre-set. So the honest expectation is EXACTLY ZERO strongly-changed
+    //    pixels, not "within tolerance" — a `meanAbsDiff` here would be ~0.3-1.3
+    //    even with the bug fully present (see `strongly`) and could not fail.
+    //
+    //    A nonzero count means one side of the joint took a branch the other did
+    //    not, which pre-fix is exactly what happened: A fell back while B mitred
+    //    alone, opening a wedge on one side of the joint and protruding B's
+    //    rotated edge on the other.
+    //
+    //    The ortho `line-join-*` pair is structurally blind to this: under
+    //    `uIsOrtho == 1` the near-plane test short-circuits to true on both
+    //    sides, so no ortho fixture can ever exercise the conjunction.
+    const glslIdentity = strongly(glslMiter, glslNone);
+    expect(
+      glslIdentity,
+      `GLSL: miter must be pixel-identical to none when the guard rejects on BOTH sides (got ${glslIdentity} strongly-changed px) — any nonzero count means one segment mitred alone`
+    ).toBe(0);
+    const tslIdentity = strongly(tslMiter.pixels, tslNone.pixels);
+    expect(
+      tslIdentity,
+      `TSL: miter must be pixel-identical to none when the guard rejects on BOTH sides (got ${tslIdentity} strongly-changed px) — any nonzero count means one segment mitred alone`
+    ).toBe(0);
+
+    // 3. THE CONTROL, and without it item 2 would be a weak claim: "identical"
+    //    is satisfied by every way the join block can fail to RUN — a width gate
+    //    that never opens, a mis-encoded joint code, the wrong storage slot, a
+    //    culled segment, a quad off-screen. This pair is the same geometry,
+    //    camera and uniforms with B's far endpoint moved in FRONT of the plane,
+    //    so the guard passes on both sides and both segments mitre. It MUST
+    //    differ from its own `none`, on the same >10 floor the ortho test uses.
+    const glslCtlMiter = await runGLSL(page, 'line-join-nearplane-control-miter');
+    const tslCtlMiter = await runTSL(page, 'line-join-nearplane-control-miter');
+    const glslCtlNone = await runGLSL(page, 'line-join-nearplane-control-none');
+    const tslCtlNone = await runTSL(page, 'line-join-nearplane-control-none');
+    assertBothRendered(glslCtlMiter, tslCtlMiter.pixels, 'line-join-nearplane-control-miter');
+    assertBothRendered(glslCtlNone, tslCtlNone.pixels, 'line-join-nearplane-control-none');
+
+    const glslCtlChanged = strongly(glslCtlMiter, glslCtlNone);
+    expect(
+      glslCtlChanged,
+      `GLSL control: the miter must fire under THIS camera (got ${glslCtlChanged} strongly-changed px) — a 0 here means the join block never ran, which would make the identity above vacuous`
+    ).toBeGreaterThan(10);
+    const tslCtlChanged = strongly(tslCtlMiter.pixels, tslCtlNone.pixels);
+    expect(
+      tslCtlChanged,
+      `TSL control: the miter must fire under THIS camera (got ${tslCtlChanged} strongly-changed px) — a 0 here means the graph was built without join geometry`
+    ).toBeGreaterThan(10);
+
+    // ...and the control pair agrees across backends too, so a per-backend
+    // miscompile cannot satisfy the two counts above with different geometry.
+    const ctlMiterDiff = meanAbsDiff(glslCtlMiter, tslCtlMiter.pixels);
+    expect(
+      ctlMiterDiff,
+      `line-join-nearplane-control-miter: GLSL vs TSL mean abs diff ${ctlMiterDiff.toFixed(2)}`
+    ).toBeLessThan(2.0);
   });
 
   // Multi-row texture-orientation parity (one per geometry type): the

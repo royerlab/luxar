@@ -577,7 +577,7 @@ void main() {
 		nodeVar122 = nodeVar121;
 		nodeVar123 = length( nodeVar122 );
 
-		if ( ( ( ( ( - nodeVar117.z ) >= nodeVar62 ) && ( nodeVar123 > 0.0001 ) ) && ( nodeVar87 > 0.0001 ) ) ) {
+		if ( ( ( ( ( nodeVar60 >= nodeVar62 ) && ( ( - nodeVar117.z ) >= nodeVar62 ) ) && ( nodeVar123 > 0.0001 ) ) && ( nodeVar87 > 0.0001 ) ) ) {
 
 			nodeVar124 = ( nodeVar122 / vec2( nodeVar123 ) );
 			nodeVar125 = dot( nodeVar124, nodeVar90 );
@@ -678,7 +678,7 @@ void main() {
 		nodeVar149 = nodeVar148;
 		nodeVar150 = length( nodeVar149 );
 
-		if ( ( ( ( ( - nodeVar144.z ) >= nodeVar62 ) && ( nodeVar150 > 0.0001 ) ) && ( nodeVar87 > 0.0001 ) ) ) {
+		if ( ( ( ( ( nodeVar59 >= nodeVar62 ) && ( ( - nodeVar144.z ) >= nodeVar62 ) ) && ( nodeVar150 > 0.0001 ) ) && ( nodeVar87 > 0.0001 ) ) ) {
 
 			nodeVar151 = ( nodeVar149 / vec2( nodeVar150 ) );
 			nodeVar152 = dot( nodeVar90, nodeVar151 );

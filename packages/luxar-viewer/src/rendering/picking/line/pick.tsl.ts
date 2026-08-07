@@ -366,10 +366,14 @@ export function linePickWebGPUFactory(
         pixelLen,
         clampedPixelWidth,
       };
+      // `thisFarDepth` is this segment's OTHER endpoint's PRE-CLIP depth (so it
+      // differs per end and cannot live in `shared`), feeding the two-sided
+      // near-plane guard — visual-factory parity, see `tslLineJoin`.
       tslLineJoin({
         ...shared,
         atEnd: false,
         reachesVertex: tA.lessThanEqual(0.0),
+        thisFarDepth: endDepth,
         jointCode: aStartJointCode,
         sharedNdc: ndcStart,
         cornerOffset: startOffset,
@@ -379,6 +383,7 @@ export function linePickWebGPUFactory(
         ...shared,
         atEnd: true,
         reachesVertex: tB.greaterThanEqual(1.0),
+        thisFarDepth: startDepth,
         jointCode: aEndJointCode,
         sharedNdc: ndcEnd,
         cornerOffset: endOffset,
