@@ -423,6 +423,7 @@ def cache_computed(
     version: int = 1,
     recompute: bool = False,
     verbose: bool = True,
+    cache_dir: Optional[Path] = None,
 ) -> Any:
     """Cache the result of ``compute_fn()`` under ``~/.cache/luxar/<name>/``.
 
@@ -439,11 +440,20 @@ def cache_computed(
         compute_fn: Zero-arg callable producing the (picklable) result.
         version: Schema/logic version; bump to invalidate all prior caches.
         recompute: If True, ignore any cached file and recompute.
+        cache_dir: Explicit cache directory, used verbatim instead of
+            ``~/.cache/luxar/<name>/``; ``name`` is then unused. Without it, the
+            location is derived from the cache NAMESPACE, which a demo's
+            ``--cache-dir`` flag cannot reach — the same limitation
+            :func:`cached_download` has, since it too derives
+            ``~/.cache/luxar/<name>/<filename>`` from the namespace.
+            ``demo_caida_as_topology`` takes such a flag and must put its derived
+            bundles beside the raw downloads they came from, wherever the user
+            pointed it.
 
     Returns:
         The cached or freshly computed result.
     """
-    cache_dir = _DEFAULT_CACHE_ROOT / name
+    cache_dir = _DEFAULT_CACHE_ROOT / name if cache_dir is None else Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file = cache_dir / f"{_safe_cache_key(key)}_v{version}.pkl"
 

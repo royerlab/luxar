@@ -86,15 +86,47 @@ DATA SOURCES
 - AS-Rank portal:
     https://asrank.caida.org/
 
-The first run downloads ~60 MB total and computes the layout (~2-3 min
-at this graph size). Subsequent runs reuse the cache at
-``~/.cache/luxar/caida/`` — including the cached 3D coordinates.
+The first run downloads ~6 MB of compressed snapshots (tens of MB once
+decompressed) and computes the layout (~2-3 min at this graph size).
+Later runs make at most one discovery check a week, and none at all while
+the memo is fresh — everything else is served from the cache directory
+(``~/.cache/luxar/caida/`` by default; ``--cache-dir`` overrides it):
+
+    - ``snapshots.json`` memoizes WHICH CAIDA snapshot pair is current, so
+      the two directory-listing GETs that discover it are skipped for a
+      week (``--refresh-snapshots`` re-checks immediately).
+    - The two snapshot files themselves (``*.as-rel2.txt.bz2`` /
+      ``*.as-org2info.txt.gz``).
+    - ``pipeline_<rel>_<org>_v1.pkl`` — the whole deterministic derived
+      chain (parse → largest connected component → tier-1 detection →
+      Louvain communities → degrees), ~12 s of recompute otherwise
+      (``--recompute-pipeline`` rebuilds it).
+    - ``layout3d_<node-hash>_e<n-edges>_v1.pkl`` — the 3D coordinates.
+
+Invalidation is by content, not by timestamp: the pipeline cache is keyed
+on the two snapshot FILENAMES and the layout on the node list plus the
+edge count it was computed from, so a new monthly CAIDA release downloads
+once and recomputes both derived artifacts once, while an older snapshot's
+caches stay valid rather than being clobbered. Superseded snapshots (raw
+files plus their derived pipeline bundles) are pruned to the newest
+``--keep-snapshots`` releases on every run.
+
+Two things are deliberately never deleted. The layout pickles (~1 MB each)
+have no release date to key them by, so they are not pruned — running this
+demo monthly for years accumulates a few tens of MB, and
+``luxar demo cache clear caida`` wipes the lot. And a ``layout_3d.npz``
+left by an older version of this demo is left alone, because that filename
+belongs to ``demo_huri_interactome``'s live layout cache and
+``--cache-dir`` may well point both demos at one shared directory.
 
 Usage:
     python -m luxar.demos.demo_caida_as_topology
     python -m luxar.demos.demo_caida_as_topology --no-serve
     python -m luxar.demos.demo_caida_as_topology --max-edges 80000
     python -m luxar.demos.demo_caida_as_topology --recompute-layout
+    python -m luxar.demos.demo_caida_as_topology --recompute-pipeline
+    python -m luxar.demos.demo_caida_as_topology --refresh-snapshots
+    python -m luxar.demos.demo_caida_as_topology --keep-snapshots 4
 """
 
 from __future__ import annotations
@@ -106,7 +138,7 @@ DEMO_META = {
     "category": "networks",
     "geometry": "points+lines",
     "requirements": {
-        "download_mb": 60,
+        "download_mb": 6,
         "compute": "medium",
         "gpu": "none",
         "local_data": None,
@@ -117,9 +149,12 @@ DEMO_META = {
 
 import bz2
 import gzip
+import json
+import math
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -128,7 +163,13 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, parse_int_arg, parse_path_arg, require_module
+from luxar.demos import (
+    cache_computed,
+    launch_viewer,
+    parse_int_arg,
+    parse_path_arg,
+    require_module,
+)
 from luxar.demos._graph_common import (
     build_adjacency,
     build_community_legend,
@@ -147,10 +188,35 @@ CACHE_DIR = Path.home() / ".cache" / "luxar" / "caida"
 
 AS_REL_INDEX_URL = "https://publicdata.caida.org/datasets/as-relationships/serial-2/"
 AS_ORG_INDEX_URL = "https://publicdata.caida.org/datasets/as-organizations/"
-AS_REL_FILE_PATTERN = re.compile(r'href="(\d{8}\.as-rel2\.txt\.bz2)"')
-AS_ORG_FILE_PATTERN = re.compile(r'href="(\d{8}\.as-org2info\.txt\.gz)"')
 
-LAYOUT_CACHE_FILENAME = "layout_3d.npz"
+# The dated snapshot filenames, in one place: used to validate a memo entry, to
+# recognise a cached snapshot file when pruning, and (wrapped in ``href="…"``) to
+# scrape the directory listings.
+AS_REL_NAME_PATTERN = re.compile(r"\d{8}\.as-rel2\.txt\.bz2")
+AS_ORG_NAME_PATTERN = re.compile(r"\d{8}\.as-org2info\.txt\.gz")
+AS_REL_FILE_PATTERN = re.compile(rf'href="({AS_REL_NAME_PATTERN.pattern})"')
+AS_ORG_FILE_PATTERN = re.compile(rf'href="({AS_ORG_NAME_PATTERN.pattern})"')
+
+# The as-org2info section markers. CAIDA writes them with NO space after the
+# colon ("# format:org_id|changed|org_name|country|source"); mirrored/older
+# copies use "# format: org_id". Accept both — matching neither leaves every AS
+# labelled "unknown"/"??", which is silent (the demo still renders) and was
+# exactly the state of the "Country" color view before this was made tolerant.
+ORG_SECTION_PATTERN = re.compile(r"format:\s*org_id\b")
+AUT_SECTION_PATTERN = re.compile(r"format:\s*aut\b")
+
+# Snapshot discovery memo: which snapshot pair was current, and when we checked.
+# Discovery costs two directory-listing GETs and CAIDA publishes monthly, so
+# re-checking once a week is ample — and it lets a warm run be fully offline.
+SNAPSHOT_MEMO_FILENAME = "snapshots.json"
+SNAPSHOT_DISCOVERY_TTL_SECONDS = 7 * 24 * 60 * 60
+
+# Cache versions for the two derived artifacts (bump to invalidate).
+PIPELINE_CACHE_VERSION = 1
+LAYOUT_CACHE_VERSION = 1
+
+# How many snapshot releases to keep on disk (raw files + derived bundles).
+DEFAULT_KEEP_SNAPSHOTS = 2
 
 # Tuned for aesthetic quality at 80k-node scale
 N_SPECTRAL_DIMS = 50
@@ -172,33 +238,292 @@ COLOR_PEER: tuple[float, float, float] = (0.30, 0.85, 1.00)  # cool cyan
 # -----------------------------------------------------------------------------
 
 
-def _find_latest_file(index_url: str, pattern: re.Pattern) -> tuple[str, str]:
-    """Hit the CAIDA directory listing and return (filename, absolute_url)."""
+def _find_latest_file(index_url: str, pattern: re.Pattern) -> str:
+    """Hit the CAIDA directory listing and return the newest matching filename."""
     r = requests.get(index_url, timeout=30)
     r.raise_for_status()
     matches = pattern.findall(r.text)
     if not matches:
         raise RuntimeError(f"No files matching {pattern.pattern} found at {index_url}")
-    latest = sorted(matches)[-1]
-    return latest, index_url + latest
+    return sorted(matches)[-1]
 
 
-def ensure_data(cache_dir: Path) -> tuple[Path, Path]:
-    """Fetch latest AS-rel + AS-org2info files. Returns local paths."""
-    with asection("Discovering latest CAIDA snapshots"):
-        rel_name, rel_url = _find_latest_file(AS_REL_INDEX_URL, AS_REL_FILE_PATTERN)
-        org_name, org_url = _find_latest_file(AS_ORG_INDEX_URL, AS_ORG_FILE_PATTERN)
-        aprint(f"  AS relationships: {rel_name}")
-        aprint(f"  AS organizations: {org_name}")
+def _load_snapshot_memo(cache_dir: Path) -> dict | None:
+    """Return the validated snapshot memo, or ``None`` if there isn't a usable one.
+
+    A missing, unreadable, non-JSON or structurally-invalid memo reads as absent
+    (discovery is then attempted) rather than raising — this is a cache hint, not
+    data. Both filenames must match the dated snapshot patterns, so a
+    hand-edited or truncated memo can never be turned into a bogus download URL,
+    and ``checked_at`` must be a finite number (``json`` happily parses ``NaN`` /
+    ``Infinity``, either of which would defeat the freshness comparison).
+    """
+    path = cache_dir / SNAPSHOT_MEMO_FILENAME
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    rel_name = raw.get("as_rel")
+    org_name = raw.get("as_org")
+    checked_at = raw.get("checked_at")
+    if not isinstance(rel_name, str) or not AS_REL_NAME_PATTERN.fullmatch(rel_name):
+        return None
+    if not isinstance(org_name, str) or not AS_ORG_NAME_PATTERN.fullmatch(org_name):
+        return None
+    if isinstance(checked_at, bool) or not isinstance(checked_at, (int, float)):
+        return None
+    if not math.isfinite(checked_at):
+        return None
+    return {"as_rel": rel_name, "as_org": org_name, "checked_at": float(checked_at)}
+
+
+def _snapshot_present(path: Path) -> bool:
+    """True if ``path`` is a usable cached snapshot (present and non-empty).
+
+    Matches :func:`download_file`'s own cache-hit rule, so the memo shortcut and
+    the downloader agree on what "already have it" means.
+    """
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:  # pragma: no cover - racing removal
+        return False
+
+
+def _newest_complete_local_pair(cache_dir: Path) -> tuple[str, str] | None:
+    """Newest complete ``(as_rel, as_org)`` pair already on disk, or ``None``.
+
+    The two series are published on different cadences, so the newest present
+    file of each is chosen INDEPENDENTLY — exactly as a live discovery round
+    would. Used by the offline fallback when the memo names a file we do not
+    actually have (an interrupted first run leaves that state, since the memo is
+    written before the downloads).
+    """
+
+    def newest(pattern: re.Pattern) -> str | None:
+        names = sorted(
+            p.name
+            for p in cache_dir.glob("*")
+            if pattern.fullmatch(p.name) and _snapshot_present(p)
+        )
+        return names[-1] if names else None
+
+    rel_name = newest(AS_REL_NAME_PATTERN)
+    org_name = newest(AS_ORG_NAME_PATTERN)
+    if rel_name is None or org_name is None:
+        return None
+    return rel_name, org_name
+
+
+def _save_snapshot_memo(
+    cache_dir: Path, rel_name: str, org_name: str, now: float
+) -> None:
+    """Record the discovered snapshot pair, written atomically.
+
+    Best-effort, like the pruner: a cache directory that is readable but not
+    writable (someone else's, or read-only) still serves a perfectly good run, so
+    a failed memo write warns instead of aborting after the downloads are done.
+    """
+    path = cache_dir / SNAPSHOT_MEMO_FILENAME
+    payload = {"as_rel": rel_name, "as_org": org_name, "checked_at": float(now)}
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        aprint(f"  ⚠ Could not write {SNAPSHOT_MEMO_FILENAME} ({exc})")
+        aprint("    Discovery will run again next time; nothing else is affected.")
+
+
+def _memo_shortcut_applies(memo: dict, cache_dir: Path, *, now: float) -> bool:
+    """True when the memo may stand in for a fresh discovery round.
+
+    Requires a memo that is neither stale nor stamped in the FUTURE (a skewed
+    clock on a fresh VM, or a restored cache, would otherwise pin one snapshot
+    pair for years), and — since skipping discovery is only a win if there is
+    nothing left to fetch — both of its snapshot files already on disk. An
+    interrupted first run leaves exactly that state: the memo is written before
+    the downloads, so a missing file must fall through to discovery rather than
+    hand a raw connection error back from :func:`download_file`.
+    """
+    age = now - memo["checked_at"]
+    if not 0 <= age < SNAPSHOT_DISCOVERY_TTL_SECONDS:
+        return False
+    return _snapshot_present(cache_dir / memo["as_rel"]) and _snapshot_present(
+        cache_dir / memo["as_org"]
+    )
+
+
+def ensure_data(
+    cache_dir: Path, *, refresh: bool = False, now: float | None = None
+) -> tuple[Path, Path]:
+    """Fetch latest AS-rel + AS-org2info files. Returns local paths.
+
+    Discovery (two directory-listing GETs) is memoized in
+    ``snapshots.json`` for :data:`SNAPSHOT_DISCOVERY_TTL_SECONDS`, so a warm run
+    makes no network request at all — :func:`download_file` is already a no-op
+    for a file that is present. ``refresh=True`` forces a re-check; see
+    :func:`_memo_shortcut_applies` for the rest of the conditions. When discovery
+    fails (offline, HTTP error, or an index with no matching file) an existing
+    memo — even a stale one — is used instead, WITHOUT restamping it, so the next
+    run re-checks. If the memo is absent, or names a file we do not actually
+    have, the newest complete pair on disk is used (see
+    :func:`_newest_complete_local_pair`): what decides an offline run is whether
+    the DATA is cached, not whether a memo happens to exist. The error propagates
+    only when there is no complete pair at all — a genuine first run.
+
+    ``now`` (seconds, defaults to :func:`time.time`) is injectable for tests.
+    """
+    if now is None:
+        now = time.time()
+    memo = _load_snapshot_memo(cache_dir)
+
+    if (
+        memo is not None
+        and not refresh
+        and _memo_shortcut_applies(memo, cache_dir, now=now)
+    ):
+        rel_name = memo["as_rel"]
+        org_name = memo["as_org"]
+        age_days = (now - memo["checked_at"]) / 86400.0
+        with asection("Discovering latest CAIDA snapshots"):
+            aprint(
+                f"  Skipped (memoized {age_days:.1f} days ago; re-checked every "
+                f"{SNAPSHOT_DISCOVERY_TTL_SECONDS / 86400:.0f} days, "
+                f"or with --refresh-snapshots)"
+            )
+            aprint(f"  AS relationships: {rel_name}")
+            aprint(f"  AS organizations: {org_name}")
+    else:
+        with asection("Discovering latest CAIDA snapshots"):
+            try:
+                rel_name = _find_latest_file(AS_REL_INDEX_URL, AS_REL_FILE_PATTERN)
+                org_name = _find_latest_file(AS_ORG_INDEX_URL, AS_ORG_FILE_PATTERN)
+            except (requests.RequestException, RuntimeError) as exc:
+                aprint(f"  ⚠ Snapshot discovery failed: {exc}")
+                memo_pair: tuple[str, str] | None = None
+                if memo is not None:
+                    candidate = (memo["as_rel"], memo["as_org"])
+                    if _snapshot_present(
+                        cache_dir / candidate[0]
+                    ) and _snapshot_present(cache_dir / candidate[1]):
+                        memo_pair = candidate
+
+                if memo_pair is not None:
+                    rel_name, org_name = memo_pair
+                    aprint(
+                        f"    Falling back to the memoized pair: "
+                        f"{rel_name} / {org_name}"
+                    )
+                else:
+                    # No memo, or one naming files we do not actually have (an
+                    # interrupted first run leaves that). What decides the run is
+                    # whether a COMPLETE pair is on disk, not whether a memo
+                    # happens to exist — every user who ran this demo before the
+                    # memo existed has the former and not the latter.
+                    local_pair = _newest_complete_local_pair(cache_dir)
+                    if local_pair is None:
+                        aprint(
+                            "    No complete snapshot pair in the cache to fall "
+                            "back on — the first run of this demo needs network "
+                            "access to CAIDA."
+                        )
+                        raise
+                    rel_name, org_name = local_pair
+                    aprint(
+                        "    Falling back to the newest complete pair in the "
+                        f"cache: {rel_name} / {org_name}"
+                    )
+            else:
+                aprint(f"  AS relationships: {rel_name}")
+                aprint(f"  AS organizations: {org_name}")
+                _save_snapshot_memo(cache_dir, rel_name, org_name, now)
 
     rel_path = cache_dir / rel_name
     org_path = cache_dir / org_name
 
     with asection("Fetching CAIDA data"):
-        download_file(rel_url, rel_path, f"{rel_name} (~5-15 MB)")
-        download_file(org_url, org_path, f"{org_name} (~10-30 MB)")
+        download_file(AS_REL_INDEX_URL + rel_name, rel_path, f"{rel_name} (~2 MB)")
+        download_file(AS_ORG_INDEX_URL + org_name, org_path, f"{org_name} (~4 MB)")
 
     return rel_path, org_path
+
+
+def _prune_superseded_snapshots(
+    cache_dir: Path, *, keep: int, current: tuple[str, str]
+) -> None:
+    """Delete all but the newest ``keep`` snapshot releases (plus ``current``).
+
+    CAIDA publishes monthly, and nothing used to remove the superseded pairs, so
+    the cache grew by ~6 MB of compressed snapshots plus their derived bundles
+    every month, forever. Snapshot files are grouped by the 8-digit date in their
+    name; the dates of the pair in use are always kept (the as-org2info release
+    cadence is slower, so the current org file can be older than the newest one
+    on disk), and each removed date takes its derived ``pipeline_*`` bundles —
+    including a ``.pkl.corrupt`` / ``.pkl.tmp`` sibling ``cache_computed`` may
+    have left — with it. Nothing else is touched: not the memo, not an
+    unrecognised file, and deliberately not a ``layout3d_*`` cache. Those are
+    small (~1 MB each) and keyed on the node SET rather than the release, so
+    there is no date to prune them by, and an unchanged node set across releases
+    reuses the same one.
+
+    Deletions are best-effort: a file that vanishes underfoot is skipped rather
+    than allowed to abort a run that has already paid for its download. There is
+    a residual race left unaddressed (no locking): a run pinned to an older pair
+    by the offline fallback can have its raw snapshot pruned by a concurrent run
+    on the newest pair, in which case it simply re-downloads.
+    """
+    keep = max(1, keep)
+    if not cache_dir.is_dir():
+        return
+
+    by_date: dict[str, list[Path]] = {}
+    for path in sorted(cache_dir.iterdir()):
+        if not path.is_file():
+            continue
+        if AS_REL_NAME_PATTERN.fullmatch(path.name) or AS_ORG_NAME_PATTERN.fullmatch(
+            path.name
+        ):
+            by_date.setdefault(path.name[:8], []).append(path)
+    if not by_date:
+        return
+
+    keep_dates = set(sorted(by_date, reverse=True)[:keep]) | {n[:8] for n in current}
+    superseded = sorted(d for d in by_date if d not in keep_dates)
+
+    collected: list[Path] = []
+    for date in superseded:
+        collected += by_date[date]
+        # The derived bundle is keyed on both filenames, so a bundle naming a
+        # removed date is unusable whatever its other date is.
+        collected += sorted(
+            p for p in cache_dir.glob(f"pipeline_*{date}*.pkl*") if p.is_file()
+        )
+    # A bundle whose two dates are BOTH superseded is collected once per date;
+    # deleting it twice would report a spurious "Skipped … No such file".
+    victims = list(dict.fromkeys(collected))
+    if not victims:
+        return
+
+    with asection("Pruning superseded CAIDA snapshots"):
+        freed = 0
+        removed = 0
+        for victim in victims:
+            try:
+                size = victim.stat().st_size
+                victim.unlink()
+            except OSError as exc:
+                aprint(f"  Skipped {victim.name} ({exc})")
+                continue
+            freed += size
+            removed += 1
+            aprint(f"  Removed {victim.name} ({size / (1024 * 1024):.1f} MB)")
+        aprint(
+            f"  ✓ Reclaimed {freed / (1024 * 1024):.1f} MB from {removed} file(s) "
+            f"({len(superseded)} superseded release(s))"
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -210,10 +535,14 @@ def parse_as_org(path: Path) -> pd.DataFrame:
     """Return a DataFrame indexed by ASN with ``org_name`` and ``country``.
 
     The CAIDA as-org2info file has two sections separated by format-comment
-    headers:
-        # format: org_id|changed|name|country|source         (organizations)
-        # format: aut|changed|aut_name|org_id|opaque_id|source  (ASes → org_id)
-    We stream once, tracking which section we're in, and join.
+    headers, written with no space after the colon:
+        # format:org_id|changed|org_name|country|source        (organizations)
+        # format:aut|changed|aut_name|org_id|opaque_id|source  (ASes → org_id)
+    We stream once, tracking which section we're in, and join. The markers are
+    matched whitespace-tolerantly (:data:`ORG_SECTION_PATTERN` /
+    :data:`AUT_SECTION_PATTERN`): a marker that fails to match is silent — every
+    row is skipped and every AS comes out ``unknown``/``??`` — so it must not
+    hinge on one spelling of the separator.
     """
     org_info: dict[str, tuple[str, str]] = {}
     asn_to_org: dict[str, str] = {}
@@ -225,9 +554,9 @@ def parse_as_org(path: Path) -> pd.DataFrame:
             for raw in f:
                 line = raw.rstrip("\n")
                 if line.startswith("#"):
-                    if "format: org_id" in line:
+                    if ORG_SECTION_PATTERN.search(line):
                         mode = "org"
-                    elif "format: aut" in line:
+                    elif AUT_SECTION_PATTERN.search(line):
                         mode = "aut"
                     continue
                 if not line.strip():
@@ -368,6 +697,121 @@ def filter_to_lcc(
 
 
 # -----------------------------------------------------------------------------
+# Derived pipeline bundle (parse → LCC/tier-1 → Louvain → degrees), cached
+# -----------------------------------------------------------------------------
+
+
+def _build_pipeline_bundle(rel_path: Path, org_path: Path) -> dict[str, np.ndarray]:
+    """Run the whole deterministic derived chain into a bundle of arrays.
+
+    Everything here is a pure function of the two snapshot files, and together it
+    costs ~12 s on the real data (~3 s parse + LCC, ~9 s Louvain). Arrays rather
+    than pickled DataFrames: the frames are rebuilt in :func:`load_pipeline`, so
+    the cache holds only the columns the demo actually consumes and does not
+    depend on the pandas version that wrote it. The string columns are
+    ``dtype=object``, NOT a fixed-width unicode dtype: real org names run to
+    ~200 characters, and ``<U200`` pads EVERY one of ~80k rows out to that width
+    at 4 bytes a character — ~65 MB for a column that is a few MB as objects, in
+    the very cache directory this bundle exists to keep small.
+    """
+    org_df = parse_as_org(org_path)
+    edges_raw = parse_as_rel(rel_path)
+    nodes, node_df, edges, tier1 = filter_to_lcc(edges_raw, org_df)
+    communities = compute_communities(
+        nodes,
+        edges,
+        columns=("asn_a", "asn_b"),
+        unit_label="ASes",
+        summary_suffix="",
+    )
+    degrees = _node_degrees(nodes, edges)
+
+    idx = {a: i for i, a in enumerate(nodes)}
+    n_edges = len(edges)
+    return {
+        # ``str(...)`` is defensive: whatever pandas hands back for these columns
+        # (plain ``str``, or a numpy scalar subclass), the bundle stores plain
+        # ``str``, which is what the demo's dict lookups and labels expect.
+        "nodes": np.array([str(a) for a in nodes], dtype=object),
+        "org_name": np.array(
+            [str(x) for x in node_df["org_name"].tolist()], dtype=object
+        ),
+        "country": np.array(
+            [str(x) for x in node_df["country"].tolist()], dtype=object
+        ),
+        "tier1": tier1.astype(bool),
+        "edge_a": np.fromiter(
+            (idx[a] for a in edges["asn_a"]), dtype=np.int32, count=n_edges
+        ),
+        "edge_b": np.fromiter(
+            (idx[b] for b in edges["asn_b"]), dtype=np.int32, count=n_edges
+        ),
+        "rel": edges["rel"].to_numpy(dtype=np.int8),
+        "communities": communities.astype(np.int32),
+        "degrees": degrees.astype(np.int32),
+    }
+
+
+def load_pipeline(
+    rel_path: Path,
+    org_path: Path,
+    cache_dir: Path,
+    *,
+    recompute: bool = False,
+) -> tuple[list[str], pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
+    """Cached ``(nodes, node_df, edges, tier1, communities, degrees)``.
+
+    Keyed on the two snapshot FILENAMES, which is what makes invalidation
+    correct: a new monthly release gets a new key (one recompute) while the
+    previous release's bundle stays valid under its own key instead of being
+    clobbered. ``version`` covers changes to the bundle layout itself.
+    """
+    with asection("AS graph (parse → LCC → communities)"):
+        bundle = cache_computed(
+            "caida",
+            key=f"pipeline_{rel_path.name}_{org_path.name}",
+            compute_fn=lambda: _build_pipeline_bundle(rel_path, org_path),
+            cache_dir=cache_dir,
+            recompute=recompute,
+            version=PIPELINE_CACHE_VERSION,
+        )
+
+        # ``tolist()`` on the object arrays yields the plain Python ``str`` the
+        # downstream ``idx[a]`` lookups, ``value_counts``, ``isin`` and hover
+        # label formatting were written against.
+        node_arr = bundle["nodes"]
+        nodes: list[str] = node_arr.tolist()
+        tier1 = bundle["tier1"].astype(bool)
+        node_df = pd.DataFrame(
+            {
+                "asn": nodes,
+                "org_name": bundle["org_name"].tolist(),
+                "country": bundle["country"].tolist(),
+                "tier1": tier1,
+            }
+        )
+        edges = pd.DataFrame(
+            {
+                "asn_a": node_arr[bundle["edge_a"]].tolist(),
+                "asn_b": node_arr[bundle["edge_b"]].tolist(),
+                # int (not int8): the callers compare against -1 / 0 and build
+                # masks from ``edges["rel"].to_numpy()``.
+                "rel": bundle["rel"].astype(np.int64),
+            }
+        )
+        communities = bundle["communities"].astype(np.int32)
+        degrees = bundle["degrees"].astype(np.int32)
+        # A fully-warm run does none of the work above, so print the shape of
+        # what was loaded — otherwise the run says nothing about its own data.
+        aprint(
+            f"  {len(nodes):,} ASes · {len(edges):,} relationships · "
+            f"{int(communities.max()) + 1 if len(communities) else 0} communities · "
+            f"{int(tier1.sum())} tier-1"
+        )
+    return nodes, node_df, edges, tier1, communities, degrees
+
+
+# -----------------------------------------------------------------------------
 # Layout: spectral + UMAP (tuned) + PCA realign
 # -----------------------------------------------------------------------------
 
@@ -387,21 +831,34 @@ def _pca_realign(coords: np.ndarray) -> np.ndarray:
 
 
 def compute_layout(
-    nodes: list[str], edges: pd.DataFrame, cache_path: Path, recompute: bool
+    nodes: list[str], edges: pd.DataFrame, cache_dir: Path, recompute: bool
 ) -> np.ndarray:
-    """Spectral embedding + UMAP + PCA-realign → 3D coords, cached to npz."""
-    node_hash = nodes_hash(nodes)
+    """Spectral embedding + UMAP + PCA-realign → 3D coords, cached.
 
-    if cache_path.exists() and not recompute:
-        with asection("Loading cached 3D layout"):
-            data = np.load(cache_path, allow_pickle=False)
-            cached_hash = str(data["node_hash"])
-            if cached_hash == node_hash:
-                coords = data["coords"].astype(np.float32)
-                aprint(f"  Loaded {len(coords):,} coords from cache")
-                return coords
-            aprint("  Node set changed — recomputing layout")
+    The cache key IS the input identity — a hash of the node list plus the EDGE
+    COUNT — so a changed graph lands in its own file instead of invalidating, and
+    no separate hash guard is needed inside the loader. The edge count matters
+    because the layout is computed from the adjacency, not from the nodes alone: a
+    release whose LCC happens to have the same node set but different
+    relationships must not silently reuse last month's geometry. It is a count
+    rather than a full edge hash deliberately — hashing ~350k pairs on every warm
+    run to catch a rewiring that preserves the edge count exactly is not worth it.
+    """
+    with asection("3D layout"):
+        coords = cache_computed(
+            "caida",
+            key=f"layout3d_{nodes_hash(nodes)}_e{len(edges)}",
+            compute_fn=lambda: _compute_layout_coords(nodes, edges),
+            cache_dir=cache_dir,
+            recompute=recompute,
+            version=LAYOUT_CACHE_VERSION,
+        )
+        aprint(f"  {len(coords):,} coords")
+    return coords
 
+
+def _compute_layout_coords(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
+    """The expensive layout itself (spectral eigenvectors + UMAP + PCA realign)."""
     from scipy.sparse import eye as speye
     from scipy.sparse.csgraph import laplacian
     from scipy.sparse.linalg import eigsh
@@ -451,10 +908,6 @@ def compute_layout(
             f"  Coords: x range {np.ptp(coords[:, 0]):.1f}, "
             f"y {np.ptp(coords[:, 1]):.1f}, z {np.ptp(coords[:, 2]):.1f}"
         )
-
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(cache_path, coords=coords, node_hash=np.array(node_hash))
-        aprint(f"  Cached to {cache_path.name}")
     return coords
 
 
@@ -913,8 +1366,11 @@ def main() -> None:
     """Fetch CAIDA data, compute the layout, and build/serve the scene."""
     argv = sys.argv[1:]
     max_edges = parse_int_arg("max-edges", DEFAULT_MAX_EDGES, argv)
+    keep_snapshots = parse_int_arg("keep-snapshots", DEFAULT_KEEP_SNAPSHOTS, argv)
     cache_dir = parse_path_arg("cache-dir", argv) or CACHE_DIR
     recompute = "--recompute-layout" in argv
+    recompute_pipeline = "--recompute-pipeline" in argv
+    refresh_snapshots = "--refresh-snapshots" in argv
 
     aprint("=" * 70)
     aprint("CAIDA AS Topology — The Internet as a Graph")
@@ -923,24 +1379,19 @@ def main() -> None:
     aprint(f"Edge cap: {max_edges:,}")
     aprint("")
 
-    rel_path, org_path = ensure_data(cache_dir)
-    org_df = parse_as_org(org_path)
-    edges_raw = parse_as_rel(rel_path)
-    nodes, node_df, edges, tier1 = filter_to_lcc(edges_raw, org_df)
+    rel_path, org_path = ensure_data(cache_dir, refresh=refresh_snapshots)
+    _prune_superseded_snapshots(
+        cache_dir, keep=keep_snapshots, current=(rel_path.name, org_path.name)
+    )
+    nodes, node_df, edges, tier1, communities, degrees = load_pipeline(
+        rel_path, org_path, cache_dir, recompute=recompute_pipeline
+    )
     coords = compute_layout(
         nodes,
         edges,
-        cache_path=cache_dir / LAYOUT_CACHE_FILENAME,
+        cache_dir=cache_dir,
         recompute=recompute,
     )
-    communities = compute_communities(
-        nodes,
-        edges,
-        columns=("asn_a", "asn_b"),
-        unit_label="ASes",
-        summary_suffix="",
-    )
-    degrees = _node_degrees(nodes, edges)
 
     if "--no-serve" in argv:
         output_path = get_demos_output_dir() / "caida_as_topology.luxar.zarr"
