@@ -19,9 +19,11 @@ rust/
     ├── lib.rs                — crate root: module declarations + WASM re-exports
     ├── common.rs             — shared constants, validate_ndim, packed_index
     ├── lines_clipping.rs     — Liang-Barsky nD clipping + attribute interpolation
+    ├── mesh_culling.rs       — whole-triangle nD slab culling for indexed surfaces
     ├── gsplats_processing.rs — Mahalanobis / marginal Cholesky / attenuation
     ├── effective_radii.rs    — radius shrinkage when slicing through hidden dims
-    ├── projection.rs         — 3D extraction, bounds, compact-by-mask
+    ├── projection.rs         — 3D extraction through display_dims
+    ├── depth_sort.rs         — back-to-front splat ordering (depth-sorting Phase 2)
     └── decode.rs             — quantized / log / LUT / broadcast decoders
 ```
 

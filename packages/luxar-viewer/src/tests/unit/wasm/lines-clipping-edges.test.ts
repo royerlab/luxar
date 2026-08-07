@@ -13,8 +13,6 @@
  *                       NaN positions (NaN propagates through Math.sqrt).
  *   - [wasm.md G13][P5] compute_cap_suppression: all-hidden, and t1=t2=0.5
  *                       (both clipped) plus t1=0/t2=1 (neither clipped).
- *   - [wasm.md G14][P5] distance_3d: NaN inputs, a===b (zero distance, no
- *                       sqrt underflow).
  *
  * Pure math on typed arrays — no mocks. Mirrors the audit's three-geometry
  * principle: every helper has a known empty-input and NaN-propagation contract.
@@ -28,7 +26,6 @@ import {
   interpolate_colors_batch,
   calculate_segment_lengths,
   compute_cap_suppression,
-  distance_3d,
 } from '../../../wasm/typescript/lines-clipping';
 
 describe('clip_segments_batch — out-of-range / self-segment / NaN [wasm.md G9]', () => {
@@ -472,38 +469,5 @@ describe('compute_cap_suppression — empty / boundary [wasm.md G13]', () => {
     expect(outStart[2]).toBe(99); // untouched
     expect(outEnd[0]).toBe(0); // seg 1: t2=1, no neighbour → free end
     expect(outEnd[1]).toBe(1); // seg 3: t2=0.9 < 1 → clipped
-  });
-});
-
-describe('distance_3d — NaN / zero-length / non-integer [wasm.md G14]', () => {
-  it('[G14] a === b (identical vectors): distance is exactly 0 (no sqrt underflow)', () => {
-    const a = new Float32Array([1.5, -2.5, 3.5]);
-    const b = new Float32Array([1.5, -2.5, 3.5]);
-    expect(distance_3d(a, b)).toBe(0);
-  });
-
-  it('[G14] NaN in a → distance is NaN (propagation contract)', () => {
-    const a = new Float32Array([Number.NaN, 0, 0]);
-    const b = new Float32Array([1, 1, 1]);
-    expect(Number.isNaN(distance_3d(a, b))).toBe(true);
-  });
-
-  it('[G14] NaN in b → distance is NaN (symmetric to NaN-in-a)', () => {
-    const a = new Float32Array([1, 1, 1]);
-    const b = new Float32Array([Number.NaN, 0, 0]);
-    expect(Number.isNaN(distance_3d(a, b))).toBe(true);
-  });
-
-  it('[G14] Infinity in b → distance is Infinity', () => {
-    const a = new Float32Array([0, 0, 0]);
-    const b = new Float32Array([Number.POSITIVE_INFINITY, 0, 0]);
-    expect(distance_3d(a, b)).toBe(Number.POSITIVE_INFINITY);
-  });
-
-  it('[G14] non-integer distance: matches Float64 reference within Float32 epsilon', () => {
-    // sqrt(1^2 + 1^2 + 1^2) = sqrt(3) ≈ 1.732050807...
-    const a = new Float32Array([0, 0, 0]);
-    const b = new Float32Array([1, 1, 1]);
-    expect(distance_3d(a, b)).toBeCloseTo(Math.sqrt(3), 6);
   });
 });

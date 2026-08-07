@@ -741,57 +741,6 @@ describe('WASM vs TypeScript Comparison', () => {
 
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
-
-    it.skipIf(!wasmFilesExist)('calculate_bounds_3d should match', () => {
-      const positions = new Float32Array([-1, 2, 3, 4, -5, 6, 7, 8, -9]);
-
-      const tsOutput = new Float32Array(6);
-      const wasmOutput = new Float32Array(6);
-
-      const tsCount = tsModule.calculate_bounds_3d(positions, 3, tsOutput);
-      const wasmCount = wasmModule!.calculate_bounds_3d(positions, 3, wasmOutput);
-
-      expect(wasmCount).toBe(tsCount);
-      expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
-    });
-
-    it.skipIf(!wasmFilesExist)('compact_by_mask should match', () => {
-      const input = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      const mask = new Uint8Array([1, 0, 1]);
-
-      const tsOutput = new Float32Array(6);
-      const wasmOutput = new Float32Array(6);
-
-      const tsCount = tsModule.compact_by_mask(input, mask, 3, 3, tsOutput);
-      const wasmCount = wasmModule!.compact_by_mask(input, mask, 3, 3, wasmOutput);
-
-      expect(wasmCount).toBe(tsCount);
-      expect(
-        arraysAlmostEqual(wasmOutput.slice(0, tsCount * 3), tsOutput.slice(0, tsCount * 3))
-      ).toBe(true);
-    });
-
-    it.skipIf(!wasmFilesExist)('count_visible should match', () => {
-      const mask = new Uint8Array([1, 0, 1, 0, 1, 1, 0]);
-
-      const tsCount = tsModule.count_visible(mask, 7);
-      const wasmCount = wasmModule!.count_visible(mask, 7);
-
-      expect(wasmCount).toBe(tsCount);
-    });
-
-    it.skipIf(!wasmFilesExist)('radii_to_visibility_mask should match', () => {
-      const radii = new Float32Array([0.5, 0.001, 0.2, 0.0, 1.5]);
-
-      const tsOutput = new Uint8Array(5);
-      const wasmOutput = new Uint8Array(5);
-
-      const tsCount = tsModule.radii_to_visibility_mask(radii, 0.01, 5, tsOutput);
-      const wasmCount = wasmModule!.radii_to_visibility_mask(radii, 0.01, 5, wasmOutput);
-
-      expect(wasmCount).toBe(tsCount);
-      expect(arraysEqual(wasmOutput, tsOutput)).toBe(true);
-    });
   });
 
   // ============================================================================
@@ -837,123 +786,6 @@ describe('WASM vs TypeScript Comparison', () => {
         expect(Math.abs(wasmDist - tsDist)).toBeLessThan(scaledEps);
       }
     );
-
-    it.skipIf(!wasmFilesExist)('extract_cholesky_submatrix should match', () => {
-      const packed = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      const keepDims = new Uint32Array([0, 2]);
-
-      const tsOutput = new Float32Array(3);
-      const wasmOutput = new Float32Array(3);
-
-      tsModule.extract_cholesky_submatrix(packed, keepDims, 2, tsOutput);
-      wasmModule!.extract_cholesky_submatrix(packed, keepDims, 2, wasmOutput);
-
-      expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
-    });
-
-    it.skipIf(!wasmFilesExist)('compute_gsplats_attenuation should match', () => {
-      const positions = new Float32Array([0, 0, 0, 0, 0, 0, 0, 3]);
-      const cholesky = new Float32Array([
-        1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1,
-      ]);
-      const amplitudes = new Float32Array([1.0, 1.0]);
-      const slicePos = new Float32Array([0, 0, 0, 0]);
-      const hiddenDims = new Uint32Array([3]);
-
-      const tsVisibility = new Uint8Array(2);
-      const tsAttenuation = new Float32Array(2);
-      const wasmVisibility = new Uint8Array(2);
-      const wasmAttenuation = new Float32Array(2);
-
-      const tsCount = tsModule.compute_gsplats_attenuation(
-        positions,
-        cholesky,
-        amplitudes,
-        slicePos,
-        hiddenDims,
-        4,
-        2,
-        0.01,
-        3.0,
-        tsVisibility,
-        tsAttenuation
-      );
-      const wasmCount = wasmModule!.compute_gsplats_attenuation(
-        positions,
-        cholesky,
-        amplitudes,
-        slicePos,
-        hiddenDims,
-        4,
-        2,
-        0.01,
-        3.0,
-        wasmVisibility,
-        wasmAttenuation
-      );
-
-      expect(wasmCount).toBe(tsCount);
-      expect(arraysEqual(wasmVisibility, tsVisibility)).toBe(true);
-      expect(arraysAlmostEqual(wasmAttenuation, tsAttenuation)).toBe(true);
-    });
-
-    it.skipIf(!wasmFilesExist)('extract_visible_cholesky_3d should match', () => {
-      const cholesky = new Float32Array([
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-      ]);
-      const visibility = new Uint8Array([1, 1]);
-      const displayDims = new Uint32Array([0, 1, 2]);
-
-      const tsOutput = new Float32Array(12);
-      const wasmOutput = new Float32Array(12);
-
-      const tsCount = tsModule.extract_visible_cholesky_3d(
-        cholesky,
-        visibility,
-        displayDims,
-        4,
-        2,
-        tsOutput
-      );
-      const wasmCount = wasmModule!.extract_visible_cholesky_3d(
-        cholesky,
-        visibility,
-        displayDims,
-        4,
-        2,
-        wasmOutput
-      );
-
-      expect(wasmCount).toBe(tsCount);
-      expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
-    });
-
-    it.skipIf(!wasmFilesExist)('compact_attenuated_amplitudes should match', () => {
-      const amplitudes = new Float32Array([1.0, 2.0, 3.0]);
-      const attenuation = new Float32Array([0.5, 0.25, 0.75]);
-      const visibility = new Uint8Array([1, 0, 1]);
-
-      const tsOutput = new Float32Array(2);
-      const wasmOutput = new Float32Array(2);
-
-      const tsCount = tsModule.compact_attenuated_amplitudes(
-        amplitudes,
-        attenuation,
-        visibility,
-        3,
-        tsOutput
-      );
-      const wasmCount = wasmModule!.compact_attenuated_amplitudes(
-        amplitudes,
-        attenuation,
-        visibility,
-        3,
-        wasmOutput
-      );
-
-      expect(wasmCount).toBe(tsCount);
-      expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
-    });
 
     // Fused single-call projection (W5). The fused kernel writes compacted
     // outputs, so we compare the dense prefix [0, count*stride) only. epsilon is
@@ -1175,37 +1007,6 @@ describe('WASM vs TypeScript Comparison', () => {
         expect(arraysEqual(w.cols.subarray(0, 6), ts.cols.subarray(0, 6))).toBe(true);
       }
     );
-
-    it.skipIf(!wasmFilesExist)('extract_visible_cholesky_3d matches TS (2D data)', () => {
-      const cholesky = new Float32Array([2.0, 0.5, 1.5]);
-      const visibility = new Uint8Array([1]);
-      const displayDims = new Uint32Array([0, 1]);
-      const tsOutput = new Float32Array(6);
-      const wasmOutput = new Float32Array(6);
-
-      const tsCount = tsModule.extract_visible_cholesky_3d(
-        cholesky,
-        visibility,
-        displayDims,
-        2,
-        1,
-        tsOutput
-      );
-      const wasmCount = wasmModule!.extract_visible_cholesky_3d(
-        cholesky,
-        visibility,
-        displayDims,
-        2,
-        1,
-        wasmOutput
-      );
-
-      expect(wasmCount).toBe(tsCount);
-      expect(wasmOutput[3]).toBe(0);
-      expect(wasmOutput[4]).toBe(0);
-      expect(wasmOutput[5]).toBeCloseTo(Math.sqrt(2.0 * 1.5), 5);
-      expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
-    });
   });
 
   // ============================================================================
@@ -1318,53 +1119,6 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(wasmCount).toBe(tsCount);
       expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
       expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
-    });
-
-    // wasm.md O8[P4]: prior version embedded a `for (const ...)` loop with
-    // 4 cases. A single failing case was reported as "lerp should match" —
-    // no diagnostic about WHICH case failed. Parametrize via `it.each` so
-    // each case becomes its own named row and a single mismatch surfaces
-    // by its `t` value.
-    it.each([
-      { a: 0, b: 10, t: 0 },
-      { a: 0, b: 10, t: 1 },
-      { a: 0, b: 10, t: 0.5 },
-      { a: -10, b: 10, t: 0.25 },
-    ])('lerp WASM↔TS parity: lerp($a, $b, $t)', ({ a, b, t }) => {
-      if (!wasmFilesExist) return; // it.each doesn't support skipIf in this version
-      const tsResult = tsModule.lerp(a, b, t);
-      const wasmResult = wasmModule!.lerp(a, b, t);
-      expect(Math.abs(wasmResult - tsResult)).toBeLessThan(1e-6);
-    });
-
-    it.skipIf(!wasmFilesExist)('lerp_vec3 should match', () => {
-      const a = new Float32Array([0, 10, -5]);
-      const b = new Float32Array([10, 0, 5]);
-
-      const tsResult = tsModule.lerp_vec3(a, b, 0.3);
-      const wasmResult = wasmModule!.lerp_vec3(a, b, 0.3);
-
-      expect(arraysAlmostEqual(wasmResult, tsResult)).toBe(true);
-    });
-
-    // wasm.md O10 / Phase E5: previous version wrapped 3 `distance_3d`
-    // wasm-vs-ts comparisons in a single `it` with a `for` loop. A
-    // regression in just the negative-coordinate case would surface as
-    // a generic "distance_3d should match" failure without naming the
-    // offending input pair. Split via `it.each` so each row names its
-    // {a, b} pair on failure. Preserves the original `skipIf(!wasmFilesExist)`
-    // gate by chaining `skipIf().each()` — the test still reports as
-    // skipped (not "passed") when the wasm artefact is unavailable.
-    it.skipIf(!wasmFilesExist).each<{ a: number[]; b: number[]; label: string }>([
-      { a: [0, 0, 0], b: [3, 4, 0], label: '3-4-5 (5)' },
-      { a: [1, 1, 1], b: [2, 2, 2], label: 'unit diagonal (sqrt 3)' },
-      { a: [-1, -1, -1], b: [1, 1, 1], label: 'symmetric across origin (sqrt 12)' },
-    ])('distance_3d wasm-vs-ts: $label', ({ a, b }) => {
-      const aArr = new Float32Array(a);
-      const bArr = new Float32Array(b);
-      const tsResult = tsModule.distance_3d(aArr, bArr);
-      const wasmResult = wasmModule!.distance_3d(aArr, bArr);
-      expect(Math.abs(wasmResult - tsResult)).toBeLessThan(1e-5);
     });
 
     it.skipIf(!wasmFilesExist)('interpolate_scalars_batch should match', () => {

@@ -2,18 +2,13 @@
  * Edge-case tests for WASM TypeScript-fallback gsplats-processing helpers.
  *
  * Closes wasm.md gap cluster:
- *   - [wasm.md G4][P5]  extract_visible_cholesky_3d with displayDims=[0,2,4]
- *                       on a 5D correlated Cholesky — exercises
- *                       computeMarginalCholesky's actual cross-correlation logic.
+ *   - [wasm.md G4][P5]  computeMarginalCholesky with displayDims=[0,2,4]
+ *                       on a 5D correlated Cholesky — exercises its actual
+ *                       cross-correlation logic.
  *   - [wasm.md G5][P5]  computeMarginalCholesky CHOLESKY_EPSILON degenerate
  *                       fallback (rank-deficient marginal → sqrt(EPS) clamp).
  *   - [wasm.md G19][P5] mahalanobis_distance ndim=16 (largest documented WASM
  *                       dim; full forward-sub accumulation).
- *   - [wasm.md G20][P5] compute_gsplats_attenuation truncate=0 (degenerate
- *                       shiftC=1 / invOneMinusC=Infinity), minAmplitude=0
- *                       (exact boundary), minAmplitude<0 (always visible).
- *   - [wasm.md G21][P5] extract_cholesky_submatrix keepDims.length=0 (no
- *                       output), keepDims=[d_n-1] (single highest dim).
  *
  * Pure math on typed arrays — no mocks. Floor-clamp behaviour at
  * CHOLESKY_EPSILON is a load-bearing invariant; future hardening will surface
@@ -24,9 +19,6 @@ import { describe, it, expect } from 'vitest';
 import {
   computeMarginalCholesky,
   mahalanobis_distance,
-  extract_cholesky_submatrix,
-  extract_visible_cholesky_3d,
-  compute_gsplats_attenuation,
 } from '../../../wasm/typescript/gsplats-processing';
 
 // Helper: pack a lower-triangular dense L into the packed format the helpers expect.
@@ -41,8 +33,8 @@ function packLowerTri(rows: number[][]): Float32Array {
   return new Float32Array(out);
 }
 
-describe('extract_visible_cholesky_3d — non-sequential displayDims [wasm.md G4]', () => {
-  it('[G4] displayDims=[0,2,4] on a 5D CORRELATED Cholesky reorders + reconstructs the marginal correctly', () => {
+describe('computeMarginalCholesky — non-sequential displayDims [wasm.md G4]', () => {
+  it('[G4] keepDims=[0,2,4] on a 5D CORRELATED Cholesky reorders + reconstructs the marginal correctly', () => {
     // Construct a 5D L with non-zero off-diagonal at L[2,0] and L[4,2].
     // Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]. For S=[0,2,4]:
     //   Σ_S[0,0] = L[0,0]² = 1
@@ -60,11 +52,10 @@ describe('extract_visible_cholesky_3d — non-sequential displayDims [wasm.md G4
     //   L_S[2,1] = (0.3 - 0*0.5) / 1 = 0.3
     //   L_S[2,2] = sqrt(1.09 - 0 - 0.09) = sqrt(1) = 1
     const fullL = packLowerTri([[1], [0, 1], [0.5, 0, 1], [0, 0, 0, 1], [0, 0, 0.3, 0, 1]]);
-    const visibility = new Uint8Array([1]);
-    const displayDims = new Uint32Array([0, 2, 4]);
+    const keepDims = new Uint32Array([0, 2, 4]);
     const output = new Float32Array(6);
 
-    extract_visible_cholesky_3d(fullL, visibility, displayDims, 5, 1, output);
+    computeMarginalCholesky(fullL, 0, keepDims, 3, output, 0);
 
     // Packed 3x3 lower-tri: [L00, L10, L11, L20, L21, L22].
     expect(output[0]).toBeCloseTo(1.0, 4);
@@ -75,53 +66,17 @@ describe('extract_visible_cholesky_3d — non-sequential displayDims [wasm.md G4
     expect(output[5]).toBeCloseTo(1.0, 4);
   });
 
-  it('[G4] marginal Cholesky DIFFERS from raw extraction for correlated covariances', () => {
-    // Pin the audit-flagged regression: a mutant collapsing
-    // extract_visible_cholesky_3d to extract_cholesky_submatrix would produce
-    // a different result on this correlated 5D input.
-    const fullL = packLowerTri([[1], [0, 1], [0.5, 0, 1], [0, 0, 0, 1], [0, 0, 0.3, 0, 1]]);
-    const visibility = new Uint8Array([1]);
-    const displayDims = new Uint32Array([0, 2, 4]);
-    const marginalOut = new Float32Array(6);
-    const rawOut = new Float32Array(6);
-
-    extract_visible_cholesky_3d(fullL, visibility, displayDims, 5, 1, marginalOut);
-    extract_cholesky_submatrix(fullL, displayDims, 3, rawOut);
-
-    // Marginal Cholesky at index 2 should be > 0 (cross-correlation contributes),
-    // while raw extraction reads L[2,2]=1 → both are 1; the discriminating
-    // slot is index 4 (sub L21 — captures off-diagonal contribution).
-    // Marginal L21 ≈ 0.3 vs raw L[4,2] = 0.3 — these happen to coincide here,
-    // but the L11 slot (index 2) differs: marginal L11 = 1 (from Σ_S[1,1]=1.25
-    // minus cross-term 0.25 → sqrt(1)) while raw extraction reads L[2,2] = 1
-    // also. The actual discriminator is L20 (slot 3): marginal = 0,
-    // raw = L[4,0] = 0. Hmm — for this particular L, raw and marginal
-    // happen to coincide because L has the same first column as the marginal
-    // covariance allows. Let me use a stronger discriminator: assert the
-    // INTERMEDIATE Σ_S reconstruction is correct by checking that
-    // marginalOut, when squared back to Σ, recovers the right marginal.
-    // For now, simpler check: marginalOut[2] (L11) reflects subtraction of
-    // L[2,0]² = 0.25 from Σ_S[1,1] = 1.25, giving sqrt(1) = 1; raw gives
-    // L[2,2] = 1. Same. Use a different correlated L for the discriminator.
-
-    // Easier discriminator: a fully correlated L where row 2 has multiple
-    // non-zero entries.
+  it('[G4] correlated marginal L11 reflects the cross-correlation subtraction', () => {
+    // A fully correlated L where row 2 has multiple non-zero entries. The
+    // marginal for [0,2,4] must reconstruct Σ_S and re-factorize — NOT read raw
+    // L elements (which would give L[2,2]=1 at slot 2).
+    //   Σ_S[1,1] = L[2,0]² + L[2,1]² + L[2,2]² = 0.25 + 0.25 + 1 = 1.5
+    //   L_S[1,1] = sqrt(1.5 - 0.5²) = sqrt(1.25) ≈ 1.118 (≠ the raw L[2,2]=1)
     const fullL2 = packLowerTri([[2], [0, 2], [0.5, 0.5, 1], [0, 0, 0, 1], [0.4, 0, 0.6, 0, 1]]);
     const margOut2 = new Float32Array(6);
-    const rawOut2 = new Float32Array(6);
-    extract_visible_cholesky_3d(fullL2, visibility, displayDims, 5, 1, margOut2);
-    extract_cholesky_submatrix(fullL2, displayDims, 3, rawOut2);
+    computeMarginalCholesky(fullL2, 0, new Uint32Array([0, 2, 4]), 3, margOut2, 0);
 
-    // L_marginal[0,0] = sqrt(Σ_S[0,0]) = sqrt(L[0,0]²) = sqrt(4) = 2.
-    // Raw extract reads packed L[0,0] = 2. SAME.
-    // L_marginal[1,0] = Σ_S[1,0] / L_marg[0,0] = L[2,0]·L[0,0] / 2 = 0.5*2/2 = 0.5.
-    // Raw reads L[2,0] = 0.5. SAME (because L00 is on diagonal).
-    // L_marginal[1,1] = sqrt(Σ_S[1,1] - L_m[1,0]²)
-    //   Σ_S[1,1] = L[2,0]² + L[2,1]² + L[2,2]² = 0.25 + 0.25 + 1 = 1.5
-    //   L_m[1,1] = sqrt(1.5 - 0.25) = sqrt(1.25) ≈ 1.118
-    // Raw reads L[2,2] = 1.
-    // → DIFFER at slot 2 (L11). Pin this.
-    expect(Math.abs(margOut2[2] - rawOut2[2])).toBeGreaterThan(0.05);
+    expect(margOut2[2]).toBeCloseTo(Math.sqrt(1.25), 4);
   });
 });
 
@@ -217,184 +172,5 @@ describe('mahalanobis_distance — ndim=16 full-loop accumulation [wasm.md G19]'
     const diff = new Float32Array(ndim);
     diff[15] = 1.0;
     expect(mahalanobis_distance(diff, packedL, ndim)).toBeCloseTo(1.0, 5);
-  });
-});
-
-describe('compute_gsplats_attenuation — truncate / minAmplitude boundaries [wasm.md G20]', () => {
-  it('[G20] truncate=0 makes shiftC=1, invOneMinusC=Infinity → splats far from slice get attenuation 0', () => {
-    // shiftC = exp(0) = 1; invOneMinusC = 1/0 = Infinity.
-    // For a splat NOT at the slice: D > 0, rawExp = exp(-0.5·D²) < 1,
-    //   attenuation = max(0, Infinity * (rawExp - 1)) = max(0, -Infinity) = 0.
-    const cholesky = packLowerTri([[1]]); // 1D identity Cholesky
-    const positions = new Float32Array([3.0]); // splat 3σ away
-    const amplitudes = new Float32Array([1.0]);
-    const slicePos = new Float32Array([0.0]);
-    const hiddenDims = new Uint32Array([0]);
-    const visibility = new Uint8Array(1);
-    const attenuation = new Float32Array(1);
-
-    compute_gsplats_attenuation(
-      positions,
-      cholesky,
-      amplitudes,
-      slicePos,
-      hiddenDims,
-      1,
-      1,
-      0.01, // minAmplitude
-      0.0, // truncate=0
-      visibility,
-      attenuation
-    );
-    expect(attenuation[0]).toBe(0);
-    expect(visibility[0]).toBe(0);
-  });
-
-  it('[G20] truncate=0 splat exactly at slice (D=0) → Infinity * 0 = NaN attenuation (documented quirk)', () => {
-    // Documents the edge: 0 * Infinity → NaN. A future hardening could
-    // special-case truncate=0 to set attenuation=1 at D=0; pin today's quirk.
-    const cholesky = packLowerTri([[1]]);
-    const positions = new Float32Array([0.0]); // splat AT slice
-    const amplitudes = new Float32Array([1.0]);
-    const slicePos = new Float32Array([0.0]);
-    const hiddenDims = new Uint32Array([0]);
-    const visibility = new Uint8Array(1);
-    const attenuation = new Float32Array(1);
-
-    compute_gsplats_attenuation(
-      positions,
-      cholesky,
-      amplitudes,
-      slicePos,
-      hiddenDims,
-      1,
-      1,
-      0.01,
-      0.0,
-      visibility,
-      attenuation
-    );
-    expect(Number.isNaN(attenuation[0])).toBe(true);
-    // NaN amplitudes[i] * NaN = NaN; NaN >= 0.01 is false → hidden.
-    expect(visibility[0]).toBe(0);
-  });
-
-  it('[G20] minAmplitude=0: any non-negative attenuation makes the splat visible (boundary on >=)', () => {
-    // Strict `>= 0` boundary: with amplitude=1, attenuation=0, product=0,
-    // 0 >= 0 → visible. A mutation flipping `>=` to `>` would fail here.
-    const cholesky = packLowerTri([[1]]);
-    const positions = new Float32Array([10.0]); // far away, atten will be 0
-    const amplitudes = new Float32Array([1.0]);
-    const slicePos = new Float32Array([0.0]);
-    const hiddenDims = new Uint32Array([0]);
-    const visibility = new Uint8Array(1);
-    const attenuation = new Float32Array(1);
-
-    compute_gsplats_attenuation(
-      positions,
-      cholesky,
-      amplitudes,
-      slicePos,
-      hiddenDims,
-      1,
-      1,
-      0.0, // minAmplitude=0
-      3.0,
-      visibility,
-      attenuation
-    );
-    expect(attenuation[0]).toBe(0);
-    expect(visibility[0]).toBe(1);
-  });
-
-  it('[G20] minAmplitude<0: every splat is visible (degenerate "always-show" mode)', () => {
-    const cholesky = packLowerTri([[1]]);
-    const positions = new Float32Array([100.0]); // very far
-    const amplitudes = new Float32Array([1.0]);
-    const slicePos = new Float32Array([0.0]);
-    const hiddenDims = new Uint32Array([0]);
-    const visibility = new Uint8Array(1);
-    const attenuation = new Float32Array(1);
-
-    compute_gsplats_attenuation(
-      positions,
-      cholesky,
-      amplitudes,
-      slicePos,
-      hiddenDims,
-      1,
-      1,
-      -1.0, // negative minAmplitude
-      3.0,
-      visibility,
-      attenuation
-    );
-    expect(visibility[0]).toBe(1);
-  });
-
-  it('[G20] numHidden===0: no dims hidden → attenuation forced to 1 → visible', () => {
-    // Pin the explicit `if (numHidden === 0)` short-circuit at L232.
-    const cholesky = packLowerTri([[1]]);
-    const positions = new Float32Array([5.0]); // value doesn't matter
-    const amplitudes = new Float32Array([1.0]);
-    const slicePos = new Float32Array([0.0]);
-    const hiddenDims = new Uint32Array(0); // empty
-    const visibility = new Uint8Array(1);
-    const attenuation = new Float32Array(1);
-
-    compute_gsplats_attenuation(
-      positions,
-      cholesky,
-      amplitudes,
-      slicePos,
-      hiddenDims,
-      1,
-      1,
-      0.01,
-      3.0,
-      visibility,
-      attenuation
-    );
-    expect(attenuation[0]).toBe(1.0);
-    expect(visibility[0]).toBe(1);
-  });
-});
-
-describe('extract_cholesky_submatrix — keepDims boundaries [wasm.md G21]', () => {
-  it('[G21] keepDims.length === 0: subPackedSize=0, output untouched (no iteration)', () => {
-    const packed = new Float32Array([1, 2, 3, 4, 5, 6]); // arbitrary 3D L
-    const keepDims = new Uint32Array(0);
-    const output = new Float32Array(0);
-    expect(() => extract_cholesky_submatrix(packed, keepDims, 0, output)).not.toThrow();
-  });
-
-  it('[G21] keepDims = [d_n-1] (single highest dim): output = L[d_n-1, d_n-1]', () => {
-    // For ndim=4, packed = [L00, L10, L11, L20, L21, L22, L30, L31, L32, L33].
-    // packedIndex(3, 3) = 3*4/2 + 3 = 9 → packed[9] = L33.
-    const packed = new Float32Array([
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      7.5, // L33 at index 9
-    ]);
-    const keepDims = new Uint32Array([3]);
-    const output = new Float32Array(1);
-    extract_cholesky_submatrix(packed, keepDims, 1, output);
-    expect(output[0]).toBe(7.5);
-  });
-
-  it('[G21] keepDims = [0] (lowest dim): output = L[0, 0]', () => {
-    const packed = new Float32Array([3.14, 1, 2, 1, 2, 3]);
-    const keepDims = new Uint32Array([0]);
-    const output = new Float32Array(1);
-    extract_cholesky_submatrix(packed, keepDims, 1, output);
-    // 3.14 is not exactly representable in Float32 → use closeness.
-    expect(output[0]).toBeCloseTo(3.14, 5);
   });
 });

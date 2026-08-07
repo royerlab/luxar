@@ -551,8 +551,8 @@ re-extraction of the display-space projection, **not** compaction — compaction
 `drawElements` never fetches an unreferenced vertex, so culled vertices cost nothing to draw, and the
 mesh is resident in full anyway (§7). This deliberately avoids:
 
-- `compact_by_mask` (`wasm/rust/src/projection.rs:122`), which is **`&[f32]`-only** and could not
-  compact the native `uint8`/`uint16` colors §3.2 permits without a widening pass (the `uint8`/`float16`
+- a generic mask-compaction helper over the vertex buffers, which would be **`&[f32]`-only** and could
+  not compact the native `uint8`/`uint16` colors §3.2 permits without a widening pass (the `uint8`/`float16`
   scalars are uploaded as `f32` on the attribute path anyway, §6.1.1, but the colors stay native, only
   padded RGB→RGBA);
 - a `vertex_remap` array and the index remapping that goes with it;
@@ -875,9 +875,19 @@ buffer, which is a natural but separate extension (§9). Until then:
 
 - `opaque` (the default for mesh, unlike the other types) depth-tests and depth-writes, and is
   therefore correct;
-- `normal` with `opacity < 1` **or per-vertex RGBA alpha present** (either makes the surface
-  translucent, §6.2) may show incorrect inter-triangle ordering, and the loader logs a one-time warning
-  naming the node.
+- `normal` with `opacity` below the `depthWrite` threshold (`normalModeDepthWrite`, `>= 0.99`) **or any
+  per-vertex alpha below fully opaque** (either makes the surface translucent, §6.2) may show incorrect
+  inter-triangle ordering, and the loader logs a one-time warning naming the node
+  (`commit-mesh-geometry.ts`, re-evaluated by the Layers panel after a mode/opacity edit). Both arms key
+  on what is observable rather than on what was authored, and neither warns at `opacity 0.995` with a
+  uniformly-opaque (or absent) alpha channel: `depthWrite` is still on there, which does not make the
+  compositing *exact* — a depth-writing translucent fragment drops what is behind it — but with every
+  fragment at least 99% opaque the dropped term is bounded by `1 − opacity`, so the surface renders as
+  the opaque one it nearly is. Below the threshold `depthWrite` goes off and the error stops being
+  bounded: unsorted alpha-over swaps almost the whole contribution of two overlapping faces. An RGBA
+  array whose alpha is uniformly opaque likewise composites exactly like an RGB one. Per-vertex alpha
+  gets no matching tolerance — one vertex's alpha says nothing about the rest, so any value below fully
+  opaque warns.
 
 Making `opaque` the mesh default is a deliberate asymmetry — it is the only mode that is unconditionally
 correct without sorting, and it is what a surface should look like.
@@ -1386,12 +1396,17 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 Each of these is a deliberate exclusion, not an oversight. Each should surface clearly — an error, or
 for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rather than silently misbehave.
 
-> **One code follow-up this section currently OVERSTATES its own compliance on**, noted here
-> rather than silently carried: **§6.3's translucent-`normal` warning is not implemented.**
-> §6.3 promises "the loader logs a one-time warning naming the node" when `normal` is combined
-> with `opacity < 1` or per-vertex alpha — the mitigation that makes the per-triangle-depth-sort
-> exclusion acceptable. Only comments reference it; no `log.warning` exists. Until it lands, that
-> one exclusion *does* silently misbehave, contrary to the paragraph above.
+> This section carried two code follow-ups it OVERSTATED its own compliance on. **Both have
+> now landed**, so the paragraph above is true as written:
+>
+> - §6.3's translucent-`normal` warning is implemented in `commit-mesh-geometry.ts`, so the
+>   per-triangle-depth-sort exclusion below does surface rather than silently misbehave.
+> - The `add_mesh` refusal message no longer justifies refusing substitutive LOD with
+>   additive's reason. It used to read "the additive/substitutive ladder reduces independent
+>   elements (a surface is connected)" — true of the additive flavour, false of the
+>   substitutive one. The two flavours now get the two separate reasons the rows below give
+>   (`_reject_specialized_parent` / `_reject_structure_params` in
+>   `packages/luxar/src/luxar/core/group/adders/mesh.py`).
 
 | Excluded | Why | Natural follow-up |
 |---|---|---|
