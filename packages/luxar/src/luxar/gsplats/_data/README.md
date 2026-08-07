@@ -114,7 +114,7 @@ A plain `None` default would conflate the two and make uncompressed output impos
 
 Tests live in the parent package's test suite (`packages/luxar/src/luxar/gsplats/tests/`):
 
-- **`test_gsplat_data.py`**: The core data API — properties (`n_splats`, `ndim`, `__len__`, `repr`, `stats`), construction/validation, and the transforms (`translate`, `center_at_centroid`, `scale_intensity`, affine/normalize/clamp intensity, `transform` incl. covariance correctness).
+- **`test_gsplat_data.py`**: The core data API — properties (`n_splats`, `ndim`, `__len__`, `repr`, `stats`), construction/validation, the transforms (`translate`, `center_at_centroid`, `scale_intensity`, affine/normalize/clamp intensity, `transform` incl. covariance correctness), and the mixin-composition guard that fails if any `_GSplatDataOps` stub wins the MRO (see Ownership above).
 - **`test_gsplat_data_lod.py`**: The LOD matrix API (`LODViewsMixin`) — additive ladders and substitutive levels, `additive_prefix` / `flattened` / `at_substitutive` read-only views, the per-level constructors, and the `_merge_lod_colors` dtype / RGB→RGBA layout policy.
 - **`test_gsplat_data_tree_bridge.py`**: The node-tree bridge (`tree` / `from_tree`) round-trips, including the `_readonly_sublod` stats-aliasing regression.
 - **`test_gsplat_data_aggregations.py`**: Computed metrics (`volumes`, `principal_radii`, `masses`, `marginal_sigmas`, `eccentricities`), filtering (`filter`, `filter_by`, `slice_by`), and reshape ops (`concatenate`, `embed_dimension`, `combine_as_new_dimension`).
