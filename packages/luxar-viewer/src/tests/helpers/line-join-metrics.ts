@@ -246,7 +246,21 @@ function clipRect(region: PixelRect, width: number, height: number): PixelRect |
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
-/** Nearest-rank percentile of an ascending-sorted array. */
+/**
+ * Percentile of an ascending-sorted array, taken as the NEAREST SAMPLE to the
+ * interpolated rank — index `round(fraction * (n - 1))`, i.e. numpy's
+ * `method='nearest'`. No interpolation: the answer is always an observed
+ * value.
+ *
+ * Deliberately not the nearest-RANK convention (`ceil(fraction * n) - 1`),
+ * which is off by one index at small `n` and, at `fraction = 0.5`, would put
+ * the "median" below the middle on an even-length profile. That matters here
+ * because {@link measureAxialFlux} uses this as its normaliser and documents
+ * that the normaliser collapses to zero only once MORE than half the profile
+ * is empty; under nearest-rank, exactly half would already do it.
+ *
+ * Pinned by the "percentile convention" unit tests.
+ */
 function percentileSorted(sorted: readonly number[], fraction: number): number {
   const n = sorted.length;
   if (n === 0) return 0;

@@ -4,7 +4,7 @@
  * This file runs BEFORE any tests and verifies pre-conditions:
  * 1. Servers can be reached, and belong to THIS checkout
  * 2. Required example datasets exist (warn — many specs do not need them)
- * 3. Generated zarr fixtures exist, are complete, and are served (throw — 18 specs
+ * 3. Generated zarr fixtures exist, are complete, and are served (throw — 19 specs
  *    hard-depend on them)
  * 4. Basic environment checks
  */
@@ -179,7 +179,7 @@ export default async function globalSetup(config: FullConfig) {
 
   // Check 3: Generated zarr fixtures.
   //
-  // THROW rather than warn, unlike the example datasets above. 18 specs read
+  // THROW rather than warn, unlike the example datasets above. 19 specs read
   // `tests/fixtures/`, and a missing fixture there is not a degraded run — the spec
   // navigates to a 404 and dies on its own 45 s content-wait with no indication that the
   // cause was a fixture that was never generated. Examples warn because many specs do not

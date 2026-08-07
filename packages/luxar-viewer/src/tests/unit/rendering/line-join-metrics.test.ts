@@ -4,7 +4,7 @@
  *
  * Every case builds a synthetic luminance image by hand so the expected
  * answer is known exactly, including the two edge rows the background mask
- * legitimately drops. Two groups are load-bearing beyond simple coverage:
+ * legitimately drops. Three groups are load-bearing beyond simple coverage:
  *
  *   - "the two metrics are complementary" proves the #780 bead-chain failure
  *     is invisible to the local-median metric by construction, which is why
@@ -14,6 +14,9 @@
  *     because the defect poisons its own median). A change to the default
  *     window that silently moves that envelope must fail here, because
  *     nothing downstream would notice.
+ *   - "percentile convention" pins which sample p05/p95/median actually pick,
+ *     at a length where the nearest-sample and nearest-rank conventions
+ *     disagree, and pins the half-empty boundary that follows from it.
  */
 import { describe, it, expect } from 'vitest';
 
@@ -366,6 +369,50 @@ describe('measureAxialFlux', () => {
     expect(a.medianFlux).toBe(0);
     expect(a.profile).toHaveLength(0);
     expect(a.p05).toBe(0);
+  });
+});
+
+describe('percentile convention', () => {
+  // The percentile helper takes the observed sample NEAREST the interpolated
+  // rank — `round(fraction * (n - 1))`, numpy's `method='nearest'` — not the
+  // nearest-RANK `ceil(fraction * n) - 1`. The two disagree at n = 20, which
+  // is what makes these pins real rather than tautological.
+  const width = 20;
+  const height = 20;
+
+  it('selects the sample nearest the interpolated rank', () => {
+    // Column x carries luminance 100 + x, so the 20 cross-section sums are
+    // strictly increasing and already in ascending order.
+    const image = makeBand(width, height, (x) => 100 + x);
+
+    const a = measureAxialFlux(image, width, height, WHOLE(width, height), 'x');
+
+    expect(a.samples).toBe(20);
+    // Median: index round(0.5 * 19) = 10 -> 110. Nearest-rank would say 109.
+    expect(a.medianFlux).toBeCloseTo(BAND_HEIGHT * 110, 4);
+    // p05: index round(0.05 * 19) = 1 -> 101. Nearest-rank would say 100.
+    expect(a.p05).toBeCloseTo(101 / 110, 10);
+    // p95: index round(0.95 * 19) = 18 -> 118. Both conventions agree here.
+    expect(a.p95).toBeCloseTo(118 / 110, 10);
+    expect(a.min).toBeCloseTo(100 / 110, 10);
+  });
+
+  it('normalises at exactly half the profile empty, and gives up past it', () => {
+    // The documented boundary: the normaliser survives half a missing tube and
+    // collapses only past it. Column 0 and the tail stay lit so nothing is
+    // trimmed as overhang and the profile keeps all 20 samples.
+    const half = punchColumns(makeBand(width, height), width, 1, 0, 10);
+    const atHalf = measureAxialFlux(half, width, height, WHOLE(width, height), 'x');
+    expect(atHalf.samples).toBe(20);
+    expect(atHalf.emptySamples).toBe(10);
+    expect(atHalf.medianFlux).toBeCloseTo(BAND_HEIGHT * BAND_VALUE, 4);
+
+    const past = punchColumns(makeBand(width, height), width, 1, 0, 11);
+    const pastHalf = measureAxialFlux(past, width, height, WHOLE(width, height), 'x');
+    expect(pastHalf.samples).toBe(20);
+    expect(pastHalf.emptySamples).toBe(11);
+    expect(pastHalf.medianFlux).toBe(0);
+    expect(pastHalf.profile).toHaveLength(0);
   });
 });
 
