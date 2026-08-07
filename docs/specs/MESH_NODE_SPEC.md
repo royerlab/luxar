@@ -1425,7 +1425,11 @@ surface. `energyCompensation` already returns exactly `1` for an absent `e`, lea
 leaf byte-identical. LOD **cross-fade** is gated on the same set and follows the same rule.
 
 The rule is **enforced at write time**: `add_mesh` raises if `level_stats` or `lod_stats` is
-supplied (`_reject_energy_stamps` in `packages/luxar/src/luxar/core/group/adders/mesh.py`). It has
+supplied (`_reject_energy_stamps` in `packages/luxar/src/luxar/core/group/adders/mesh.py`) — on key
+presence, deliberately broader than the energy fields themselves, since neither attribute has any
+meaning on a mesh today. Substitutive mesh levels are the one thing that would change that
+(`level_stats.quality` is a legitimate non-energy stamp), so whoever lands the decimator narrows the
+guard to the energy keys rather than routing around it. It has
 to be the adder that refuses, because the write path's allow-list `_ALLOWED_NODE_ATTRS` in
 `packages/luxar/src/luxar/io/_compiler/node_common.py` is geometry-blind and would let either key
 through on any node type. The refusal is prophylactic rather than a fix for a live bug: two latches

@@ -189,17 +189,23 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
     ``level_stats`` also carries the non-energy ``quality`` stamp a level may
     legitimately want, so whoever lands the decimator narrows this to the energy keys
     rather than working around it.
+
+    Until then the check is on KEY PRESENCE, deliberately broader than the energy
+    fields themselves: neither attribute has anything to say about a mesh today, so
+    there is no value worth inspecting, and refusing the container is the rule §9.1
+    states. The message says which attribute is refused and what it is FOR — it does
+    not claim the supplied dict actually holds a stamp.
     """
     supplied = sorted(k for k in ("level_stats", "lod_stats") if k in attrs)
     if supplied:
         raise ValueError(
-            f"Cannot add mesh '{name}' with {' and '.join(supplied)}. Those carry "
-            "the additive ladder's energy stamps, and the viewer's brightness "
+            f"Cannot add mesh '{name}' with {' and '.join(supplied)}. That is where "
+            "an additive ladder writes its energy stamps, and the viewer's brightness "
             "compensation is gated on the BLENDING MODE, not the geometry type — "
             "so a stamped mesh in 'additive' or 'luminous' would be scaled by "
             "1/energy_fraction_cum. That brightens a dimmer prefix correctly and a "
-            "holed surface wrongly (spec §9.1). Mesh has no additive ladder; omit "
-            "them."
+            "holed surface wrongly (spec §9.1). Mesh has no additive ladder, so "
+            "neither attribute has anything to say about one; omit them."
         )
 
 
