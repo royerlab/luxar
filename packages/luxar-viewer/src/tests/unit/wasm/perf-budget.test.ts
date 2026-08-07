@@ -11,22 +11,25 @@
  * If a regression in the Rust source landed that pulled WASM down close to
  * the TS implementation (e.g. accidentally allocating in the hot loop or
  * regressing a SIMD path), a benchmark run would notice — but only if
- * someone happened to run `pnpm bench:wasm`. This test makes the budget
- * automatic: we run the same shape of comparison the benchmark suite does
- * and fail the build if any covered hot path is no longer comfortably
+ * someone happened to run `pnpm bench:wasm`. This test turns the budget
+ * into an assertion: we run the same shape of comparison the benchmark
+ * suite does and fail if any covered hot path is no longer comfortably
  * faster than the TS fallback.
  *
- * Skipped cleanly when `public/wasm/luxar_wasm_bg.wasm` is absent (CI or
- * dev box without `make build-wasm`), so this is opportunistic enforcement
- * rather than a hard prerequisite.
+ * It lives in the opt-in perf suite (`pnpm test:perf`) — the ratios are
+ * timing-sensitive under parallel test-file load, so it is excluded from
+ * the gating unit run. It also skips cleanly when
+ * `public/wasm/luxar_wasm_bg.wasm` is absent (dev box without
+ * `make build-wasm`), so this is opportunistic enforcement rather than a
+ * hard prerequisite.
  *
  * **Threshold.** 1.15×, not 2×. The plan called for 2× but in practice
  * V8 autovectorizes the simpler TS fallbacks well enough that a healthy
- * WASM build lands at ~1.9× on most workloads in jsdom while gsplats
- * Cholesky/attenuation occasionally lands at 1.20× under concurrent
- * test-file CPU load. 1.15× still catches real regressions (a
- * SIMD/alloc-in-loop slip would push the ratio toward 1× or below)
- * without flaking. The 2× stretch target is checked manually via
+ * WASM build lands at ~1.9× on most workloads in jsdom while some
+ * occasionally land as low as 1.20× under concurrent test-file CPU load.
+ * 1.15× still catches real regressions (a SIMD/alloc-in-loop slip would
+ * push the ratio toward 1× or below) without flaking. The 2× stretch
+ * target is checked manually via
  * `pnpm bench:wasm` (local/manual; not currently wired into a CI
  * workflow). A scheduled perf workflow is a future follow-up.
  */

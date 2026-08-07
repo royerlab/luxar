@@ -946,7 +946,7 @@ Prefer the no-trailing-slash form in examples and logs as the canonical spelling
 The compiled WASM kernels use fixed-size arrays (for performance) and support a
 **maximum of 16 dimensions** on the fast path. `validate_ndim` **panics** (crate
 is `panic = "abort"`) for `ndim > 16`, so those kernels must never be called above 16D.
-- Functions affected: `calculate_effective_radii`, `mahalanobis_distance`, `compute_gsplats_attenuation`, etc.
+- Functions affected: `calculate_effective_radii`, `mahalanobis_distance`, `project_gsplats_nd_to_3d`, etc.
 - **>16D is fully supported (slower but works), automatically.** The TypeScript
   reference implementations in `wasm/typescript/` are uncapped, and the worker's
   `pickBackend(ctx, ndim)` (`workers/data-worker/state.ts`) transparently routes
