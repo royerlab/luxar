@@ -875,9 +875,19 @@ buffer, which is a natural but separate extension (§9). Until then:
 
 - `opaque` (the default for mesh, unlike the other types) depth-tests and depth-writes, and is
   therefore correct;
-- `normal` with `opacity < 1` **or per-vertex RGBA alpha present** (either makes the surface
-  translucent, §6.2) may show incorrect inter-triangle ordering, and the loader logs a one-time warning
-  naming the node.
+- `normal` with `opacity` below the `depthWrite` threshold (`normalModeDepthWrite`, `>= 0.99`) **or any
+  per-vertex alpha below fully opaque** (either makes the surface translucent, §6.2) may show incorrect
+  inter-triangle ordering, and the loader logs a one-time warning naming the node
+  (`commit-mesh-geometry.ts`, re-evaluated by the Layers panel after a mode/opacity edit). Both arms key
+  on what is observable rather than on what was authored, and neither warns at `opacity 0.995` with a
+  uniformly-opaque (or absent) alpha channel: `depthWrite` is still on there, which does not make the
+  compositing *exact* — a depth-writing translucent fragment drops what is behind it — but with every
+  fragment at least 99% opaque the dropped term is bounded by `1 − opacity`, so the surface renders as
+  the opaque one it nearly is. Below the threshold `depthWrite` goes off and the error stops being
+  bounded: unsorted alpha-over swaps almost the whole contribution of two overlapping faces. An RGBA
+  array whose alpha is uniformly opaque likewise composites exactly like an RGB one. Per-vertex alpha
+  gets no matching tolerance — one vertex's alpha says nothing about the rest, so any value below fully
+  opaque warns.
 
 Making `opaque` the mesh default is a deliberate asymmetry — it is the only mode that is unconditionally
 correct without sorting, and it is what a surface should look like.
@@ -1386,19 +1396,18 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 Each of these is a deliberate exclusion, not an oversight. Each should surface clearly — an error, or
 for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rather than silently misbehave.
 
-> **Two code follow-ups this section currently OVERSTATES its own compliance on**, both
-> noted here rather than silently carried:
+> **One code follow-up this section currently OVERSTATES its own compliance on**, noted
+> here rather than silently carried:
 >
-> 1. **§6.3's translucent-`normal` warning is not implemented.** §6.3 promises "the loader
->    logs a one-time warning naming the node" when `normal` is combined with `opacity < 1`
->    or per-vertex alpha — the mitigation that makes the per-triangle-depth-sort exclusion
->    acceptable. Only comments reference it; no `log.warning` exists. Until it lands, that
->    one exclusion *does* silently misbehave, contrary to the paragraph above.
-> 2. **The `add_mesh` refusal message justifies refusing substitutive LOD with additive's
->    reason.** It reads "the additive/substitutive ladder reduces independent elements (a
->    surface is connected)", which is true of the additive flavour and false of the
->    substitutive one — see the two rows below. The refusal itself is correct (no producer
->    exists yet); only its stated reason is wrong, and it is user-facing.
+> - **The `add_mesh` refusal message justifies refusing substitutive LOD with additive's
+>   reason.** It reads "the additive/substitutive ladder reduces independent elements (a
+>   surface is connected)", which is true of the additive flavour and false of the
+>   substitutive one — see the two rows below. The refusal itself is correct (no producer
+>   exists yet); only its stated reason is wrong, and it is user-facing.
+>
+> (§6.3's translucent-`normal` warning — the second entry here until it landed — is now
+> implemented in `commit-mesh-geometry.ts`, so the per-triangle-depth-sort exclusion below
+> does surface as the paragraph above promises.)
 
 | Excluded | Why | Natural follow-up |
 |---|---|---|
