@@ -8,8 +8,11 @@ validate → read → normalize.
 
 It diverges from that module in one visible way. ``classical_splats`` keeps all five
 readers inline; here each format lives in its own private module, because each is
-120–330 lines of independent parsing with no shared decode step and ruff's
-``max-complexity = 10`` would force the extraction anyway.
+120–330 lines of independent parsing with no shared decode step. (An earlier
+version of this note claimed ruff's ``max-complexity = 10`` "would force the
+extraction anyway". It would not: ``C901`` is not in ``[tool.ruff.lint] select``,
+so that setting is inert — see the comment beside it in ``pyproject.toml``. The
+split stands on the readers being independent, which is reason enough.)
 
 **There is no ``MeshData`` here on purpose.** ``luxar.io.reader`` already defines a
 ``MeshData`` for reading a written node back; the intermediate a reader produces is a

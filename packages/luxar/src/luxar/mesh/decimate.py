@@ -97,6 +97,78 @@ def _cluster_keys(
     return np.concatenate([grid, exact], axis=1)
 
 
+def _validate_normal_frame(
+    normals: NDArray[np.float32] | None,
+    normal_dims: tuple[int, ...] | None,
+    ndim: int,
+) -> None:
+    """Require a 3-axis frame whenever normals are supplied.
+
+    Its own function because it is the one guard here that is about a CONCEPT
+    rather than an array shape: `normal_dims` is not interchangeable with
+    `spatial_dims`, and conflating them failed silently rather than loudly (a
+    2-dim coarsening made `np.cross` return scalars).
+    """
+    if normals is None:
+        return
+    if normal_dims is None or len(tuple(normal_dims)) != 3:
+        raise ValueError(
+            "normals require normal_dims naming exactly 3 dimensions (got "
+            f"{normal_dims!r}). They are recomputed from the COARSE surface, "
+            "which needs the frame they are defined in — spatial_dims cannot "
+            "stand in for it, since a grid may coarsen over any number of axes."
+        )
+    if any(i < 0 or i >= ndim for i in normal_dims):
+        raise ValueError(
+            f"normal_dims {tuple(normal_dims)} out of range for {ndim} dims"
+        )
+
+
+def _validate_decimate_inputs(
+    vertices: NDArray[np.float32],
+    faces: NDArray[np.uint32],
+    target_vertices: int,
+    normals: NDArray[np.float32] | None,
+    normal_dims: tuple[int, ...] | None,
+    spatial_dims: tuple[int, ...] | None,
+) -> tuple[int, ...]:
+    """Reject malformed input and resolve the default ``spatial_dims``.
+
+    Split out of :func:`decimate_cluster` purely for readability — it is seven
+    guards in a row with no interleaved logic, and inline they were most of that
+    function's branching. Returns the resolved ``spatial_dims`` because the
+    default (the first ``min(3, D)`` columns) can only be computed once the
+    vertex width is known, and the caller needs the resolved value.
+    """
+    if vertices.ndim != 2 or vertices.shape[1] < 2:
+        raise ValueError(f"vertices must be (V, D>=2), got {vertices.shape}")
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError(f"faces must be (F, 3), got {faces.shape}")
+    if faces.shape[0] == 0:
+        raise ValueError(
+            "cannot decimate a mesh with no faces: there is no surface to coarsen, "
+            "and every vertex would come back unreferenced"
+        )
+    if target_vertices < 4:
+        raise ValueError(
+            f"target_vertices must be at least 4 (a tetrahedron is the smallest "
+            f"closed surface), got {target_vertices}"
+        )
+    if faces.size and int(faces.max()) >= vertices.shape[0]:
+        raise ValueError(
+            f"face index {int(faces.max())} is out of range for "
+            f"{vertices.shape[0]} vertices"
+        )
+
+    d = vertices.shape[1]
+    if spatial_dims is None:
+        spatial_dims = tuple(range(min(3, d)))
+    if not spatial_dims or any(i < 0 or i >= d for i in spatial_dims):
+        raise ValueError(f"spatial_dims {spatial_dims} out of range for {d} dims")
+    _validate_normal_frame(normals, normal_dims, d)
+    return spatial_dims
+
+
 def decimate_cluster(
     vertices: NDArray[np.float32],
     faces: NDArray[np.uint32],
@@ -147,43 +219,9 @@ def decimate_cluster(
     """
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
-    if vertices.ndim != 2 or vertices.shape[1] < 2:
-        raise ValueError(f"vertices must be (V, D>=2), got {vertices.shape}")
-    if faces.ndim != 2 or faces.shape[1] != 3:
-        raise ValueError(f"faces must be (F, 3), got {faces.shape}")
-    if faces.shape[0] == 0:
-        raise ValueError(
-            "cannot decimate a mesh with no faces: there is no surface to coarsen, "
-            "and every vertex would come back unreferenced"
-        )
-    if target_vertices < 4:
-        raise ValueError(
-            f"target_vertices must be at least 4 (a tetrahedron is the smallest "
-            f"closed surface), got {target_vertices}"
-        )
-    if faces.size and int(faces.max()) >= vertices.shape[0]:
-        raise ValueError(
-            f"face index {int(faces.max())} is out of range for "
-            f"{vertices.shape[0]} vertices"
-        )
-
-    d = vertices.shape[1]
-    if spatial_dims is None:
-        spatial_dims = tuple(range(min(3, d)))
-    if not spatial_dims or any(i < 0 or i >= d for i in spatial_dims):
-        raise ValueError(f"spatial_dims {spatial_dims} out of range for {d} dims")
-    if normals is not None:
-        if normal_dims is None or len(tuple(normal_dims)) != 3:
-            raise ValueError(
-                "normals require normal_dims naming exactly 3 dimensions (got "
-                f"{normal_dims!r}). They are recomputed from the COARSE surface, "
-                "which needs the frame they are defined in — spatial_dims cannot "
-                "stand in for it, since a grid may coarsen over any number of axes."
-            )
-        if any(i < 0 or i >= d for i in normal_dims):
-            raise ValueError(
-                f"normal_dims {tuple(normal_dims)} out of range for {d} dims"
-            )
+    spatial_dims = _validate_decimate_inputs(
+        vertices, faces, target_vertices, normals, normal_dims, spatial_dims
+    )
 
     if vertices.shape[0] <= target_vertices:
         return DecimatedMesh(vertices, faces, normals, colors)
