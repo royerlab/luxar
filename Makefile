@@ -802,6 +802,8 @@ check-all:  ## All quality checks (Python/TS/Rust/Go) — WARNING: reformats tre
 
 # Documentation checks
 check-docs:  ## Run the PR documentation gate (ratchets + warning-fatal Sphinx)
+	@echo "📦 Checking pnpm overrides are single-sourced..."
+	node packages/luxar-viewer/scripts/check-overrides.mjs
 	@echo "📚 Checking README/docstring/JSDoc completeness..."
 	$(HATCH) run docs:python scripts/check_documentation.py
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -814,6 +816,8 @@ check-docs:  ## Run the PR documentation gate (ratchets + warning-fatal Sphinx)
 	$(HATCH) run docs:build
 
 check-docs-verbose:  ## Run the documentation gate with verbose completeness output
+	@echo "📦 Checking pnpm overrides are single-sourced..."
+	node packages/luxar-viewer/scripts/check-overrides.mjs
 	@echo "📚 Checking documentation (verbose mode)..."
 	$(HATCH) run docs:python scripts/check_documentation.py --verbose
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \

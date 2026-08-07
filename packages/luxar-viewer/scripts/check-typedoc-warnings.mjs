@@ -116,7 +116,7 @@ export async function saveWarningBaseline(baselinePath, warnings) {
   await writeFile(baselinePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
 
-class RecordingLogger extends Logger {
+export class RecordingLogger extends Logger {
   constructor(viewerRoot) {
     super();
     this.viewerRoot = viewerRoot;

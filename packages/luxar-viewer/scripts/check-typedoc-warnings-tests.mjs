@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { LogLevel } from 'typedoc';
+
 import {
   diagnosticLevel,
   diffWarningMultisets,
@@ -11,8 +13,21 @@ import {
   loadWarningBaseline,
   normalizeDiagnostic,
   parseArgs,
+  RecordingLogger,
   saveWarningBaseline,
 } from './check-typedoc-warnings.mjs';
+
+test('recording logger preserves TypeDoc counters and captures diagnostics', () => {
+  const logger = new RecordingLogger('/tmp/luxar/packages/luxar-viewer');
+
+  logger.log('warning at /tmp/luxar/packages/luxar-viewer/src/example.ts', LogLevel.Warn);
+  logger.log('conversion failed', LogLevel.Error);
+
+  assert.equal(logger.warningCount, 1);
+  assert.equal(logger.errorCount, 1);
+  assert.deepEqual(logger.warnings, ['warning at <viewer>/src/example.ts']);
+  assert.deepEqual(logger.errors, ['conversion failed']);
+});
 
 test('recognizes only tagged TypeDoc console diagnostics', () => {
   assert.equal(diagnosticLevel('\u001b[93m[warning]\u001b[0m unresolved link'), 'warning');
