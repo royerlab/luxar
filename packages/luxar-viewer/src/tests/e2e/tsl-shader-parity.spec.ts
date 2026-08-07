@@ -930,11 +930,13 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // `harnesses/tsl-harness/render.ts`), so both backends compile to GLSL and
     // share one provoking-vertex rule; a per-VERTEX join width would hand both
     // the same `flat` cap and leave this test green. The per-END width is
-    // pinned by three other gates: the source assertion `#790 both vertex
+    // pinned by four other gates: the source assertion `#790 both vertex
     // stages hand luxarLineJoin each END its own segment-constant width` in
     // `tests/unit/rendering/materials/line/material-glsl.test.ts`, the
     // checked-in codegen snapshot `tests/__codegen__/line.vertex.glsl.txt`
-    // (generated FROM the TSL graph, so it is what pins the TSL twin), and the
+    // (generated FROM the TSL graph, so it is what pins the TSL twin — though
+    // only in this `if: false` CI job), the always-running TSL-source lock
+    // `tests/unit/rendering/materials/line/join-width-tsl.test.ts`, and the
     // CPU-mirror cases in `tests/unit/rendering/line-join-math.test.ts`.
     const glslMiter = await runGLSL(page, 'line-join-taper-miter');
     const tslMiter = await runTSL(page, 'line-join-taper-miter');
