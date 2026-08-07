@@ -11,22 +11,18 @@
  *      GPU buffer pool (zero allocations on reuse) or, with the pool
  *      disabled, dispose+recreate via NodeFactory.
  *
- * **Why is there no `data-processor-points.ts`?** Lines and gsplats
- * each have their own `data-processor-{lines,gsplats}.ts` running a
- * `process*Data` step (worker-driven nD → 3D projection + clipping)
- * before commit. Points has no equivalent module because the points
- * facade folds the equivalent projection into `loadPoints()` itself
- * — the data returned by the facade is already 3D-projected and
- * ready for GPU upload, so the orchestrator only needs to commit it.
- * That asymmetry is a real architectural split, not drift: points'
- * projection is single-pass and fits in the loader; lines clipping
- * and gsplats Cholesky-projection are per-frame transforms that
- * the orchestrator needs to schedule on a worker.
+ * **Where the no-op fast path lives, vs. `data-processor-points.ts`.**
+ * `data-processor-points.ts` exists as the *synchronous staging half*:
+ * the points loader folds nD → 3D projection into `loadPoints()`
+ * itself, so the data is already 3D-projected and ready for GPU upload
+ * and there is no async worker projection step to run. Lines (segment
+ * clipping) and gsplats (Cholesky-factored projection) instead run
+ * per-frame worker dispatches upstream of commit. Because points has no
+ * projection to skip, its no-op reference-identity fast path lives HERE
+ * in `commitPointsGeometry` — unlike lines/gsplats, which must
+ * short-circuit *before* their worker projection.
  *
- * Filename matches the single export. If a future per-frame points
- * processing step appears (e.g. nD intensity attenuation), this
- * file should grow into `data-processor-points.ts` matching the
- * other two.
+ * Filename matches the single export.
  *
  * @module data/scene-loader/commit/commit-points-geometry
  */
