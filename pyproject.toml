@@ -340,7 +340,12 @@ dependencies = [
 ]
 
 [tool.hatch.envs.docs.scripts]
-build = "sphinx-build -b html docs docs/_build/html"
+# Keep the HTML build deterministic and warning-fatal: force a fresh read of
+# every source so incremental state cannot hide warnings in the required gate.
+build = "sphinx-build -E -a -W --keep-going -b html docs docs/_build/html"
+# External HTTP checks remain opt-in because remote availability is not a
+# reliable merge dependency. Narrow exceptions live in docs/conf.py.
+linkcheck = "sphinx-build -E -a -W --keep-going -b linkcheck docs docs/_build/linkcheck"
 serve = "python -m http.server 8000 --directory docs/_build/html"
 
 # Test matrix for multiple Python versions

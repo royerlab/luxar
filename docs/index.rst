@@ -93,6 +93,7 @@ Features
 
    guides/user/LUXAR_ZARR_FORMAT
    specs/GSPLATS_ZARR_FORMAT
+   specs/MESH_NODE_SPEC
    guides/user/FORMAT_AND_MIGRATION
 
 .. toctree::
@@ -111,6 +112,7 @@ Features
    :caption: Developer Guides:
 
    guides/developer/BUILD_SYSTEM_SPEC
+   guides/developer/DOCUMENTATION_QUALITY
    guides/developer/TESTING_GUIDELINES
    guides/developer/PLAYWRIGHT_GUIDE
    guides/user/E2E_TESTING_GUIDE

@@ -6,6 +6,16 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Documentation — pull-request quality gate and warning ratchets (#776)
+
+Documentation-relevant pull requests now report a stable `docs-quality` check.
+It combines the existing README/docstring/JSDoc completeness baseline with a
+message-level TypeDoc warning baseline and a warning-fatal Sphinx build. Broken
+internal references fail deterministically; external HTTP link checking remains
+an explicit opt-in audit with narrow reviewed exceptions. The developer guide
+records measurable phases for reducing the remaining completeness and TypeDoc
+debt to zero.
+
 #### Tests — the line-joint artifact gets an automated acceptance measurement (#790)
 
 The outer-side miter wedge existed only as a scratch script, and nothing
