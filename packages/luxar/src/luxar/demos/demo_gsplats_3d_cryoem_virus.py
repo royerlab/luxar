@@ -76,6 +76,7 @@ from luxar.utils.demos import (
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
+    parse_int_arg,
     warn_if_no_cuda_gpu,
 )
 from luxar.utils.paths import get_demos_output_dir
@@ -114,17 +115,8 @@ SERVE_ONLY = FLAGS["serve_only"]
 RECOMPUTE = FLAGS["recompute"]
 
 
-def _int_arg(argv: list[str], flag: str, default: int) -> int:
-    for i, a in enumerate(argv):
-        if a == flag and i + 1 < len(argv):
-            return int(argv[i + 1])
-        if a.startswith(flag + "="):
-            return int(a.split("=", 1)[1])
-    return default
-
-
-TARGET_SIZE = _int_arg(sys.argv, "--target-size", TARGET_SIZE)
-MAX_SPLATS = _int_arg(sys.argv, "--max-splats", MAX_SPLATS)
+TARGET_SIZE = parse_int_arg("target-size", TARGET_SIZE, sys.argv)
+MAX_SPLATS = parse_int_arg("max-splats", MAX_SPLATS, sys.argv)
 
 Arbol.max_depth = 5
 DEVICE = None

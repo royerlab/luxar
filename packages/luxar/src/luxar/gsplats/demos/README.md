@@ -76,6 +76,14 @@ hatch run python packages/luxar/src/luxar/gsplats/demos/demo_2d_synthetic_blobs.
 | **demo_tiled_fitting.py** | Tiling | Tiled fitting for large volumes |
 | **demo_substitutive_lod_dapi.py** | Substitutive LOD | Cost-aware Lloyd vs amplitude-culling baseline |
 
+### **Shared Helpers (not a demo)**
+
+`_demo_common.py` holds the overlay/metric helpers the demos share —
+`ellipse_polygon_from_L` (2D t-sigma contour), `ellipsoid_wireframe_from_L` (3D
+t-sigma wireframe) and `psnr` (peak = target's dynamic range). Import them
+(`from luxar.gsplats.demos._demo_common import ...`) rather than pasting another
+copy into a new demo; they are unit-tested in `tests/test_demo_common.py`.
+
 ---
 
 ## Detailed Demo Descriptions
