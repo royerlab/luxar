@@ -421,8 +421,13 @@ pub fn project_gsplats_nd_to_3d(
         };
 
         // (3) Visibility decision: attenuated amplitude vs the threshold.
+        // The rejection is the NEGATION of the acceptance rule, not `<`: a NaN
+        // amplitude (or `inf * 0.0` when a splat is fully attenuated) is neither
+        // `<` nor `>=` the threshold, and plain `<` would let it through to be
+        // emitted with a NaN amplitude — the #725 silent-corruption mode. Spelled
+        // as an explicit `is_nan` arm because clippy rejects `!(a >= b)` on f32.
         let attenuated_amplitude = amplitudes[i] * attenuation;
-        if attenuated_amplitude < min_amplitude {
+        if attenuated_amplitude < min_amplitude || attenuated_amplitude.is_nan() {
             continue;
         }
 
@@ -732,8 +737,9 @@ mod tests {
 
     /// Visibility-gate boundaries of the fused kernel, migrated from the
     /// per-kernel attenuation tests: the gate is `attenuated >= min_amplitude`,
-    /// and a NaN center must CULL the splat (`f32::max` ignores NaN) rather
-    /// than emit a NaN amplitude. The TypeScript twin pins the same two cases.
+    /// and a NaN attenuated amplitude — whether it came from a NaN center, a
+    /// NaN input amplitude, or `inf * 0.0` — must CULL the splat rather than be
+    /// emitted. The TypeScript twin pins the same cases.
     #[test]
     fn test_fused_visibility_gate_boundaries() {
         // One splat, identity Cholesky, sliced at the origin.
@@ -773,6 +779,19 @@ mod tests {
 
         // NaN center → NaN Mahalanobis distance → `max(0.0)` yields 0, culled.
         assert_eq!(project(&[0.0, 0.0, 0.0, f32::NAN], 4, &[3], 1.0, 1e-6).0, 0);
+
+        // A NaN arriving in `amplitudes` is past the attenuation clamp, so the
+        // gate itself has to reject it: `NaN < min` is false, and a gate spelled
+        // as a plain `<` would emit a NaN amplitude to the GPU.
+        assert_eq!(project(&[0.0, 0.0, 0.0], 3, &[], f32::NAN, 1e-6).0, 0);
+        // Same for `inf * 0.0` on a fully attenuated splat.
+        assert_eq!(
+            project(&[0.0, 0.0, 0.0, 50.0], 4, &[3], f32::INFINITY, 1e-6).0,
+            0
+        );
+        // The finite counterpart is culled the ordinary way, so the case above
+        // really exercises the NaN arm and not just the distance cull.
+        assert_eq!(project(&[0.0, 0.0, 0.0, 50.0], 4, &[3], 1.0, 1e-6).0, 0);
     }
 
     /// Regression: a 2D scene gives `display_dims.len() == 2`; the display

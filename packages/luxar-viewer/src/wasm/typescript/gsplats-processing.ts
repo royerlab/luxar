@@ -381,17 +381,21 @@ export function project_gsplats_nd_to_3d(
       const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
       // Clamp at 0 with a comparison rather than Math.max: Rust's `f32::max`
       // IGNORES NaN and returns 0.0, while `Math.max(0, NaN)` is NaN. A NaN
-      // anywhere in a splat's center/covariance would otherwise make this
-      // backend emit it with a NaN amplitude (`NaN < minAmplitude` is false —
-      // the #725 silent-corruption mode) while WASM culled it. `NaN > 0` is
-      // false, so the two twins now agree on every input.
+      // anywhere in a splat's center/covariance would otherwise leave this
+      // backend with a NaN attenuation where WASM had 0.0. `NaN > 0` is false,
+      // so the two twins agree on every input. (The visibility gate below is
+      // the second line of defence, for a NaN that arrives in `amplitudes`.)
       const shifted = invOneMinusC * (rawExp - shiftC);
       attenuation = shifted > 0.0 ? shifted : 0.0;
     }
 
-    // (3) Visibility decision.
+    // (3) Visibility decision. The rejection is the NEGATION of the acceptance
+    // rule, not `<`: a NaN amplitude (or `Infinity * 0` when a splat is fully
+    // attenuated) is neither `<` nor `>=` the threshold, and plain `<` would let
+    // it through to be emitted with a NaN amplitude — the #725 silent-corruption
+    // mode. Mirrors the Rust twin.
     const attenuatedAmplitude = amplitudes[i] * attenuation;
-    if (attenuatedAmplitude < minAmplitude) continue;
+    if (attenuatedAmplitude < minAmplitude || Number.isNaN(attenuatedAmplitude)) continue;
 
     // (4) Write compacted outputs at dense slot `out`.
     const cOff = out * 3;

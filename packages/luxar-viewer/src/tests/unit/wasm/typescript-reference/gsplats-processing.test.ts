@@ -162,6 +162,20 @@ describe('gsplats_processing: fused visibility gate', () => {
     // to the GPU (`NaN < minAmplitude` is false), the #725 corruption mode.
     expect(project([0, 0, 0, Number.NaN], 4, [3], 1.0, 1e-6)[0]).toBe(0);
   });
+
+  it('culls a splat whose attenuated AMPLITUDE comes out NaN', () => {
+    // The attenuation clamp above cannot help here — the NaN arrives already in
+    // `amplitudes`, so the gate itself has to reject it. `NaN < minAmplitude` is
+    // false, so a gate spelled as a plain `<` would emit the splat with a NaN
+    // amplitude straight to the GPU.
+    expect(project([0, 0, 0], 3, [], Number.NaN, 1e-6)[0]).toBe(0);
+    // Same for the `Infinity * 0` product: a fully attenuated splat with an
+    // infinite amplitude yields NaN, not 0.
+    expect(project([0, 0, 0, 50], 4, [3], Number.POSITIVE_INFINITY, 1e-6)[0]).toBe(0);
+    // A finite amplitude on the same off-slice splat is culled the ordinary way,
+    // so the case above really is the NaN arm and not just the distance cull.
+    expect(project([0, 0, 0, 50], 4, [3], 1.0, 1e-6)[0]).toBe(0);
+  });
 });
 
 /**
