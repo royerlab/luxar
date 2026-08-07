@@ -288,9 +288,9 @@ dependencies = [
 # tests (content-fit CLI, tiled/progressive fitting) still run locally and their
 # code stays covered by fast unit tests (coverage holds at ~87% ≥ the 80% gate).
 [tool.hatch.envs.default.scripts]
-test = "pytest {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
-test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
-test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats}"
+test = "pytest {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
+test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
+test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
 # `scripts/benchmarks` is listed explicitly: a broad `benchmarks/` entry in
 # .gitignore makes ruff's directory walk skip it, but pre-commit still formats
 # those tracked files, so it must be covered here to keep them in sync.
@@ -534,7 +534,12 @@ ignore_errors = true
 # Linting configuration is in [tool.ruff] section above
 
 [tool.pytest.ini_options]
-testpaths = ["packages/luxar/src/luxar", "packages/luxar/examples/tests", "stats"]
+testpaths = [
+    "packages/luxar/src/luxar",
+    "packages/luxar/examples/tests",
+    "stats",
+    "scripts/gallery/tests",
+]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

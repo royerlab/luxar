@@ -27,6 +27,7 @@ import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
 import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
+import { noticeUnsortedTranslucency } from '../../data/scene-loader/commit/commit-mesh-geometry';
 import type { GeometryTypeName } from '../../types/format-contract';
 import {
   defaultBlendingMode,
@@ -317,6 +318,9 @@ export class LayerApplyEngine {
 
   applyOpacity(layer: LayerInfo): void {
     this.applyComposed(layer);
+    // The other half of §6.3's predicate: dragging opacity below the depthWrite
+    // threshold makes an already-`normal` mesh translucent without touching the mode.
+    this.noticeMeshTranslucency(layer);
   }
 
   applyAbsorption(layer: LayerInfo): void {
@@ -360,6 +364,28 @@ export class LayerApplyEngine {
 
   applyBlendingMode(layer: LayerInfo): void {
     this.applyComposed(layer);
+    this.noticeMeshTranslucency(layer);
+  }
+
+  /**
+   * Re-evaluate the unsorted-translucency notice after a panel-driven change (§6.3).
+   *
+   * The notice otherwise fires only from `commitMeshGeometry`, so switching a loaded
+   * mesh to `normal` — or dragging its opacity down — would never warn on a STATIC
+   * mesh, one whose slice never moves and which therefore never commits again. Reading
+   * the mode and opacity live off the material does not help if nothing calls the
+   * predicate; this is the missing call.
+   *
+   * Cheap to run unconditionally: the predicate returns immediately for any non-`normal`
+   * mode, and it is de-duplicated per node, so a slider drag evaluates a couple of
+   * comparisons per frame and warns at most once.
+   */
+  private noticeMeshTranslucency(layer: LayerInfo): void {
+    for (const leaf of this.getAffectedDataLeaves(layer.path)) {
+      if (leaf.type !== 'mesh') continue;
+      const obj = this.getMesh(leaf.path);
+      if (obj) noticeUnsortedTranslucency(obj as THREE.Mesh, leaf.path);
+    }
   }
 
   /**

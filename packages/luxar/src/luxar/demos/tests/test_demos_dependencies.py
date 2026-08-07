@@ -32,6 +32,9 @@ from luxar.demos._dependencies import (
     substitutive_lod_or_flat,
     survey,
 )
+from luxar.demos.registry import iter_demos
+
+from ._scanned_modules import EXCLUDED, REQUIRED_SHARED_HELPERS, scanned_demo_modules
 
 # Requirement names that intentionally live outside every Luxar extra.
 NOT_IN_ANY_EXTRA = {"gdown"}
@@ -447,16 +450,58 @@ class TestSubstitutiveLodGate:
         assert "skipping Lines LOD" in capsys.readouterr().out
 
 
+class TestScannedModuleSet:
+    """The guards below are only as good as the set of files they read.
+
+    Six guards read :func:`scanned_demo_modules` — four here, plus the
+    entry-point preflight and the substitutive-LOD guards next door. A gate that
+    moves out of a ``demo_*.py`` into a shared helper must stay covered, so the
+    set is a denylist over ``demos/*.py`` rather than an opt-in filename pattern.
+    """
+
+    def test_shared_helpers_are_scanned(self) -> None:
+        names = {p.name for p in scanned_demo_modules()}
+        assert REQUIRED_SHARED_HELPERS <= names, (
+            "shared helper modules escaped the guarded set: "
+            f"{sorted(REQUIRED_SHARED_HELPERS - names)}"
+        )
+
+    def test_the_set_is_a_denylist_over_every_module(self) -> None:
+        # Not an allowlist: a new demos/_plot_helpers.py must be picked up with
+        # no edit here, or it would silently escape all six guards.
+        demos_dir = Path(__file__).resolve().parents[1]
+        on_disk = {p.name for p in demos_dir.glob("*.py")}
+        scanned = {p.name for p in scanned_demo_modules()}
+        assert on_disk - scanned == set(EXCLUDED)
+
+    def test_excluded_modules_are_justified(self) -> None:
+        # Exclusions cost coverage, so each one is named and explained in
+        # _scanned_modules' docstring. Keep the set tiny and deliberate.
+        assert set(EXCLUDED) == {"__init__.py", "_dependencies.py"}
+
+    def test_scanned_demos_match_the_registry_exactly(self) -> None:
+        # The registry is what `luxar demo` lists and what the import smoke test
+        # exercises; the guards read the filesystem. A divergence either way is a
+        # bug: a registered demo the guards never scan, or a demo_*.py on disk
+        # that no longer registers (a broken DEMO_META).
+        scanned = {p.name for p in scanned_demo_modules() if p.name.startswith("demo_")}
+        registered = {info.path.name for info in iter_demos()}
+        assert scanned == registered, (
+            "scanned demo modules and the registry disagree: "
+            f"only on disk {sorted(scanned - registered)}, "
+            f"only registered {sorted(registered - scanned)}"
+        )
+
+
 class TestEveryGatedModuleIsInTheTable:
     """A ``require_module("x")`` whose x is absent from the table would advertise
     a BARE ``pip install x`` — exactly the unbounded hint rule 2 forbids — and
     ``luxar demo deps`` would never report it as missing."""
 
     def test_all_require_module_arguments_are_known(self) -> None:
-        demos_dir = Path(__file__).resolve().parents[1]
         pattern = re.compile(r'require_module\(\s*"([^"]+)"')
         unknown: dict[str, set[str]] = {}
-        for path in sorted(demos_dir.glob("demo_*.py")):
+        for path in scanned_demo_modules():
             for module in pattern.findall(path.read_text(encoding="utf-8")):
                 # Submodules inherit their package's spec (see require_module).
                 root = module.split(".")[0]
@@ -537,9 +582,7 @@ class TestNoRuntimePipInstall:
         return self._offending_nodes(ast.parse(source))
 
     def test_no_demo_installs_packages_at_runtime(self) -> None:
-        demos_dir = Path(__file__).resolve().parents[1]
-        files = sorted(demos_dir.glob("demo_*.py"))
-        assert files, "no demo files found — the glob or layout changed"
+        files = scanned_demo_modules()
         offenders = {
             path.name: lines
             for path in files
@@ -643,7 +686,6 @@ class TestNoUnpinnedThirdPartyImports:
         }
 
     def test_every_third_party_demo_import_is_pinned_and_tabled(self) -> None:
-        demos_dir = Path(__file__).resolve().parents[1]
         allowed = (
             set(sys.stdlib_module_names)
             | {"luxar"}
@@ -653,8 +695,7 @@ class TestNoUnpinnedThirdPartyImports:
         )
 
         offenders: dict[str, set[str]] = {}
-        files = sorted(demos_dir.glob("demo_*.py"))
-        assert files, "no demo files found — the glob or layout changed"
+        files = scanned_demo_modules()
         for path in files:
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
@@ -757,9 +798,7 @@ class TestNoUnboundedInstallHint:
 
     def test_no_demo_advertises_an_unbounded_install(self) -> None:
         bounded = self._bounded_distributions()
-        demos_dir = Path(__file__).resolve().parents[1]
-        files = sorted(demos_dir.glob("demo_*.py"))
-        assert files, "no demo files found — the glob or layout changed"
+        files = scanned_demo_modules()
 
         offenders = {
             path.name: hits
