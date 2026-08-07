@@ -931,9 +931,9 @@ with `MeshMaterialProperties` alongside the existing three property interfaces. 
 node** (the convention for all three types since the texture-storage migration), so there is no cache
 key and no LRU.
 
-Note that `material-manager.ts` still declares `pointMaterialCache` / `lineMaterialCache` /
-`gsplatMaterialCache`; these are **vestigial and permanently empty**, kept only so `getCacheStats()`
-keeps its shape. Mesh must **not** add a fourth empty map — `createMeshMaterial` constructs directly.
+There are no per-type material cache maps — every material is per-node, so `getCacheStats()` reports
+only registry size and create-time, never a cache size. Mesh follows the same convention: no cache map,
+`createMeshMaterial` constructs directly.
 
 Both backends must produce matching output; the existing codegen snapshot harness
 (`src/tests/__codegen__/`) gates the **TSL-generated** shaders (the hand-written GLSL twins are pinned
