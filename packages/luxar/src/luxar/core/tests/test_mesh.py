@@ -417,7 +417,7 @@ def test_mesh_names_the_reason_for_the_lod_and_partition_parameters(tmp_path) ->
     """``add_mesh(additive_lod=…)`` must not answer like a typo.
 
     ``partition`` / ``additive_lod`` / ``substitutive_lod`` are real parameters on the
-    other three adders, so a caller reaching for one on a mesh spelled a real feature
+    sibling adders, so a caller reaching for one on a mesh spelled a real feature
     correctly. Without a refusal of its own they fall into ``**attrs`` and come back as
     "Unknown node attribute … The viewer would silently ignore it. Remove it or use a
     supported attribute" — and ``partition`` even draws a "Did you mean 'absorption'?"

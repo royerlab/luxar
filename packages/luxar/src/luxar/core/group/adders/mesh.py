@@ -122,9 +122,9 @@ def _reject_structure_params(name: str, attrs: Dict[str, Any]) -> None:
     for key, reason in _UNSUPPORTED_STRUCTURE_PARAMS.items():
         if key in attrs:
             raise ValueError(
-                f"Cannot add mesh '{name}' with '{key}'. That is a Points / Lines / "
-                f"GSplats parameter and mesh has no such path yet: {reason} (spec "
-                "§9). Write the mesh as a plain leaf instead."
+                f"Cannot add mesh '{name}' with '{key}'. That is a structural "
+                "parameter of the sibling adders and mesh has no such path yet: "
+                f"{reason} (spec §9). Write the mesh as a plain leaf instead."
             )
 
 
