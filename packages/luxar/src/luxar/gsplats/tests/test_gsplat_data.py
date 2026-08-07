@@ -3,9 +3,39 @@
 import numpy as np
 import pytest
 
+from luxar.gsplats._data.base import _GSplatDataOps
 from luxar.gsplats.gsplat_data import GSplatData
 
 from ._gsplat_data_helpers import _make_3d_gsplat, _make_empty_gsplat
+
+# ── Mixin composition ───────────────────────────────────────
+
+
+class TestMixinComposition:
+    """Guard the invariant the ``_data`` mixin split rests on."""
+
+    def test_no_ops_stub_wins_the_mro(self):
+        """Every ``_GSplatDataOps`` stub must resolve to a real implementation.
+
+        The stubs exist so each domain mixin's cross-mixin ``self.`` calls
+        type-check; they only ever raise. They are safe solely because C3 puts
+        ``_GSplatDataOps`` after every mixin that inherits it. Reorder the base
+        list (or drop the inheritance from the final base) and a stub silently
+        wins — ``flattened()`` and friends start raising ``NotImplementedError``
+        with nothing else in the suite to notice.
+        """
+        stubs = [name for name in vars(_GSplatDataOps) if not name.startswith("__")]
+        assert stubs, "expected _GSplatDataOps to declare cross-mixin stubs"
+        owners = {
+            name: next(c for c in GSplatData.__mro__ if name in vars(c))
+            for name in stubs
+        }
+        leaked = sorted(n for n, owner in owners.items() if owner is _GSplatDataOps)
+        assert leaked == [], (
+            f"_GSplatDataOps stubs shadow their real implementations: {leaked}. "
+            f"MRO: {[c.__name__ for c in GSplatData.__mro__]}"
+        )
+
 
 # ── Properties and basic interface ──────────────────────────
 

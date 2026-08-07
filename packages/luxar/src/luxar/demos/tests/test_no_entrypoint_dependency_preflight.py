@@ -23,7 +23,13 @@ its subclass ``ModuleNotFoundError``, or :class:`~luxar.demos.MissingDependencyE
 ``os._exit``, ``exit``/``quit``, or ``raise SystemExit``). The entry points are
 ``main()``, the module's executable top-level statements, and the
 ``if __name__ == "__main__":`` block (demos run as ``python -m ...``) — plus,
-transitively, every module-local helper any of them calls by bare name. Nested
+transitively, every module-local helper any of them calls by bare name. A
+scanned module that defines NO entry point of its own — today exactly
+``_interop_common.py``, ``_roundtrip_common.py`` and ``registry.py``, whose
+callers live in the demos that import them — has every module-level ``def``
+treated as reachable instead. So a gate moved into one of *those* modules stays
+guarded; the precondition is the absence of an entry point, not the ``_common``
+name (see the last bullet below for the case it does not cover). Nested
 ``def``s inside a reachable function are scanned too, conservatively, whether
 or not the closure is provably called: skipping them would reopen the bypass
 of hiding the preflight in an immediately-invoked local closure.
@@ -46,6 +52,18 @@ Not covered on purpose:
   where ``except*`` is a syntax error (3.11+).
 - Reversed-operand or ``and``-compound spellings of the ``__name__`` guard;
   only the idiomatic ``if __name__ == "__main__":`` is recognised.
+- A gate exported from a module that HAS its own entry point: a function in a
+  ``main()``-bearing module that only its *importers* call is unreachable from
+  that module's own ``main()``, so it is not scanned. This is a real shape —
+  ``demo_gsplats_lod_tribolium.py``, ``demo_gsplats_lod_embryo_line.py`` and
+  ``demo_gsplats_recipes_tribolium.py`` all import from
+  ``demo_gsplats_3d_tribolium_embryo.py``, and
+  ``demo_particle_collision_animated.py`` from ``demo_particle_collision.py``.
+  Seeding every ``def`` unconditionally would close it, but at the cost of
+  flagging genuinely dead code as an entry-point preflight, which
+  ``test_the_guard_still_ignores_unreached_helpers_in_a_real_demo`` pins against.
+  Putting shared code in a module without a ``main()`` (the ``_*_common.py``
+  pattern) keeps it inside the guard.
 
 These are accepted limits, not full soundness: within the idiomatic
 ``try``/``except`` preflight shape the guard is closed, and every demo today is
@@ -59,12 +77,16 @@ from pathlib import Path
 
 import pytest
 
+from ._scanned_modules import scanned_demo_modules
+
 DEMOS_DIR = Path(__file__).resolve().parent.parent
 ENTRY_POINTS = {"main"}
 
 
 def _demo_modules() -> list[Path]:
-    return sorted(DEMOS_DIR.glob("demo_*.py"))
+    # Includes the shared `_*_common.py` helpers, not just `demo_*.py` — see
+    # `_scanned_modules` for why the set is explicit rather than a blanket glob.
+    return scanned_demo_modules(DEMOS_DIR)
 
 
 def _exits(node: ast.AST) -> bool:
@@ -231,20 +253,43 @@ def _entry_reachable(tree: ast.Module) -> list[ast.AST]:
     guard, or any ordinary top-level statement — are followed transitively,
     with a visited set to break cycles, so a preflight moved into a helper
     is still scanned no matter which entry point calls it.
+
+    A module with NO entry point of its own — no ``main()``, no ``__main__``
+    guard, nothing called at import time; today ``_interop_common.py``,
+    ``_roundtrip_common.py`` and ``registry.py`` — would otherwise have every one
+    of its functions unreachable, so the walk would return nothing and the guard
+    would pass vacuously. That is not a hypothetical: moving a gate out of five
+    demos' ``main()``-reachable code into one such helper would silently *drop*
+    it from this guard. For those modules every module-level ``def`` is therefore
+    seeded as a root — the demos reach them by import, so the entry point is
+    simply somewhere else.
+
+    Note the precondition: this keys on the ABSENCE of an entry point, not on the
+    filename. Should one of those modules ever gain a ``main()``, intra-module
+    reachability resumes and an exported-only function stops being scanned — the
+    limit recorded in the module docstring's last "not covered" bullet.
     """
     defs = _module_defs(tree)
     roots: list[ast.AST] = []
     seed_names: set[str] = {name for name in ENTRY_POINTS if name in defs}
+    has_entry_point = bool(seed_names)
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue  # defs reached via seeds; class bodies are not entry points
         if _is_name_guard(node):
             if _is_main_guard(node):
+                has_entry_point = True
                 roots.append(node)  # runs as a script on `python -m ...`
                 seed_names |= _local_callees(node, defs)
             continue  # negated / other-operator guard runs on import — skip
         roots.append(node)  # ordinary top-level statement runs on `python -m ...`
         seed_names |= _local_callees(node, defs)
+    if not has_entry_point:
+        # No entry point in THIS module (a shared helper such as
+        # _interop_common / _roundtrip_common / registry): its callers' entry
+        # points are elsewhere, so treat every module-level function as
+        # reachable rather than none.
+        seed_names |= set(defs)
     scanned: dict[str, ast.AST] = {}
     stack = list(seed_names)
     while stack:
@@ -303,6 +348,50 @@ def test_the_guard_itself_detects_the_pattern(tmp_path: Path) -> None:
         "        sys.exit(1)\n"
     )
     assert _preflights(offender) == ["demo_offender.py:3"]
+
+
+def test_the_guard_scans_a_helper_module_with_no_main(tmp_path: Path) -> None:
+    """A shared helper's functions must be reachable even without a ``main()``.
+
+    Shaped exactly like ``_roundtrip_common.py``: no entry point, nothing run at
+    import time, the gate inside a function the demos call. Rooting the walk at
+    ``main()`` alone returned ``[]`` here, so moving a gate out of five demos
+    into one helper would have dropped it from this guard entirely.
+    """
+    helper = tmp_path / "_helper_common.py"
+    helper.write_text(
+        "import sys\n"
+        "def show_something(x):\n"
+        "    try:\n"
+        "        import matplotlib.pyplot as plt\n"
+        "    except ImportError:\n"
+        "        print('missing')\n"
+        "        sys.exit(1)\n"
+        "    return plt\n"
+    )
+    assert _preflights(helper) == ["_helper_common.py:3"]
+
+
+def test_the_guard_still_ignores_unreached_helpers_in_a_real_demo(
+    tmp_path: Path,
+) -> None:
+    """The helper seeding must not leak into modules that DO have an entry point.
+
+    A demo with a ``main()`` keeps the reachability rule: a dead function nobody
+    calls is not an entry-point preflight.
+    """
+    demo = tmp_path / "demo_with_dead_code.py"
+    demo.write_text(
+        "import sys\n"
+        "def never_called():\n"
+        "    try:\n"
+        "        import umap\n"
+        "    except ImportError:\n"
+        "        sys.exit(1)\n"
+        "def main():\n"
+        "    return 1\n"
+    )
+    assert _preflights(demo) == []
 
 
 def test_the_guard_ignores_soft_optional_checks(tmp_path: Path) -> None:
