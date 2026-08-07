@@ -6,7 +6,8 @@ Pure function taking a ``group: Group`` parameter as the first arg. Called by
 
 Notably shorter than its siblings, and structurally so: mesh has no
 ``additive_lod`` / ``substitutive_lod`` / ``partition`` branches, because none of
-those exist for a connected surface (MESH_NODE_SPEC.md §9). What remains is the
+those paths exist for a mesh yet — for three different reasons, spelled out in the
+rejections below and in MESH_NODE_SPEC.md §9. What remains is the
 single-leaf write path the other adders reach after their LOD/partition
 dispatch — plus one rejection those adders never need, since a specialized-group
 parent is the one way a mesh could end up somewhere it cannot be rendered.
@@ -47,23 +48,84 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
       ``display_type='mesh'``, but nothing stops a caller from creating a
       ``points`` partition and then adding a mesh child into it, which would make
       the group's declared display type a lie.
-    * ``kind=lod`` — the ladder has no coarse stand-in for a surface, and the
-      display type resolved from a mesh child is refused by the LOD guard. That
-      guard fires at finalize, i.e. AFTER the mesh's arrays are on disk; catching
-      it here keeps the failure fail-fast and leaves no partial node.
+    * ``kind=lod`` — there is no mesh LOD producer, and the display type resolved
+      from a mesh child is refused by the LOD guard. That guard fires at finalize,
+      i.e. AFTER the mesh's arrays are on disk; catching it here keeps the failure
+      fail-fast and leaves no partial node.
 
     Both are caller mistakes with no valid interpretation, so they raise rather
     than warn.
+
+    The two LOD flavours are refused for DIFFERENT reasons and the message says so
+    (spec §9). The additive prefix ladder is excluded on principle — a prefix of an
+    index buffer is a *holed* surface, not a coarse one, which is why it degrades
+    gracefully for independent elements and produces a wrong picture here.
+    Substitutive levels are excluded only for want of a producer: that machinery
+    makes no independence assumption at all, since a level is an
+    independently-authored ``(vertices, faces)`` pair chosen by
+    ``coverage_fraction``. Conflating the two (as this message once did) tells a
+    user the feature is impossible when it is merely unwritten.
     """
     kind = parent_node.attrs.get("kind")
-    if kind in ("lod", "partition"):
+    if kind == "lod":
         raise ValueError(
-            f"Cannot add mesh '{name}' to a kind={kind} group. Mesh supports "
-            "neither LOD nor spatial partitioning yet: the additive/substitutive "
-            "ladder reduces independent elements (a surface is connected), and a "
-            "BSP cut needs vertex duplication at part boundaries. Add the mesh to "
-            "a plain group instead."
+            f"Cannot add mesh '{name}' to a kind=lod group. Mesh has no LOD "
+            "ladder yet, for two different reasons: an ADDITIVE prefix ladder "
+            "cannot apply at all (a prefix of an index buffer is a surface with "
+            "holes in it, not a coarser surface), while SUBSTITUTIVE levels are "
+            "structurally fine and simply have no producer — mesh decimation does "
+            "not exist yet. Add the mesh to a plain group instead."
         )
+    if kind == "partition":
+        raise ValueError(
+            f"Cannot add mesh '{name}' to a kind=partition group. Mesh has no "
+            "spatial-partition path yet: a BSP cut runs through faces, so each "
+            "part needs its boundary vertices duplicated and the per-vertex label "
+            "CSR split to match. Add the mesh to a plain group instead."
+        )
+
+
+# Reason per structural parameter the sibling adders take and mesh does not. Same
+# three exclusions as the parent-group refusals above and as ``Group.add_mesh``'s
+# docstring, worded for a caller who passed the knob; insertion order decides which
+# one a multi-parameter call is told about.
+_UNSUPPORTED_STRUCTURE_PARAMS: Dict[str, str] = {
+    "additive_lod": (
+        "an ADDITIVE prefix ladder cannot apply at all — a prefix of an index "
+        "buffer is a surface with holes in it, not a coarser surface"
+    ),
+    "substitutive_lod": (
+        "SUBSTITUTIVE levels are structurally fine and simply have no producer — "
+        "mesh decimation does not exist yet"
+    ),
+    "partition": (
+        "a BSP cut runs through faces, so each part needs its boundary vertices "
+        "duplicated and the per-vertex label CSR split to match"
+    ),
+}
+
+
+def _reject_structure_params(name: str, attrs: Dict[str, Any]) -> None:
+    """Refuse the sibling adders' ``additive_lod`` / ``substitutive_lod`` / ``partition``.
+
+    ``add_mesh`` has no such parameters, so a caller who passes one lands in
+    ``**attrs`` and gets the generic UNKNOWN-attribute rejection from
+    ``validate_render_attrs`` — "The viewer would silently ignore it… Remove it or
+    use a supported attribute", plus a "Did you mean 'absorption'?" hint for
+    ``partition``. That is a typo diagnostic, and this caller made no typo: they
+    asked for a real feature the other three geometry types have, by its real name.
+
+    The refusal is correct either way; only its stated reason was wrong, which is the
+    same defect the parent-group message above carried. Answering with the per-flavour
+    reason (spec §9) is what tells a user whether to wait for the feature.
+    """
+    for key, reason in _UNSUPPORTED_STRUCTURE_PARAMS.items():
+        if key in attrs:
+            raise ValueError(
+                f"Cannot add mesh '{name}' with '{key}'. That is a structural "
+                "parameter of the sibling adders and mesh has no such path yet: "
+                f"{reason} (spec §9). Write the mesh as a plain leaf instead."
+            )
 
 
 def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
@@ -97,6 +159,56 @@ def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
         )
 
 
+def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
+    """Refuse hand-supplied LOD quality stamps on a mesh (spec §9.1).
+
+    ``level_stats`` / ``lod_stats`` carry the ``energy_fraction_cum`` and
+    ``reference_energy`` pair that an additive ladder writes. The allow-list in
+    ``io/_compiler/node_common.py`` is geometry-blind, so a caller can set them on a
+    mesh today and the node writes clean.
+
+    The hazard is on the viewer side. ``energyCompensation`` multiplies a leaf's
+    brightness by ``1/e(k)`` while a ladder is incomplete, and it is gated on
+    ``BLENDABLE_MODES = {additive, luminous, volumetric}`` — **not** on geometry
+    type. Mesh supports ``additive`` and ``luminous``, so a stamped mesh in either
+    mode would be brightened. That is right for a splat prefix, which really is a
+    dimmer version of the whole; it is backwards for a surface, where a partial draw
+    is a *holed* picture at full brightness. Mesh's ``opaque`` default escapes it
+    today by luck, not design.
+
+    This is deliberately prophylactic rather than a fix for a live bug: mesh cannot
+    currently be in a ``kind=lod`` group (so the fade pass never visits it) and the
+    mesh commit never stamps ``committedEnergyFraction`` (so the compensation
+    factor is 1). Substitutive LOD would remove the first latch and a reveal ladder
+    the second. Refusing now means §9.1's "must NOT carry energy stamps" rule is
+    enforced before either lands, rather than being a note someone has to remember.
+
+    A reveal ladder (§9.1) is expected to arrive as a face ORDER plus a reveal
+    fraction on a single leaf, which needs neither key — so this refusal does not
+    stand in its way. Substitutive mesh levels are the one thing it would touch:
+    ``level_stats`` also carries the non-energy ``quality`` stamp a level may
+    legitimately want, so whoever lands the decimator narrows this to the energy keys
+    rather than working around it.
+
+    Until then the check is on KEY PRESENCE, deliberately broader than the energy
+    fields themselves: neither attribute has anything to say about a mesh today, so
+    there is no value worth inspecting, and refusing the container is the rule §9.1
+    states. The message says which attribute is refused and what it is FOR — it does
+    not claim the supplied dict actually holds a stamp.
+    """
+    supplied = sorted(k for k in ("level_stats", "lod_stats") if k in attrs)
+    if supplied:
+        raise ValueError(
+            f"Cannot add mesh '{name}' with {' and '.join(supplied)}. That is where "
+            "an additive ladder writes its energy stamps, and the viewer's brightness "
+            "compensation is gated on the BLENDING MODE, not the geometry type — "
+            "so a stamped mesh in 'additive' or 'luminous' would be scaled by "
+            "1/energy_fraction_cum. That brightens a dimmer prefix correctly and a "
+            "holed surface wrongly (spec §9.1). Mesh has no additive ladder, so "
+            "neither attribute has anything to say about one; omit them."
+        )
+
+
 def add_mesh_impl(
     group: "Group",
     *,
@@ -127,7 +239,9 @@ def add_mesh_impl(
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
         _reject_specialized_parent(parent or group, name)
+        _reject_structure_params(name, attrs)
         _reject_volumetric_blending(name, attrs)
+        _reject_energy_stamps(name, attrs)
 
         scene = group._find_scene()
 
