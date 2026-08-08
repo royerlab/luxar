@@ -410,7 +410,9 @@ A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedde
 #### demo_cytoself_protein_landscape.py - CytoSelf Protein Localization 3D UMAP
 ~114k per-image CytoSelf embeddings from the OpenCell dataset as a 3D UMAP point cloud. Each point is a single fluorescence microscopy crop of an endogenously tagged protein, colored by subcellular localization or protein identity.
 
-**Run**: `luxar demo run cytoself_protein_landscape [-- --no-serve] [-- --recompute]`
+**Run**: `luxar demo run cytoself_protein_landscape [-- --no-serve] [-- --recompute] [-- --without-images]`
+
+`--recompute` rebuilds both the 3D UMAP and the hover-thumbnail bundle; `--without-images` skips the image download entirely and the hover tooltip becomes text-only.
 
 **Requires**: Internet access (downloads embeddings from Google Drive), `umap-learn`, `pandas`, `requests`. First run computes 3D UMAP (~10-30 min); subsequent runs load cached results.
 

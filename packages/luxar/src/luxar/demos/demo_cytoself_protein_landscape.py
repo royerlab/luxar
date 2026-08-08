@@ -26,6 +26,11 @@ Usage:
     python -m luxar.demos.demo_cytoself_protein_landscape
     python -m luxar.demos.demo_cytoself_protein_landscape --no-serve
     python -m luxar.demos.demo_cytoself_protein_landscape --recompute
+    python -m luxar.demos.demo_cytoself_protein_landscape --without-images
+
+    --recompute rebuilds BOTH the 3D UMAP and the hover-thumbnail bundle.
+    --without-images skips the (large) image download; hover then shows a
+    text-only tooltip.
 
 Dependencies:
     pip install 'luxar[demos]'   # includes umap-learn, pandas, Pillow
@@ -110,6 +115,11 @@ GDRIVE_LABEL_DATA_IDS = {
 }
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "luxar" / "cytoself"
+
+# Encoded, test-aligned hover thumbnails. `load_cytoself_images` short-circuits
+# on this file before touching the network, so it is also the one thing to
+# delete when the bundle no longer matches the embeddings.
+THUMBNAILS_CACHE_NAME = "image_labels_test_webp.npz"
 
 # Per-cell sphere radius in scene units. Deliberately LARGER than the ~0.4x
 # median-nearest-neighbour rule the other embedding demos follow (median NN here
@@ -526,6 +536,7 @@ def _build_test_index_mapping(
 
 def load_cytoself_images(
     cache_dir: Path | None = None,
+    recompute: bool = False,
 ) -> list[bytes]:
     """Load and encode CytoSelf image crops as WebP thumbnails.
 
@@ -535,6 +546,10 @@ def load_cytoself_images(
 
     Args:
         cache_dir: Directory for caching downloads and encoded thumbnails.
+        recompute: If True, ignore the cached thumbnail bundle and rebuild it.
+            Without this a stale bundle (e.g. one whose count no longer matches
+            the embeddings) is returned forever, since the cache short-circuits
+            before any download.
 
     Returns:
         List of WebP-encoded bytes aligned with label.csv / embeddings.
@@ -544,8 +559,10 @@ def load_cytoself_images(
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Check for cached encoded thumbnails (test-aligned)
-    thumbnails_cache = cache_dir / "image_labels_test_webp.npz"
-    if thumbnails_cache.exists():
+    thumbnails_cache = cache_dir / THUMBNAILS_CACHE_NAME
+    if thumbnails_cache.exists() and recompute:
+        aprint("Rebuilding thumbnails (--recompute): ignoring the cached bundle")
+    elif thumbnails_cache.exists():
         with asection("Loading cached image thumbnails"):
             data = np.load(thumbnails_cache, allow_pickle=True)
             blobs = list(data["blobs"])
@@ -567,58 +584,78 @@ def load_cytoself_images(
 
     with asection("Downloading and encoding matched image crops"):
         for i, (filename, file_id) in enumerate(GDRIVE_IMAGE_IDS.items()):
-            img_path = cache_dir / filename
+            # Name the offending file. main()'s handler has to stay broad —
+            # this loop can fail with a download error, a MemoryError from
+            # np.load on a ~1.7 GB array, or a PIL encode failure — and
+            # without the filename the user cannot tell which of the ten
+            # Image_data files to look at.
+            try:
+                img_path = cache_dir / filename
 
-            _download_from_google_drive(
-                file_id, img_path, expected_min_size=400_000_000
-            )
+                _download_from_google_drive(
+                    file_id, img_path, expected_min_size=400_000_000
+                )
 
-            with asection(f"Processing {filename} ({i + 1}/{len(GDRIVE_IMAGE_IDS)})"):
-                try:
-                    arr = np.load(img_path)
-                except Exception:
-                    aprint("  ⚠ Corrupt file detected, re-downloading...")
-                    img_path.unlink(missing_ok=True)
-                    _download_from_google_drive(
-                        file_id, img_path, expected_min_size=400_000_000
-                    )
-                    arr = np.load(img_path)
+                with asection(
+                    f"Processing {filename} ({i + 1}/{len(GDRIVE_IMAGE_IDS)})"
+                ):
+                    try:
+                        arr = np.load(img_path)
+                    except Exception:
+                        aprint("  ⚠ Corrupt file detected, re-downloading...")
+                        img_path.unlink(missing_ok=True)
+                        _download_from_google_drive(
+                            file_id, img_path, expected_min_size=400_000_000
+                        )
+                        arr = np.load(img_path)
 
-                n_crops = arr.shape[0]
-                aprint(f"Shape: {arr.shape}, dtype: {arr.dtype}")
+                    n_crops = arr.shape[0]
+                    aprint(f"Shape: {arr.shape}, dtype: {arr.dtype}")
 
-                # Find which local indices in this file are needed
-                local_indices = []
-                local_to_test_map: list[tuple[int, int]] = []
-                for local_idx in range(n_crops):
-                    global_idx = global_offset + local_idx
-                    if global_idx in global_to_test:
-                        local_indices.append(local_idx)
-                        for test_idx in global_to_test[global_idx]:
-                            local_to_test_map.append((local_idx, test_idx))
+                    # Find which local indices in this file are needed
+                    local_indices = []
+                    local_to_test_map: list[tuple[int, int]] = []
+                    for local_idx in range(n_crops):
+                        global_idx = global_offset + local_idx
+                        if global_idx in global_to_test:
+                            local_indices.append(local_idx)
+                            for test_idx in global_to_test[global_idx]:
+                                local_to_test_map.append((local_idx, test_idx))
 
-                if local_indices:
-                    # Extract and encode only the needed crops
-                    unique_local = sorted(set(local_indices))
-                    subset = arr[unique_local]
-                    encoded = _encode_crops_to_webp(subset)
+                    if local_indices:
+                        # Extract and encode only the needed crops
+                        unique_local = sorted(set(local_indices))
+                        subset = arr[unique_local]
+                        encoded = _encode_crops_to_webp(subset)
 
-                    # Map encoded blobs back to test indices
-                    local_to_encoded = {li: ei for ei, li in enumerate(unique_local)}
-                    for local_idx, test_idx in local_to_test_map:
-                        encoded_idx = local_to_encoded[local_idx]
-                        result_blobs[test_idx] = encoded[encoded_idx]
-                        matched_count += 1
+                        # Map encoded blobs back to test indices
+                        local_to_encoded = {
+                            li: ei for ei, li in enumerate(unique_local)
+                        }
+                        for local_idx, test_idx in local_to_test_map:
+                            encoded_idx = local_to_encoded[local_idx]
+                            result_blobs[test_idx] = encoded[encoded_idx]
+                            matched_count += 1
 
-                    aprint(
-                        f"Encoded {len(unique_local):,} matched crops "
-                        f"(of {n_crops:,} total)"
-                    )
-                else:
-                    aprint(f"No matched crops in this file ({n_crops:,} total)")
+                        aprint(
+                            f"Encoded {len(unique_local):,} matched crops "
+                            f"(of {n_crops:,} total)"
+                        )
+                    else:
+                        aprint(f"No matched crops in this file ({n_crops:,} total)")
 
-                global_offset += n_crops
-                del arr
+                    global_offset += n_crops
+                    del arr
+            except MissingDependencyError:
+                # Has its own handler (and its own pip/extra hint) in main();
+                # rebranding it as RuntimeError would route it to the
+                # download advice instead.
+                raise
+            except Exception as exc:
+                # Keep the original type in the message: main() prints
+                # `type(e).__name__`, which is now always RuntimeError, and
+                # `str(MemoryError())` is empty — a bare trailing colon.
+                raise RuntimeError(f"{filename}: {type(exc).__name__}: {exc}") from exc
 
         aprint(f"Total matched: {matched_count:,}/{n_test:,}")
 
@@ -642,9 +679,20 @@ def load_cytoself_images(
 
     final_blobs: list[bytes] = [b for b in result_blobs if b is not None]
 
-    # Cache the test-aligned thumbnails
+    # Cache the test-aligned thumbnails. Atomic write (same idiom as
+    # `cache_computed`): with --recompute this can overwrite a VALID bundle,
+    # and np.savez truncates on open, so an interrupted write would leave a
+    # BadZipFile behind that every later run trips over.
     with asection("Caching test-aligned thumbnails"):
-        np.savez(thumbnails_cache, blobs=np.array(final_blobs, dtype=object))
+        tmp = thumbnails_cache.with_suffix(".npz.tmp")
+        try:
+            # Write through a handle, not a path: np.savez APPENDS ".npz" to a
+            # filename that lacks it, which would defeat the rename.
+            with open(tmp, "wb") as f:
+                np.savez(f, blobs=np.array(final_blobs, dtype=object))
+            tmp.replace(thumbnails_cache)
+        finally:
+            tmp.unlink(missing_ok=True)
         aprint(f"Cached {len(final_blobs):,} thumbnails to {thumbnails_cache}")
 
     return final_blobs
@@ -661,6 +709,8 @@ def create_cytoself_scene(
     attributes: dict,
     category_maps: dict | None = None,
     image_labels: list[bytes] | None = None,
+    *,
+    images_expected: bool = True,
 ) -> int:
     """Create Luxar scene with categorical attribute visualization.
 
@@ -670,6 +720,9 @@ def create_cytoself_scene(
         attributes: Dict of attribute arrays
         category_maps: Dict of attribute name -> list of category labels
         image_labels: Optional list of WebP-encoded image blobs (one per point)
+        images_expected: Whether the caller INTENDED to supply thumbnails.
+            False for a deliberate ``--without-images`` run, which then builds
+            quietly instead of warning about an absence the user asked for.
 
     Returns:
         Number of points
@@ -755,14 +808,29 @@ def create_cytoself_scene(
             # Only use if count matches embeddings — the image .npy files may
             # contain more crops than the embedding/label rows.
             all_image_labels = None
-            if image_labels is not None:
-                if len(image_labels) == n_points:
-                    all_image_labels = image_labels * len(available_attrs)
+            if image_labels is None:
+                if images_expected:
+                    # The caller (main()) has already explained WHY they are
+                    # missing and how to get them back — only state the
+                    # consequence here so the advice is printed exactly once.
+                    aprint("  ⚠ No image labels — hover tooltip will be text-only")
                 else:
-                    aprint(
-                        f"  ⚠ Skipping image labels: count mismatch "
-                        f"({len(image_labels):,} images vs {n_points:,} embeddings)"
-                    )
+                    aprint("  Building without hover thumbnails (--without-images)")
+            elif len(image_labels) == n_points:
+                all_image_labels = image_labels * len(available_attrs)
+            else:
+                aprint(
+                    f"  ⚠ Skipping image labels: count mismatch "
+                    f"({len(image_labels):,} images vs {n_points:,} embeddings)"
+                )
+                aprint("    Hover falls back to the text-only tooltip. This is")
+                aprint("    usually a stale cached bundle, which a plain re-run")
+                aprint("    reuses — delete it and re-run to rebuild:")
+                aprint(f"      {DEFAULT_CACHE_DIR / THUMBNAILS_CACHE_NAME}")
+                aprint("    (--recompute does the same, but also throws away the")
+                aprint("    cached UMAP: a 10-30 min recompute. If the mismatch")
+                aprint("    survives a rebuild, label.csv and the embeddings")
+                aprint("    themselves disagree.)")
 
             scene.add_points(
                 "Images",
@@ -815,9 +883,27 @@ def create_cytoself_scene(
                             transition_duration=0.2,
                         )
 
-            # Custom hover overlays: image top-right, text to its left
-            # (two lines via \n separator in labels). Defining these
-            # suppresses the auto-injected default hover overlay.
+            # Custom hover overlays. Defining ANY hover=True overlay
+            # suppresses the auto-injected default, so this block owns the
+            # whole hover layout and has to cover BOTH shapes:
+            #
+            #  * WITH thumbnails — the bespoke two-panel layout: the image
+            #    panel top-right at 0.98, and the text label at x=0.82 so it
+            #    sits immediately to its LEFT (two lines via the \n separator
+            #    in the labels).
+            #  * WITHOUT thumbnails — x=0.82 would leave the text floating
+            #    beside an image panel that does not exist, and the injected
+            #    default is the same top-right corner, only 16% of the
+            #    viewport further into it. So the label moves to the
+            #    centre-left slot, which no other overlay in this scene uses
+            #    (the legend is center-RIGHT at 0.98/0.5) and which is the
+            #    house convention for a text-only hover tooltip: parameters
+            #    copied from demo_chromatrace_choir_umap.py, whose overlay
+            #    layout is otherwise identical to this one. Note the viewer's
+            #    control rail is docked at the same left-centre edge and
+            #    paints above the overlay layer, so the first glyph or two
+            #    can sit behind it — house-wide, and matching the siblings
+            #    beats diverging from them.
             if all_image_labels is not None:
                 scene.add_html(
                     "{hover_image_label}",
@@ -829,17 +915,32 @@ def create_cytoself_scene(
                     hover=True,
                     hover_image_size=(0.15, 0.20),
                 )
-            if labels is not None:
+                if labels is not None:
+                    scene.add_text(
+                        "{hover_label}",
+                        position=(0.82, 0.02),
+                        anchor="top-right",
+                        font_size=0.018,
+                        color="white",
+                        width=0.12,
+                        text_align="right",
+                        background="rgba(0,0,0,0.7)",
+                        padding=0.008,
+                        opacity=1.0,
+                        transition="fade",
+                        transition_duration=0.15,
+                        hover=True,
+                    )
+            elif labels is not None:
                 scene.add_text(
                     "{hover_label}",
-                    position=(0.82, 0.02),
-                    anchor="top-right",
-                    font_size=0.018,
+                    position=(0.02, 0.5),
+                    anchor="center-left",
+                    font_size=0.022,
                     color="white",
-                    width=0.12,
-                    text_align="right",
-                    background="rgba(0,0,0,0.7)",
-                    padding=0.008,
+                    background="rgba(0,0,0,0.72)",
+                    padding=0.01,
+                    text_align="left",
                     opacity=1.0,
                     transition="fade",
                     transition_duration=0.15,
@@ -901,11 +1002,25 @@ def main() -> None:
     if not without_images:
         try:
             require_module("PIL.Image")
-            image_labels = load_cytoself_images()
+            image_labels = load_cytoself_images(recompute=recompute)
         except MissingDependencyError as exc:
-            aprint(f"WARNING: skipping image labels — {exc}")
+            # `exc` already names the package and the extra that provides it,
+            # and a re-run without it fails identically — so no other advice.
+            aprint(f"WARNING: hover thumbnails unavailable — {exc}")
         except Exception as e:
-            aprint(f"WARNING: Failed to load images — skipping: {e}")
+            # Broad on purpose: a download/decode failure must not kill the
+            # demo. But it must be honest about WHAT failed and how to fix it.
+            aprint(
+                f"WARNING: failed to load hover thumbnails — {type(e).__name__}: {e}"
+            )
+            aprint("  Re-running SKIPS whole files that already finished")
+            aprint(f"  downloading under {DEFAULT_CACHE_DIR}, so only the")
+            aprint("  missing Image_data*.npy is refetched (a file that died")
+            aprint("  part-way is refetched from the start — there is no")
+            aprint("  byte-level resume). The encoded bundle is written only at")
+            aprint("  the very end, so the index mapping and the ~114K crop")
+            aprint("  encodes are redone too. Pass --without-images to skip the")
+            aprint("  images deliberately.")
     else:
         aprint("Skipping image labels (--without-images)")
 
@@ -928,6 +1043,7 @@ def main() -> None:
             attributes,
             category_maps,
             image_labels=image_labels,
+            images_expected=not without_images,
         )
         aprint(f"Dataset generated at {output_path}")
         return
@@ -941,6 +1057,7 @@ def main() -> None:
             attributes,
             category_maps,
             image_labels=image_labels,
+            images_expected=not without_images,
         )
 
         aprint("")
@@ -951,7 +1068,12 @@ def main() -> None:
         aprint("")
         aprint("  - Rotate to explore UMAP structure")
         aprint("  - Zoom in to see individual images")
-        aprint("  - Hover over a point to see its fluorescence image")
+        # Mirror create_cytoself_scene's count-mismatch guard: thumbnails only
+        # made it into the scene if they were loaded AND aligned 1:1.
+        if image_labels is not None and len(image_labels) == len(coordinates):
+            aprint("  - Hover over a point to see its fluorescence image")
+        else:
+            aprint("  - Hover over a point to see its localization and protein")
         aprint("")
         aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
         aprint("     0: Localization (subcellular compartment)")
