@@ -6,6 +6,61 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### LOD levels no longer wait for the object to overfill the screen
+
+The viewer picks a substitutive LOD level by comparing each child's
+`coverage_fraction` against a dimensionless coverage metric,
+`projectedBBoxDiagonalPx / (FILL_FACTOR * viewportDiagonalPx)`. `FILL_FACTOR` was
+`1.0`, which put the finest level's threshold of `1.0` at "the object's projected
+diagonal equals the whole viewport diagonal" — i.e. the object had to OVERFILL the
+screen before full detail appeared. Measuring the viewer's own opening framing
+(`calculateCameraDistance`, fitRatio 0.75 + 20% margin, at the default fov 47) puts
+a real scene's raw diagonal fraction at **0.31 – 0.86**, so every default view
+showed a blurry merged level. Twelve demos and all user data with
+`substitutive_lod` were affected.
+
+`FILL_FACTOR` is now `0.25`. That lifts even the worst common shape (an in-plane
+elongated cloud on a portrait viewport, 0.307) to a metric of 1.23, while the other
+shapes span 1.7-3.4 over 16:9 / 9:16 / 1:1. Detail is still dropped well before the
+object is tiny: for the usual K=8 / 3-level ladder a cube on 16:9 leaves the finest
+level at ~2.0x zoomed out from the opening framing and reaches the coarsest at ~14x
+(~2.1x / ~15.7x counting the downgrade hysteresis); on 1:1 it is ~2.8x / ~20x. The fix is deliberately in the VIEWER rather than in Python's
+`coverage_fractions()`, so **every scene already written to disk is fixed on
+reload** — no regeneration.
+
+**This changes which level renders for every existing dataset.** Nothing needs
+regenerating and no store is invalidated, but a scene now shows more detail at the
+same camera than it did before.
+
+**If you hand-tuned `coverage_fractions=[...]`, multiply every threshold by 4.**
+The metric is 4x larger at a given framing, so a x4 rescale reproduces the previous
+selection exactly (the hysteresis margin and the cross-fade band are both
+proportional to inter-threshold gaps, so they scale with it). To make that
+expressible, the upper bound on an explicit list widened from `1.0` to
+`MAX_COVERAGE_FRACTION = 4.0` — which is `1 / FILL_FACTOR`, the metric a
+screen-filling object produces, so the bound still means exactly what `1.0` meant
+before. `validate_lod_group` now enforces that range for hand-built ladders too.
+`coverage_fractions()`'s derived output is unchanged and still lands in `[0, 1]`.
+
+Ladders bound to a spatial partition keep the old fills-screen anchor via the new
+`partitioned_coverage_fractions`, because a tile's projected diagonal is
+intrinsically a fraction of the whole object's: the `adaptive` recipe's per-tile
+groups and the `overview` recipe's coarse-cap/fine-partition pair now anchor their
+finest at `4.0`. Without that, `overview` would load its entire fine partition on
+frame 1 (inverting "instant coarse overview, fine tiles on zoom") and every
+`adaptive` tile would jump to its finest level at whole-object framing. The
+standalone writer derives the same anchor from the topology, so
+`luxar gsplat transform`'s scrub-and-re-derive stays a no-op.
+
+Known limitation, documented on the constant and pinned by tests: the anchor drifts
+with viewport ASPECT. `calculateCameraDistance` fits the vertical fov while the
+metric normalises by the diagonal, so for aspect >= 1 the raw fraction falls as
+`1 / hypot(aspect, 1)`. Each shape has its own crossover (~2.30 for an in-plane rod,
+~3.40 for a flat pancake, ~4.75 for a cube) beyond which the old symptom returns —
+so on a 21:9 or 32:9 canvas the flattest shapes still miss the finest level. Fixing
+that means changing what the two sides normalise by, not lowering `FILL_FACTOR`
+further.
+
 #### Mesh is per-triangle depth sorted
 
 `normal`-mode meshes composited in index order: whichever triangle the writer

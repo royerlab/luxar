@@ -100,6 +100,7 @@ def graft_gsplat_node(
     node: Any,  # luxar.gsplats.tree.GSplatNode
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
+    _under_partition: bool = False,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     """Graft a pre-built ``GSplatNode`` subtree into the scene, node-for-node.
@@ -111,6 +112,10 @@ def graft_gsplat_node(
     per-child ``coverage_fraction`` selector thresholds ride from each child's
     ``meta`` (so a nested lod combo stays selectable). Compositing attrs land on
     a wrapper Group; the rest fall through to children.
+
+    ``_under_partition`` is set by the recursion once a ``kind=partition`` ancestor
+    has been crossed; it selects which anchor the FALLBACK ``coverage_fraction``
+    derivation uses (see the lod branch). Callers leave it at the default.
     """
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
@@ -156,7 +161,7 @@ def graft_gsplat_node(
     if isinstance(node, GSplatLodGroup):
         from luxar.gsplats.tree import total_splats
 
-        from ..lod.group import coverage_fractions
+        from ..lod.group import coverage_fractions, partitioned_coverage_fractions
 
         wrapper_attrs.setdefault("display_type", "gsplats")
         # In-memory children are coarsest→finest, the same order add_lod_group
@@ -164,10 +169,24 @@ def graft_gsplat_node(
         on_disk = list(node.children)
         # Per-child coverage_fraction selector thresholds: prefer each child's
         # authored ``meta`` value, else derive — ``sqrt(N_i/N_finest)`` (count
-        # ratios), matching the standalone writer (gsplat_tree) and scene writer
-        # (lod_dispatch), so a meta-less grafted tree still gets ascending thresholds
-        # the selector accepts (never all-zero).
-        derived_cov = coverage_fractions([total_splats(c) for c in on_disk])
+        # ratios), so a meta-less grafted tree still gets ascending thresholds the
+        # selector accepts (never all-zero).
+        #
+        # The fallback is TOPOLOGY-AWARE, matching the standalone writer
+        # (``gsplat_tree.write_gsplat_node``): a ladder bound to a spatial partition
+        # keeps the fills-screen anchor (see ``partitioned_coverage_fractions``).
+        # Without this a meta-less partition-bound tree grafted with
+        # ``add_gsplats_from_file`` would get whole-object anchors while
+        # ``gsplat migrate-format`` on the same store gave partitioned ones. The
+        # live trigger is a legacy pre-v3.2 store, whose ``min_pixel_size`` is not
+        # lifted into ``meta``, so nothing authored wins over this fallback.
+        partition_bound = _under_partition or any(
+            isinstance(c, GSplatPartition) for c in on_disk
+        )
+        derive_cov = (
+            partitioned_coverage_fractions if partition_bound else coverage_fractions
+        )
+        derived_cov = derive_cov([total_splats(c) for c in on_disk])
         # default_level = 0 = the COARSEST child (child_0): the viewer's initial
         # progressive-load level, decoupled from the data-model default (see
         # gsplat_tree.write_gsplat_node / add_gsplats_as_lod_group_impl). Loading
@@ -181,6 +200,9 @@ def graft_gsplat_node(
                 node=child,
                 extend_to_all=extend_to_all,
                 coverage_fraction=cov,
+                # A nested ladder inside a partition-bound one is still inside the
+                # same tile, so the binding propagates down.
+                _under_partition=partition_bound,
                 **child_attrs,
             )
         return wrapper
@@ -204,6 +226,8 @@ def graft_gsplat_node(
                 name=f"part_{i}",
                 node=child,
                 extend_to_all=extend_to_all,
+                # Everything under a kind=partition is partition-bound.
+                _under_partition=True,
                 **child_attrs,
             )
         return wrapper

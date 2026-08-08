@@ -487,6 +487,7 @@ def write_gsplat_node(
     attrs: Optional[Dict[str, Any]] = None,
     scene_tone_mapping: Optional[str] = None,
     barrier_dims: Optional[Sequence[int]] = None,
+    under_partition: bool = False,
 ) -> Dict[str, Any]:
     """Recursively write any :class:`GSplatNode` into ``group``.
 
@@ -498,6 +499,11 @@ def write_gsplat_node(
     ``barrier_dims`` names categorical/barrier center columns (e.g. time) so
     chunk ordering groups by them first; it is the SAME for every leaf in the
     tree and passed straight through. ``None`` → per-leaf auto-detection.
+
+    ``under_partition`` is set by the recursion once a ``kind=partition`` ancestor
+    has been crossed. It selects which anchor the FALLBACK ``coverage_fraction``
+    derivation uses for a lod group (see the lod branch below); callers always
+    leave it at the default.
     """
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
@@ -516,24 +522,48 @@ def write_gsplat_node(
         )
 
     if isinstance(node, GSplatLodGroup):
-        from luxar.core.group.lod.group import coverage_fractions
+        from luxar.core.group.lod.group import (
+            coverage_fractions,
+            partitioned_coverage_fractions,
+        )
         from luxar.gsplats.tree import total_splats
 
         # In-memory children are coarsest→finest, the SAME order as the on-disk
         # child_<i> layout (child_0 = coarsest) — written straight through.
         on_disk = list(node.children)
         n = len(on_disk)
+        # Which ANCHOR the fallback derivation uses. A ladder bound to a spatial
+        # partition keeps the pre-#1361 fills-screen anchor, because a tile's
+        # projected diagonal is intrinsically a fraction of the whole object's —
+        # see ``partitioned_coverage_fractions``. Two ways to be bound:
+        #   * this group sits UNDER a partition (the ``adaptive`` per-part groups);
+        #   * one of its own children IS a partition (the ``overview`` cap↔fine pair).
+        # The second test is deliberately ``any(...)``, so it also marks a group
+        # where only a NON-finest child is a partition. No producer builds that
+        # shape (overview's partition is always the finest child), so it is
+        # untested rather than intended; if one ever does, decide explicitly which
+        # anchor it wants instead of inheriting this fallback.
+        # Keeping the fallback topology-aware is what lets ``gsplat transform``
+        # scrub-and-re-derive stay a no-op instead of silently downgrading such a
+        # store to the whole-object anchor.
+        partition_bound = under_partition or any(
+            isinstance(c, GSplatPartition) for c in on_disk
+        )
+        derive_cov = (
+            partitioned_coverage_fractions if partition_bound else coverage_fractions
+        )
         # Derive a per-child selector threshold (coarsest→finest) so EVERY child —
         # leaf OR nested Group — is viewer-selectable. Viewport-relative
         # ``coverage_fraction`` = ``sqrt(N_i/N_finest)`` (count ratios; the viewer
-        # multiplies by the live viewport diagonal). An authored coverage_fraction on
-        # the child still takes precedence: for a leaf child it is merged over these
+        # multiplies by a quarter of the live viewport diagonal). An authored
+        # coverage_fraction on the child still takes precedence: for a leaf child
+        # it is merged over these
         # passed attrs by ``_leaf_child_attrs`` in the leaf writer; for a nested group
         # child it is reapplied from ``node.meta`` by that group's branch. So this
         # only sets the threshold for meta-less (e.g. hand-built) trees. Without it a
         # nested lod-of-Group child carried no threshold and the selector was stuck
         # always-finest.
-        derived_cov = coverage_fractions([total_splats(c) for c in on_disk])
+        derived_cov = derive_cov([total_splats(c) for c in on_disk])
         child_bounds: List[Dict[str, List[float]]] = []
         for i, child in enumerate(on_disk):
             child_group = group.require_group(f"child_{i}")
@@ -555,6 +585,9 @@ def write_gsplat_node(
                     "child_index": i,
                 },
                 barrier_dims=barrier_dims,
+                # A nested ladder inside a partition-bound one is still inside the
+                # same tile, so the binding propagates down.
+                under_partition=partition_bound,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])
@@ -601,6 +634,7 @@ def write_gsplat_node(
                 # from enumerating part_10 before part_2.
                 attrs={"child_index": i},
                 barrier_dims=barrier_dims,
+                under_partition=True,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])

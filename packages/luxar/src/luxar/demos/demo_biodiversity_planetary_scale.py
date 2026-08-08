@@ -65,13 +65,16 @@ needs reducing.
 **Calibrating the occurrence thresholds** took two measured corrections, both
 worth knowing before reusing the recipe. The default
 ``coverage_fraction = sqrt(N_i/N_finest)`` is calibrated for a *single* lod group
-that fills the screen; split into T tiles, each tile's projected diagonal at
-whole-globe framing is only ~0.6 of the viewport diagonal, which against the
-default ladder still selects a mid level. And a threshold placed *on* that
-measured metric makes the tiles flap: two levels stay simultaneously visible,
+seen at a normal full-frame view; split into T tiles, each tile's projected
+diagonal at whole-globe framing is only ~0.6 of the viewport diagonal, which
+against the default ladder still selects a mid level. And a threshold placed *on*
+that measured value makes the tiles flap: two levels stay simultaneously visible,
 cross-faded, both resident, because the selector's hysteresis is 10% and
-downgrade-only. The metric also varies per tile (nearer tiles project larger), so
-thresholds must clear the *largest* per-tile value, not the mean.
+downgrade-only. It also varies per tile (nearer tiles project larger), so
+thresholds must clear the *largest* per-tile value, not the mean. Note the units:
+those measurements are RAW projected-diagonal fractions, while the authored
+thresholds live in coverage-METRIC space (raw ÷ ``FILL_FACTOR``, currently 0.25),
+so they exceed 1.0 — see ``OCCURRENCE_COVERAGE`` below.
 
 PERSISTENT CONTEXT vs. SLICED SELECTION
 --------------------------------------
@@ -593,27 +596,47 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #:
 #: `coverage_fractions` is overridden rather than left to the default
 #: `sqrt(N_i/N_finest)`, and the override is the crux. That default is calibrated
-#: for a SINGLE lod group that fills the screen. Here each layer is split into T
-#: spatial tiles, so at whole-globe framing a tile's projected diagonal is only
-#: ~0.6 of the viewport diagonal — measured in-browser, not estimated. Against
-#: the default thresholds that metric still lands on a mid level (tiles sat on
-#: 117k and 469k, ~3.6M total).
+#: for a SINGLE lod group seen at a normal full-frame view. Here each layer is
+#: split into T spatial tiles, so at whole-globe framing a tile's projected
+#: diagonal is only ~0.6 of the viewport diagonal — measured in-browser, not
+#: estimated. Against the default thresholds that fraction still lands on a mid
+#: level (tiles sat on 117k and 469k, ~3.6M total).
 #:
-#: MEASURED WHOLE-GLOBE COVERAGE METRIC ~= 0.60. Every threshold is therefore
-#: kept well clear of it. A first attempt put the first threshold AT 0.60 and the
-#: tiles never settled: `child_0` and `child_1` stayed simultaneously visible
-#: with cross-fade opacities summing to 1.0, so BOTH levels were resident and the
-#: layer cost 1.07M instead of 186k. The selector's hysteresis is 10% and
-#: downgrade-only, which cannot damp a metric sitting exactly on a boundary.
-#: The metric also VARIES BY TILE — a tile nearer the camera projects larger, so
-#: on a globe the front-facing tiles run well above the mean. At thresholds of
-#: 0.78/0.82 two of the four globe tiles still crossed into their middle level and
-#: the globe alone cost 513k of a 1.02M total. The thresholds are therefore set
-#: above the LARGEST per-tile metric at whole-globe framing, not the mean.
+#: UNITS. The thresholds below are in COVERAGE-METRIC space, which is the raw
+#: projected-diagonal fraction divided by the viewer's `FILL_FACTOR` (0.25 — see
+#: `scene/lod-group-registry.ts`). So a raw fraction of 0.60 is a metric of 2.40.
+#: They were originally written in raw-fraction space, back when `FILL_FACTOR`
+#: was 1.0 and the two coincided; #1361 moved the anchor and every threshold was
+#: rescaled x4. That rescale is exact — selection compares
+#: `threshold <= rawFraction / FILL_FACTOR`, and the hysteresis margin and
+#: cross-fade band are both proportional to inter-threshold gaps — so the
+#: measurements below, which are all RAW FRACTIONS, are unchanged and remain the
+#: calibration record.
+#:
+#: MEASURED WHOLE-GLOBE PROJECTED DIAGONAL ~= 0.60 OF THE VIEWPORT DIAGONAL
+#: (metric 2.40). Every threshold below was chosen to clear it. A first attempt
+#: put the first threshold AT 0.60 raw and the tiles never settled: `child_0` and
+#: `child_1` stayed simultaneously visible with cross-fade opacities summing to
+#: 1.0, so BOTH levels were resident and the layer cost 1.07M instead of 186k.
+#: The selector's hysteresis is 10% and downgrade-only, which cannot damp a
+#: metric sitting exactly on a boundary.
+#: The projected diagonal also VARIES BY TILE — a nearer tile projects larger, so
+#: on a globe the front-facing tiles run well above the mean. At raw thresholds
+#: of 0.78/0.82 two of the four globe tiles still crossed into their middle level
+#: and the globe alone cost 513k of a 1.02M total. The thresholds are therefore
+#: set above the LARGEST per-tile value at whole-globe framing (~0.82 raw), not
+#: the mean.
 #: Refinement then begins only once you have zoomed in appreciably, which is the
 #: intended behaviour: cheap overview, detail on demand.
+#:
+#: Values above 1.0 are legal precisely because a tiled layer needs them: 1.0 is
+#: only the AUTO-DERIVED ladder's finest anchor (a quarter-viewport diagonal),
+#: and the explicit-list ceiling is `MAX_COVERAGE_FRACTION` = 4.0 == 1/FILL_FACTOR
+#: — the metric a screen-filling object produces. 4.0 here means "this tile's
+#: finest level shows only once the TILE alone fills the viewport".
 OCCURRENCE_LOD_LEVELS: Final = 3
-OCCURRENCE_COVERAGE: Final = (0.0, 0.88, 0.96, 1.0)
+#: In metric space (raw fraction / FILL_FACTOR): raw 0.0/0.88/0.96/1.0 x4.
+OCCURRENCE_COVERAGE: Final = (0.0, 3.52, 3.84, 4.0)
 
 STREAM_LOD: Final = dict(counts="stream:20000", method="random", seed=0)
 

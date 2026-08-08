@@ -1161,7 +1161,7 @@ def test_writer_derives_coverage_fractions_for_meta_less_lod_group() -> None:
         write_gsplats_tree(path, grp, ordering="none")
         root = zarr.open_group(str(path), mode="r")
         assert root["child_0"].attrs["coverage_fraction"] == 0.0  # coarsest floor
-        # sqrt(N_i/N_finest): coarsest-first counts [50, 800] → finest fills screen.
+        # sqrt(N_i/N_finest): coarsest-first counts [50, 800] → finest anchored at 1.0.
         assert root["child_1"].attrs["coverage_fraction"] == pytest.approx(1.0)
 
 
@@ -1651,3 +1651,127 @@ class TestAtomicFinalizeTrashFirst:
         assert (dest / "new.txt").read_text() == "y"
         assert not (dest / "old.txt").exists()
         assert not list(tmp_path.glob(".*trash-*"))
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Topology-aware coverage_fraction FALLBACK (both writers)
+#
+# The stamped anchors are what recipes emit, but every writer also DERIVES a
+# fallback for a node that carries no ``coverage_fraction`` in its ``meta`` —
+# which is exactly the state ``luxar gsplat transform`` leaves the tree in after
+# its scrub, and the state a legacy pre-v3.2 store loads in. The CHANGELOG's
+# "scrub-and-re-derive stays a no-op" claim rests on that fallback picking the
+# PARTITION-BOUND anchor for a partition-bound ladder, so pin it here for both
+# ``write_gsplats_tree`` and its streaming sibling.
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _strip_coverage(node):
+    """The post-scrub state: no ``coverage_fraction`` anywhere in ``meta``."""
+    from luxar.gsplats.tree import without_meta_key
+
+    return without_meta_key(node, "coverage_fraction")
+
+
+def _recipe_tree(recipe: str):
+    from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+
+    rng = np.random.default_rng(0)
+    n = 400
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    data = GSplatData(
+        centers=rng.uniform(0, 10, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.1, 1.0, n).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    params = RecipeParams(
+        max_elements=120, compression_factor=4, levels=2, device="cpu", seed=0
+    )
+    return build_recipe(data, recipe, params)
+
+
+@pytest.mark.parametrize("recipe", ["overview", "adaptive"])
+def test_meta_less_partition_bound_tree_rederives_the_partitioned_anchor(
+    recipe: str, tmp_path: Path
+) -> None:
+    """``write_gsplats_tree`` on a scrubbed tree must re-derive 0.0 → 4.0."""
+    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+    node = _strip_coverage(_recipe_tree(recipe))
+    out = tmp_path / f"{recipe}.gsplats.zarr"
+    write_gsplats_tree(out, node)
+    root = zarr.open_group(str(out), mode="r")
+    # overview: the lod group IS the root. adaptive: one lod group per part.
+    lod_group = root if recipe == "overview" else root["part_0"]
+    covs = [
+        float(lod_group[k].attrs["coverage_fraction"])
+        for k in sorted(lod_group.group_keys(), key=lambda s: int(s.split("_")[1]))
+    ]
+    assert covs[0] == 0.0
+    assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION), (
+        f"{recipe}: meta-less re-derivation gave {covs}, expected the "
+        "partition-bound anchor (finest = MAX_COVERAGE_FRACTION)"
+    )
+    assert all(covs[i] > covs[i - 1] for i in range(1, len(covs)))
+
+
+def test_scrub_and_rederive_is_a_no_op_for_partition_bound_ladders(
+    tmp_path: Path,
+) -> None:
+    """The exact ``gsplat transform`` round trip: stamped == re-derived."""
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+    for recipe in ("overview", "adaptive"):
+        node = _recipe_tree(recipe)
+        stamped = tmp_path / f"{recipe}_stamped.gsplats.zarr"
+        scrubbed = tmp_path / f"{recipe}_scrubbed.gsplats.zarr"
+        write_gsplats_tree(stamped, node)
+        write_gsplats_tree(scrubbed, _strip_coverage(node))
+
+        def _covs(path):
+            root = zarr.open_group(str(path), mode="r")
+            g = root if recipe == "overview" else root["part_0"]
+            return [
+                float(g[k].attrs["coverage_fraction"])
+                for k in sorted(g.group_keys(), key=lambda s: int(s.split("_")[1]))
+            ]
+
+        assert _covs(stamped) == pytest.approx(_covs(scrubbed)), recipe
+
+
+def test_streaming_partition_writer_uses_the_partitioned_anchor(
+    tmp_path: Path,
+) -> None:
+    """``write_partition_streaming``'s root IS a kind=partition, so every part is
+    partition-bound by construction — its recursion must say so.
+
+    Regression: the streaming writer started the walk at the default
+    ``under_partition=False``, so a meta-less per-part ladder came out
+    0.0/0.5/1.0 here while ``write_gsplats_tree`` on the same tree gave
+    0.0/2.0/4.0. Latent only because the batch merge stamps ``meta`` that wins
+    over the fallback.
+    """
+    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+    from luxar.gsplats.io.save_gsplats import write_partition_streaming
+    from luxar.gsplats.tree import GSplatPartition
+
+    partitioned = _strip_coverage(_recipe_tree("adaptive"))
+    assert isinstance(partitioned, GSplatPartition)
+    parts = list(partitioned.children)
+
+    out = tmp_path / "streamed.gsplats.zarr"
+    write_partition_streaming(out, lambda: iter(parts), max_elements=120)
+
+    root = zarr.open_group(str(out), mode="r")
+    part0 = root["part_0"]
+    covs = [
+        float(part0[k].attrs["coverage_fraction"])
+        for k in sorted(part0.group_keys(), key=lambda s: int(s.split("_")[1]))
+    ]
+    assert covs[0] == 0.0
+    assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION), (
+        f"streaming writer gave {covs}; every part_<i> is under a kind=partition "
+        "root, so the fallback must use the partition-bound anchor"
+    )

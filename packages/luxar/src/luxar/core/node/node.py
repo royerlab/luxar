@@ -317,12 +317,15 @@ class Node:
         A kind=lod ``Group`` picks one of N alternative children at runtime
         based on the projected bbox diagonal in pixels and each child's
         ``coverage_fraction`` threshold (a viewport-relative fraction the viewer
-        multiplies by the viewport diagonal). Children are added via the inherited
-        ``add_*`` methods on the returned ``Group`` and each must carry a
-        ``coverage_fraction`` attribute. Children must be added in strictly
-        increasing ``coverage_fraction`` order (coarsest 0.0 → finest 1.0); the
-        resolved ``display_type`` of the finest child becomes the group's
-        user-facing geometry type.
+        multiplies by a quarter of the viewport diagonal). Children are added via
+        the inherited ``add_*`` methods on the returned ``Group`` and each must
+        carry a ``coverage_fraction`` attribute. Children must be added in
+        strictly increasing ``coverage_fraction`` order, coarsest ``0.0`` →
+        finest ``1.0`` (the auto-derived anchor: shown at any normal full-frame
+        view). A hand-built ladder may go above ``1.0``, up to
+        ``MAX_COVERAGE_FRACTION`` (4.0 == a screen-filling object), to hold a
+        level until the object is larger still. The resolved ``display_type`` of
+        the finest child becomes the group's user-facing geometry type.
 
         Example::
 

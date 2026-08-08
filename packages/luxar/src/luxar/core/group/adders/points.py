@@ -730,8 +730,18 @@ def add_points_substitutive_lod_wrapper_impl(
         coverage_vals = list(explicit)
     else:
         # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (count ratios;
-        # the viewer anchors the finest at fills-screen). No per-level radius or
-        # world-extent needed.
+        # the viewer anchors the finest at a quarter of the live viewport diagonal,
+        # i.e. any normal full-frame view). No per-level radius or world-extent
+        # needed.
+        #
+        # This is the WHOLE-OBJECT anchor. ``add_points`` rejects
+        # ``partition=`` together with ``substitutive_lod=``, so the library path
+        # cannot build a per-tile ladder here — but a caller CAN hand-build a
+        # ``kind=partition`` wrapper and call this per part (that is what
+        # ``demo_biodiversity_planetary_scale`` does). Such a ladder needs the
+        # fills-screen anchor instead (see ``partitioned_coverage_fractions``);
+        # until this path can detect it, pass an explicit
+        # ``coverage_fractions=[...]`` scaled by ``MAX_COVERAGE_FRACTION``.
         coverage_vals = coverage_fractions(counts)
 
     # Compositing attrs ride on the kind=lod Group; everything else (colormap,
