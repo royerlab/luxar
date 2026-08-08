@@ -153,9 +153,14 @@ interface DemoEntry {
   // elevation 90 = straight down (+/- along vertical), 0 = equator (side-on).
   viewAngle?: { azimuth?: number; elevation?: number };
   // World axis that is the subject's "up": the orbit rock revolves about it and
-  // the camera up-vector uses it. Default 'y'. Set 'z' (or 'x') for a subject
-  // whose long/vertical axis is world-Z — otherwise a world-Y yaw degenerates
-  // into an in-plane roll (e.g. a supine CT body lying along Z).
+  // the camera up-vector uses it. DEFAULT = derived from the camera's own
+  // up-vector after framing (`dominantCameraUpAxis`), so a baked
+  // `viewer_config` up is honoured without being declared here; a demo that
+  // bakes nothing gets three.js's (0,1,0) -> 'y', the historical default.
+  // Set it only to OVERRIDE that — e.g. to rock about something other than the
+  // scene's own up — and note that setting it also runs `positionForOrbitUp`,
+  // which re-parks the camera on the axis and discards the baked framing, so it
+  // usually wants a `viewAngle` beside it.
   orbitUp?: 'x' | 'y' | 'z';
   // Multiplicative zoom applied AFTER fill-to-screen: a final dolly by 1/zoom.
   // zoom > 1 zooms IN (e.g. 3 = 3x closer), zoom < 1 zooms OUT (e.g. 0.8 = 20%
@@ -269,20 +274,28 @@ async function jumpTimeDimToFrac(page: any, frac: number): Promise<void> {
 }
 
 /**
- * The world axis the camera's current up-vector most nearly points along.
+ * The SIGNED world axis the camera's current up-vector most nearly points along.
  *
  * Read AFTER framing, so it reflects whatever pose is actually on screen — the
  * demo's baked `viewer_config` up when it has one, else three.js's (0,1,0). The
  * rock axis has always been axis-aligned, so a non-axis-aligned baked up is
  * snapped to its dominant component rather than rejected.
  *
- * Falls back to `'y'` when the debug handle or camera is missing, which is the
+ * The DIRECTION of that component is kept, not just which axis it is: a baked up
+ * of (0,0,-1) has to stay -Z, because the orbit hard-sets `cam.up` and snapping
+ * it to +Z would roll the animation 180° from the still — the exact divergence
+ * this derivation exists to remove. Only `cam.up` is affected; the rock geometry
+ * is sign-invariant (the out-of-plane offset enters as `compU·U`).
+ *
+ * Falls back to +Y when the debug handle or camera is missing, which is the
  * historical default and keeps a partially-loaded page from throwing here.
  */
-async function dominantCameraUpAxis(page: any): Promise<'x' | 'y' | 'z'> {
-  const axis = await page.evaluate(() => {
+type SignedUpAxis = { axis: 'x' | 'y' | 'z'; sign: 1 | -1 };
+
+async function dominantCameraUpAxis(page: any): Promise<SignedUpAxis> {
+  const up = await page.evaluate(() => {
     const cam = (window as any).__luxarDebug?.camera;
-    if (!cam?.up) return 'y';
+    if (!cam?.up) return { axis: 'y', sign: 1 };
     const { x, y, z } = cam.up;
     const ax = Math.abs(x);
     const ay = Math.abs(y);
@@ -290,12 +303,12 @@ async function dominantCameraUpAxis(page: any): Promise<'x' | 'y' | 'z'> {
     // Degenerate up (zero or non-finite): fall back to 'y' like the missing-camera
     // guard above, rather than letting the >= chain answer 'x' for an all-zero
     // vector — that would be an arbitrary axis dressed up as a measurement.
-    if (!(ax + ay + az > 0)) return 'y';
-    if (ax >= ay && ax >= az) return 'x';
-    if (az >= ay) return 'z';
-    return 'y';
+    if (!(ax + ay + az > 0)) return { axis: 'y', sign: 1 };
+    if (ax >= ay && ax >= az) return { axis: 'x', sign: x < 0 ? -1 : 1 };
+    if (az >= ay) return { axis: 'z', sign: z < 0 ? -1 : 1 };
+    return { axis: 'y', sign: y < 0 ? -1 : 1 };
   });
-  return axis as 'x' | 'y' | 'z';
+  return up as SignedUpAxis;
 }
 
 /**
@@ -744,54 +757,75 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
   // (`F` restores it) but the loop below hard-sets `cam.up` every frame, so those
   // demos render an animation ROLLED away from their own poster, with the
   // turntable degenerating into an in-plane tumble — measured at a 130% swing in
-  // subject aspect over one rock. Three demos bake a non-Y up and none had opted
-  // in to `orbitUp`, because nothing told them they had to (#1377). Only one of
-  // the three was visibly shipping the roll: another's checked-in dataset
-  // predates its own CameraConfig and carries no camera at all, and the third's
-  // camera was not orbiting in the first place (#1383).
+  // subject aspect over one rock. FOUR manifest demos bake a non-Y up without
+  // opting in to `orbitUp`, because nothing told them they had to (#1377 audited
+  // three; the mesh tile added since makes four). TWO were measurably shipping
+  // the roll — the asteroids/cosmicflows pairs pinned in
+  // `src/tests/unit/gallery-frame-similarity.test.ts`. Of the other two, one's
+  // pre-generated dataset predates its own CameraConfig and carries no camera at
+  // all, and the other's camera was not orbiting in the first place (#1383).
   //
   // Deriving it means a baked up is honoured by default and `orbitUp` becomes a
   // true override. A demo that bakes nothing gets three.js's default camera up,
-  // (0,1,0) -> 'y', so this is a no-op for every previously-correct demo.
-  const upAxis = demo?.orbitUp ?? (await dominantCameraUpAxis(page));
+  // (0,1,0) -> +y, so this is a no-op for every previously-correct demo.
+  const derived = demo?.orbitUp ? null : await dominantCameraUpAxis(page);
+  const upAxis: 'x' | 'y' | 'z' = demo?.orbitUp ?? derived?.axis ?? 'y';
+  // An explicit `orbitUp` names a POSITIVE world axis — `positionForOrbitUp` has
+  // already re-parked the camera on it with `up = +U` — so a sign can only come
+  // from the derived case.
+  const upSign: 1 | -1 = derived?.sign ?? 1;
   console.log(
-    `[${demo?.id ?? 'orbit'}] orbitUp=${upAxis}` +
+    `[${demo?.id ?? 'orbit'}] orbitUp=${upSign < 0 ? '-' : '+'}${upAxis}` +
       (demo?.orbitUp ? ' (manifest)' : ' (derived from camera up)')
   );
-  const ok = await page.evaluate((up: string) => {
-    const debug = (window as any).__luxarDebug;
-    const ac = debug?.animationController;
-    const cam = debug?.camera;
-    const c = debug?.controls;
-    if (!ac || !cam || !c?.getFocusTarget) return false;
-    ac.stopAnimation?.(); // freeze the rAF loop so it can't move/re-render the camera
-    c.setEnabled?.(false); // and stop controls damping from touching it
-    const t = c.getFocusTarget();
-    const off = { x: cam.position.x - t.x, y: cam.position.y - t.y, z: cam.position.z - t.z };
-    // The rock revolves the camera about the world `up` axis (U), in the plane of
-    // the other two axes (A,B). Default 'y' reproduces the original XZ yaw. For a
-    // subject whose long/vertical axis is world-Z (e.g. a supine CT body), 'z'
-    // gives a proper turntable instead of an in-plane roll.
-    const U =
-      up === 'x' ? { x: 1, y: 0, z: 0 } : up === 'z' ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
-    const A = up === 'x' ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
-    const B = up === 'z' ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 };
-    const dot = (p: any, q: any) => p.x * q.x + p.y * q.y + p.z * q.z;
-    const compA = dot(off, A);
-    const compB = dot(off, B);
-    (window as any).__orbit = {
-      phi0: Math.atan2(compA, compB),
-      radius: Math.hypot(compA, compB),
-      compU: dot(off, U),
-      A,
-      B,
-      U,
-      tx: t.x,
-      ty: t.y,
-      tz: t.z,
-    };
-    return true;
-  }, upAxis);
+  const ok = await page.evaluate(
+    ({ up, sign }: { up: string; sign: number }) => {
+      const debug = (window as any).__luxarDebug;
+      const ac = debug?.animationController;
+      const cam = debug?.camera;
+      const c = debug?.controls;
+      if (!ac || !cam || !c?.getFocusTarget) return false;
+      ac.stopAnimation?.(); // freeze the rAF loop so it can't move/re-render the camera
+      c.setEnabled?.(false); // and stop controls damping from touching it
+      const t = c.getFocusTarget();
+      const off = { x: cam.position.x - t.x, y: cam.position.y - t.y, z: cam.position.z - t.z };
+      // The rock revolves the camera about the world `up` axis (U), in the plane of
+      // the other two axes (A,B). Default 'y' reproduces the original XZ yaw. For a
+      // subject whose long/vertical axis is world-Z (e.g. a supine CT body), 'z'
+      // gives a proper turntable instead of an in-plane roll.
+      //
+      // `sign` is U's direction (-1 for a baked up like (0,0,-1)). It reaches the
+      // pose ONLY through `cam.up`: the out-of-plane offset is stored as
+      // `compU = dot(off, U)` and re-applied as `compU·U`, so negating U leaves
+      // every frame's camera POSITION bit-identical, and phi0/radius come from
+      // A,B alone. It flips the rock's direction of travel, which a symmetric
+      // ±amp sine covers either way.
+      const U =
+        up === 'x'
+          ? { x: sign, y: 0, z: 0 }
+          : up === 'z'
+            ? { x: 0, y: 0, z: sign }
+            : { x: 0, y: sign, z: 0 };
+      const A = up === 'x' ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+      const B = up === 'z' ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 };
+      const dot = (p: any, q: any) => p.x * q.x + p.y * q.y + p.z * q.z;
+      const compA = dot(off, A);
+      const compB = dot(off, B);
+      (window as any).__orbit = {
+        phi0: Math.atan2(compA, compB),
+        radius: Math.hypot(compA, compB),
+        compU: dot(off, U),
+        A,
+        B,
+        U,
+        tx: t.x,
+        ty: t.y,
+        tz: t.z,
+      };
+      return true;
+    },
+    { up: upAxis, sign: upSign }
+  );
   if (!ok) return 0;
 
   fs.mkdirSync(framesDir, { recursive: true });
@@ -896,9 +930,9 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
  * so they should render near-identically. When they do not, the orbit is showing
  * the subject from somewhere the poster never does, and since the README embeds
  * the ANIMATION while reviewers usually look at the still, that divergence ships
- * unnoticed. It already did: three demos bake a non-Y camera up, and the one
- * whose dataset actually carries that camera shipped an animation rolled ~90 deg
- * from its own poster (#1377). Nothing in this harness compared the two.
+ * unnoticed. It already did: four demos bake a non-Y camera up, and the two
+ * whose datasets actually carry that camera shipped animations rolled ~90 deg
+ * from their own posters (#1377). Nothing in this harness compared the two.
  *
  * Normalised cross-correlation on a greyscale downscale — deliberately not
  * SSIM, which is punishing on high-frequency filamentary subjects (a
@@ -906,9 +940,11 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
  * would cry wolf. The maths, the size and the threshold live in
  * `frame-similarity.ts`, where they are unit-tested.
  *
- * WARNS rather than fails. A demo may legitimately reorient between still and
- * orbit (`orbitUp` + `viewAngle` do exactly that on purpose), so this is a "look
- * at this" signal, not a correctness gate.
+ * WARNS rather than fails. The still and frame 0 can differ for reasons that are
+ * not a roll — a progressively-streamed scene keeps filling in between the two
+ * captures, and the in-page decode could go missing — and neither should abandon
+ * a 61-tile media run that takes hours. So this is a "look at this" signal, not
+ * a correctness gate.
  */
 async function warnIfStillDisagreesWithOrbit(
   page: any,
