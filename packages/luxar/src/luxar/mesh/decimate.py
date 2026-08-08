@@ -129,6 +129,19 @@ def _validate_normal_frame(
         raise ValueError(
             f"normal_dims {tuple(normal_dims)} out of range for {ndim} dims"
         )
+    # Distinct, for the same reason the writer's `validate_normal_dims_for_writing`
+    # requires it: a repeated axis is not a frame. `(0, 0, 1)` would pass every
+    # check above and then have `_recompute_normals` cross two vectors confined to
+    # a degenerate plane, producing normals that point nowhere in particular — with
+    # nothing anywhere saying so. Checked HERE and not left to the writer because
+    # decimation runs BEFORE the ladder's first child is written: without this the
+    # refusal arrives with a `kind=lod` group already on disk.
+    if len(set(int(i) for i in normal_dims)) != 3:
+        raise ValueError(
+            f"normal_dims {tuple(normal_dims)} must name three DISTINCT dimensions; "
+            "a repeated axis is a degenerate frame, and the normals recomputed in "
+            "it would be meaningless rather than merely wrong."
+        )
 
 
 def _validate_decimate_inputs(

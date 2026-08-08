@@ -81,12 +81,20 @@ export async function loadMeshNodeCheap(
 }
 
 /**
- * Expensive half: fetch, project and commit, then register the loader.
+ * Expensive half: fetch, project and commit.
  *
  * Split out so a deferred LOD level can run it on first activation. Reads the
  * effective attrs again rather than threading them from the cheap half — a level
  * can be activated long after its placeholder was attached, and the Layers panel
  * may have changed them in between.
+ *
+ * Deliberately does NOT register the loader — that is the EAGER caller's job (see
+ * {@link loadMeshNode}), exactly as in the three sibling loaders. A lazy LOD level
+ * must stay out of the per-slice update sweep: the registry drives its reloads on a
+ * settled slice change, and a registered level would additionally be re-fetched and
+ * re-committed by the sweep on every scrub — including while it is hidden, and
+ * concurrently with the registry's own `ensureLoaded`. Gating each scrub on
+ * projecting the full-resolution surface is precisely what deferring it avoids.
  */
 export async function loadMeshNodeExpensive(
   node: SceneNode,
@@ -137,12 +145,6 @@ export async function loadMeshNodeExpensive(
     if (!ctx.isDatasetLive()) return;
     ctx.registry.recordFailure(node.path, error as Error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
-  } finally {
-    // Register only once the initial load has SETTLED, success or failure.
-    // Registering before the await would let a concurrent updateView sweep run on
-    // the same instance mid-flight; registering on failure too is deliberate, so a
-    // failed initial load stays retryable.
-    ctx.registry.registerMeshLoader(node.path, loader);
   }
 }
 
@@ -161,6 +163,15 @@ export async function loadMeshNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Object3D | null> {
   const { placeholder, loader } = await loadMeshNodeCheap(node, parentThree, loc, ctx);
-  await loadMeshNodeExpensive(node, ctx, loader);
+  try {
+    await loadMeshNodeExpensive(node, ctx, loader);
+  } finally {
+    // Register only once the initial load has SETTLED, success or failure, and
+    // only on THIS path — see the note on `loadMeshNodeExpensive`. Registering
+    // before the await would let a concurrent updateView sweep run on the same
+    // instance mid-flight; registering on failure too is deliberate, so a failed
+    // initial load stays retryable through `retryFailedLoader`.
+    ctx.registry.registerMeshLoader(node.path, loader);
+  }
   return placeholder;
 }

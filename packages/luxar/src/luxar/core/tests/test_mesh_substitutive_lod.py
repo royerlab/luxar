@@ -653,3 +653,27 @@ class TestNormalFrame:
                 normals=normals,
                 normal_dims=(0, 1),
             )
+
+    def test_the_decimator_refuses_a_repeated_axis_in_the_frame(self):
+        """Three entries is not enough — they have to be three DIFFERENT axes.
+
+        `(0, 0, 1)` has the right length and is in range, so it passed both other
+        guards and then had the normals crossed inside a degenerate plane: values
+        that are finite, unit-length and meaningless. The writer refuses it too,
+        but only once the ladder's first child is being written, by which point a
+        `kind=lod` group is already on disk.
+        """
+        from luxar.mesh.decimate import decimate_cluster
+
+        verts, faces = octasphere(3)
+        normals = (verts / np.linalg.norm(verts, axis=1, keepdims=True)).astype(
+            np.float32
+        )
+        with pytest.raises(ValueError, match="DISTINCT"):
+            decimate_cluster(
+                verts,
+                faces,
+                target_vertices=40,
+                normals=normals,
+                normal_dims=(0, 0, 1),
+            )
