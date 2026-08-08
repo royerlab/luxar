@@ -114,8 +114,19 @@ def graft_gsplat_node(
     a wrapper Group; the rest fall through to children.
 
     ``_under_partition`` is set by the recursion once a ``kind=partition`` ancestor
-    has been crossed; it selects which anchor the FALLBACK ``coverage_fraction``
-    derivation uses (see the lod branch). Callers leave it at the default.
+    *within the grafted subtree* has been crossed; it selects which anchor the
+    FALLBACK ``coverage_fraction`` derivation uses (see the lod branch). Callers
+    leave it at the default.
+
+    Note what does NOT come here: only a **non-matrix-shaped** subtree is grafted
+    at all. ``add_gsplats_from_file_impl`` sends every matrix-shaped tree — a bare
+    leaf, an additive ladder, or a ``kind=lod`` group whose children are all
+    leaves, which is what ``levels`` / ``stream`` / a plain fit writes — down
+    ``add_gsplats_from_data_impl``, so the ordinary "one
+    ``add_gsplats_from_file`` per part into a hand-built ``kind=partition``" case
+    derives its thresholds in
+    :func:`~luxar.core.group.gsplats_pipeline.lod_dispatch.add_gsplats_as_lod_group_impl`
+    (via ``derive_coverage_fractions``), not in this function.
     """
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
@@ -161,7 +172,11 @@ def graft_gsplat_node(
     if isinstance(node, GSplatLodGroup):
         from luxar.gsplats.tree import total_splats
 
-        from ..lod.group import coverage_fractions, partitioned_coverage_fractions
+        from ..lod.group import (
+            coverage_fractions,
+            is_partition_bound,
+            partitioned_coverage_fractions,
+        )
 
         wrapper_attrs.setdefault("display_type", "gsplats")
         # In-memory children are coarsest→finest, the same order add_lod_group
@@ -180,8 +195,29 @@ def graft_gsplat_node(
         # ``gsplat migrate-format`` on the same store gave partitioned ones. The
         # live trigger is a legacy pre-v3.2 store, whose ``min_pixel_size`` is not
         # lifted into ``meta``, so nothing authored wins over this fallback.
-        partition_bound = _under_partition or any(
-            isinstance(c, GSplatPartition) for c in on_disk
+        #
+        # THREE ways to be bound. Scope each one honestly:
+        #   * ``_under_partition`` — a ``kind=partition`` crossed higher up THIS
+        #     grafted subtree (the recursion's own flag).
+        #   * a child that IS a ``GSplatPartition`` — the ``overview`` recipe's
+        #     cap↔fine pair, the common reachable case here.
+        #   * ``is_partition_bound(parent_node)`` — the SCENE side, for a subtree
+        #     grafted INTO a hand-built ``kind=partition`` wrapper.
+        # The third term is DEFENSIVE, not the fix for the everyday per-part
+        # graft: only a non-matrix-shaped subtree reaches this function at all
+        # (see the docstring), so with ``_under_partition=False`` the shape that
+        # gets here and needs it is a nested lod-of-lods — which no library
+        # producer writes today (``levels`` → lod of leaves, ``overview`` → lod of
+        # [leaf, partition], ``adaptive``/``tiles`` → partition of …). A per-part
+        # ``add_gsplats_from_file`` of an ordinary ladder file is matrix-shaped and
+        # is anchored by ``add_gsplats_as_lod_group_impl`` instead. The term is
+        # kept because it costs one cheap parent walk, is idempotent (the
+        # recursion's insertion point is this wrapper, itself inside the same
+        # chain), and closes the asymmetry for a hand-built / future nested tree.
+        partition_bound = (
+            _under_partition
+            or is_partition_bound(parent_node)
+            or any(isinstance(c, GSplatPartition) for c in on_disk)
         )
         derive_cov = (
             partitioned_coverage_fractions if partition_bound else coverage_fractions

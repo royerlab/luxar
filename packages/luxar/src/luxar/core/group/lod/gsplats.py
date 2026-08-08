@@ -43,13 +43,15 @@ def resolve_substitutive_axis_gsplats(
 
     - ``explicit_coverage_fractions`` is non-None only when the user passed
       ``dict(coverage_fractions=[...])`` (strict-ascending, in
-      ``[0, MAX_COVERAGE_FRACTION]``; ``1.0`` is the auto-derived finest anchor
-      and higher values hold a level until the object is larger still) —
+      ``[0, MAX_COVERAGE_FRACTION]``; ``1.0`` is a whole-object ladder's finest
+      anchor and higher values hold a level until the object is larger still) —
       otherwise downstream code auto-derives per-level thresholds from splat
-      counts via :func:`luxar.core.group.lod.group.coverage_fractions`
-      (``sqrt(N_i/N_finest)``). There is no method selector or per-dataset anchor
-      knob: the viewer anchors the finest at a quarter of the live viewport
-      diagonal — any normal full-frame view.
+      counts via :func:`luxar.core.group.lod.group.derive_coverage_fractions`
+      (``sqrt(N_i/N_finest)``, re-anchored at fills-screen when the insertion
+      point is inside a ``kind=partition``). There is no method selector or
+      per-dataset anchor knob: for a whole-object ladder the viewer anchors the
+      finest at a quarter of the live viewport diagonal — any normal full-frame
+      view.
 
     Semantics:
 
@@ -130,8 +132,8 @@ def resolve_substitutive_axis_gsplats(
                     f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
                     f"{explicit_coverage_fractions}. The upper bound is "
                     "1/FILL_FACTOR — the coverage metric a screen-filling object "
-                    "produces; 1.0 is the auto-derived finest anchor (~a quarter "
-                    "of the viewport diagonal)."
+                    "produces; 1.0 is a whole-object ladder's finest anchor (~a "
+                    "quarter of the viewport diagonal)."
                 )
 
         if data.n_substitutive > 1 and not recompute:

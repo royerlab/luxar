@@ -360,10 +360,16 @@ default (the finest level the `.centers` accessor returns).
   quarter-viewport. That is the right anchor whenever a **spatial partition** is
   part of the switch, because a tile's projected diagonal is intrinsically a
   fraction of the whole object's; a ladder anchored at `1.0` there would put
-  every tile on its finest level while the object is merely full-frame. Two
-  producers emit it: the `adaptive` / `overview` gsplat recipes (automatically,
-  via `partitioned_coverage_fractions`), and an **explicitly authored**
-  `coverage_fractions=[...]` list on a hand-built partition of per-tile ladders.
+  every tile on its finest level while the object is merely full-frame. Every
+  producer emits it automatically once it can see the binding: the `adaptive` /
+  `overview` gsplat recipes; the two gsplat writers' topology-aware fallback (a
+  `kind=partition` crossed on the way down); and the scene-side paths
+  (`substitutive_lod=` / `lod_group=` / `add_gsplats_from_file`'s graft fallback),
+  which detect a `kind=partition` ancestor of the insertion point. An
+  **explicitly authored** `coverage_fractions=[...]` list always wins over all of
+  them. The rule assumes >= 2 parts: the scene-side paths cannot check that (part 0's
+  ladder is derived before part 1 exists), and `--recipe adaptive` on a dataset below
+  `--max-elements` does emit a one-part partition whose "tile" is the whole object.
 - Children themselves are standard nodes — they retain their own
   `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
   own `kind` attr) and full attr set.

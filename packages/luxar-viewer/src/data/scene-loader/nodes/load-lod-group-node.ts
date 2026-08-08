@@ -6,9 +6,11 @@
  * with two additions:
  *
  *   1. Each child carries a ``coverage_fraction`` attribute (a per-child
- *      viewport-relative threshold; 0.0 coarsest, 1.0 the auto-derived finest
- *      anchor, up to 4.0 == ``1/FILL_FACTOR`` for an explicitly authored ladder)
- *      plus its own ``position_bounds`` (the raw nD AABB). Both are read from the child's zarr attrs.
+ *      viewport-relative threshold; 0.0 coarsest, 1.0 the finest anchor of a
+ *      whole-object ladder, up to 4.0 == ``1/FILL_FACTOR`` — which is what a
+ *      partition-bound ladder derives, as well as what an author may write)
+ *      plus its own ``position_bounds`` (the raw nD AABB). Both are read from
+ *      the child's zarr attrs.
  *      Legacy (pre-v3.2) datasets that still carry ``min_pixel_size`` /
  *      selector ``'pixel_size'`` are auto-adapted with a warning
  *      (see ``resolveCoverageFractions``).
@@ -163,8 +165,12 @@ function attachLazyChild(
  * legacy datasets.
  *
  * Current stores carry a per-child ``coverage_fraction`` (viewport-relative
- * ``sqrt(N_i/N_finest)`` in [0,1], strictly ascending coarsest→finest,
- * finest == 1.0). Datasets written before the v3.2 rename instead carry a
+ * ``sqrt(N_i/N_finest)``, strictly ascending coarsest→finest, in
+ * [0, ``1/FILL_FACTOR``] == [0, 4]). A whole-object ladder's finest is 1.0; a
+ * ladder bound to a spatial partition is re-anchored at fills-screen so its
+ * finest is 4.0 — derived, not merely hand-authored.
+ *
+ * Datasets written before the v3.2 rename instead carry a
  * per-child ``min_pixel_size`` (absolute pixel thresholds; group ``selector``
  * = ``'pixel_size'``). Silently defaulting those to 0 would make the selector
  * permanently pick the FINEST child — eager-downloading full-res geometry and

@@ -17,6 +17,10 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
+from luxar.core.group.lod.group import (
+    MAX_COVERAGE_FRACTION,
+    partitioned_coverage_fractions,
+)
 from luxar.core.group.lod.points import resolve_substitutive_axis_points
 from luxar.gsplats.lift import (
     LIFT_TRUNCATION_RADIUS,
@@ -657,6 +661,149 @@ class TestAdditiveLevelStatsPairing:
         assert stored["caller_key"] == 123
         assert np.isfinite(stored["reference_energy"])
         assert stored["reference_energy"] > 0
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Partition-bound anchor (hand-built kind=partition of per-part ladders)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _partitioned_points(
+    tmp_path, *, n=600, levels=2, partitioned=True, wrap_in_group=False, **kw
+):
+    """Hand-build a ``kind=partition`` wrapper and one ladder per part.
+
+    ``partitioned=False`` places the same ladders at the scene ROOT instead (the
+    over-trigger control), so both variants get identical geometry and only the
+    insertion point differs.
+
+    The shape ``demo_biodiversity_planetary_scale`` builds: ``add_points`` rejects
+    ``partition=`` with ``substitutive_lod=``, so a caller who wants per-tile
+    ladders creates the wrapper itself and calls the adder once per part.
+
+    ``method="kmeans_lloyd"`` instead of the default ``"auto"``: at these sizes
+    ``auto`` routes to the submodular ``greedy`` Runnalls path, whose sparse-Gram
+    build scales with OVERLAP DENSITY and costs tens of seconds per part on a
+    lifted cloud. Every assertion below reads per-level COUNTS
+    (``compression_factor``/``levels`` decide those, identically for either
+    method) and never reduction quality, so the cheap O(N log N) reduction is
+    sound here — the same reasoning as ``_acceptance_params`` in
+    ``test_gsplats.py``. Pre-existing tests keep ``auto``.
+    """
+    out = tmp_path / "p.luxar.zarr"
+    rng = np.random.RandomState(0)
+    pos = rng.normal(0, 20, (n, 3)).astype(np.float32)
+    radii = rng.uniform(0.5, 1.5, n).astype(np.float32)
+    halves = [np.arange(n) % 2 == 0, np.arange(n) % 2 == 1]
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        wrapper = (
+            scene.add_partition_group(
+                "tiled", display_type="points", max_elements=n // 2
+            )
+            if partitioned
+            else scene
+        )
+        for i, idx in enumerate(halves):
+            target = wrapper.add_group(f"holder_{i}") if wrap_in_group else wrapper
+            target.add_points(
+                f"part_{i}",
+                pos[idx],
+                radii=radii[idx],
+                substitutive_lod=dict(
+                    compression_factor=4,
+                    levels=levels,
+                    method="kmeans_lloyd",
+                    device="cpu",
+                    seed=0,
+                    **kw,
+                ),
+            )
+    root = zarr.open(str(out), mode="r")
+    return (root["tiled"] if partitioned else root), len(halves)
+
+
+def _child_coverage(lod_group) -> list:
+    """Per-child ``coverage_fraction``, coarsest→finest."""
+    names = sorted(
+        (k for k in lod_group.keys() if k.startswith("child_")),
+        key=lambda k: int(k.split("_")[1]),
+    )
+    return [float(lod_group[k].attrs["coverage_fraction"]) for k in names]
+
+
+def _child_counts(lod_group) -> list:
+    names = sorted(
+        (k for k in lod_group.keys() if k.startswith("child_")),
+        key=lambda k: int(k.split("_")[1]),
+    )
+    return [
+        int(lod_group[k].attrs.get("n_splats") or lod_group[k].attrs.get("n_points"))
+        for k in names
+    ]
+
+
+class TestPartitionBoundAnchorPoints:
+    """A hand-built partition of per-part ladders gets the fills-screen anchor.
+
+    Before ``derive_coverage_fractions`` detected the ``kind=partition`` ancestor,
+    this path always auto-derived the WHOLE-OBJECT ladder, whose finest threshold
+    is ``1.0`` — so every tile sat on its finest level at the opening whole-object
+    framing. The expected finest is ``MAX_COVERAGE_FRACTION`` (4.0).
+
+    Three tests here REGRESS without the fix (``test_every_part_ladder_is_partition
+    _anchored``, ``test_finest_is_exactly_the_ceiling``,
+    ``test_plain_group_between_partition_and_ladder_still_anchored``). The other two
+    are CONTROLS that pass either way and pin what must NOT change: no
+    over-triggering outside a partition, and an explicit list still winning.
+    """
+
+    def test_every_part_ladder_is_partition_anchored(self, tmp_path) -> None:
+        wrapper, n_parts = _partitioned_points(tmp_path)
+        assert wrapper.attrs["kind"] == "partition"
+        for i in range(n_parts):
+            part = wrapper[f"part_{i}"]
+            assert part.attrs["kind"] == "lod"
+            counts = _child_counts(part)
+            # The finest count IS the point count for Points (the lift drops no
+            # positive-radius point), so the on-disk counts reproduce the ladder.
+            assert _child_coverage(part) == pytest.approx(
+                partitioned_coverage_fractions(counts)
+            )
+
+    def test_finest_is_exactly_the_ceiling(self, tmp_path) -> None:
+        wrapper, n_parts = _partitioned_points(tmp_path)
+        for i in range(n_parts):
+            assert _child_coverage(wrapper[f"part_{i}"])[-1] == pytest.approx(
+                MAX_COVERAGE_FRACTION
+            )
+
+    def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path) -> None:
+        """CONTROL (passes pre-fix): the SAME ladders at the scene root must keep
+        the whole-object anchor — the over-trigger guard."""
+        root, n_parts = _partitioned_points(tmp_path, partitioned=False)
+        for i in range(n_parts):
+            assert _child_coverage(root[f"part_{i}"])[-1] == 1.0
+
+    def test_plain_group_between_partition_and_ladder_still_anchored(
+        self, tmp_path
+    ) -> None:
+        wrapper, n_parts = _partitioned_points(tmp_path, wrap_in_group=True)
+        for i in range(n_parts):
+            part = wrapper[f"holder_{i}"][f"part_{i}"]
+            assert _child_coverage(part)[-1] == pytest.approx(MAX_COVERAGE_FRACTION)
+
+    def test_explicit_coverage_fractions_still_win_under_a_partition(
+        self, tmp_path
+    ) -> None:
+        """CONTROL (passes pre-fix): the biodiversity demo's contract — it
+        hand-tunes the list itself, and that must keep winning verbatim."""
+        explicit = [0.0, 3.52, 4.0]
+        wrapper, n_parts = _partitioned_points(
+            tmp_path, levels=2, coverage_fractions=explicit
+        )
+        for i in range(n_parts):
+            assert _child_coverage(wrapper[f"part_{i}"]) == pytest.approx(explicit)
 
 
 class TestSubstitutiveLodGuards:
