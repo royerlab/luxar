@@ -61,7 +61,9 @@ describe('geometry capabilities', () => {
     // of these — it is in the vocabulary, so its answers come from its row and
     // are asserted below, not here. (This case used to assert `mesh` alongside
     // the outsiders, which read as "mesh is unclassified" when what was true
-    // was only that its row happened to be all-false at the time.)
+    // was only that its row happened to be all-false at the time. It broke the
+    // moment mesh gained `partition`, which is the right outcome for a
+    // mesh-capability test and the wrong one for this test.)
     for (const predicate of [supportsLod, supportsPartition, isPooledGeometry, isDepthSortable]) {
       for (const outsider of ['volume', 'group', 'scene', '', undefined, null, 3]) {
         expect(predicate(outsider), String(outsider)).toBe(false);
@@ -70,13 +72,16 @@ describe('geometry capabilities', () => {
   });
 
   it('classifies mesh per capability, not uniformly', () => {
-    // The row the table exists for: mesh is capable of one of these and not the
-    // others, and each answer is a distinct architectural fact (see the comment
-    // on the row itself). Pinned explicitly so a widened literal or a reflexive
-    // "flip them all" cannot pass unnoticed.
+    // The row the table exists for: mesh is capable of some of these and not
+    // the others, and each answer is a distinct architectural fact (see the
+    // comment on the row itself). Pinned explicitly so a widened literal or a
+    // reflexive "flip them all" cannot pass unnoticed.
     expect(GEOMETRY_CAPABILITIES.mesh).toEqual({
       lod: false,
-      partition: false,
+      // TRUE: a BSP cut runs between faces, never through one, and each part
+      // renumbers the vertices its own faces use. Cut vertices are duplicated
+      // with identical position AND normal, so the seam stays invisible.
+      partition: true,
       // Permanently false: `pooled` names the instanced-quad element-texture
       // stack, which an indexed triangle surface is not drawn from.
       pooled: false,
