@@ -241,7 +241,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           mesh.userData = {
             nodeType: 'lines',
             attrs: {},
-            maxWidth: 1.0,
+            // Mirrors createLinesNode's `attrs.max_width`: the widest
+            // authored width, which `spec.width` now controls (the
+            // thick perf scenarios inject 3.0, not the 1.0 default).
+            maxWidth: spec.width ?? 1.0,
             visibleSegmentCount: clamped,
             synthetic: true,
           };
