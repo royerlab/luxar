@@ -78,7 +78,9 @@ README gallery table.
   the turntable into a tumble — `mesh_isosurface_cells3d` swung 130% in subject
   aspect before its `orbitUp: "x"` was set. Setting `orbitUp` also runs
   `positionForOrbitUp`, which re-parks the camera on an axis and discards the
-  baked framing, so in practice it needs a `viewAngle` next to it.
+  baked framing, so check that pose: it needs a `viewAngle` next to it whenever
+  the parked pose lands edge-on (as this slab's did — whereas
+  `gsplats_3d_ct_totalsegmentator`'s `orbitUp: "z"` parks coronal and needs none).
 
   **Judge a tile on its orbit frames, not on the still.** The README embeds the
   animated WebP; the PNG is a byproduct that ships nowhere. A framing tuned on
