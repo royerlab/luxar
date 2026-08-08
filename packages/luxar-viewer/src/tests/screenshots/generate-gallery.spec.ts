@@ -264,13 +264,6 @@ async function jumpTimeDimToFrac(page: any, frac: number): Promise<void> {
 }
 
 /**
- * Position the camera for a subject whose up-axis is `up` (default 'y'): look at
- * the target along the +B axis with up=U, preserving the current distance. This
- * is the base pose the orbit rock revolves around, so the still and the video
- * share orientation. For up='z' (CT lying along Z) this gives an upright coronal
- * view instead of the degenerate top-down one from F.
- */
-/**
  * The world axis the camera's current up-vector most nearly points along.
  *
  * Read AFTER framing, so it reflects whatever pose is actually on screen — the
@@ -289,6 +282,10 @@ async function dominantCameraUpAxis(page: any): Promise<'x' | 'y' | 'z'> {
     const ax = Math.abs(x);
     const ay = Math.abs(y);
     const az = Math.abs(z);
+    // Degenerate up (zero or non-finite): fall back to 'y' like the missing-camera
+    // guard above, rather than letting the >= chain answer 'x' for an all-zero
+    // vector — that would be an arbitrary axis dressed up as a measurement.
+    if (!(ax + ay + az > 0)) return 'y';
     if (ax >= ay && ax >= az) return 'x';
     if (az >= ay) return 'z';
     return 'y';
@@ -296,6 +293,13 @@ async function dominantCameraUpAxis(page: any): Promise<'x' | 'y' | 'z'> {
   return axis as 'x' | 'y' | 'z';
 }
 
+/**
+ * Position the camera for a subject whose up-axis is `up` (default 'y'): look at
+ * the target along the +B axis with up=U, preserving the current distance. This
+ * is the base pose the orbit rock revolves around, so the still and the video
+ * share orientation. For up='z' (CT lying along Z) this gives an upright coronal
+ * view instead of the degenerate top-down one from F.
+ */
 async function positionForOrbitUp(page: any, up: string): Promise<void> {
   await page.evaluate((u: string) => {
     const d = (window as any).__luxarDebug;
@@ -733,10 +737,13 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
   // This used to be a flat `?? 'y'`, and that default was silently wrong for any
   // demo whose `viewer_config` bakes a non-Y up. The still keeps the baked pose
   // (`F` restores it) but the loop below hard-sets `cam.up` every frame, so those
-  // demos shipped an animation ROLLED away from their own poster, with the
+  // demos render an animation ROLLED away from their own poster, with the
   // turntable degenerating into an in-plane tumble — measured at a 130% swing in
-  // subject aspect over one rock. Three demos were affected and none had opted in
-  // to `orbitUp`, because nothing told them they had to (#1377).
+  // subject aspect over one rock. Three demos bake a non-Y up and none had opted
+  // in to `orbitUp`, because nothing told them they had to (#1377). Only one of
+  // the three was visibly shipping the roll: another's checked-in dataset
+  // predates its own CameraConfig and carries no camera at all, and the third's
+  // camera was not orbiting in the first place (#1383).
   //
   // Deriving it means a baked up is honoured by default and `orbitUp` becomes a
   // true override. A demo that bakes nothing gets three.js's default camera up,
@@ -781,6 +788,7 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
     return true;
   }, upAxis);
   if (!ok) return 0;
+
   fs.mkdirSync(framesDir, { recursive: true });
   const ampRad = (ORBIT_AMPLITUDE_DEG * Math.PI) / 180;
   let tlLastV = -1;
@@ -845,20 +853,15 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
 }
 
 /**
- * High-quality VP9 WebM master from the orbit frame sequence. Constant-quality
- * (CRF), looping by construction. GitHub renders a committed .webm with a player
- * on the file page; the README embeds the smaller WebP and links to this.
- */
-/**
  * Warn when the still and the FIRST orbit frame disagree.
  *
  * They are the same nominal pose — the rock is `phi0 + amp*sin(0)` at frame 0 —
  * so they should render near-identically. When they do not, the orbit is showing
  * the subject from somewhere the poster never does, and since the README embeds
  * the ANIMATION while reviewers usually look at the still, that divergence ships
- * unnoticed. It already did: three demos with a baked non-Y camera up had their
- * animation rolled ~90 deg away from their own poster (#1377), and nothing in
- * this harness compared the two.
+ * unnoticed. It already did: three demos bake a non-Y camera up, and the one
+ * whose dataset actually carries that camera shipped an animation rolled ~90 deg
+ * from its own poster (#1377). Nothing in this harness compared the two.
  *
  * Normalised cross-correlation on a 256x256 greyscale downscale — deliberately
  * not SSIM, which is punishing on high-frequency filamentary subjects (a
@@ -881,6 +884,13 @@ async function warnIfStillDisagreesWithOrbit(
   // clip's start, so the two show DIFFERENT TIMEPOINTS and correlate ~0.14 even
   // when the camera agrees perfectly. Comparing them would warn on every
   // timelapse tile, which is how a guard gets ignored.
+  //
+  // Note this tests the DECLARED field, while the per-frame re-freeze in
+  // `captureOrbitFrames` gates on `tl !== null` — whether time stepping is
+  // actually happening. Deliberately not the same question: a demo that declares
+  // `timelapse` but whose scene has no non-displayed dimension steps nothing, so
+  // the freeze correctly stays off while this exemption still (harmlessly) skips
+  // one warning. Do not "align" the two.
   if (demo.timelapse) return;
   if (!fs.existsSync(stillPath) || !fs.existsSync(frameZeroPath)) return;
   const [a, b] = [stillPath, frameZeroPath].map((f) => fs.readFileSync(f).toString('base64'));
@@ -923,11 +933,20 @@ async function warnIfStillDisagreesWithOrbit(
           'viewer_config camera up (see #1377).'
       );
     }
-  } catch {
-    // Diagnostic only — never let it break a capture.
+  } catch (e) {
+    // Diagnostic only — never let it break a capture. But say so: a guard that
+    // fails silently is worse than no guard, because the absence of a warning
+    // reads as "checked and fine". If `createImageBitmap`/`OffscreenCanvas` ever
+    // go missing, this line is what stops #1377 regressing unnoticed.
+    console.warn(`[${demo.id}] still-vs-orbit check could not run:`, e);
   }
 }
 
+/**
+ * High-quality VP9 WebM master from the orbit frame sequence. Constant-quality
+ * (CRF), looping by construction. GitHub renders a committed .webm with a player
+ * on the file page; the README embeds the smaller WebP and links to this.
+ */
 function convertFramesToWebm(framesDir: string, output: string): void {
   // Assemble the real frames 1:1 at ORBIT_FPS — NO minterpolate. Every output
   // frame is a genuine screenshot, so there is no motion-vector warping of fine

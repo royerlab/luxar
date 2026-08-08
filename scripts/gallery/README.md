@@ -77,8 +77,10 @@ README gallery table.
   The orbit **hard-sets `cam.up` every frame**, so that axis has to be right. It
   used to default to world-Y unconditionally, which silently discarded any baked
   non-Y up: the still keeps the baked pose (`F` restores it) but the animation
-  did not, so three demos shipped an animation rolled ~90° away from their own
-  poster, turntable degenerating into tumble (#1377). Deriving the default from
+  did not, so a demo baking a non-Y up renders an animation rolled ~90° away from
+  its own poster, turntable degenerating into tumble (#1377). Three demos bake
+  one; only one was visibly shipping the roll (another's checked-in dataset
+  predates its own `CameraConfig`, the third's camera was not orbiting at all). Deriving the default from
   the camera makes `orbitUp` a true **override**, needed only to rock about
   something other than the scene's own up. Setting it explicitly also runs
   `positionForOrbitUp`, which re-parks the camera on an axis and discards the
