@@ -11,6 +11,7 @@ by file path so importing it never triggers the module-level
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -238,14 +239,30 @@ class TestCheckSizing:
 
 
 class TestSceneMarker:
+    @staticmethod
+    def _write(marker: Path, payload: str) -> Path:
+        marker.write_text(payload)
+        return marker
+
+    def _current(self, tmp_path: Path) -> Path:
+        return self._write(
+            tmp_path / "scene_build.json",
+            json.dumps(
+                {
+                    "version": _demo.SCENE_SCHEMA_VERSION,
+                    "points": 28,
+                    "per_bundle": 6000,
+                }
+            ),
+        )
+
     def test_missing_marker_forces_a_rebuild(self, tmp_path: Path) -> None:
         assert not _demo.scene_marker_matches(
             tmp_path / "absent.json", points=28, per_bundle=6000
         )
 
     def test_matching_marker_allows_reuse(self, tmp_path: Path) -> None:
-        marker = tmp_path / "scene_build.json"
-        marker.write_text('{"points": 28, "per_bundle": 6000}')
+        marker = self._current(tmp_path)
         assert _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
 
     @pytest.mark.parametrize("points,per_bundle", [(20, 6000), (28, 3000), (20, 3000)])
@@ -255,15 +272,36 @@ class TestSceneMarker:
         points: int,
         per_bundle: int,
     ) -> None:
-        marker = tmp_path / "scene_build.json"
-        marker.write_text('{"points": 28, "per_bundle": 6000}')
+        marker = self._current(tmp_path)
         assert not _demo.scene_marker_matches(
             marker, points=points, per_bundle=per_bundle
         )
 
+    def test_pre_label_marker_forces_a_rebuild(self, tmp_path: Path) -> None:
+        # A scene built before hover labels existed: right sizing, no version
+        # key. Reusing it would serve a label-less scene while the docs (and
+        # the auto-injected hover overlay) promise tooltips. Anyone with a warm
+        # datasets/demos/ or a gallery box is in exactly this state.
+        marker = self._write(
+            tmp_path / "scene_build.json", '{"points": 28, "per_bundle": 6000}'
+        )
+        assert not _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
+
+    def test_older_schema_version_forces_a_rebuild(self, tmp_path: Path) -> None:
+        marker = self._write(
+            tmp_path / "scene_build.json",
+            json.dumps(
+                {
+                    "version": _demo.SCENE_SCHEMA_VERSION - 1,
+                    "points": 28,
+                    "per_bundle": 6000,
+                }
+            ),
+        )
+        assert not _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
+
     def test_corrupt_marker_forces_a_rebuild(self, tmp_path: Path) -> None:
-        marker = tmp_path / "scene_build.json"
-        marker.write_text("{not json")
+        marker = self._write(tmp_path / "scene_build.json", "{not json")
         assert not _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
 
 
@@ -292,6 +330,158 @@ class TestNodeBudget:
         }
 
 
+#: The HCP-1065 archive's member list, by division — enumerated once from the
+#: release zip's central directory rather than inferred. Paired codes are listed
+#: by their base and expanded to ``_L`` / ``_R`` below; the unpaired (midline)
+#: ones are listed as-is. Note ``SCP``: ``CB`` and ``ICP`` pair, the superior
+#: cerebellar peduncle does not.
+#:
+#: Being a literal, this is a *transcription* of the archive, and the tests
+#: below compare it against ``BUNDLE_INFO`` — two in-repo tables, not the
+#: archive itself. Nothing here can catch a wrong transcription; the runtime
+#: signal for that is ``build_scene``'s "missing from BUNDLE_INFO" WARNING,
+#: which fires on the real member names during a real build.
+_PAIRED_CODES = {
+    "association": [
+        "AF",
+        "C_FP",
+        "C_FPH",
+        "C_PH",
+        "C_PHP",
+        "C_PO",
+        "EMC",
+        "FAT",
+        "IFOF",
+        "ILF",
+        "MdLF",
+        "PAT",
+        "SLF1",
+        "SLF2",
+        "SLF3",
+        "UF",
+        "VOF",
+    ],
+    "cerebellum": ["CB", "ICP"],
+    "cranial nerve": ["CNII", "CNIII", "CNV", "CNVII", "CNVIII"],
+    "projection": [
+        "AR",
+        "CBT",
+        "CPT_F",
+        "CPT_O",
+        "CPT_P",
+        "CST",
+        "CS_A",
+        "CS_P",
+        "CS_S",
+        "DRTT",
+        "F",
+        "ML",
+        "OR",
+        "RST",
+        "TR_A",
+        "TR_P",
+        "TR_S",
+    ],
+}
+_UNPAIRED_CODES = {
+    "cerebellum": ["MCP", "SCP", "V"],
+    "commissural": ["AC", "CC"],
+}
+
+_ALL_BUNDLES: list[tuple[str, str]] = [
+    *(
+        (f"{code}_{side}", division)
+        for division, codes in _PAIRED_CODES.items()
+        for code in codes
+        for side in ("L", "R")
+    ),
+    *(
+        (code, division)
+        for division, codes in _UNPAIRED_CODES.items()
+        for code in codes
+    ),
+]
+
+
+class TestTractLabel:
+    """The hover-label expansion: every atlas code must resolve."""
+
+    def test_the_code_list_fixture_still_has_87_entries(self) -> None:
+        # A fixture-integrity guard, NOT a check on the atlas: _ALL_BUNDLES is a
+        # literal 30 lines up. It catches an accidental edit to the paired /
+        # unpaired split — moving SCP back into _PAIRED_CODES, say — which would
+        # otherwise quietly weaken every test below.
+        assert len(_ALL_BUNDLES) == 87
+
+    def test_the_table_and_the_code_list_agree(self) -> None:
+        # Both directions: no atlas code without a table entry (a fallback
+        # label in the viewer) and no table entry the atlas never ships (dead
+        # data). The 87 members reduce to 46 base codes.
+        assert {_demo.split_hemisphere(b)[0] for b, _ in _ALL_BUNDLES} == set(
+            _demo.BUNDLE_INFO
+        )
+        assert len(_demo.BUNDLE_INFO) == 46
+
+    @pytest.mark.parametrize("bundle,division", _ALL_BUNDLES)
+    def test_every_atlas_code_resolves(self, bundle: str, division: str) -> None:
+        label = _demo.tract_label(bundle, division)
+        # Never the bare fallback.
+        assert label != f"{bundle} — {division}"
+        base, _ = _demo.split_hemisphere(bundle)
+        name, gloss = _demo.BUNDLE_INFO[base]
+        # Leads with the raw code, so the Layers panel row and the tooltip agree.
+        assert label.startswith(f"{bundle} — ")
+        assert name in label
+        assert division in label
+        assert gloss in label
+
+    def test_underscore_base_codes_are_not_mis_split(self) -> None:
+        # THE regression: several base codes themselves end in _F/_O/_P/_A/_S,
+        # so only a BUNDLE_INFO-guarded _L/_R strip gets these right.
+        assert _demo.split_hemisphere("CPT_F_L") == ("CPT_F", "left")
+        assert "Frontal corticopontine tract (left)" in _demo.tract_label(
+            "CPT_F_L", "projection"
+        )
+        assert "Superior corticostriatal tract (right)" in _demo.tract_label(
+            "CS_S_R", "projection"
+        )
+        assert "Cingulum, frontal-parietal segment (left)" in _demo.tract_label(
+            "C_FP_L", "association"
+        )
+        assert "Cingulum, parolfactory segment (right)" in _demo.tract_label(
+            "C_PO_R", "association"
+        )
+        assert "Superior longitudinal fasciculus III (left)" in _demo.tract_label(
+            "SLF3_L", "association"
+        )
+
+    @pytest.mark.parametrize(
+        "bundle,division",
+        [
+            ("MCP", "cerebellum"),
+            # SCP is the non-obvious one: CB and ICP pair, this does not.
+            ("SCP", "cerebellum"),
+            ("V", "cerebellum"),
+            ("CC", "commissural"),
+        ],
+    )
+    def test_unpaired_codes_get_no_hemisphere(self, bundle: str, division: str) -> None:
+        assert _demo.split_hemisphere(bundle) == (bundle, "")
+        label = _demo.tract_label(bundle, division)
+        assert "(left)" not in label
+        assert "(right)" not in label
+
+    def test_matches_the_documented_shape(self) -> None:
+        assert _demo.tract_label("AF_L", "association") == (
+            "AF_L — Arcuate fasciculus (left) · association · "
+            "frontal (Broca) and temporal (Wernicke) language areas"
+        )
+
+    def test_unknown_code_falls_back_without_raising(self) -> None:
+        assert _demo.tract_label("ZZZ_L", "projection") == "ZZZ_L — projection"
+        assert _demo.split_hemisphere("ZZZ_L") == ("ZZZ_L", "")
+
+
 class TestBuildScene:
     """The authoring path, on synthetic bundles — no atlas download needed.
 
@@ -306,14 +496,18 @@ class TestBuildScene:
     POINTS = 6
     PER_BUNDLE = 4
 
+    #: One REAL atlas code per division, in DIVISIONS order — synthetic names
+    #: would silently take ``tract_label``'s unknown-code fallback.
+    NAMES = ("AF_L", "CST_R", "CC", "MCP", "CNII_L")
+
     def _bundles(self) -> dict:
         rng = np.random.default_rng(0)
         bundles: dict = {"names": [], "divisions": [], "positions": [], "colors": []}
-        for i, division in enumerate(_demo.DIVISIONS):
+        for name, division in zip(self.NAMES, _demo.DIVISIONS, strict=True):
             paths = np.cumsum(
                 rng.normal(size=(self.PER_BUNDLE, self.POINTS, 3)), axis=1
             )
-            bundles["names"].append(f"tract_{i}")
+            bundles["names"].append(name)
             bundles["divisions"].append(division)
             bundles["positions"].append(_demo.ras_to_scene(paths).reshape(-1, 3))
             bundles["colors"].append(_demo.direction_colors(paths).reshape(-1, 3))
@@ -324,9 +518,9 @@ class TestBuildScene:
         _demo.build_scene(self._bundles(), output, points=self.POINTS)
 
         root = zarr.open_group(output, mode="r")
-        for i, division in enumerate(_demo.DIVISIONS):
+        for name, division in zip(self.NAMES, _demo.DIVISIONS, strict=True):
             # The group name is the division with its space replaced.
-            tract = root[f"{division.replace(' ', '_')}/tract_{i}"]
+            tract = root[f"{division.replace(' ', '_')}/{name}"]
 
             # Compositing rides on the lod wrapper, not the levels: opacity and
             # intensity multiply root-to-leaf and blending takes the nearest
@@ -360,3 +554,119 @@ class TestBuildScene:
             assert np.all(degree > 0), "orphaned vertex"
             # Interior joints share an index; only the two ends have degree 1.
             assert int((degree == 1).sum()) == 2 * self.PER_BUNDLE
+
+    def test_the_labelled_level_is_gated_at_full_viewport_coverage(
+        self, tmp_path: Path
+    ) -> None:
+        # The premise the whole "get close before hover says anything" note
+        # rests on. If a future default made the Lines level selectable below
+        # full coverage, hover would start working at the opening pose and the
+        # docstring's headline caveat would silently become wrong.
+        output = tmp_path / "tractography.luxar.zarr"
+        _demo.build_scene(self._bundles(), output, points=self.POINTS)
+
+        root = zarr.open_group(output, mode="r")
+        for name, division in zip(self.NAMES, _demo.DIVISIONS, strict=True):
+            tract = root[f"{division.replace(' ', '_')}/{name}"]
+            assert tract.attrs["selector"] == "coverage"
+
+            children = sorted(
+                (child for _, child in tract.groups()),
+                key=lambda c: int(c.attrs["child_index"]),
+            )
+            fractions = [float(c.attrs["coverage_fraction"]) for c in children]
+            # Coarsest to finest, ascending, with the finest anchored at 1.0 —
+            # i.e. only a node filling the viewport selects it.
+            assert fractions == sorted(fractions)
+            assert fractions[-1] == 1.0
+            assert "original_line_type" in children[-1].attrs, (
+                "the level gated at 1.0 must be the labelled Lines level"
+            )
+
+    def test_hover_labels_reach_the_finest_lines_level(self, tmp_path: Path) -> None:
+        output = tmp_path / "tractography.luxar.zarr"
+        _demo.build_scene(self._bundles(), output, points=self.POINTS)
+
+        root = zarr.open_group(output, mode="r")
+        for name, division in zip(self.NAMES, _demo.DIVISIONS, strict=True):
+            tract = root[f"{division.replace(' ', '_')}/{name}"]
+            leaves = [
+                child
+                for _, child in tract.groups()
+                if "original_line_type" in child.attrs
+            ]
+            # The ladder shape itself: two synthesised coarse gsplat levels
+            # plus the one real Lines level.
+            children = [child for _, child in tract.groups()]
+            assert len(children) == 3
+            assert len(leaves) == 1
+
+            # THE headline caveat, pinned: the coarse levels carry NO labels.
+            # If a core change ever propagated labels down the gsplat lift, the
+            # docstring's "zoom in before hover says anything" would silently
+            # become false with every other assertion still green.
+            for child in children:
+                if "original_line_type" not in child.attrs:
+                    assert child.attrs.get("has_labels") is not True
+
+            node = leaves[0]
+            n_vertices = int(node.attrs["n_vertices"])
+
+            assert node.attrs["has_labels"] is True
+            offsets = np.asarray(node["label_offsets"][:])
+            assert len(offsets) == n_vertices + 1
+
+            # Labels are per-vertex CSR: label i is the byte slice
+            # [offsets[i]:offsets[i + 1]] of label_bytes, UTF-8 decoded.
+            raw = np.asarray(node["label_bytes"][:]).tobytes()
+            expected = _demo.tract_label(name, division)
+            decoded = {
+                raw[int(offsets[i]) : int(offsets[i + 1])].decode("utf-8")
+                for i in range(n_vertices)
+            }
+            assert decoded == {expected}, (
+                "every vertex of a bundle must carry the same tract label"
+            )
+
+    def test_labels_trigger_the_auto_injected_hover_overlay(
+        self, tmp_path: Path
+    ) -> None:
+        # The demo authors no hover overlay of its own: the compiler injects one
+        # only because a node carried labels, so its presence is the end-to-end
+        # signal that the labels reached the scene. Placement is hover_inject's
+        # default, not the demo's choice, so it is not asserted here.
+        output = tmp_path / "tractography.luxar.zarr"
+        _demo.build_scene(self._bundles(), output, points=self.POINTS)
+
+        root = zarr.open_group(output, mode="r")
+        overlays = [child for _, child in root["overlays"].groups()]
+        hover = [o for o in overlays if o.attrs.get("hover")]
+        assert len(hover) == 1, "expected exactly one hover overlay"
+        assert hover[0].attrs["type"] == "overlay_text"
+        assert "{hover_label}" in hover[0].attrs["text"]
+
+    def test_reports_bundles_missing_from_the_table(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The fallback path has to be visible: a future atlas revision adding a
+        # code must not silently ship code-only tooltips.
+        bundles = self._bundles()
+        bundles["names"][0] = "ZZZ_L"
+
+        _demo.build_scene(bundles, tmp_path / "t.luxar.zarr", points=self.POINTS)
+
+        out = capsys.readouterr().out
+        assert "Hover labels: 4/5 tracts named" in out
+        assert "1 bundle(s) missing from BUNDLE_INFO" in out
+        assert "ZZZ_L" in out
+
+    def test_reports_full_coverage_when_every_code_is_known(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _demo.build_scene(
+            self._bundles(), tmp_path / "t.luxar.zarr", points=self.POINTS
+        )
+
+        out = capsys.readouterr().out
+        assert "Hover labels: 5/5 tracts named" in out
+        assert "missing from BUNDLE_INFO" not in out

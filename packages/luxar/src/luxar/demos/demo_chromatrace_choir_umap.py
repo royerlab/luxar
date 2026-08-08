@@ -383,6 +383,7 @@ def build_scene(
                 opacity=0.85,
                 intensity=0.2,
                 labels=labels,
+                layer=True,
             )
 
             # Title (top-left)

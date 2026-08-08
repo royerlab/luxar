@@ -299,8 +299,20 @@ Navigation:
             # carrying its own transform. The arrays are identical across
             # embryos, so the encoder deduplicates them via array references.
             with asection(f"Placing {n} embryos (shared arrays → array_ref dedup)"):
+                # One `layer=True` group over the whole line: 100 per-embryo
+                # rows would drown the Layers panel, and the embryos are copies
+                # of one ladder anyway, so the useful control is "the line".
+                # The wrapper restates the descendants' blending mode rather
+                # than leaving it unset: the panel falls back to a group's
+                # DEFAULT mode (additive) when none is authored, which would
+                # mislabel the row and hide the absorption slider that only
+                # `volumetric` layers get. Every embryo below is volumetric, so
+                # the mode the wrapper owns is the one they already had.
+                line = scene.add_group(
+                    "embryo_line", layer=True, blending_mode="volumetric"
+                )
                 for i, xform in enumerate(xforms):
-                    group = scene.add_group(f"embryo_{i:03d}", transform=xform)
+                    group = line.add_group(f"embryo_{i:03d}", transform=xform)
                     group.add_gsplats_from_data(
                         "lod",
                         colored,
