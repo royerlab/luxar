@@ -23,6 +23,9 @@ Download size (exact, from Range probes of the Drive files; decimal GB/MB):
     Image_data00..09.npy        181.5 GB total (11.28-23.60 GB each)
   Pass --without-images for a ~4.24 GB run: the embeddings and label.csv only,
   since the Label_data CSVs are needed solely to place the thumbnails.
+  Budget ~190 GB of free disk rather than 186: the downloads stay cached, and
+  the encoded thumbnails — one archive per source file, the assembled bundle,
+  and the staging copy the bundle is written through — sit alongside them.
 
 Data source: OpenCell / CytoSelf (CC BY 4.0)
   - Embeddings: Global VQ-VAE-2 representations (9,216-dim per image)
@@ -66,6 +69,7 @@ DEMO_META = {
     "outputs": ["cytoself_protein_landscape", "cytoself_landscape"],
 }
 
+import errno
 import json
 import os
 import sys
@@ -152,6 +156,16 @@ COMPLETE_SUFFIX = ".complete"
 MIN_DOWNLOAD_BYTES = 1_000
 HTML_SNIFF_BYTES = 512
 HTML_MARKERS = (b"<!doctype html", b"<html", b"<head")
+
+# Errnos that describe the ENVIRONMENT rather than the bytes on disk: descriptor
+# exhaustion, permissions, allocation failure. A truncated or garbage artifact
+# surfaces from numpy/pandas as ValueError / BadZipFile / ParserError with no
+# errno at all, so nothing here can mask a real corruption — while treating an
+# EMFILE as one would quarantine a healthy 23 GB file and re-download it into
+# the same wall. Consumed by :func:`_load_downloaded_artifact`.
+_ENVIRONMENT_ERRNOS = frozenset(
+    {errno.EACCES, errno.EPERM, errno.EMFILE, errno.ENFILE, errno.ENOMEM}
+)
 
 # Per-artifact size floors. Exact sizes, from HTTP Range probes of the Drive
 # files themselves (185,838,193,451 B for the whole set):
@@ -356,8 +370,15 @@ def _quarantine_download(path: Path, reason: str) -> None:
     Dropping the sidecar matters as much as the rename: a stale sidecar left
     behind would keep describing a file that is no longer there and could shadow
     the freshly written one after a re-fetch.
+
+    The ORDER is the load-bearing part. The rename goes first: while the bad file
+    still sits at the canonical name, its sidecar is the only thing that marks it
+    bad, so a rename that fails (a cross-device cache, an open handle on Windows)
+    must not also leave the file looking like a sidecar-less legacy cache that
+    the size heuristic then trusts. The reverse leftover is harmless — a sidecar
+    with no file fails :func:`_cached_file_is_complete` on the missing file and
+    is overwritten by the next successful download.
     """
-    _sidecar_path(path).unlink(missing_ok=True)
     try:
         quarantine_file(path, reason=reason)
     except FileNotFoundError:
@@ -365,6 +386,7 @@ def _quarantine_download(path: Path, reason: str) -> None:
         # the same artifact between our check and theirs. Either way it is out
         # from under the canonical name, which is all this needs to guarantee.
         pass
+    _sidecar_path(path).unlink(missing_ok=True)
 
 
 def _load_downloaded_artifact(
@@ -383,15 +405,20 @@ def _load_downloaded_artifact(
     ONLY parse/integrity failures count as corruption. Faults that say nothing
     about the bytes on disk are re-raised untouched: ``MemoryError`` (the
     embeddings need ~16 GB of RAM, so re-downloading 4.23 GB would fail
-    identically) and ``ImportError`` (a reader reaching for an engine that is
-    not installed — ``pd.read_csv`` does this — is a broken environment, not a
-    broken file).
+    identically), ``ImportError`` (a reader reaching for an engine that is not
+    installed — ``pd.read_csv`` does this — is a broken environment, not a broken
+    file) and an :class:`OSError` carrying one of
+    :data:`_ENVIRONMENT_ERRNOS` (a descriptor limit, a permission, an
+    allocation), which would otherwise throw away a healthy 23 GB file and
+    re-fetch it straight into the same wall.
     """
     try:
         return loader(path)
     except (MemoryError, ImportError):
         raise
     except Exception as exc:
+        if isinstance(exc, OSError) and exc.errno in _ENVIRONMENT_ERRNOS:
+            raise
         aprint(f"  ⚠ Cached file {path.name} could not be read ({exc})")
         _quarantine_download(path, reason="unreadable cached download")
         _download_from_google_drive(file_id, path, expected_min_size=expected_min_size)
@@ -1427,7 +1454,10 @@ def main() -> None:
     aprint("NOTE: First run downloads 185.8 GB — 4.23 GB of embeddings, 71 MB")
     aprint("      of label CSVs, and ten Image_data files of 11.3-23.6 GB each")
     aprint("      (181.5 GB) for the hover thumbnails — and computes UMAP")
-    aprint("      (~10-30 min). Needs ~16 GB RAM and ~186 GB of free disk.")
+    aprint("      (~10-30 min). Needs ~16 GB RAM and ~190 GB of free disk: the")
+    aprint("      downloads stay cached, and the encoded thumbnails (per source")
+    aprint("      file, plus the assembled bundle and its staging copy) sit")
+    aprint("      alongside them.")
     aprint("      Subsequent runs load from cache; an interrupted run resumes")
     aprint("      per file. Use --without-images for the ~4.24 GB run.")
     aprint("")

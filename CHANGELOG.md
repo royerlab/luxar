@@ -31,9 +31,12 @@ URL, so nothing bad is ever cached. On success the rename is atomic and a
 `.complete` sidecar records the verified size, which is what the next run's
 cache check reads — a file truncated behind the sidecar's back is re-fetched
 rather than trusted. A sidecar is only ever removed together with the file it
-describes (quarantine moves both at once); nothing clears it in advance of a
-replacement, because until that replacement exists it is the only evidence that
-the file at the destination is bad.
+describes, and in that order: the rename goes first and the sidecar goes only
+once the canonical name is clear, because until then the sidecar is the only
+evidence that the file sitting there is bad — a rename that fails would
+otherwise leave a truncated file looking like a sidecar-less legacy cache, which
+the size heuristic trusts. The reverse leftover costs nothing: a sidecar with no
+file fails the cache check on the missing file.
 
 The expected sizes are now measured rather than guessed. Range probes of the
 Drive files give 4,232,208,512 B for the embeddings, 6,553,361 B for
@@ -61,9 +64,12 @@ size heuristic; tightening it would have forced everyone to re-download
 gigabytes for no evidence of a problem, so the residual risk is handled at the
 consumer instead. Every load of a downloaded artifact (the embeddings, both
 label tables, the image archives) now quarantines the file and re-downloads once
-if it cannot be parsed — with `MemoryError` and `ImportError` excluded, since
-neither says anything about the bytes on disk and re-fetching 4.23 GB to meet the
-same wall twice is the worst possible response.
+if it cannot be parsed — with `MemoryError`, `ImportError` and the environmental
+`OSError` errnos (a descriptor limit, a permission, an allocation) excluded,
+since none of them says anything about the bytes on disk and re-fetching 23 GB to
+meet the same wall twice is the worst possible response. Nothing is masked by
+that exclusion: numpy and pandas report a truncated or garbage artifact as
+`ValueError` / `BadZipFile` / `ParserError`, carrying no errno at all.
 
 The thumbnail pipeline had a separate and more annoying failure: it processed
 all ten `Image_data` files and wrote its npz at the very end, so a failure on
@@ -102,7 +108,10 @@ it claimed. The artifacts sum to 185,838,193,451 B, and the figure matters
 operationally — `luxar demo run --all --max-download-mb 20000` used to wave this
 demo through and then fill a 100 GB disk. `--without-images` is ~4240 MB, which
 is the embeddings plus `label.csv`; the `Label_data` CSVs are fetched only to
-place the thumbnails.
+place the thumbnails. The free-space advice is ~190 GB rather than 186: the
+transfer figure is not the footprint, since the downloads stay cached and the
+encoded thumbnails — per source file, plus the assembled bundle and the staging
+copy it is written through — sit next to them.
 
 #### Real join geometry for lines: the miter (#790, #795)
 
@@ -163,7 +172,6 @@ pixels — the measurement is zero, the small ceiling only absorbs a seam pixel
 the shaders' float32 operand order can cost — so unmitred rendering cannot
 come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
 under `make test-e2e`.)
-
 
 #### Mesh is per-triangle depth sorted
 

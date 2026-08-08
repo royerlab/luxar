@@ -17,6 +17,7 @@ That is the only way a test can see the difference the identity header makes.
 
 from __future__ import annotations
 
+import errno
 import gzip
 import io
 import json
@@ -626,6 +627,70 @@ def test_memory_error_is_not_treated_as_corruption(
 
     assert path.exists()
     assert not (tmp_path / "Global_representation.npy.corrupt").exists()
+
+
+def test_descriptor_exhaustion_is_not_treated_as_corruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An EMFILE says the process is out of file descriptors, not that a 23 GB
+    # Image_data file is bad. Quarantining on it would throw the file away and
+    # re-download it straight into the same wall.
+    path = tmp_path / "Image_data00.npy"
+    path.write_bytes(b"a perfectly good file we simply cannot open right now")
+
+    def _no_descriptors(_path: Path) -> object:
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    monkeypatch.setattr(
+        demo,
+        "_download_from_google_drive",
+        lambda *a, **k: pytest.fail("must not re-download on EMFILE"),
+    )
+
+    with pytest.raises(OSError):
+        demo._load_downloaded_artifact(path, _no_descriptors, "IMGID0")
+
+    assert path.exists()
+    assert not (tmp_path / "Image_data00.npy.corrupt").exists()
+
+
+def test_a_failed_quarantine_keeps_the_truncation_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # While the bad file still sits at the canonical name, its sidecar is the
+    # only thing marking it bad. So the rename comes first: if it fails, the
+    # sidecar must survive, or the next run sees a sidecar-less "legacy" cache
+    # and the size heuristic waves the truncation through.
+    body = b"\x93NUMPY" + b"\xab" * 20_000
+    _install_session(monkeypatch, _serve(body))
+    dest = tmp_path / "Image_data00.npy"
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+    dest.write_bytes(body[: len(body) - 500])
+
+    def _cannot_rename(path: Path, **kwargs: object) -> Path:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(demo, "quarantine_file", _cannot_rename)
+
+    with pytest.raises(OSError):
+        demo._quarantine_download(dest, reason="unreadable cached download")
+
+    assert demo._sidecar_path(dest).exists()
+    assert demo._cached_file_is_complete(dest, 10_000) is False
+
+
+def test_quarantine_drops_the_sidecar_once_the_file_is_moved(tmp_path: Path) -> None:
+    # The success case: nothing may be left describing the canonical name, or a
+    # stale sidecar could shadow the replacement written after a re-fetch.
+    dest = tmp_path / "Image_data00.npy"
+    dest.write_bytes(b"\x93NUMPY" + b"\x00" * 4_000)
+    demo._write_completion_sidecar(dest, dest.stat().st_size)
+
+    demo._quarantine_download(dest, reason="unreadable cached download")
+
+    assert not dest.exists()
+    assert not demo._sidecar_path(dest).exists()
+    assert (tmp_path / "Image_data00.npy.corrupt").exists()
 
 
 def test_import_error_is_not_treated_as_corruption(
