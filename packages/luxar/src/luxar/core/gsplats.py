@@ -103,3 +103,27 @@ class GSplats(DataNode):
     def center_bounds(self) -> Dict[str, list]:
         """Get center coordinate bounds."""
         return self._metadata.get("center_bounds", {"min": [], "max": []})  # type: ignore
+
+    @property
+    def join(self) -> Optional[str]:
+        """Get the line join style for this node.
+
+        Re-declared (identically to :class:`Node`, ``None`` when unset rather than
+        a substituted default) only so the setter below can be overridden — a
+        property's getter and setter travel together.
+        """
+        value = self.attrs.get("join")
+        return str(value) if value is not None else None
+
+    @join.setter
+    def join(self, value: Any) -> None:
+        """Refuse ``join``, which is lines-only (issue #790).
+
+        The adder refuses an explicitly-authored ``join=`` at add time; without
+        this override the inherited :class:`Node` setter (and ``set_join``, which
+        assigns through this property) would re-open the same door one line later,
+        and the dead attr would persist to zarr.
+        """
+        from .group.compositing import reject_lines_only_join_assignment
+
+        reject_lines_only_join_assignment("gsplats", self.name, value)

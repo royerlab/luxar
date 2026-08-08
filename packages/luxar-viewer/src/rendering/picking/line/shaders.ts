@@ -23,8 +23,11 @@ import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_SORTED_INDEX,
+  GLSL_LINE_JOINT_CODE,
+  GLSL_LINE_JOIN,
 } from '../../materials/_shared/glsl-lib';
 import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick.tsl';
+import { lineJoinStyleFromUniform } from '../../../types/line-join';
 import { FALLOFF_FLOOR, FALLOFF_K } from '../../materials/_shared/falloff';
 
 /**
@@ -43,6 +46,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
     // Draw-slot → storage-slot mapping (visual-shader parity).
     ${GLSL_SORTED_INDEX}
+    ${GLSL_LINE_JOINT_CODE}
 
     // Line data texture: RGBA32F, 6 texels/segment (see
     // rendering/line-geometry.ts for the texel layout).
@@ -56,6 +60,11 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     // CPU-precomputed pixel-width scales — visual-shader parity.
     uniform float uPerspectiveLineScale; // = resolution.y / tan(fov * 0.5)
     uniform float uOrthoLineScale;       // = 2 * resolution.y / frustumHeight
+
+    // Screen-space miter join (#790) — same block the visual vertex stage
+    // includes, so the pick footprint keeps matching the visible one at a
+    // mitred corner. Declares uLineJoin; MUST follow the uniforms above.
+    ${GLSL_LINE_JOIN}
 
     out float vSharpness;
     out float vPerpNorm;
@@ -88,15 +97,23 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float aStartSharpness = texelFetch(uLineTex, ivec2(texel0.x + 2, texel0.y), 0).w;
       float aEndSharpness = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0).w;
       float aSegmentLength = lineT4.x;
-      float aStartCapSuppress = lineT4.y;
-      float aEndCapSuppress = lineT4.z;
+      float aStartJointCode = lineT4.y;
+      float aEndJointCode = lineT4.z;
 
       // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
       float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
       vSegmentLength = aSegmentLength;
-      vCapSuppressStart = aStartCapSuppress;
-      vCapSuppressEnd = aEndCapSuppress;
+      // texel4.yz hold a per-endpoint joint CODE, not a [0, 1] scalar — reading
+      // it as one made brightness scale with the partner's slot index (a
+      // segment joining slot 399 reached capFactor 200.5), which both broke the
+      // brightness < 1e-4 discard for clipped endpoints and let high-slot
+      // segments win every gl_FragDepth comparison. Decode it the same way the
+      // visual vertex stage does. This is the DEFAULT; the join block further
+      // down replaces it with the screen-space value wherever it reaches a
+      // partner, exactly as in the visual shader.
+      vCapSuppressStart = luxarLineJointCapSuppression(aStartJointCode);
+      vCapSuppressEnd = luxarLineJointCapSuppression(aEndJointCode);
 
       // sanitize width/sharpness against negative/NaN/Inf. Sharpness is a
       // [0, 1] knob -> super-Gaussian exponent beta = 2^(6s - 2) (computed
@@ -235,12 +252,49 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vElementId = luxarElementIdParts();
         return;
       }
-      float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
       vWidthFade = (rawPixelWidth <= maxPW) ? 1.0 : (maxPW / max(rawPixelWidth, 1e-4));
       vPixelWidth = rawPixelWidth;
       vPerpNorm = aQuadCorner.y;
 
-      vec2 pixelOffset = perpendicular * aQuadCorner.y * clampedPixelWidth;
+      // Join geometry (#790) — visual-shader parity. The pick quad must be the
+      // SAME quad the eye sees, or the mitred corner region becomes unpickable
+      // (and the plain-perpendicular corner outside it picks a segment that no
+      // longer draws there). Same shared helper, same operands, so the two
+      // stages agree by construction rather than by two copies of the math
+      // staying in sync. Both ends are evaluated on every vertex so the two
+      // "flat" cap varyings stay segment-constant — see shader-glsl.ts for why
+      // a per-corner write splits the quad along its diagonal.
+      //
+      // Per-END widths, not this vertex's: the gate inside luxarLineJoin must be
+      // segment-constant or the "flat" cap varyings below resolve from whichever
+      // corner provokes (see luxarLineEndPixelWidth). Geometrically identical —
+      // each equals the per-vertex clamped width at the corner that consumes it
+      // (tEff == tA and mvPos == mvStart at t=0, symmetrically at t=1).
+      //
+      // The trailing depth is the segment's FAR endpoint (the END's for the
+      // start call, the START's for the end call), taken from the ORIGINAL
+      // pre-clipping depths for the helper's near-plane guard.
+      float startEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tA), mvStart.z, nearCull),
+        minPixelWidth, maxPW
+      );
+      float endEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tB), mvEnd.z, nearCull),
+        minPixelWidth, maxPW
+      );
+      vec3 startJoin = luxarLineJoin(
+        false, tA <= 0.0, aStartJointCode, ndcStart,
+        lineDir, pixelLen, startEndPixelWidth, endDepth, nearCull
+      );
+      vec3 endJoin = luxarLineJoin(
+        true, tB >= 1.0, aEndJointCode, ndcEnd,
+        lineDir, pixelLen, endEndPixelWidth, startDepth, nearCull
+      );
+      if (startJoin.z >= 0.0) vCapSuppressStart = startJoin.z;
+      if (endJoin.z >= 0.0) vCapSuppressEnd = endJoin.z;
+
+      vec2 cornerOffset = (aQuadCorner.x > 0.0) ? endJoin.xy : startJoin.xy;
+      vec2 pixelOffset = cornerOffset * aQuadCorner.y;
       vec2 ndcOffset = pixelOffset / uResolution * 2.0;
       clipPos.xy += ndcOffset * clipPos.w;
 
@@ -339,6 +393,9 @@ export const LINE_PICK_SOURCE: ShaderSource = {
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
     const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
-    return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u), { isOrtho });
+    // The join style likewise (see LINE_SOURCE): GLSL carries it as a runtime
+    // uniform, TSL as a graph variant, so the record must select the variant.
+    const join = lineJoinStyleFromUniform(u.uLineJoin?.value as number | undefined);
+    return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u), { isOrtho, join });
   },
 };

@@ -17,11 +17,11 @@ so the per-frame `ensure()` re-walks the graph each frame (see the
 
 ## Files
 
-| File                    | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bounds-math.ts`        | Side-effect-free geometry: `BoundingBox` / `BoundingSphere` / `CameraConfig` types, `getBoundingBoxCenter` / `Size` / `MaxDimension` / `Diagonal`, `transformBoundingBox` (4x4 column-major; skips corners with `\|w\| < 1e-12`, falls back to the input box if all 8 are degenerate), `boundingBoxToSphere`, `calculateClippingPlanesFromSphere`, `calculateCameraDistance` (FOV + aspect fit-ratio with 20% margin), `validateFOV`, and `projectBoundsToDisplayDims` (nD min/max → 3D box via `displayDims`). Exports the `MIN_NEAR_PLANE = 1e-9`, `MIN_NEAR_RADIUS_FACTOR = 2e-6` and `SPHERE_SAFETY_EXPANSION = 1.05` constants used by the policy, plus `minNearForRadius` (the scale-aware near floor both clipping paths actually clamp to). |
-| `scene-bounds-cache.ts` | `SceneBoundsCache` class — lazy, invalidatable cache of the 3D `BoundingBox`, derived `BoundingSphere`, and near-cull margin (~0.1% of diagonal) projected from `userData.positionBounds` to `sceneDimsManager.getDims().displayed`. `ensure(scene)` walks the scene graph to find metadata bounds; after a successful hit subsequent calls are O(1) until `invalidate()`, but a metadata-less scene has no negative caching and re-walks the graph on every call. Also exports the free helpers `computeBoundsFromMetadata` and `findPositionBoundsInScene` used by the cache and by `SceneManager.getSceneBoundsFromMetadata`.                                                                                                                    |
-| `clipping-policy.ts`    | Three policy helpers operating on a narrow `ClippingCtx` (`camera`, `controls`, `scene`, `boundsCache`, `getSceneBoundsFromMetadata`): `applyClippingPlanes` (validates `near < far`, warns on `far/near > 10000`, calls `updateProjectionMatrix`), `autoAdjustFromBounds` (metadata first, `THREE.Box3.setFromObject` fallback, also pushes scene diagonal into `controls.setSceneScale`), and `updateDynamicFromCache` (per-frame sphere-based near/far, with a 0.1% change threshold to avoid projection-matrix thrash on sub-pixel camera moves).                                                                                                                                                                                               |
+| File                    | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bounds-math.ts`        | Side-effect-free geometry: `BoundingBox` / `BoundingSphere` / `CameraConfig` types, `getBoundingBoxCenter` / `Size` / `MaxDimension` / `Diagonal`, `transformBoundingBox` (4x4 column-major; skips corners with `\|w\| < 1e-12`, falls back to the input box if all 8 are degenerate), `boundingBoxToSphere`, `calculateClippingPlanesFromSphere`, `calculateCameraDistance` (FOV + aspect fit-ratio with 20% margin), `validateFOV`, and `projectBoundsToDisplayDims` (nD min/max → 3D box via `displayDims`). Exports the `MIN_NEAR_PLANE = 1e-9`, `MIN_NEAR_RADIUS_FACTOR = 2e-6`, `MAX_NEAR_FAR_RATIO = 1200` and `SPHERE_SAFETY_EXPANSION = 1.05` constants used by the policy, plus `nearPlaneFloor` (the near floor both clipping paths actually clamp to) and `minNearForRadius` (a dominated backstop under perspective; the OPERATIVE floor under ortho). |
+| `scene-bounds-cache.ts` | `SceneBoundsCache` class — lazy, invalidatable cache of the 3D `BoundingBox`, derived `BoundingSphere`, and near-cull margin (~0.1% of diagonal) projected from `userData.positionBounds` to `sceneDimsManager.getDims().displayed`. `ensure(scene)` walks the scene graph to find metadata bounds; after a successful hit subsequent calls are O(1) until `invalidate()`, but a metadata-less scene has no negative caching and re-walks the graph on every call. Also exports `NEAR_CULL_DIAGONAL_FACTOR` (the 0.001 the margin is derived from — imported by the tests that pin `MAX_NEAR_FAR_RATIO`'s losslessness derivation, which is stated relative to it) and the free helpers `computeBoundsFromMetadata` and `findPositionBoundsInScene` used by the cache and by `SceneManager.getSceneBoundsFromMetadata`.                                             |
+| `clipping-policy.ts`    | Three policy helpers operating on a narrow `ClippingCtx` (`camera`, `controls`, `scene`, `boundsCache`, `getSceneBoundsFromMetadata`): `applyClippingPlanes` (validates `near < far`, warns on `far/near > 10000`, calls `updateProjectionMatrix`), `autoAdjustFromBounds` (metadata first, `THREE.Box3.setFromObject` fallback, also pushes scene diagonal into `controls.setSceneScale`), and `updateDynamicFromCache` (per-frame sphere-based near/far, with a 0.1% change threshold to avoid projection-matrix thrash on sub-pixel camera moves).                                                                                                                                                                                                                                                                                                               |
 
 ## Invariants
 
@@ -32,16 +32,44 @@ so the per-frame `ensure()` re-walks the graph each frame (see the
   values transition smoothly as the camera moves around the scene
   instead of jumping at box edges/corners. No exponential smoothing
   is needed.
-- **Inside-sphere clamp.** When `dist(camera, center) < R * 1.05`,
-  near collapses to the scale-aware floor
-  `minNearForRadius(R * 1.05) = max(MIN_NEAR_PLANE, R * 1.05 * MIN_NEAR_RADIUS_FACTOR)`
-  (the safety-expanded radius, with `MIN_NEAR_PLANE = 1e-9` and
-  `MIN_NEAR_RADIUS_FACTOR = 2e-6`), so for any real-scale scene the
-  radius term dominates and `MIN_NEAR_PLANE` is only the last-resort
-  floor for a zero-radius scene. This keeps all surrounding geometry visible — matches the
-  `calculateClippingPlanesFromSphere` documented behaviour and is
-  re-implemented inline by `updateDynamicFromCache` for the zero-
-  alloc per-frame path.
+- **Inside-sphere clamp is RATIO-BOUNDED.** When
+  `dist(camera, center) < R * 1.05` the sphere-surface distance is
+  meaningless, so near becomes the floor
+  `nearPlaneFloor(R, far) = max(minNearForRadius(R), far / MAX_NEAR_FAR_RATIO)`.
+  The `far / MAX_NEAR_FAR_RATIO` term is the operative one and it exists for
+  DEPTH-BUFFER PRECISION: depth quantization goes as
+  `d² · (far − near) / (near · far) · 2⁻²⁴` on the 24-bit depth
+  renderbuffer, so an unbounded near/far ratio z-fights (and pops as the
+  camera orbits, since near tracks camera distance). Being inside the
+  circumscribed sphere is not exotic — it is just "zoomed in", because
+  the sphere is 1.73x the half-side of a cube.
+
+  The bound is lossless for Points / Lines / GSplats, not a tradeoff:
+  their shaders already discard anything closer than
+  `nearCull = 1e-3 * diagonal` (`perspectiveNearFade`), and the floor
+  stays inside that reject band with ~21% headroom over the binding
+  constraint — enforced by a property test, not asserted by a comment.
+  The full derivation of the constant, and why it sits above the
+  minimum-viable value rather than at it, lives on
+  `MAX_NEAR_FAR_RATIO`; it is not restated here, so there is one place
+  to change. Mesh has no near fade in either backend and is the one type
+  the floor can clip.
+  Under PERSPECTIVE, `MIN_NEAR_RADIUS_FACTOR` is dominated everywhere
+  except a zero-radius sphere (where it yields `MIN_NEAR_PLANE`, keeping
+  the degenerate-frustum guard tripping instead of NaN-ing); under ortho
+  it is the operative floor, since ortho opts out of the ratio bound
+  (next invariant). Re-implemented
+  inline by `updateDynamicFromCache` for the zero-alloc per-frame path,
+  with a parity test pinning the two to identical values.
+
+- **The ratio bound is PERSPECTIVE-ONLY.** Orthographic depth is linear
+  in eye space, so its resolution is `(far - near) / 2^24` whatever
+  `near` is — the bound buys ortho nothing, while `perspectiveNearFade`
+  returns 1.0 under ortho so all four geometry types draw right up to
+  `near` there. Both paths therefore pass
+  `!isOrthographicCamera(camera)` into `nearPlaneFloor`, read from the
+  LIVE camera because the viewer swaps projections at runtime (V key).
+
 - **Metadata bounds preferred over scene-graph bounds.** Both
   `autoAdjustFromBounds` and the cache reach for
   `userData.positionBounds` (full dataset extent set by the loader).
