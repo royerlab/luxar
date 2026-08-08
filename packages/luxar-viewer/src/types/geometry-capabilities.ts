@@ -65,7 +65,8 @@ export interface GeometryCapabilities {
   /**
    * May appear as a `kind=partition` group's `display_type`, i.e. can be split
    * into spatially-culled parts. Mirrors the Python-side allowlist in
-   * `core/node/specialized_groups.py`.
+   * `luxar/typing_utils/geometry_capabilities.py` (which
+   * `core/node/specialized_groups.py` calls to gate the wrapper).
    */
   readonly partition: boolean;
 
@@ -104,12 +105,14 @@ export interface GeometryCapabilities {
  *
  * Points / Lines / GSplats are uniformly capable — they are all soft, emissive,
  * per-element primitives drawn as instanced quads. `mesh` is the row that proves
- * the table earns its keep: it is capable of some of these and not others, and
- * for no one blanket reason. `pooled` is architectural — a mesh is an indexed
+ * the table earns its keep: its flags are MIXED, and each is false (or true) for
+ * its own reason. `pooled` is architectural — a mesh is an indexed
  * `BufferGeometry`, so there is nothing to pool, and that column can never
  * become true. `depthSortable` is TRUE: the centers, worker and kernel are
- * shared, and only the apply differs. `lod` is neither — substitutive levels
- * need only a decimator on the writer side and a widened
+ * shared, and only the apply differs. `partition` is also TRUE: it was false
+ * only for want of the bookkeeping to duplicate vertices across a cut, which is
+ * exactly why it is now true. `lod` is neither architectural nor done —
+ * substitutive levels need only a decimator on the writer side and a widened
  * `LODGroupMetadata.display_type` here. The row comment below gives each flag
  * its own reason; do not read "impossible" into a column that means "not yet".
  *
@@ -130,7 +133,12 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     //                 surface, not a coarser one); SUBSTITUTIVE levels assume
     //                 nothing of the sort and are missing only a producer, the
     //                 mesh analogue of which is QEM decimation.
-    //   partition     a BSP cut needs vertex duplication at part boundaries.
+    //   partition     TRUE. A BSP cut runs between faces, never through one,
+    //                 and each part gathers + renumbers the vertices its own
+    //                 faces use (luxar.mesh.split on the writer side). Vertices
+    //                 on the cut are duplicated, which is what makes each part
+    //                 independently drawable; the seam stays invisible because
+    //                 both copies carry identical position AND normal.
     //   pooled        mesh renders as an indexed BufferGeometry, NOT through the
     //                 instanced-quad element-texture stack. Permanently false.
     //   depthSortable TRUE: a triangle's center is its vertex centroid, so the
@@ -139,7 +147,7 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     //                 instead of an `aSortedIndex` indirection (§9,
     //                 `rendering/depth-sort-coordinator/triangle-ordering.ts`).
     // Flip a flag here when the corresponding path lands — never at a call site.
-    mesh: { lod: false, partition: false, pooled: false, depthSortable: true },
+    mesh: { lod: false, partition: true, pooled: false, depthSortable: true },
   });
 
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */

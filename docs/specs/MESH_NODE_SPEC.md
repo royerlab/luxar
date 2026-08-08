@@ -1,6 +1,6 @@
 # Mesh Node Specification
 
-**Status:** Delivered — Phases 0–6 landed (writer, cull kernels, drawable, shaded, picking + panel + stats, docs; §11); real WebGPU verified pixel-equivalent to WebGL (§11 row 6). LOD, spatial indexing, kind=partition and volumetric blending remain deliberate non-goals (§9).
+**Status:** Delivered — Phases 0–6 landed (writer, cull kernels, drawable, shaded, picking + panel + stats, docs; §11); real WebGPU verified pixel-equivalent to WebGL (§11 row 6). `kind=partition` now ships (§9.2). LOD, spatial indexing and volumetric blending remain deliberate non-goals (§9).
 **Scope:** A fourth first-class geometry type — `mesh` — symmetric to Points, Lines and GSplats.
 **Non-goals:** LOD/decimation, spatial indexing, exact nD triangle clipping. See [§9](#9-explicitly-out-of-scope).
 **Target data:** isosurfaces and segmentation boundaries — 3D geometry whose hidden dimensions are
@@ -63,7 +63,8 @@ the storage or LOD layers, and pretending otherwise would produce a worse design
 | GPU storage | ❌ No | Indexed triangles, not instanced quads — see §2.1 |
 | Per-element extent | ❌ No | A mesh has no `radii`/`widths`/`amplitudes` analog — see §2.2 |
 | Depth sorting | ⚠️ Partial | Registration/worker/kernel reused; the APPLY is per-triangle index permutation, not per-instance — see §6.3 |
-| LOD / partition groups | ❌ Excluded | See §9 |
+| LOD groups | ❌ Excluded | See §9 |
+| `kind=partition` | ⚠️ Partial | Supported via `add_mesh(partition=…)`, but a part is a **re-indexing, not a slice** of the parent's arrays (with vertices duplicated across the cut) — see §9.2 |
 
 ### 2.1 The storage layer does not transfer
 
@@ -1219,9 +1220,12 @@ name here as a pointer to the subsystem rather than to a live file.
 - [x] `cli/info_command.py` — **landed in #1220**
 - [x] **Partition rejection** — **landed in #1220**, in a stronger form than this item planned:
       `add_partition_group_impl` asks the shared capability table (`supports_partition` in
-      `typing_utils/geometry_capabilities.py`) instead of hardcoding a tuple, and the error message
-      explains *why* mesh is excluded (its faces share vertices across any cut). Pinned by
-      `test_mesh_under_a_partition_group_is_rejected`.
+      `typing_utils/geometry_capabilities.py`) instead of hardcoding a tuple.
+      **Superseded:** the exclusion itself has since been lifted (§9.2) — mesh's
+      `partition` capability is now `true`, so the guard passes for mesh and the
+      test that pinned the refusal is now
+      `test_mesh_under_a_mesh_partition_group_is_allowed`. The capability-table
+      indirection is what made lifting it a one-row change.
 - [x] **LOD rejection** — **landed in #1220.** The hole this item flagged was real:
       `compute_lod_display_type` simply returned `resolve_display_type(children[-1])`, which falls
       through to `node.attrs.get("type", "group")` for a plain leaf, so a mesh child would have been
@@ -1301,7 +1305,7 @@ error to catch it:
 | Site | Why mesh stays out |
 |---|---|
 | `types/lod-group.ts:31` — `display_type` union | Mesh is excluded from `kind=lod` (§9) |
-| `types/partition-group.ts:48` — `display_type` union | Mesh is excluded from `kind=partition` (§9) |
+| `types/partition-group.ts` — `display_type` union | Includes `'mesh'`; the partition path ships (§9.2) |
 | `rendering/gpu-buffer-pool/pool-stats.ts:22` — `type` union | Mesh doesn't use the buffer pool (§2.1) |
 | `data/loaders/spatial-query/spatial-query-builder.ts` — chunk-query construction | No spatial index in v1 (§7). **Note:** this is the *query builder* only — `tolerance-computer.ts` in the same folder **does** need a mesh arm (§5.2.1); don't let the shared folder mislead you |
 | `ui/layers/absorption-range.ts:90,98` | Mesh doesn't support `volumetric` blending — warn + `opaque` fallback (§6.3) |
@@ -1443,12 +1447,12 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 |---|---|---|
 | **Additive LOD ladder** | A prefix of an index buffer is a **holed** surface, not a coarse one. That is the difference from a splat prefix, which genuinely is a sparser approximation of the same field — so the ladder degrades gracefully there and produces a *wrong picture* here. The legitimate refinement scheme is a progressive mesh (base mesh + vertex-split records), which cannot use the prefix-count ladder at all: different data structure, not a widening. | Not a LOD in any form. A deliberate progressive-draw effect IS worth exposing — see **§9.1** — but off the `additive` code path |
 | **Substitutive LOD levels** | Nothing structural, and the machinery makes no independence assumption: a level is an independently-authored `(vertices, faces)` pair, selected by `coverage_fraction`. What is missing is only the PRODUCER. Per-level picking is already solved — the LOD registry hides inactive levels and the picking system skips hidden nodes, so each level is its own pick domain with its own per-vertex label CSR. | `luxar mesh lod` with QEM levels. Viewer side is a two-line widening: flip `GEOMETRY_CAPABILITIES.mesh.lod` and extend `LODGroupMetadata.display_type`. **The cheapest of the LOD family by a wide margin** |
-| **`kind=partition`** | BSP over face centroids, needing vertex duplication at part boundaries plus a per-part split of the per-vertex label CSR. **Bookkeeping, not correctness:** with stored normals split verbatim a duplicated boundary vertex carries an identical position AND normal in both parts, so nothing seams under §6.2's shading — and the derivative variant is per-fragment off the rasterized triangle, hence part-agnostic by construction. Seams arrive only with something RECOMPUTED per part: area-averaged normals, tangent frames, UVs, baked AO. | Highest value for large meshes. Revisit the seam question the moment shading gains any per-part recomputation |
 | **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** — a condition that is now *measured* rather than asserted: `processMeshData` emits a `log.info` for a node whose hidden dims include a continuous one (`noticeContinuousHiddenDim` in `data/scene-loader/process/data-processor-mesh.ts`), naming each such dimension and its unit. Promote when that line starts appearing against real datasets; see TODO item 29 under "Future / Exploratory" for why the deferral is a decision rather than a backlog entry |
 | **Spatial index** | Not merely "see §7": a chunk of faces is not independently meaningful, because the index buffer references vertices anywhere in the array — so a face chunk draws only with the whole vertex buffer resident, or after the same remap/duplicate bookkeeping the partition row describes. An efficiency cliff, not an impossibility: partial loading is achievable, it just forfeits most of the bandwidth win a chunk index exists to buy. Moot in practice as well, since the 512 MiB per-node byte budget binds first (≈22.4M vertices for a 3D float32 mesh, measured), well under §7's ≤-few-million-triangle expectation. | Mirror the lines dual-index loader over faces |
 | **`volumetric` blending** | Not about opacity — about **path length**. Emission–absorption integrates κ over the distance a ray spends inside a participating medium, and a triangle is zero-thickness, so τ = 0 however translucent the surface is. The adjacent feature that DOES make sense — volume rendering bounded by a mesh's front and back faces — is a different thing entirely and is not what this excludes. | — |
 | **Worker projection** | Measure first (§7). | — |
 | ~~**Mesh import formats** (PLY/OBJ/STL/glTF)~~ — **landed** | Independent of the node type, which is why it could ship on its own afterwards. | Shipped as `luxar mesh import` (`luxar/mesh/interop/`), mirroring `gsplat import` |
+| ~~**`kind=partition`**~~ — **landed** | The exclusion was bookkeeping, not correctness, and the bookkeeping is now written. | Shipped as `add_mesh(partition=…)`; see §9.2 |
 
 **Lifted since this table was written:** *per-triangle depth sorting*. It was the weakest exclusion
 here, and the only one with a live user-visible consequence. It turned out to be almost entirely reuse
@@ -1526,6 +1530,58 @@ stamp it. No clobber ever resulted — `validate_render_attrs`'s reject-unknown 
 write, just with the *unknown-attr* message instead of the *reserved* one — so it was only an
 error-message gap. #1220 added the key to all three sibling sets, matching `MESH_RESERVED_ATTRS` (§3.3).
 
+### 9.2 `kind=partition` — lifted
+
+**Shipped.** `add_mesh(partition=True | {"max_elements": N, "rule": …})` writes a
+`kind=partition` wrapper with one independently-drawable `Mesh` child per BSP part, and
+`GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both sides of the contract.
+
+This row was always the weakest of the structural exclusions, for the reason the old table
+gave: it was **bookkeeping, not correctness**. What the bookkeeping had to do:
+
+* **Split on face CENTROIDS, never through a face.** A triangle is the indivisible unit, so
+  `max_elements` counts FACES. No geometry is cut and no vertex is invented.
+* **Re-index, do not slice.** The sibling adders hand each part a slice of their element
+  arrays because their elements are independent rows. A triangle is three *references* into
+  a shared vertex table, so each part gathers the vertices its own faces use and renumbers
+  those faces against the gathered table (`luxar/mesh/split.py`).
+* **Duplicate across the cut.** A vertex referenced from both sides appears in both parts.
+  That is the cost, and it is what makes each part stand alone as a drawable leaf. It is
+  bounded by `3F` in the pathological case and is a few percent in practice — only the cut
+  surface duplicates. The writer reports the measured factor.
+* **Gather every per-vertex attribute**, including the per-vertex label CSR the old table
+  called out: `normals`, `colors`, `scalars` and `labels` all travel with their vertices
+  (via the shared `slice_optional_array`, which gathers on length and so leaves a uniform
+  RGB triple or a colormap name alone).
+
+**The seam question resolves the way the old row predicted.** With stored normals split
+verbatim, a duplicated boundary vertex carries an identical position AND an identical normal
+in both parts, so nothing seams under §6.2's shading; the derivative variant is per-fragment
+off the rasterized triangle and is part-agnostic by construction. **Revisit this the moment
+shading gains anything RECOMPUTED per part** — area-averaged normals, tangent frames, UVs,
+baked AO — because each of those is computed from a part's own contents and would differ
+across the cut.
+
+**No `bsp_tree` attr is written**, matching the three sibling leaf adders (only the gsplat
+LOD recipes emit one). Opaque parts do not need back-to-front ordering, and the depth-sort
+coordinator falls back to a per-part centroid heuristic if a translucent mesh partition ever
+needs it. Note also that `render-order.ts::traverseBspBackToFront` would order parts
+back-to-front, which for opaque mesh parts is *correct but pointless* — it forfeits
+front-to-back early-Z. That is a known non-issue, recorded so it is not rediscovered as a bug.
+
+**One refusal survives the lift.** A mesh may go under a `kind=partition` group whose
+`display_type` is `'mesh'` — nothing else. A partition is homogeneous by definition, and
+`validate_partition_group`'s homogeneity check has no production caller, so declaring a
+`points` partition and dropping a mesh into it would write clean and load as a layer
+claiming to be points. `reject_mismatched_partition_parent` (in `core/group/partition.py`)
+refuses that pairing fail-fast, before any array reaches disk — and it is called by all
+four leaf adders, so the rule is symmetric: a points leaf under a `display_type='mesh'`
+partition is refused the same way. That direction only became reachable here, since a mesh
+partition could not be built at all before mesh became partition-capable.
+
+Still excluded, and unaffected by this: a partition of a mesh LOD ladder, since there is no
+mesh LOD ladder to partition.
+
 ---
 
 ## 10. Architecture: what the consolidation changed for mesh
@@ -1598,7 +1654,7 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 | Phase | Contents | Verifiable outcome |
 |---|---|---|
 | **0** ✅ *(done — §10.1)* | Single-source `GeometryKind` from the contract; collapse `LoaderRegistry`; unify the per-type pipeline; table-drive the dispatch switches | Landed as #1079 / #1099 / #1150, all behaviour-preserving. The `SceneGraphNodeType` local extension has since been deleted (#1220) — it is now plain `NodeTypeName` — so Phase 0 is fully landed |
-| **1** ✅ *(done — #1220)* | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH`) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | Landed as #1220, all in one PR: `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip tests green; a mesh child of a lod/partition group **raises** (both rejections pinned by tests) |
+| **1** ✅ *(done — #1220)* | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH`) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | Landed as #1220, all in one PR: `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip tests green; a mesh child of a lod/partition group **raises** (both rejections pinned by tests). The partition half has since been **lifted** (§9.2): a mesh may now go under a `display_type='mesh'` partition group (`test_mesh_under_a_mesh_partition_group_is_allowed`), and only the mismatched-`display_type` refusal survives; the lod rejection stands unchanged |
 | **2** ✅ *(done — #1232)* | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
 | **3** ✅ *(done)* | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
 | **4** ✅ *(done)* | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent. Landed as the `mesh/` material stack (4 files + `appearance.ts`), 5 codegen variants (10 snapshot files — the sixth, `mesh-pick`, arrives with picking in Phase 5, which is why §6.4 and §8 count six), and the §6.2 headlight with its compile-time stored-normal/derivative variant. Two spec refinements were forced by the implementation and are folded back into §6.2: the derivative normal is **forced** viewer-facing rather than assumed so (`cross(dFdx, dFdy)` has the sign of the fragment-space y axis, and WGSL's `dpdy` is top-down where GLSL's `dFdy` is bottom-up), and the stored normal is transformed WITHOUT three's `transformNormalToView` (whose internal `normalize` turns a legitimately zero-length normal into a whole-triangle NaN, contradicting §3.5's locally-distorted contract). The `normal`/`aScalar` attributes are bound for the node's lifetime from the metadata rather than bound/unbound per epoch — the shader variant alone stops reading them, which keeps the attribute set (and hence the WebGPU vertex layout) fixed |
