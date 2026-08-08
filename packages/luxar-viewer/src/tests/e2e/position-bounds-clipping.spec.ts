@@ -360,4 +360,87 @@ test.describe('Position Bounds and Clipping Planes', () => {
         `far actual=${info.actual.far.toFixed(1)} expected=${info.expected.far.toFixed(1)}`
     );
   });
+
+  // The zoomed-in regime, which had NO E2E coverage: every test above runs on
+  // the auto-framed camera, which sits OUTSIDE the bounding sphere where
+  // near = dist - R is comfortably large. Being INSIDE the sphere is just
+  // "zoomed in" (the circumscribed sphere is 1.73x the half-side of a cube),
+  // and that arm used to collapse near to 2e-6 * R — a ~6e5:1 near/far ratio
+  // that visibly z-fights and pops on depth-writing geometry.
+  test('bounds the near/far ratio when the camera is inside the bounding sphere', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${DATASET_WITH_BOUNDS}&debug`);
+    await waitForLuxarReady(page);
+
+    const info = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const sceneManager = debug.app?.components?.sceneManager;
+      if (!sceneManager) return null;
+
+      let foundBounds: { min: number[]; max: number[] } | null = null;
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.positionBounds && !foundBounds) {
+          foundBounds = obj.userData.positionBounds as { min: number[]; max: number[] };
+        }
+      });
+      if (!foundBounds) return null;
+      const b = foundBounds as { min: number[]; max: number[] };
+
+      const centre = [0, 1, 2].map((i) => (b.min[i] + b.max[i]) / 2);
+      const radius =
+        0.5 * Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+      const R = radius * 1.05;
+
+      // Park the camera well inside the sphere (a modest zoom-in), then run
+      // the same per-frame update the animation loop drives.
+      const dist = R * 0.16;
+      sceneManager.setDynamicClipping(true);
+      debug.camera.position.set(centre[0], centre[1], centre[2] + dist);
+      sceneManager.updateDynamicClippingPlanes();
+
+      return {
+        near: debug.camera.near,
+        far: debug.camera.far,
+        dist,
+        R,
+        insideSphere: dist < R,
+      };
+    });
+
+    expect(info).not.toBeNull();
+    if (!info) return;
+
+    // Precondition — otherwise this would silently exercise the outside arm.
+    expect(info.insideSphere).toBe(true);
+    expect(info.near).toBeGreaterThan(0);
+    expect(info.far).toBeGreaterThan(info.near);
+
+    // The bound: MAX_NEAR_FAR_RATIO in scene-manager/clipping/bounds-math.ts.
+    // E2E specs in this suite never import viewer source (checked: zero do),
+    // so the value appears as a literal — but as an INEQUALITY ceiling, not a
+    // mirrored equality. Tightening MAX_NEAR_FAR_RATIO keeps this green;
+    // only loosening it past this ceiling trips the alarm. That direction is
+    // what makes the literal safe from the mirrored-constant drift that #573
+    // removed from the sibling test below.
+    const RATIO_CEILING = 1200;
+    expect(info.far / info.near).toBeLessThanOrEqual(RATIO_CEILING * (1 + 1e-6));
+
+    // And the consequence that actually matters: depth quantization at the
+    // eye distance, on the 24-bit depth buffer, expressed as a fraction of
+    // the scene radius. Measured ~7.6e-4 of the radius with the unbounded
+    // floor versus ~1.3e-6 with the bound, so this threshold sits ~1 order
+    // above the fixed value and ~2 below the broken one — it discriminates
+    // rather than merely passing.
+    const deltaZ =
+      ((info.dist * info.dist * (info.far - info.near)) / (info.near * info.far)) *
+      Math.pow(2, -24);
+    expect(deltaZ / info.R).toBeLessThan(1e-5);
+
+    console.log(
+      `Inside-sphere clipping: dist=${info.dist.toFixed(3)} R=${info.R.toFixed(3)} ` +
+        `near=${info.near.toExponential(3)} far=${info.far.toFixed(3)} ` +
+        `ratio=${(info.far / info.near).toFixed(0)}:1 Δz/R=${(deltaZ / info.R).toExponential(2)}`
+    );
+  });
 });

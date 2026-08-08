@@ -18,7 +18,8 @@
 import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { linePickWebGPUFactory } from './pick.tsl';
+import { linePickWebGPUFactory, type LinePickTSLConfig } from './pick.tsl';
+import type { LineJoinStyle } from '../../../types/line-join';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
@@ -65,6 +66,13 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uSortedIndexSlot: uniform(0),
     };
 
+    // Join style — a BUILD-time graph variant (see pick.tsl.ts), so it is
+    // stashed on userData before the first factory call and re-read by every
+    // rebuild. Stored unresolved so the ?lineJoin= session override still wins
+    // at build time. MUST match the visual material's value: the two build the
+    // same screen-space quad.
+    this.userData.lineJoin = config.join;
+
     this.uniforms = {
       // WARNING: a direct `uniforms.uLineTex.value = tex` write does NOT
       // rebind — `updateLineTexture()` is the only rebind chokepoint.
@@ -92,9 +100,10 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
   /**
    * Build the per-rebuild factory config from current uniforms.
    */
-  private _currentConfig(): { isOrtho: boolean } {
+  private _currentConfig(): LinePickTSLConfig {
     return {
       isOrtho: (this.tslNodes.uIsOrtho.value as number) === 1,
+      join: this.userData.lineJoin as LineJoinStyle | undefined,
     };
   }
 
@@ -111,6 +120,8 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
   clone(): this {
     const cloned = new LinePickingTSLMaterial({
       nodeId: this.uniforms.uNodeId.value as number,
+      // Graph variant — must ride the CONSTRUCTOR, not a post-hoc copy.
+      join: this.userData.lineJoin as LineJoinStyle | undefined,
     });
     // Rebind the line data texture (no-op when still on the placeholder).
     const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;

@@ -77,7 +77,7 @@ describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G2
     try {
       const wasm = await initWasm();
       expect(wasm).toBeInstanceOf(TypeScriptFallback);
-      expect(typeof wasm.compute_cap_suppression).toBe('function');
+      expect(typeof wasm.compute_joint_codes).toBe('function');
     } finally {
       setWasmJsUrl('');
     }
