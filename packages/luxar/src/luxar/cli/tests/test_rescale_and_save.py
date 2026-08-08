@@ -1,6 +1,6 @@
 """Tests for the ``rescale_and_save`` empty-tile write branch.
 
-``rescale_and_save`` (``cli/gsplat_ops/fitting_fit_utils.py``) has a special
+``rescale_and_save`` (``cli/gsplat_ops/fitting/fit_utils.py``) has a special
 branch for an empty single tile fit under ``--allow-empty-tile``: the gsplats
 writer enforces a no-empty policy, so instead of erroring the function drops a
 ``<output_path>.empty`` marker (containing ``"0 splats\n"``) and skips the
@@ -20,7 +20,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
-from luxar.cli.gsplat_ops.fitting_fit_utils import FitPipelineCtx, rescale_and_save
+from luxar.cli.gsplat_ops.fitting.fit_utils import FitPipelineCtx, rescale_and_save
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import tril_size
 

@@ -68,7 +68,7 @@ export function alignProvokingVertexWithWebGPU(renderer: unknown): boolean {
   const host = renderer as { getContext?: () => unknown } | null;
   if (!host || typeof host.getContext !== 'function') return false;
 
-  let ext: ProvokingVertexExtension | null = null;
+  let ext: ProvokingVertexExtension | null;
   try {
     const ctx = host.getContext() as { getExtension?: (name: string) => unknown } | null;
     if (!ctx || typeof ctx.getExtension !== 'function') return false;

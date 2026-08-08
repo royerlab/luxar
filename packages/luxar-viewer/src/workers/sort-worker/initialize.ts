@@ -31,7 +31,8 @@ export async function initialize(
     log.error(Modules.WORKER_POOL, 'SortWorker WASM initialization failed', error);
     throw new Error(
       'WASM unavailable. Luxar requires WebAssembly support. ' +
-        'Please use a modern browser (Chrome 57+, Firefox 52+, Safari 11+).'
+        'Please use a modern browser (Chrome 57+, Firefox 52+, Safari 11+).',
+      { cause: error }
     );
   }
 

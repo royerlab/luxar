@@ -20,6 +20,7 @@ from luxar.validation.types import (
     validate_gamma,
     validate_intensity,
     validate_layer,
+    validate_line_join,
     validate_node_type,
     validate_offset,
     validate_opacity,
@@ -482,6 +483,50 @@ class TestBlendingModeValidation:
 
         with pytest.raises(TypeError, match="Blending mode must be a string"):
             validate_blending_mode(["normal"])
+
+
+class TestLineJoinValidation:
+    """Test validate_line_join function (issue #790)."""
+
+    def test_validator_accepts_every_known_style(self) -> None:
+        """LINE_JOIN_STYLES is the SSOT, shared with the viewer's line-join.ts."""
+        from luxar.typing_utils.constants import LINE_JOIN_STYLES
+
+        for style in LINE_JOIN_STYLES:
+            assert validate_line_join(style) == style
+
+    def test_invalid_line_join(self) -> None:
+        """An unrecognised STYLE raises, and the message names it.
+
+        A typo is far more likely than a request for no joins, so the file must
+        not write cleanly and render with the default.
+        """
+        with pytest.raises(ValueError, match="Unknown line join style 'mitre'"):
+            validate_line_join("mitre")
+
+        with pytest.raises(ValueError, match="Unknown line join style 'MITER'"):
+            validate_line_join("MITER")  # Case sensitive
+
+        with pytest.raises(ValueError, match="Unknown line join style ''"):
+            validate_line_join("")
+
+    def test_error_message_lists_every_known_style(self) -> None:
+        """Adding a style to LINE_JOIN_STYLES advertises it, with no second list."""
+        from luxar.typing_utils.constants import LINE_JOIN_STYLES
+
+        with pytest.raises(ValueError) as exc_info:
+            validate_line_join("bogus")
+        message = str(exc_info.value)
+        for style in LINE_JOIN_STYLES:
+            assert style in message
+
+    def test_line_join_type_error(self) -> None:
+        """A non-string join style raises TypeError, matching validate_blending_mode."""
+        with pytest.raises(TypeError, match="Line join style must be a string"):
+            validate_line_join(1)
+
+        with pytest.raises(TypeError, match="Line join style must be a string"):
+            validate_line_join(None)
 
 
 class TestPositionsValidation:

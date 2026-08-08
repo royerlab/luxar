@@ -204,7 +204,7 @@ def test_argv_staging_is_per_invocation(tmp_path: Path, monkeypatch) -> None:
     driving the real runner and stubbing only the task pool.
     """
     import luxar.gsplats.batch.local_runner as lr
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
         FitConfig,
@@ -383,7 +383,7 @@ def test_finalize_real_promotion_clears_stale_empty_marker(tmp_path: Path) -> No
 
 
 def _plan_single_tile_manifest(tmp_path: Path):  # type: ignore[no-untyped-def]
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
         FitConfig,
@@ -494,7 +494,7 @@ def test_no_resume_forces_merge_rebuild(tmp_path: Path, monkeypatch) -> None:
     the fresh tiles (``force=True``) instead of returning the old artifact.
     """
     import luxar.gsplats.batch.local_runner as lr
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
         FitConfig,
@@ -569,7 +569,7 @@ def _make_4d_zarr(path: Path, n_t: int = 2) -> None:
 @pytest.mark.slow
 def test_run_batch_local_cpu_end_to_end(tmp_path: Path) -> None:
     """Plan a tiny 2-timepoint uniform batch and run it locally on CPU."""
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
         FitConfig,
@@ -621,7 +621,7 @@ def test_run_batch_local_cpu_end_to_end(tmp_path: Path) -> None:
 @pytest.mark.slow
 def test_run_batch_local_resume_skips_existing(tmp_path: Path) -> None:
     """A second run with one output deleted re-fits only the missing task."""
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
         FitConfig,

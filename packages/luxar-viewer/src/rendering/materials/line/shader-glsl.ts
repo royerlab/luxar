@@ -53,6 +53,8 @@ import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SORTED_INDEX,
+  GLSL_LINE_JOINT_CODE,
+  GLSL_LINE_JOIN,
 } from '../_shared/glsl-lib';
 import {
   ALPHA_CLAMP,
@@ -62,6 +64,7 @@ import {
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
 import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from './shader-tsl';
+import { lineJoinStyleFromUniform } from '../../../types/line-join';
 import { FALLOFF_FLOOR, FALLOFF_K } from '../_shared/falloff';
 import type { ShaderSource } from '../_shared/shader-source';
 
@@ -79,6 +82,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Uint32Array attributes → bound via vertexAttribIPointer, matching
     // the uint declarations.
     ${GLSL_SORTED_INDEX}
+    ${GLSL_LINE_JOINT_CODE}
 
     // Line data texture: RGBA32F, 6 texels/segment (see
     // rendering/line-geometry.ts for the texel layout). Replaces the
@@ -95,6 +99,11 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // and one division. See updateCameraParams in line-material.ts.
     uniform float uPerspectiveLineScale; // = resolution.y / tan(fov * 0.5)
     uniform float uOrthoLineScale;       // = 2 * resolution.y / frustumHeight
+
+    // Screen-space miter join (#790) — declares uLineJoin and defines
+    // luxarLinePixelPos + luxarLineJoin. MUST follow the uniforms above:
+    // it reads uLineTex, uResolution and uIsOrtho.
+    ${GLSL_LINE_JOIN}
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -139,16 +148,39 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       vec3 aEndPos = lineT1.xyz;
       float aEndWidth = lineT1.w;
       float aSegmentLength = lineT4.x;
-      float aStartCapSuppress = lineT4.y;
-      float aEndCapSuppress = lineT4.z;
+      float aStartJointCode = lineT4.y;
+      float aEndJointCode = lineT4.z;
 
       // Position along segment: 0 = start, 1 = end. Branchless because
       // aQuadCorner.x ∈ {-1, +1} by construction.
       float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
       vSegmentLength = aSegmentLength;
-      vCapSuppressStart = aStartCapSuppress;
-      vCapSuppressEnd = aEndCapSuppress;
+      // Endpoint cap default, before the join block below may refine it.
+      //
+      // ONLY a free end (code 0) and a degree->=3 hub (code -2) keep the soft
+      // cap. Everything else suppresses it: a slice-clipped endpoint (-1)
+      // because no neighbour will ever arrive there, and a slot-bearing code
+      // because a neighbouring quad DOES meet it.
+      //
+      // Defaulting a slot-bearing code to "keep the cap" would be the #780 bead
+      // chain all over again, and not only under join style 'none': the join
+      // block is also skipped for every line below the rendered-width gate, so
+      // thin-line scenes — the million-segment ones — would lose the #785 fix
+      // entirely. Measured, an interior joint bottoms out at 0.5 instead of 1.0
+      // and a dense polyline (segment length <= width) loses ~40% of its total
+      // brightness.
+      //
+      // The default is exact for the straight and gentle joints that dominate
+      // real polyline data, and those are projection-invariant so no camera can
+      // change the answer. Where the block DOES run it replaces this with the
+      // screen-space value, which is exact at any angle. The residual gap is a
+      // SHARP bend on a line too thin to be mitered: it keeps full intensity on
+      // both quads over their sub-pixel overlap lens instead of half each. That
+      // is a ~1 px speck slightly too bright, against the alternative of dimming
+      // every joint in the scene.
+      vCapSuppressStart = luxarLineJointCapSuppression(aStartJointCode);
+      vCapSuppressEnd = luxarLineJointCapSuppression(aEndJointCode);
 
       // Project endpoints to view space first — the bothBehind near-cull
       // test reads view-space depth, and culling BEFORE the colormap
@@ -405,7 +437,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         vViewZ = 0.0;
         return;
       }
-      float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
       // Fade intensity in proportion to the clamp so the giant quad
       // doesn't overcontribute. fade=1 when not clamped, →0 as the
       // raw width grows past the clamp by a factor.
@@ -419,9 +450,63 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // GPU interpolates this across the quad, giving 0 at centerline
       vPerpNorm = aQuadCorner.y;
 
-      // Expand quad by perpendicular offset in pixel space, then convert to clip space
-      // pixelOffset is in pixels, convert to NDC then to clip space
-      vec2 pixelOffset = perpendicular * aQuadCorner.y * clampedPixelWidth;
+      // === Join geometry at degree-2 polyline joints (#790) ===
+      //
+      // luxarLineJoin (glsl-lib.ts, shared with the pick vertex stage) returns
+      // one END's pixel-space corner offset in .xy and, in .z, either the
+      // screen-space endpoint cap it derived from the partner's direction or
+      // -1.0 meaning "no partner reached — keep the code-implied default".
+      // Under join style "none", below the rendered-width gate, or at a free
+      // end, .xy is exactly the plain perpendicular half-width this shader has
+      // always used.
+      //
+      // BOTH ends are evaluated on EVERY vertex, and only the offset is then
+      // selected per corner. That is not redundancy — vCapSuppressStart/End are
+      // "flat" varyings, so a value that differs between the four quad corners
+      // is resolved from the provoking vertex alone, and the two triangles of
+      // one quad have DIFFERENT provoking vertices (indices [0,1,2, 2,1,3]
+      // provoke v2=start and v3=end under WebGL's last-vertex rule). Writing
+      // the cap only at the corner it belongs to therefore split the quad
+      // diagonally wherever the refined value differed from the default — and
+      // WGSL's "@interpolate(flat)" provokes from the FIRST vertex, so the two
+      // backends disagreed as well. Evaluating both ends everywhere makes the
+      // two caps segment-constant, which is what "flat" requires.
+      //
+      // Per-END widths, not this vertex's: the gate inside luxarLineJoin must be
+      // segment-constant or the "flat" cap varyings below resolve from whichever
+      // corner provokes (see luxarLineEndPixelWidth). Geometrically identical —
+      // each equals the per-vertex clamped width at the corner that consumes it
+      // (at a t=0 vertex tEff == tA and mvPos == mvStart, symmetrically at t=1),
+      // so only the DECISIONS become segment-constant. Same #849 reasoning as
+      // segMaxPixelWidth above.
+      //
+      // The trailing depth argument is the segment's FAR endpoint, from the
+      // ORIGINAL pre-clipping depths: the near-plane guard inside the helper
+      // needs both far endpoints of the joint, so the start call passes the
+      // END's depth and the end call the START's.
+      float startEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tA), mvStart.z, nearCull),
+        minPixelWidth, maxPW
+      );
+      float endEndPixelWidth = clamp(
+        luxarLineEndPixelWidth(mix(startW, endW, tB), mvEnd.z, nearCull),
+        minPixelWidth, maxPW
+      );
+      vec3 startJoin = luxarLineJoin(
+        false, tA <= 0.0, aStartJointCode, ndcStart,
+        lineDir, pixelLen, startEndPixelWidth, endDepth, nearCull
+      );
+      vec3 endJoin = luxarLineJoin(
+        true, tB >= 1.0, aEndJointCode, ndcEnd,
+        lineDir, pixelLen, endEndPixelWidth, startDepth, nearCull
+      );
+      if (startJoin.z >= 0.0) vCapSuppressStart = startJoin.z;
+      if (endJoin.z >= 0.0) vCapSuppressEnd = endJoin.z;
+      vec2 cornerOffset = (aQuadCorner.x > 0.0) ? endJoin.xy : startJoin.xy;
+
+      // Expand quad by the corner offset in pixel space, then convert to clip
+      // space. pixelOffset is in pixels, convert to NDC then to clip space
+      vec2 pixelOffset = cornerOffset * aQuadCorner.y;
       vec2 ndcOffset = pixelOffset / uResolution * 2.0;
       clipPos.xy += ndcOffset * clipPos.w;
 
@@ -515,7 +600,8 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       //   slice-clipped endpoint, or a straight-through interior joint
       //   whose neighbouring quad TILES rather than overlaps (nothing
       //   there to add the missing half back). Computed once per commit
-      //   in compute_cap_suppression (wasm/rust/src/lines_clipping.rs).
+      //   from the joint code in the vertex stage (see compute_joint_codes,
+      //   wasm/rust/src/lines_clipping.rs).
       float distFromStart = vT * vSegmentLength;
       float distFromEnd = (1.0 - vT) * vSegmentLength;
       // dist / vWidthAtT is a scale-free ratio (both world units), so
@@ -657,11 +743,11 @@ export const LINE_SOURCE: ShaderSource = {
   webgl: { vertex: LINE_VERTEX_SHADER, fragment: LINE_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
-    // Read `uIsOrtho` from the uniform record at build time so the
+    // Read "uIsOrtho" from the uniform record at build time so the
     // projection-mode graph variant matches the camera the caller set
     // up. Live ortho/perspective flips on a long-lived material go
-    // through `LineTSLMaterial.updateCameraParams`, which calls
-    // `rebuildGraph()` itself — this short-lived ShaderSource path
+    // through "LineTSLMaterial.updateCameraParams", which calls
+    // "rebuildGraph()" itself — this short-lived ShaderSource path
     // just needs the right variant at construction.
     // Default config otherwise — no toggles: colormap uniforms in the
     // record are IGNORED here (matching POINT_SOURCE). Consumers
@@ -669,6 +755,12 @@ export const LINE_SOURCE: ShaderSource = {
     // `lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, { useColormap }),
     // { ...flags })` directly, as the parity harness does.
     const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
-    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho });
+    // Same at build time for the join style. The GLSL twin carries it as the
+    // runtime "uLineJoin" uniform, so a harness that pins one backend's
+    // uniform record gets the matching graph variant out of the other —
+    // without this the WebGPU build would silently ignore a pinned
+    // "uLineJoin: 0" and draw mitred quads against unmitred GLSL ones.
+    const join = lineJoinStyleFromUniform(u.uLineJoin?.value as number | undefined);
+    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho, join });
   },
 };

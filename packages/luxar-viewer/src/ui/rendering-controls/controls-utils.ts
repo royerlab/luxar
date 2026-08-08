@@ -276,12 +276,17 @@ export function mergeSettings(
 }
 
 /**
- * Serializes settings for storage
+ * Serializes settings for storage.
+ *
+ * Accepts a PARTIAL snapshot — symmetric with {@link deserializeSettings},
+ * which returns one. Callers legitimately omit keys they do not own:
+ * `saveSettingsToStorage` drops `near` / `far` while dynamic clipping owns
+ * them, so a transient camera readout is never persisted as user intent.
  *
  * @param settings - Settings to serialize
  * @returns JSON string
  */
-export function serializeSettings(settings: RenderingSettings): string {
+export function serializeSettings(settings: Partial<RenderingSettings>): string {
   return JSON.stringify(settings);
 }
 

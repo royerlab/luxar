@@ -1,6 +1,6 @@
 # `luxar gsplat` editing & inspection commands — full reference
 
-Verified from `cli/gsplat_ops/transforms_*.py`, `scene_commands.py`,
+Verified from `cli/gsplat_ops/transforms/`, `scene_commands.py`,
 `inspect_commands.py`. All operate on a `.gsplats.zarr` (flat, partition, or nested
 LOD). These write-output commands take `--encoding`/`-e` (`auto`/`precision`/`memory`,
 default `auto`): `transform`, `slice`, `filter`, `cull`, `merge`, `partition`,

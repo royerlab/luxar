@@ -259,7 +259,7 @@ export class ArrayDecoder {
       // 1. Array: bounds = [min, max]
       // 2. Separate fields: min, max (current format)
       // 3. Inferred from encoding name (implicit for known types)
-      let bounds: [number, number] | null = null;
+      let bounds: [number, number] | null;
 
       if (enc.bounds) {
         bounds = enc.bounds;

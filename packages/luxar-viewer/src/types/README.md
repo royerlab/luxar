@@ -361,6 +361,32 @@ if (isLinesMetadata(attrs)) {
 
 See `lines.ts` for complete interface definitions including `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, and `LinesViewState`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query/spatial-query-builder.ts`; lines additionally carry the vertex-side bounds inside the loader.
 
+## Line Join Types
+
+`line-join.ts` owns the joint style a polyline's vertex stage uses at a degree-2 joint (issue #790): `'none'` leaves the uncovered wedge at every bend, `'miter'` closes it exactly. It lives in `types/` rather than `rendering/` because `config/url-params.ts` must both parse the `?lineJoin=` override and install it, and `config/` may not import from `rendering/`.
+
+```typescript
+import {
+  type LineJoinStyle,
+  DEFAULT_LINE_JOIN,
+  parseLineJoinStyle,
+  setLineJoinOverride,
+  resolveLineJoin,
+} from '../types/line-join';
+
+parseLineJoinStyle(attrs.join); // untrusted text -> style | null
+resolveLineJoin(authored); // precedence -> the `uLineJoin` value
+```
+
+- **`LineJoinStyle`** -- `'none' | 'miter'`; `LINE_JOIN_STYLES` is the same set as a runtime array, for validation and error messages.
+- **`DEFAULT_LINE_JOIN`** -- `'miter'`, applied when nothing is authored or overridden.
+- **`LINE_JOIN_UNIFORM`** -- the numeric encoding handed to the `uLineJoin` uniform, kept in lockstep with the shader's `> 0.5` comparison and identical across the GLSL and TSL backends.
+- **`parseLineJoinStyle(raw)`** -- parses a URL parameter or an authored zarr attribute, returning `null` for anything unrecognised so the caller can warn rather than silently mean "no joins".
+- **`setLineJoinOverride(style)`** / **`resolveLineJoin(authored)`** -- the session `?lineJoin=` override and the precedence it takes part in: `?lineJoin=` > the node's authored `join` attribute > `DEFAULT_LINE_JOIN`.
+- **`lineJoinStyleFromUniform(value)`** -- the inverse of `LINE_JOIN_UNIFORM`, needed because a `ShaderSource.webgpu` factory is handed the GLSL-shaped uniform record and must pick the matching TSL graph variant.
+
+The authored `join` attribute composes down the scene graph nearest-ancestor-wins (`data/attrs-composer.ts`), so a `kind=partition` / `kind=lod` wrapper sets it once for every child.
+
 ## GSplats Types
 
 The package includes complete type definitions for Gaussian Splats visualization in `gsplats.ts`:
@@ -839,6 +865,7 @@ The types package provides the type-safe foundation for all nD visualization ope
 - `dims.ts` -- `DimensionMetadata`, `SimpleDims`, `initializeDims()`, `getDimensionRanges()`.
 - `points.ts` -- `EffectiveRadiusConfig`, `PointsMetadata`, `LoadedPointsData`, `PointRange`, `PointsViewState`, `PointsDataLoader`, `PointsUserData`, `PositionArray` / `ColorArray` / `ScalarArray` aliases, and `isPointsMetadata` / `isPointsUserData` guards.
 - `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and `isLinesMetadata` / `isLinesUserData` / `isValidLineType` guards.
+- `line-join.ts` -- `LineJoinStyle`, `DEFAULT_LINE_JOIN`, `LINE_JOIN_UNIFORM`, `LINE_JOIN_STYLES`, and the `parseLineJoinStyle()` / `setLineJoinOverride()` / `resolveLineJoin()` / `lineJoinStyleFromUniform()` helpers.
 - `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, `isGSplatsMetadata` / `isGSplatsUserData` guards, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
 - `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` / `isPointsNode` guards.
 - `format-contract.ts` -- Generated cross-language format-contract constants (the TypeScript consumer half of the Python <-> TypeScript contract; single source of truth is `format-contract/contract.yaml`, regenerate via `make gen-contract`): `SCENE_FORMAT_VERSION` / `SUPPORTED_SCENE_VERSIONS`, `GSPLATS_FORMAT_VERSION` / `SUPPORTED_GSPLATS_FORMAT_VERSIONS`, `FORMAT_TYPE_GSPLATS`, `NODE_TYPES`, `NODE_KINDS`, `ENCODING_NAMES`, `ATTR_KEYS`, `ARRAY_NAMES`, and their corresponding union types (`SceneFormatVersion`, `GSplatsFormatVersion`, `NodeTypeName`, `NodeKind`, `EncodingName`, ...).
