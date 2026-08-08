@@ -117,7 +117,7 @@ def test_run_uniform_auto_tile_without_profile_errors(tmp_path: Path) -> None:
 
 def test_assemble_fit_args_includes_floor_by_default() -> None:
     """Batch FitConfig defaults to floor='auto' → workers get `--floor auto`."""
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         DenoiseConfig,
         FitConfig,
         _assemble_fit_args,
@@ -128,7 +128,7 @@ def test_assemble_fit_args_includes_floor_by_default() -> None:
 
 
 def test_assemble_fit_args_floor_override() -> None:
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         DenoiseConfig,
         FitConfig,
         _assemble_fit_args,
@@ -140,14 +140,14 @@ def test_assemble_fit_args_floor_override() -> None:
 
 def test_resolve_tiling_small_volume_fits_whole() -> None:
     """Companion fix: a small/medium stack no longer tiles (avoids seams)."""
-    from luxar.cli.gsplat_ops.fitting_fit_utils import resolve_tiling as _resolve_tiling
+    from luxar.cli.gsplat_ops.fitting.fit_utils import resolve_tiling as _resolve_tiling
 
     # Neuromast-shaped stack (dims > 256 but only ~28M voxels) → whole-volume.
     assert _resolve_tiling("auto", (84, 580, 576), 256, False) == "none"
 
 
 def test_resolve_tiling_large_volume_tiles() -> None:
-    from luxar.cli.gsplat_ops.fitting_fit_utils import resolve_tiling as _resolve_tiling
+    from luxar.cli.gsplat_ops.fitting.fit_utils import resolve_tiling as _resolve_tiling
 
     # Genuinely large gigavoxel volume still tiles.
     assert _resolve_tiling("auto", (1024, 1024, 1024), 256, False) == "uniform"

@@ -22,6 +22,7 @@ import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
+import { setLineJoinOverride } from '../types/line-join';
 import { StorageKeys } from '../utils/storage-keys';
 import { showError, clearError } from '../ui/error-overlay';
 import { showToast } from '../ui/toast';
@@ -116,6 +117,13 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       ? urlParams.gpuBudgetMB * 1_000_000
       : config.dataLoading.performance.gpuPoolMaxBytes
   );
+
+  // Install the session-wide line join override before any line material is
+  // constructed (same shape and the same reason as the byte budget above).
+  // `null` means "no override", leaving each node's authored style — or the
+  // default — in force. Precedence: `?lineJoin=` > authored `join` attribute >
+  // DEFAULT_LINE_JOIN. See types/line-join.ts.
+  setLineJoinOverride(urlParams.lineJoin);
 
   if (patchConsole) {
     consoleInterceptor.patch();

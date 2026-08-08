@@ -83,12 +83,52 @@ export function clearStoredSettings(sceneId: string): void {
   }
 }
 
+/**
+ * Strip `near` / `far` from a settings snapshot when dynamic clipping
+ * owns them.
+ *
+ * TWO places push the LIVE camera near/far into `settings.near` /
+ * `settings.far` so the (read-only, greyed-out) sliders show current
+ * values: `ClippingDisplay`'s RAF loop, and `syncCurrentState` on every
+ * panel-open. Those are transient camera-derived readouts, not user
+ * intent — but `saveSettingsToStorage`
+ * serializes the whole settings object, so ANY later control change
+ * would persist whatever the camera happened to read at that instant
+ * (e.g. `near = 1.05e-4`, `far = 61` from a zoomed-in pose). The next
+ * load then re-applies them as FIXED manual planes via
+ * `setSceneId` → `updateClippingPlanes`, pinning a pathological
+ * near/far even though nothing was set by hand.
+ *
+ * Omitting the keys (rather than writing defaults) means the load path's
+ * `{ ...buildBaseDefaults(), ...loaded }` spread in
+ * `RenderingControls.loadSettings` leaves `config.renderingControls.defaults`
+ * standing for `near` / `far`, after which `autoAdjustClippingPlanes` + the
+ * per-frame dynamic update take over — which is the whole point of the mode.
+ * (The `validateRenderingSettings` call wrapping that spread only clamps
+ * non-finite / out-of-range values; it is the spread, not the validator,
+ * that supplies the fallback.) When dynamic clipping is OFF the values ARE
+ * user intent, and are persisted unchanged.
+ */
+export function stripDynamicClippingPlanes(
+  settings: RenderingSettings
+): Partial<RenderingSettings> {
+  // Always a fresh object, both branches: an exported helper that sometimes
+  // aliases its input and sometimes copies it is a footgun for the next
+  // caller. The spread costs nothing next to the JSON.stringify +
+  // localStorage write it feeds, and saves are user-action-triggered.
+  const copy: Partial<RenderingSettings> = { ...settings };
+  if (!settings.dynamicClippingEnabled) return copy;
+  delete copy.near;
+  delete copy.far;
+  return copy;
+}
+
 /** Persist current settings under the scene id. Quota-safe. */
 export function saveSettingsToStorage(sceneId: string, settings: RenderingSettings): void {
   if (!sceneId) return;
   try {
     const key = StorageKeys.rendering(sceneId);
-    localStorage.setItem(key, serializeSettings(settings));
+    localStorage.setItem(key, serializeSettings(stripDynamicClippingPlanes(settings)));
   } catch (err) {
     log.warning(
       Modules.RENDERING_CONTROLS,
