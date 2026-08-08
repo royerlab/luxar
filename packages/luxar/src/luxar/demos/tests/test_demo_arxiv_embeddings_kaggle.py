@@ -69,7 +69,7 @@ class TestCompleteCacheRunsWithoutLodDeps:
         # machine where the package IS installed.
         monkeypatch.setitem(sys.modules, blocked, None)
 
-        out = tmp_path / "arxiv_papers.luxar.zarr"
+        out = tmp_path / "arxiv_papers_kaggle.luxar.zarr"
         n = generate_paper_landscape(out, sample_size=40)
 
         # The scene was written (no crash). The return value is N, not 2×N.
@@ -81,9 +81,9 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert "skipping Points LOD" in stdout
         assert blocked in stdout
 
-        # A FLAT Points leaf was written — not an LOD group. (Node: arxiv_papers.)
-        assert (out / "arxiv_papers" / "positions").exists()
-        zattrs = json.loads((out / "arxiv_papers" / ".zattrs").read_text())
+        # A FLAT Points leaf was written — not an LOD group. (Node: arxiv_papers_kaggle.)
+        assert (out / "arxiv_papers_kaggle" / "positions").exists()
+        zattrs = json.loads((out / "arxiv_papers_kaggle" / ".zattrs").read_text())
         assert zattrs.get("kind") != "lod"
 
     def test_lod_group_built_when_deps_present(
@@ -93,7 +93,7 @@ class TestCompleteCacheRunsWithoutLodDeps:
         pytest.importorskip("scipy")
         _install_warm_cache(monkeypatch)
 
-        out = tmp_path / "arxiv_papers.luxar.zarr"
+        out = tmp_path / "arxiv_papers_kaggle.luxar.zarr"
         n = generate_paper_landscape(out, sample_size=40)
 
         assert n == 40
@@ -105,7 +105,7 @@ class TestCompleteCacheRunsWithoutLodDeps:
 
         # A substitutive-LOD group was written: kind=lod with child_N levels and
         # NO top-level positions leaf.
-        zattrs = json.loads((out / "arxiv_papers" / ".zattrs").read_text())
+        zattrs = json.loads((out / "arxiv_papers_kaggle" / ".zattrs").read_text())
         assert zattrs.get("kind") == "lod"
-        assert (out / "arxiv_papers" / "child_0").exists()
-        assert not (out / "arxiv_papers" / "positions").exists()
+        assert (out / "arxiv_papers_kaggle" / "child_0").exists()
+        assert not (out / "arxiv_papers_kaggle" / "positions").exists()
