@@ -12,6 +12,7 @@ import {
   saveSettingsToStorage,
   clearStoredSettings,
   loadSettingsFromStorage,
+  stripDynamicClippingPlanes,
 } from '../../../ui/rendering-controls/settings-persistence';
 import { config } from '../../../config';
 import { StorageKeys } from '../../../utils/storage-keys';
@@ -123,5 +124,93 @@ describe('settings-persistence — localStorage I/O', () => {
     const result = loadSettingsFromStorage(sceneId);
     expect(result).toEqual({ stored: false, loaded: null });
     getItemSpy.mockRestore();
+  });
+});
+
+describe('settings-persistence — dynamic clipping never persists its planes', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  // ClippingDisplay's RAF loop writes the LIVE camera near/far into the
+  // settings object so the greyed-out sliders read out current values. Those
+  // are camera state, not user intent — and saveSettingsToStorage serializes
+  // the whole object, so before this guard ANY later control change (bloom,
+  // tone mapping, anything calling saveSettings) snapshotted them. The next
+  // load re-applied them as FIXED manual planes via
+  // setSceneId → updateClippingPlanes, pinning a zoomed-in near/far pair
+  // even with the Dynamic Clipping box unchecked. That is exactly the state
+  // the reported near = 0.0001 / far = 61 screenshot was in.
+  it('omits near/far from storage while dynamic clipping is enabled', () => {
+    const sceneId = 'dyn_on';
+    const settings = buildBaseDefaults();
+    settings.dynamicClippingEnabled = true;
+    // Simulate the RAF readout having stamped a deep-zoom camera pose.
+    settings.near = 1.05e-4;
+    settings.far = 61;
+
+    saveSettingsToStorage(sceneId, settings);
+
+    const raw = localStorage.getItem(StorageKeys.rendering(sceneId))!;
+    const parsed = JSON.parse(raw);
+    expect(parsed).not.toHaveProperty('near');
+    expect(parsed).not.toHaveProperty('far');
+    // Everything else still round-trips — this is a targeted omission, not a
+    // wholesale drop of camera settings.
+    expect(parsed.dynamicClippingEnabled).toBe(true);
+    expect(parsed.fov).toBe(settings.fov);
+  });
+
+  it('falls back to config defaults on load when the planes were omitted', () => {
+    const sceneId = 'dyn_on';
+    const settings = buildBaseDefaults();
+    settings.dynamicClippingEnabled = true;
+    settings.near = 1.05e-4;
+    settings.far = 61;
+    saveSettingsToStorage(sceneId, settings);
+
+    const { loaded } = loadSettingsFromStorage(sceneId);
+    // The transient values are gone, so mergeSettings/validateRenderingSettings
+    // supplies the defaults and autoAdjustClippingPlanes takes it from there.
+    expect(loaded?.near).toBeUndefined();
+    expect(loaded?.far).toBeUndefined();
+  });
+
+  it('persists near/far unchanged when dynamic clipping is disabled (user intent)', () => {
+    const sceneId = 'dyn_off';
+    const settings = buildBaseDefaults();
+    settings.dynamicClippingEnabled = false;
+    settings.near = 0.25;
+    settings.far = 400;
+
+    saveSettingsToStorage(sceneId, settings);
+
+    const { loaded } = loadSettingsFromStorage(sceneId);
+    expect(loaded?.near).toBe(0.25);
+    expect(loaded?.far).toBe(400);
+  });
+
+  it('does not mutate the caller settings object', () => {
+    const settings = buildBaseDefaults();
+    settings.dynamicClippingEnabled = true;
+    settings.near = 1.05e-4;
+    saveSettingsToStorage('dyn_on', settings);
+    // The live settings object still drives the GUI controllers' display.
+    expect(settings.near).toBe(1.05e-4);
+  });
+
+  // Uniform contract in BOTH branches: never alias the input. A helper that
+  // returns its argument on one path and a copy on the other invites the next
+  // caller to mutate the result and corrupt live GUI-bound state.
+  it('never aliases the input, on either branch', () => {
+    for (const dynamic of [true, false]) {
+      const settings = buildBaseDefaults();
+      settings.dynamicClippingEnabled = dynamic;
+      const out = stripDynamicClippingPlanes(settings);
+      expect(out).not.toBe(settings);
+      // Mutating the result must not reach back into the live settings.
+      (out as { fov?: number }).fov = -999;
+      expect(settings.fov).not.toBe(-999);
+    }
   });
 });

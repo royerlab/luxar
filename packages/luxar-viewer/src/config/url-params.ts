@@ -19,6 +19,8 @@
  * Every consumer that wants a URL-derived value should accept the relevant
  * field via constructor/init options rather than read `window.location`.
  */
+import { parseLineJoinStyle, type LineJoinStyle } from '../types/line-join';
+
 const MAX_SRC_LENGTH = 4096;
 const URL_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 function hasUnsafeSrcCharacter(src: string): boolean {
@@ -215,6 +217,18 @@ export interface UrlParams {
    * adaptive behavior.
    */
   dpr: number | null;
+
+  /**
+   * Force a line join style for the session (`?lineJoin=none|miter`).
+   *
+   * Overrides whatever each node authored, which is exactly its purpose: it is
+   * a debugging and workaround lever, so it must win over the scene file.
+   * Precedence is `?lineJoin=` > authored node attribute > the built-in
+   * default. `null` (missing or unrecognised) means "no override" — distinct
+   * from `'none'`, which is an explicit request for no join geometry. See
+   * `types/line-join.ts`.
+   */
+  lineJoin: LineJoinStyle | null;
 }
 
 /**
@@ -249,6 +263,7 @@ export function readUrlParams(search?: string): UrlParams {
     gpuBudgetMB: parseNonNegativeInt(params.get('gpuBudgetMB')),
     cacheBudgetMB: parseNonNegativeInt(params.get('cacheBudgetMB')),
     dpr: parsePositiveFloat(params.get('dpr')),
+    lineJoin: parseLineJoinStyle(params.get('lineJoin')),
   };
 }
 

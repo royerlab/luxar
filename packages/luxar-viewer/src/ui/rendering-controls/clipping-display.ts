@@ -16,6 +16,20 @@ import type { SceneManager } from '../../scene/scene-manager';
 
 const CLIPPING_DISPLAY_THROTTLE_MS = 100;
 
+/**
+ * Relative drift at which the readout is refreshed, matching the 0.1% gate
+ * `updateDynamicFromCache` uses before it touches the camera at all.
+ *
+ * RELATIVE, not absolute: near/far are scene-scaled quantities, and the
+ * absolute thresholds this replaced (1e-4 for near, 0.1 for far) were tuned
+ * for a scene roughly 100 world units across. On a micron-scale scene every
+ * real change falls under them, so the sliders froze on their defaults and
+ * stopped being the live readout dynamic clipping advertises. Matching the
+ * camera's own gate also means the display can never be the coarser of the
+ * two — anything the camera bothered to change, this shows.
+ */
+const CLIPPING_DISPLAY_REL_EPSILON = 0.001;
+
 export interface ClippingDisplayContext {
   sceneManager: SceneManager;
   settings: RenderingSettings;
@@ -26,6 +40,20 @@ export interface ClippingDisplayContext {
    */
   getNearPlane: () => Controller | undefined;
   getFarPlane: () => Controller | undefined;
+}
+
+/**
+ * Whether the displayed value has drifted far enough from the live camera
+ * value to be worth a re-render.
+ *
+ * A non-finite camera value is never mirrored into the settings — the readout
+ * keeps its last good value rather than showing (and stamping in) NaN.
+ */
+function hasDrifted(shown: number, current: number): boolean {
+  if (!Number.isFinite(current)) return false;
+  const magnitude = Math.abs(current);
+  if (magnitude === 0) return shown !== 0;
+  return Math.abs(shown - current) > magnitude * CLIPPING_DISPLAY_REL_EPSILON;
 }
 
 export class ClippingDisplay {
@@ -77,7 +105,7 @@ export class ClippingDisplay {
     const nearPlane = this.context.getNearPlane();
     if (nearPlane) {
       const currentNear = camera.near;
-      if (Math.abs(this.context.settings.near - currentNear) > 0.0001) {
+      if (hasDrifted(this.context.settings.near, currentNear)) {
         this.context.settings.near = currentNear;
         nearPlane.updateDisplay();
       }
@@ -86,7 +114,7 @@ export class ClippingDisplay {
     const farPlane = this.context.getFarPlane();
     if (farPlane) {
       const currentFar = camera.far;
-      if (Math.abs(this.context.settings.far - currentFar) > 0.1) {
+      if (hasDrifted(this.context.settings.far, currentFar)) {
         this.context.settings.far = currentFar;
         farPlane.updateDisplay();
       }

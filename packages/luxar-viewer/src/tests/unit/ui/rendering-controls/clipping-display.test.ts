@@ -109,12 +109,12 @@ describe('ClippingDisplay — setDynamicEnabled(false)', () => {
 });
 
 describe('ClippingDisplay — refreshDisplays', () => {
-  it('only updates near when the value drift exceeds the 0.0001 threshold', () => {
+  it('only updates near when the drift exceeds 0.1% of the live value', () => {
     const cd = makeClipping();
     settings.near = 0.10001; // sub-threshold drift
     camera.near = 0.10005;
     cd.refreshDisplays();
-    // settings.near unchanged because |0.10005 - 0.10001| = 4e-5 < 1e-4
+    // unchanged: |0.10005 - 0.10001| = 4e-5 < 0.1% of 0.10005 (~1e-4)
     expect(settings.near).toBe(0.10001);
     expect(nearPlane.updateDisplay).not.toHaveBeenCalled();
     cd.dispose();
@@ -130,17 +130,35 @@ describe('ClippingDisplay — refreshDisplays', () => {
     cd.dispose();
   });
 
-  it('uses a 0.1 threshold for far plane (looser, since values are larger)', () => {
+  it('scales the far-plane threshold with the value (0.1%, not an absolute)', () => {
     const cd = makeClipping();
     settings.far = 1000;
-    camera.far = 1000.05; // sub-threshold
+    camera.far = 1000.5; // sub-threshold: 0.5 < 0.1% of 1000.5
     cd.refreshDisplays();
     expect(settings.far).toBe(1000);
     expect(farPlane.updateDisplay).not.toHaveBeenCalled();
 
-    camera.far = 1000.5; // super-threshold
+    camera.far = 1005; // super-threshold
     cd.refreshDisplays();
-    expect(settings.far).toBe(1000.5);
+    expect(settings.far).toBe(1005);
+    expect(farPlane.updateDisplay).toHaveBeenCalled();
+    cd.dispose();
+  });
+
+  // The reason the thresholds are relative: near/far are scene-scaled, so an
+  // absolute epsilon tuned for a ~100-unit scene freezes the readout entirely
+  // on a micron-scale one — the sliders would sit on their defaults forever
+  // while dynamic clipping moved the real planes every frame.
+  it('still tracks the camera on a micron-scale scene', () => {
+    const cd = makeClipping();
+    settings.near = 1e-7;
+    camera.near = 5e-7;
+    settings.far = 1e-3;
+    camera.far = 2e-3;
+    cd.refreshDisplays();
+    expect(settings.near).toBe(5e-7);
+    expect(settings.far).toBe(2e-3);
+    expect(nearPlane.updateDisplay).toHaveBeenCalled();
     expect(farPlane.updateDisplay).toHaveBeenCalled();
     cd.dispose();
   });

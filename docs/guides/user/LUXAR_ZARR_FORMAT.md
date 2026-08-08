@@ -653,10 +653,29 @@ their coordinates match, so connected thick curves should use `polyline` or
   "ordering": "hilbert",             // or "morton" / "none"
   "vertex_ordering": { ... },        // Vertex spatial-index metadata (D-space)
   "segment_ordering": { ... },       // Segment spatial-index metadata (2×D-space)
+  "join": "miter",                   // Optional, LINES ONLY: join style at
+                                     //   degree-2 polyline joints —
+                                     //   "miter" (default) or "none".
+                                     //   Unset ⇒ inherited, then the viewer
+                                     //   default. Compositing: set it on the
+                                     //   layer, not on internal children.
   /* transform, nd_transform, opacity, absorption, gamma, intensity, offset,
      blending_mode, layer, visible — same as Points */
 }
 ```
+
+`join` selects what the vertex stage does where two segments of a polyline
+meet. Without join geometry the turn leaves an uncovered circular sector on the
+outside of the bend and a double-covered lens inside — dark ticks along the
+convex edge of a thick curve, bright ticks along the concave one. `"miter"`
+rotates each quad's end edge onto the shared miter edge so the two TILE:
+coverage becomes a partition, so there is nothing to sum and every blending
+mode is correct by construction. It is gated in-shader by a rendered-width
+threshold (a sub-pixel wedge is invisible, and thin lines are the
+million-segment ones) and by a miter limit, so `"none"` is rarely worth
+authoring. A session-wide `?lineJoin=none|miter` overrides whatever the file
+says. Unrecognised values are rejected at write time rather than silently
+meaning "no joins".
 
 Lines use **dual spatial indexing**: vertices are curve-ordered in D-space
 (like Points) and segments are independently curve-ordered in (2×D)-space
@@ -915,7 +934,8 @@ Rendering attributes compose along the scene graph (root → leaf):
 - `opacity`, `absorption`, `gamma`, `intensity` — multiplied (`absorption`
   has identity 1.0, is floored at 0, and has no upper clamp)
 - `offset` — summed
-- `blending_mode` — the nearest ancestor that sets it wins
+- `blending_mode`, `join` — the nearest ancestor that sets it wins
+  (`join` is lines-only)
 
 Example: a group with `opacity=0.5` and a child with `opacity=0.5` yields
 an effective opacity of `0.25` for the child's material. Unset values are

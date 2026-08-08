@@ -1639,6 +1639,231 @@ class TestUnknownRenderAttrRejected:
             assert "lns" not in root
             assert "splats" not in root
 
+    def test_line_join_style_round_trips_and_rejects_a_typo(self) -> None:
+        """``join=`` (issue #790) persists verbatim, stays absent when
+        unauthored, and rejects an unrecognised VALUE.
+
+        The key allowlist and the value check are separate gates and both
+        matter: ``jion=`` is caught by the former, ``join="mitre"`` only by the
+        latter. Without the value check a typo would write cleanly and render
+        with the default join, giving the author nothing to go on.
+        """
+        for style in ("none", "miter"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zarr_path, compiler, scene = self._scene(tmpdir)
+                scene.add_lines("lns", self.POS, 0.5, join=style)
+                compiler.finalize()
+                root = zarr.open_group(str(zarr_path), mode="r")
+                assert root["lns"].attrs["join"] == style
+
+        # Unauthored: the writer must NOT bake a default into the file — the
+        # default belongs to the viewer, where a ?lineJoin= override can still
+        # win over it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_lines("lns", self.POS, 0.5)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "join" not in root["lns"].attrs
+
+        # A misspelled STYLE fails fast and leaves nothing on disk.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Unknown line join style"):
+                scene.add_lines("lns", self.POS, 0.5, join="mitre")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "lns" not in root
+
+    def test_line_join_setter_persists_like_its_compositing_siblings(self) -> None:
+        """``node.join = "none"`` after construction must reach disk.
+
+        Every other member of COMPOSITING_ATTRS has a validating property +
+        ``_persist_attr`` setter. Without one, the assignment landed in the
+        instance ``__dict__``, the node reported the new style, and the file kept
+        the old one — the silent half of a divergence that only shows up when
+        somebody opens the scene.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            lns = scene.add_lines("lns", self.POS, 0.5)
+            # Unauthored reads as None, NOT as the default: the writer must not
+            # bake today's default into the file.
+            assert lns.join is None
+            lns.join = "none"
+            assert lns.join == "none"
+            # Chainable sibling of set_blending_mode.
+            assert lns.set_join("miter") is lns
+
+            with pytest.raises(ValueError, match="Unknown line join style"):
+                lns.join = "mitre"
+            with pytest.raises(TypeError, match="Line join style must be a string"):
+                lns.join = 1
+            # The failed assignments left the last good value in place.
+            assert lns.join == "miter"
+
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["lns"].attrs["join"] == "miter"
+
+    def test_line_join_rides_the_partition_wrapper_not_the_parts(self) -> None:
+        """``join`` is a COMPOSITING attr, so a partitioned lines node writes it
+        ONCE on the ``kind=partition`` wrapper and the parts inherit it.
+
+        This is the routing the viewer's attrs composer exists to follow. A
+        regression that copied it onto each part instead would still render
+        correctly, so only the wrapper's own ``.zattrs`` can pin the contract.
+        """
+        # Polylines are atomic — a single one never splits — so the fixture needs
+        # genuinely separable geometry: 8 disjoint segments, well spread out.
+        starts = np.arange(8, dtype=np.float32)[:, None] * 100.0
+        verts = np.repeat(starts, 2, axis=0) * np.ones((1, 3), dtype=np.float32)
+        verts[1::2, 0] += 1.0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_lines(
+                "tracks",
+                verts,
+                0.5,
+                line_type="segments",
+                join="none",
+                partition={"max_elements": 2},
+            )
+            compiler.finalize()
+
+            root = zarr.open_group(str(zarr_path), mode="r")
+            wrapper = root["tracks"]
+            assert wrapper.attrs["kind"] == "partition"
+            assert wrapper.attrs["join"] == "none"
+
+            parts = [key for key in wrapper.group_keys() if key.startswith("part_")]
+            # Verified, not assumed: with one part the wrapper/leaf distinction
+            # this test is about would be untestable.
+            assert len(parts) > 1, f"partition produced {len(parts)} part(s)"
+            for part in parts:
+                assert "join" not in wrapper[part].attrs
+
+    @pytest.mark.parametrize("geometry_type", ["points", "gsplats", "mesh"])
+    def test_line_join_refused_on_a_non_lines_leaf(self, geometry_type: str) -> None:
+        """``join`` on a points / gsplats / mesh LEAF is dead metadata, so it raises.
+
+        ``KNOWN_RENDER_ATTRS`` is one set shared by all four geometry writers, so
+        before this guard ``add_points(..., join="none")`` wrote a ``join`` into a
+        points ``.zattrs`` that nothing will ever read — contradicting the format
+        spec's "Optional, LINES ONLY". Refused per type at the adder, mirroring the
+        mesh ``volumetric`` refusal.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="lines-only attribute"):
+                if geometry_type == "points":
+                    scene.add_points("node", self.POS, join="none")
+                elif geometry_type == "gsplats":
+                    scene.add_gsplats(
+                        "node",
+                        centers=self.POS,
+                        amplitudes=np.ones(len(self.POS), dtype=np.float32),
+                        cholesky_factors=np.ones((len(self.POS), 6), dtype=np.float32),
+                        join="none",
+                    )
+                else:
+                    scene.add_mesh(
+                        "node",
+                        np.array(
+                            [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+                            dtype=np.float32,
+                        ),
+                        np.array([[0, 1, 2]], dtype=np.uint32),
+                        join="none",
+                    )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "node" not in root
+
+    def test_line_join_still_allowed_on_a_group(self) -> None:
+        """The other half: a ``join`` on a GROUP is correct and must keep working.
+
+        It is a compositing attr precisely so it can be authored once above a
+        lines node — including on a wrapper whose own children are the parts of a
+        partitioned lines leaf. A refusal that keyed on "not a lines node" rather
+        than "a non-lines LEAF" would break that.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            grp = scene.add_group("styled", join="none")
+            grp.add_lines("lns", self.POS, 0.5)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["styled"].attrs["join"] == "none"
+            assert "join" not in root["styled"]["lns"].attrs
+
+    @pytest.mark.parametrize("geometry_type", ["points", "gsplats", "mesh"])
+    @pytest.mark.parametrize("via", ["property", "set_join"])
+    def test_line_join_setter_refused_on_a_non_lines_leaf(
+        self, geometry_type: str, via: str
+    ) -> None:
+        """The adder's refusal is worthless if the SETTER re-opens the same door.
+
+        ``join`` is declared on :class:`Node`, so ``pts.join = "none"`` — and
+        ``pts.set_join("none")``, which assigns through that same property — would
+        persist the dead attr one line after ``add_points(join=...)`` refused it.
+        Each non-lines geometry class overrides the setter to refuse, exactly as
+        ``Mesh`` overrides ``blending_mode`` to refuse ``volumetric``. Both
+        surfaces raise with the same explanation, so the check below is the one
+        the adder test uses.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            if geometry_type == "points":
+                node = scene.add_points("node", self.POS)
+            elif geometry_type == "gsplats":
+                node = scene.add_gsplats(
+                    "node",
+                    centers=self.POS,
+                    amplitudes=np.ones(len(self.POS), dtype=np.float32),
+                    cholesky_factors=np.ones((len(self.POS), 6), dtype=np.float32),
+                )
+            else:
+                node = scene.add_mesh(
+                    "node",
+                    np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32),
+                    np.array([[0, 1, 2]], dtype=np.uint32),
+                )
+
+            with pytest.raises(ValueError, match="lines-only attribute"):
+                if via == "property":
+                    node.join = "none"
+                else:
+                    node.set_join("none")
+
+            # The getter still reads as unset (it does NOT substitute a default),
+            # and nothing reached disk.
+            assert node.join is None
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "join" not in root["node"].attrs
+
+    def test_line_join_setter_still_allowed_on_a_group(self) -> None:
+        """A GROUP's ``join`` setter keeps working, like its ``add_group`` sibling.
+
+        ``Group`` derives from ``Node`` directly and gets no override, so the
+        compositing attr can still be authored after construction on a wrapper
+        above a lines node. (The Lines-leaf half of this is already pinned by
+        ``test_line_join_setter_persists_like_its_compositing_siblings``.)
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            grp = scene.add_group("styled")
+            grp.add_lines("lns", self.POS, 0.5)
+            grp.join = "miter"
+            assert grp.join == "miter"
+            # Chainable form routes through the same property.
+            assert grp.set_join("none") is grp
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["styled"].attrs["join"] == "none"
+
     def test_typo_of_structural_key_rejected_without_structural_suggestion(
         self,
     ) -> None:

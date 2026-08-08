@@ -47,10 +47,10 @@ describe('generateSyntheticLines', () => {
       expect(result.endSharpness.length).toBe(50);
       expect(result.segmentLengths.length).toBe(50);
       // Cap suppression: continuous per-endpoint [0, 1] scalars, Float32
-      expect(result.startCapSuppression).toBeInstanceOf(Float32Array);
-      expect(result.startCapSuppression.length).toBe(50);
-      expect(result.endCapSuppression).toBeInstanceOf(Float32Array);
-      expect(result.endCapSuppression.length).toBe(50);
+      expect(result.startJointCode).toBeInstanceOf(Float32Array);
+      expect(result.startJointCode.length).toBe(50);
+      expect(result.endJointCode).toBeInstanceOf(Float32Array);
+      expect(result.endJointCode.length).toBe(50);
     });
 
     it('produces widths=1.0 and sharpness=0.5 (the [0,1] knob Gaussian midpoint, beta=2) for every endpoint', () => {
@@ -63,47 +63,33 @@ describe('generateSyntheticLines', () => {
       }
     });
 
-    it('emits faithful cap suppression: free ends 0, interior joints share clamp(cos θ, 0, 1)', () => {
-      // 130 segments straddles two chain breaks (i = 64 and i = 128), so
-      // both the interior-joint and the re-anchor paths are exercised.
+    it('emits faithful joint codes: free ends at the chain breaks, partners inside', () => {
+      // 130 segments straddles two chain breaks (i = 64 and i = 128), so both
+      // the interior-joint and the re-anchor paths are exercised.
       const result = generateSyntheticLines({ type: 'lines', count: 130, seed: 3 });
-      let nonZeroJoints = 0;
+      let namedPartners = 0;
       for (let i = 0; i < result.segmentCount; i++) {
-        // Suppression is a continuous [0, 1] scalar on both sides.
-        for (const v of [result.startCapSuppression[i], result.endCapSuppression[i]]) {
-          expect(v).toBeGreaterThanOrEqual(0);
-          expect(v).toBeLessThanOrEqual(1);
-        }
         if (i % 64 === 0) {
           // Chain break (walk re-anchor): free start, and the previous
           // segment's end is a free end too.
-          expect(result.startCapSuppression[i]).toBe(0);
-          if (i > 0) expect(result.endCapSuppression[i - 1]).toBe(0);
+          expect(result.startJointCode[i]).toBe(0);
+          if (i > 0) expect(result.endJointCode[i - 1]).toBe(0);
         } else {
-          // Interior joint: both endpoint sides carry the SAME value,
-          // equal to what compute_cap_suppression emits for connected
-          // geometry: clamp(dot(dir_prev, dir_cur), 0, 1).
-          expect(result.startCapSuppression[i]).toBe(result.endCapSuppression[i - 1]);
-          const dir = (k: number): [number, number, number] => {
-            const k3 = k * 3;
-            const dx = result.endPositions[k3] - result.startPositions[k3];
-            const dy = result.endPositions[k3 + 1] - result.startPositions[k3 + 1];
-            const dz = result.endPositions[k3 + 2] - result.startPositions[k3 + 2];
-            const len = Math.hypot(dx, dy, dz);
-            return [dx / len, dy / len, dz / len];
-          };
-          const a = dir(i - 1);
-          const b = dir(i);
-          const expected = Math.min(Math.max(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], 0), 1);
-          expect(result.startCapSuppression[i]).toBeCloseTo(expected, 5);
-          if (result.startCapSuppression[i] > 0) nonZeroJoints++;
+          // Interior joint of a chain: segment i-1's END meets segment i's
+          // START, so i-1 names slot i at its start and i names slot i-1 at its
+          // end. Purely topological — unlike the angle scalar this replaced, it
+          // does not depend on the walk's directions at all, which is why this
+          // assertion needs no geometry.
+          expect(result.endJointCode[i - 1]).toBe(i + 1);
+          expect(result.startJointCode[i]).toBe(-(i - 1 + 3));
+          namedPartners++;
         }
       }
       // The last segment's end is always a free end.
-      expect(result.endCapSuppression[result.segmentCount - 1]).toBe(0);
-      // A random walk turns by less than 90° about half the time — the
-      // generator must actually be producing non-zero joint suppression.
-      expect(nonZeroJoints).toBeGreaterThan(0);
+      expect(result.endJointCode[result.segmentCount - 1]).toBe(0);
+      // Sensitivity: the generator must actually be emitting joints, or every
+      // assertion above is vacuous.
+      expect(namedPartners).toBeGreaterThan(100);
     });
   });
 
@@ -200,7 +186,7 @@ describe('generateSyntheticLines', () => {
       expect(result.startPositions.length).toBe(0);
       expect(result.endPositions.length).toBe(0);
       expect(result.segmentLengths.length).toBe(0);
-      expect(result.startCapSuppression.length).toBe(0);
+      expect(result.startJointCode.length).toBe(0);
     });
 
     it('handles count=1 — produces a single segment with finite endpoints', () => {

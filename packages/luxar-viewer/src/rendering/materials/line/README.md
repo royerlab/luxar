@@ -6,8 +6,8 @@ This folder holds the four-file material stack that renders one of Luxar's
 four first-class geometry types. Each line segment is drawn as an instanced
 screen-space quad expanded perpendicular to its pixel-space direction; the
 fragment stage shades a shifted-truncated super-Gaussian perpendicular
-cross-section, with per-endpoint cap suppression keeping interior polyline
-joints continuous. Both backends share
+cross-section, with a per-endpoint joint code keeping interior polyline joints
+continuous and driving the screen-space miter join. Both backends share
 the same `LineMaterialConfig` shape and the same update / clone / blending
 semantics — `MaterialManager.getLineMaterial` dispatches on
 `RendererCapabilities.apiSurface`, so call sites never see the divergence.
@@ -44,7 +44,11 @@ either `uPerspectiveLineScale = resY / tan(fov/2)` or
 `uOrthoLineScale = 2·resY / frustumHeight` (precomputed CPU-side so the
 shader has no `tan()` or projection-mode divide), clamps to
 `[1.5 px, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
-offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × clampedPixelWidth`.
+offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × startEndPixelWidth` /
+`endEndPixelWidth` — the clamped pixel half-width of the END this corner sits at
+(from the shared `luxarLineEndPixelWidth` / `tslLineEndPixelWidth` helper),
+which is segment-constant and equals the per-vertex clamp exactly at the corner
+it is consumed at (the join below needs it segment-constant; see there).
 The fragment stage shades
 `capFactor × perpFalloff × edgeAA × widthScale × vWidthFade × nearFade` (the near
 fade is computed PER-FRAGMENT from the interpolated view depth `vViewZ` — a
@@ -66,11 +70,12 @@ colormapped nodes — and writes `vec4(rgb, intensity × vAlpha × uOpacity)`
 (`vAlpha` is the per-endpoint opacity, `1.0` for RGB data). Under
 `LUXAR_VOLUMETRIC` the output switches to the emission–absorption branch
 described below.
-The `capFactor` joint trick (next section) is **independent** of the
+The `capFactor` joint machinery (next section) is **independent** of the
 perpendicular falloff — only `perpFalloff` changed when the kernel was swapped
-to the super-Gaussian.
+to the super-Gaussian, and the miter join leaves it untouched too (the mitred
+trapezoid's edges stay on the segment's own ±R offset lines).
 
-## The cap factor and its suppression
+## The endpoint cap and the joint code
 
 Each segment fades to `0.5` at its true endpoints (a per-endpoint ramp
 `0.5 + 0.5 × dist / vWidthAtT`), giving a soft cap at a free polyline end
@@ -79,47 +84,54 @@ vertex-side because with only 4 vertices per quad, a vertex-side
 `min(t, 1−t) × segLen / width` collapses to `0.5` everywhere — there's no
 vertex at the body midpoint to interpolate from.
 
-**That dimming is only correct where a neighbouring quad overlaps the
+**That dimming is only correct where a neighbouring quad meets the
 endpoint.** The quad spans exactly `[start, end]` — there is no longitudinal
 extension — so two collinear segments _tile_ rather than overlap. A fragment
 just inside segment A gets `0.5 + 0.5·d/w` from A and nothing at all from B
 (it is outside B's quad), so the two halves never sum back to 1.0 and every
 interior joint became a dark notch of axial length `2 × width` bottoming out
-at 50% — thick polylines rendered as bead chains (issue #780). The overlap
-premise _does_ hold at a sharp bend, where the two rectangles cover a lens on
-the inner side of the turn, and at a branch point, where three or more quads
-stack around the hub.
+at 50% — thick polylines rendered as bead chains (issue #780).
 
-So the endpoint dimming is gated by a per-endpoint **suppression scalar** in
-`[0, 1]` (texel4.yz). Each endpoint's ramp is lifted by its own suppression
-and the two caps combine with `min()`:
+So the endpoint dimming is gated by a per-endpoint **joint code** (texel4.yz).
+Each endpoint's ramp is lifted by its own value and the two caps combine with
+`min()`:
 `capFactor = min(mix(startRamp, 1.0, suppressStart), mix(endRamp, 1.0, suppressEnd))`
 — evaluated independently per endpoint (not keyed on the nearest one), which
 makes the cap field continuous **within** each segment: the nearest-endpoint
 pick used to jump at the midpoint of segments shorter than `2 × width` when
-the two suppressions differ, the routine case for a polyline's first/last
-segment (issue #796). The old form was exactly continuous **across** the
-joint seam, so the `min()` form _relocates_ the discontinuity rather than
-leaving one behind: a strictly smaller step at the seam, appearing only when
-a segment is shorter than one width (its far-end ramp cannot reach `1.0`
-before the neighbour takes over) — at worst `0.5 × (1 − clamp(L/w))` (far
-end fully free, joint fully suppressed), scaling with `(1 − s_far)` in
-general, always ≤ the old midpoint jump, and zero for `L ≥ width`.
-Polyline-wide C⁰ continuity would need join geometry, not a per-endpoint
-scalar:
+the two values differ, the routine case for a polyline's first/last segment
+(issue #796). The old form was exactly continuous **across** the joint seam,
+so the `min()` form _relocates_ the discontinuity rather than leaving one
+behind: a strictly smaller step at the seam, appearing only when a segment is
+shorter than one width, and zero for `L ≥ width`.
 
-| Endpoint                        | Suppression                                             | Why                                                                          |
-| ------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Slice-clipped                   | `1.0`                                                   | the real endpoint is outside the slice; no neighbour will arrive to sum with |
-| Straight-through interior joint | `1.0`                                                   | quads tile, nothing overlaps, nothing to compensate                          |
-| Bend (turn angle θ)             | `clamp(-dot(awayA, awayB), 0, 1)` = `cos θ` for θ < 90° | overlap area grows with θ, so blend towards the dimmed regime                |
-| 90° or sharper                  | `0.0`                                                   | quads genuinely overlap; `0.5 + 0.5` is what makes the joint flat            |
-| Branch point (3+ segments)      | `0.0`                                                   | suppressing would stack the quads into a bright nub                          |
-| Free polyline end               | `0.0`                                                   | keep the soft cap                                                            |
+The code is a small exact integer, not a scalar — it says what KIND of
+endpoint this is, and at an ordinary two-segment joint, WHICH segment it
+joins:
 
-(The "tile"/"overlap" reasoning in this table is stated for the
-**data-space** angle; whether the quads actually tile or overlap on screen
-depends on the projected angle — see the projection caveat below.)
+| Code          | Endpoint                  | Cap  | Why                                                              |
+| ------------- | ------------------------- | ---- | ---------------------------------------------------------------- |
+| `0`           | Free polyline end         | kept | nothing meets it; the soft cap is the point                      |
+| `-1`          | Slice-clipped             | none | the real endpoint is outside the slice; no neighbour will arrive |
+| `-2`          | Degree-≥3 hub             | kept | several quads already stack here; suppressing stacks them bright |
+| `+(slot + 1)` | Joins `slot` at its START | none | a neighbouring quad meets this endpoint                          |
+| `-(slot + 3)` | Joins `slot` at its END   | none | same, with the partner's other endpoint shared                   |
+
+`slot` is the partner's index in the visible stream, which is exactly its
+line-texture **storage** slot. `aSortedIndex` maps draw→storage and the
+partner is read directly rather than through that permutation, so a
+depth-sort re-ordering needs no bookkeeping. The sign carries which of the
+partner's endpoints is shared rather than a packed `(slot << 1) | bit`,
+because a bare slot stays inside float32's 2²⁴ exact-integer range at the
+11.17M per-node segment ceiling while the packed form reaches 22.35M and
+would silently lose precision on a 16384-class device.
+
+**A slot-bearing code suppresses the cap.** Defaulting it the other way is
+the #780 bead chain again, and not only under join style `none`: the join
+block is also skipped for every line below the rendered-width gate, so
+thin-line scenes — the million-segment ones — would lose the fix entirely.
+Measured, an interior joint bottoms out at 0.5 instead of 1.0 and a dense
+polyline loses ~40% of its total brightness.
 
 Joints are matched by vertex **index**, not by position: a chain whose
 segments each carry their own duplicate copy of the shared point (what
@@ -128,62 +140,118 @@ it keeps the cap at every joint and still shows the notch. Author connected
 geometry as `line_type="polyline"` to get continuous joints — position
 matching would also fuse two unrelated lines that merely touch.
 
-The scalar is computed once per commit, off the main thread, by
-`compute_cap_suppression` (`wasm/rust/src/lines_clipping.rs`, with the
-uncapped TypeScript reference in `wasm/typescript/lines-clipping.ts`). It
-only pairs endpoints that both actually _reach_ the shared vertex, so a
-culled or slice-trimmed neighbour does not anchor a joint. Because the
-suppression is a plain scalar multiplier on the intensity chain, it behaves
-identically in every blending mode.
+The code is computed once per commit, off the main thread, by
+`compute_joint_codes` (`wasm/rust/src/lines_clipping.rs`, with the uncapped
+TypeScript reference in `wasm/typescript/lines-clipping.ts` — that mirror is
+the production backend above 16 dimensions, not just a fallback). It only
+pairs endpoints that both actually _reach_ the shared vertex, so a culled or
+slice-trimmed neighbour does not anchor a joint. It is purely topological: it
+reads connectivity and the clip parameters, never positions, so the bend
+angle is the shader's business.
 
-**Known limitation — the suppression angle is data-space, the overlap is
-screen-space.** `compute_cap_suppression` measures the bend from the dot
-product of segment directions in display/data space, once per data commit;
-but the quads are expanded perpendicular to the **projected** segment
-direction, so whether two quads tile or overlap depends on the camera, and
-the scalar is never revisited as the camera moves. A sharp 3D bend viewed
-nearly in its own plane projects almost straight, keeps suppression `0`, and
-stays notched (exactly what every joint did before suppression existed — not
-a regression); a gentle 3D bend that happens to project sharp keeps
-suppression near `1` while the quads genuinely do overlap, summing to up to
-~2× body brightness over a width-sized lens that moves as the camera orbits.
-Straight joints are projection-invariant, so the bead-chain case the scalar
-targets is correct under every camera. A true fix needs a screen-space
-(per-frame) suppression, a design change at odds with the once-per-commit
-worker architecture — the trade-off is discussed in #795.
+## Join geometry (`uLineJoin`)
 
-The other known artifact is the **outer-side miter wedge**: at a bend the
-two quads leave an uncovered wedge on the outside of the turn, growing from
-nothing at the centerline to roughly `half_width × turn_angle` at the tube
-edge — negligible on a gentle curve, a quarter disc of the full half-width
-at 90°.
-Closing it needs real join geometry (extending the quads longitudinally by a
-half-width), which is tracked separately (#790).
+At a turn of angle θ two quads leave an uncovered circular sector of that
+angle on the OUTSIDE of the bend and double-cover a lens on the inside: dark
+ticks along the convex edge of a thick curve, bright ticks along the concave
+one (issue #790). No per-endpoint intensity scalar can close the outer wedge
+— nothing rasterises there to shade — so it needs geometry.
 
-That artifact now has an automated acceptance measurement:
-`../../../tests/e2e/line-join-artifact.spec.ts` renders the
-`test_line_joins` fixture (five joint cases, one per horizontal band —
-smooth curve, 90° zigzag, thin and thick straights, and a nine-ray hub)
-and scores every band on one frame with the pure metrics in
+`uLineJoin` selects the strategy (`types/line-join.ts`; precedence is
+`?lineJoin=` > the node's authored `join` attribute > `miter`):
+
+| Style   | Per-vertex cost           | Wedge     | Blending modes           |
+| ------- | ------------------------- | --------- | ------------------------ |
+| `none`  | zero                      | left open | n/a                      |
+| `miter` | +1 texel fetch, 1 project | **exact** | all six, by construction |
+
+`miter` rotates the quad's end edge onto the shared miter edge, so the two
+quads TILE: coverage becomes a partition, and with nothing to sum there is no
+axial profile and no per-mode special case. The miter point is the
+intersection of the two segments' `+R` offset lines,
+`M = R·(perpIn + perpOut) / (1 + turn)`, which reduces to `R·perp` at a
+collinear joint — so straight polylines are untouched — and lies ON this
+segment's own `±R` offset line, so `vPerpNorm` stays an exact perpendicular
+coordinate and the super-Gaussian cross-section is unchanged.
+
+Both sides of a joint must take the same branch, or one rotated edge has
+nothing to tile against and rasterises as a flap. The guards are therefore
+computed from operands that are identical on either side — the shared
+vertex's width, the depths of the joint's two FAR endpoints (NOT the shared
+vertex's own; see the bullet below), and `min()` over the two lengths — with
+the directions read in a canonical order (incoming edge first):
+
+- miter limit `grow = sqrt(2/(1+turn)) ≤ 2` (θ ≤ 120°)
+- overshoot on the **axial** reach `R·tan(θ/2) ≤ ½·min(pixelLen, partnerLen)`
+  — not on `|M|`, which is ≈R always and would disable the join on every
+  polyline whose segments are shorter than twice the tube radius, i.e.
+  exactly the dense-curve case
+- BOTH far endpoints of the joint — the partner's and this segment's own —
+  must be in front of the near plane (testing only the partner's has each side
+  testing a different point, so one side can miter alone against nothing), and
+  this endpoint must actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
+- a **rendered-HALF-width gate** of 2 px (`LINE_JOIN_MIN_HALF_WIDTH`), i.e.
+  4 px of rendered width: the wedge has area ~θ·R²/2, so below
+  that it is sub-pixel and the line is already pinned to the 1.5 px floor
+  with its intensity faded. The cost then lands only where the benefit is —
+  million-segment scenes are thin-line scenes and skip the block entirely.
+
+Where the block runs it also DERIVES the endpoint cap, as
+`clamp(dot(lineDir, partnerDir), 0, 1)` — algebraically the same quantity the
+kernel used to store, but measured in SCREEN space, per frame. That is what
+retires the old "the angle is data-space, the overlap is screen-space"
+limitation (#795): a gentle 3D bend that projects sharp is now seen as sharp.
+Where the block is skipped, the code-implied cap above applies instead, which
+is exact for the straight and gentle joints that dominate real polyline data
+and are projection-invariant anyway.
+
+All four stages build the join from one source: the visual and pick GLSL vertex
+shaders share `GLSL_LINE_JOIN`'s `luxarLineJoin`, and the visual and pick TSL
+factories share its twin `tslLineJoin` (`_shared/tsl-helpers.ts`). Parity tests
+assert the two backends agree on the VISUAL join — end→start, END–END, and a
+tapered perspective joint (`line-join-*` in the TSL harness) — so a mitred
+joint is not a WebGL2/WebGPU difference. The pick stages run the same helper by
+construction, but no pick fixture carries a slot-bearing joint code, so a
+mitred corner's pick footprint is not pixel-pinned on either backend.
+
+The wedge was given an automated acceptance measurement before it was
+closed, and that harness stays. `../../../tests/e2e/line-join-artifact.spec.ts`
+renders the `test_line_joins` fixture (five joint cases, one per horizontal
+band — smooth curve, 90° zigzag, thin and thick straights, and a nine-ray
+hub) and scores every band on one frame with the pure metrics in
 `../../../tests/helpers/line-join-metrics.ts`. There are **two** metrics
 because each is blind to what the other catches: a local-median outlier
 count sees the narrow one-to-two-pixel wedge tick but tracks any smooth
 variation invisibly, while an axial flux profile (cross-section sum along
 the tube, normalised by its own median) sees exactly the smooth
 per-joint dip that was the #780 bead chain and would score zero on the
-outlier metric. The spec asserts what already holds — zero dark and zero
-bright outliers on both straight bands, flat flux profiles on both, and a
-gapless flux profile on all five — and merely records the bend cases
-under documented ceilings until join geometry lands.
+outlier metric. The spec asserts a gapless flux profile on all five bands,
+zero dark and zero bright outliers plus a flat flux profile on both
+straight bands — and, since the miter landed, at most two outliers of each
+kind on the two bend bands, which both measure zero, so a regression to
+unmitred rendering fails it by a wide margin. (The bend ceiling is two rather
+than zero only to absorb a seam pixel the float32 operand order can cost;
+the spec header quantifies it.)
 
-Read the metrics module header before quoting one of its numbers: the
+The before/after on that harness:
+
+| Band                 | Unmitred                  | Mitred          |
+| -------------------- | ------------------------- | --------------- |
+| `curve_smooth`       | 4.94% dark / 3.52% bright | 0 / 0           |
+| `zigzag_right_angle` | flux p05 0.780            | flux p05 0.985  |
+| `straight_thin`      | 0 / 0, flat profile       | unchanged       |
+| `straight_thick`     | 0 / 0, flat profile       | unchanged       |
+| `hub_9ray` (control) | 0.157% / 0.114%           | 0.157% / 0.114% |
+
+Read the metrics module header before quoting one of its numbers. The
 local-median count is non-monotone in defect width (a wedge three or more
-pixels across poisons its own median and scores zero), so the gentle
-`curve_smooth` band measures 4.94% dark while the 90°
-`zigzag_right_angle`, whose wedge is far worse but far wider, measures
-0.077%. For wide wedges the axial flux dip is the measure that responds —
-p05 0.749 on the zigzag against 1.000 on the straight bands. (Measured
-with `dpr=1` pinned, headless Chromium, 2026-08-06.)
+pixels across poisons its own median and scores zero), which is why the
+gentle `curve_smooth` band measured 4.94% dark unmitred while the 90°
+`zigzag_right_angle`, whose wedge is far worse but far wider, measured
+only 0.076% — and why the zigzag is gated on its flux profile instead.
+(Both columns measured in headless Chromium with `dpr=1` pinned on
+2026-08-07, the unmitred one via `&lineJoin=none`. The E2E job is not part of the
+per-PR CI run; the spec runs under `make test-e2e`.)
 
 ## Geometry and storage layout
 
