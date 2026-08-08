@@ -65,7 +65,8 @@ export interface GeometryCapabilities {
   /**
    * May appear as a `kind=partition` group's `display_type`, i.e. can be split
    * into spatially-culled parts. Mirrors the Python-side allowlist in
-   * `core/node/specialized_groups.py`.
+   * `luxar/typing_utils/geometry_capabilities.py` (which
+   * `core/node/specialized_groups.py` calls to gate the wrapper).
    */
   readonly partition: boolean;
 

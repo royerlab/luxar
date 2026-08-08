@@ -157,7 +157,8 @@ def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
     that path length. A triangle is a zero-thickness surface, so its path length is
     identically zero and there is no medium to absorb anything — the mode has no
     per-element quantity to integrate. That makes it a caller mistake with no valid
-    interpretation, which is the same bar the LOD/partition refusals are held to, so
+    interpretation, which is the same bar the surviving structural refusals are held to
+    (the LOD parent, and a partition parent declaring a non-mesh ``display_type``), so
     it raises rather than warns.
 
     Refused at the ADDER rather than in ``validate_blending_mode``, which is

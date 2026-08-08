@@ -600,9 +600,17 @@ export class LayerStateManager {
           // value. Without this wrap the panel showed Absorption (which no mesh shader
           // reads) and hid Alpha cutoff exactly when the cutout was active. A no-op for
           // the default path, since `defaultBlendingMode('mesh')` is already `opaque`.
+          //
+          // The default is keyed on `layerType`, NOT `node.type`: a kind=partition /
+          // kind=lod wrapper's raw type is `group` (default `additive`) while the layer —
+          // and every leaf it wraps — is its `display_type`. For the emissive types the
+          // two agree, but a partitioned MESH renders `opaque`, so keying on the raw type
+          // showed "Additive" for an opaque surface and hid the Alpha-cutoff slider
+          // (`layer-controls.ts::syncMeshAppearanceVisibility`) exactly when the cutout
+          // was active. Plain groups and leaves have `layerType === node.type`.
           blendingMode: resolveLayerBlendingMode(
             layerType,
-            composedBlendingMode ?? defaultBlendingMode(node.type)
+            composedBlendingMode ?? defaultBlendingMode(layerType)
           ),
           // Ownership reads the node's OWN attr — see the `LayerInfo` doc for why the
           // composed ancestry would be wrong (stale-snapshot shadowing) and why a

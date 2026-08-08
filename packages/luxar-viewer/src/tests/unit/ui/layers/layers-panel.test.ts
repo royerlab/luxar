@@ -2537,6 +2537,16 @@ describe('LayersPanel — blend select drives the leaf material', () => {
 
     const layer = panel.layerState.getLayer('/surface')!;
     expect(layer.type).toBe('mesh');
+    // Nothing authored a mode, so the layer opens on the MESH default — keyed on the
+    // resolved layer type, not the wrapper's raw `group` type (which would read
+    // `additive` and hide the Alpha-cutoff slider on an opaque surface).
+    expect(layer.blendingMode).toBe('opaque');
+    // ...and the defaulted mode must NOT make the wrapper a composition setter, or it
+    // would push `opaque` onto every descendant as if the author had asked for it.
+    expect(layer.blendingModeExplicit).toBe(false);
+    // The consequence the default exists for: the cutout is active, so its slider shows.
+    panel.layerState.select('/surface', 'single');
+    expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
     // The wrapper carries no shading attrs of its own, so the sliders must open on
     // what the parts are actually rendering with — not on the material defaults.
     expect(layer.ambient).toBe(0.4);

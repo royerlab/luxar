@@ -32,6 +32,7 @@ bookkeeping rather than correctness.
   TypeScript sides; `image_labels` is refused alongside `partition=`.
 
 Mesh still has **no LOD ladder** — a separate axis, and unaffected by this.
+
 #### Real join geometry for lines: the miter (#790, #795)
 
 Every line segment is one screen-space quad expanded only *perpendicular* to its
