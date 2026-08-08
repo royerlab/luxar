@@ -1351,17 +1351,56 @@ def test_partition_gathers_per_vertex_normals_and_colors(tmp_path) -> None:
 
 
 def test_partition_passes_a_uniform_color_through_unsliced(tmp_path) -> None:
-    """A broadcast RGB triple is whole-node, not per-vertex — do not gather it.
-
-    Gathering on LENGTH is what keeps this right: a 3-element colour has no
-    vertex axis, and slicing it by vertex index would be nonsense (and, on a
-    3-vertex mesh, silently plausible).
-    """
+    """A broadcast RGB triple is whole-node, not per-vertex — do not gather it."""
     store = _write_partitioned(
         tmp_path, partition={"max_elements": 10}, colors=(255, 128, 0)
     )
     scene = LuxarScene.load(str(store))
     assert len(scene.list_meshes()) > 1
+
+
+@pytest.mark.parametrize("colors", [[1.0, 0.0, 0.0, 0.5], (1.0, 0.0, 0.0, 0.5)])
+def test_partition_uniform_color_survives_a_vertex_count_collision(
+    tmp_path, colors
+) -> None:
+    """A 4-component color on a 4-vertex mesh is still one color, not four rows.
+
+    The broadcast form has to be recognised by SHAPE, not by length. Classifying
+    it by length is silently wrong exactly here: the tetrahedron has as many
+    vertices as an RGBA color has channels, so every part would be handed a
+    rotated 3-slice of the components — itself a valid uniform RGB, so nothing
+    downstream complains. Mesh is where this is reachable rather than theoretical,
+    because a part always holds at least a triangle's worth of vertices.
+    """
+    store = tmp_path / "tet.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh("tet", _V, _F, colors=colors, partition={"max_elements": 1})
+
+    root = zarr.open_group(str(store), mode="r")
+    node = root["tet"]
+    assert node.attrs["kind"] == "partition"
+    parts = [k for k in node.keys() if k.startswith("part_")]
+    assert len(parts) > 1
+    for part in parts:
+        stored = np.asarray(node[part]["colors"]).reshape(-1)
+        assert stored.tolist() == pytest.approx(list(colors)[: stored.size])
+        assert np.allclose(stored[:3], [1.0, 0.0, 0.0])
+
+
+def test_partition_rejects_a_malformed_uniform_color_before_writing(tmp_path) -> None:
+    """A bad broadcast color fails the same way with and without ``partition=``.
+
+    The refusal itself is not new — a part's own writer would reach it — but only
+    after the wrapper and every earlier part are already on disk. Checking the
+    source value up front is what leaves no partial node behind, which is the same
+    fail-fast gate the other per-vertex channels get here.
+    """
+    with pytest.raises(ValueError, match="3 \\(RGB\\) or 4 \\(RGBA\\)"):
+        _write_partitioned(tmp_path, partition={"max_elements": 10}, colors=(255, 128))
+
+    root = zarr.open_group(str(tmp_path / "pm.luxar.zarr"), mode="r")
+    assert "pm" not in root
 
 
 def test_partition_below_the_cap_falls_through_to_a_single_leaf(tmp_path) -> None:

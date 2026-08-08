@@ -420,6 +420,26 @@ def _resolve_mesh_partition(partition: Any) -> tuple[int, str]:
     )
 
 
+def _is_broadcast_color(colors: Any) -> bool:
+    """Whether ``colors`` is a uniform RGB(A) sequence rather than per-vertex data.
+
+    Classifies on SHAPE only — a list/tuple of 3 or 4 numeric components — which is
+    the admission test
+    :func:`~luxar.io._compiler.node_common.validate_broadcast_color` applies at the
+    writer. Values (finite, non-negative, alpha in range) are deliberately left to
+    that validator, so a bad uniform color fails with the same message it gets
+    without ``partition=``.
+
+    A per-vertex list of triples fails the component test (its entries are
+    sequences, not numbers) and is gathered normally, as are numpy colors of any
+    shape — the writer refuses a 1-D numpy color outright, so only a list/tuple can
+    be the broadcast form.
+    """
+    if not isinstance(colors, (list, tuple)) or len(colors) not in (3, 4):
+        return False
+    return all(isinstance(c, (int, float, np.integer, np.floating)) for c in colors)
+
+
 def _add_mesh_partition(
     group: "Group",
     *,
@@ -455,7 +475,10 @@ def _add_mesh_partition(
     are gathered through the part's ``vertex_index``; per-face data has no
     attribute today.
     """
-    from ....io._compiler.node_common import validate_scalars_preflight
+    from ....io._compiler.node_common import (
+        validate_broadcast_color,
+        validate_scalars_preflight,
+    )
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
     from ....validation.base import (
         validate_colors_for_writing,
@@ -507,8 +530,19 @@ def _add_mesh_partition(
     # a given input then fails identically whether or not it is partitioned.
     if normals is not None:
         validate_normals_for_writing(normals, n_vertices)
+    # A uniform RGB(A) list/tuple is the one leaf parameter whose OWN length can
+    # collide with the vertex count, and mesh is the geometry where that collision
+    # is reachable: every part holds at least three vertices (a triangle's worth),
+    # so a 4-vertex source with an RGBA color satisfies `slice_optional_array`'s
+    # length test and is gathered as if its four channels were four vertex rows.
+    # Each part then receives a different rotated 3-slice of the components —
+    # SILENTLY, because a 3-element result is itself a valid uniform RGB. Classify
+    # the broadcast form up front so every part gets the color the caller wrote.
+    uniform_color = _is_broadcast_color(colors)
     if isinstance(colors, np.ndarray):
         validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
+    elif isinstance(colors, (list, tuple)):
+        validate_broadcast_color(colors, "colors")
     if scalars is not None:
         validate_scalars_preflight(scalars, n_vertices)
     if labels is not None:
@@ -558,7 +592,9 @@ def _add_mesh_partition(
         # follows its vertices while a uniform RGB triple or a colormap name is
         # handed to every part untouched. `labels` is per-VERTEX (hover tooltips),
         # so it is gathered too — passing it whole would give every part V labels
-        # for its own Vi vertices.
+        # for its own Vi vertices. `colors` is the one exception: a broadcast
+        # RGB(A) sequence is classified by SHAPE above rather than by length, since
+        # its length can coincide with the vertex count (see `uniform_color`).
         take = part.vertex_index
         wrapper.add_mesh(
             name=f"part_{i}",
@@ -566,7 +602,11 @@ def _add_mesh_partition(
             faces=part.faces,
             normals=slice_optional_array(normals, take, n_vertices),
             normal_dims=normal_dims,
-            colors=slice_optional_array(colors, take, n_vertices),
+            colors=(
+                colors
+                if uniform_color
+                else slice_optional_array(colors, take, n_vertices)
+            ),
             scalars=slice_optional_array(scalars, take, n_vertices),
             shading=shading,
             double_sided=double_sided,
