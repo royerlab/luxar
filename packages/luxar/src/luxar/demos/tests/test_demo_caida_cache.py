@@ -699,6 +699,37 @@ class TestLoadPipeline:
         assert any(org_a.name in n for n in names)
         assert any(new_org in n for n in names)
 
+    def test_the_pruner_matches_the_name_cache_computed_really_writes(
+        self, tmp_path: Path
+    ) -> None:
+        """The bundle name and the pruner's pattern must not drift apart.
+
+        The name comes from ``_safe_cache_key`` over in ``luxar.utils.demos``
+        (which keeps ``.`` and ``-``, so both snapshot filenames survive intact);
+        the pattern that finds it again lives here. The prune tests below build
+        their bundles by hand, so nothing else in this file would notice a
+        sanitizer that stopped preserving those characters — every derived bundle
+        would silently become unprunable, which is the unbounded cache growth
+        this whole change exists to stop.
+        """
+        cache = tmp_path / "caida"
+        rel_path, org_path = _write_snapshot_pair(cache)
+        demo.load_pipeline(rel_path, org_path, cache)
+
+        (bundle,) = cache.glob("pipeline_*.pkl")
+        matched = demo.PIPELINE_BUNDLE_PATTERN.fullmatch(bundle.name)
+        assert matched is not None, bundle.name
+        assert matched.group("rel") == rel_path.name
+        assert matched.group("org") == org_path.name
+
+        # ...and it is therefore really collected once its date is superseded.
+        victims, _ = demo._collect_superseded_victims(
+            cache,
+            keep=1,
+            current=("20990101.as-rel2.txt.bz2", "20990101.as-org2info.txt.gz"),
+        )
+        assert bundle in victims
+
 
 # =============================================================================
 # parse_as_org — the section markers CAIDA really writes

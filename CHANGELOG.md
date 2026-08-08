@@ -76,7 +76,6 @@ what the gate enforces for new code. The checker runs in
 that actually gates PRs — from the Python test suite. Regenerate with
 `hatch run check-complexity --update-baseline`.
 
-
 #### CAIDA country coloring parses current organization snapshots (#1373)
 
 The CAIDA AS-topology demo expected a space in the upstream
