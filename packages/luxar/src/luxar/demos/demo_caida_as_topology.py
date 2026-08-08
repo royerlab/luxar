@@ -101,11 +101,12 @@ the memo is fresh — everything else is served from the cache directory
       chain (parse → largest connected component → tier-1 detection →
       Louvain communities → degrees), ~12 s of recompute otherwise
       (``--recompute-pipeline`` rebuilds it).
-    - ``layout3d_<node-hash>_e<n-edges>_v1.pkl`` — the 3D coordinates.
+    - ``layout3d_<node-hash>_e<n-edges>_<edge-hash>_v1.pkl`` — the 3D
+      coordinates.
 
 Invalidation is by content, not by timestamp: the pipeline cache is keyed
 on the two snapshot FILENAMES and the layout on the node list plus the
-edge count it was computed from, so a new monthly CAIDA release downloads
+edge list it was computed from, so a new monthly CAIDA release downloads
 once and recomputes both derived artifacts once, while an older snapshot's
 caches stay valid rather than being clobbered. Superseded snapshots (raw
 files plus their derived pipeline bundles) are pruned to the newest
@@ -149,6 +150,7 @@ DEMO_META = {
 
 import bz2
 import gzip
+import hashlib
 import json
 import math
 import re
@@ -214,6 +216,18 @@ SNAPSHOT_DISCOVERY_TTL_SECONDS = 7 * 24 * 60 * 60
 # Cache versions for the two derived artifacts (bump to invalidate).
 PIPELINE_CACHE_VERSION = 1
 LAYOUT_CACHE_VERSION = 1
+
+# A derived pipeline bundle exactly as ``cache_computed`` names it
+# (``<key>_v<version>.pkl``), plus the ``.corrupt`` / ``.tmp`` siblings it can
+# leave behind. The pruner matches this in FULL rather than globbing on the
+# ``pipeline_`` prefix: ``--cache-dir`` may point at a directory shared with
+# another demo or tool, and a prefix glob would delete any file that merely
+# starts with "pipeline_" and happens to contain a superseded 8-digit date.
+PIPELINE_BUNDLE_PATTERN = re.compile(
+    rf"pipeline_(?P<rel>{AS_REL_NAME_PATTERN.pattern})"
+    rf"_(?P<org>{AS_ORG_NAME_PATTERN.pattern})"
+    r"_v\d+\.pkl(?:\.corrupt|\.tmp)?"
+)
 
 # How many snapshot releases to keep on disk (raw files + derived bundles).
 DEFAULT_KEEP_SNAPSHOTS = 2
@@ -461,9 +475,13 @@ def _prune_superseded_snapshots(
     every month, forever. Snapshot files are grouped by the 8-digit date in their
     name; the dates of the pair in use are always kept (the as-org2info release
     cadence is slower, so the current org file can be older than the newest one
-    on disk), and each removed date takes its derived ``pipeline_*`` bundles —
+    on disk), and each removed date takes its derived pipeline bundles —
     including a ``.pkl.corrupt`` / ``.pkl.tmp`` sibling ``cache_computed`` may
-    have left — with it. Nothing else is touched: not the memo, not an
+    have left — with it. A bundle qualifies only by matching
+    :data:`PIPELINE_BUNDLE_PATTERN` in full and EMBEDDING the superseded date in
+    one of the two snapshot filenames it is keyed on; a shared ``--cache-dir``
+    must not lose someone else's ``pipeline_…`` file to a substring match.
+    Nothing else is touched: not the memo, not an
     unrecognised file, and deliberately not a ``layout3d_*`` cache. Those are
     small (~1 MB each) and keyed on the node SET rather than the release, so
     there is no date to prune them by, and an unchanged node set across releases
@@ -480,6 +498,7 @@ def _prune_superseded_snapshots(
         return
 
     by_date: dict[str, list[Path]] = {}
+    bundles_by_date: dict[str, list[Path]] = {}
     for path in sorted(cache_dir.iterdir()):
         if not path.is_file():
             continue
@@ -487,6 +506,14 @@ def _prune_superseded_snapshots(
             path.name
         ):
             by_date.setdefault(path.name[:8], []).append(path)
+            continue
+        bundle = PIPELINE_BUNDLE_PATTERN.fullmatch(path.name)
+        if bundle is not None:
+            # The derived bundle is keyed on both filenames, so a bundle naming
+            # a removed date is unusable whatever its other date is. Indexed by
+            # the dates it actually EMBEDS, not by a substring search.
+            for embedded in (bundle.group("rel"), bundle.group("org")):
+                bundles_by_date.setdefault(embedded[:8], []).append(path)
     if not by_date:
         return
 
@@ -496,11 +523,7 @@ def _prune_superseded_snapshots(
     collected: list[Path] = []
     for date in superseded:
         collected += by_date[date]
-        # The derived bundle is keyed on both filenames, so a bundle naming a
-        # removed date is unusable whatever its other date is.
-        collected += sorted(
-            p for p in cache_dir.glob(f"pipeline_*{date}*.pkl*") if p.is_file()
-        )
+        collected += bundles_by_date.get(date, [])
     # A bundle whose two dates are BOTH superseded is collected once per date;
     # deleting it twice would report a spurious "Skipped … No such file".
     victims = list(dict.fromkeys(collected))
@@ -540,9 +563,10 @@ def parse_as_org(path: Path) -> pd.DataFrame:
         # format:aut|changed|aut_name|org_id|opaque_id|source  (ASes → org_id)
     We stream once, tracking which section we're in, and join. The markers are
     matched whitespace-tolerantly (:data:`ORG_SECTION_PATTERN` /
-    :data:`AUT_SECTION_PATTERN`): a marker that fails to match is silent — every
-    row is skipped and every AS comes out ``unknown``/``??`` — so it must not
-    hinge on one spelling of the separator.
+    :data:`AUT_SECTION_PATTERN`), so recognition does not hinge on one spelling
+    of the separator — and an empty section warns, because the failure mode is
+    otherwise invisible: every row is skipped, every AS comes out
+    ``unknown``/``??``, and the demo still renders with a flat "Country" view.
     """
     org_info: dict[str, tuple[str, str]] = {}
     asn_to_org: dict[str, str] = {}
@@ -568,6 +592,16 @@ def parse_as_org(path: Path) -> pd.DataFrame:
                 elif mode == "aut" and len(parts) >= 4:
                     asn, _changed, _aut_name, org_id = parts[:4]
                     asn_to_org[asn.strip()] = org_id.strip()
+
+        if not org_info or not asn_to_org:
+            # The failure this parser is most prone to, made loud. A marker the
+            # regexes do not recognise skips every row and still renders — the
+            # "Country" view just goes one flat colour, which is easy to miss.
+            aprint(
+                "  ⚠ No organization/AS section recognised in this file — its "
+                "format-comment markers have changed."
+            )
+            aprint("    Every AS will be labelled unknown/??.")
 
         rows = []
         for asn, org_id in asn_to_org.items():
@@ -830,24 +864,42 @@ def _pca_realign(coords: np.ndarray) -> np.ndarray:
     return rotated.astype(np.float32)
 
 
+def _edges_hash(edges: pd.DataFrame) -> str:
+    """Deterministic hash of the edge ENDPOINTS, the other half of the layout key.
+
+    The counterpart of :func:`nodes_hash`. Only the two endpoint columns are
+    hashed, because that is exactly what the layout depends on:
+    :func:`build_adjacency` builds an unweighted symmetric matrix, so ``rel``
+    does not move a single coordinate. It is order-sensitive, which errs the
+    safe way — a reordering of the same edge list costs one recompute, where a
+    weaker key would serve the wrong geometry. ~50 ms on the real 350k-edge
+    frame, against the 2-3 minutes a needless layout recompute costs.
+    """
+    h = hashlib.sha256()
+    for column in ("asn_a", "asn_b"):
+        h.update("\n".join(edges[column].tolist()).encode("utf-8"))
+        h.update(b"\x1f")
+    return h.hexdigest()[:16]
+
+
 def compute_layout(
     nodes: list[str], edges: pd.DataFrame, cache_dir: Path, recompute: bool
 ) -> np.ndarray:
     """Spectral embedding + UMAP + PCA-realign → 3D coords, cached.
 
-    The cache key IS the input identity — a hash of the node list plus the EDGE
-    COUNT — so a changed graph lands in its own file instead of invalidating, and
-    no separate hash guard is needed inside the loader. The edge count matters
-    because the layout is computed from the adjacency, not from the nodes alone: a
-    release whose LCC happens to have the same node set but different
-    relationships must not silently reuse last month's geometry. It is a count
-    rather than a full edge hash deliberately — hashing ~350k pairs on every warm
-    run to catch a rewiring that preserves the edge count exactly is not worth it.
+    The cache key IS the input identity — a hash of the node list plus the edge
+    count and a hash of the edge endpoints — so a changed graph lands in its own
+    file instead of invalidating, and no separate hash guard is needed inside the
+    loader. The edges matter because the layout is computed from the adjacency,
+    not from the nodes alone: a release whose LCC happens to have the same node
+    set but different relationships must not silently reuse last month's
+    geometry, and a bare count would not catch a rewiring that preserves it. The
+    count stays in the name because it makes the cache directory readable.
     """
     with asection("3D layout"):
         coords = cache_computed(
             "caida",
-            key=f"layout3d_{nodes_hash(nodes)}_e{len(edges)}",
+            key=f"layout3d_{nodes_hash(nodes)}_e{len(edges)}_{_edges_hash(edges)}",
             compute_fn=lambda: _compute_layout_coords(nodes, edges),
             cache_dir=cache_dir,
             recompute=recompute,

@@ -19,10 +19,12 @@ recompute, and impossible offline. These tests pin the caching that removes it:
   not re-parse. Keyed on the two snapshot FILENAMES, so a new monthly release
   gets its own entry instead of clobbering the previous one.
 * ``_prune_superseded_snapshots`` — superseded raw snapshots and their derived
-  bundles are removed; the memo, the layout cache and unrecognised files are not.
+  bundles are removed; the memo, the layout cache, unrecognised files and a
+  foreign ``pipeline_…`` file that merely contains a superseded date are not.
 * ``compute_layout`` — cached under a key that IS its input identity (node hash +
-  edge count), so two node sets get two cache files and each is reused, and a
-  rewired graph with the same nodes is not served last month's geometry.
+  edge count + edge hash), so two node sets get two cache files and each is
+  reused, and a rewired graph with the same nodes — even one with the same edge
+  COUNT — is not served last month's geometry.
 * ``parse_as_org`` — the section markers CAIDA really emits carry NO space after
   the colon (``# format:org_id|…``). Matching only the spaced spelling yields an
   empty table and hence ``unknown``/``??`` for every AS — a silent failure the
@@ -725,12 +727,25 @@ class TestParseAsOrgSections:
         assert df.loc["1", "org_name"] == "Alpha Networks"
         assert df.loc["1", "country"] == "US"
 
-    def test_an_unmatched_marker_yields_an_empty_table(self, tmp_path: Path) -> None:
-        # The anti-case, pinning what "silent" means: no recognisable section
-        # header at all and every row is skipped.
+    def test_an_unmatched_marker_yields_an_empty_table_and_warns(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The anti-case: no recognisable section header at all, so every row is
+        # skipped. The demo still renders, which is exactly why it has to say so
+        # — an unannounced flat "Country" view is how the old spaced-marker bug
+        # survived unnoticed.
         df = self._parse(tmp_path, ORG_TEXT.replace("# format:", "# columns:"))
 
         assert len(df) == 0
+        out = capsys.readouterr().out
+        assert "No organization/AS section recognised" in out
+
+    def test_a_recognised_file_does_not_warn(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._parse(tmp_path, ORG_TEXT)
+
+        assert "No organization/AS section recognised" not in capsys.readouterr().out
 
 
 # =============================================================================
@@ -889,6 +904,31 @@ class TestPruneSupersededSnapshots:
         assert "Skipped" not in out
         assert out.count(both.name) == 1
 
+    def test_a_foreign_pipeline_file_is_never_touched(self, tmp_path: Path) -> None:
+        # ``pipeline_`` is not a CAIDA-specific prefix and ``--cache-dir`` can
+        # be shared, so only a file matching the bundle name IN FULL may go.
+        # A substring glob on the date would take all three of these.
+        cache = tmp_path / "caida"
+        self._populate(cache)
+        foreign = [
+            cache / "pipeline_20250101_features.pkl",  # someone else's bundle
+            cache / "pipeline_20250101.as-rel2.txt.bz2_notes.txt",  # half-matching
+            cache / "pipeline_run_20250101.log",  # not even a pickle
+        ]
+        for path in foreign:
+            path.write_bytes(b"not ours")
+
+        demo._prune_superseded_snapshots(
+            cache,
+            keep=2,
+            current=("20250401.as-rel2.txt.bz2", "20250401.as-org2info.txt.gz"),
+        )
+
+        assert all(p.read_bytes() == b"not ours" for p in foreign)
+        # ...while our own bundle for the same superseded date still goes.
+        ours = "pipeline_20250101.as-rel2.txt.bz2_20250101.as-org2info.txt.gz_v1.pkl"
+        assert not (cache / ours).exists()
+
     def test_another_demos_layout_npz_is_never_touched(self, tmp_path: Path) -> None:
         # ``--cache-dir`` can point us at a directory another demo owns, and
         # ``demo_huri_interactome`` keeps its LIVE layout cache in exactly this
@@ -981,10 +1021,11 @@ class TestComputeLayoutCache:
 
         from luxar.demos._graph_common import nodes_hash
 
+        edge_hash = demo._edges_hash(edges)
         names = {p.name for p in cache.glob("layout3d_*.pkl")}
         assert names == {
-            f"layout3d_{nodes_hash(a)}_e1_v{demo.LAYOUT_CACHE_VERSION}.pkl",
-            f"layout3d_{nodes_hash(b)}_e1_v{demo.LAYOUT_CACHE_VERSION}.pkl",
+            f"layout3d_{nodes_hash(a)}_e1_{edge_hash}_v{demo.LAYOUT_CACHE_VERSION}.pkl",
+            f"layout3d_{nodes_hash(b)}_e1_{edge_hash}_v{demo.LAYOUT_CACHE_VERSION}.pkl",
         }
 
         # recompute=True bypasses the cache for that node set only.
@@ -996,7 +1037,7 @@ class TestComputeLayoutCache:
     ) -> None:
         # The layout is computed from the ADJACENCY. A release whose LCC keeps the
         # same node set but rewires it must not silently reuse the old coords, so
-        # the edge count is part of the key.
+        # the edge list is part of the key.
         cache = tmp_path / "caida"
         nodes = ["1", "2", "3"]
         few = pd.DataFrame({"asn_a": ["1"], "asn_b": ["2"], "rel": [0]})
@@ -1017,6 +1058,51 @@ class TestComputeLayoutCache:
         assert first[0, 0] == 1.0 and second[0, 0] == 2.0
         np.testing.assert_array_equal(first, again)
         assert len({p.name for p in cache.glob("layout3d_*.pkl")}) == 2
+
+    def test_a_rewiring_that_keeps_the_edge_count_still_recomputes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The case a bare edge COUNT in the key cannot see: same nodes, same
+        # number of edges, different endpoints — a different graph, so a
+        # different layout. Serving the cached coords here would silently plot
+        # this month's Internet with last month's geometry.
+        cache = tmp_path / "caida"
+        nodes = ["1", "2", "3"]
+        star = pd.DataFrame({"asn_a": ["1", "1"], "asn_b": ["2", "3"], "rel": [0, 0]})
+        path = pd.DataFrame({"asn_a": ["1", "2"], "asn_b": ["2", "3"], "rel": [0, 0]})
+        assert len(star) == len(path)
+        calls: list[tuple[str, ...]] = []
+
+        def fake_coords(ns: list[str], es: Any) -> np.ndarray:
+            calls.append(tuple(es["asn_a"]))
+            return np.full((len(ns), 3), len(calls), dtype=np.float32)
+
+        monkeypatch.setattr(demo, "_compute_layout_coords", fake_coords)
+
+        first = demo.compute_layout(nodes, star, cache_dir=cache, recompute=False)
+        second = demo.compute_layout(nodes, path, cache_dir=cache, recompute=False)
+        again = demo.compute_layout(nodes, star, cache_dir=cache, recompute=False)
+
+        # Each graph was laid out on its own, and neither served the other's.
+        assert calls == [("1", "1"), ("1", "2")]
+        assert first[0, 0] == 1.0 and second[0, 0] == 2.0
+        np.testing.assert_array_equal(first, again)  # and each is still reused
+        assert len({p.name for p in cache.glob("layout3d_*.pkl")}) == 2
+
+    def test_edges_hash_tracks_the_endpoints_and_ignores_the_relationship_kind(
+        self,
+    ) -> None:
+        # ``build_adjacency`` is unweighted and symmetric, so ``rel`` moves no
+        # coordinate and must not cost a 2-3 minute recompute.
+        base = pd.DataFrame({"asn_a": ["1", "2"], "asn_b": ["2", "3"], "rel": [0, -1]})
+        flipped_rel = base.assign(rel=[-1, 0])
+        rewired = pd.DataFrame(
+            {"asn_a": ["1", "1"], "asn_b": ["2", "3"], "rel": [0, -1]}
+        )
+
+        assert demo._edges_hash(base) == demo._edges_hash(flipped_rel)
+        assert demo._edges_hash(base) != demo._edges_hash(rewired)
+        assert demo._edges_hash(base) != demo._edges_hash(base.iloc[:1])
 
 
 # =============================================================================
