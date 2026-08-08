@@ -72,6 +72,7 @@ def run_lod(
     """
     from luxar import LuxarZarrCompiler
 
+    from ...core.group.adders.mesh import validate_scalar_data_range
     from ...core.group.lod.mesh import resolve_substitutive_axis_mesh
     from ...core.viewer_config import ViewerConfig
     from ...io._compiler.node_common import KNOWN_RENDER_ATTRS
@@ -179,6 +180,28 @@ def run_lod(
         }
         forwarded = {k: v for k, v in data.metadata.items() if k in forwardable}
 
+        # The stored scalar window, FORWARDED rather than left to be recomputed
+        # from the decoded values. The two agree for an ordinary mesh, but the
+        # stamp can legitimately be wider than the values it describes, and then
+        # they do not: a coarse child of an existing ladder carries the whole
+        # ladder's shared window while its own cluster-averaged values are
+        # contracted, so `--node surf/child_0` recomputed a narrower window and
+        # the surface came back recoloured — the exact pop the shared window
+        # exists to prevent, reintroduced by the rewrite. It rides the private
+        # `_scalar_data_range` plumbing key rather than `forwarded` because the
+        # public stamp is not an accepted attribute (see the note above).
+        #
+        # Validated HERE, with the adder's own validator, for the same reason
+        # `--method` is: the deletion below is irreversible, and a corrupt stamp
+        # would otherwise be diagnosed with the output already gone.
+        scalar_range = (
+            validate_scalar_data_range(
+                node_path, data.metadata.get("scalar_data_range")
+            )
+            if data.scalars is not None
+            else None
+        )
+
         # `colormap='custom'` is a SENTINEL, not a name: the writer resolves any
         # non-builtin colormap — an ndarray LUT, but also a plain matplotlib or
         # colorcet name like 'magma' — to a `colormap_lut` dataset plus that
@@ -228,6 +251,7 @@ def run_lod(
                 normal_dims=data.normal_dims,
                 colors=data.colors,
                 scalars=data.scalars,
+                _scalar_data_range=scalar_range,
                 shading=data.metadata.get("shading"),
                 double_sided=bool(data.metadata.get("double_sided", True)),
                 substitutive_lod=spec,

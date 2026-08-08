@@ -428,6 +428,49 @@ class TestMeshLod:
             assert child_lut is not None
             np.testing.assert_array_equal(child_lut, source_lut)
 
+    def test_a_widened_scalar_window_is_forwarded_not_recomputed(
+        self, tmp_path: Path
+    ) -> None:
+        """Re-laddering a node whose stamp is wider than its values recoloured it.
+
+        `scalar_data_range` is the window the viewer normalizes the colormap
+        against, and it is not always the min/max of the values stored under it:
+        a ladder stamps ONE shared window on every child, so a coarse child's
+        stamp spans the whole field while its own cluster-averaged values are
+        contracted. Recomputing from the decoded values there rewrote the window
+        onto the narrower span and the surface came back in different colours.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        # Authored deliberately wider than the values, which is exactly the shape
+        # a ladder child has on disk — and reachable without building one first.
+        scalars = _grid_mesh()[0][:, 0].copy()
+        window = (-10.0, 10.0)
+        _write_source(
+            source,
+            colormap="viridis",
+            scalars=scalars,
+            _scalar_data_range=window,
+        )
+        loaded_source = LuxarScene.load(source)
+        assert loaded_source.get_node_metadata("surf")["scalar_data_range"] == list(
+            window
+        )
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        written = LuxarScene.load(out)
+        children = [m for m in written.list_meshes() if m.startswith("surf/child_")]
+        assert len(children) >= 2
+        for child in children:
+            stamped = written.get_node_metadata(child)["scalar_data_range"]
+            assert stamped == pytest.approx(list(window)), (
+                f"{child} re-windowed the colormap onto its own values "
+                f"({stamped}) instead of keeping the authored window {window}"
+            )
+
     def test_the_scene_viewer_config_comes_across(self, tmp_path: Path) -> None:
         """Dropping it undoes the LUT fidelity above on the scenes that have one.
 

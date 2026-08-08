@@ -189,8 +189,13 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
         )
 
 
-def _validate_scalar_data_range(name: str, value: Any) -> Optional[tuple[float, float]]:
+def validate_scalar_data_range(name: str, value: Any) -> Optional[tuple[float, float]]:
     """Check the internal ``_scalar_data_range`` plumbing key (or pass ``None``).
+
+    Public despite validating a private key, because ``luxar mesh lod`` has to run
+    it BEFORE it deletes its output — the same reason that command validates the
+    decimation method up front. Sharing this function is what keeps the CLI's
+    early check and the adder's real one from disagreeing about what is accepted.
 
     Internal, but reachable: it is a keyword like any other, and an ill-formed
     one used to travel all the way to ``write_scalars``, where ``bounds[1]``
@@ -265,7 +270,7 @@ def add_mesh_impl(
         # private key. Validated because it is a real parameter with a real
         # shape: a 1-tuple used to reach the writer and raise a bare IndexError,
         # which this funnel does not catch, leaving a half-written node.
-        scalar_data_range = _validate_scalar_data_range(
+        scalar_data_range = validate_scalar_data_range(
             name, attrs.pop("_scalar_data_range", None)
         )
 

@@ -137,7 +137,6 @@ function makePointsChildNode(
   };
 }
 
-/** A ``lines`` leaf child (the finest level of a lines-substitutive ladder). */
 /** A mesh lod-group child (the fourth deferrable type). */
 function makeMeshChildNode(path: string, coverageFraction: number): SceneNode {
   return {
@@ -153,6 +152,7 @@ function makeMeshChildNode(path: string, coverageFraction: number): SceneNode {
   };
 }
 
+/** A ``lines`` leaf child (the finest level of a lines-substitutive ladder). */
 function makeLinesChildNode(
   path: string,
   coverageFraction: number,
