@@ -19,7 +19,7 @@ vi.mock('zarrita', async () => {
     get: vi.fn(),
   };
 });
-import { open as zarrOpen, get as zarrGet } from 'zarrita';
+import { open as zarrOpen, get as zarrGet, NotFoundError } from 'zarrita';
 const mockOpen = vi.mocked(zarrOpen);
 const mockGet = vi.mocked(zarrGet);
 
@@ -176,18 +176,118 @@ describe('LabelLoader.getLabel — fetch + cache', () => {
 
   it('returns null for any element when the underlying zarr fetch fails', async () => {
     const loader = makeLoader();
-    mockOpen.mockRejectedValueOnce(new Error('not found'));
+    mockOpen.mockRejectedValueOnce(new Error('decode failed'));
 
     // Default warn spy so the failure log doesn't pollute test output.
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       // Returns empty array on error → any index falls through to the
       // out-of-range branch.
-      expect(await loader.getLabel('/Missing', 0)).toBeNull();
+      expect(await loader.getLabel('/Broken', 0)).toBeNull();
       expect(warnSpy).toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('does not warn when the node simply has no label arrays', async () => {
+    // The picker calls getLabel for whatever it hit, and most nodes carry no
+    // labels at all (every coarse LOD level of a labelled ladder, for one).
+    // That is an ordinary miss, not a failure worth a console warning.
+    // The real class zarrita throws for an absent node, so this pins the
+    // `instanceof` branch of the shared isNotFoundError guard.
+    const loader = makeLoader();
+    mockOpen.mockRejectedValueOnce(new NotFoundError('v2 array', { path: '/x/.zarray' }));
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await loader.getLabel('/Unlabelled', 0)).toBeNull();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe('LabelLoader.getLabel — a consecutive run of equal labels decodes once', () => {
+  beforeEach(() => {
+    mockOpen.mockReset();
+    mockGet.mockReset();
+  });
+
+  it('decodes a 64-element broadcast node exactly once', async () => {
+    const loader = makeLoader();
+    // How a producer tags a whole node: one string repeated per element.
+    const broadcast = 'AF_L — Arcuate fasciculus (left) · association';
+    programOneLoad(new Array(64).fill(broadcast));
+
+    const decodeSpy = vi.spyOn(TextDecoder.prototype, 'decode');
+    try {
+      expect(await loader.getLabel('/Tract', 0)).toBe(broadcast);
+      expect(await loader.getLabel('/Tract', 63)).toBe(broadcast);
+      // The whole node is decoded in one pass on first access; 63 of the 64
+      // elements are served by reusing the previous element's string.
+      expect(decodeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      decodeSpy.mockRestore();
+    }
+  });
+
+  it('still decodes once per element when every label differs', async () => {
+    // The reuse must not cost the all-distinct case anything, and must never
+    // collapse two different labels into one.
+    const loader = makeLoader();
+    const distinct = Array.from({ length: 64 }, (_, i) => `label-${i}`);
+    programOneLoad(distinct);
+
+    const decodeSpy = vi.spyOn(TextDecoder.prototype, 'decode');
+    try {
+      expect(await loader.getLabel('/Distinct', 0)).toBe('label-0');
+      expect(decodeSpy).toHaveBeenCalledTimes(64);
+      expect(await loader.getLabel('/Distinct', 63)).toBe('label-63');
+    } finally {
+      decodeSpy.mockRestore();
+    }
+  });
+
+  it('keeps distinct labels distinct when repeats and empties are interleaved', async () => {
+    const loader = makeLoader();
+    // No two ADJACENT entries are equal here, so this pins the run boundaries
+    // without ever taking the reuse branch.
+    programOneLoad(['red', 'green', 'red', '', 'green', 'blue', 'red']);
+
+    expect(await loader.getLabel('/Mixed', 0)).toBe('red');
+    expect(await loader.getLabel('/Mixed', 1)).toBe('green');
+    expect(await loader.getLabel('/Mixed', 2)).toBe('red');
+    expect(await loader.getLabel('/Mixed', 3)).toBeNull();
+    expect(await loader.getLabel('/Mixed', 4)).toBe('green');
+    expect(await loader.getLabel('/Mixed', 5)).toBe('blue');
+    expect(await loader.getLabel('/Mixed', 6)).toBe('red');
+  });
+
+  it('does not let an empty label bridge a run across it', async () => {
+    // The empty branch must still advance the previous-range bookkeeping. If
+    // it does not, the element after an empty compares against the element
+    // BEFORE it and wrongly reuses: ['red','',''] instead of ['red','','red'].
+    const loader = makeLoader();
+    programOneLoad(['red', '', 'red']);
+
+    expect(await loader.getLabel('/Gap', 0)).toBe('red');
+    expect(await loader.getLabel('/Gap', 1)).toBeNull();
+    expect(await loader.getLabel('/Gap', 2)).toBe('red');
+  });
+
+  it('resumes a run correctly after an embedded empty label', async () => {
+    // Same defect, with real runs either side: a stale previous range yields
+    // ['red','red','','',''] instead of ['red','red','','red','red'].
+    const loader = makeLoader();
+    programOneLoad(['red', 'red', '', 'red', 'red']);
+
+    expect(await loader.getLabel('/Runs', 0)).toBe('red');
+    expect(await loader.getLabel('/Runs', 1)).toBe('red');
+    expect(await loader.getLabel('/Runs', 2)).toBeNull();
+    expect(await loader.getLabel('/Runs', 3)).toBe('red');
+    expect(await loader.getLabel('/Runs', 4)).toBe('red');
   });
 });
 

@@ -24,7 +24,12 @@ The two loaders differ in how aggressively they fetch:
 
 - **`LabelLoader`** bulk-loads and UTF-8-decodes **every** label for a
   node on first hover, then serves all subsequent lookups from memory.
-  Label strings are small, so a one-shot decode is cheap.
+  That is usually cheap, but not always: labels are stored per element,
+  so a node that tags all 168k of its vertices with one 107-byte tract
+  name carries ~18 MB of raw CSR bytes over ~275 chunks. The first hover
+  of such a node pays that fetch (a few tens of KB once compressed) and
+  one synchronous decode pass; consecutive equal labels are decoded once
+  (see Invariants), so the retained strings stay small.
 - **`ImageLabelLoader`** is **truly lazy**: it bulk-loads only the
   (small) offsets array per node, then fetches each image's byte range
   on demand via a zarr slice. Image blobs can be hundreds of MB, so
@@ -57,7 +62,10 @@ const loader = new LabelLoader(store, rootLoc);
 // First call loads + decodes all labels for the node; later calls hit the cache.
 const label = await loader.getLabel('/points/cells', elementIndex); // string | null
 
-// Cheap guard before constructing a loader path, using cached node .zattrs:
+// Available as a cheap guard from cached node .zattrs — but note that NOTHING
+// in the viewer currently calls it: the pick-result handler asks for a label
+// unconditionally, and an unlabelled node is kept quiet by the info-demotion in
+// the loader's catch (below) rather than by this predicate.
 if (loader.hasLabels(nodeAttrs)) {
   /* node has a label_offsets / label_bytes pair */
 }
@@ -66,9 +74,12 @@ loader.dispose(); // clear caches + in-flight map
 ```
 
 `getLabel` returns `null` when the node has no labels, the element's
-label is empty, or the index is out of range. A failed zarr fetch logs a
-warning (`Modules.SCENE_LOADER`) and resolves to an empty label set
-rather than throwing.
+label is empty, or the index is out of range. A failed zarr fetch
+resolves to an empty label set rather than throwing. A node that simply
+has no `label_offsets` array is the ordinary case — the picker calls
+`getLabel` for whatever it hit, and most nodes are unlabelled — so that
+is logged at info; everything else (decode failures, corrupt chunks, bad
+metadata) still logs a warning (`Modules.SCENE_LOADER`).
 
 ### ImageLabelLoader (`image-label-loader.ts`)
 
@@ -106,6 +117,12 @@ WebP (`RIFF…WEBP`) are detected, with `image/png` as the fallback.
   converted to `Number` before slicing — fine for in-range byte offsets.
 - **Empty entry ⇒ `null`.** `offsets[i] === offsets[i+1]` is the
   canonical "no label" sentinel for both loaders.
+- **A consecutive run of equal labels is decoded once.** `LabelLoader`
+  compares each element's bytes to the previous element's and reuses the
+  string on a match, so a broadcast label (one value repeated across a
+  whole node) costs one decode and one retained string instead of `N`.
+  Only _consecutive_ runs collapse — a general pool would cost more than
+  it saves on the common all-distinct case.
 - **Path normalization.** A leading `/` on `nodePath` is stripped before
   `rootLoc.resolve(...)`, so both `/points/cells` and `points/cells`
   resolve identically.

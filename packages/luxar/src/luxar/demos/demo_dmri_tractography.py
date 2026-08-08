@@ -44,6 +44,57 @@ Lines geometry applied to data that is natively made of curves. Each of the 87
 bundles becomes its own Lines node with ``layer=True``, so the Layers panel
 (press **L**) gives per-tract visibility, display range, gamma and blending.
 
+HOVER LABELS — AND THE LOD CAVEAT
+---------------------------------
+The atlas names its bundles with terse codes (`AF_L`, `IFOF_R`, `DRTT_L`), which
+are what the Layers panel shows. Hovering a streamline expands the code into the
+full anatomical name plus a one-line gloss of what the tract does, e.g.
+
+    AF_L — Arcuate fasciculus (left) · association · frontal (Broca) and
+    temporal (Wernicke) language areas
+
+Two honest caveats, and the first is the big one:
+
+* **Get close before hover says anything.** Labels ride the *finest* level of
+  the substitutive ladder only — the real Lines node; the synthesised coarse
+  gsplat levels carry none. Levels are selected on `coverage_fraction`, the
+  share of the viewport the node's bounds fill, and the finest level of every
+  group is anchored at 1.0, which nothing reaches from the opening pose.
+
+  The route that works is to **fly the camera into the tractogram**. When the
+  camera is inside or straddling a group's bounding box the selector returns
+  `+Infinity` and saturates to the finest level (`projectBoxDiagonalPx` in
+  `scene/lod-selector-math.ts`), so every bundle enclosing the camera becomes
+  labelled at once — a cranial nerve needs proximity, not magnification.
+  Zooming from outside works too, it is just slower: roughly measured from the
+  atlas bundle bounding boxes projected through `brain_camera()` at 16:9, the
+  whole tractogram covers ~0.7 of the viewport at the opening pose, the corpus
+  callosum ~0.7, the corticospinal tract ~0.4, the arcuate ~0.3 and a cranial
+  nerve ~0.1 — so about 1.5x of zoom for the biggest tracts and rather more,
+  plus a pan, for the smallest.
+
+  This is a threshold, not a law: `substitutive_lod` takes an explicit
+  `coverage_fractions=[...]` (validated in `core/group/lod/group.py`, consumed
+  in `core/group/adders/lines.py`), so the finest step could be dropped below
+  1.0 to make the big tracts hoverable straight away. It is left at the default
+  on purpose — lowering it selects every tract's full fine level in the default
+  whole-brain view, which is precisely the cost the ladder exists to avoid.
+
+* Lines labels are stored *per vertex*, so a bundle holds one copy of its string
+  per vertex — 168,000 copies at the defaults. Labels here run ~124 bytes on
+  average (AF_L's is 107, the longest, C_PHP_L's, ~148), so a node's blob is
+  ~18-25 MB raw. That is cheap in two of the three places it could hurt and
+  unavoidable in the third: 168,000 identical strings compress to tens of KB on
+  disk, and the viewer's label loader collapses a consecutive run of equal
+  labels to a single decoded string, so the tract name is retained once rather
+  than 168,000 times. The cost is the *fetch*: `write_labels_csr` chunks
+  `label_bytes` at 65,536 bytes, so one bundle is ~278 chunks (~275 plus 3 for
+  `label_offsets`) and its first hover issues ~278 small requests totalling
+  ~42 KB over the wire. Round-trip count, not decode and not memory, is what
+  you wait for — and across 87 bundles it is also ~24,000 extra files in the
+  store, which is worth knowing before `luxar export` writes them all to an
+  offline folder or you put the scene on static hosting.
+
 RENDERING NOTE — `additive`, AND WHY NOT `normal`
 -------------------------------------------------
 A tractogram is a *solid* object: ~6.8M segments packed into a 180 mm skull,
@@ -109,6 +160,9 @@ Usage:
 
 Controls:
     - Press 'L' to open the Layers panel: one row per tract, 87 in total
+    - Fly the camera into the tractogram (or zoom a bundle to fill the view),
+      then hover a tract for its full name and what it does — only the finest
+      LOD level carries labels, and no tract selects it at the opening pose
     - Ctrl+C to stop and cleanup
 """
 
@@ -178,6 +232,229 @@ DIVISIONS: Final = (
     "cerebellum",
     "cranial nerve",
 )
+
+#: Atlas code -> (full anatomical name, one-line functional gloss).
+#:
+#: The bundle names and the code -> tract mapping follow the DSI-Studio HCP-1065
+#: atlas documentation and Yeh, F-C. "Population-based tract-to-region connectome
+#: of the human brain and its hierarchical topology", Nat. Commun. 13, 4933
+#: (2022). The one-line glosses are standard neuroanatomy, not from either
+#: source — several draw on the wider literature (the callosal fibre count, the
+#: DRTT as the tremor target, the Broca/Wernicke framing of the arcuate).
+#:
+#: Keyed on the BASE code with any ``_L`` / ``_R`` hemisphere suffix stripped, so
+#: 46 entries cover all 87 bundles; the pairing is applied by ``tract_label``
+#: rather than duplicated here.
+BUNDLE_INFO: Final[dict[str, tuple[str, str]]] = {
+    # -- association -------------------------------------------------------
+    "AF": (
+        "Arcuate fasciculus",
+        "frontal (Broca) and temporal (Wernicke) language areas",
+    ),
+    "C_FP": (
+        "Cingulum, frontal-parietal segment",
+        "dorsal cingulate bundle linking frontal and parietal cortex",
+    ),
+    "C_FPH": (
+        "Cingulum, frontal-parahippocampal segment",
+        "long cingulate arc from frontal cortex to the parahippocampal gyrus",
+    ),
+    "C_PH": (
+        "Cingulum, parahippocampal segment",
+        "temporal cingulum along the hippocampus; memory circuit",
+    ),
+    "C_PHP": (
+        "Cingulum, parahippocampal-parietal segment",
+        "retrosplenial link from the parahippocampal gyrus to parietal cortex",
+    ),
+    "C_PO": (
+        "Cingulum, parolfactory segment",
+        "subgenual cingulum curving under the genu of the corpus callosum",
+    ),
+    "EMC": (
+        "Extreme capsule",
+        "ventral fronto-temporal pathway between insula and claustrum",
+    ),
+    "FAT": (
+        "Frontal aslant tract",
+        "pre-SMA to inferior frontal gyrus; speech initiation and fluency",
+    ),
+    "IFOF": (
+        "Inferior fronto-occipital fasciculus",
+        "longest association bundle; frontal to occipital, semantic processing",
+    ),
+    "ILF": (
+        "Inferior longitudinal fasciculus",
+        "occipital to anterior temporal; object and face recognition",
+    ),
+    "MdLF": (
+        "Middle longitudinal fasciculus",
+        "superior temporal gyrus to parietal and occipital cortex; auditory and "
+        "language",
+    ),
+    "PAT": (
+        "Parietal aslant tract",
+        "superior to inferior parietal lobule; vertical link across parietal "
+        "association cortex",
+    ),
+    "SLF1": (
+        "Superior longitudinal fasciculus I",
+        "superior parietal to superior frontal; dorsal spatial and motor stream",
+    ),
+    "SLF2": (
+        "Superior longitudinal fasciculus II",
+        "inferior parietal to dorsolateral prefrontal; spatial attention",
+    ),
+    "SLF3": (
+        "Superior longitudinal fasciculus III",
+        "supramarginal gyrus to ventral premotor; articulation and praxis",
+    ),
+    "UF": (
+        "Uncinate fasciculus",
+        "hooks the anterior temporal lobe to orbitofrontal cortex; emotion and memory",
+    ),
+    "VOF": (
+        "Vertical occipital fasciculus",
+        "connects dorsal and ventral occipital visual streams",
+    ),
+    # -- cerebellum --------------------------------------------------------
+    # DSI-Studio calls this member "Cerebellum"; expanded here because CB_L IS
+    # the left cerebellar hemisphere and "Cerebellum (left)" answers "what is
+    # this?" with "the cerebellum". The one deviation from atlas nomenclature in
+    # this table. Note too that outside this atlas `CB` conventionally
+    # abbreviates the CINGULUM BUNDLE, so the row is easy to misread.
+    "CB": (
+        "Cerebellar hemisphere",
+        "hemispheric white matter (arbor vitae); coordination and timing of "
+        "limb movement",
+    ),
+    "ICP": (
+        "Inferior cerebellar peduncle",
+        "chiefly olivocerebellar, spinal and vestibular input to the cerebellum",
+    ),
+    "MCP": (
+        "Middle cerebellar peduncle",
+        "pontine nuclei to cerebellar cortex; the cortico-ponto-cerebellar relay",
+    ),
+    "SCP": (
+        "Superior cerebellar peduncle",
+        "main cerebellar output to red nucleus and thalamus",
+    ),
+    "V": (
+        "Vermis",
+        "midline cerebellar fibres coordinating trunk and posture",
+    ),
+    # -- commissural -------------------------------------------------------
+    "AC": (
+        "Anterior commissure",
+        "small ventral commissure joining the temporal lobes and olfactory regions",
+    ),
+    "CC": (
+        "Corpus callosum",
+        "the great commissure; ~200 million fibres joining the hemispheres",
+    ),
+    # -- cranial nerve -----------------------------------------------------
+    # The roman numeral is left out of the name: the code already leads the
+    # tooltip, so "CNII_L — Optic nerve (CN II) (left)" doubles the
+    # parenthetical against the hemisphere qualifier.
+    "CNII": (
+        "Optic nerve",
+        "retina to the optic chiasm; all visual input from one eye",
+    ),
+    "CNIII": (
+        "Oculomotor nerve",
+        "midbrain to most extraocular muscles; eye movement and pupil",
+    ),
+    "CNV": (
+        "Trigeminal nerve",
+        "face sensation and the muscles of mastication",
+    ),
+    "CNVII": (
+        "Facial nerve",
+        "facial expression, taste from the anterior tongue, lacrimation",
+    ),
+    "CNVIII": (
+        "Vestibulocochlear nerve",
+        "hearing and balance from the inner ear",
+    ),
+    # -- projection --------------------------------------------------------
+    "AR": (
+        "Acoustic radiation",
+        "medial geniculate body to Heschl's gyrus, the primary auditory cortex",
+    ),
+    "CBT": (
+        "Corticobulbar tract",
+        "motor cortex to brainstem cranial-nerve nuclei; face, tongue, swallowing",
+    ),
+    # "<Region> corticopontine tract", not "Frontopontine tract": the code says
+    # CPT, so the name expands it, and the shape then matches the CS_* / TR_*
+    # siblings ("Anterior corticostriatal tract"). A "(frontopontine)" alias
+    # would collide with the hemisphere qualifier the same way the cranial
+    # nerves' roman numerals did.
+    "CPT_F": (
+        "Frontal corticopontine tract",
+        "frontal cortex to pontine nuclei; cortico-ponto-cerebellar relay",
+    ),
+    "CPT_O": (
+        "Occipital corticopontine tract",
+        "occipital cortex to pontine nuclei; visual input to the cerebellum",
+    ),
+    "CPT_P": (
+        "Parietal corticopontine tract",
+        "parietal association cortex to pontine nuclei; somatosensory and "
+        "visuospatial input to the cerebellum",
+    ),
+    "CST": (
+        "Corticospinal tract",
+        "motor cortex to spinal cord; the pyramidal tract's spinal component, "
+        "carrying voluntary movement",
+    ),
+    "CS_A": (
+        "Anterior corticostriatal tract",
+        "prefrontal cortex to the caudate and putamen",
+    ),
+    "CS_P": (
+        "Posterior corticostriatal tract",
+        "posterior cortex to the striatum",
+    ),
+    "CS_S": (
+        "Superior corticostriatal tract",
+        "superior and motor cortex to the striatum",
+    ),
+    "DRTT": (
+        "Dentato-rubro-thalamic tract",
+        "cerebellar dentate nucleus to red nucleus and thalamus; the tremor target",
+    ),
+    "F": (
+        "Fornix",
+        "hippocampus to mammillary bodies and septum; the main hippocampal output",
+    ),
+    "ML": (
+        "Medial lemniscus",
+        "dorsal-column nuclei to thalamus; fine touch and proprioception",
+    ),
+    "OR": (
+        "Optic radiation",
+        "lateral geniculate nucleus to primary visual cortex; its anterior "
+        "fibres detour through the temporal lobe as Meyer's loop",
+    ),
+    "RST": (
+        "Reticulospinal tract",
+        "brainstem reticular formation to spinal cord; posture and locomotion",
+    ),
+    "TR_A": (
+        "Anterior thalamic radiation",
+        "anterior and mediodorsal thalamus to prefrontal cortex",
+    ),
+    "TR_P": (
+        "Posterior thalamic radiation",
+        "pulvinar and posterior thalamus to parietal and occipital cortex",
+    ),
+    "TR_S": (
+        "Superior thalamic radiation",
+        "ventral thalamus to the pre- and postcentral gyri; sensorimotor relay",
+    ),
+}
 
 #: Points per streamline after arc-length resampling. The source is sampled at
 #: ~0.4 mm (a ~10 cm tract carries ~270 points), far finer than any rendered
@@ -273,6 +550,20 @@ CACHE_DIR: Final = Path.home() / ".cache" / "luxar" / DEMO_NAME
 #: default scene from one built with ``--points`` / ``--per-bundle``.
 SCENE_MARKER: Final = CACHE_DIR / "scene_build.json"
 
+#: Bumped whenever the scene's *content* changes in a way the sizing knobs do
+#: not capture, so a warm output directory is rebuilt instead of silently
+#: served. v2 added per-tract hover labels; a v1 scene has no ``version`` key
+#: at all, which reads as stale and rebuilds.
+#:
+#: Note what this does and does not reach.
+#: ``scripts/gallery/generate_gallery_datasets.py`` skips on the dataset
+#: existing and never invokes the demo at all, so the bump cannot rescue a warm
+#: gallery box on the default path — only ``--force`` gets there. What the bump
+#: buys is that such a regen (and any plain re-run against a warm
+#: ``datasets/demos/``) actually rebuilds, instead of the demo short-circuiting
+#: on its own marker and re-serving the label-less scene.
+SCENE_SCHEMA_VERSION: Final = 2
+
 Arbol.max_depth = 4
 
 
@@ -309,6 +600,71 @@ def check_sizing(points: int, per_bundle: int) -> str | None:
             "will render but `hatch run check` will fail on it."
         )
     return None
+
+
+def split_hemisphere(bundle: str) -> tuple[str, str]:
+    """Split an atlas code into its base code and hemisphere word.
+
+    Only ``_L`` / ``_R`` are hemisphere suffixes, and only when what remains is
+    itself a known base code. That lookup guard is what makes the split safe:
+    several base codes end in ``_F``, ``_O``, ``_P``, ``_A``, ``_S`` (``CPT_F``,
+    ``CS_A``, ``C_PO``, ...), and ``CPT_F_L`` must resolve to ``CPT_F``, never to
+    a naive "strip the last underscore group".
+
+    Args:
+        bundle: An atlas bundle code, e.g. ``"AF_L"``, ``"CPT_F_L"``, ``"MCP"``.
+
+    Returns:
+        ``(base_code, hemisphere)`` where ``hemisphere`` is ``"left"``,
+        ``"right"``, or ``""`` for an unpaired (midline) bundle. ``base_code`` is
+        ``bundle`` unchanged when no hemisphere suffix applies.
+    """
+    for suffix, side in (("_L", "left"), ("_R", "right")):
+        if bundle.endswith(suffix) and bundle[: -len(suffix)] in BUNDLE_INFO:
+            return bundle[: -len(suffix)], side
+    return bundle, ""
+
+
+def is_named_tract(bundle: str) -> bool:
+    """Whether ``bundle`` has a :data:`BUNDLE_INFO` entry.
+
+    The single source of truth for "will :func:`tract_label` fall back?", so the
+    build-time coverage report and the label itself cannot drift apart.
+
+    Args:
+        bundle: An atlas bundle code, e.g. ``"AF_L"``.
+
+    Returns:
+        ``True`` when the label will be fully expanded.
+    """
+    return split_hemisphere(bundle)[0] in BUNDLE_INFO
+
+
+def tract_label(bundle: str, division: str) -> str:
+    """Hover label for one tract: code, full name, division, functional gloss.
+
+    The Layers panel shows the raw atlas code, so the label leads with it and
+    then expands it — the two surfaces name the same thing and read together.
+
+    Args:
+        bundle: The atlas bundle code, e.g. ``"AF_L"``.
+        division: The anatomical division the bundle belongs to, one of
+            :data:`DIVISIONS`.
+
+    Returns:
+        ``"AF_L — Arcuate fasciculus (left) · association · frontal (Broca) and
+        temporal (Wernicke) language areas"``. An unrecognized base code (a
+        future atlas revision) is NOT an error: it falls back to
+        ``f"{bundle} — {division}"``, which ``build_scene`` detects via
+        :func:`is_named_tract` and reports once.
+    """
+    base, side = split_hemisphere(bundle)
+    info = BUNDLE_INFO.get(base)
+    if info is None:
+        return f"{bundle} — {division}"
+    name, gloss = info
+    hemi = f" ({side})" if side else ""
+    return f"{bundle} — {name}{hemi} · {division} · {gloss}"
 
 
 def resample_polyline(points: np.ndarray, n: int) -> np.ndarray:
@@ -612,6 +968,17 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
     extent = float(np.abs(np.concatenate(positions)).max())
 
     with asection("Writing scene"):
+        # Reported BEFORE the write: a bundle missing from BUNDLE_INFO is a
+        # table gap to fix, and saying so after 87 nodes are already on disk
+        # (and after finalize's banner) buries it.
+        unknown = [n for n in names if not is_named_tract(n)]
+        aprint(f"Hover labels: {len(names) - len(unknown)}/{len(names)} tracts named")
+        if unknown:
+            aprint(
+                f"WARNING: {len(unknown)} bundle(s) missing from BUNDLE_INFO, "
+                f"labelled by code only: {', '.join(sorted(unknown))}"
+            )
+
         dims = Dimensions(
             [
                 Dimension("x", unit="mm", display=True),
@@ -648,6 +1015,16 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                     widths=LINE_WIDTH,
                     colors=rgb,
                     indices=indices,
+                    # Lines labels are PER VERTEX, and every vertex of a
+                    # bundle belongs to the same tract — so the one tract
+                    # string is broadcast across the node. That broadcast is
+                    # also what makes the lookup safe: the line picker reports
+                    # a SEGMENT slot, which is fed unremapped into this
+                    # per-vertex, vertex-sorted array. The index is therefore
+                    # not the vertex that was hit — but every entry holds the
+                    # same string (and a segment index is always < the vertex
+                    # count), so the tooltip is right regardless.
+                    labels=[tract_label(name, division)] * len(xyz),
                     # `indexed`, NOT `segments`: interior joints must share a
                     # vertex index or thick lines render as chains of beads.
                     line_type="indexed",
@@ -676,6 +1053,24 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                 anchor="bottom-right",
                 color="rgba(200,200,220,0.5)",
             )
+            # The one user-visible statement of the LOD caveat. Without it the
+            # first contact with this scene is "hover does nothing", which is
+            # the complaint the labels were added to answer. Bottom-left is the
+            # only free corner: title top-left, credit bottom-right, and the
+            # auto-injected hover box top-right.
+            scene.add_text(
+                "Fly in or zoom a tract, then hover to identify it",
+                position=(0.02, 0.97),
+                font_size=0.015,
+                anchor="bottom-left",
+                color="rgba(200,200,220,0.5)",
+            )
+            # NO explicit hover overlay, deliberately: the compiler
+            # auto-injects one top-right as soon as a node carries labels, and
+            # that corner is the free one. Do not "improve" it to the left or
+            # top-left — the control rail and Layers panel are fixed DOM at
+            # z-index 1000/1500, far above the overlay layer's 5, so a hover
+            # box there is occluded.
 
         aprint(f"{len(names)} lines nodes, {total_segments:,} segments")
         aprint(f"Scene saved: {output_path}")
@@ -683,17 +1078,22 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
 
 
 def scene_marker_matches(marker: Path, *, points: int, per_bundle: int) -> bool:
-    """Whether the scene on disk was built with these sizing knobs.
+    """Whether the scene on disk was built with these knobs AND this schema.
 
     A missing, unreadable or stale marker reads as "no", which costs one
     rebuild — the safe direction. The alternative (existence alone) silently
-    serves ``--points 20`` geometry to a later default run, and vice versa.
+    serves ``--points 20`` geometry to a later default run, and vice versa, or
+    keeps serving a scene built before a content change such as hover labels.
     """
     try:
         record = json.loads(marker.read_text())
     except (OSError, ValueError):
         return False
-    return record.get("points") == points and record.get("per_bundle") == per_bundle
+    return (
+        record.get("version") == SCENE_SCHEMA_VERSION
+        and record.get("points") == points
+        and record.get("per_bundle") == per_bundle
+    )
 
 
 def load_or_build_scene(output_path: Path) -> Path:
@@ -717,7 +1117,13 @@ def load_or_build_scene(output_path: Path) -> Path:
     scene_path = build_scene(bundles, output_path, points=POINTS_PER_STREAMLINE)
     SCENE_MARKER.parent.mkdir(parents=True, exist_ok=True)
     SCENE_MARKER.write_text(
-        json.dumps({"points": POINTS_PER_STREAMLINE, "per_bundle": PER_BUNDLE})
+        json.dumps(
+            {
+                "version": SCENE_SCHEMA_VERSION,
+                "points": POINTS_PER_STREAMLINE,
+                "per_bundle": PER_BUNDLE,
+            }
+        )
     )
     return scene_path
 
@@ -752,6 +1158,10 @@ def main() -> None:
     else:
         aprint("Data credit: HCP-1065 tractography atlas (Yeh 2022, CC BY-SA 4.0)")
         aprint("Press 'L' in the viewer for per-tract visibility.")
+        aprint(
+            "Fly the camera into the tractogram (or zoom a bundle to fill the "
+            "view), then hover a tract to see its name and function."
+        )
         launch_viewer(scene_path)
 
 

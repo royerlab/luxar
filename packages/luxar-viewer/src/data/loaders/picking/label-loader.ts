@@ -15,6 +15,33 @@
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 
+/**
+ * Whether two byte ranges of `bytes` hold identical content.
+ *
+ * Length is checked first: unequal-length ranges cost a single integer
+ * compare, and equal-length ones a byte scan that stops at the first
+ * mismatch. An empty/uninitialised previous range never matches a non-empty
+ * one, and a descending (negative-length) range never matches anything.
+ */
+function bytesEqual(
+  bytes: Uint8Array,
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number
+): boolean {
+  const length = aEnd - aStart;
+  if (length !== bEnd - bStart) return false;
+  // Descending offsets (only reachable from a corrupt store) would otherwise
+  // skip the loop entirely and report "equal", silently making this element
+  // inherit the previous label instead of decoding to ''.
+  if (length < 0) return false;
+  for (let i = 0; i < length; i++) {
+    if (bytes[aStart + i] !== bytes[bStart + i]) return false;
+  }
+  return true;
+}
+
 export class LabelLoader {
   /** Cache of decoded labels per node path. */
   private cache = new Map<string, string[]>();
@@ -113,19 +140,56 @@ export class LabelLoader {
       const nElements = offsets.length - 1;
       const labels: string[] = new Array(nElements);
 
+      // Consecutive-run reuse. `decode` mints a fresh string per element and
+      // the decoded array is cached for the session, so a *broadcast* label
+      // (one string repeated over every element — how a producer tags a whole
+      // node, e.g. one tract name across 168k line vertices) would otherwise
+      // be decoded and retained N times: ~39 MB for a 107-byte label at 168k
+      // elements, which drops to ~1.3 MB when the run collapses to a single
+      // instance. Comparing element i's bytes to element i-1's costs a length
+      // compare, or at most one short byte scan when the lengths coincide
+      // (fixed-width IDs), which is trivial next to the `decode` it replaces —
+      // so the all-distinct case, the common one (embeddings, protein IDs,
+      // edge labels), is not penalised. Deliberately only *consecutive* runs:
+      // a general hash-and-pool of every value is a large net loss on distinct
+      // labels, so interleaved duplicates are left undeduped.
+      let prevStart = -1;
+      let prevEnd = -1;
+
       for (let i = 0; i < nElements; i++) {
         const start = Number(offsets[i]);
         const end = Number(offsets[i + 1]);
         if (start === end) {
           labels[i] = '';
+        } else if (bytesEqual(bytes, start, end, prevStart, prevEnd)) {
+          labels[i] = labels[i - 1];
         } else {
           labels[i] = this.decoder.decode(bytes.subarray(start, end));
         }
+        prevStart = start;
+        prevEnd = end;
       }
 
       log.info(Modules.SCENE_LOADER, `Loaded ${nElements} labels for ${nodePath}`);
       return labels;
     } catch (error) {
+      // A node with no labels at all is the ordinary case, not a failure: the
+      // picker calls this for whatever it hit, and most nodes (every coarse
+      // LOD level of a labelled ladder, for one) simply have no
+      // `label_offsets` array. Demote that to info so it does not drown the
+      // console — hovering one labelled tract's ladder would otherwise log a
+      // warning per coarse level. `isNotFoundError` is the house guard for
+      // this (see gsplats-spatial-index-loader / mesh preflight).
+      //
+      // Caveat: under MultiLevelCachingStore a retry-exhausted fetch also
+      // surfaces as a missing key, so this branch can swallow a genuine
+      // network death. The cache tier already logs its own warning for that,
+      // and everything else — decode failures, corrupt chunks, bad metadata,
+      // aborts — still reaches the warning below.
+      if (zarr.isNotFoundError(error)) {
+        log.info(Modules.SCENE_LOADER, `Node carries no labels: ${nodePath}`);
+        return [];
+      }
       log.warning(
         Modules.SCENE_LOADER,
         `Failed to load labels for ${nodePath}: ${error instanceof Error ? error.message : error}`
