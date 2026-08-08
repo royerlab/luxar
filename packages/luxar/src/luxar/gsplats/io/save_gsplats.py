@@ -574,6 +574,12 @@ def write_partition_streaming(
                 # standalone partition writer (prevents part_10 < part_2 reorder).
                 attrs={"child_index": n_written},
                 barrier_dims=part_barrier,
+                # This writer's ROOT is stamped kind=partition below, so every
+                # part_<i> is under a partition by construction — exactly what the
+                # GSplatPartition branch of write_gsplat_node passes. Without it a
+                # meta-less per-part lod ladder would fall back to the whole-object
+                # anchor here while the standalone writer gave the partitioned one.
+                under_partition=True,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])

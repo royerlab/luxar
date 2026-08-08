@@ -5,8 +5,12 @@ import type { BlendingMode } from './blending';
  * A `Group` whose `kind === 'lod'` selects one of N alternative
  * children at runtime based on the projected bbox diagonal in pixels and
  * each child's `coverage_fraction` threshold — a viewport-relative fraction
- * (0..1) the viewer multiplies by the viewport diagonal, so the finest child
- * (coverage 1.0) activates when the object fills the screen. Children are
+ * (0..4, the auto-derived ladder using 0..1) the viewer multiplies by a fixed
+ * fraction (a quarter) of the viewport
+ * diagonal, so a `coverage_fraction` of 1.0 activates once the object's
+ * projected bbox diagonal reaches about a quarter of the viewport diagonal —
+ * i.e. at any normal full-frame view — and coarser children step in as it
+ * shrinks below that. Children are
  * arbitrary geometry subtrees (points / lines / gsplats / nested specialized
  * groups).
  *

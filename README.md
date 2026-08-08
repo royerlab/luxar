@@ -376,9 +376,10 @@ splats are reordered so that early prefixes carry as much of the signal as possi
 which means the first chunk to arrive is already a meaningful picture and later
 chunks only refine it. Where levels replace each other, the viewer picks between
 them using a viewport-relative `coverage_fraction = sqrt(N_i / N_finest)` — the
-finest level shows when an object fills the screen, coarser ones step in as it
-shrinks — so level switching self-calibrates on any monitor with no threshold to
-tune.
+finest level shows once an object's projected size reaches about a quarter of the
+viewport diagonal, i.e. at any normal full-frame view, and coarser ones step in as
+it shrinks below that — so level switching self-calibrates on any monitor with no
+threshold to tune.
 
 The canonical end-to-end pipeline is three commands:
 
