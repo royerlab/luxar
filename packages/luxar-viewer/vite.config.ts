@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { checkoutIdentityPlugin, ensureCheckoutIdentity } from './tools/e2e-server-identity';
+// Explicit `.ts` extension: Vite's future native config loader (Node's own TS
+// support) does not do extensionless resolution, and 8.2 warns about it.
+import { checkoutIdentityPlugin, ensureCheckoutIdentity } from './tools/e2e-server-identity.ts';
 
 const viewerRoot = fileURLToPath(new URL('.', import.meta.url));
 const projectRoot = resolve(viewerRoot, '../..');

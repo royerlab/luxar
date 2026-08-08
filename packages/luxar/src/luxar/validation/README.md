@@ -67,6 +67,7 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_layer()`: Coerce a layer flag to bool
 - `validate_visible()`: Coerce a visibility flag to bool
 - `validate_blending_mode()`: Validate blending mode strings (`normal`, `additive`, `max`, `opaque`, `luminous`, `volumetric`)
+- `validate_line_join()`: Validate the lines-only join style at degree-2 polyline joints (`none`, `miter`)
 - `validate_colormap()`: Validate a colormap name (resolved via `colormaps.registry`) or LUT array (N, 3)
 - `validate_category_indices()`: Validate category index arrays
 
