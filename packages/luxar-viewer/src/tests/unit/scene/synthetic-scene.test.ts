@@ -264,6 +264,94 @@ describe('generateSyntheticLines', () => {
       ]);
     });
   });
+
+  describe('perf-scenario knobs (width / stepScale / turnAngle, #1352)', () => {
+    it('width propagates to every start/end width; default stays 1.0', () => {
+      const custom = generateSyntheticLines({ type: 'lines', count: 40, seed: 3, width: 3.0 });
+      for (let i = 0; i < custom.segmentCount; i++) {
+        expect(custom.startWidths[i]).toBe(3.0);
+        expect(custom.endWidths[i]).toBe(3.0);
+      }
+      const dflt = generateSyntheticLines({ type: 'lines', count: 4, seed: 3 });
+      expect(dflt.startWidths[0]).toBe(1.0);
+    });
+
+    it('stepScale bounds every segment length (|step| <= stepScale·bounds·sqrt(3))', () => {
+      const spec = { type: 'lines', count: 300, seed: 5, bounds: 100, stepScale: 0.002 } as const;
+      const cfg = generateSyntheticLines(spec);
+      const cap = 0.002 * 100 * Math.sqrt(3) + 1e-6;
+      for (let i = 0; i < cfg.segmentCount; i++) {
+        expect(cfg.segmentLengths[i]).toBeLessThanOrEqual(cap);
+      }
+      // Sensitivity control: the default walk exceeds this cap, so the
+      // assertion is capable of failing.
+      const wide = generateSyntheticLines({ type: 'lines', count: 300, seed: 5, bounds: 100 });
+      expect(Array.from(wide.segmentLengths).some((l) => l > cap)).toBe(true);
+    });
+
+    it('turnAngle produces a smooth walk: fixed step length and gentle consecutive turns', () => {
+      const cfg = generateSyntheticLines({
+        type: 'lines',
+        count: 2000,
+        seed: 7,
+        bounds: 100,
+        turnAngle: 0.25,
+      });
+      // Fixed step length: every segment is exactly stepScale·bounds long
+      // (float32 storage tolerance).
+      for (let i = 0; i < cfg.segmentCount; i++) {
+        expect(cfg.segmentLengths[i]).toBeGreaterThan(1.0 - 1e-3);
+        expect(cfg.segmentLengths[i]).toBeLessThan(1.0 + 1e-3);
+      }
+      // Gentle turning: measure the angle between consecutive CHAIN
+      // segments (skip the i % 64 restarts). The jitter construction
+      // bounds per-step turns at roughly turnAngle; assert a small
+      // safety multiple, plus a sensitivity control on the default walk
+      // (whose consecutive segments turn ~90° on average).
+      const turnAt = (c: typeof cfg, i: number): number => {
+        const ax = c.endPositions[(i - 1) * 3] - c.startPositions[(i - 1) * 3];
+        const ay = c.endPositions[(i - 1) * 3 + 1] - c.startPositions[(i - 1) * 3 + 1];
+        const az = c.endPositions[(i - 1) * 3 + 2] - c.startPositions[(i - 1) * 3 + 2];
+        const bx = c.endPositions[i * 3] - c.startPositions[i * 3];
+        const by = c.endPositions[i * 3 + 1] - c.startPositions[i * 3 + 1];
+        const bz = c.endPositions[i * 3 + 2] - c.startPositions[i * 3 + 2];
+        const dot = ax * bx + ay * by + az * bz;
+        const na = Math.hypot(ax, ay, az);
+        const nb = Math.hypot(bx, by, bz);
+        return Math.acos(Math.min(1, Math.max(-1, dot / (na * nb))));
+      };
+      let worstSmooth = 0;
+      for (let i = 1; i < cfg.segmentCount; i++) {
+        if (i % 64 === 0) continue; // chain restart, not a joint
+        worstSmooth = Math.max(worstSmooth, turnAt(cfg, i));
+      }
+      expect(worstSmooth).toBeLessThan(0.25 * 2.0);
+      const noisy = generateSyntheticLines({ type: 'lines', count: 2000, seed: 7, bounds: 100 });
+      let sumNoise = 0;
+      let n = 0;
+      for (let i = 1; i < noisy.segmentCount; i++) {
+        if (i % 64 === 0) continue;
+        sumNoise += turnAt(noisy, i);
+        n++;
+      }
+      expect(sumNoise / n).toBeGreaterThan(Math.PI / 4); // default walk turns hard
+    });
+
+    it('knobbed output stays deterministic for a fixed seed', () => {
+      const spec = {
+        type: 'lines',
+        count: 100,
+        seed: 11,
+        width: 2.5,
+        stepScale: 0.005,
+        turnAngle: 0.1,
+      } as const;
+      const a = generateSyntheticLines(spec);
+      const b = generateSyntheticLines(spec);
+      expect(Array.from(a.startPositions)).toEqual(Array.from(b.startPositions));
+      expect(Array.from(a.endPositions)).toEqual(Array.from(b.endPositions));
+    });
+  });
 });
 
 describe('sampleClusteredPositions', () => {
