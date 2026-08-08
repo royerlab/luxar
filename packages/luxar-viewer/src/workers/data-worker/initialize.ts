@@ -41,7 +41,8 @@ export async function initialize(ctx: WasmCtx, wasmPath?: string): Promise<Worke
     log.error(Modules.WORKER_POOL, 'DataWorker WASM initialization failed', error);
     throw new Error(
       'WASM unavailable. Luxar requires WebAssembly support. ' +
-        'Please use a modern browser (Chrome 57+, Firefox 52+, Safari 11+).'
+        'Please use a modern browser (Chrome 57+, Firefox 52+, Safari 11+).',
+      { cause: error }
     );
   }
 
