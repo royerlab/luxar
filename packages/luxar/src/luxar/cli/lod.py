@@ -21,7 +21,7 @@ import typer
 from arbol import aprint, asection
 
 # Shared recipe/streaming validation surface — moved to
-# gsplat_ops/recipe_shared.py (consumed by six sibling gsplat_ops modules);
+# gsplat_ops/recipe_shared.py (consumed by six gsplat_ops modules);
 # re-imported here so the lod command and historical
 # ``from luxar.cli.lod import <name>`` imports keep working.
 from .gsplat_ops.recipe_shared import (

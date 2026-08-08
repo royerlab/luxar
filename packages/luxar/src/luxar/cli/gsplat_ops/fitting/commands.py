@@ -11,12 +11,12 @@ from typing import Optional
 
 import typer
 
-from .fitting_calibrate import run_calibrate_command
-from .fitting_denoise_render import (
+from .calibrate import run_calibrate_command
+from .denoise_render import (
     run_denoise_volume_cmd,
     run_render_to_file,
 )
-from .fitting_fit import run_fit_volume
+from .fit import run_fit_volume
 
 
 def denoise_volume_cmd(

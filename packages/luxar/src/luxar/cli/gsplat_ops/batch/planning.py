@@ -1,6 +1,6 @@
 """Scheduler-agnostic batch planning shared by ``batch-fit submit`` and ``run``.
 
-``batch_submit`` (Slurm) and ``batch_run`` (local) share everything *up to and
+``submit`` (Slurm) and ``run`` (local) share everything *up to and
 including* building the :class:`BatchManifest` + its job list: dataset discovery
 + T/C slicing, uniform-tile / content-box decomposition (and the shared
 ``plan.json``), fit-arg assembly, and per-part merge-recipe validation.  Only the
