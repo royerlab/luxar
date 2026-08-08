@@ -106,22 +106,24 @@ the case above `near` becomes 0.0508 and depth quantization improves
 `1200` is derived, not picked. A larger C means a smaller floor, so two
 constraints push C _up_ and only the wish to keep precision pushes down:
 C > 551 keeps the floor in front of the orbit target at maximum zoom-in, and
-C ≥ 993 keeps it inside the band where the Points / Lines / GSplats vertex
+C ≥ 992 keeps it inside the band where the Points / Lines / GSplats vertex
 shaders already discard geometry (`perspectiveNearFade` below
-`1.0582 · nearCull`). The worst case there is not the camera on the sphere
+`1.0589 · nearCull`, the root of `smoothstep(1, 2, x) = 0.01`). The worst case there is not the camera on the sphere
 surface but the crossover just outside it — `dist = R(C+1)/(C-1) ≈ 1.002 · R`,
 the last distance at which the floor still beats the surface term, where the
-floor sits highest relative to `nearCull`. The second binds at 993, and 1200
-clears it by **20.8%** —
+floor sits highest relative to `nearCull`. The second binds at 992, and 1200
+clears it by **20.9%** —
 margin chosen deliberately rather than sitting at the minimum-viable 1000,
 because it turns out to be nearly free: the step from 1000 to 1200 gives away
 **0.03%** of the total precision gain and buys survival of ordinary tuning
 elsewhere. Measured: a 10% tightening of `nearCull` requires C ≥ 1104, and
 reducing the fade reject headroom to 1.0 requires C ≥ 1051 — C = 1000 would have
 become silently lossy under either. Both constraints are pinned as executable
-arithmetic, and the margin is enforced by a property test against the shaders'
-own reject threshold plus an assertion that the constant survives that 10%
-tightening — rather than trusted. Being derived from `far` (itself scene-scaled) the floor also
+arithmetic — with the near-cull factor, the minimum-distance factor and the fade
+reject threshold taken from their real sources rather than re-typed, and the
+shader premises they model grep-locked against the GLSL — and the margin is
+enforced by a property test against the shaders' own reject threshold plus an
+assertion that the constant survives that 10% tightening. Being derived from `far` (itself scene-scaled) the floor also
 keeps the tiny-scene guarantee that motivated the radius-proportional floor, so
 `MIN_NEAR_RADIUS_FACTOR` is now a dominated backstop that only surfaces on a
 degenerate zero-radius sphere.
@@ -184,6 +186,16 @@ re-applied those numbers as **fixed manual planes** (`setSceneId` →
 untraceable to any user action. `near` / `far` are now omitted from storage while
 dynamic clipping owns them, so defaults + auto-adjust take over on load. With
 dynamic clipping off they are real user intent and persist unchanged.
+`captureViewerState` skips them on the same condition, so a Ctrl+Shift+S export
+no longer writes a zoomed-in pose's planes into `viewer_config` as if they had
+been authored.
+
+The readout those transient values feed is also gated relatively now (0.1% of
+the live value, matching the gate the per-frame update applies before it moves
+the camera at all) instead of by absolute epsilons of 1e-4 / 0.1. Same
+scene-relative-vs-absolute mistake as the slider ranges above: on a
+micron-scale scene no real change ever cleared them, so the sliders sat frozen
+on their defaults while dynamic clipping moved the planes every frame.
 
 #### Removed — unreachable accelerated gsplat code paths
 

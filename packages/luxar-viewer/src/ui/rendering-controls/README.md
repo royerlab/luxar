@@ -81,7 +81,7 @@ The post-processing batch goes through `postProcessing.withDeferredRebuild(...)`
 
 `ClippingDisplay` ties the dynamic-clipping toggle to the near/far sliders:
 
-- When `dynamicEnabled === true` it sets `opacity: 0.5` and `pointer-events: none` on the slider containers and starts a throttled (100 ms) `requestAnimationFrame` loop that copies `camera.near` / `camera.far` into `settings.near` / `settings.far` and calls `controller.updateDisplay()` (without firing `onChange`).
+- When `dynamicEnabled === true` it sets `opacity: 0.5` and `pointer-events: none` on the slider containers and starts a throttled (100 ms) `requestAnimationFrame` loop that copies `camera.near` / `camera.far` into `settings.near` / `settings.far` and calls `controller.updateDisplay()` (without firing `onChange`). The copy is gated on a RELATIVE 0.1% drift — the same gate `updateDynamicFromCache` applies before it moves the camera at all — because near/far are scene-scaled: the absolute epsilons this replaced (1e-4 / 0.1) froze the readout completely on a micron-scale scene.
 - When `dynamicEnabled === false` it cancels the RAF and restores normal styling. The camera keeps whatever near/far the last dynamic frame left — freezing the current view is the intended behaviour of switching to manual.
 - Those RAF-written `settings.near` / `settings.far` are a DISPLAY mirror, not user intent. `saveSettingsToStorage` omits them while dynamic clipping is on (`stripDynamicClippingPlanes`) — otherwise a transient deep-zoom pair gets persisted and re-applied as fixed planes on the next load.
 - `getNearPlane` / `getFarPlane` are passed as getters because the near/far controllers are created by `setup/camera-setup.ts` and may not exist when this controller is constructed.

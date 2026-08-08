@@ -22,6 +22,14 @@ import {
   BoundingBox,
   CameraConfig,
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
+import { NEAR_CULL_DIAGONAL_FACTOR } from '../../../../../scene/scene-manager/clipping/scene-bounds-cache';
+import { config } from '../../../../../config';
+import { POINT_VERTEX_SHADER } from '../../../../../rendering/materials/point/shader-glsl';
+import { GSPLAT_VERTEX_SHADER } from '../../../../../rendering/materials/gsplat/shader-glsl';
+import { LINE_FRAGMENT_SHADER } from '../../../../../rendering/materials/line/shader-glsl';
+import { GLSL_NEAR_FADE_FUNCTIONS } from '../../../../../rendering/materials/_shared/glsl-lib';
+
+import { fadeRejectHeadroom, NEAR_FADE_REJECT, smoothstep } from './_near-fade-model';
 
 describe('bounds-math', () => {
   describe('getBoundingBoxCenter', () => {
@@ -377,14 +385,54 @@ describe('bounds-math', () => {
       expect(61 / nearPlaneFloor(52.5, 61)).toBeCloseTo(MAX_NEAR_FAR_RATIO, 6);
     });
 
+    // The losslessness half of the derivation is a claim about the SHADERS,
+    // not about this module: "everything the floor clips was already being
+    // suppressed by the point / line / gsplat near fade". The arithmetic below
+    // models that fade — a `smoothstep` over [nearCull, 2*nearCull] with a
+    // reject at 0.01 — and arithmetic cannot notice the shaders changing under
+    // it. So pin the premises against the real sources; without this the
+    // derivation tests stay green while the thing they model has moved.
+    // (String-grep regression locks, same rationale and precedent as
+    // `tests/unit/rendering/shader-hot-path.test.ts`.)
+    it('rests on shader premises that still hold in the GLSL sources', () => {
+      // The band: smoothstep from nearCull to 2*nearCull over view depth.
+      expect(GLSL_NEAR_FADE_FUNCTIONS).toMatch(
+        /smoothstep\s*\(\s*nearCull\s*,\s*nearCull\s*\*\s*2\.0\s*,\s*-viewZ\s*\)/
+      );
+      // Ortho returns 1.0, which is why `nearPlaneFloor` opts ortho out of the
+      // ratio bound instead of relying on the fade to hide the clipped slab.
+      expect(GLSL_NEAR_FADE_FUNCTIONS).toMatch(/isOrtho\s*==\s*1\s*\)\s*return\s+1\.0/);
+      // Points and gsplats REJECT the vertex below NEAR_FADE_REJECT. The `.`
+      // is escaped so this cannot pass on some other literal that merely
+      // matches a wildcard.
+      const reject = `<\\s*${String(NEAR_FADE_REJECT).replace('.', '\\.')}\\b`;
+      expect(POINT_VERTEX_SHADER).toMatch(new RegExp(`vNearFade\\s*${reject}`));
+      expect(GSPLAT_VERTEX_SHADER).toMatch(new RegExp(`depthFade\\s*${reject}`));
+      // ...lines instead multiply the fade in per-fragment, so their
+      // contribution is already ~0 across the same band.
+      expect(LINE_FRAGMENT_SHADER).toMatch(
+        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*vViewZ\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
+      );
+    });
+
     // The two constraints that pin MAX_NEAR_FAR_RATIO, as executable arithmetic
     // rather than prose. Both are LOWER bounds on C (a bigger C means a smaller
     // floor), so C wants to be the smallest value clearing both — which is why
     // the margin below is only 0.8% and why that thinness is intentional.
     it('satisfies both constraints that pin the constant, and shows how tightly', () => {
-      const NEAR_CULL_FACTOR = 0.001; // scene-bounds-cache.ts
-      const MIN_DISTANCE_FACTOR = 0.001; // config.controls.scaleMultipliers
-      const FADE_REJECT_HEADROOM = 1.0582; // smoothstep(nc, 2nc, x) < 0.01 below this * nc
+      // All three inputs come from their real sources rather than being
+      // re-typed here: the point of this test is that retuning any of them
+      // must move the derived constraint (and fail below if the constant no
+      // longer clears it), not leave a mirrored copy standing.
+      const NEAR_CULL_FACTOR = NEAR_CULL_DIAGONAL_FACTOR; // scene-bounds-cache.ts
+      const MIN_DISTANCE_FACTOR = config.controls.scaleMultipliers.minDistanceFactor;
+      const FADE_REJECT_HEADROOM = fadeRejectHeadroom(); // smoothstep(nc, 2nc, ·) reject band
+      // Solving it rather than writing it down also corrected it: the value
+      // this derivation was first stated with (1.0582) is the root to three
+      // digits, and slightly CONSERVATIVE — a smaller headroom demands a
+      // larger C — so the constraints below move down by ~0.6, not up.
+      expect(FADE_REJECT_HEADROOM).toBeCloseTo(1.0589, 5);
+      expect(smoothstep(1, 2, FADE_REJECT_HEADROOM)).toBeCloseTo(NEAR_FADE_REJECT, 9);
       // Per unit R: diagonal = 2R / SPHERE_SAFETY_EXPANSION.
       const perR = (factor: number) => (factor * 2) / SPHERE_SAFETY_EXPANSION;
 
@@ -399,7 +447,7 @@ describe('bounds-math', () => {
       const cMinLossless = farAtCrossoverOverR / (FADE_REJECT_HEADROOM * perR(NEAR_CULL_FACTOR));
 
       expect(cMinTarget).toBeCloseTo(551, 0);
-      expect(cMinLossless).toBeCloseTo(993, 0);
+      expect(cMinLossless).toBeCloseTo(992, 0);
       // Strictly tighter than the surface case the derivation used to name.
       const cMinAtSurface = 2 / (FADE_REJECT_HEADROOM * perR(NEAR_CULL_FACTOR));
       expect(cMinLossless).toBeGreaterThan(cMinAtSurface);
@@ -472,7 +520,7 @@ describe('bounds-math', () => {
       // this is the upper-bound half of the MAX_NEAR_FAR_RATIO derivation.
       for (const diagonal of [0.01, 1, 100, 1e5]) {
         const R = 0.5 * diagonal * SPHERE_SAFETY_EXPANSION;
-        const nearCull = diagonal * 0.001;
+        const nearCull = diagonal * NEAR_CULL_DIAGONAL_FACTOR;
         // Worst case for the floor is the camera at the bounds centre,
         // where far is smallest relative to nothing else raising near.
         expect(nearPlaneFloor(R, R)).toBeLessThanOrEqual(nearCull);

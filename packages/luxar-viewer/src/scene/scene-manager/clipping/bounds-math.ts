@@ -206,7 +206,7 @@ export function minNearForRadius(expandedRadius: number): number {
  *    `minDistance`. Only mesh is affected — the other three types are inside
  *    the fade's reject region throughout that band by construction — so this
  *    does not move C.
- *  - **C ≥ 993, stay lossless for Points / Lines / GSplats.** All three
+ *  - **C ≥ 992, stay lossless for Points / Lines / GSplats.** All three
  *    already suppress anything closer than `nearCull = 1e-3 · diagonal`
  *    via `perspectiveNearFade` (`materials/_shared/glsl-lib.ts`), though
  *    by two different mechanisms worth knowing before trusting this:
@@ -214,16 +214,18 @@ export function minNearForRadius(expandedRadius: number): number {
  *    (both backends); Lines instead cull only when BOTH endpoints are
  *    near, clip a half-near segment onto the `nearCull` plane, and apply
  *    the fade PER-FRAGMENT as a multiply. Either way the fade is what
- *    governs, and it is under 0.01 below `1.0582 · nearCull`.
+ *    governs, and it is under 0.01 below `1.0589 · nearCull` (the root of
+ *    `smoothstep(1, 2, x) = 0.01`, solved rather than eyeballed in
+ *    `tests/.../clipping/_near-fade-model.ts`).
  *
  *    The worst case is NOT the camera on the sphere surface — it is just
  *    OUTSIDE it, at the crossover `dist = R · (C+1)/(C-1) ≈ 1.002 · R`,
  *    the last distance at which the floor still beats the surface term and
  *    therefore where the floor sits highest relative to `nearCull`
  *    (fade 0.00755 there versus 0.00725 on the surface). So
- *    `2.002 R / C ≤ 1.0582 · 1.905e-3 · R` ⟹ `C ≥ 993`.
+ *    `2.002 R / C ≤ 1.0589 · 1.905e-3 · R` ⟹ `C ≥ 992`.
  *
- * 993 binds, and C = 1200 clears it by **20.8%**. The margin is deliberate,
+ * 992 binds, and C = 1200 clears it by **20.9%**. The margin is deliberate,
  * and it is cheap: going from the minimum-viable 1000 to 1200 gives away
  * **0.03%** of the total precision gain (Δz 7.05e-5 → 8.47e-5 world units on
  * the reported pose, against 4.10e-2 before the bound), and buys survival of

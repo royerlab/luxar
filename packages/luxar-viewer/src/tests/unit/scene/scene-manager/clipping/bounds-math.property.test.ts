@@ -24,6 +24,10 @@ import {
   nearPlaneFloor,
   SPHERE_SAFETY_EXPANSION,
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
+import { NEAR_CULL_DIAGONAL_FACTOR } from '../../../../../scene/scene-manager/clipping/scene-bounds-cache';
+// Shader-fade model, shared with bounds-math.test.ts (which grep-locks it
+// against the real GLSL, so it cannot drift away from the shaders).
+import { fadeRejectHeadroom, NEAR_FADE_REJECT, smoothstep } from './_near-fade-model';
 
 // Finite, well-scaled coordinate (avoids NaN/Inf and float-blowup noise).
 const coord = fc.double({ min: -1e4, max: 1e4, noNaN: true, noDefaultInfinity: true });
@@ -147,14 +151,9 @@ describe('bounds-math properties', () => {
     // `far` carries SPHERE_SAFETY_EXPANSION but `nearCull` does not, so with
     // the camera right at the sphere surface the floor reaches ~1.05x
     // nearCull -- still inside the fade band's reject region (which extends
-    // to ~1.058x nearCull), but only just. Raising MAX_NEAR_FAR_RATIO's
+    // to ~1.059x nearCull), but only just. Raising MAX_NEAR_FAR_RATIO's
     // reciprocal any further would start clipping visible geometry, which is
     // the upper bound on the constant.
-    const NEAR_FADE_REJECT = 0.01;
-    const smoothstep = (e0: number, e1: number, x: number) => {
-      const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
-      return t * t * (3 - 2 * t);
-    };
 
     // Generates the regime this property is ABOUT: every camera distance at
     // which the FLOOR is what sets `near`, which is NOT merely "inside the
@@ -191,7 +190,7 @@ describe('bounds-math properties', () => {
           expect(near).toBe(nearPlaneFloor(R, far));
           // diagonal = 2 * radius (boundingBoxToSphere inverse), so
           // nearCull = 1e-3 * 2 * radius. See scene-bounds-cache.ts.
-          const nearCull = 2 * radius * 0.001;
+          const nearCull = 2 * radius * NEAR_CULL_DIAGONAL_FACTOR;
           expect(smoothstep(nearCull, 2 * nearCull, near)).toBeLessThanOrEqual(NEAR_FADE_REJECT);
         })
       );
@@ -199,11 +198,11 @@ describe('bounds-math properties', () => {
 
     // The tightest point specifically, as a fixed case rather than trusting the
     // arbitrary to sample it: at the crossover `near / nearCull` peaks, which is
-    // what pins MAX_NEAR_FAR_RATIO's lower bound at 993.
+    // what pins MAX_NEAR_FAR_RATIO's lower bound at 992.
     test('the worst case is the floor/surface crossover, and the bound clears it', () => {
       const radius = 50;
       const R = radius * SPHERE_SAFETY_EXPANSION;
-      const nearCull = 2 * radius * 0.001;
+      const nearCull = 2 * radius * NEAR_CULL_DIAGONAL_FACTOR;
       const crossover = (R * (MAX_NEAR_FAR_RATIO + 1)) / (MAX_NEAR_FAR_RATIO - 1);
       const atCrossover = planesAt(radius, crossover * (1 - 1e-12));
       const atSurface = planesAt(radius, R);
@@ -227,8 +226,8 @@ describe('bounds-math properties', () => {
       // The constant the crossover demands, and the headroom the chosen C has
       // over it. At the minimum-viable C = 1000 this margin is 0.7%; the extra
       // is what survives a 10% tightening of `nearCull` (see bounds-math.test).
-      const requiredC = atCrossover.far / (1.0582 * nearCull);
-      expect(requiredC).toBeCloseTo(993, 0);
+      const requiredC = atCrossover.far / (fadeRejectHeadroom() * nearCull);
+      expect(requiredC).toBeCloseTo(992, 0);
       expect(MAX_NEAR_FAR_RATIO).toBeGreaterThanOrEqual(requiredC);
       expect(MAX_NEAR_FAR_RATIO / requiredC - 1).toBeGreaterThan(0.15);
     });
