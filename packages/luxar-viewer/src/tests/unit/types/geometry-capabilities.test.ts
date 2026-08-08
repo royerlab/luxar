@@ -57,11 +57,34 @@ describe('geometry capabilities', () => {
 
   it('reports no capability for a type outside the vocabulary', () => {
     // The whole point: a type the table has not classified is excluded from
-    // every feature rather than defaulting in.
+    // every feature rather than defaulting in. `mesh` is deliberately NOT one
+    // of these — it is in the vocabulary, so its answers come from its row and
+    // are asserted below, not here. (This case used to assert `mesh` alongside
+    // the outsiders, which read as "mesh is unclassified" when what was true
+    // was only that its row happened to be all-false at the time.)
     for (const predicate of [supportsLod, supportsPartition, isPooledGeometry, isDepthSortable]) {
-      expect(predicate('mesh')).toBe(false);
-      expect(predicate(undefined)).toBe(false);
+      for (const outsider of ['volume', 'group', 'scene', '', undefined, null, 3]) {
+        expect(predicate(outsider), String(outsider)).toBe(false);
+      }
     }
+  });
+
+  it('classifies mesh per capability, not uniformly', () => {
+    // The row the table exists for: mesh is capable of one of these and not the
+    // others, and each answer is a distinct architectural fact (see the comment
+    // on the row itself). Pinned explicitly so a widened literal or a reflexive
+    // "flip them all" cannot pass unnoticed.
+    expect(GEOMETRY_CAPABILITIES.mesh).toEqual({
+      lod: false,
+      partition: false,
+      // Permanently false: `pooled` names the instanced-quad element-texture
+      // stack, which an indexed triangle surface is not drawn from.
+      pooled: false,
+      // A triangle's center is its vertex centroid, so registration, worker and
+      // kernel are all shared; only the apply differs (index permutation rather
+      // than an `aSortedIndex` indirection).
+      depthSortable: true,
+    });
   });
 
   it('the table record is frozen', () => {

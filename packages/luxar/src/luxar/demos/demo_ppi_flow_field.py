@@ -64,12 +64,20 @@ from typing import Any, Final
 
 import numpy as np
 import pandas as pd
-import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
 from luxar.demos import launch_viewer, require_module
+from luxar.demos._graph_common import (
+    compute_communities as louvain_communities,
+)
+from luxar.demos._graph_common import (
+    download_file,
+    filter_to_lcc,
+    load_hgnc,
+    load_huri_edges,
+)
 from luxar.utils._umap_utils import get_categorical_color
 from luxar.utils.fields import (
     FlowField,
@@ -208,144 +216,14 @@ class SceneStats:
 # -----------------------------------------------------------------------------
 
 
-def _download(url: str, dest: Path, description: str) -> None:
-    """Stream a URL to ``dest`` if it is not already cached."""
-    if dest.exists() and dest.stat().st_size > 0:
-        size_mb = dest.stat().st_size / (1024 * 1024)
-        aprint(f"  Using cached {dest.name} ({size_mb:.1f} MB)")
-        return
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    aprint(f"  Downloading {description}")
-    aprint(f"    URL: {url}")
-
-    with requests.get(url, stream=True, timeout=120) as response:
-        response.raise_for_status()
-        total = int(response.headers.get("content-length", 0))
-        written = 0
-        last_pct = 0.0
-        with open(tmp, "wb") as handle:
-            for chunk in response.iter_content(chunk_size=1 << 20):
-                if not chunk:
-                    continue
-                handle.write(chunk)
-                written += len(chunk)
-                if total > 0:
-                    pct = 100.0 * written / total
-                    if pct - last_pct >= 20.0:
-                        aprint(
-                            f"    {written / (1024 * 1024):,.0f} / "
-                            f"{total / (1024 * 1024):,.0f} MB ({pct:.0f}%)"
-                        )
-                        last_pct = pct
-    tmp.replace(dest)
-    size_mb = dest.stat().st_size / (1024 * 1024)
-    aprint(f"  ✓ Saved {dest.name} ({size_mb:.1f} MB)")
-
-
 def ensure_data(cache_dir: Path) -> tuple[Path, Path]:
     """Fetch HuRI and HGNC metadata into the shared HuRI cache."""
     huri_path = cache_dir / HURI_FILENAME
     hgnc_path = cache_dir / HGNC_FILENAME
     with asection("Fetching HuRI / HGNC data"):
-        _download(HURI_URL, huri_path, "HuRI network (~2 MB)")
-        _download(HGNC_URL, hgnc_path, "HGNC complete set (~30 MB)")
+        download_file(HURI_URL, huri_path, "HuRI network (~2 MB)")
+        download_file(HGNC_URL, hgnc_path, "HGNC complete set (~30 MB)")
     return huri_path, hgnc_path
-
-
-def load_hgnc(tsv_path: Path) -> pd.DataFrame:
-    """Return a frame indexed by Ensembl gene id with symbol/chromosome."""
-    wanted = {"symbol", "ensembl_gene_id", "location", "status"}
-    with asection("Loading HGNC metadata"):
-        df = pd.read_csv(
-            tsv_path,
-            sep="\t",
-            usecols=lambda c: c in wanted,
-            dtype=str,
-            low_memory=False,
-        )
-        if "status" in df.columns:
-            df = df[df["status"] == "Approved"]
-        df = df.dropna(subset=["ensembl_gene_id", "symbol"])
-        df["chromosome"] = (
-            df.get("location", pd.Series([""] * len(df)))
-            .fillna("?")
-            .astype(str)
-            .str.extract(r"^([0-9XYMT]+)", expand=False)
-            .fillna("?")
-        )
-        df = df.set_index("ensembl_gene_id")[["symbol", "chromosome"]]
-        df = df[~df.index.duplicated(keep="first")]
-        aprint(f"  {len(df):,} Ensembl→symbol mappings")
-    return df
-
-
-def load_huri_edges(tsv_path: Path, hgnc: pd.DataFrame) -> pd.DataFrame:
-    """Return the undirected, deduplicated HuRI edge frame in HGNC symbols."""
-    with asection("Loading HuRI protein-protein interactions"):
-        df = pd.read_csv(tsv_path, sep="\t", header=None, dtype=str, low_memory=False)
-        if df.shape[1] < 2:
-            raise RuntimeError(f"Unexpected HuRI format: {df.shape[1]} columns")
-        df = df.iloc[:, :2].copy()
-        df.columns = ["ensg_a", "ensg_b"]
-        df = df[
-            df["ensg_a"].str.startswith("ENSG", na=False)
-            & df["ensg_b"].str.startswith("ENSG", na=False)
-        ]
-        df = df[df["ensg_a"] != df["ensg_b"]]
-        aprint(f"  {len(df):,} ENSG-level pairs")
-
-        symbol_map = hgnc["symbol"].to_dict()
-        sym_a = df["ensg_a"].map(symbol_map)
-        sym_b = df["ensg_b"].map(symbol_map)
-        keep = sym_a.notna() & sym_b.notna()
-        df = pd.DataFrame(
-            {"sym_a": sym_a[keep].to_numpy(), "sym_b": sym_b[keep].to_numpy()}
-        )
-        aprint(f"  {len(df):,} pairs with both endpoints mapped to HGNC")
-
-        a = df["sym_a"].to_numpy()
-        b = df["sym_b"].to_numpy()
-        lo = np.where(a < b, a, b)
-        hi = np.where(a < b, b, a)
-        df = pd.DataFrame({"sym_a": lo, "sym_b": hi}).drop_duplicates()
-        aprint(f"  {len(df):,} unique undirected pairs")
-    return df.reset_index(drop=True)
-
-
-def filter_to_lcc(
-    edges: pd.DataFrame, hgnc: pd.DataFrame
-) -> tuple[list[str], pd.DataFrame, pd.DataFrame]:
-    """Restrict the network to its largest connected component."""
-    nx = require_module("networkx")
-
-    with asection("Filtering to largest connected component"):
-        graph = nx.Graph()
-        graph.add_edges_from(
-            zip(edges["sym_a"].tolist(), edges["sym_b"].tolist(), strict=True)
-        )
-        components = sorted(nx.connected_components(graph), key=len, reverse=True)
-        lcc = components[0]
-        aprint(
-            f"  {len(components):,} components; LCC has {len(lcc):,} nodes "
-            f"(dropped {graph.number_of_nodes() - len(lcc):,})"
-        )
-
-        lcc_set = set(lcc)
-        mask = edges["sym_a"].isin(lcc_set) & edges["sym_b"].isin(lcc_set)
-        edges = edges[mask].reset_index(drop=True)
-        aprint(f"  {len(edges):,} edges within the LCC")
-
-        nodes = sorted(lcc_set)
-        sym_to_chrom = hgnc.groupby("symbol")["chromosome"].first().to_dict()
-        node_df = pd.DataFrame(
-            {
-                "symbol": nodes,
-                "chromosome": [sym_to_chrom.get(symbol, "?") for symbol in nodes],
-            }
-        )
-    return nodes, node_df, edges
 
 
 # -----------------------------------------------------------------------------
@@ -447,26 +325,12 @@ def compute_communities(
                 aprint(f"  Loaded {int(communities.max()) + 1:,} communities")
                 return communities
 
-    nx = require_module("networkx")
+    communities = louvain_communities(nodes, edges, columns=("sym_a", "sym_b"))
 
-    with asection("Detecting communities (Louvain)"):
-        graph = nx.Graph()
-        graph.add_nodes_from(nodes)
-        graph.add_edges_from(
-            zip(edges["sym_a"].tolist(), edges["sym_b"].tolist(), strict=True)
-        )
-        partitions = nx.community.louvain_communities(graph, seed=42)
-        partitions = sorted(partitions, key=len, reverse=True)
-        aprint(f"  {len(partitions):,} communities detected")
-        for i, part in enumerate(partitions[:5]):
-            aprint(f"    #{i}: {len(part):,} nodes")
-
-        node_index = {symbol: i for i, symbol in enumerate(nodes)}
-        communities = np.full(len(nodes), -1, dtype=np.int32)
-        for comm_id, members in enumerate(partitions):
-            for symbol in members:
-                communities[node_index[symbol]] = comm_id
-
+    # Its own section: the shared detector owns (and closes) the one it logs
+    # under, so without this the cache line would sit a level shallower than
+    # the identical one in ``compute_pagerank`` above.
+    with asection("Caching Louvain communities"):
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         np.savez(
             cache_path,

@@ -36,8 +36,13 @@ import type { ControlsManager } from '../../../controls/controls-manager';
  * How far the user can zoom IN relative to the "scene fits in view"
  * distance/zoom (1000 = down to 1/1000 of the framed distance).
  * Kept finite because orbit math degenerates as the target distance
- * approaches zero, and deep zoom-in is where the pinned near-plane
- * floor (minNearForRadius) starts costing Z-buffer precision.
+ * approaches zero.
+ *
+ * Coupled to `MAX_NEAR_FAR_RATIO` in `clipping/bounds-math.ts`: at
+ * maximum zoom-in the near-plane floor (`far / MAX_NEAR_FAR_RATIO`) must sit in
+ * front of the orbit target, which is what pins that ratio's lower
+ * bound. Loosening this factor without re-deriving that one would clip
+ * whatever the user zoomed in on.
  */
 export const ZOOM_IN_FACTOR = 1000;
 

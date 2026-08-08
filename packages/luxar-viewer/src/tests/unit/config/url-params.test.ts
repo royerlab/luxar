@@ -30,6 +30,7 @@ describe('readUrlParams', () => {
       gpuBudgetMB: null,
       cacheBudgetMB: null,
       dpr: null,
+      lineJoin: null,
     });
   });
 
@@ -75,6 +76,20 @@ describe('readUrlParams', () => {
     // Flag-only form parses as NaN → null.
     expect(readUrlParams('?dpr').dpr).toBeNull();
     expect(readUrlParams('').dpr).toBeNull();
+  });
+
+  it('parses lineJoin, distinguishing "no override" from an explicit none', () => {
+    expect(readUrlParams('?lineJoin=none').lineJoin).toBe('none');
+    expect(readUrlParams('?lineJoin=miter').lineJoin).toBe('miter');
+    // Case- and whitespace-insensitive, like the other enum params.
+    expect(readUrlParams('?lineJoin=MITER').lineJoin).toBe('miter');
+    // Unrecognised values must NOT silently mean "no join geometry" — they mean
+    // "no override", so each node's authored style (or the default) still wins.
+    expect(readUrlParams('?lineJoin=bevel').lineJoin).toBeNull();
+    expect(readUrlParams('?lineJoin=round').lineJoin).toBeNull();
+    expect(readUrlParams('?lineJoin=').lineJoin).toBeNull();
+    expect(readUrlParams('?lineJoin').lineJoin).toBeNull();
+    expect(readUrlParams('').lineJoin).toBeNull();
   });
 
   it('parses gpuBudgetMB, accepting 0 (disable) and rejecting negatives', () => {

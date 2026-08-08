@@ -12,121 +12,34 @@
  *   epoch and never resized, so there is nothing to recycle
  *   (`gpu-buffer-pool/pool-stats.ts` must keep listing exactly the three instanced
  *   types).
- * - **No depth-sort registration.** Per-triangle depth sorting is explicitly out
- *   of scope (`docs/specs/MESH_NODE_SPEC.md` §9); an opaque surface gets correct
- *   occlusion from the depth buffer, which is what the other three cannot do.
  * - **No capacity clamp.** Mesh's element ordinal is `gl_VertexID`, not an
  *   element-texture texel, so it is bounded by `MAX_MESH_VERTICES` at the loader's
  *   Stage-1 preflight instead of by texture dimensions here.
  *
- * What remains is: find the placeholder by name, update its geometry in place, and
- * apply the epoch's material `side`.
+ * Depth-sort registration IS shared, though both halves of the payload differ from
+ * the instanced types': a triangle's "center" is its vertex centroid, and the
+ * resolved ordering permutes `geometry.index` rather than an `aSortedIndex`
+ * indirection (`rendering/depth-sort-coordinator/triangle-ordering.ts`).
+ *
+ * What remains is: find the placeholder by name, update its geometry in place,
+ * apply the epoch's material `side`, and register the epoch with the depth-sort
+ * coordinator.
  *
  * @module data/scene-loader/commit/commit-mesh-geometry
  */
 
 import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
-import { hasTranslucentVertexAlpha, updateMeshGeometry } from '../../../rendering/mesh-geometry';
+import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { applyMeshSide, applyMeshShading } from '../../../rendering/node-factory/create-mesh-node';
-import { normalModeDepthWrite } from '../../../rendering/blending-state';
+import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import { computeFaceCentroids } from '../../../rendering/depth-sort-coordinator/triangle-ordering';
 import { stampLoadedViewVersion } from './stamp-view-version';
+import { setCommittedData } from '../../../types/committed-data';
 import { isMeshUserData, type MeshMetadata } from '../../../types/mesh';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-
-/**
- * Nodes already warned about unsorted translucency, keyed by OBJECT IDENTITY.
- *
- * Module-scoped so the notice is once per node for the lifetime of the tab rather than
- * once per commit — this runs on EVERY slice move, and a per-call warning would flood
- * the console during a scrub.
- *
- * A `WeakSet` of the mesh itself rather than a `Set` of paths, which is what this was
- * and which was wrong in both directions: a dataset switch that reused a path left the
- * NEW node permanently suppressed, while the comment claimed the opposite ("a dataset
- * switch may re-warn"). Identity has neither problem — a replaced node is a different
- * object, and the entry disappears with the old one instead of leaking for the tab's
- * lifetime.
- */
-let noticedTranslucency = new WeakSet<THREE.Mesh>();
-
-/** Test seam: forget which nodes have been warned about. */
-export function resetTranslucencyNoticesForTesting(): void {
-  // A WeakSet cannot be enumerated or cleared, so replace it.
-  noticedTranslucency = new WeakSet<THREE.Mesh>();
-}
-
-/**
- * Warn once per node when `normal` is combined with translucency (spec §6.3).
- *
- * §6.3 promises this warning and names it as the mitigation for the per-triangle
- * depth-sort exclusion (§9) — mesh sorts nothing, so triangles composite in index
- * order. `opaque`, mesh's default, is unaffected: it depth-tests and depth-writes, so
- * the depth buffer orders it correctly whatever the index order is.
- *
- * **The predicate is two independent clauses, and neither is `opacity < 1`.**
- *
- * The opacity arm reuses {@link normalModeDepthWrite} (the `>= 0.99` threshold)
- * rather than testing `< 1` directly, and it is the same predicate the material's own
- * blending state keys on — so the warning and the behaviour it warns about cannot drift
- * apart. Above the threshold the compositing is not *exact*: a depth-writing translucent
- * fragment still drops whatever is behind it. But this arm only fires with NO per-vertex
- * alpha, so every fragment there is at least `opacity` opaque and the dropped term is
- * bounded by `1 - opacity`, i.e. under 1% — the surface renders as the opaque one it
- * nearly is. Below the threshold `depthWrite` goes off and the artifact stops being
- * bounded: unsorted alpha-over swaps almost the whole contribution of two overlapping
- * faces, which is the thing worth naming.
- *
- * The per-vertex-alpha arm is deliberately UNCONDITIONAL in opacity, because at
- * `opacity = 1` the failure is worse rather than absent: `depthWrite` is on while
- * `transparent` is true, so a translucent fragment writes depth and whatever is behind
- * it is depth-REJECTED. That is dropout, not mis-ordering, and the opacity arm cannot
- * see it. It gets no `1 - opacity`-style tolerance either, because one vertex's alpha
- * says nothing about the rest: a single translucent vertex is an unbounded dropout
- * wherever the surface folds over itself. It keys on alpha that is actually below
- * opaque, not on the presence of a 4th channel — an all-opaque RGBA array composites
- * exactly like an RGB one.
- *
- * Both inputs are read LIVE off the material rather than from the authored attrs: the
- * Layers panel can switch a node into `normal` or drag its opacity long after load,
- * and `userData.blendingMode` is the RESOLVED mode (so an unsupported request that
- * already fell back to `opaque` stays silent). `uniforms.uOpacity.value` is the same
- * live-opacity read `ui/layers/layer-apply.ts` performs.
- */
-export function noticeUnsortedTranslucency(object: THREE.Mesh, path: string): void {
-  if (noticedTranslucency.has(object)) return;
-
-  const material = object.material as
-    (THREE.Material & { uniforms?: { uOpacity?: { value?: number } } }) | undefined;
-  if (!material || Array.isArray(material)) return;
-  if (material.userData?.blendingMode !== 'normal') return;
-
-  const opacity = material.uniforms?.uOpacity?.value ?? 1.0;
-  // The commit's scan (below), NOT the geometry attribute: `mesh-geometry.ts` pads RGB
-  // to RGBA for uint8/uint16, so `itemSize === 4` is true for plenty of meshes that
-  // carry no authored alpha at all — and an RGBA array whose alpha is uniformly opaque
-  // is not translucent either.
-  const hasVertexAlpha = object.userData.meshTranslucentVertexAlpha === true;
-  if (normalModeDepthWrite(opacity) && !hasVertexAlpha) return;
-
-  noticedTranslucency.add(object);
-  // Rounded: this opacity is usually a COMPOSED product (layer × ancestors), so the
-  // raw value prints as 0.6299999999999999 often enough to be worth two decimals.
-  const shownOpacity = opacity.toFixed(2);
-  const cause = hasVertexAlpha
-    ? `per-vertex RGBA alpha${normalModeDepthWrite(opacity) ? '' : ` and opacity ${shownOpacity}`}`
-    : `opacity ${shownOpacity}`;
-  log.warning(
-    Modules.SCENE_LOADER,
-    `Mesh ${path} renders translucent (${cause}) under blending_mode='normal', which ` +
-      'is drawn WITHOUT per-triangle depth sorting (MESH_NODE_SPEC.md §6.3): triangles ' +
-      'composite in index order, so faces may show through each other incorrectly. Use ' +
-      "'opaque' (the mesh default, depth-correct at any opacity) unless the see-through " +
-      'look is the point.'
-  );
-}
 
 /** Host references the commit needs. */
 export interface MeshCommitCtx {
@@ -207,24 +120,6 @@ export function commitMeshGeometry(
   // nothing here.
   applyMeshShading(object, object.userData.attrs as MeshMetadata, projected.storedNormalsUsable);
 
-  // Warned here rather than at node creation because the two halves of the condition
-  // are only both known here: the resolved mode lives on the material, while per-vertex
-  // alpha is a property of the LOADED arrays (`MeshMetadata` carries `has_colors`, not a
-  // channel count, let alone the alpha values) and so does not exist until the first
-  // commit.
-  // Stamped so the Layers panel can evaluate the same predicate later: a mode or
-  // opacity change after load has no access to `LoadedMeshData`. Scanned ONCE per node
-  // — the colour array is uploaded once and never changes, while this runs on every
-  // slice move.
-  if (object.userData.meshTranslucentVertexAlpha === undefined) {
-    object.userData.meshTranslucentVertexAlpha = hasTranslucentVertexAlpha(
-      data.colors,
-      data.colorComponents,
-      data.vertexCount
-    );
-  }
-  noticeUnsortedTranslucency(object, staged.path);
-
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it
   // so the next draw rebuilds from the current attributes. WebGPU-gated — a no-op on
@@ -234,6 +129,37 @@ export function commitMeshGeometry(
 
   object.userData.visibleTriangleCount = projected.visibleFaceCount;
   object.userData.visibleVertexCount = projected.visibleVertexCount;
+
+  // The GPU now holds this data. Mesh has no memoized-concat noop path (the whole
+  // node is resident, so there is no LOD concatenation to memoize and
+  // `processMeshData` re-projects every update), so the stamp is not used as an
+  // identity key here — it is used in the OTHER direction the contract describes:
+  // its presence is what tells the depth-sort coordinator that this mesh's index
+  // buffer still holds the commit whose ordering is being resolved, and its
+  // absence is the demotion signal. Without it every resolved ordering would be
+  // dropped as stale (see `types/committed-data.ts`).
+  setCommittedData(object, data);
+
+  // Register the epoch with the depth-sort coordinator. Unconditional — the
+  // coordinator judges order-dependence off the LIVE material mode and releases
+  // the node when it is commutative, which is also what keeps the generation
+  // counter advancing so an in-flight sort from a superseded commit is dropped.
+  //
+  // The centroids are a THUNK for the same reason the points commit uses one: the
+  // O(F) pass is paid only if the node actually registers (order-dependent, non
+  // empty, still the latest generation). It must allocate fresh — the buffer is
+  // transferred to the worker and detached.
+  //
+  // `projected.indices` is handed over as the permutation SOURCE. It is already a
+  // fresh per-epoch copy (`projectMeshTo3D` copies out of its reused scratch), so
+  // this retains a reference rather than paying for one, and the coordinator drops
+  // it the moment the node stops sorting.
+  noteDepthSortCommit(
+    object,
+    () => computeFaceCentroids(projected.position, projected.indices, projected.visibleFaceCount),
+    projected.visibleFaceCount,
+    projected.indices
+  );
 
   stampLoadedViewVersion(object.userData, loadedViewVersion ?? currentVersion);
 
