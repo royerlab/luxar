@@ -146,10 +146,12 @@ Configuration loading and validation for GSplat CLI commands.
 GSplat Operations
 ~~~~~~~~~~~~~~~~~
 
-Post-fit GSplat editing/inspection operations (transform, slice, filter, cull,
-partition, flatten, merge, migrate, info, render, compare, ...). This is a
-package split across several submodules; the top-level module aggregates the
-Click command group used by the ``luxar gsplat`` CLI.
+Implementations behind ``luxar gsplat ...``: fitting/calibration (``fitting/``),
+whole-timelapse batch fitting (``batch/``), post-fit editing and inspection
+(``transforms/`` plus the ``scene``/``inspect``/``interchange`` root modules).
+The package ``__init__`` is docstring-only — the Typer groups are assembled in
+``luxar.cli.gsplat_commands``, and each family's registration surface is its own
+``commands.py``.
 
 .. automodule:: luxar.cli.gsplat_ops
    :members:

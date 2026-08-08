@@ -12,12 +12,21 @@ import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { LINE_PICK_SOURCE } from './shaders';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
+import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
 const LINE_PICK_GLSL = requireWebGLSources(LINE_PICK_SOURCE);
 
 export interface LinePickingMaterialConfig {
   nodeId: number;
+  /**
+   * Join style at degree-2 polyline joints (#790). MUST be resolved from the
+   * same authored attribute the visual material gets: the pick pass builds the
+   * same screen-space quad, so a divergence here makes a mitred corner
+   * unpickable. Omitted ⇒ the session default, exactly like the visual
+   * material's own omitted-config path.
+   */
+  join?: LineJoinStyle;
 }
 
 export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
@@ -42,6 +51,9 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         // CPU-precomputed pixel-width scales — see LineMaterial.
         uPerspectiveLineScale: { value: 1.0 },
         uOrthoLineScale: { value: 1.0 },
+        // Join style (#790): 0 none, 1 miter — see types/line-join.ts for the
+        // override precedence. Resolved the same way LineMaterial resolves it.
+        uLineJoin: { value: resolveLineJoin(config.join) },
       },
       vertexShader: LINE_PICK_GLSL.vertex,
       fragmentShader: LINE_PICK_GLSL.fragment,
@@ -75,6 +87,7 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
+    cloned.uniforms.uLineJoin.value = this.uniforms.uLineJoin.value;
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.

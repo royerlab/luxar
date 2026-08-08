@@ -26,6 +26,7 @@ import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { lineWebGPUFactory, type LineTSLNodes } from './shader-tsl';
 import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
+import type { LineJoinStyle } from '../../../types/line-join';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma } from '../_shared/uniform-helpers';
@@ -199,6 +200,13 @@ export class LineTSLMaterial
     // runs after `super()`.
     this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
 
+    // Same reason: the join style is a BUILD-time graph variant here (unlike
+    // the GLSL twin's uLineJoin uniform), so the factory must see it on the
+    // very first rebuild or the graph ships without join geometry. Stored
+    // unresolved — `resolveLineJoin` applies the ?lineJoin= override at build
+    // time, so the session override still wins.
+    this.userData.lineJoin = materialConfig.join;
+
     // For max mode, the shader needs the LUXAR_MAX_RGB_CONTRIBUTION
     // define from the very first compile; volumetric mirrors this with
     // LUXAR_VOLUMETRIC (the factory derives the output branch from
@@ -281,6 +289,7 @@ export class LineTSLMaterial
         gammaOne,
         noGOG,
         isOrtho,
+        join: this.userData.lineJoin as LineJoinStyle | undefined,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
@@ -521,6 +530,10 @@ export class LineTSLMaterial
       hasElementAlpha: (this.uniforms.uHasElementAlpha.value as number) === 1,
       blendingMode:
         (this.userData.blendingMode as LineMaterialConfig['blendingMode']) ?? 'additive',
+      // The join style is a graph variant, so it must ride the CONSTRUCTOR —
+      // copying it onto the clone afterwards would leave the already-built
+      // graph without join geometry.
+      join: this.userData.lineJoin as LineJoinStyle | undefined,
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,

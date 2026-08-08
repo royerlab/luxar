@@ -13,6 +13,7 @@
  */
 
 import type { BlendingMode } from '../../types/blending';
+import type { LineJoinStyle } from '../../types/line-join';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
@@ -93,6 +94,14 @@ export interface LineMaterialProperties {
   gamma: number;
   intensity: number;
   offset: number;
+  /**
+   * Join style at degree-2 polyline joints (#790). Omitted ⇒ the session
+   * default. No cache-key concern: line materials are PER NODE (each owns its
+   * `uLineTex`), so unlike the point materials there is no LRU entry two nodes
+   * with different styles could collide on — which matters here because the TSL
+   * backend BAKES this into the graph.
+   */
+  join?: LineJoinStyle;
 }
 
 /** GSplat material properties driving the constructor config. */
