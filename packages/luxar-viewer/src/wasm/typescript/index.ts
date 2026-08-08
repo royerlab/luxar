@@ -52,9 +52,12 @@ export {
   interpolate_colors_batch,
   calculate_segment_lengths,
   compute_joint_codes,
+  /** Exposed for the parity tests; the Rust twin is private. */
+  jointCodeForEndpoint,
   JOINT_FREE_END,
   JOINT_CLIPPED,
   JOINT_HUB,
+  MAX_EXACT_JOINT_SLOT,
 } from './lines-clipping';
 export { mesh_vertex_visibility_mask, compact_visible_faces } from './mesh-culling';
 

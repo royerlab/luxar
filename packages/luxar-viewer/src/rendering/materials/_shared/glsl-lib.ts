@@ -78,9 +78,10 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
  * arbitrary index.
  *
  * Separate from {@link GLSL_SORTED_INDEX} because mesh needs the split WITHOUT
- * the ordering attributes: its pick id is `gl_VertexID` (mesh has no depth sort
- * and therefore no `aSortedIndex` indirection — spec §6.5), so injecting the
- * whole sorted-index block would declare two attributes the geometry does not
+ * the ordering attributes: its pick id is `gl_VertexID` (mesh IS depth sorted,
+ * but its ordering permutes `geometry.index` itself, so there is no
+ * `aSortedIndex` indirection to read — spec §6.5), so injecting the whole
+ * sorted-index block would declare two attributes the geometry does not
  * carry. Declaring an unbound attribute is not merely wasteful on WebGPU — the
  * vertex-buffer layout is cached from the attribute set at first draw.
  *
@@ -168,9 +169,16 @@ vec2 luxarElementIdParts() {
  * endpoint cap kept — a free end and a hub, where several quads already stack.
  * Everything else suppresses it: a slice-clipped endpoint because no neighbour
  * will ever arrive there, and a slot-bearing code because a neighbouring quad
- * does meet it. Defaulting a slot-bearing code the other way is the #780 bead
- * chain (measured: an interior joint bottoms out at 0.5 instead of 1.0, and a
- * dense polyline loses ~40% of its total brightness).
+ * is EXPECTED to meet it. Defaulting a slot-bearing code the other way is the
+ * #780 bead chain (measured: an interior joint bottoms out at 0.5 instead of
+ * 1.0, and a dense polyline loses ~40% of its total brightness).
+ *
+ * "Expected" and not "does", because the kernel is position-blind: it matches
+ * endpoints by vertex index, so a zero-length neighbour still earns a
+ * slot-bearing code while rasterising nothing to meet this endpoint with.
+ * `luxarLineJoin` detects that case from the partner's screen-space length and
+ * overrides the code-implied suppression back to "keep the cap" — the code
+ * alone cannot tell the two apart.
  *
  * Codes are exact small integers out of an RGBA32F texel fetched without
  * filtering; the half-integer midpoints are for defensiveness only.
@@ -216,6 +224,20 @@ export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
  * the two quads TILE. Coverage becomes a partition, so there is nothing to sum
  * and every blending mode is correct by construction, with no axial profile and
  * no cap dimming.
+ *
+ * That partition is exact in exact arithmetic, not bit-exact in float32. The
+ * two sides of a joint evaluate algebraically identical operands in a
+ * canonical order, but they reach pixel space differently — the vertex stage
+ * scales the NDC difference `ndcEnd - ndcStart` once, while
+ * `luxarLinePixelPos` scales each endpoint and the caller subtracts afterwards
+ * — so their miter points agree only to float32 rounding, order 1e-5 px on the
+ * `test_line_joins` fixture. That is at most a single seam pixel under the
+ * rasteriser's subpixel quantisation, and it is why the acceptance spec
+ * (`tests/e2e/line-join-artifact.spec.ts`, which quantifies it) gates the bend
+ * bands at a couple of outlier pixels rather than at the zero they measure.
+ * Subtracting in NDC and scaling afterwards on both paths — here and in the
+ * TSL twin — would make the two sides bit-exact; that is a known, deliberately
+ * deferred change.
  *
  * The two stages MUST build the same quad or a pick footprint stops matching
  * what the eye sees, so this lives here rather than being written twice.
@@ -365,7 +387,15 @@ vec3 luxarLineJoin(
   // A.far} — the same pair — so both sides take the same branch. Ortho has no
   // 1/z singularity, so the whole test stays inert there.
   bool bothFarInFront = (uIsOrtho == 1) || (farPx.z >= nearCull && selfFarDepth >= nearCull);
-  if (!bothFarInFront || partnerLen <= 0.0001 || pixelLen <= 0.0001) return noJoin;
+  // A DEGENERATE partner is the one decline that must not fall back to the
+  // code-implied default. The kernel matches endpoints by vertex index and
+  // never looks at positions, so a zero-length interior segment still earns
+  // this endpoint a slot-bearing code — which means "suppress the cap, a
+  // neighbouring quad meets you". Nothing rasterises there, so the joint would
+  // get neither a miter nor a cap and the #790 wedge reappears. Keep the cap.
+  // Tested FIRST so both backends order the declines identically.
+  if (partnerLen <= 0.0001) return vec3(perpendicular * joinPixelWidth, 0.0);
+  if (!bothFarInFront || pixelLen <= 0.0001) return noJoin;
 
   // CANONICAL operand order — incoming edge first, outgoing second — so both
   // segments meeting here evaluate the same expression and, crucially, take

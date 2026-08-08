@@ -304,6 +304,18 @@ export interface TSLLineJoinArgs {
  * nothing rasterises there to shade — so this rotates the quad's end edge onto
  * the shared miter edge and the two quads TILE.
  *
+ * That tiling is exact in exact arithmetic, not bit-exact in float32. The two
+ * sides of a joint evaluate algebraically identical operands in a canonical
+ * order, but they reach pixel space differently — the vertex stage scales the
+ * NDC difference `ndcEnd.sub(ndcStart)` once, while this helper scales each
+ * endpoint (`sharedPx`, `farPx`) and subtracts afterwards — so their miter
+ * points agree only to float32 rounding, order 1e-5 px on the
+ * `test_line_joins` fixture, which is at most one seam pixel once the
+ * rasteriser quantises. `tests/e2e/line-join-artifact.spec.ts` quantifies it
+ * and gates the bend bands accordingly. Subtracting in NDC and scaling
+ * afterwards on both paths — here and in `GLSL_LINE_JOIN` — would make the two
+ * sides bit-exact; that is a known, deliberately deferred change.
+ *
  * STRUCTURAL DIFFERENCE FROM THE GLSL TWIN, and it is deliberate: the join
  * STYLE is a build-time graph variant here (the caller simply does not call
  * this when the style is `none`), exactly as the line factories already treat
@@ -407,6 +419,19 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     const bothFarInFront: TSLNode = isOrtho
       ? float(1.0).greaterThan(0.0)
       : mvFar.z.negate().greaterThanEqual(nearCull).and(selfFarDepth.greaterThanEqual(nearCull));
+
+    // A DEGENERATE partner is the one decline that must not fall back to the
+    // code-implied default. The kernel matches endpoints by vertex index and
+    // never looks at positions, so a zero-length interior segment still earns
+    // this endpoint a slot-bearing code — which means "suppress the cap, a
+    // neighbouring quad meets you". Nothing rasterises there, so the joint
+    // would get neither a miter nor a cap and the #790 wedge reappears. Keep
+    // the cap. Written BEFORE the join block so both backends order the
+    // declines identically; the join block already requires a non-degenerate
+    // partner, so the two are mutually exclusive.
+    If(partnerLen.lessThanEqual(0.0001), () => {
+      capValue.assign(float(0.0));
+    });
 
     If(bothFarInFront.and(partnerLen.greaterThan(0.0001)).and(pixelLen.greaterThan(0.0001)), () => {
       // CANONICAL operand order — incoming edge first, outgoing second — so

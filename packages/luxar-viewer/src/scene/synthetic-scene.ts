@@ -29,7 +29,7 @@ import type * as THREE from 'three';
 
 import type { InstancedLinesMeshConfig } from '../rendering/line-geometry';
 import type { InstancedGSplatsMeshConfig } from '../rendering/gsplat-geometry';
-import { JOINT_FREE_END } from '../wasm/typescript/lines-clipping';
+import { JOINT_FREE_END, MAX_EXACT_JOINT_SLOT } from '../wasm/typescript/lines-clipping';
 
 export type SyntheticSceneType = 'lines' | 'points' | 'gsplats';
 
@@ -192,9 +192,17 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     // depend on the segment directions at all. Chain breaks (the i % 64 reset
     // above) and free ends stay JOINT_FREE_END, keeping the soft cap;
     // zero-length segments do too, matching the kernel's degenerate fallback.
+    //
+    // The MAX_EXACT_JOINT_SLOT bound is the kernel's too, and is checked here
+    // for the same reason: these arrays are Float32, so past 2^24 a code rounds
+    // AT THE STORE into a valid-looking but wrong slot. `i` is the larger of
+    // the pair's two slots, so testing it degrades BOTH endpoints together —
+    // the symmetry `jointCodeForEndpoint` enforces, and the thing that keeps a
+    // quad from mitring alone. Only a >16.7M-segment bench reaches it, which is
+    // exactly the size this generator exists to build.
     startJointCode[i] = JOINT_FREE_END;
     endJointCode[i] = JOINT_FREE_END;
-    if (i % 64 !== 0 && prevLen > 0 && len > 0) {
+    if (i % 64 !== 0 && prevLen > 0 && len > 0 && i <= MAX_EXACT_JOINT_SLOT) {
       endJointCode[i - 1] = i + 1;
       startJointCode[i] = -(i - 1 + 3);
     }

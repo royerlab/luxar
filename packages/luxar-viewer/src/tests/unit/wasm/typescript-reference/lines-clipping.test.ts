@@ -23,6 +23,8 @@ import {
   JOINT_CLIPPED,
   JOINT_FREE_END,
   JOINT_HUB,
+  MAX_EXACT_JOINT_SLOT,
+  jointCodeForEndpoint,
 } from '../../../../wasm/typescript';
 
 // ============================================================================
@@ -615,34 +617,91 @@ describe('lines_clipping: compute_joint_codes', () => {
     expect(outEnd[0]).toBe(JOINT_FREE_END);
   });
 
-  it('cannot name an out-of-range slot when a NaN clip param desyncs the two passes', () => {
-    // The registering pass tests `t <= 0` and the reading pass tests `!(t > 0)`.
-    // Those agree for every ordinary float but BOTH go false for NaN, so a NaN
-    // endpoint reads without having registered and the code-sum difference does
-    // not contain its own code. `slot < 0` alone does not catch it: the
-    // difference is negative only when the unregistered endpoint's code is the
-    // larger one. Here slot 0 carries the NaN while the two endpoints actually
-    // registered on its vertex are slots 1 and 2, so the difference is large and
-    // POSITIVE (6 - 0) and decodes to slot 3 in a 3-segment scene.
-    const outStart = new Float32Array(3).fill(9);
-    const outEnd = new Float32Array(3).fill(9);
+  it('reads nothing at an endpoint a NaN clip param kept out of the touch tables', () => {
+    // Both passes run the SAME `t <= 0` test, so a NaN endpoint registers
+    // nothing and reports JOINT_CLIPPED. With the reading pass on the
+    // complement `!(t > 0)` — also false for NaN — it read anyway, and the
+    // code-sum difference (which does not contain its own code) decoded to an
+    // arbitrary slot. `slot < 0` never caught that: the difference is negative
+    // only when the unregistered endpoint's code is the larger one.
+    //
+    // Here slot 0 carries the NaN while the two endpoints actually registered
+    // on v5 are slots 1 and 2, so the difference is large and POSITIVE
+    // (6 - 0 = 6 -> slot 3). FOUR segments, so that bogus slot is IN range and
+    // names a real-but-unrelated segment: the `visibleCount` bound cannot see
+    // it.
+    const outStart = new Float32Array(4).fill(9);
+    const outEnd = new Float32Array(4).fill(9);
     compute_joint_codes(
-      new Uint32Array([5, 8, 5, 6, 5, 7]),
-      new Uint8Array([1, 1, 1]),
-      new Float32Array([NaN, 0, 0]),
-      new Float32Array([1, 1, 1]),
-      3,
+      new Uint32Array([5, 8, 5, 6, 5, 7, 0, 1]),
+      new Uint8Array([1, 1, 1, 1]),
+      new Float32Array([NaN, 0, 0, 0]),
+      new Float32Array([1, 1, 1, 1]),
+      4,
       9,
       outStart,
       outEnd
     );
+
+    expect(outStart[0]).toBe(JOINT_CLIPPED);
+
+    // The other slots are unaffected: v5 still holds exactly the two endpoints
+    // that DID register, and they pair with each other at their STARTs.
+    expect(outStart[1]).toBe(3); // slot 1 start joins slot 2's START: +(2 + 1)
+    expect(outStart[2]).toBe(2); // slot 2 start joins slot 1's START: +(1 + 1)
+    expect(outStart[3]).toBe(JOINT_FREE_END); // v0 is touched once
+    for (const code of outEnd) expect(code).toBe(JOINT_FREE_END);
+
+    // Belt and braces: no code may name a slot outside the stream.
     for (const code of [...outStart, ...outEnd]) {
-      if (code > 0.5) expect(code - 1).toBeLessThan(3);
-      else if (code < -2.5) expect(-code - 3).toBeLessThan(3);
+      if (code > 0.5) expect(code - 1).toBeLessThan(4);
+      else if (code < -2.5) expect(-code - 3).toBeLessThan(4);
     }
-    // Sensitivity: the NaN endpoint must actually take the guarded path, or the
-    // loop above is vacuous. Slot 0's start is the NaN one.
-    expect(outStart[0]).toBe(JOINT_FREE_END);
+  });
+
+  it('degrades BOTH sides of a joint whose slots straddle the f32 exact bound', () => {
+    // Codes land in Float32Arrays, so a slot past 2^24 is rounded AT THE STORE
+    // onto a valid neighbour — indistinguishable downstream from a deliberate
+    // reference. Rejecting only the PARTNER's slot degrades one side of the
+    // pair: the over-bound endpoint would see a representable partner, miter,
+    // and rotate its end edge onto a miter line the other side never matched.
+    // Both slots are therefore tested.
+    //
+    // Driven through `jointCodeForEndpoint` directly, mirroring the Rust unit
+    // test on `joint_code`: reaching it via compute_joint_codes would need a
+    // >16.7M-segment fixture.
+    const degree = new Uint8Array([2]);
+    const myCode = 5 << 1; // slot 5, start
+    const over = MAX_EXACT_JOINT_SLOT + 1;
+    const partnerCode = (over << 1) | 1; // the partner's END touches the vertex
+
+    // Seen from the representable side: the PARTNER is unrepresentable.
+    expect(
+      jointCodeForEndpoint(0, myCode, 1, over + 1, new Int32Array([myCode + partnerCode]), degree)
+    ).toBe(JOINT_FREE_END);
+
+    // Seen from the over-bound side: the partner (slot 5) IS representable, so
+    // only the own-slot test can reject it.
+    const theirCode = (5 << 1) | 1;
+    const myOverCode = over << 1;
+    expect(
+      jointCodeForEndpoint(
+        0,
+        myOverCode,
+        1,
+        over + 1,
+        new Int32Array([myOverCode + theirCode]),
+        degree
+      )
+    ).toBe(JOINT_FREE_END);
+
+    // Sensitivity control: the largest REPRESENTABLE slot must still encode, or
+    // both assertions above would pass for the wrong reason.
+    const atBound = MAX_EXACT_JOINT_SLOT;
+    const partnerOk = (atBound << 1) | 1;
+    expect(
+      jointCodeForEndpoint(0, myCode, 1, atBound + 1, new Int32Array([myCode + partnerOk]), degree)
+    ).toBe(-(atBound + 3));
   });
 
   it('falls back to the free end for out-of-range vertex indices', () => {

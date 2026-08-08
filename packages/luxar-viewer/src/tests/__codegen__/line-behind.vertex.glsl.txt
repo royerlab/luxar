@@ -570,6 +570,14 @@ void main() {
 		nodeVar124 = ( nodeVar123 - nodeVar122 );
 		nodeVar125 = length( nodeVar124 );
 
+		if ( ( nodeVar125 <= 0.0001 ) ) {
+
+			nodeVar102 = 0.0;
+
+
+		}
+
+
 		if ( ( ( ( ( ( - nodeVar120.z ) >= nodeVar62 ) && ( nodeVar60 >= nodeVar62 ) ) && ( nodeVar125 > 0.0001 ) ) && ( nodeVar87 > 0.0001 ) ) ) {
 
 			nodeVar126 = ( nodeVar124 / vec2( nodeVar125 ) );
@@ -659,6 +667,14 @@ void main() {
 		nodeVar149 = ( nodeVar85 * ( nodeUniform24 * vec2( 0.5 ) ) );
 		nodeVar150 = ( nodeVar148 - nodeVar149 );
 		nodeVar151 = length( nodeVar150 );
+
+		if ( ( nodeVar151 <= 0.0001 ) ) {
+
+			nodeVar103 = 0.0;
+
+
+		}
+
 
 		if ( ( ( ( ( ( - nodeVar146.z ) >= nodeVar62 ) && ( nodeVar59 >= nodeVar62 ) ) && ( nodeVar151 > 0.0001 ) ) && ( nodeVar87 > 0.0001 ) ) ) {
 

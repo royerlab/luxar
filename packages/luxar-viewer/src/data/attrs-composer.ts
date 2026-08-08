@@ -12,6 +12,8 @@
  *                          else undefined (each consumer applies its own per-type
  *                          default: `additive` for points/lines/gsplats, `opaque`
  *                          for mesh — docs/specs/MESH_NODE_SPEC.md §6.3)
+ *   effective_join       = nearest ancestor (root-to-leaf) that sets join,
+ *                          else undefined (lines apply DEFAULT_LINE_JOIN)
  *
  * Note: the offset composition is additive per the spec. This is mathematically
  * different from chaining the shader's `color * I + O` model through successive
@@ -35,6 +37,13 @@ export interface ComposableAttrs {
   offset?: number;
   /** Raw (unvalidated) mode string as authored; normalized at compose time. */
   blending_mode?: string;
+  /**
+   * Raw (unvalidated) line join style as authored. Unlike `blending_mode` it
+   * is NOT normalized here — `createLinesNode` runs it through
+   * `parseLineJoinStyle` and warns once on an unknown value, and validating
+   * in both places would warn twice.
+   */
+  join?: string;
 }
 
 export interface EffectiveAttrs {
@@ -50,6 +59,12 @@ export interface EffectiveAttrs {
    * malformed one) is run through `normalizeBlendingMode`.
    */
   blending_mode: BlendingMode | undefined;
+  /**
+   * Nearest ancestor (root-to-leaf) that sets `join`, `undefined` when no
+   * level of the chain does — which is what lets `createLinesNode` apply
+   * `DEFAULT_LINE_JOIN`. Left raw on purpose: the consumer validates.
+   */
+  join: string | undefined;
 }
 
 /**
@@ -71,6 +86,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
   let intensity = 1.0;
   let offset = 0.0;
   let blending_mode: string | undefined;
+  let join: string | undefined;
 
   for (const a of chainRootToLeaf) {
     if (a.opacity !== undefined) opacity *= a.opacity;
@@ -79,6 +95,7 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     if (a.intensity !== undefined) intensity *= a.intensity;
     if (a.offset !== undefined) offset += a.offset;
     if (a.blending_mode !== undefined) blending_mode = a.blending_mode;
+    if (a.join !== undefined) join = a.join;
   }
 
   // Clamp per spec
@@ -97,6 +114,9 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     // (consumers apply their per-type default). A set-but-malformed value
     // (e.g. '') is NOT undefined, so it still normalizes → 'normal'.
     blending_mode: blending_mode === undefined ? undefined : normalizeBlendingMode(blending_mode),
+    // Passed through as authored — `createLinesNode` is the one place that
+    // validates a join style, so it also owns the unknown-value warning.
+    join,
   };
 }
 
@@ -184,5 +204,6 @@ function toComposable(attrs: SceneNode['attrs']): ComposableAttrs {
     intensity: attrs.intensity as number | undefined,
     offset: attrs.offset as number | undefined,
     blending_mode: attrs.blending_mode as string | undefined,
+    join: attrs.join as string | undefined,
   };
 }

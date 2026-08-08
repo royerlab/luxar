@@ -138,7 +138,13 @@ function evalJoin(i: JoinInput): JoinResult {
   const partnerDelta = i.atEnd ? sub(i.farPx, i.sharedPx) : sub(i.sharedPx, i.farPx);
   const partnerLen = len(partnerDelta);
   const bothFarInFront = i.isOrtho || (i.farDepth >= i.nearCull && i.selfFarDepth >= i.nearCull);
-  if (!bothFarInFront || partnerLen <= 0.0001 || i.pixelLen <= 0.0001) return noJoin;
+  // A degenerate partner keeps the cap rather than falling back to the
+  // code-implied suppression — see the shader for why. Tested first, so the
+  // ordering matches the two backends.
+  if (partnerLen <= 0.0001) {
+    return { cornerOffset: mul(perpendicular, i.joinPixelWidth), cap: 0, mitred: false, turn: NaN };
+  }
+  if (!bothFarInFront || i.pixelLen <= 0.0001) return noJoin;
 
   const partnerDir = mul(partnerDelta, 1 / partnerLen);
   const dirIn = i.atEnd ? i.lineDir : partnerDir;
@@ -547,5 +553,32 @@ describe('line join math (vertex-side, #790)', () => {
     const ungated = evalJoin(base);
     expect(ungated.mitred).toBe(true);
     expect(len(sub(ungated.cornerOffset, plain))).toBeCloseTo(4, 10);
+  });
+
+  it('a degenerate partner keeps the cap instead of the code-implied suppression', () => {
+    // The kernel matches endpoints by vertex index and never reads positions,
+    // so a ZERO-LENGTH interior segment still earns its two neighbours
+    // slot-bearing codes. Here the partner's far endpoint sits on the shared
+    // vertex, so its screen-space leg has no direction to miter against.
+    //
+    // Falling back to `noJoin` (cap -1, i.e. the code-implied default) is
+    // wrong twice over: a slot-bearing code SUPPRESSES the cap, so the joint
+    // would get neither a miter nor a cap and the #790 wedge reappears at
+    // every zero-length interior segment. The cap must come back on.
+    const self = leg(true, [0, 100], 0);
+    const degenerate = leg(false, SHARED, 1); // far endpoint == the shared vertex
+    const input = sideInput(self, degenerate, SHARED, 8);
+
+    const res = evalJoin(input);
+    expect(res.mitred).toBe(false);
+    expect(res.cap).toBe(0); // 0 = keep the soft cap; -1 would defer to the code
+    const plain = mul(perpOf(input.lineDir), input.joinPixelWidth);
+    expect(res.cornerOffset[0]).toBeCloseTo(plain[0], 10);
+    expect(res.cornerOffset[1]).toBeCloseTo(plain[1], 10);
+
+    // Sensitivity control: the identical joint with a real partner leg miters,
+    // so the assertions above are not passing on some unrelated gate.
+    const real = leg(false, [200, 100], 1);
+    expect(evalJoin(sideInput(self, real, SHARED, 8)).mitred).toBe(true);
   });
 });

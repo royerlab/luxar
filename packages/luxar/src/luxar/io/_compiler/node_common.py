@@ -506,13 +506,9 @@ def validate_render_attrs(
         # Both matter: an unrecognised style is far more likely a typo than a
         # request for no joins, and the file would otherwise write cleanly and
         # render with the default, giving the author nothing to go on.
-        from ...typing_utils.constants import LINE_JOIN_STYLES
+        from ...validation.types import validate_line_join
 
-        if attrs["join"] not in LINE_JOIN_STYLES:
-            raise ValueError(
-                f"Unknown line join style {attrs['join']!r}. "
-                f"Expected one of {sorted(LINE_JOIN_STYLES)}."
-            )
+        validate_line_join(attrs["join"])
 
     if "absorption" in attrs:
         from ...validation.types import validate_absorption

@@ -29,21 +29,106 @@ track the camera.
 Because the miter point lies on the segment's own ±R offset line, `vPerpNorm`
 stays an exact perpendicular coordinate and the **fragment stage is unchanged**.
 Guards (miter limit 120°, an overshoot test on the axial reach, and a 2 px
-rendered-width gate) keep the cost where the benefit is: 0 on thin-line scenes,
-+0.1–0.2 ms/frame at 800k thick segments. The near-plane guard is two-sided
-(#1346) — each side tests BOTH far endpoints, not just the partner's — so the two
-quads cannot disagree at a joint next to the camera plane and leave one segment
-mitering alone. Default style is `miter`; a per-node `join` attribute and
-`?lineJoin=none|miter` override it.
+rendered-HALF-width gate, i.e. 4 px rendered width) keep the cost where the
+benefit is: a joint pays one extra texel fetch and one extra projection per
+vertex, and the width gate skips the block entirely below that threshold, so
+thin-line scenes — the million-segment ones — pay nothing. The near-plane guard
+is two-sided (#1346) — each side tests BOTH far endpoints, not just the
+partner's — so the two quads cannot disagree at a joint next to the camera plane
+and leave one segment mitering alone. Default style is `miter`; a per-node
+`join` attribute and `?lineJoin=none|miter` override it.
+
+`join` is a compositing attribute, so on a partitioned / LOD lines node it is
+written once on the wrapper and inherited by the parts. Three consequences of
+that are now enforced rather than assumed. The **pick** material reads the style
+off the live visual material at retro-registration — the path a first load
+actually takes — so a `join="none"` scene no longer leaves the empty outer wedge
+of every corner pickable, or picks differently on a second dataset load. `join`
+has a validating `Node` property (`validate_line_join`, alongside the sibling
+render-attr validators) instead of an assignment that silently never reached
+disk. And the points / gsplats / mesh adders refuse it: it is one shared writer
+allow-list, so `add_points(..., join="none")` used to write a dead attribute
+nothing would ever read. A `join` on a **Group** is still correct — that is the
+whole point of it compositing.
 
 Net deletion: the per-segment `dirs` table (~32 MB at 2.7M segments), the
-per-endpoint normalize + dot, and `softenCapacitySplitCap`. A/B'd none → miter
-on this branch's own scratch fixture: a 120-segment sinusoid drops from 233 to 2
-outlier pixels and a right-angle zigzag from 726 to 0, while straight polylines
-come back byte-identical (the miter reduces algebraically to `R·perp` at a
-collinear joint). That fixture was superseded by the `test_line_joins` fixture
-and `line-join-artifact.spec.ts` described below, which is the acceptance
-harness going forward — the two figures above are not reproducible from it.
+per-endpoint normalize + dot, and the f64-vs-f32 care those needed to keep the
+two backends bit-identical — integer index arithmetic agrees trivially.
+
+Measured on the `test_line_joins` acceptance harness described below
+(`line-join-artifact.spec.ts`, headless Chromium, `dpr=1` pinned, both columns
+2026-08-07 — the unmitred one re-measured on the same tree via
+`&lineJoin=none`): the 120-segment sinusoid goes from 4.94% dark / 3.52% bright
+outlier pixels to **zero of each**, and the right-angle zigzag's axial flux p05
+rises from 0.780 to 0.985 against a straight-band 1.000. Both straight bands
+are unchanged at zero outliers and a flat profile — the miter reduces
+algebraically to `R·perp` at a collinear joint — and the nine-ray hub control holds at
+0.157% / 0.114%. The spec now gates the two bend bands at a couple of outlier
+pixels — the measurement is zero, the small ceiling only absorbs a seam pixel
+the shaders' float32 operand order can cost — so unmitred rendering cannot
+come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
+under `make test-e2e`.)
+
+#### Mesh is per-triangle depth sorted
+
+`normal`-mode meshes composited in index order: whichever triangle the writer
+emitted last drew last, so faces showed through each other and — with per-vertex
+RGBA at full node opacity, where `depthWrite` is on while `transparent` is true —
+whatever was behind a translucent fragment was depth-REJECTED outright. The
+mitigation shipped in #1328 was a one-time warning naming the node. This replaces
+the warning with the fix, and deletes it.
+
+Almost all of it is reuse. A triangle's "center" is its vertex centroid: 3 floats
+per element, exactly like a splat center or a line segment midpoint. So the
+registration (`noteDepthSortCommit`), the SortWorker, the sort kernel, the
+generation/stale-drop bookkeeping and the per-frame camera-motion re-sort
+scheduler all serve mesh unchanged, and `GEOMETRY_CAPABILITIES.mesh.depthSortable`
+is now `true` — which is also what makes a Layers-panel switch INTO `normal`
+reprocess the node so it registers.
+
+The apply is the part that genuinely differs, and it differs structurally rather
+than by degree. The three instanced types permute `aSortedIndex`, a per-instance
+draw-slot indirection, streaming a new ordering into an inactive twin attribute
+and flipping a uniform when it completes. A mesh has no indirection: it is one
+indexed `drawElements`, and the draw order of its triangles IS the order of the
+index buffer. `geometry.index` is BOUND state, so no uniform can select between
+two of them, and reassigning it is the drawn-geometry rebind `applyMeshIndices`
+exists to avoid. The new `depth-sort-coordinator/triangle-ordering.ts` therefore
+writes the whole visible prefix ATOMICALLY — one `set`, one update range — because
+a half-written index buffer is not a permutation: some triangles would draw twice
+and others not at all, a wrong picture rather than a stale one. The cost is
+bounded by a quantity the mesh path already pays, since `applyMeshIndices`
+re-uploads that same prefix on every slice move.
+
+Two things that took finding:
+
+- **The permutation must be applied to the CANONICAL triples, not to the live
+  buffer.** The buffer already holds the previous permutation, so permuting it
+  again composes the two — invisible on the first sort, a scrambled surface on the
+  second. The coordinator retains the commit's `ProjectedMeshData.indices` for
+  exactly as long as the node is being sorted, and drops it on every release
+  branch so an opaque mesh never carries a second copy of its index.
+- **`commitMeshGeometry` has to stamp `committedData`.** Mesh has no
+  memoized-concat noop path of its own, so it never set the stamp — and the
+  coordinator's resolve path, per-frame scheduler and capture drain all gate on it.
+  Unset, every sort still dispatched, still resolved, and was then silently
+  dropped: the surface would have rendered unsorted with nothing anywhere
+  reporting a problem.
+
+Picking needed no work, and the reason is worth recording: for an indexed draw
+`gl_VertexID` (WGSL `@builtin(vertex_index)`) IS the value fetched from the index
+buffer, so a mesh's element ordinal is invariant under any permutation of the
+triples. The slot-syncing the instanced types need to keep the pick pass reading
+the same permutation has no analogue here.
+
+Verified on a real written scene rather than in unit tests alone: two overlapping
+half-opaque quads, green at z = +2 and red at z = −2, authored NEAR-first so the
+index order is deliberately the wrong one. Sampling the centre of the frame,
+`?depthSort=0` gives (r 199, g 153) — red wins, the far quad composited last, as
+authored. Sorted gives (r 162, g 196) — green wins. Orbiting to the far side with
+real mouse drags flips it back to (r 184, g 136). What sorting still cannot fix is
+interpenetrating triangles, a residual shared with the other three types and the
+reason `opaque` remains the mesh default.
 
 #### Documentation — pull-request quality gate and warning ratchets (#776)
 
@@ -73,11 +158,11 @@ and a nine-ray indexed hub) under a pinned photometry-grade viewer config, and
 projecting its world AABB through the live camera. Every band is asserted to
 have a gapless flux profile — a torn tube is a defect at any turn angle — and
 the straight bands additionally at zero outliers and a flat profile. The two
-bending cases are **recorded** under documented ceilings rather than fixed:
-measured 2026-08-06, with the device pixel ratio pinned, at 4.94% dark /
-3.53% bright on the curve. Those are pre-miter numbers — the join geometry
-landed in the entry above, and the ceilings have not yet been re-measured
-against the mitred renderer, so they still stand in the spec as upper bounds.
+bending cases were first **recorded** under documented ceilings rather than
+fixed: measured with the device pixel ratio pinned at 4.94% dark / 3.52% bright
+on the curve. Once the join geometry landed in the entry above
+those ceilings dropped to two outlier pixels against a measured zero, plus a 0.9 axial-flux
+floor on the zigzag, whose wedge is too wide for the outlier metric to see.
 
 Scope note: the E2E job is currently disabled in CI, so the spec runs only
 under `make test-e2e` locally. What runs on every PR is the unit suite, and it
@@ -2254,7 +2339,8 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   fixed: the suppression angle is measured in data space once per commit
   while quad tiling/overlap is a screen-space, per-camera fact (#795 tracks a
   real screen-space suppression), and the outer-side miter wedge at sharp
-  bends remains.
+  bends remains. (Both were subsequently closed — see the screen-space miter
+  join entry at the top of this file.)
 
 #### Added — manifest-driven demo-data fetch (R17 step 1)
 

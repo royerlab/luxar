@@ -5,8 +5,10 @@
  * Without join geometry, two segments meeting at a turn of angle θ leave an
  * uncovered circular sector of that angle on the OUTSIDE of the bend and
  * double-cover a lens on the inside: measurably, dark ticks along the convex
- * edge of a thick curve (worst −199/255 on a 2-world-unit tube) and bright
- * ticks along the concave one. No per-endpoint intensity scalar can close the
+ * edge of a thick curve and bright ticks along the concave one. On the
+ * `test_line_joins.luxar.zarr` acceptance fixture (`bend_width = 0.4`),
+ * rendered with `&lineJoin=none`, the worst local-median deficit is 203/255 on
+ * the `curve_smooth` band and 200/255 on `zigzag_right_angle`. No per-endpoint intensity scalar can close the
  * outer wedge — nothing rasterises there to shade — so it needs geometry.
  *
  * | style   | per-vertex cost             | wedge      | blending modes    |
@@ -37,9 +39,12 @@ export type LineJoinStyle = 'none' | 'miter';
  *
  * `miter` is exact and blending-mode agnostic, leaves free polyline ends
  * untouched, and is gated in-shader by both a rendered-width threshold and a
- * miter limit — so every existing scene improves without re-authoring. Measured
- * overhead is 0 on thin-line scenes (the width gate skips them, and they are
- * the million-segment ones) and +0.1–0.2 ms/frame at 800k thick segments.
+ * miter limit — so every existing scene improves without re-authoring. The
+ * overhead a joint pays is one extra `texelFetch` and one extra projection per
+ * vertex, and the rendered-width gate compiles it out of the whole draw below
+ * `LINE_JOIN_MIN_HALF_WIDTH`, so thin-line scenes — which are the
+ * million-segment ones — pay nothing at all. No frame-time figure is quoted
+ * here because the perf suite has no `lineJoin` axis to measure one with.
  */
 export const DEFAULT_LINE_JOIN: LineJoinStyle = 'miter';
 

@@ -190,7 +190,8 @@ the directions read in a canonical order (incoming edge first):
   must be in front of the near plane (testing only the partner's has each side
   testing a different point, so one side can miter alone against nothing), and
   this endpoint must actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
-- a **rendered-width gate** of 2 px: the wedge has area ~θ·R²/2, so below
+- a **rendered-HALF-width gate** of 2 px (`LINE_JOIN_MIN_HALF_WIDTH`), i.e.
+  4 px of rendered width: the wedge has area ~θ·R²/2, so below
   that it is sub-pixel and the line is already pinned to the 1.5 px floor
   with its intensity faded. The cost then lands only where the benefit is —
   million-segment scenes are thin-line scenes and skip the block entirely.
@@ -227,23 +228,33 @@ count sees the narrow one-to-two-pixel wedge tick but tracks any smooth
 variation invisibly, while an axial flux profile (cross-section sum along
 the tube, normalised by its own median) sees exactly the smooth
 per-joint dip that was the #780 bead chain and would score zero on the
-outlier metric. The spec asserts what already holds — zero dark and zero
-bright outliers on both straight bands, flat flux profiles on both, and a
-gapless flux profile on all five — and records the bend cases under
-documented ceilings. Those ceilings were recorded against the unmitred
-renderer and have not been re-measured since the miter landed, so they
-now stand as pre-miter upper bounds rather than as a description of what
-the bend bands look like today.
+outlier metric. The spec asserts a gapless flux profile on all five bands,
+zero dark and zero bright outliers plus a flat flux profile on both
+straight bands — and, since the miter landed, at most two outliers of each
+kind on the two bend bands, which both measure zero, so a regression to
+unmitred rendering fails it by a wide margin. (The bend ceiling is two rather
+than zero only to absorb a seam pixel the float32 operand order can cost;
+the spec header quantifies it.)
 
-Read the metrics module header before quoting one of its numbers, and
-read them as the pre-miter figures they are: the local-median count is
-non-monotone in defect width (a wedge three or more pixels across poisons
-its own median and scores zero), so the gentle `curve_smooth` band
-measured 4.94% dark while the 90° `zigzag_right_angle`, whose wedge is
-far worse but far wider, measured 0.077%. For wide wedges the axial flux
-dip is the measure that responds — p05 0.749 on the zigzag against 1.000
-on the straight bands. (Measured pre-miter with `dpr=1` pinned, headless
-Chromium, 2026-08-06.)
+The before/after on that harness:
+
+| Band                 | Unmitred                  | Mitred          |
+| -------------------- | ------------------------- | --------------- |
+| `curve_smooth`       | 4.94% dark / 3.52% bright | 0 / 0           |
+| `zigzag_right_angle` | flux p05 0.780            | flux p05 0.985  |
+| `straight_thin`      | 0 / 0, flat profile       | unchanged       |
+| `straight_thick`     | 0 / 0, flat profile       | unchanged       |
+| `hub_9ray` (control) | 0.157% / 0.114%           | 0.157% / 0.114% |
+
+Read the metrics module header before quoting one of its numbers. The
+local-median count is non-monotone in defect width (a wedge three or more
+pixels across poisons its own median and scores zero), which is why the
+gentle `curve_smooth` band measured 4.94% dark unmitred while the 90°
+`zigzag_right_angle`, whose wedge is far worse but far wider, measured
+only 0.076% — and why the zigzag is gated on its flux profile instead.
+(Both columns measured in headless Chromium with `dpr=1` pinned on
+2026-08-07, the unmitred one via `&lineJoin=none`. The E2E job is not part of the
+per-PR CI run; the spec runs under `make test-e2e`.)
 
 ## Geometry and storage layout
 
