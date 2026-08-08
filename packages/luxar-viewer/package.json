@@ -107,7 +107,7 @@
   "dependencies": {
     "comlink": "^4.4.2",
     "fflate": "^0.8.3",
-    "mediabunny": "^1.51.0",
+    "mediabunny": "^1.52.3",
     "zarrita": "^0.7.3"
   },
   "devDependencies": {
