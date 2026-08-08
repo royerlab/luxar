@@ -45,6 +45,11 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import {
+  COMPARE_SIZE,
+  DISAGREEMENT_THRESHOLD,
+  normalizedCrossCorrelation,
+} from './frame-similarity';
+import {
   computeAutoExposure,
   CLIP_LUMA,
   CLIP_SAT_MAX,
@@ -863,11 +868,11 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
  * whose dataset actually carries that camera shipped an animation rolled ~90 deg
  * from its own poster (#1377). Nothing in this harness compared the two.
  *
- * Normalised cross-correlation on a 256x256 greyscale downscale — deliberately
- * not SSIM, which is punishing on high-frequency filamentary subjects (a
+ * Normalised cross-correlation on a greyscale downscale — deliberately not
+ * SSIM, which is punishing on high-frequency filamentary subjects (a
  * correctly-matched cosmic-web tile scores 0.57 while correlating at 0.98) and
- * would cry wolf. Measured separation is wide: 0.98-1.00 when consistent,
- * 0.52-0.54 when rolled, so 0.85 sits clear of both.
+ * would cry wolf. The maths, the size and the threshold live in
+ * `frame-similarity.ts`, where they are unit-tested.
  *
  * WARNS rather than fails. A demo may legitimately reorient between still and
  * orbit (`orbitUp` + `viewAngle` do exactly that on purpose), so this is a "look
@@ -895,37 +900,33 @@ async function warnIfStillDisagreesWithOrbit(
   if (!fs.existsSync(stillPath) || !fs.existsSync(frameZeroPath)) return;
   const [a, b] = [stillPath, frameZeroPath].map((f) => fs.readFileSync(f).toString('base64'));
   try {
-    const corr = await page.evaluate(
-      async ([s, f]: [string, string]) => {
+    // The page does DECODING only — it is the one place with an image decoder —
+    // and hands back plain integer greyscale buffers. The comparison itself runs
+    // in Node against `frame-similarity.ts`, so the arithmetic is unit-tested
+    // rather than trapped inside a `page.evaluate` string.
+    const [ga, gb] = await page.evaluate(
+      async ([s, f, size]: [string, string, number]) => {
         const grey = async (b64: string) => {
           const blob = await (await fetch('data:image/png;base64,' + b64)).blob();
           const img = await createImageBitmap(blob);
-          const c = new OffscreenCanvas(256, 256);
+          const c = new OffscreenCanvas(size, size);
           const ctx = c.getContext('2d')!;
-          ctx.drawImage(img, 0, 0, 256, 256);
-          const d = ctx.getImageData(0, 0, 256, 256).data;
-          const out = new Float64Array(256 * 256);
+          ctx.drawImage(img, 0, 0, size, size);
+          const d = ctx.getImageData(0, 0, size, size).data;
+          const out: number[] = new Array(size * size);
           for (let i = 0, j = 0; i < d.length; i += 4, j++) {
-            out[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            // Kept in step with `luma8` in frame-similarity.ts — this side
+            // cannot import it (the body is serialised into the page).
+            out[j] = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
           }
-          const mean = out.reduce((p, q) => p + q, 0) / out.length;
-          let ss = 0;
-          for (let i = 0; i < out.length; i++) {
-            out[i] -= mean;
-            ss += out[i] * out[i];
-          }
-          const sd = Math.sqrt(ss / out.length);
-          if (sd > 0) for (let i = 0; i < out.length; i++) out[i] /= sd;
           return out;
         };
-        const [ga, gb] = [await grey(s), await grey(f)];
-        let acc = 0;
-        for (let i = 0; i < ga.length; i++) acc += ga[i] * gb[i];
-        return acc / ga.length;
+        return [await grey(s), await grey(f)];
       },
-      [a, b]
+      [a, b, COMPARE_SIZE]
     );
-    if (corr < 0.85) {
+    const corr = normalizedCrossCorrelation(ga, gb);
+    if (corr < DISAGREEMENT_THRESHOLD) {
       console.warn(
         `[${demo.id}] ⚠️  still and orbit frame 0 disagree (correlation ${corr.toFixed(3)}). ` +
           'They are the same nominal pose, so the animation is showing a different ' +
