@@ -333,6 +333,9 @@ Navigation:
                 opacity=1.0,
                 absorption=1.0,
                 blending_mode="volumetric",
+                # `layer` is a compositing attr, so it rides on the kind=lod
+                # wrapper: one panel row for the ladder, not one per level.
+                layer=True,
             )
 
             # ── Overlays ────────────────────────────────────────────────────

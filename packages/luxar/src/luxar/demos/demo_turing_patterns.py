@@ -284,6 +284,7 @@ def generate_turing_patterns(
                 sharpness=sharpnesses,
                 opacity=0.9,
                 intensity=0.1,
+                layer=True,
             )
 
             # --- Overlays ---
