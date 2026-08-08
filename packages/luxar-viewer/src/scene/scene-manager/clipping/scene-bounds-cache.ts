@@ -35,6 +35,18 @@ import {
 } from './bounds-math';
 
 /**
+ * Fraction of the bounding-box diagonal used as the near-cull margin fed to
+ * the point / line / gsplat materials (`uNearCull`).
+ *
+ * Named and exported because it is not local: `MAX_NEAR_FAR_RATIO`'s
+ * losslessness derivation (`bounds-math.ts`) is stated relative to this
+ * factor, and the tests that pin that derivation import it from here rather
+ * than re-typing 0.001 — otherwise retuning the near cull would leave those
+ * tests green while quietly invalidating the bound.
+ */
+export const NEAR_CULL_DIAGONAL_FACTOR = 0.001;
+
+/**
  * Lazily-computed, invalidatable cache of the 3D bounds /
  * bounding sphere / near-cull margin derived from the scene's
  * `position_bounds` metadata, projected to the current display
@@ -68,7 +80,7 @@ export class SceneBoundsCache {
     if (!bounds) return;
     this._bounds = bounds;
     this._sphere = boundingBoxToSphere(bounds);
-    this._nearCull = getBoundingBoxDiagonal(bounds) * 0.001;
+    this._nearCull = getBoundingBoxDiagonal(bounds) * NEAR_CULL_DIAGONAL_FACTOR;
   }
 
   /**
