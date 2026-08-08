@@ -6,6 +6,10 @@ import { PostProcessingManager } from '../rendering';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
 import { config, type RenderingSettings } from '../config';
+import {
+  minNearForRadius,
+  SPHERE_SAFETY_EXPANSION,
+} from '../scene/scene-manager/clipping/bounds-math';
 
 import type { RenderingControllers } from './rendering-controls/types';
 import { log, Modules } from '../utils/log';
@@ -36,6 +40,39 @@ import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-u
  * cinematic effect values and `CinematicSnapshotKeys` its key union.
  */
 export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-controls/cinematic-mode';
+
+/**
+ * Largest power of ten at or below `v`, floored at 1e-6 — a slider step whose
+ * `String()` form is an exact short decimal.
+ *
+ * The GUI derives a controller's displayed decimal count from
+ * `String(step).split('.')[1].length` (`gui/format/value-formatting.ts`), so the
+ * step's *textual* form is load-bearing, not just its magnitude:
+ *
+ *  - A scene-derived value carries float noise. `String(1.05e-4)` is
+ *    `"0.00010499999999999999"` → 20 decimals → a near of 117.5 renders as
+ *    `"117.50000000000000000000"`.
+ *  - Below 1e-6, `String` switches to exponential (`String(1e-7) === "1e-7"`),
+ *    where that split reads the decimal count off the MANTISSA — or finds no
+ *    `.` at all and reports 0, rendering every small value as `"0"`.
+ *
+ * What is load-bearing is only that the result is a POWER OF TEN (so `String()`
+ * is short and exact) and that the exponent is floored at -6 (so `String()`
+ * stays decimal). The literal spelling is not: `Number('1e'+e)` and
+ * `Math.pow(10, e)` were measured identical at every exponent from -13 to +12,
+ * so either works — the literal just reads as the intent.
+ *
+ * The 1e-6 floor costs slider granularity on sub-micron scenes and buys a
+ * correct readout, which is the right trade for a control that is a read-only
+ * live display whenever dynamic clipping is on.
+ *
+ * Exported for test. The underlying `formatNumber` limitation is the GUI's, not
+ * this module's — this is the caller-side accommodation.
+ */
+export function decadeStep(v: number): number {
+  if (!Number.isFinite(v) || v <= 0) return 1e-6;
+  return Number(`1e${Math.max(-6, Math.floor(Math.log10(v)))}`);
+}
 
 /**
  * Advanced rendering parameters GUI for real-time visual control.
@@ -518,6 +555,23 @@ export class RenderingControls {
     // Apply clipping planes if overridden
     if (zarrOverrides.near !== undefined || zarrOverrides.far !== undefined) {
       this.sceneManager.updateClippingPlanes(this.settings.near, this.settings.far);
+
+      // Authored planes and dynamic clipping are mutually exclusive in effect:
+      // the per-frame update recomputes near/far from scene bounds on the very
+      // next frame, so authored values survive for one frame and then vanish
+      // with no diagnostic. Precedence is intentionally NOT changed here —
+      // dynamic clipping is an explicit auto mode and silently disabling it
+      // would be the more surprising behaviour — but the author deserves to
+      // know why their setting appears to be ignored. Pair
+      // `camera.near`/`camera.far` with `dynamic_clipping_enabled=False` in
+      // viewer_config to make them stick.
+      if (this.settings.dynamicClippingEnabled) {
+        log.warning(
+          Modules.RENDERER,
+          'viewer_config sets camera.near/far while dynamic clipping is enabled; ' +
+            'the per-frame update will override them. Set dynamic_clipping_enabled=False to keep them.'
+        );
+      }
     }
 
     // Apply navigation settings if overridden
@@ -614,6 +668,88 @@ export class RenderingControls {
       Modules.UI,
       `Fly speed range updated for scale ${scale.toFixed(1)}: ` +
         `[${newMin.toFixed(2)}, ${newMax.toFixed(1)}], speed=${scaledSpeed.toFixed(1)}`
+    );
+
+    this.updateClippingSliderRanges(scale);
+  }
+
+  /**
+   * Re-range the near/far sliders from the scene scale.
+   *
+   * Their authored range is ABSOLUTE (`near` 0.0001–10, `far` 1–100000) while
+   * every value they ever show is scene-relative, so on any scene that is not
+   * roughly 100 world units across the two disagree. The visible symptom is
+   * under dynamic clipping, where the sliders are read-only live readouts: at a
+   * framed camera on a diagonal-100 scene `near` is ~44, so the number input
+   * reads 44 truthfully while `<input type=range>` clamps its own value and
+   * pins the thumb at the 10 end. On a micron-scale scene the whole useful
+   * range collapses below the 0.0001 minimum instead.
+   *
+   * Ranged off the same scene diagonal the rest of the scale-aware machinery
+   * uses, and bracketing what the clipping policy can actually produce:
+   * `near` bottoms out at `MIN_NEAR_RADIUS_FACTOR · R` (the ortho floor) and
+   * tops out near the framed distance; `far` reaches `dist + R` at the
+   * zoom-out limit. Mirrors the fly-speed re-ranging directly above — same
+   * trigger, same structural cast, same reason.
+   *
+   * The STEP is not simply the range minimum, because the GUI derives the
+   * displayed decimal count from `String(step)` (`format/value-formatting.ts`).
+   * A scene-derived step carries float noise into that string — `String(1.05e-4)`
+   * is `"0.00010499999999999999"`, which renders every value with TWENTY
+   * decimals — and below 1e-6 `String` switches to exponential, where the
+   * decimal count is read off the mantissa and is meaningless. `decadeStep`
+   * exists to hand this function a clean value; see it for the exact bounds.
+   */
+  private updateClippingSliderRanges(scale: number): void {
+    type ChainableNumber = {
+      min(v: number): ChainableNumber;
+      max(v: number): ChainableNumber;
+      step(v: number): ChainableNumber;
+    };
+    const reRange = (
+      controller: (typeof this.controllers)[keyof typeof this.controllers],
+      min: number,
+      max: number,
+      step: number
+    ): void => {
+      if (!controller) return;
+      const ctrl = controller as unknown as ChainableNumber;
+      if (typeof ctrl.min === 'function') ctrl.min(min).max(max).step(step);
+    };
+
+    // Both maxima come from the SAME sphere equations the clipping policy uses,
+    // evaluated at the furthest camera distance the controls allow. Anything
+    // less and the range input clamps again — which is the entire symptom this
+    // method exists to remove.
+    //
+    // `nearMax = scale` (an earlier spelling) was not merely short at the
+    // zoom-out limit: `near = dist - R` overtakes it once `dist > scale + R`,
+    // i.e. at 0.9x the framed distance, so the thumb pinned at the OPENING
+    // pose of any ordinary scene. It also made things worse below diagonal ~10,
+    // where the old absolute max of 10 was the larger of the two and a manual
+    // `near` above the scene diagonal stopped being settable.
+    //
+    // R is the safety-expanded radius the clipping policy works in.
+    const R = 0.5 * scale * SPHERE_SAFETY_EXPANSION;
+    const distMax = scale * config.controls.scaleMultipliers.maxDistanceFactor;
+    const nearMin = minNearForRadius(R);
+    const nearMax = distMax; // near = dist - R, so distMax bounds it
+    const farMin = nearMin * 10;
+    const farMax = distMax + R; // far = dist + R at the limit
+
+    reRange(this.controllers.nearPlane, nearMin, nearMax, decadeStep(nearMin));
+    reRange(this.controllers.farPlane, farMin, farMax, decadeStep(scale / 1000));
+
+    // Re-assert the live values: `<input type=range>` clamped them to the OLD
+    // bounds, so the thumbs stay stale until the display is refreshed.
+    this.controllers.nearPlane?.updateDisplay();
+    this.controllers.farPlane?.updateDisplay();
+
+    log.info(
+      Modules.UI,
+      `Clipping slider ranges updated for scale ${scale.toFixed(1)}: ` +
+        `near [${nearMin.toExponential(1)}, ${nearMax.toFixed(1)}], ` +
+        `far [${farMin.toExponential(1)}, ${farMax.toFixed(0)}]`
     );
   }
 

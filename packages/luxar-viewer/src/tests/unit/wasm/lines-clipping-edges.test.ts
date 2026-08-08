@@ -11,7 +11,7 @@
  *                       all-hidden visibility → loop never iterates → return 0.
  *   - [wasm.md G12][P5] calculate_segment_lengths: visibleCount=0 (no-op) and
  *                       NaN positions (NaN propagates through Math.sqrt).
- *   - [wasm.md G13][P5] compute_cap_suppression: all-hidden, and t1=t2=0.5
+ *   - [wasm.md G13][P5] compute_joint_codes: all-hidden, and t1=t2=0.5
  *                       (both clipped) plus t1=0/t2=1 (neither clipped).
  *
  * Pure math on typed arrays — no mocks. Mirrors the audit's three-geometry
@@ -25,7 +25,10 @@ import {
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
-  compute_cap_suppression,
+  compute_joint_codes,
+  MAX_EXACT_JOINT_SLOT,
+  JOINT_CLIPPED,
+  JOINT_FREE_END,
 } from '../../../wasm/typescript/lines-clipping';
 
 describe('clip_segments_batch — out-of-range / self-segment / NaN [wasm.md G9]', () => {
@@ -341,19 +344,35 @@ describe('calculate_segment_lengths — boundaries and NaN [wasm.md G12]', () =>
   });
 });
 
-describe('compute_cap_suppression — empty / boundary [wasm.md G13]', () => {
-  /** Disjoint segments (no shared vertices) → the clipped-flag path alone. */
+describe('joint-code f32 representability bound', () => {
+  // The bound itself is exercised as a BRANCH on the Rust side
+  // (`slot_past_the_f32_exact_bound_degrades_to_free_end`), where `joint_code`
+  // is a free function. Its TypeScript mirror is a closure inside
+  // `computeJointCodes`, and reaching the branch through the public kernel
+  // would need a >16.7M-segment fixture — so what is pinned here is the part
+  // that can silently DRIFT between the two hand-written implementations: the
+  // constant, and the arithmetic reason it sits where it does.
+  it('is the largest slot whose END encoding survives a float32 round-trip', () => {
+    const decode = (c: number) => (c > 0 ? Math.trunc(c) - 1 : Math.trunc(-c) - 3);
+    const atEnd = (slot: number) => -(slot + 3);
+    const atStart = (slot: number) => slot + 1;
+
+    expect(MAX_EXACT_JOINT_SLOT).toBe((1 << 24) - 3);
+    // At the bound: both encodings round-trip exactly.
+    expect(decode(Math.fround(atEnd(MAX_EXACT_JOINT_SLOT)))).toBe(MAX_EXACT_JOINT_SLOT);
+    expect(decode(Math.fround(atStart(MAX_EXACT_JOINT_SLOT)))).toBe(MAX_EXACT_JOINT_SLOT);
+    // One past it, the END encoding — the larger magnitude, so the binding one —
+    // rounds to a neighbour and decodes to the WRONG slot. That wrong slot is
+    // in range and indistinguishable downstream, which is why the kernel has to
+    // refuse to emit it rather than letting a consumer notice.
+    const over = MAX_EXACT_JOINT_SLOT + 1;
+    expect(decode(Math.fround(atEnd(over)))).not.toBe(over);
+  });
+});
+
+describe('compute_joint_codes — empty / boundary [wasm.md G13]', () => {
+  /** Disjoint segments (no shared vertices) → the sentinel path alone. */
   const disjointSegs = (n: number): Uint32Array => Uint32Array.from({ length: n * 2 }, (_, i) => i);
-  /** Positions for `n` disjoint unit-length segments along +x. */
-  const disjointPos = (n: number): [Float32Array, Float32Array] => {
-    const s = new Float32Array(n * 3);
-    const e = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      s[i * 3] = i * 10;
-      e[i * 3] = i * 10 + 1;
-    }
-    return [s, e];
-  };
 
   it('[G13] all visibility=0: loop never executes, output untouched, return 0', () => {
     const visibility = new Uint8Array([0, 0, 0]);
@@ -361,16 +380,13 @@ describe('compute_cap_suppression — empty / boundary [wasm.md G13]', () => {
     const t2Params = new Float32Array([0.5, 0.5, 0.5]);
     const outStart = new Float32Array(3).fill(99);
     const outEnd = new Float32Array(3).fill(99);
-    const [sp, ep] = disjointPos(3);
-    const n = compute_cap_suppression(
+    const n = compute_joint_codes(
       disjointSegs(3),
       visibility,
       t1Params,
       t2Params,
       3,
       6,
-      sp,
-      ep,
       outStart,
       outEnd
     );
@@ -379,68 +395,61 @@ describe('compute_cap_suppression — empty / boundary [wasm.md G13]', () => {
     expect(Array.from(outEnd)).toEqual([99, 99, 99]);
   });
 
-  it('[G13] t1=t2=0.5 (both clipped from outside): both suppressions = 1', () => {
-    // t1=0.5 > 0 → start clipped. t2=0.5 < 1 → end clipped. Both = 1.
+  it('[G13] t1=t2=0.5 (both clipped from outside): both codes = JOINT_CLIPPED', () => {
+    // t1=0.5 > 0 → start trimmed off its vertex. t2=0.5 < 1 → end trimmed. A
+    // trimmed endpoint can never be a joint: no neighbour meets it there.
     const outStart = new Float32Array(1);
     const outEnd = new Float32Array(1);
-    const [sp, ep] = disjointPos(1);
-    const n = compute_cap_suppression(
+    const n = compute_joint_codes(
       disjointSegs(1),
       new Uint8Array([1]),
       new Float32Array([0.5]),
       new Float32Array([0.5]),
       1,
       2,
-      sp,
-      ep,
       outStart,
       outEnd
     );
     expect(n).toBe(1);
-    expect(outStart[0]).toBe(1);
-    expect(outEnd[0]).toBe(1);
+    expect(outStart[0]).toBe(JOINT_CLIPPED);
+    expect(outEnd[0]).toBe(JOINT_CLIPPED);
   });
 
-  it('[G13] t1=0, t2=1, no neighbour (free ends): both suppressions = 0', () => {
-    // The strict-inequality clipped contract (`t1 > 0` / `t2 < 1`) yields 0,
-    // and with no segment sharing either vertex there is no joint to suppress.
+  it('[G13] t1=0, t2=1, no neighbour: both codes = JOINT_FREE_END', () => {
+    // The strict-inequality clipped contract (`t1 > 0` / `t2 < 1`) means these
+    // endpoints DO reach their vertices — but nothing shares them, so there is
+    // no partner to name.
     const outStart = new Float32Array(1);
     const outEnd = new Float32Array(1);
-    const [sp, ep] = disjointPos(1);
-    compute_cap_suppression(
+    compute_joint_codes(
       disjointSegs(1),
       new Uint8Array([1]),
       new Float32Array([0]),
       new Float32Array([1]),
       1,
       2,
-      sp,
-      ep,
       outStart,
       outEnd
     );
-    expect(outStart[0]).toBe(0);
-    expect(outEnd[0]).toBe(0);
+    expect(outStart[0]).toBe(JOINT_FREE_END);
+    expect(outEnd[0]).toBe(JOINT_FREE_END);
   });
 
-  it('[G13] asymmetry: t1=0 / t2=0.7 → start free (0), end clipped (1)', () => {
+  it('[G13] asymmetry: t1=0 / t2=0.7 → start free, end clipped', () => {
     const outStart = new Float32Array(1);
     const outEnd = new Float32Array(1);
-    const [sp, ep] = disjointPos(1);
-    compute_cap_suppression(
+    compute_joint_codes(
       disjointSegs(1),
       new Uint8Array([1]),
       new Float32Array([0]),
       new Float32Array([0.7]),
       1,
       2,
-      sp,
-      ep,
       outStart,
       outEnd
     );
-    expect(outStart[0]).toBe(0);
-    expect(outEnd[0]).toBe(1);
+    expect(outStart[0]).toBe(JOINT_FREE_END);
+    expect(outEnd[0]).toBe(JOINT_CLIPPED);
   });
 
   it('[G13] mixed visibility compacts the output (only visible segments contribute)', () => {
@@ -449,25 +458,24 @@ describe('compute_cap_suppression — empty / boundary [wasm.md G13]', () => {
     const t2Params = new Float32Array([1, 1, 1, 0.9]);
     const outStart = new Float32Array(4).fill(99); // sentinel
     const outEnd = new Float32Array(4).fill(99);
-    const [sp, ep] = disjointPos(4);
-    const n = compute_cap_suppression(
+    const n = compute_joint_codes(
       disjointSegs(4),
       visibility,
       t1Params,
       t2Params,
       4,
       8,
-      sp,
-      ep,
       outStart,
       outEnd
     );
     expect(n).toBe(2);
-    // Compacted: outStart[0] = (seg 1 → t1=0.3 > 0) = 1; outStart[1] = (seg 3 → free) = 0.
-    expect(outStart[0]).toBe(1);
-    expect(outStart[1]).toBe(0);
+    // Compacted into slots 0 and 1: the emitted partner slots are therefore
+    // VISIBLE-stream indices, not source segment indices — which is exactly
+    // what makes a code a line-texture storage slot.
+    expect(outStart[0]).toBe(JOINT_CLIPPED); // seg 1: t1=0.3 > 0
+    expect(outStart[1]).toBe(JOINT_FREE_END); // seg 3: reaches, unshared
     expect(outStart[2]).toBe(99); // untouched
-    expect(outEnd[0]).toBe(0); // seg 1: t2=1, no neighbour → free end
-    expect(outEnd[1]).toBe(1); // seg 3: t2=0.9 < 1 → clipped
+    expect(outEnd[0]).toBe(JOINT_FREE_END); // seg 1: t2=1, no neighbour
+    expect(outEnd[1]).toBe(JOINT_CLIPPED); // seg 3: t2=0.9 < 1
   });
 });
