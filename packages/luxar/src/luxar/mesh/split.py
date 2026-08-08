@@ -158,15 +158,25 @@ def split_mesh_by_faces(
     return parts
 
 
-def duplication_factor(parts: Sequence[MeshPart], n_vertices: int) -> float:
-    """Total gathered vertices across ``parts`` divided by the original count.
+def duplication_factor(parts: Sequence[MeshPart]) -> float:
+    """Total gathered vertices across ``parts`` divided by the distinct ones.
 
     ``1.0`` means the cut fell entirely between connected components (no shared
     vertex crossed it); larger means boundary vertices were duplicated. Reported
     by the writer as a diagnostic — it is the honest cost of the partition, and
     a surprising value (say > 1.5) usually means the cap is far too small for
     the mesh's connectivity rather than that anything is wrong.
+
+    The denominator is the number of distinct SOURCE vertices the parts between
+    them reference — which is the union of their ``vertex_index`` arrays, since
+    every face lands in exactly one part. Deliberately not the source vertex
+    count: a vertex no face references is dropped by the split, so dividing by
+    the full table would report a *duplication* below 1.0 on a mesh that carries
+    unused vertices (a trimmed surface, an imported table shared between
+    objects), which reads as nonsense next to the word.
     """
-    if n_vertices <= 0:
+    gathered = sum(int(p.vertex_index.size) for p in parts)
+    if gathered == 0:
         return 1.0
-    return sum(int(p.vertex_index.size) for p in parts) / float(n_vertices)
+    distinct = np.unique(np.concatenate([p.vertex_index for p in parts])).size
+    return gathered / float(distinct)

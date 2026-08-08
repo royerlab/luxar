@@ -92,7 +92,7 @@ def test_boundary_vertices_are_duplicated_not_dropped() -> None:
     # Total gathered exceeds the original exactly by the shared count.
     total = sum(int(p.vertex_index.size) for p in parts)
     assert total == len(left | right) + len(shared)
-    assert duplication_factor(parts, vertices.shape[0]) > 1.0
+    assert duplication_factor(parts) > 1.0
 
 
 def test_indices_are_local_and_in_range() -> None:
@@ -120,16 +120,30 @@ def test_no_vertex_is_gathered_that_no_face_uses() -> None:
 
 def test_disjoint_components_split_without_duplication() -> None:
     """A cut that falls BETWEEN components duplicates nothing (factor 1.0)."""
-    vertices = np.array(
-        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [10, 0, 0], [11, 0, 0], [10, 1, 0]],
-        dtype=np.float32,
-    )
+    # Two triangles sharing no vertex index — the splitter works on indices
+    # alone, so index-disjoint is exactly what "separate component" means here.
     faces = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.uint32)
     parts = split_mesh_by_faces(faces, [np.array([0]), np.array([1])])
 
-    assert duplication_factor(parts, vertices.shape[0]) == 1.0
+    assert duplication_factor(parts) == 1.0
     for part in parts:
         assert part.vertex_index.size == 3
+
+
+def test_factor_counts_referenced_vertices_not_the_whole_table() -> None:
+    """Unreferenced source vertices are dropped by the split, not scored against it.
+
+    These two triangles live at the far end of a much larger vertex table and
+    share one vertex, so the honest duplication is 6 gathered / 5 distinct = 1.2.
+    Measuring against the table instead would report a *duplication* well below
+    1.0 — fewer vertices than we started with — which reads as nonsense next to
+    the word, and hides a real duplication behind the unused rows.
+    """
+    faces = np.array([[10, 11, 12], [12, 13, 14]], dtype=np.uint32)
+    parts = split_mesh_by_faces(faces, [np.array([0]), np.array([1])])
+
+    assert sum(int(p.vertex_index.size) for p in parts) == 6
+    assert duplication_factor(parts) == pytest.approx(1.2)
 
 
 def test_single_part_is_a_pure_renumbering() -> None:
@@ -216,7 +230,7 @@ def test_bad_face_shape_is_rejected() -> None:
 
 
 def test_duplication_factor_handles_empty_input() -> None:
-    assert duplication_factor([], 0) == 1.0
+    assert duplication_factor([]) == 1.0
 
 
 def test_mesh_part_is_frozen() -> None:

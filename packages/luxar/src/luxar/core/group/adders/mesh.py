@@ -630,7 +630,7 @@ def _add_mesh_partition(
         f"  ✂️  Partitioned mesh '{name}' into {len(parts)} parts via BSP "
         f"(max_elements={max_elements:,} faces, "
         f"face counts={[int(p.faces.shape[0]) for p in parts]}, "
-        f"vertex duplication x{duplication_factor(parts, n_vertices):.3f})"
+        f"vertex duplication x{duplication_factor(parts):.3f})"
     )
 
     for i, part in enumerate(parts):
