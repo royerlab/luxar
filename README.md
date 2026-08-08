@@ -107,7 +107,8 @@ category, what it needs, and whether you have already built it:
 
   #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
 ───────────────────────────────────────────────────────────────────────────────────────────────────
-  1  arxiv_papers                           points       embeddings     ⬇20MB                cached
+  1  arxiv_papers_kaggle                    points       embeddings     ⬇30000MB 🔑kaggle
+  2  arxiv_papers_semantic_scholar          points       embeddings     ⬇20MB                cached
   7  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
   9  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
  25  gsplats_2d_cmu1_pathology              gsplats      medical        ⬇150MB GPU* LFS      cached
