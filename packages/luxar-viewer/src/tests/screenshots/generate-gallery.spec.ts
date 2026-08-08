@@ -57,6 +57,7 @@ import {
   DISAGREEMENT_THRESHOLD,
   normalizedCrossCorrelation,
 } from './frame-similarity';
+import { dominantSignedAxis, type SignedUpAxis } from './orbit-axis';
 import {
   computeAutoExposure,
   CLIP_LUMA,
@@ -292,43 +293,24 @@ async function jumpTimeDimToFrac(page: any, frac: number): Promise<void> {
   await page.waitForTimeout(600);
 }
 
-/** A world axis plus the direction along it, as returned by `dominantCameraUpAxis`. */
-type SignedUpAxis = { axis: 'x' | 'y' | 'z'; sign: 1 | -1 };
-
 /**
  * The SIGNED world axis the camera's current up-vector most nearly points along.
  *
  * Read AFTER framing, so it reflects whatever pose is actually on screen — the
- * demo's baked `viewer_config` up when it has one, else three.js's (0,1,0). The
- * rock axis has always been axis-aligned, so a non-axis-aligned baked up is
- * snapped to its dominant component rather than rejected.
+ * demo's baked `viewer_config` up when it has one, else three.js's (0,1,0).
  *
- * The DIRECTION of that component is kept, not just which axis it is: a baked up
- * of (0,0,-1) has to stay -Z, because the orbit hard-sets `cam.up` and snapping
- * it to +Z would roll the animation 180° from the still — the exact divergence
- * this derivation exists to remove. Only `cam.up` is affected; the rock geometry
- * is sign-invariant (the out-of-plane offset enters as `compU·U`).
- *
- * Falls back to +Y when the debug handle or camera is missing, which is the
- * historical default and keeps a partially-loaded page from throwing here.
+ * The page does the READ only; the classification (and its degenerate-input
+ * fallback to +Y, the historical default) is `dominantSignedAxis` in
+ * `./orbit-axis`, so it can be unit-tested outside a browser — this is the fix
+ * for #1377 itself, and a sign slip in it ships a rolled animation.
  */
 async function dominantCameraUpAxis(page: any): Promise<SignedUpAxis> {
   const up = await page.evaluate(() => {
     const cam = (window as any).__luxarDebug?.camera;
-    if (!cam?.up) return { axis: 'y', sign: 1 };
-    const { x, y, z } = cam.up;
-    const ax = Math.abs(x);
-    const ay = Math.abs(y);
-    const az = Math.abs(z);
-    // Degenerate up (zero or non-finite): fall back to 'y' like the missing-camera
-    // guard above, rather than letting the >= chain answer 'x' for an all-zero
-    // vector — that would be an arbitrary axis dressed up as a measurement.
-    if (!(ax + ay + az > 0)) return { axis: 'y', sign: 1 };
-    if (ax >= ay && ax >= az) return { axis: 'x', sign: x < 0 ? -1 : 1 };
-    if (az >= ay) return { axis: 'z', sign: z < 0 ? -1 : 1 };
-    return { axis: 'y', sign: y < 0 ? -1 : 1 };
+    // Return plain numbers, not the Vector3: only x/y/z survive the CDP hop.
+    return cam?.up ? { x: cam.up.x, y: cam.up.y, z: cam.up.z } : null;
   });
-  return up as SignedUpAxis;
+  return dominantSignedAxis(up);
 }
 
 /**
