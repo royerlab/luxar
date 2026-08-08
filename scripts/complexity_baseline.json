@@ -202,6 +202,9 @@
     "packages/luxar/src/luxar/demos/demo_caida_as_topology.py::build_edge_lines": [
       12
     ],
+    "packages/luxar/src/luxar/demos/demo_caida_as_topology.py::parse_as_org": [
+      11
+    ],
     "packages/luxar/src/luxar/demos/demo_cytoself_protein_landscape.py::_download_from_google_drive": [
       14
     ],

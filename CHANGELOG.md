@@ -13,13 +13,13 @@ early on, but `[tool.ruff.lint] select` never listed `C901`, the rule that limit
 feeds. The setting was therefore inert: no complexity limit was enforced
 anywhere, and it had been cited in a module docstring as a design constraint it
 never was. Simply adding `C901` to `select` was not an option — ruff has no
-baseline mechanism, so it would have failed on all 227 pre-existing violations
+baseline mechanism, so it would have failed on all 228 pre-existing violations
 at once, and the only ruff-native suppression (`per-file-ignores`) is
 file-granular and would have blinded the guard to new offenders in the 151 files
 that already hold one.
 
 The new `scripts/check_complexity.py` selects the rule explicitly and diffs the
-findings against a checked-in baseline (`scripts/complexity_baseline.json`, 227
+findings against a checked-in baseline (`scripts/complexity_baseline.json`, 228
 entries keyed `<repo-relative-path>::<function-name>`), in the same shape as the
 documentation ratchet added in #1341. Pre-existing debt is grandfathered; a
 function that is newly over the limit, or a baselined one whose complexity
@@ -32,14 +32,26 @@ module-move series do not turn a required check red, including the commonest
 move-and-tidy shape. Move detection is disabled when the scan is restricted to
 explicit target paths, where an unscanned baseline key would otherwise be free
 to absorb a genuinely new function. The gate fails closed throughout: a ruff
-that cannot run is an error rather than a suspiciously clean report, a full scan
-that finds nothing while the baseline is populated is an error rather than 227
+that cannot run is an error rather than a suspiciously clean report, a target
+ruff could not read is an error rather than a partial scan wearing a normal exit
+code (that one reads as "all those functions were fixed"), a full scan
+that finds nothing while the baseline is populated is an error rather than 228
 keys' worth of imaginary progress, and `--update-baseline` refuses to replace a
 populated baseline with an empty one. `max-complexity` stays at 10 and is now
 what the gate enforces for new code. The checker runs in
 `hatch run lint` / `hatch run check`, as `make check-complexity`, and — the path
 that actually gates PRs — from the Python test suite. Regenerate with
 `hatch run check-complexity --update-baseline`.
+
+#### CAIDA country coloring parses current organization snapshots (#1373)
+
+The CAIDA AS-topology demo expected a space in the upstream
+`# format: org_id` / `# format: aut` section headers, but current
+`as-org2info` snapshots use `# format:org_id` / `# format:aut`. The parser now
+accepts either whitespace form, so organization names and country codes reach
+node colors and hover labels again. A snapshot missing either required section
+now raises an actionable error instead of silently producing an all-unknown
+country view.
 
 #### Real join geometry for lines: the miter (#790, #795)
 
@@ -100,7 +112,6 @@ pixels — the measurement is zero, the small ceiling only absorbs a seam pixel
 the shaders' float32 operand order can cost — so unmitred rendering cannot
 come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
 under `make test-e2e`.)
-
 
 #### Mesh is per-triangle depth sorted
 

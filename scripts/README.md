@@ -123,7 +123,7 @@ ratchet, the same shape as the documentation ratchet above.
 **Purpose:**
 - Run `ruff check --select C901` over the same paths as `hatch run lint`
 - Tolerate the pre-existing over-limit functions recorded in
-  `scripts/complexity_baseline.json` (227 at the time of writing)
+  `scripts/complexity_baseline.json` (228 at the time of writing)
 - Fail (exit 1) when a function is newly over the limit, or when a baselined
   one gets *more* complex
 - Report paid-down debt as advisory (exit 0) so the baseline can be tightened
@@ -132,8 +132,10 @@ ratchet, the same shape as the documentation ratchet above.
   old-key-to-new-key, so a module-move series is not a false red. Full runs
   only — see the restricted-scan note below
 - Fail closed (exit 2) rather than green whenever the scan cannot be trusted: a
-  ruff that did not run, or a FULL run that found nothing while the baseline is
-  populated (a mistyped target, a wrong `--project-root`, a partial checkout).
+  ruff that did not run, a target ruff could not read (its `Failed to lint`
+  warning otherwise leaves a partial scan behind a normal exit code), or a FULL
+  run that found nothing while the baseline is populated (a mistyped target, a
+  wrong `--project-root`, a partial checkout).
   A *restricted* run finding nothing is legitimate — a subtree may simply be
   clean — so that only warns
 

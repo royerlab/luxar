@@ -13,7 +13,7 @@ same way.
 
 Why a script instead of putting ``C901`` in ``[tool.ruff.lint] select``?
 ruff has no baseline mechanism. A bare ``select`` entry would fail on all
-pre-existing violations (227 at the time of writing), so it could not be turned
+pre-existing violations (228 at the time of writing), so it could not be turned
 on at all without a large, unrelated refactor. The only ruff-native suppression
 is ``per-file-ignores``, which is *file*-granular: silencing the 151 files that
 currently hold a violation would also blind the guard to brand-new offenders
@@ -68,6 +68,10 @@ BASELINE_COMMENT = (
 # ruff's C901 message, e.g. "`robust_download` is too complex (66 > 10)".
 _MESSAGE_RE = re.compile(r"^`(?P<name>[^`]+)` is too complex \((?P<value>\d+) > \d+\)$")
 
+# ruff's stderr line for a path it could not read at all, e.g.
+# "warning: Failed to lint stats: No such file or directory (os error 2)".
+_UNSCANNED_RE = re.compile(r"Failed to lint ")
+
 
 @dataclass
 class RatchetReport:
@@ -103,10 +107,16 @@ def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
     checker reports green. A real zero-findings run prints ``[]``, never blank,
     so requiring non-blank stdout on exit 1 cannot misfire.
 
-    ruff's other "scanned nothing" outcomes (``Failed to lint <path>: No such
-    file``, ``No Python files found under the given path(s)``) exit 0 with
-    ``[]`` and only a stderr WARNING, so stderr is echoed rather than
-    discarded. The caller catches the resulting empty scan (see ``main``).
+    A path ruff could NOT read (missing, unreadable, a dangling symlink) is only
+    a stderr ``Failed to lint <path>: ...`` WARNING: ruff lints the remaining
+    targets and exits 0 or 1 exactly as if the scan had been complete. That is a
+    fail-OPEN — the baselined keys under the unread path look vanished, so they
+    are reported as paid-down debt (or, worse, become pairing candidates that let
+    a genuinely new function through as a "move") and the gate goes green on a
+    partial scan. So such a warning is a hard error here, whatever the exit code.
+    Other stderr warnings (notably ``No Python files found under the given
+    path(s)``, which is a whole-scan miss the caller catches — see ``main``) are
+    echoed rather than discarded.
     """
     command = [
         sys.executable,
@@ -139,8 +149,21 @@ def run_ruff(targets: tuple[str, ...] | list[str], project_root: Path) -> str:
             f"ruff failed (exit {proc.returncode}{detail}): {' '.join(command)}\n"
             f"{proc.stderr.strip()}"
         )
-    if proc.stderr.strip():
-        aprint(f"⚠️  ruff wrote to stderr: {proc.stderr.strip()}")
+    stderr = proc.stderr.strip()
+
+    # A target ruff could not read leaves a partial scan behind a normal exit
+    # code, which reads as "those functions are all fixed". Fail closed instead.
+    unscanned = [line for line in stderr.splitlines() if _UNSCANNED_RE.search(line)]
+    if unscanned:
+        raise RuntimeError(
+            "ruff could not read every target, so the scan is PARTIAL and its "
+            "findings cannot be diffed against the baseline:\n"
+            + "\n".join(f"  {line}" for line in unscanned)
+            + f"\nCommand: {' '.join(command)} (cwd {project_root})"
+        )
+
+    if stderr:
+        aprint(f"⚠️  ruff wrote to stderr: {stderr}")
     return proc.stdout
 
 

@@ -91,14 +91,49 @@ def test_run_ruff_rejects_an_unexpected_exit_code(
         checker.run_ruff(("x",), PROJECT_ROOT)
 
 
-def test_run_ruff_echoes_a_stderr_warning(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_run_ruff_rejects_a_target_it_could_not_read(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`Failed to lint <path>` exits 0; the warning must not be swallowed."""
+    """`Failed to lint <path>` means a PARTIAL scan, which must not read green."""
     _stub_ruff(monkeypatch, 0, "[]", "warning: Failed to lint nope.py: No such file")
 
-    assert checker.run_ruff(("nope.py",), PROJECT_ROOT) == "[]"
-    assert "Failed to lint nope.py" in _clean_output(capsys)
+    with pytest.raises(RuntimeError, match="scan is PARTIAL"):
+        checker.run_ruff(("nope.py",), PROJECT_ROOT)
+
+
+def test_run_ruff_rejects_a_partial_scan_that_still_reported_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One unreadable target beside a productive one is the dangerous shape.
+
+    ruff lints what it can and exits 1 with a real report, so neither the exit
+    code nor the empty-stdout check notices — yet every baselined key under the
+    unread path now looks fixed, and could even absorb a genuinely new function
+    as a `moved` one. Only the stderr line gives it away.
+    """
+    _stub_ruff(
+        monkeypatch,
+        1,
+        json.dumps([_finding("scripts/b.py", "beta", 15)]),
+        "warning: Failed to lint packages/luxar/src: No such file or directory",
+    )
+
+    with pytest.raises(RuntimeError, match="packages/luxar/src"):
+        checker.run_ruff(checker.DEFAULT_TARGETS, PROJECT_ROOT)
+
+
+def test_run_ruff_echoes_an_unrelated_stderr_warning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A warning that is not a read failure is echoed, not fatal.
+
+    `No Python files found` is legitimate over an explicit target subtree; the
+    whole-scan case is caught by `main`'s zero-findings guard instead.
+    """
+    _stub_ruff(monkeypatch, 0, "[]", "warning: No Python files found under the path(s)")
+
+    assert checker.run_ruff(("empty/",), PROJECT_ROOT) == "[]"
+    assert "No Python files found" in _clean_output(capsys)
 
 
 # ---------------------------------------------------------------------------
@@ -727,11 +762,21 @@ def test_repository_has_no_complexity_regressions() -> None:
     """
     pytest.importorskip("ruff", reason="ruff is not installed in this environment")
     baseline_path = PROJECT_ROOT / checker.DEFAULT_BASELINE_RELPATH
+    baseline = checker.load_baseline(baseline_path)
 
     current = checker.parse_findings(
         checker.run_ruff(checker.DEFAULT_TARGETS, PROJECT_ROOT), PROJECT_ROOT
     )
-    report = checker.evaluate_ratchet(current, checker.load_baseline(baseline_path))
+    # Same fail-closed guard `main()` applies: a scan that covered nothing would
+    # otherwise report every baselined key as fixed and pass this gate green.
+    assert baseline, f"{baseline_path} is missing or empty — the ratchet has no floor"
+    assert current, (
+        "ruff reported no over-limit function anywhere under "
+        f"{checker.DEFAULT_TARGETS}, while {baseline_path} baselines "
+        f"{len(baseline)}. The scan covered nothing."
+    )
+
+    report = checker.evaluate_ratchet(current, baseline)
 
     hint = (
         "Simplify the function(s) listed above (extract helpers, flatten "

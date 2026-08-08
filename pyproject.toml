@@ -673,7 +673,7 @@ known-first-party = ["luxar"]
 
 # C901 (the rule this limit feeds) is intentionally NOT in `[tool.ruff.lint]
 # select`: ruff has no baseline mechanism, so a bare `select` entry would fail
-# on all 227 pre-existing violations, and the only ruff-native suppression
+# on all 228 pre-existing violations, and the only ruff-native suppression
 # (`per-file-ignores`) is file-granular and would blind the guard to new
 # offenders in those files. Instead `scripts/check_complexity.py` selects C901
 # explicitly and ratchets it against `scripts/complexity_baseline.json`, so THIS
