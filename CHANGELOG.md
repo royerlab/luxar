@@ -28,13 +28,14 @@ this demo's radius, so it multiplied this node's tau ~24x and left the stored 10
 meaning something quite different. Kappa 10 was far past opaque: on the finest
 Points level, at peak falloff with the sprite at or above the 1.5 px floor, a cell
 absorbed 0.98 and its own self-screening factor `(1 - e^-tau)/tau` of 0.25 ate
-three quarters of the emission. At 6.5 that screening softens to 0.92 and the
+three quarters of the emission. At 6.5 a cell absorbs 0.92 instead and the
 factor rises to 0.36 — ~1.45x more emission per cell at peak, and more than that
 once composited, since the light from cells behind now survives too. 6.5 is a
-re-tune by eye, not that 24x compensation — the spec's `/(thickness * 0.826)`
-would land near 0.4, and this node stays deliberately heavy because the screening
-is what gives the lobes their depth. Coarse levels are lifted gsplats carrying the
-merged ray mass, so they run at higher tau than these figures.
+re-tune by eye, not that 24x compensation — the spec's scale-down by
+`1/(thickness * 0.826)`, i.e. kappa x 0.0413, would land near 0.4, and this node
+stays deliberately heavy because the screening is what gives the lobes their
+depth. Coarse levels are lifted gsplats carrying the merged ray mass, so they run
+at higher tau than these figures.
 
 The tuning session also pinned the layer to its finest level; that is deliberately
 NOT baked, because it is a workaround for the substitutive-LOD selector tracked in
@@ -101,7 +102,6 @@ pixels — the measurement is zero, the small ceiling only absorbs a seam pixel
 the shaders' float32 operand order can cost — so unmitred rendering cannot
 come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
 under `make test-e2e`.)
-
 
 #### Mesh is per-triangle depth sorted
 
