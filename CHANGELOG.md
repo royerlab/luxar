@@ -65,6 +65,17 @@ instead of forwarding only `shading`/`double_sided` — per-vertex labels stay t
 thing it cannot carry, because the reader does not surface them. It normalizes
 `--output` to `<stem>.luxar.zarr` before every path guard, and validates the method and
 the attrs before `--overwrite` deletes anything.
+
+#### CAIDA country coloring parses current organization snapshots (#1373)
+
+The CAIDA AS-topology demo expected a space in the upstream
+`# format: org_id` / `# format: aut` section headers, but current
+`as-org2info` snapshots use `# format:org_id` / `# format:aut`. The parser now
+accepts either whitespace form, so organization names and country codes reach
+node colors and hover labels again. A snapshot missing either required section
+now raises an actionable error instead of silently producing an all-unknown
+country view.
+
 #### Real join geometry for lines: the miter (#790, #795)
 
 Every line segment is one screen-space quad expanded only *perpendicular* to its
