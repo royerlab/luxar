@@ -696,6 +696,7 @@ def generate_tabula_sapiens(
                 opacity=0.85,
                 intensity=0.15,
                 labels=labels,
+                layer=True,
             )
 
             scene.add_text(

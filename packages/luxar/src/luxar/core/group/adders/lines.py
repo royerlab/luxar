@@ -31,6 +31,7 @@ from ..compositing import (
     sync_custom_colormap_attr,
 )
 from ..dim_order import apply_dim_order_positions
+from ..partition import reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -99,6 +100,7 @@ def add_lines_impl(
 
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
+        reject_mismatched_partition_parent(parent or group, "lines", name)
 
         scene = group._find_scene()
 

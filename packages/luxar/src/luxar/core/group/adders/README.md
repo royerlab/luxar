@@ -3,7 +3,8 @@
 Per-leaf adder implementations for `Group`. Each geometry type (Points,
 Lines, GSplats, Mesh) has its own module here holding the body of
 `Group.add_<type>` along with its partition-wrapper and multi-LOD-wrapper
-helpers (mesh has neither — it refuses both).
+helpers (mesh has a partition wrapper but no multi-LOD one — it still refuses
+LOD).
 
 ## Overview
 
@@ -25,7 +26,8 @@ adders/
 ├── __init__.py    # Module docstring only (no re-exports)
 ├── points.py      # add_points_impl + partition / multi-LOD wrappers
 ├── lines.py       # add_lines_impl + partition / multi-LOD wrappers
-└── gsplats.py     # add_gsplats_impl + partition wrapper
+├── gsplats.py     # add_gsplats_impl + partition wrapper
+└── mesh.py        # add_mesh_impl + partition wrapper
 ```
 
 ## Modules
@@ -65,6 +67,20 @@ and `cholesky_factors` (via `apply_dim_order_cholesky`), with `fill_sigma`
 controlling the Cholesky embedding of unmapped dimensions. GSplats has no
 additive-LOD wrapper here — LOD ladders for splats are built as a post-process
 in the `gsplats` package (`luxar gsplat lod`), not at add time.
+
+### `mesh.py`
+
+- `add_mesh_impl(group, *, name, vertices, faces, ...)` → `Mesh | Group`
+- `_add_mesh_partition(group, *, name, vert_arr, faces_arr, ...)` → `Group | None`
+
+Mesh partitions at **face granularity** — the BSP runs over face centroids, so
+`max_elements` counts faces and no triangle is ever cut. A part cannot be a slice
+of the inputs the way the sibling wrappers' are: faces reference a shared vertex
+table, so each part gathers and renumbers its own vertices
+(`luxar.mesh.split.split_mesh_by_faces`), duplicating those on the cut, and the
+per-vertex `normals` / `colors` / `scalars` / `labels` follow that index. There is
+no multi-LOD wrapper — mesh refuses both LOD flavours (and
+`blending_mode='volumetric'`) with a per-flavour explanation.
 
 ## Add-Path Anatomy
 

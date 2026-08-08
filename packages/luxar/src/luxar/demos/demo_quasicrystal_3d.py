@@ -337,6 +337,7 @@ def generate_quasicrystal_3d(
                 sharpness=sharpnesses,
                 opacity=0.9,
                 intensity=0.125,
+                layer=True,
             )
 
             # Overlay annotations
