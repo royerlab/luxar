@@ -62,6 +62,28 @@ export interface SyntheticSceneSpec {
    * the depth-sort subsystem engages.
    */
   blending?: string;
+  /**
+   * Lines only: per-endpoint width written for every segment. Defaults
+   * to 1.0 (the historical bench contract). The thick perf scenarios
+   * raise this so segments are much WIDER than they are long — the
+   * worst case for footprint-area cost (#1352 gate G0/G1).
+   */
+  width?: number;
+  /**
+   * Lines only: random-walk step size as a fraction of `bounds`.
+   * Defaults to 0.01 (the historical `bounds * 0.01`). Lower it to
+   * make segments shorter relative to their width.
+   */
+  stepScale?: number;
+  /**
+   * Lines only: maximum per-step turning angle in RADIANS. When set,
+   * the walk carries direction momentum and turns by at most roughly
+   * this much per step — a smooth streamline/trajectory proxy. Unset
+   * keeps the historical fully-random walk, whose consecutive segments
+   * turn ~90° on average (an adversarial case for any join-aware
+   * renderer, measured on the #1352 spike).
+   */
+  turnAngle?: number;
 }
 
 /** Default gaussian-blob count for the clustered samplers. */
@@ -132,7 +154,13 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
   let py = (rand() * 2 - 1) * bounds;
   let pz = (rand() * 2 - 1) * bounds;
 
-  const stepScale = bounds * 0.01;
+  const stepScale = bounds * (spec.stepScale ?? 0.01);
+  const segmentWidth = spec.width ?? 1.0;
+  const turnAngle = spec.turnAngle;
+  // Direction momentum for the smooth-walk variant (turnAngle set).
+  let dirX = 1.0;
+  let dirY = 0.0;
+  let dirZ = 0.0;
 
   // Previous segment's length, to detect a degenerate neighbour when emitting
   // joint codes (see the block at the bottom of the loop).
@@ -153,9 +181,26 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     startPositions[i3 + 1] = py;
     startPositions[i3 + 2] = pz;
 
-    px += (rand() * 2 - 1) * stepScale;
-    py += (rand() * 2 - 1) * stepScale;
-    pz += (rand() * 2 - 1) * stepScale;
+    if (turnAngle !== undefined) {
+      // Perturb the carried unit direction by up to ~turnAngle and step
+      // a FIXED length along it — a smooth curve whose consecutive
+      // segments bend gently, unlike the fully-random walk below.
+      const jitter = Math.tan(turnAngle) * 0.7071;
+      dirX += (rand() * 2 - 1) * jitter;
+      dirY += (rand() * 2 - 1) * jitter;
+      dirZ += (rand() * 2 - 1) * jitter;
+      const dirLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
+      dirX /= dirLen;
+      dirY /= dirLen;
+      dirZ /= dirLen;
+      px += dirX * stepScale;
+      py += dirY * stepScale;
+      pz += dirZ * stepScale;
+    } else {
+      px += (rand() * 2 - 1) * stepScale;
+      py += (rand() * 2 - 1) * stepScale;
+      pz += (rand() * 2 - 1) * stepScale;
+    }
 
     endPositions[i3] = px;
     endPositions[i3 + 1] = py;
@@ -170,8 +215,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     endColors[i3 + 1] = rand();
     endColors[i3 + 2] = rand();
 
-    startWidths[i] = 1.0;
-    endWidths[i] = 1.0;
+    startWidths[i] = segmentWidth;
+    endWidths[i] = segmentWidth;
     // Default 0.5 — the normalized sharpness knob's Gaussian midpoint
     // (beta = 2^(6·0.5 − 2) = 2), the production-default dataset value.
     startSharpness[i] = 0.5;
