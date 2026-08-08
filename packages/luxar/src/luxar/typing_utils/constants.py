@@ -32,6 +32,24 @@ DEFAULT_OFFSET: Final[float] = 0.0
 # Blending modes
 DEFAULT_BLENDING_MODE: Final[str] = "additive"
 
+# Line join style (issue #790) — the strategy the LINE vertex stage uses at a
+# degree-2 polyline joint. Lines-only: it has no meaning for points, gsplats or
+# mesh, none of which build a screen-space quad per element.
+#
+# "none"  leave the two quads alone, so the turn leaves an uncovered circular
+#         sector on the outside of the bend and a double-covered lens inside.
+# "miter" rotate each quad's end edge onto the shared miter edge so the two
+#         TILE. Coverage becomes a partition, so there is nothing to sum and
+#         every blending mode is correct by construction.
+#
+# The viewer mirror is `packages/luxar-viewer/src/types/line-join.ts`; keep the
+# spellings and the default in step with it.
+LINE_JOIN_STYLES: Final[frozenset[str]] = frozenset({"none", "miter"})
+# Documentation of the shared default, deliberately WITHOUT a reader here: the
+# writer must not bake a join style into the file, or an unset node would freeze
+# today's default forever and the viewer could never move it. Not dead code.
+DEFAULT_LINE_JOIN: Final[str] = "miter"
+
 # Absorption (kappa) — the volumetric blending mode's per-node coefficient.
 # Multiplicative composition, identity 1.0; no upper bound (physical
 # coefficient); read only by the volumetric shader branch.

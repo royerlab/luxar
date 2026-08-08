@@ -288,6 +288,7 @@ export class MaterialManager {
       intensity: props.intensity,
       offset: props.offset,
       blendingMode: props.blendingMode,
+      join: props.join,
     });
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;

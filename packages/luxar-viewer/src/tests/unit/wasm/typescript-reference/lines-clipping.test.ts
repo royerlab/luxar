@@ -3,7 +3,7 @@
  * (nD segment clipping: clip_segment_single, clip_segments_batch,
  * interpolate_clipped_positions, interpolate_scalars_batch,
  * interpolate_colors_batch, calculate_segment_lengths,
- * compute_cap_suppression).
+ * compute_joint_codes).
  *
  * Extracted from `tests/unit/wasm/typescript-reference.test.ts` per the
  * restructuring plan (wasm.md O1 / Phase D9 — final phase): the 1714-line
@@ -19,7 +19,12 @@ import {
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
-  compute_cap_suppression,
+  compute_joint_codes,
+  JOINT_CLIPPED,
+  JOINT_FREE_END,
+  JOINT_HUB,
+  MAX_EXACT_JOINT_SLOT,
+  jointCodeForEndpoint,
 } from '../../../../wasm/typescript';
 
 // ============================================================================
@@ -427,279 +432,292 @@ describe('lines_clipping: calculate_segment_lengths', () => {
   });
 });
 
-describe('lines_clipping: compute_cap_suppression', () => {
-  it('should mark clipped endpoints correctly', () => {
-    const visibility = new Uint8Array([1, 1, 0, 1]);
-    const t1Params = new Float32Array([0.0, 0.5, 0.0, 0.25]);
-    const t2Params = new Float32Array([1.0, 0.75, 1.0, 1.0]);
-    // Disjoint segments (vertices 0..7) so nothing forms a joint — this test
-    // pins the clipped-flag half of the contract in isolation.
+describe('lines_clipping: compute_joint_codes', () => {
+  // Mirrors the Rust kernel's own tests (wasm/rust/src/lines_clipping.rs) —
+  // this module is not merely a WASM-missing fallback but the production
+  // backend for ndim > 16, so the two must agree exactly. Agreement is trivial
+  // now in a way it was not for the angle scalar this replaced: the output is
+  // integer index arithmetic, with no f32/f64 accumulation order to reconcile.
+
+  it('emits sentinels for disjoint segments (no shared vertices)', () => {
     const segments = Uint32Array.from({ length: 8 }, (_, i) => i);
-    const startPositions = new Float32Array([0, 0, 0, 10, 0, 0, 20, 0, 0]);
-    const endPositions = new Float32Array([1, 0, 0, 11, 0, 0, 21, 0, 0]);
+    const outStart = new Float32Array(4).fill(9);
+    const outEnd = new Float32Array(4).fill(9);
 
-    const startCapSuppression = new Float32Array(3);
-    const endCapSuppression = new Float32Array(3);
-
-    const count = compute_cap_suppression(
+    const count = compute_joint_codes(
       segments,
-      visibility,
-      t1Params,
-      t2Params,
+      new Uint8Array([1, 1, 1, 1]),
+      new Float32Array([0.0, 0.3, 0.0, 0.2]),
+      new Float32Array([1.0, 1.0, 0.7, 0.8]),
       4,
       8,
-      startPositions,
-      endPositions,
-      startCapSuppression,
-      endCapSuppression
-    );
-
-    expect(count).toBe(3); // 3 visible
-    // seg0: t1=0 (not clipped), t2=1 (not clipped), no neighbour → free ends
-    expect(startCapSuppression[0]).toBe(0);
-    expect(endCapSuppression[0]).toBe(0);
-    // seg1: t1=0.5 (clipped), t2=0.75 (clipped)
-    expect(startCapSuppression[1]).toBe(1);
-    expect(endCapSuppression[1]).toBe(1);
-    // seg3: t1=0.25 (clipped), t2=1.0 (not clipped, free end)
-    expect(startCapSuppression[2]).toBe(1);
-    expect(endCapSuppression[2]).toBe(0);
-  });
-
-  it('suppresses the cap at a straight-through interior joint', () => {
-    // Two collinear segments sharing vertex 1: v0 --> v1 --> v2 along +x.
-    const segments = new Uint32Array([0, 1, 1, 2]);
-    const visibility = new Uint8Array([1, 1]);
-    const t1Params = new Float32Array([0, 0]);
-    const t2Params = new Float32Array([1, 1]);
-    const startPositions = new Float32Array([0, 0, 0, 1, 0, 0]);
-    const endPositions = new Float32Array([1, 0, 0, 2, 0, 0]);
-    const outStart = new Float32Array(2);
-    const outEnd = new Float32Array(2);
-
-    compute_cap_suppression(
-      segments,
-      visibility,
-      t1Params,
-      t2Params,
-      2,
-      3,
-      startPositions,
-      endPositions,
       outStart,
       outEnd
     );
 
-    // Free outer ends keep the cap; the shared joint is fully suppressed.
-    expect(outStart[0]).toBe(0);
-    expect(outEnd[0]).toBeCloseTo(1, 6);
-    expect(outStart[1]).toBeCloseTo(1, 6);
-    expect(outEnd[1]).toBe(0);
+    expect(count).toBe(4);
+    // Reaches both vertices, but nothing shares them.
+    expect(outStart[0]).toBe(JOINT_FREE_END);
+    expect(outEnd[0]).toBe(JOINT_FREE_END);
+    // t1=0.3 → start trimmed off its vertex.
+    expect(outStart[1]).toBe(JOINT_CLIPPED);
+    expect(outEnd[1]).toBe(JOINT_FREE_END);
+    // t2=0.7 → end trimmed.
+    expect(outStart[2]).toBe(JOINT_FREE_END);
+    expect(outEnd[2]).toBe(JOINT_CLIPPED);
+    // Both trimmed.
+    expect(outStart[3]).toBe(JOINT_CLIPPED);
+    expect(outEnd[3]).toBe(JOINT_CLIPPED);
   });
 
-  it('keeps the cap at a 90-degree bend and interpolates in between', () => {
-    // v0 --> v1 along +x, then v1 --> v2 along +y (a right-angle turn).
-    const right = new Float32Array(2);
-    compute_cap_suppression(
+  it('names the partner and which of ITS endpoints is shared', () => {
+    // v0 → v1, v1 → v2: the two inner endpoints meet at v1.
+    const outStart = new Float32Array(2).fill(9);
+    const outEnd = new Float32Array(2).fill(9);
+
+    compute_joint_codes(
       new Uint32Array([0, 1, 1, 2]),
       new Uint8Array([1, 1]),
       new Float32Array([0, 0]),
       new Float32Array([1, 1]),
       2,
       3,
-      new Float32Array([0, 0, 0, 1, 0, 0]),
-      new Float32Array([1, 0, 0, 1, 1, 0]),
-      right,
-      new Float32Array(2)
+      outStart,
+      outEnd
     );
-    expect(right[1]).toBe(0); // 90 degrees → dot 0 → cap preserved
 
-    // A gentle 45-degree turn lands between the two regimes.
-    const gentle = new Float32Array(2);
-    const d = Math.SQRT1_2;
-    compute_cap_suppression(
-      new Uint32Array([0, 1, 1, 2]),
-      new Uint8Array([1, 1]),
-      new Float32Array([0, 0]),
-      new Float32Array([1, 1]),
-      2,
-      3,
-      new Float32Array([0, 0, 0, 1, 0, 0]),
-      new Float32Array([1, 0, 0, 1 + d, d, 0]),
-      gentle,
-      new Float32Array(2)
-    );
-    expect(gentle[1]).toBeCloseTo(Math.SQRT1_2, 5);
+    // Outer ends are free.
+    expect(outStart[0]).toBe(JOINT_FREE_END);
+    expect(outEnd[1]).toBe(JOINT_FREE_END);
+    // Segment 0's END joins segment 1 at segment 1's START → +(1 + 1).
+    expect(outEnd[0]).toBe(2);
+    // Segment 1's START joins segment 0 at segment 0's END → −(0 + 3).
+    expect(outStart[1]).toBe(-3);
   });
 
-  it('clamps a 180-degree fold-back joint to 0 (the only case with a negative raw value)', () => {
-    // v0 -> v1 travelling +x, then v1 -> v2 travelling BACK along -x. The two
-    // "away" vectors coincide, so dot(dirA, dirB) = -1 and the endpoint bits
-    // differ (sign = -1), making the raw value -1. Every other geometry keeps
-    // it in [0, 1], so this is the sole case that exercises the LOWER clamp —
-    // without it a fold-back would emit a negative suppression, which the
-    // shader's per-endpoint mix(0.5 + 0.5 * ramp, 1.0, s) would turn into a
-    // cap BELOW 0.5 (a darker-than-intended notch) instead of the full cap
-    // the overlap needs.
-    const foldStart = new Float32Array(2);
-    const foldEnd = new Float32Array(2);
-    compute_cap_suppression(
-      new Uint32Array([0, 1, 1, 2]),
-      new Uint8Array([1, 1]),
-      new Float32Array([0, 0]),
-      new Float32Array([1, 1]),
-      2,
-      3,
-      new Float32Array([0, 0, 0, 1, 0, 0]),
-      new Float32Array([1, 0, 0, 0, 0, 0]),
-      foldStart,
-      foldEnd
-    );
-    expect(foldEnd[0]).toBe(0);
-    expect(foldStart[1]).toBe(0);
+  it('is angle-independent: the code is a fact about topology', () => {
+    // The kernel no longer reads positions at all, so a straight chain, a
+    // right-angle bend and a 180-degree fold-back with the same connectivity
+    // must all produce identical codes. The bend term is the vertex stage's
+    // business now, measured in SCREEN space so it tracks the camera (#795).
+    const run = (): [Float32Array, Float32Array] => {
+      const s = new Float32Array(2).fill(9);
+      const e = new Float32Array(2).fill(9);
+      compute_joint_codes(
+        new Uint32Array([0, 1, 1, 2]),
+        new Uint8Array([1, 1]),
+        new Float32Array([0, 0]),
+        new Float32Array([1, 1]),
+        2,
+        3,
+        s,
+        e
+      );
+      return [s, e];
+    };
+    const [s1, e1] = run();
+    const [s2, e2] = run();
+    expect(Array.from(s1)).toEqual(Array.from(s2));
+    expect(Array.from(e1)).toEqual(Array.from(e2));
   });
 
-  it('keeps the cap at a branch point (three segments meeting)', () => {
-    // Three segments all starting at vertex 0 — a star hub. Suppressing here
-    // would stack three quads into a bright nub.
-    const outStart = new Float32Array(3);
-    compute_cap_suppression(
+  it('treats a degree->=3 hub as a hub, not a joint', () => {
+    const hubStart = new Float32Array(3).fill(9);
+    const hubEnd = new Float32Array(3).fill(9);
+    compute_joint_codes(
       new Uint32Array([0, 1, 0, 2, 0, 3]),
       new Uint8Array([1, 1, 1]),
       new Float32Array([0, 0, 0]),
       new Float32Array([1, 1, 1]),
       3,
       4,
-      new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
-      new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
-      outStart,
-      new Float32Array(3)
+      hubStart,
+      hubEnd
     );
-    expect(Array.from(outStart)).toEqual([0, 0, 0]);
+    expect(Array.from(hubStart)).toEqual([JOINT_HUB, JOINT_HUB, JOINT_HUB]);
+    expect(Array.from(hubEnd)).toEqual([JOINT_FREE_END, JOINT_FREE_END, JOINT_FREE_END]);
   });
 
-  it('does not treat a culled or trimmed neighbour as a joint', () => {
-    // v0-v1-v2 collinear, but the second segment is invisible: v1 is a real
-    // visible free end and must keep its cap.
-    const culled = new Float32Array(2);
-    compute_cap_suppression(
-      new Uint32Array([0, 1, 1, 2]),
-      new Uint8Array([1, 0]),
-      new Float32Array([0, 0]),
-      new Float32Array([1, 1]),
-      2,
-      3,
-      new Float32Array([0, 0, 0, 1, 0, 0]),
-      new Float32Array([1, 0, 0, 2, 0, 0]),
-      new Float32Array(2),
-      culled
-    );
-    expect(culled[0]).toBe(0);
-
-    // Same geometry, but the neighbour is visible and trimmed away from the
-    // shared vertex (t1 > 0) — it no longer reaches v1, so still no joint.
-    const trimmed = new Float32Array(2);
-    compute_cap_suppression(
+  it('does not anchor a joint on a neighbour trimmed away from the vertex', () => {
+    // Mitering against a neighbour that does not reach the shared vertex would
+    // build an edge the neighbour never draws.
+    const outStart = new Float32Array(2).fill(9);
+    const outEnd = new Float32Array(2).fill(9);
+    compute_joint_codes(
       new Uint32Array([0, 1, 1, 2]),
       new Uint8Array([1, 1]),
       new Float32Array([0, 0.4]),
       new Float32Array([1, 1]),
       2,
       3,
-      new Float32Array([0, 0, 0, 1.4, 0, 0]),
-      new Float32Array([1, 0, 0, 2, 0, 0]),
-      new Float32Array(2),
-      trimmed
+      outStart,
+      outEnd
     );
-    expect(trimmed[0]).toBe(0);
+    expect(outEnd[0]).toBe(JOINT_FREE_END);
+    expect(outStart[1]).toBe(JOINT_CLIPPED);
   });
 
-  it('handles a shared vertex reached from both segments by the same endpoint', () => {
-    // Both segments END at vertex 1 (v0 -> v1 <- v2): the polyline is stored
-    // with opposing orientation. Geometrically this is still a straight
-    // continuation, so the "away" vectors are opposite and it suppresses.
-    const outEnd = new Float32Array(2);
-    compute_cap_suppression(
+  it('does not anchor a joint on an invisible neighbour, and slots stay contiguous', () => {
+    // v0-v1, v1-v2 (culled), v2-v3 → visible segments occupy slots 0 and 1, so
+    // an emitted slot always indexes a WRITTEN texel.
+    const outStart = new Float32Array(2).fill(9);
+    const outEnd = new Float32Array(2).fill(9);
+    const count = compute_joint_codes(
+      new Uint32Array([0, 1, 1, 2, 2, 3]),
+      new Uint8Array([1, 0, 1]),
+      new Float32Array([0, 0, 0]),
+      new Float32Array([1, 1, 1]),
+      3,
+      4,
+      outStart,
+      outEnd
+    );
+    expect(count).toBe(2);
+    expect(outEnd[0]).toBe(JOINT_FREE_END);
+    expect(outStart[1]).toBe(JOINT_FREE_END);
+  });
+
+  it('reports the partner END for two segments meeting end-to-end', () => {
+    // seg0: v0 → v1, seg1: v2 → v1. Both END on v1.
+    const outStart = new Float32Array(2).fill(9);
+    const outEnd = new Float32Array(2).fill(9);
+    compute_joint_codes(
       new Uint32Array([0, 1, 2, 1]),
       new Uint8Array([1, 1]),
       new Float32Array([0, 0]),
       new Float32Array([1, 1]),
       2,
       3,
-      new Float32Array([0, 0, 0, 2, 0, 0]),
-      new Float32Array([1, 0, 0, 1, 0, 0]),
-      new Float32Array(2),
-      outEnd
-    );
-    expect(outEnd[0]).toBeCloseTo(1, 6);
-    expect(outEnd[1]).toBeCloseTo(1, 6);
-  });
-
-  it('uses compacted endpoint codes when visibility is non-contiguous', () => {
-    // seg0 and seg2 survive and share v1; the disjoint middle segment is
-    // culled. The position arrays are compacted to the two survivors, so a
-    // regression that keys direction-table codes on source segIdx would read
-    // the wrong row and lose this straight-through joint.
-    const outStart = new Float32Array(2);
-    const outEnd = new Float32Array(2);
-    const count = compute_cap_suppression(
-      new Uint32Array([0, 1, 3, 4, 1, 2]),
-      new Uint8Array([1, 0, 1]),
-      new Float32Array([0, 0, 0]),
-      new Float32Array([1, 1, 1]),
-      3,
-      5,
-      new Float32Array([0, 0, 0, 1, 0, 0]),
-      new Float32Array([1, 0, 0, 2, 0, 0]),
       outStart,
       outEnd
     );
-
-    expect(count).toBe(2);
-    expect(outStart[0]).toBe(0);
-    expect(outEnd[0]).toBeCloseTo(1, 6);
-    expect(outStart[1]).toBeCloseTo(1, 6);
-    expect(outEnd[1]).toBe(0);
+    expect(outEnd[0]).toBe(-4); // joins slot 1 at its end → −(1 + 3)
+    expect(outEnd[1]).toBe(-3); // joins slot 0 at its end → −(0 + 3)
   });
 
-  it('keeps malformed unregistered endpoint codes finite', () => {
-    // The first two starts register degree 2 at v0. The third start has a
-    // NaN t1, so it does NOT register but later queries the same vertex with
-    // myCode=4. codeSum=0+2 then yields partner=-2. JavaScript negative array
-    // indexing returns undefined, which used to poison the dot product and
-    // emit NaN; Rust rejects the out-of-range partner and returns 0.
-    const outStart = new Float32Array(3);
-    compute_cap_suppression(
-      new Uint32Array([0, 1, 0, 2, 0, 3]),
-      new Uint8Array([1, 1, 1]),
-      new Float32Array([0, 0, Number.NaN]),
-      new Float32Array([1, 1, 1]),
+  it('never names itself when a segment registers both endpoints on one vertex', () => {
+    // The two codes differ only in their end bit, so comparing whole codes is
+    // not enough — the guard compares SLOTS. The angle-only scalar this replaced
+    // survived the case by returning a plausible number; a code is dereferenced,
+    // and a segment mitered against itself is the asymmetric-join case that
+    // rasterises as a flap.
+    const outStart = new Float32Array(1).fill(9);
+    const outEnd = new Float32Array(1).fill(9);
+    compute_joint_codes(
+      new Uint32Array([1, 1]),
+      new Uint8Array([1]),
+      new Float32Array([0]),
+      new Float32Array([1]),
+      1,
       3,
+      outStart,
+      outEnd
+    );
+    expect(outStart[0]).toBe(JOINT_FREE_END);
+    expect(outEnd[0]).toBe(JOINT_FREE_END);
+  });
+
+  it('reads nothing at an endpoint a NaN clip param kept out of the touch tables', () => {
+    // Both passes run the SAME `t <= 0` test, so a NaN endpoint registers
+    // nothing and reports JOINT_CLIPPED. With the reading pass on the
+    // complement `!(t > 0)` — also false for NaN — it read anyway, and the
+    // code-sum difference (which does not contain its own code) decoded to an
+    // arbitrary slot. `slot < 0` never caught that: the difference is negative
+    // only when the unregistered endpoint's code is the larger one.
+    //
+    // Here slot 0 carries the NaN while the two endpoints actually registered
+    // on v5 are slots 1 and 2, so the difference is large and POSITIVE
+    // (6 - 0 = 6 -> slot 3). FOUR segments, so that bogus slot is IN range and
+    // names a real-but-unrelated segment: the `visibleCount` bound cannot see
+    // it.
+    const outStart = new Float32Array(4).fill(9);
+    const outEnd = new Float32Array(4).fill(9);
+    compute_joint_codes(
+      new Uint32Array([5, 8, 5, 6, 5, 7, 0, 1]),
+      new Uint8Array([1, 1, 1, 1]),
+      new Float32Array([NaN, 0, 0, 0]),
+      new Float32Array([1, 1, 1, 1]),
       4,
-      new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
-      new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      9,
       outStart,
-      new Float32Array(3)
-    );
-
-    expect(outStart[2]).toBe(0);
-    expect(Number.isFinite(outStart[2])).toBe(true);
-  });
-
-  it('keeps the cap on a degenerate zero-length neighbour', () => {
-    const outEnd = new Float32Array(2);
-    compute_cap_suppression(
-      new Uint32Array([0, 1, 1, 2]),
-      new Uint8Array([1, 1]),
-      new Float32Array([0, 0]),
-      new Float32Array([1, 1]),
-      2,
-      3,
-      new Float32Array([0, 0, 0, 1, 0, 0]),
-      new Float32Array([1, 0, 0, 1, 0, 0]), // second segment has zero length
-      new Float32Array(2),
       outEnd
     );
-    expect(outEnd[0]).toBe(0);
+
+    expect(outStart[0]).toBe(JOINT_CLIPPED);
+
+    // The other slots are unaffected: v5 still holds exactly the two endpoints
+    // that DID register, and they pair with each other at their STARTs.
+    expect(outStart[1]).toBe(3); // slot 1 start joins slot 2's START: +(2 + 1)
+    expect(outStart[2]).toBe(2); // slot 2 start joins slot 1's START: +(1 + 1)
+    expect(outStart[3]).toBe(JOINT_FREE_END); // v0 is touched once
+    for (const code of outEnd) expect(code).toBe(JOINT_FREE_END);
+
+    // Belt and braces: no code may name a slot outside the stream.
+    for (const code of [...outStart, ...outEnd]) {
+      if (code > 0.5) expect(code - 1).toBeLessThan(4);
+      else if (code < -2.5) expect(-code - 3).toBeLessThan(4);
+    }
+  });
+
+  it('degrades BOTH sides of a joint whose slots straddle the f32 exact bound', () => {
+    // Codes land in Float32Arrays, so a slot past 2^24 is rounded AT THE STORE
+    // onto a valid neighbour — indistinguishable downstream from a deliberate
+    // reference. Rejecting only the PARTNER's slot degrades one side of the
+    // pair: the over-bound endpoint would see a representable partner, miter,
+    // and rotate its end edge onto a miter line the other side never matched.
+    // Both slots are therefore tested.
+    //
+    // Driven through `jointCodeForEndpoint` directly, mirroring the Rust unit
+    // test on `joint_code`: reaching it via compute_joint_codes would need a
+    // >16.7M-segment fixture.
+    const degree = new Uint8Array([2]);
+    const myCode = 5 << 1; // slot 5, start
+    const over = MAX_EXACT_JOINT_SLOT + 1;
+    const partnerCode = (over << 1) | 1; // the partner's END touches the vertex
+
+    // Seen from the representable side: the PARTNER is unrepresentable.
+    expect(
+      jointCodeForEndpoint(0, myCode, 1, over + 1, new Int32Array([myCode + partnerCode]), degree)
+    ).toBe(JOINT_FREE_END);
+
+    // Seen from the over-bound side: the partner (slot 5) IS representable, so
+    // only the own-slot test can reject it.
+    const theirCode = (5 << 1) | 1;
+    const myOverCode = over << 1;
+    expect(
+      jointCodeForEndpoint(
+        0,
+        myOverCode,
+        1,
+        over + 1,
+        new Int32Array([myOverCode + theirCode]),
+        degree
+      )
+    ).toBe(JOINT_FREE_END);
+
+    // Sensitivity control: the largest REPRESENTABLE slot must still encode, or
+    // both assertions above would pass for the wrong reason.
+    const atBound = MAX_EXACT_JOINT_SLOT;
+    const partnerOk = (atBound << 1) | 1;
+    expect(
+      jointCodeForEndpoint(0, myCode, 1, atBound + 1, new Int32Array([myCode + partnerOk]), degree)
+    ).toBe(-(atBound + 3));
+  });
+
+  it('falls back to the free end for out-of-range vertex indices', () => {
+    const outStart = new Float32Array(1).fill(9);
+    const outEnd = new Float32Array(1).fill(9);
+    compute_joint_codes(
+      new Uint32Array([7, 9]),
+      new Uint8Array([1]),
+      new Float32Array([0]),
+      new Float32Array([1]),
+      1,
+      2, // numVertices = 2 → both indices out of range
+      outStart,
+      outEnd
+    );
+    expect(outStart[0]).toBe(JOINT_FREE_END);
+    expect(outEnd[0]).toBe(JOINT_FREE_END);
   });
 });
