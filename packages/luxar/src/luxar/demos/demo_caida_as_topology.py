@@ -470,10 +470,17 @@ def ensure_data(
     return rel_path, org_path
 
 
-def _prune_superseded_snapshots(
+def _collect_superseded_victims(
     cache_dir: Path, *, keep: int, current: tuple[str, str]
-) -> None:
-    """Delete all but the newest ``keep`` snapshot releases (plus ``current``).
+) -> tuple[list[Path], int]:
+    """Return the files to prune and how many releases they span.
+
+    Everything :func:`_prune_superseded_snapshots` deletes is decided here, in
+    one read-only pass over ``cache_dir``; the caller only unlinks. The returned
+    paths are ordered raw-snapshots-before-bundles per superseded date, which is
+    the order the sweep relies on (see the interrupted-sweep note below), and
+    de-duplicated. The second element is the number of superseded releases, for
+    the caller's report line.
 
     CAIDA publishes monthly, and nothing used to remove the superseded pairs, so
     the cache grew by ~6 MB of compressed snapshots plus their derived bundles
@@ -490,23 +497,16 @@ def _prune_superseded_snapshots(
     an interrupted sweep (raw files unlink first) or a bundle unlink that failed
     is retried on the next run instead of orphaning a bundle forever — the keep
     WINDOW is still ranked on the raw snapshot dates alone, so a stray bundle can
-    never shorten how many releases are retained.
-    Nothing else is touched: not the memo, not an
-    unrecognised file, and deliberately not a ``layout3d_*`` cache. Those are
-    small (~1 MB each) and keyed on their input identity (node set + edge list)
-    rather than on the release, so there is no date to prune them by — and since
-    a release that rewires or grows the edge list gets a new key, they accumulate
-    roughly one per release.
-
-    Deletions are best-effort: a file that vanishes underfoot is skipped rather
-    than allowed to abort a run that has already paid for its download. There is
-    a residual race left unaddressed (no locking): a run pinned to an older pair
-    by the offline fallback can have its raw snapshot pruned by a concurrent run
-    on the newest pair, in which case it simply re-downloads.
+    never shorten how many releases are retained. Nothing else is collected: not
+    the memo, not an unrecognised file, and deliberately not a ``layout3d_*``
+    cache. Those are small (~1 MB each) and keyed on their input identity (node
+    set + edge list) rather than on the release, so there is no date to prune
+    them by — and since a release that rewires or grows the edge list gets a new
+    key, they accumulate roughly one per release.
     """
     keep = max(1, keep)
     if not cache_dir.is_dir():
-        return
+        return [], 0
 
     by_date: dict[str, list[Path]] = {}
     bundles_by_date: dict[str, list[Path]] = {}
@@ -526,7 +526,7 @@ def _prune_superseded_snapshots(
             for embedded in (bundle.group("rel"), bundle.group("org")):
                 bundles_by_date.setdefault(embedded[:8], []).append(path)
     if not by_date and not bundles_by_date:
-        return
+        return [], 0
 
     # The window is ranked on the RAW dates only: a bundle that outlived its
     # snapshots must not be able to shorten how many releases are kept.
@@ -545,7 +545,29 @@ def _prune_superseded_snapshots(
         collected += bundles_by_date.get(date, [])
     # A bundle whose two dates are BOTH superseded is collected once per date;
     # deleting it twice would report a spurious "Skipped … No such file".
-    victims = list(dict.fromkeys(collected))
+    return list(dict.fromkeys(collected)), len(superseded)
+
+
+def _prune_superseded_snapshots(
+    cache_dir: Path, *, keep: int, current: tuple[str, str]
+) -> None:
+    """Delete all but the newest ``keep`` snapshot releases (plus ``current``).
+
+    :func:`_collect_superseded_victims` decides WHAT goes (and documents why —
+    the date grouping, the keep window, the derived-bundle rules, and what is
+    deliberately left alone); this function only unlinks what it returned, in the
+    order it returned it, and reports the reclaimed bytes. Nothing is printed
+    when there is nothing to prune.
+
+    Deletions are best-effort: a file that vanishes underfoot is skipped rather
+    than allowed to abort a run that has already paid for its download. There is
+    a residual race left unaddressed (no locking): a run pinned to an older pair
+    by the offline fallback can have its raw snapshot pruned by a concurrent run
+    on the newest pair, in which case it simply re-downloads.
+    """
+    victims, n_superseded = _collect_superseded_victims(
+        cache_dir, keep=keep, current=current
+    )
     if not victims:
         return
 
@@ -564,7 +586,7 @@ def _prune_superseded_snapshots(
             aprint(f"  Removed {victim.name} ({size / (1024 * 1024):.1f} MB)")
         aprint(
             f"  ✓ Reclaimed {freed / (1024 * 1024):.1f} MB from {removed} file(s) "
-            f"({len(superseded)} superseded release(s))"
+            f"({n_superseded} superseded release(s))"
         )
 
 

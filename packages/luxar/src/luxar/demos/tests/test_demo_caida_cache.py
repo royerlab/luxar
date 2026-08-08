@@ -914,6 +914,11 @@ class TestPruneSupersededSnapshots:
         out = capsys.readouterr().out
         assert "Skipped" not in out
         assert out.count(both.name) == 1
+        # The tally counts superseded RELEASES, not the files removed, and this
+        # is the case where the two differ (2 dates, 7 files — the shared bundle
+        # is deduplicated). Reporting the file count here would read as 7.
+        assert "(2 superseded release(s))" in out
+        assert "from 7 file(s)" in out
 
     def test_a_bundle_whose_raw_snapshots_are_gone_is_still_removed(
         self, tmp_path: Path
