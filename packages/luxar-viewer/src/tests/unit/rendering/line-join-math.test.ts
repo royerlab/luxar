@@ -29,8 +29,10 @@
  * operands pass either way), and the NEGATION half of the mirrored-corner
  * relation between the two sides' offsets (no same-parity mitrable joint there
  * to negate across). That relation's `M_B == +M_A` half DOES bite there — an
- * axial-sign slip leaves the same apex-at-the-vertex wedge that `curve_smooth`
- * measured 4.94% dark on unmitred — and the miter form itself is pinned by the
+ * axial-sign slip rotates one side's end edge the wrong way, leaving an untiled
+ * apex-at-the-vertex gap of the same kind (not the same size) as the one
+ * `curve_smooth` measured 4.94% dark on unmitred — and the miter form itself is
+ * pinned by the
  * GLSL source assertion in `materials/line/material-glsl.test.ts` and, on the
  * TSL side, by the codegen snapshot `tests/__codegen__/line.vertex.glsl.txt`,
  * which carries the same sum-of-perps expression under mangled `nodeVar` names.
@@ -398,9 +400,12 @@ describe('line join math (vertex-side, #790)', () => {
       // edge is the UNORDERED pair {S + M, S - M} (`materials/line/shader-glsl.ts`
       // expands by `cornerOffset * aQuadCorner.y`, y = +-1); the parity only
       // decides which of B's two corners lands on A's +R one. (Both sides are
-      // handed the same joinPixelWidth here, R literally; see
-      // `luxarLineEndPixelWidth`'s own note for why the shader's two sides
-      // agree on it as well.)
+      // handed the same joinPixelWidth here, R literally, and the shader's two
+      // sides agree on it too: each end's width is
+      // `luxarLineEndPixelWidth(width, depth)` at the SHARED vertex — the same
+      // authored width and the same view depth from either segment — under a
+      // clamp whose bounds are a constant and a uniform, never anything
+      // per-segment.)
       const relSign = parity.a === parity.b ? -1 : 1;
       for (const c of [0, 1] as const) {
         const label = `M_B[${c}] == ${relSign < 0 ? '-' : '+'}M_A[${c}]`;
