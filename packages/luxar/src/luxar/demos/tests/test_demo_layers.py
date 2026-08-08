@@ -23,13 +23,20 @@ Two invariants, weak and strong:
 
 Two deliberate leniencies, both narrow:
 
-* A geometry adder that splats ``**attrs`` cannot have its kwargs read
-  statically, so it counts as satisfied — but ONLY if the module spells the
-  word ``layer`` somewhere as a dict key or keyword. The real case is
-  ``_interop_common.build_interop_scene``, which assembles
+* A geometry adder that splats ``**attrs`` does not show its kwargs to a
+  static reader, so it counts as satisfied — but ONLY when THAT mapping can be
+  shown to carry the flag: a dict literal or ``dict(...)`` written inline, or a
+  local name bound to one (including a later ``attrs["layer"] = True``). The
+  real case is ``_interop_common.build_interop_scene``, which assembles
   ``dict(..., layer=True)`` and splats it into ``add_gsplats_from_file``; drop
   that ``layer=True`` and the six ``demo_gsplats_interop_*`` demos it serves go
-  inert, so "splats something" alone must not be a free pass.
+  inert, so "splats something" must not be a free pass.
+  The leniency is deliberately per-mapping rather than per-module: a module
+  that layers one node correctly must not thereby excuse a second call that
+  splats an unrelated ``**style`` dict. A splat this cannot resolve — a
+  function parameter, a call result — gets no benefit of the doubt either;
+  spell ``layer=`` out, or take an :data:`EXEMPT` entry naming the group that
+  covers the node.
   The leniency does NOT extend to group adders: a composite group layer is a
   deliberate authoring act that should be spelled out, and treating a
   ``**extra``-built group as a layer would let a whole module pass vacuously.
@@ -173,49 +180,81 @@ def _calls(tree: ast.AST, methods: frozenset[str]) -> list[ast.Call]:
     ]
 
 
-def _splats(call: ast.Call) -> bool:
-    """True if the call forwards ``**something`` (so ``layer`` may be in it)."""
-    return any(keyword.arg is None for keyword in call.keywords)
+def _splat_carries_layer(tree: ast.AST, call: ast.Call) -> bool:
+    """True if a ``**`` argument of ``call`` can be shown to carry ``layer``.
 
-
-def _mentions_layer_key(tree: ast.AST) -> bool:
-    """True if the module builds a ``layer`` entry it could splat into a call.
-
-    A ``**attrs`` splat hides the kwargs from a static reader, but only a module
-    that writes ``layer`` SOMEWHERE can be splatting it. Without this the
-    leniency degenerates into "splats anything ⇒ exempt", and dropping
-    ``layer=True`` from ``_interop_common.build_interop_scene`` — which takes
-    six demos' panels down with it — would go unnoticed.
-
-    A string value does not count: two interop demos carry ``"layer": "<node
-    name>"`` in their per-scene spec dicts, which is a name, not the flag.
+    A splat hides the kwargs from a static reader, so the mapping ITSELF has to
+    be resolvable to something that sets the flag — a dict written inline, or a
+    local name bound to one. Anything else (a parameter, a call result, a
+    ``**a or b``) is not lenient: were it, the rule would degenerate into
+    "splats anything ⇒ exempt", and dropping ``layer=True`` from
+    ``_interop_common.build_interop_scene`` — which takes six demos' panels down
+    with it — would go unnoticed.
     """
-    for node in ast.walk(tree):
-        if isinstance(node, ast.keyword) and node.arg == "layer":
-            if _is_flag_value(node.value):
-                return True  # dict(..., layer=True)
-        elif isinstance(node, ast.Dict):
-            for key, value in zip(node.keys, node.values):
-                if (
-                    isinstance(key, ast.Constant)
-                    and key.value == "layer"
-                    and _is_flag_value(value)
-                ):
-                    return True  # {"layer": True}
-        elif isinstance(node, ast.Assign) and _assigns_layer_key(node):
-            return True  # attrs["layer"] = True
+    return any(
+        keyword.arg is None and _mapping_sets_layer(tree, keyword.value)
+        for keyword in call.keywords
+    )
+
+
+def _mapping_sets_layer(tree: ast.AST, value: ast.expr) -> bool:
+    """True if the splatted expression is a mapping that sets ``layer``."""
+    if isinstance(value, ast.Name):
+        return _binding_sets_layer(tree, value.id)
+    return _mapping_literal_sets_layer(value)
+
+
+def _mapping_literal_sets_layer(value: ast.expr) -> bool:
+    """True for ``{"layer": <flag>}`` / ``dict(layer=<flag>)`` written inline."""
+    if isinstance(value, ast.Dict):
+        return any(
+            isinstance(key, ast.Constant)
+            and key.value == "layer"
+            and _is_flag_value(item)
+            for key, item in zip(value.keys, value.values)
+        )
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "dict"
+    ):
+        return any(
+            keyword.arg == "layer" and _is_flag_value(keyword.value)
+            for keyword in value.keywords
+        )
     return False
 
 
-def _assigns_layer_key(node: ast.Assign) -> bool:
-    """True for ``attrs["layer"] = <flag>`` (any target of the assignment)."""
-    return any(
-        isinstance(target, ast.Subscript)
-        and isinstance(target.slice, ast.Constant)
-        and target.slice.value == "layer"
-        and _is_flag_value(node.value)
-        for target in node.targets
-    )
+def _binding_sets_layer(tree: ast.AST, name: str) -> bool:
+    """True if ``name`` is bound in this module to a mapping that sets ``layer``.
+
+    Both spellings the demos use are recognised: the mapping literal itself
+    (``attrs = dict(..., layer=True)``, annotated or not) and a later
+    ``attrs["layer"] = True``.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            targets: list[ast.expr] = [node.target]
+        elif isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        else:
+            continue
+        if node.value is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == name:
+                if _mapping_literal_sets_layer(node.value):
+                    return True
+            elif (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == name
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == "layer"
+                and _is_flag_value(node.value)
+            ):
+                return True
+    return False
 
 
 def _is_flag_value(value: ast.expr) -> bool:
@@ -264,13 +303,12 @@ def test_module_exposes_at_least_one_layer(path: Path) -> None:
         pytest.skip(f"{path.name} authors no geometry")
 
     # A splatted geometry adder may well carry `layer` inside the dict — but
-    # only if the module writes one at all; group adders get no such benefit of
-    # the doubt.
-    splat_ok = _mentions_layer_key(tree)
+    # only if THAT dict is resolvable and sets it; group adders get no such
+    # benefit of the doubt.
     exposed = [
         call
         for call in geometry
-        if _enables_layer(call) or (splat_ok and _splats(call))
+        if _enables_layer(call) or _splat_carries_layer(tree, call)
     ]
     exposed += [call for call in _calls(tree, GROUP_ADDERS) if _enables_layer(call)]
 
@@ -290,12 +328,11 @@ def test_no_geometry_adder_omits_the_layer_kwarg(path: Path) -> None:
     exempt_nodes = exemption.nodes if exemption is not None else frozenset()
 
     tree = _parse(path)
-    splat_ok = _mentions_layer_key(tree)
     missing = [
         f"{_node_name(call)} (line {call.lineno})"
         for call in _calls(tree, GEOMETRY_ADDERS)
         if not _declares_layer(call)
-        and not (splat_ok and _splats(call))
+        and not _splat_carries_layer(tree, call)
         and _node_name(call) not in exempt_nodes
     ]
 
@@ -306,6 +343,64 @@ def test_no_geometry_adder_omits_the_layer_kwarg(path: Path) -> None:
         "`layer=True` container group, add it to EXEMPT in this module with "
         "the group that covers it."
     )
+
+
+#: ``(source, is_lenient)`` cases for the ``**mapping`` benefit of the doubt.
+#: Each source's LAST geometry adder is the call under test.
+SPLAT_CASES = [
+    pytest.param(
+        'attrs = {"layer": True}\nscene.add_points("a", **attrs)',
+        True,
+        id="dict-literal",
+    ),
+    pytest.param(
+        'attrs = dict(layer=True)\nscene.add_points("a", **attrs)', True, id="dict-call"
+    ),
+    pytest.param(
+        'attrs: dict[str, object] = dict(layer=True)\nscene.add_points("a", **attrs)',
+        True,
+        id="annotated-binding",
+    ),
+    pytest.param(
+        'attrs = {}\nattrs["layer"] = True\nscene.add_points("a", **attrs)',
+        True,
+        id="subscript-assign",
+    ),
+    pytest.param('scene.add_points("a", **{"layer": True})', True, id="inline-splat"),
+    pytest.param(
+        'scene.add_points("a", layer=True)\nstyle = {"opacity": 0.5}\nscene.add_points("b", **style)',
+        False,
+        id="unrelated-mapping-in-a-layered-module",
+    ),
+    pytest.param(
+        'attrs = {"layer": "some_node"}\nscene.add_points("a", **attrs)',
+        False,
+        id="layer-is-a-name",
+    ),
+    pytest.param(
+        'attrs = {"layer": False}\nscene.add_points("a", **attrs)',
+        False,
+        id="explicit-opt-out",
+    ),
+    pytest.param(
+        'scene.add_points("a", **build_attrs())', False, id="unresolvable-call"
+    ),
+]
+
+
+@pytest.mark.parametrize(("source", "is_lenient"), SPLAT_CASES)
+def test_the_splat_leniency_is_per_mapping_not_per_module(
+    source: str, is_lenient: bool
+) -> None:
+    """A layered call elsewhere must not excuse a splat that cannot carry ``layer``.
+
+    The whole point of the per-call rule is that it cannot rot one node at a
+    time; a module-wide "mentions layer somewhere" test would hand every later
+    ``**kwargs`` call a free pass.
+    """
+    tree = ast.parse(source)
+    call = _calls(tree, GEOMETRY_ADDERS)[-1]
+    assert _splat_carries_layer(tree, call) is is_lenient
 
 
 def _exempt_module(name: str) -> Path:
@@ -330,11 +425,10 @@ class TestTheExemptionsThemselves:
         stale = []
         for name, exemption in EXEMPT.items():
             tree = _parse(_exempt_module(name))
-            splat_ok = _mentions_layer_key(tree)
             unmarked = {
                 _node_name(call)
                 for call in _calls(tree, GEOMETRY_ADDERS)
-                if not _declares_layer(call) and not (splat_ok and _splats(call))
+                if not _declares_layer(call) and not _splat_carries_layer(tree, call)
             }
             for node in sorted(exemption.nodes - unmarked):
                 stale.append(f"{name}::{node}")
