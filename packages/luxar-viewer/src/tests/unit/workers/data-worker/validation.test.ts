@@ -9,6 +9,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { WasmModule } from '../../../../wasm/types';
+
 interface WorkerModule {
   workerAPI: Record<string, (...args: unknown[]) => Promise<unknown>>;
 }
@@ -23,7 +25,7 @@ async function loadWorker(): Promise<WorkerModule> {
     interpolate_colors_batch: vi.fn(),
     interpolate_scalars_batch: vi.fn(),
     calculate_segment_lengths: vi.fn(),
-    compute_cap_suppression: vi.fn(),
+    compute_joint_codes: vi.fn(),
     decode_quantized_u8: vi.fn(),
     decode_quantized_u16: vi.fn(),
     decode_log_scalar_u8: vi.fn(),
@@ -33,8 +35,15 @@ async function loadWorker(): Promise<WorkerModule> {
     decode_lut_row_u8: vi.fn(),
     decode_lut_row_u16: vi.fn(),
     decode_broadcasted: vi.fn(),
-    query_chunks_for_view: vi.fn(() => 0),
-  };
+    // Deliberately PARTIAL: only the kernels this worker path actually calls.
+    // `satisfies` keeps it honest in the one direction that matters — every key
+    // here must still exist on the real module, so a kernel deletion upstream
+    // fails the typecheck instead of leaving a stub member nothing can reach.
+    // (`query_chunks_for_view` sat here dead from #493 until this caught it.)
+    // The reverse direction is intentionally NOT enforced: requiring the full
+    // 33-member surface would make every unrelated kernel addition edit this
+    // file, and an absent member simply means this path never calls it.
+  } satisfies Partial<WasmModule>;
   vi.doMock('../../../../wasm', () => ({
     initWasm: vi.fn(async () => wasmStub),
     // wasmStub stands in for the compiled backend, not the fallback.

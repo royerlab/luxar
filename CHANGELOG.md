@@ -6,6 +6,66 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Real join geometry for lines: the miter (#790, #795)
+
+Every line segment is one screen-space quad expanded only *perpendicular* to its
+own projected direction, so where a polyline deflects by θ the union of two
+rectangles leaves an uncovered circular sector outside the bend and
+double-covers a lens inside it. #785's cap-suppression scalar could not reach
+that: a multiplier only reshapes intensity where fragments exist, and in the
+wedge there are none.
+
+`texel4.yz` now carry a per-endpoint joint **code** rather than a `[0, 1]`
+scalar — `0` free end, `-1` slice-clipped, `-2` degree-≥3 hub, `+(slot+1)` /
+`-(slot+3)` naming the partner segment's storage slot and which of its endpoints
+is shared (`compute_joint_codes`, replacing `compute_cap_suppression`; the
+paragraph below describes the superseded scalar). Adjacency is derived at
+projection time from the `segments` index pairs, so there is **no on-disk format
+change**. The vertex stage fetches the partner's far endpoint and intersects the
+two ±R offset lines, and the bend term is now derived per frame in **screen
+space** — which is what closes #795, whose stored data-space angle could not
+track the camera.
+
+Because the miter point lies on the segment's own ±R offset line, `vPerpNorm`
+stays an exact perpendicular coordinate and the **fragment stage is unchanged**.
+Guards (miter limit 120°, an overshoot test on the axial reach, and a 2 px
+rendered-HALF-width gate, i.e. 4 px rendered width) keep the cost where the
+benefit is: a joint pays one extra texel fetch and one extra projection per
+vertex, and the width gate skips the block entirely below that threshold, so
+thin-line scenes — the million-segment ones — pay nothing. Default style is
+`miter`; a per-node `join` attribute and `?lineJoin=none|miter` override it.
+
+`join` is a compositing attribute, so on a partitioned / LOD lines node it is
+written once on the wrapper and inherited by the parts. Three consequences of
+that are now enforced rather than assumed. The **pick** material reads the style
+off the live visual material at retro-registration — the path a first load
+actually takes — so a `join="none"` scene no longer leaves the empty outer wedge
+of every corner pickable, or picks differently on a second dataset load. `join`
+has a validating `Node` property (`validate_line_join`, alongside the sibling
+render-attr validators) instead of an assignment that silently never reached
+disk. And the points / gsplats / mesh adders refuse it: it is one shared writer
+allow-list, so `add_points(..., join="none")` used to write a dead attribute
+nothing would ever read. A `join` on a **Group** is still correct — that is the
+whole point of it compositing.
+
+Net deletion: the per-segment `dirs` table (~32 MB at 2.7M segments), the
+per-endpoint normalize + dot, and the f64-vs-f32 care those needed to keep the
+two backends bit-identical — integer index arithmetic agrees trivially.
+
+Measured on the `test_line_joins` acceptance harness described below
+(`line-join-artifact.spec.ts`, headless Chromium, `dpr=1` pinned, both columns
+2026-08-07 — the unmitred one re-measured on the same tree via
+`&lineJoin=none`): the 120-segment sinusoid goes from 4.94% dark / 3.52% bright
+outlier pixels to **zero of each**, and the right-angle zigzag's axial flux p05
+rises from 0.780 to 0.985 against a straight-band 1.000. Both straight bands
+are unchanged at zero outliers and a flat profile — the miter reduces
+algebraically to `R·perp` at a collinear joint — and the nine-ray hub control holds at
+0.157% / 0.114%. The spec now gates the two bend bands at a couple of outlier
+pixels — the measurement is zero, the small ceiling only absorbs a seam pixel
+the shaders' float32 operand order can cost — so unmitred rendering cannot
+come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
+under `make test-e2e`.)
+
 #### Mesh is per-triangle depth sorted
 
 `normal`-mode meshes composited in index order: whichever triangle the writer
@@ -66,6 +126,7 @@ authored. Sorted gives (r 162, g 196) — green wins. Orbiting to the far side w
 real mouse drags flips it back to (r 184, g 136). What sorting still cannot fix is
 interpenetrating triangles, a residual shared with the other three types and the
 reason `opaque` remains the mesh default.
+
 #### Documentation — pull-request quality gate and warning ratchets (#776)
 
 Documentation-relevant pull requests now report a stable `docs-quality` check.
@@ -94,10 +155,11 @@ and a nine-ray indexed hub) under a pinned photometry-grade viewer config, and
 projecting its world AABB through the live camera. Every band is asserted to
 have a gapless flux profile — a torn tube is a defect at any turn angle — and
 the straight bands additionally at zero outliers and a flat profile. The two
-bending cases are **recorded** under documented ceilings rather than fixed:
-measured 2026-08-06, with the device pixel ratio pinned, at 4.94% dark /
-3.53% bright on the curve. Those ceilings drop to zero when the join geometry
-lands.
+bending cases were first **recorded** under documented ceilings rather than
+fixed: measured with the device pixel ratio pinned at 4.94% dark / 3.52% bright
+on the curve. Once the join geometry landed in the entry above
+those ceilings dropped to two outlier pixels against a measured zero, plus a 0.9 axial-flux
+floor on the zigzag, whose wedge is too wide for the outlier metric to see.
 
 Scope note: the E2E job is currently disabled in CI, so the spec runs only
 under `make test-e2e` locally. What runs on every PR is the unit suite, and it
@@ -2381,7 +2443,8 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   fixed: the suppression angle is measured in data space once per commit
   while quad tiling/overlap is a screen-space, per-camera fact (#795 tracks a
   real screen-space suppression), and the outer-side miter wedge at sharp
-  bends remains.
+  bends remains. (Both were subsequently closed — see the screen-space miter
+  join entry at the top of this file.)
 
 #### Added — manifest-driven demo-data fetch (R17 step 1)
 

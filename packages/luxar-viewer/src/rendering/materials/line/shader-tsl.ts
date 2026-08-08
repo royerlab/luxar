@@ -69,7 +69,11 @@ import {
   sanitizeNonNegative,
   type TSLNode,
   sortedIndexNode,
+  tslLineEndPixelWidth,
+  tslLineJoin,
+  tslLineJointCapSuppression,
 } from '../_shared/tsl-helpers';
+import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 import {
   ALPHA_CLAMP,
   VOLUMETRIC_SERIES_C1,
@@ -119,6 +123,14 @@ export interface LineTSLConfig {
    * triggers `rebuildGraph()` whenever the camera mode flips.
    */
   readonly isOrtho?: boolean;
+  /**
+   * Join style at degree-2 polyline joints (#790). BUILD-time here, unlike the
+   * GLSL twin's `uLineJoin` uniform: the TSL vertex stage is traced in a single
+   * `Fn()` that deliberately avoids structural `select()` branches, so the
+   * style follows the same graph-variant pattern as `isOrtho` and the wrapper
+   * calls `rebuildGraph()` when it changes. Omitted ⇒ the session default.
+   */
+  readonly join?: LineJoinStyle;
 }
 
 /**
@@ -327,8 +339,8 @@ export function lineWebGPUFactory(
     const aStartSharpness: TSLNode = lineT2.w.toVar();
     const aEndSharpness: TSLNode = lineT3.w.toVar();
     const aSegmentLength: TSLNode = lineT4.x.toVar();
-    const aStartCapSuppress: TSLNode = lineT4.y.toVar();
-    const aEndCapSuppress: TSLNode = lineT4.z.toVar();
+    const aStartJointCode: TSLNode = lineT4.y.toVar();
+    const aEndJointCode: TSLNode = lineT4.z.toVar();
 
     // t ∈ {0, 1} — position along the segment. Branchless because
     // aQuadCorner.x ∈ {-1, +1} by construction.
@@ -478,8 +490,6 @@ export function lineWebGPUFactory(
 
     const minPixelWidth = float(1.5);
     const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0)).toVar();
-    const clampedPixelWidth: TSLNode = clamp(rawPixelWidth, minPixelWidth, maxPW);
-
     // Width fade for clamped extreme cases. `.toVar()` on the
     // expression branch so select() picks the right concrete value.
     const vWidthFadeVal: TSLNode = rawPixelWidth
@@ -500,10 +510,12 @@ export function lineWebGPUFactory(
     if (!config.isOrtho) {
       const startPixelWidth: TSLNode = mix(startW, endW, tA)
         .mul(uPerspectiveLineScale)
-        .div(max(mvStart.z.negate(), nearCull));
+        .div(max(mvStart.z.negate(), nearCull))
+        .toVar();
       const endPixelWidth: TSLNode = mix(startW, endW, tB)
         .mul(uPerspectiveLineScale)
-        .div(max(mvEnd.z.negate(), nearCull));
+        .div(max(mvEnd.z.negate(), nearCull))
+        .toVar();
       const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
       pathological = startDepth
         .lessThan(nearCull.mul(2.0))
@@ -511,11 +523,99 @@ export function lineWebGPUFactory(
         .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
     }
 
-    // Final clip-space position with perpendicular expansion.
-    // pixelOffset = perpendicular × aQuadCorner.y × clampedPixelWidth
+    // The quad's per-END clamped half-widths, via the shared
+    // `tslLineEndPixelWidth` (GLSL twin: `luxarLineEndPixelWidth`), so the two
+    // backends compute the same thing from one definition. Deliberately NOT a
+    // per-VERTEX clamp of rawPixelWidth (width interpolates and the perspective
+    // divide uses this vertex's depth): the join drives two `flat` cap varyings,
+    // so its width-gated decisions must be segment-constant or the four corners
+    // of a tapered / foreshortened segment disagree — the same #849 reasoning as
+    // the cull above. A no-op where each offset is CONSUMED: at a t=0 vertex
+    // tEff == tA and mvPos == mvStart, so the per-vertex clamp equals
+    // startEndPixelWidth exactly (symmetrically at t=1).
+    const endPixelWidthAt = (tEnd: TSLNode, mvZ: TSLNode): TSLNode =>
+      clamp(
+        tslLineEndPixelWidth(
+          !!config.isOrtho,
+          mix(startW, endW, tEnd),
+          mvZ,
+          nearCull,
+          uOrthoLineScale,
+          uPerspectiveLineScale
+        ),
+        minPixelWidth,
+        maxPW
+      );
+    const startEndPixelWidth: TSLNode = endPixelWidthAt(tA, mvStart.z).toVar();
+    const endEndPixelWidth: TSLNode = endPixelWidthAt(tB, mvEnd.z).toVar();
+
+    // === Join geometry at degree-2 polyline joints (#790) ===
+    // Build-time variant: a graph built for style 'none' carries no join code
+    // at all (mirroring how `config.isOrtho` drops the unused width branch).
+    // Each offset starts at the shipped plain-perpendicular expansion and each
+    // cap at -1.0 ("keep the code-implied default"), so every skipped path —
+    // style none, below the width gate, free end, near clip, partner behind
+    // the camera — is byte-identical to the pre-#790 shader.
+    //
+    // BOTH ends are evaluated on EVERY vertex and only the offset is selected
+    // per corner: the two cap varyings are `flat`, and the two triangles of one
+    // quad provoke from different vertices, so a per-corner cap write would
+    // split the quad along its diagonal (and WebGL's last-vertex rule and
+    // WGSL's first-vertex one would disagree). See shader-glsl.ts.
+    const startOffset: TSLNode = vec2(perpendicular.mul(startEndPixelWidth)).toVar();
+    const endOffset: TSLNode = vec2(perpendicular.mul(endEndPixelWidth)).toVar();
+    const startJoinCap: TSLNode = float(-1.0).toVar();
+    const endJoinCap: TSLNode = float(-1.0).toVar();
+    if (resolveLineJoin(config.join) > 0.5) {
+      // The width is deliberately NOT shared between the two calls: each end
+      // supplies its OWN segment-constant half-width (computed above).
+      const shared = {
+        isOrtho: !!config.isOrtho,
+        uLineTex,
+        lineTexW,
+        uResolution,
+        nearCull,
+        selfSlot: int(aSortedIndex),
+        lineDir,
+        pixelLen,
+      };
+      // `reachesVertex`: a near-clipped endpoint was moved onto the nearCull
+      // plane, so it is no longer AT its source vertex and no neighbour meets
+      // it there. `selfFarDepth` is the ORIGINAL (pre-clipping) depth of the
+      // segment's OTHER endpoint — the near-plane guard needs both far
+      // endpoints of the joint, so the start call passes the END's depth and
+      // the end call the START's.
+      tslLineJoin({
+        ...shared,
+        atEnd: false,
+        reachesVertex: tA.lessThanEqual(0.0),
+        jointCode: aStartJointCode,
+        sharedNdc: ndcStart,
+        joinPixelWidth: startEndPixelWidth,
+        selfFarDepth: endDepth,
+        cornerOffset: startOffset,
+        capValue: startJoinCap,
+      });
+      tslLineJoin({
+        ...shared,
+        atEnd: true,
+        reachesVertex: tB.greaterThanEqual(1.0),
+        jointCode: aEndJointCode,
+        sharedNdc: ndcEnd,
+        joinPixelWidth: endEndPixelWidth,
+        selfFarDepth: startDepth,
+        cornerOffset: endOffset,
+        capValue: endJoinCap,
+      });
+    }
+    const cornerOffset: TSLNode = vec2(
+      aQuadCorner.x.greaterThan(0.0).select(endOffset, startOffset)
+    ).toVar();
+
+    // Final clip-space position with the (possibly mitred) corner expansion.
     // ndcOffset = pixelOffset / uResolution × 2
     // clipPos.xy += ndcOffset × clipPos.w
-    const pixelOffset: TSLNode = perpendicular.mul(aQuadCorner.y).mul(clampedPixelWidth);
+    const pixelOffset: TSLNode = cornerOffset.mul(aQuadCorner.y);
     const ndcOffset: TSLNode = pixelOffset.div(uResolution).mul(2.0);
     // vec4(vec2, scalar, scalar) — vec4(vec2, vec2) isn't a supported
     // TSL overload. Pass clipPosBase.z and .w as individual scalars.
@@ -554,8 +654,19 @@ export function lineWebGPUFactory(
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
     if (vViewZ) vViewZ.assign(mvPos.z);
-    vCapSuppressStart.assign(aStartCapSuppress);
-    vCapSuppressEnd.assign(aEndCapSuppress);
+    // texel4.yz hold a per-endpoint joint CODE, not a [0, 1] scalar. Reading
+    // it as one let capFactor scale with the partner's slot index (200.5 for a
+    // segment joining slot 399, -0.5 for a hub, 0.0 for a slice-clipped end).
+    // Decode it exactly as the GLSL twin does, via the shared helper, so the
+    // two backends agree. Where the join block above reached a partner it
+    // supplies the refined SCREEN-space cap instead (cap >= 0); both are
+    // segment-constant, as `flat` requires.
+    vCapSuppressStart.assign(
+      startJoinCap.lessThan(0.0).select(tslLineJointCapSuppression(aStartJointCode), startJoinCap)
+    );
+    vCapSuppressEnd.assign(
+      endJoinCap.lessThan(0.0).select(tslLineJointCapSuppression(aEndJointCode), endJoinCap)
+    );
     // Each texel read sanitized BEFORE the mix: NaN/Inf route to the
     // 1.0 opaque identity (loud), finite values clamp to [0, 1] (alpha
     // is load-bearing in every mode and feeds optical depth under
