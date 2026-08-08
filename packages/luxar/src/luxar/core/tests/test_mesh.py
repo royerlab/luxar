@@ -358,6 +358,25 @@ def test_mesh_under_a_partition_of_another_type_is_rejected(tmp_path, declared) 
             part.add_mesh("part_0", _V, _F)
 
 
+def test_non_mesh_under_a_mesh_partition_group_is_rejected(tmp_path) -> None:
+    """The homogeneity rule is symmetric — the INVERSE pairing raises too.
+
+    Refusing a mesh under a ``points`` partition while accepting a points leaf
+    under a ``mesh`` partition would enforce homogeneity in one direction only,
+    and the direction left open is the one this feature newly makes reachable: a
+    ``display_type='mesh'`` partition could not even be built before mesh became
+    partition-capable.
+    """
+    pos = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+    with LuxarZarrCompiler(tmp_path / "mesh_part.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        part = scene.add_partition_group("parts", display_type="mesh", max_elements=100)
+        with pytest.raises(ValueError, match="kind=partition group declared"):
+            part.add_points("part_0", pos)
+        with pytest.raises(ValueError, match="kind=partition group declared"):
+            part.add_lines("part_1", pos, np.ones(2, dtype=np.float32))
+
+
 def test_lod_refusal_distinguishes_the_two_ladder_flavours(tmp_path) -> None:
     """The REASON is pinned, not just the fact of the refusal.
 
@@ -1501,4 +1520,38 @@ def test_partition_validates_faces_the_same_way_a_plain_leaf_does(
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_mesh(
                 "pm", _GRID_V, mutate(_GRID_F), partition={"max_elements": 10}
+            )
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        (
+            {"normals": np.zeros((6, 3), np.float32), "normal_dims": (0, 1, 2)},
+            "Normals count",
+        ),
+        ({"colors": np.zeros((6, 3), np.uint8)}, "colors"),
+        ({"scalars": np.zeros(6, np.float32), "colormap": "viridis"}, "scalars"),
+        ({"labels": ["a"] * 6}, "labels"),
+    ],
+    ids=["normals", "colors", "scalars", "labels"],
+)
+def test_partition_validates_per_vertex_lengths_against_the_source(
+    tmp_path, kwargs, match
+) -> None:
+    """A wrong-length per-vertex input is refused, not quietly broadcast.
+
+    ``slice_optional_array`` gathers only when the leading length matches the
+    vertex count and otherwise passes the value through WHOLE — which is what
+    makes a uniform RGB triple work, and what would hand a 6-entry per-vertex
+    array to every part of this 36-vertex grid. Any part whose own vertex count
+    happened to be 6 would then accept it and pair the values with the wrong
+    vertices. The same input raises without ``partition=``, so it must raise with
+    it.
+    """
+    with pytest.raises(ValueError, match=match):
+        with LuxarZarrCompiler(tmp_path / "badattr.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "pm", _GRID_V, _GRID_F, partition={"max_elements": 10}, **kwargs
             )

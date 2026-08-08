@@ -159,6 +159,22 @@ def test_centroids_work_in_more_than_three_dimensions() -> None:
     np.testing.assert_allclose(face_centroids(vertices, faces), [[1.0, 1.0, 0.0, 6.0]])
 
 
+def test_centroids_match_the_naive_gather_in_float64() -> None:
+    """The corner-by-corner accumulation is the ``(F, 3, D)`` gather's value.
+
+    ``face_centroids`` deliberately does NOT widen the vertex table or
+    materialize the corner axis (that peaks at ``8VD + 24FD`` bytes on exactly
+    the meshes partitioning is for). Pinned against the naive reading so the
+    memory shape can change again without anyone having to re-derive the value.
+    """
+    rng = np.random.default_rng(7)
+    vertices = rng.normal(scale=1e3, size=(200, 4)).astype(np.float32)
+    faces = rng.integers(0, 200, size=(500, 3)).astype(np.uint32)
+    naive = vertices.astype(np.float64)[faces].mean(axis=1)
+    np.testing.assert_allclose(face_centroids(vertices, faces), naive)
+    assert face_centroids(vertices, faces).dtype == np.float64
+
+
 @pytest.mark.parametrize(
     "bad_parts, reason",
     [

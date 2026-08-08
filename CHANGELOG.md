@@ -28,8 +28,16 @@ bookkeeping rather than correctness.
   identical stored normal, and the derivative shading variant is per-fragment.
   Revisit if shading ever gains a per-part recomputation (area-averaged normals,
   tangent frames, UVs, baked AO).
+- **Wrong-length per-vertex inputs are refused up front**, against the SOURCE vertex
+  count, so a mesh fails identically with and without `partition=` (the gather is
+  length-keyed, so an off-length array would otherwise be passed through whole and
+  could be accepted by a part whose own vertex count happened to match).
 - `GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both the Python and
   TypeScript sides; `image_labels` is refused alongside `partition=`.
+- A partition stays **homogeneous in both directions**: every leaf adder now refuses a
+  leaf whose type contradicts a hand-built wrapper's declared `display_type`
+  (`reject_mismatched_partition_parent`). Previously only the mesh side checked, and
+  `validate_partition_group` — the whole-tree equivalent — has no production caller.
 
 Mesh still has **no LOD ladder** — a separate axis, and unaffected by this.
 

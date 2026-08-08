@@ -1573,8 +1573,11 @@ front-to-back early-Z. That is a known non-issue, recorded so it is not rediscov
 `display_type` is `'mesh'` — nothing else. A partition is homogeneous by definition, and
 `validate_partition_group`'s homogeneity check has no production caller, so declaring a
 `points` partition and dropping a mesh into it would write clean and load as a layer
-claiming to be points. The adder refuses that pairing by name, fail-fast, before any array
-reaches disk.
+claiming to be points. `reject_mismatched_partition_parent` (in `core/group/partition.py`)
+refuses that pairing fail-fast, before any array reaches disk — and it is called by all
+four leaf adders, so the rule is symmetric: a points leaf under a `display_type='mesh'`
+partition is refused the same way. That direction only became reachable here, since a mesh
+partition could not be built at all before mesh became partition-capable.
 
 Still excluded, and unaffected by this: a partition of a mesh LOD ladder, since there is no
 mesh LOD ladder to partition.

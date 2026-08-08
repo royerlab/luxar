@@ -43,6 +43,7 @@ from ..compositing import (
     sync_custom_colormap_attr,
 )
 from ..dim_order import apply_dim_order_positions
+from ..partition import reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -70,12 +71,14 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
 
     ``kind=partition`` is no longer refused OUTRIGHT — mesh is partition-capable
     now, and a mesh leaf under a ``display_type='mesh'`` partition is exactly what
-    ``add_mesh(partition=...)`` writes. What is still refused is a partition whose
-    declared ``display_type`` is some OTHER geometry type: homogeneity is mandatory
-    for a partition, and nothing else enforces it before finalize, so a caller who
-    declares a ``points`` partition and drops a mesh into it would otherwise make
-    the group's declared display type a lie.
+    ``add_mesh(partition=...)`` writes. A partition declaring some OTHER geometry
+    type is still refused, by the shared
+    :func:`~luxar.core.group.partition.reject_mismatched_partition_parent` every
+    leaf adder calls — the rule is symmetric (a points leaf under a
+    ``display_type='mesh'`` partition is refused the same way), so it does not
+    belong to mesh.
     """
+    reject_mismatched_partition_parent(parent_node, "mesh", name)
     kind = parent_node.attrs.get("kind")
     if kind == "lod":
         raise ValueError(
@@ -86,17 +89,6 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
             "structurally fine and simply have no producer — mesh decimation does "
             "not exist yet. Add the mesh to a plain group instead."
         )
-    if kind == "partition":
-        display = parent_node.attrs.get("display_type")
-        if display != "mesh":
-            raise ValueError(
-                f"Cannot add mesh '{name}' to a kind=partition group declared "
-                f"display_type={display!r}. A partition is homogeneous — every "
-                "part must resolve to the parent's display type — so a mesh child "
-                "here would make that attr a lie, and nothing re-checks it before "
-                "the store is finalized. Use display_type='mesh', or let "
-                "add_mesh(partition=...) build the wrapper for you."
-            )
 
 
 # Reason per structural parameter the sibling adders take and mesh does not. Same
@@ -463,8 +455,14 @@ def _add_mesh_partition(
     are gathered through the part's ``vertex_index``; per-face data has no
     attribute today.
     """
+    from ....io._compiler.node_common import validate_scalars_preflight
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
-    from ....validation.base import validate_faces_for_writing
+    from ....validation.base import (
+        validate_colors_for_writing,
+        validate_faces_for_writing,
+        validate_labels_for_writing,
+        validate_normals_for_writing,
+    )
     from ..partition import (
         median_bsp_partition,
         midpoint_bsp_partition,
@@ -493,7 +491,28 @@ def _add_mesh_partition(
     # vertex and write a triangle the author never wound, and an out-of-range or
     # float index surfaces as a bare IndexError from inside the centroid gather
     # instead of the guided message the same input gets without partition=.
-    validate_faces_for_writing(faces_arr, int(vert_arr.shape[0]))
+    n_vertices = int(vert_arr.shape[0])
+    validate_faces_for_writing(faces_arr, n_vertices)
+
+    # Same argument for the per-VERTEX channels, and the failure here is worse
+    # than a bad message: `slice_optional_array` gathers only when the leading
+    # length matches the vertex count and otherwise passes the value through
+    # WHOLE, which is exactly what makes a uniform RGB triple or a colormap name
+    # work. A wrong-length per-vertex array takes the same pass-through branch —
+    # and if its length happens to equal a part's OWN vertex count, that part's
+    # writer accepts it and silently pairs the values with the wrong vertices.
+    # (Two disconnected triangles: six source vertices, two three-vertex parts,
+    # three normals — rejected outright without `partition=`, accepted by both
+    # parts with it.) So run the plain-leaf gate against the SOURCE count first;
+    # a given input then fails identically whether or not it is partitioned.
+    if normals is not None:
+        validate_normals_for_writing(normals, n_vertices)
+    if isinstance(colors, np.ndarray):
+        validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_vertices)
+    if labels is not None:
+        validate_labels_for_writing(labels, n_vertices)
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)
@@ -514,7 +533,6 @@ def _add_mesh_partition(
         return None
 
     parts = split_mesh_by_faces(faces2d, face_parts)
-    n_vertices = int(vert_arr.shape[0])
 
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}

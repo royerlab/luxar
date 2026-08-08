@@ -67,9 +67,25 @@ def face_centroids(
     The quantity the BSP splits on. A centroid is used rather than any single
     corner so a part's spatial extent is symmetric about the cut — splitting on
     (say) the first vertex biases every part toward one corner of its own box.
+
+    Accumulated one corner column at a time rather than as
+    ``vertices.astype(float64)[faces].mean(axis=1)``. That reading is shorter and
+    identical in value, but its peak is a float64 copy of the WHOLE vertex table
+    plus an ``(F, 3, D)`` float64 gather — ``8VD + 24FD`` bytes — on exactly the
+    large meshes partitioning exists to make manageable. This form never
+    materializes the third axis and never widens the vertex table, so the peak is
+    the ``(F, D)`` accumulator plus one same-shape gather.
     """
-    gathered = np.asarray(vertices, dtype=np.float64)[np.asarray(faces)]
-    centroids: NDArray[np.floating] = gathered.mean(axis=1)
+    verts = np.asarray(vertices)
+    corners = np.asarray(faces)
+    # `copy=False` is safe to accumulate into: advanced indexing always returns a
+    # fresh array, so this is ours either way — the flag only skips a second copy
+    # when the vertices are already float64.
+    first: NDArray[np.floating] = verts[corners[:, 0]]
+    centroids: NDArray[np.floating] = first.astype(np.float64, copy=False)
+    centroids += verts[corners[:, 1]]
+    centroids += verts[corners[:, 2]]
+    centroids /= 3.0
     return centroids
 
 
