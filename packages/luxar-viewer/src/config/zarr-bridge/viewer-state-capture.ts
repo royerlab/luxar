@@ -54,9 +54,22 @@ export function captureViewerState(
     up: [camera.up.x, camera.up.y, camera.up.z],
     fov: settings.fov,
     fov_preset: settings.fovPreset,
-    near: settings.near,
-    far: settings.far,
   };
+
+  // `near` / `far` are AUTHORED here only when the user owns them. While dynamic
+  // clipping is on, `settings.near` / `settings.far` are the live camera readouts
+  // stamped in by `ClippingDisplay`'s RAF loop and `syncCurrentState` — the same
+  // transient values `stripDynamicClippingPlanes` keeps out of localStorage.
+  // Capturing them wrote a zoomed-in pose's planes (e.g. near 1.05e-4 / far 61)
+  // into an exported viewer_config as if the author had chosen them, and since
+  // the capture also emits `dynamic_clipping_enabled: true`, loading that file
+  // tripped the "dynamic clipping will override these" warning — whose advice
+  // (set it false) is exactly what would pin the pathological pair. Omitting
+  // them lets the loader auto-adjust, which is what the authored scene means.
+  if (!settings.dynamicClippingEnabled) {
+    result.camera.near = settings.near;
+    result.camera.far = settings.far;
+  }
 
   // --- Background color ---
   if (sceneManager.scene.background) {

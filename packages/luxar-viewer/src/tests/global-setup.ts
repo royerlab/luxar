@@ -63,7 +63,7 @@ function runPythonGenerator(command: string, label: string): void {
     console.error(`[test-setup] Failed to generate ${label}: ${message}`);
     if (stderr) console.error(stderr);
     console.error(`[test-setup] Run manually: ${command}`);
-    throw new Error(`${label} generation failed. See above for details.`);
+    throw new Error(`${label} generation failed. See above for details.`, { cause: err });
   }
 }
 
@@ -164,7 +164,7 @@ export function ensureWasmBuilt(): void {
     execSync('pnpm run build:wasm', { cwd: VIEWER_ROOT, stdio: 'inherit' });
   } catch (err) {
     const msg = `[test-setup] WASM build failed: ${err instanceof Error ? err.message : String(err)}`;
-    if (require) throw new Error(msg);
+    if (require) throw new Error(msg, { cause: err });
     console.warn(`\n⚠️  ${msg}\n   Parity tests will be skipped.\n`);
     return;
   }

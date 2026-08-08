@@ -104,6 +104,7 @@ const EMPTY_PARAMS: UrlParams = {
   gpuBudgetMB: null,
   cacheBudgetMB: null,
   dpr: null,
+  lineJoin: null,
 };
 
 describe('bootstrapStandalone', () => {

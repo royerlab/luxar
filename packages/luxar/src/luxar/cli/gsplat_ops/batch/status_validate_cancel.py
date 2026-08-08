@@ -12,7 +12,7 @@ from pathlib import Path
 import typer
 from arbol import aprint
 
-from .batch_validation import validate_tile as _validate_tile_impl
+from .validation import validate_tile as _validate_tile_impl
 
 # Per-attempt staging tokens (the part after `{tile}.tmp.`):
 # Slurm attempts are `<jobid>.<taskid>.<restart>`, local attempts `<host>-<pid>`

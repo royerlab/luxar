@@ -574,11 +574,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // saturating the connection pool.
     type ArrayType = Float32Array | Uint8Array | Uint16Array | Float16Array;
     let positions: ArrayType;
-    let colors: ArrayType | null = null;
-    let radii: ArrayType | null = null;
-    let sharpness: ArrayType | null = null;
+    let colors: ArrayType | null;
+    let radii: ArrayType | null;
+    let sharpness: ArrayType | null;
     // optional per-point scalars for colormap lookup.
-    let scalars: ArrayType | null = null;
+    let scalars: ArrayType | null;
 
     const loadSession = session?.begin('Load Arrays');
     try {

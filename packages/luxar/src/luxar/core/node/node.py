@@ -129,6 +129,11 @@ class Node:
 
                 attrs["blending_mode"] = validate_blending_mode(attrs["blending_mode"])
 
+            if "join" in attrs:
+                from ...validation.types import validate_line_join
+
+                attrs["join"] = validate_line_join(attrs["join"])
+
             if "layer" in attrs:
                 from ...validation.types import validate_layer
 
@@ -785,6 +790,46 @@ class Node:
 
         self._persist_attr("blending_mode", validate_blending_mode(value))
 
+    @property
+    def join(self) -> Optional[str]:
+        """Get the line join style for this node (issue #790).
+
+        Lines-only: the strategy the line vertex stage uses at a degree-2
+        polyline joint. Compositing, so it may equally be set on a wrapper
+        Group, from where it flows down to the lines descendants.
+
+        Unlike :attr:`blending_mode` this does NOT substitute a default when
+        unset — it returns ``None``. The default belongs to the viewer, where a
+        ``?lineJoin=`` override can still win over it; reporting one here would
+        invite writing it back and freezing today's default into the file.
+
+        Returns:
+            ``"none"`` or ``"miter"`` if set, None otherwise
+        """
+        value = self.attrs.get("join")
+        return str(value) if value is not None else None
+
+    @join.setter
+    def join(self, value: Any) -> None:
+        """Set the line join style for this node.
+
+        Changes are persisted to zarr immediately if a writer is available.
+
+        Args:
+            value: Join style string:
+                - "none": leave the two segment quads alone, so a turn leaves an
+                  uncovered wedge outside the bend and a double-covered lens inside
+                - "miter": rotate each quad's end edge onto the shared miter edge
+                  so the two tile — exact, and correct under every blending mode
+
+        Raises:
+            ValueError: If the join style is not valid
+            TypeError: If the join style is not a string
+        """
+        from ...validation.types import validate_line_join
+
+        self._persist_attr("join", validate_line_join(value))
+
     def set_opacity(self, value: Any) -> "Node":
         """Set opacity and return self for chaining.
 
@@ -862,6 +907,18 @@ class Node:
             Self for method chaining
         """
         self.blending_mode = value
+        return self
+
+    def set_join(self, value: Any) -> "Node":
+        """Set the line join style and return self for chaining.
+
+        Args:
+            value: Join style string ("none" or "miter")
+
+        Returns:
+            Self for method chaining
+        """
+        self.join = value
         return self
 
     @property

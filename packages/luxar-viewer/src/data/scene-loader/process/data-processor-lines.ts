@@ -134,8 +134,8 @@ function toProcessedLines(
     startAlphas: hasSourceAlpha ? result.startAlphas : undefined,
     endAlphas: hasSourceAlpha ? result.endAlphas : undefined,
     segmentLengths: result.segmentLengths,
-    startCapSuppression: result.startCapSuppression,
-    endCapSuppression: result.endCapSuppression,
+    startJointCode: result.startJointCode,
+    endJointCode: result.endJointCode,
     segmentCount: result.visibleSegmentCount,
     // Fused-scan cull metadata (AABB + max width) — lets computeLineBounds
     // skip its O(N) main-thread scan per commit (see types/lines.ts).

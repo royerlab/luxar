@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
-from .fitting_fit_utils import (
+from .fit_utils import (
     FitPipelineCtx,
     assemble_fit_config,
     dispatch_parallel_tiled,
@@ -21,7 +21,7 @@ from .fitting_fit_utils import (
     validate_and_build_recipe,
     warn_ignored_density_flags,
 )
-from .fitting_fit_utils import (
+from .fit_utils import (
     resolve_tiling as _resolve_tiling_impl,
 )
 
