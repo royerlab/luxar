@@ -352,18 +352,18 @@ luxar demo run network_performance -- --points=2000000 --profile satellite
 
 ### Embedding and UMAP Demos
 
-#### demo_arxiv_paper_embeddings.py - ArXiv Paper Embeddings (Semantic Scholar)
+#### demo_arxiv_embeddings_semantic_scholar.py - arXiv Papers (Semantic Scholar)
 Visualizes scientific papers in 3D embedding space. Papers cluster by topic, colored by research field, sized by citation count.
 
-**Run**: `luxar demo run arxiv_papers`
+**Run**: `luxar demo run arxiv_papers_semantic_scholar`
 
 **Requires**: Internet access, `sentence-transformers` and `umap-learn` packages. Embeds abstracts with Sentence-BERT (all-MiniLM-L6-v2) and reduces to 3D with UMAP. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
 
-**Demonstrates**: Semantic embedding of text, UMAP dimensionality reduction (768D to 3D), citation-based sizing, research field clustering, Semantic Scholar API usage.
+**Demonstrates**: Semantic embedding of text, UMAP dimensionality reduction (384D to 3D), citation-based sizing, research field clustering, Semantic Scholar API usage.
 
 ---
 
-#### demo_arxiv_embeddings_kaggle.py - ArXiv Paper Embeddings (Kaggle / OpenAI)
+#### demo_arxiv_embeddings_kaggle.py - arXiv Papers (Kaggle / OpenAI)
 Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "openai-arxiv-embeddings" dataset (2M+ papers, 3072D).
 
 **Run**: `luxar demo run arxiv_papers_kaggle`
@@ -1283,7 +1283,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 
 # --- Embedding / UMAP ---
-hatch run python packages/luxar/src/luxar/demos/demo_arxiv_paper_embeddings.py
+hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_semantic_scholar.py
 hatch run python packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py
 hatch run python packages/luxar/src/luxar/demos/demo_protein_embeddings_cafa5.py
 hatch run python packages/luxar/src/luxar/demos/demo_esm3_protein_landscape.py
