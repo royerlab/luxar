@@ -32,6 +32,17 @@ and its serve-path scene lives in a `TemporaryDirectory`. It now claims only
 visible in debug/monitor output — lose the retired name too. A new registry test
 fails if two demos ever resolve an output to the same scene path again (#1363).
 
+#### CAIDA country coloring parses current organization snapshots (#1373)
+
+The CAIDA AS-topology demo expected a space in the upstream
+`# format: org_id` / `# format: aut` section headers, but current
+`as-org2info` snapshots use `# format:org_id` / `# format:aut`. The parser now
+accepts either whitespace form, so organization names and country codes reach
+node colors and hover labels again. A snapshot missing either required section
+now raises an actionable error instead of silently producing an all-unknown
+country view.
+
+
 #### Real join geometry for lines: the miter (#790, #795)
 
 Every line segment is one screen-space quad expanded only *perpendicular* to its
