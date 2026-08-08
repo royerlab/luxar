@@ -126,7 +126,6 @@ and its serve-path scene lives in a `TemporaryDirectory`. It now claims only
 visible in debug/monitor output — lose the retired name too. A new registry test
 fails if two demos ever resolve an output to the same scene path again (#1363).
 
-
 #### CAIDA country coloring parses current organization snapshots (#1373)
 
 The CAIDA AS-topology demo expected a space in the upstream

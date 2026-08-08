@@ -27,8 +27,10 @@ Two deliberate leniencies, both narrow:
   static reader, so it counts as satisfied — but ONLY when THAT mapping can be
   shown to carry the flag: a dict literal or ``dict(...)`` written inline, or a
   name bound to one where the call can actually see it — the innermost scope
-  that binds the name, above the call (including a later
-  ``attrs["layer"] = True``, and honouring a rebinding in between). The
+  that binds the name, in a statement the call has certainly run (including a
+  later ``attrs["layer"] = True``, and honouring a rebinding in between; a
+  write buried in an ``if``/``for``/``try`` the call is not inside settles
+  nothing, either way). The
   real case is ``_interop_common.build_interop_scene``, which assembles
   ``dict(..., layer=True)`` and splats it into ``add_gsplats_from_file``; drop
   that ``layer=True`` and the six ``demo_gsplats_interop_*`` demos it serves go
@@ -70,8 +72,10 @@ import pytest
 from ._scanned_modules import scanned_demo_modules
 
 #: Methods that write a geometry node (Points / Lines / GSplats / Mesh).
-#: ``add_text`` / ``add_html`` / ``add_image`` are screen-space overlays, not
-#: scene geometry, and are not layers.
+#: The screen-space overlays are :data:`OVERLAY_ADDERS`, not scene geometry, and
+#: are not layers. ``test_every_scene_adder_is_classified`` keeps the three sets
+#: exhaustive, so a geometry adder added to the API later cannot slip past the
+#: per-call rule unnoticed.
 GEOMETRY_ADDERS = frozenset(
     {
         "add_points",
@@ -87,6 +91,33 @@ GEOMETRY_ADDERS = frozenset(
 #: Methods that write a container node. A group marked ``layer=True`` is a
 #: composite layer, so it satisfies the weak invariant for everything below it.
 GROUP_ADDERS = frozenset({"add_group", "add_partition_group", "add_lod_group"})
+
+#: Screen-space overlays: they carry no ``layer`` flag and never reach the panel.
+OVERLAY_ADDERS = frozenset({"add_text", "add_html", "add_image"})
+
+
+def test_every_scene_adder_is_classified() -> None:
+    """Every ``Scene.add_*`` is geometry, a container, or an overlay — no fourth kind.
+
+    The per-call rule only inspects :data:`GEOMETRY_ADDERS`, so an eighth
+    geometry adder on the scene API would be silently unchecked — the exact
+    one-call-at-a-time rot this module exists to prevent. Asserted both ways so
+    a rename cannot quietly empty one of the sets either.
+    """
+    from luxar.core.scene import Scene
+
+    classified = GEOMETRY_ADDERS | GROUP_ADDERS | OVERLAY_ADDERS
+    on_scene = {name for name in dir(Scene) if name.startswith("add_")}
+
+    assert not sorted(on_scene - classified), (
+        f"Scene grew adder(s) {sorted(on_scene - classified)} that this lint "
+        "does not classify. Add them to GEOMETRY_ADDERS (so the layer rule "
+        "covers them), GROUP_ADDERS, or OVERLAY_ADDERS."
+    )
+    assert not sorted(classified - on_scene), (
+        f"this lint names adder(s) {sorted(classified - on_scene)} that no "
+        "longer exist on Scene, so it is checking nothing for them."
+    )
 
 
 class Exemption(NamedTuple):
@@ -233,17 +264,23 @@ def _binding_sets_layer(tree: ast.AST, name: str, call: ast.Call) -> bool:
 
     Resolution follows Python's own rules rather than "assigned somewhere in
     the file": the innermost scope that binds the name wins, and only
-    statements ABOVE the call count. Without that, a ``**attrs`` splat of a
-    function PARAMETER would be excused by an unrelated ``attrs = dict(
-    layer=True)`` in a different function, and an assignment BELOW the call
-    would validate it — the very benefit of the doubt the module docstring says
-    an unresolvable splat does not get.
+    statements the call has CERTAINLY run count. Without that, a ``**attrs``
+    splat of a function PARAMETER would be excused by an unrelated ``attrs =
+    dict(layer=True)`` in a different function, and an assignment BELOW the
+    call would validate it — the very benefit of the doubt the module docstring
+    says an unresolvable splat does not get.
 
     Both spellings the demos use are recognised: the mapping literal itself
     (``attrs = dict(..., layer=True)``, annotated or not) and a later
-    ``attrs["layer"] = True``. Rebinding is honoured in source order, so a
+    ``attrs["layer"] = True``. Rebinding is honoured in statement order, so a
     mapping that sets the flag and is then replaced by something unresolvable
     is not lenient either.
+
+    Conditional writes are NOT replayed as if they were straight-line: an
+    ``if``/``for``/``try`` body that does not itself contain the call may run
+    zero times, so ``attrs = {}`` plus a conditional ``attrs["layer"] = True``
+    stays unresolved — and, the other way round, a conditional rebinding that
+    drops the flag revokes the leniency an unconditional one would have given.
     """
     for scope in _scope_chain(tree, call):
         rebindings, flag_writes = _bindings_of(scope, name)
@@ -251,25 +288,48 @@ def _binding_sets_layer(tree: ast.AST, name: str, call: ast.Call) -> bool:
             continue  # the name is not bound here; look further out
         # The name resolves in THIS scope, so judge it here and do not fall
         # outwards: an outer binding is shadowed.
+        writes = [*rebindings, *flag_writes]
+        # Statement order, not line number: `attrs = {}` followed by
+        # `attrs["layer"] = True` on ONE line still replays in the right order,
+        # and a write the call may have skipped is not replayed at all.
+        certain = {
+            id(statement): index
+            for index, statement in enumerate(_statements_before(scope, call))
+        }
+        replayed = sorted(
+            (
+                (certain[id(statement)], is_flag_write, value)
+                for statement, is_flag_write, value in writes
+                if id(statement) in certain
+            ),
+            key=lambda write: write[0],
+        )
         sets_layer = False
-        # (lineno, then rebinding before flag-write) so `attrs = {}` followed by
-        # `attrs["layer"] = True` on ONE line still replays in the right order.
-        ordered = sorted(rebindings + flag_writes, key=lambda b: (b[0], b[1]))
-        for lineno, is_flag_write, value in ordered:
-            if lineno >= call.lineno:
-                break
-            sets_layer = (
-                _is_flag_value(value)
-                if is_flag_write
-                else _mapping_literal_sets_layer(value)
+        for _, is_flag_write, value in replayed:
+            sets_layer = _write_sets_layer(is_flag_write, value)
+        if sets_layer:
+            # A conditional write above the call may or may not have happened,
+            # so the unconditional verdict only holds if none of them can
+            # contradict it.
+            sets_layer = all(
+                _write_sets_layer(is_flag_write, value)
+                for statement, is_flag_write, value in writes
+                if id(statement) not in certain and statement.lineno < call.lineno
             )
         return sets_layer
     return False
 
 
-#: ``(lineno, is_a_layer_flag_write, assigned_value)`` per statement that binds
-#: or mutates the name, so the two kinds can be replayed in source order.
-_Binding = tuple[int, bool, ast.expr]
+def _write_sets_layer(is_flag_write: bool, value: ast.expr) -> bool:
+    """True if one recorded write leaves ``layer`` enabled."""
+    if is_flag_write:
+        return _is_flag_value(value)
+    return _mapping_literal_sets_layer(value)
+
+
+#: ``(statement, is_a_layer_flag_write, assigned_value)`` per statement that
+#: binds or mutates the name, so the two kinds can be replayed in source order.
+_Binding = tuple[ast.stmt, bool, ast.expr]
 
 
 def _bindings_of(scope: ast.AST, name: str) -> tuple[list[_Binding], list[_Binding]]:
@@ -287,7 +347,7 @@ def _bindings_of(scope: ast.AST, name: str) -> tuple[list[_Binding], list[_Bindi
             continue
         for target in targets:
             if isinstance(target, ast.Name) and target.id == name:
-                rebindings.append((node.lineno, False, node.value))
+                rebindings.append((node, False, node.value))
             elif (
                 isinstance(target, ast.Subscript)
                 and isinstance(target.value, ast.Name)
@@ -295,8 +355,53 @@ def _bindings_of(scope: ast.AST, name: str) -> tuple[list[_Binding], list[_Bindi
                 and isinstance(target.slice, ast.Constant)
                 and target.slice.value == "layer"
             ):
-                flag_writes.append((node.lineno, True, node.value))
+                flag_writes.append((node, True, node.value))
     return rebindings, flag_writes
+
+
+def _statements_before(scope: ast.AST, call: ast.Call) -> list[ast.stmt]:
+    """Statements of ``scope`` that ``call`` is certain to have run.
+
+    Everything above the call in its own block, plus the same in every block
+    that ENCLOSES it — a ``with``/``if`` body holding the call has run by the
+    time the call does. A compound statement the call is NOT inside is never
+    entered: its body may run zero times, so nothing written inside it is
+    certain.
+    """
+    return _certain_in_block(list(getattr(scope, "body", [])), call)
+
+
+def _certain_in_block(block: list[ast.stmt], call: ast.Call) -> list[ast.stmt]:
+    for index, statement in enumerate(block):
+        if not _contains(statement, call):
+            continue
+        before = list(block[:index])
+        for inner in _child_blocks(statement):
+            if any(_contains(item, call) for item in inner):
+                return before + _certain_in_block(inner, call)
+        return before
+    return []  # the call is not in this block at all
+
+
+def _child_blocks(statement: ast.stmt) -> list[list[ast.stmt]]:
+    """The statement lists ``statement`` owns: bodies, else-branches, handlers."""
+    blocks: list[list[ast.stmt]] = []
+    for _, value in ast.iter_fields(statement):
+        if not isinstance(value, list) or not value:
+            continue
+        if all(isinstance(item, ast.stmt) for item in value):
+            blocks.append(value)
+            continue
+        blocks.extend(
+            item.body
+            for item in value
+            if isinstance(item, (ast.ExceptHandler, ast.match_case))
+        )
+    return blocks
+
+
+def _contains(node: ast.AST, call: ast.Call) -> bool:
+    return any(inner is call for inner in ast.walk(node))
 
 
 def _scope_chain(tree: ast.AST, call: ast.Call) -> list[ast.AST]:
@@ -309,7 +414,7 @@ def _scope_chain(tree: ast.AST, call: ast.Call) -> list[ast.AST]:
         node
         for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and any(inner is call for inner in ast.walk(node))
+        and _contains(node, call)
     ]
     enclosing.sort(key=lambda node: node.lineno, reverse=True)
     return [*enclosing, tree]
@@ -502,6 +607,40 @@ SPLAT_CASES = [
         'attrs = dict(layer=True)\nattrs = load_attrs()\nscene.add_points("a", **attrs)',
         False,
         id="rebound-to-something-unresolvable",
+    ),
+    pytest.param(
+        # The flag is only written on one path, so the call may still get {}.
+        'attrs = {}\nif fancy:\n    attrs["layer"] = True\nscene.add_points("a", **attrs)',
+        False,
+        id="conditional-flag-write",
+    ),
+    pytest.param(
+        "attrs = {}\nfor _ in styles:\n"
+        '    attrs["layer"] = True\nscene.add_points("a", **attrs)',
+        False,
+        id="flag-write-in-a-loop-that-may-not-run",
+    ),
+    pytest.param(
+        "attrs = dict(layer=True)\nif fancy:\n    attrs = load_attrs()\n"
+        'scene.add_points("a", **attrs)',
+        False,
+        id="conditionally-rebound-to-something-unresolvable",
+    ),
+    pytest.param(
+        # The `if` CONTAINS the call, so its body did run before it.
+        'if fancy:\n    attrs = dict(layer=True)\n    scene.add_points("a", **attrs)',
+        True,
+        id="binding-in-a-block-that-holds-the-call",
+    ),
+    pytest.param(
+        # The `_interop_common` shape again: bound inside the same nested
+        # `with` blocks the call sits in.
+        "with compiler() as c:\n"
+        "    with scene_of(c) as scene:\n"
+        "        attrs = dict(layer=True)\n"
+        '        scene.add_points("a", **attrs)',
+        True,
+        id="binding-in-an-enclosing-with-block",
     ),
 ]
 
