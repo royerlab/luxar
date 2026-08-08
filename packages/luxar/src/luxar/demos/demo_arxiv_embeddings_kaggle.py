@@ -83,7 +83,7 @@ Controls:
 
 DEMO_META = {
     "key": "arxiv_papers_kaggle",
-    "title": "arXiv Paper Embeddings",
+    "title": "arXiv Papers (Kaggle / OpenAI)",
     "description": "2M+ arXiv papers embedded with OpenAI text-embedding-3-large, shown as a 3D UMAP.",
     "category": "embeddings",
     "geometry": "points",
@@ -94,7 +94,7 @@ DEMO_META = {
         "local_data": "kaggle-auth",
     },
     "caches": ["arxiv_kaggle"],
-    "outputs": ["arxiv_papers_kaggle", "arxiv_papers"],
+    "outputs": ["arxiv_papers_kaggle"],
 }
 
 import sys
@@ -671,7 +671,7 @@ def generate_paper_landscape(
             # through substitutive_lod_or_flat so a warm-cache run without
             # torch/scipy still builds a (flat) viewable scene.
             scene.add_points(
-                "arxiv_papers",
+                "arxiv_papers_kaggle",
                 positions=stacked.positions,
                 colors=stacked.colors,
                 radii=radii,
@@ -686,7 +686,7 @@ def generate_paper_landscape(
 
             # --- Overlays ---
             scene.add_text(
-                "ArXiv Paper Embeddings",
+                "arXiv Papers — Kaggle / OpenAI",
                 position=(0.02, 0.02),
                 font_size=0.055,
                 anchor="top-left",
@@ -794,7 +794,7 @@ def main() -> None:
 
     # Use temporary directory for serving (auto-cleanup on exit)
     with tempfile.TemporaryDirectory(prefix="luxar_demo_arxiv_kaggle_") as tmpdir:
-        output_path = Path(tmpdir) / "arxiv_papers.luxar.zarr"
+        output_path = Path(tmpdir) / "arxiv_papers_kaggle.luxar.zarr"
 
         try:
             n_papers = generate_paper_landscape(
