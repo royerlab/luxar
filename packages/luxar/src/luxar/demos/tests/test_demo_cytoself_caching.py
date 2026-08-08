@@ -1031,6 +1031,77 @@ def test_legacy_bundle_is_adopted_instead_of_rebuilt(
     assert not (tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME).exists()
 
 
+def test_bundle_with_the_wrong_blob_count_is_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The silent failure a bundle cannot self-report: the loser of the
+    # pre-staging rename race is a perfectly VALID npz whose blob count belongs
+    # to another run. The scene builder refuses a mismatched count, so left
+    # alone this costs every future run its hover images, forever.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(bundle, blobs=np.array([b"a", b"b"], dtype=object))
+    downloaded.clear()
+
+    rebuilt = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert rebuilt == blobs_full
+    assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+    # Reassembled from the surviving part caches — no re-download.
+    assert downloaded == []
+    # And the repaired bundle is accepted on the next run.
+    assert (
+        demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+        == blobs_full
+    )
+
+
+def test_legacy_bundle_with_the_wrong_blob_count_is_not_adopted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pre-versioning bundle is exactly the vintage that can carry a raced blob
+    # count, so the count is checked BEFORE the rename — adopting one under the
+    # v1 name would launder it into the new world permanently.
+    demo._write_npz_atomic(
+        tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME,
+        blobs=np.array([b"one", b"two"], dtype=object),
+    )
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert blobs == _blobs_in_global_order()
+    assert len(downloaded) == _N_IMAGE_FILES
+    assert (tmp_path / (demo.LEGACY_THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+
+
+def test_an_intrinsically_short_assembly_is_returned_but_not_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # label.csv and the embeddings disagreeing is not a cache fault, so writing
+    # the bundle would only hand the next run a file it has to quarantine —
+    # a re-quarantine on every run for a condition no rebuild can fix.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL + 1)
+
+    assert blobs == _blobs_in_global_order()
+    assert not (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists()
+    # The per-file work is kept, so the next run costs a reassembly, not a fetch.
+    downloaded.clear()
+    assert (
+        demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL + 1)
+        == blobs
+    )
+    assert downloaded == []
+    assert not list(tmp_path.glob("*.corrupt"))
+
+
 def test_a_future_version_does_not_adopt_the_legacy_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

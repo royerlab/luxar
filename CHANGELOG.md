@@ -133,12 +133,24 @@ length, and reusing a part across the shift would paste every thumbnail onto
 the wrong cell and then freeze it into the bundle. The assembled
 bundle is versioned, written atomically through a process-private staging name
 (a shared one lets two runs rename each other's bytes into place, and the loser
-of that race is a perfectly valid npz with the wrong blob count — nothing
-downstream can detect it), and quarantined and rebuilt rather than crashing when
-it is unreadable. A bundle written before the name carried a version is adopted
-under the new name rather than rebuilt, since the contents are byte-identical;
-the adoption is gated on the versioned name literally being the v1 one, so a
-future encoding change disables it by itself instead of relying on a comment.
+of that race is a perfectly valid npz — nothing about the file itself says its
+blob count belongs to somebody else's mapping), and quarantined and rebuilt
+rather than crashing when it is unreadable. A bundle written before the name
+carried a version is adopted under the new name rather than rebuilt, since the
+contents are byte-identical; the adoption is gated on the versioned name
+literally being the v1 one, so a future encoding change disables it by itself
+instead of relying on a comment.
+
+The blob count is what makes a bundle usable, so it is checked against the
+number of points the scene needs — before a legacy bundle is adopted, which is
+the vintage most likely to be carrying a raced count. A bundle that does not
+match is quarantined and reassembled from the surviving per-file caches rather
+than returned: the scene builder cannot align a mismatched bundle to its points
+and drops the hover images, and nothing on disk was ever going to repair that on
+its own. The reverse case is not a cache fault and is not treated as one — when
+`label.csv` and the embeddings genuinely disagree on their row count, the
+thumbnails are returned but not written, so no run has to quarantine the same
+file again for a condition no rebuild can fix.
 
 One new tripwire: if fewer than half the test rows match an image crop, the
 thumbnails are still returned but are not cached. The row matching is a

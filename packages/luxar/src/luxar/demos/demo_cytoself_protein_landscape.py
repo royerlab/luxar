@@ -425,6 +425,159 @@ def _load_downloaded_artifact(
         return loader(path)
 
 
+def _open_drive_stream(session: Any, url: str, file_id: str) -> Any:
+    """Get a streamed response for *file_id*, past the virus-scan confirmation.
+
+    Google Drive answers a large-file download with an interstitial instead of
+    the bytes, and which interstitial depends on the file and the day, so all
+    four escalations below are needed. Each step only runs while the response is
+    still ``text/html`` — the first one that yields a body short-circuits the
+    rest. A response that is STILL html when this returns is not an error here:
+    the caller's HTML sniff rejects it after staging, with the manual URL.
+    """
+    # Strategy 1: Direct download with confirm=t
+    response = session.get(url, params={"confirm": "t"}, stream=True, timeout=60)
+
+    # Strategy 2: Check cookies for download_warning token
+    if response.headers.get("content-type", "").startswith("text/html"):
+        aprint("Trying cookie-based confirmation...")
+        confirm_token = None
+        for key, value in response.cookies.items():
+            if key.startswith("download_warning"):
+                confirm_token = value
+                break
+        if confirm_token:
+            response = session.get(
+                url,
+                params={"confirm": confirm_token},
+                stream=True,
+                timeout=60,
+            )
+
+    # Strategy 3: Parse the HTML confirmation page
+    if response.headers.get("content-type", "").startswith("text/html"):
+        import html as html_mod
+        import re
+
+        aprint("Parsing confirmation page for download form...")
+        page_html = response.text
+
+        action_match = re.search(r'action="([^"]*)"', page_html)
+        form_inputs = dict(
+            re.findall(
+                r'<input[^>]*name="([^"]*)"[^>]*value="([^"]*)"',
+                page_html,
+            )
+        )
+
+        if action_match and form_inputs:
+            action_url = html_mod.unescape(action_match.group(1))
+            aprint(f"Found download form with {len(form_inputs)} params")
+            response = session.get(
+                action_url,
+                params=form_inputs,
+                stream=True,
+                timeout=60,
+            )
+        else:
+            # Strategy 4: Try the usercontent endpoint
+            aprint("Trying usercontent endpoint...")
+            uc_url = (
+                f"https://drive.usercontent.google.com/download"
+                f"?id={file_id}&export=download&confirm=t"
+            )
+            response = session.get(uc_url, stream=True, timeout=60)
+
+    return response
+
+
+def _stream_to_part(response: Any, part_path: Path, total_size: int | None) -> int:
+    """Stream *response* into *part_path*, reporting progress; return the size."""
+    downloaded = 0
+    last_report_mb = 0
+    start_time = time.time()
+    chunk_size = 1024 * 1024  # 1 MB
+
+    with open(part_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=chunk_size):
+            if not chunk:
+                continue
+            f.write(chunk)
+            downloaded += len(chunk)
+
+            progress_mb = downloaded / (1024 * 1024)
+            if progress_mb - last_report_mb < 100:
+                continue
+            elapsed = time.time() - start_time
+            rate = downloaded / (1024 * 1024) / elapsed if elapsed > 0 else 0
+            if total_size is not None:
+                pct = downloaded / total_size * 100
+                aprint(
+                    f"  {downloaded / (1024**3):.2f} / "
+                    f"{total_size / (1024**3):.2f} GB "
+                    f"({pct:.0f}%) - {rate:.1f} MB/s"
+                )
+            else:
+                aprint(f"  {downloaded / (1024**3):.2f} GB - {rate:.1f} MB/s")
+            last_report_mb = progress_mb
+
+    return part_path.stat().st_size
+
+
+def _verify_staged_download(
+    part_path: Path,
+    final_size: int,
+    total_size: int | None,
+    expected_min_size: int,
+    file_id: str,
+    output_path: Path,
+) -> None:
+    """Raise (and discard the staging file) unless the staged bytes look real."""
+    with open(part_path, "rb") as f:
+        head = f.read(HTML_SNIFF_BYTES)
+    if _looks_like_html(head):
+        raise _reject_staged_download(
+            part_path,
+            "Downloaded file is an HTML page, not data — Google Drive most "
+            "likely returned a quota or permission error.",
+            file_id,
+            output_path,
+        )
+
+    if final_size < MIN_DOWNLOAD_BYTES:
+        raise _reject_staged_download(
+            part_path,
+            f"Downloaded file is too small ({final_size} bytes) — likely a "
+            "Google Drive error page.",
+            file_id,
+            output_path,
+        )
+
+    if total_size is not None and final_size != total_size:
+        raise _reject_staged_download(
+            part_path,
+            f"Download is incomplete: got {final_size} bytes but the "
+            f"server declared {total_size}.",
+            file_id,
+            output_path,
+        )
+
+    # The expected-size floor is checked whether or not a length was declared.
+    # An honest content-length only proves the body arrived whole, not that it
+    # is the body we asked for: Drive also serves small non-HTML "cannot access
+    # this file" responses, which agree with their own length and would
+    # otherwise be promoted AND certified by a sidecar — where the old heuristic
+    # at least re-fetched them every run.
+    if final_size <= expected_min_size * 0.9:
+        raise _reject_staged_download(
+            part_path,
+            f"Download is too short: got {final_size} bytes, well under the "
+            f"{expected_min_size} bytes expected for this file.",
+            file_id,
+            output_path,
+        )
+
+
 def _download_from_google_drive(
     file_id: str, output_path: Path, expected_min_size: int = 0
 ) -> Path:
@@ -490,143 +643,20 @@ def _download_from_google_drive(
     with asection(f"Downloading {output_path.name} from Google Drive"):
         aprint(f"File ID: {file_id}")
 
-        # Strategy 1: Direct download with confirm=t
-        response = session.get(url, params={"confirm": "t"}, stream=True, timeout=60)
-
-        # Strategy 2: Check cookies for download_warning token
-        if response.headers.get("content-type", "").startswith("text/html"):
-            aprint("Trying cookie-based confirmation...")
-            confirm_token = None
-            for key, value in response.cookies.items():
-                if key.startswith("download_warning"):
-                    confirm_token = value
-                    break
-            if confirm_token:
-                response = session.get(
-                    url,
-                    params={"confirm": confirm_token},
-                    stream=True,
-                    timeout=60,
-                )
-
-        # Strategy 3: Parse the HTML confirmation page
-        if response.headers.get("content-type", "").startswith("text/html"):
-            import html as html_mod
-            import re
-
-            aprint("Parsing confirmation page for download form...")
-            page_html = response.text
-
-            action_match = re.search(r'action="([^"]*)"', page_html)
-            form_inputs = dict(
-                re.findall(
-                    r'<input[^>]*name="([^"]*)"[^>]*value="([^"]*)"',
-                    page_html,
-                )
-            )
-
-            if action_match and form_inputs:
-                action_url = html_mod.unescape(action_match.group(1))
-                aprint(f"Found download form with {len(form_inputs)} params")
-                response = session.get(
-                    action_url,
-                    params=form_inputs,
-                    stream=True,
-                    timeout=60,
-                )
-            else:
-                # Strategy 4: Try the usercontent endpoint
-                aprint("Trying usercontent endpoint...")
-                uc_url = (
-                    f"https://drive.usercontent.google.com/download"
-                    f"?id={file_id}&export=download&confirm=t"
-                )
-                response = session.get(uc_url, stream=True, timeout=60)
-
+        response = _open_drive_stream(session, url, file_id)
         response.raise_for_status()
 
         total_size = _parse_content_length(response.headers)
         if total_size is not None:
             aprint(f"Download size: {total_size / (1024**2):.1f} MB")
 
-        downloaded = 0
-        last_report_mb = 0
-        start_time = time.time()
-        chunk_size = 1024 * 1024  # 1 MB
-
-        with open(part_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=chunk_size):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-
-                    progress_mb = downloaded / (1024 * 1024)
-                    if progress_mb - last_report_mb >= 100:
-                        elapsed = time.time() - start_time
-                        rate = (
-                            downloaded / (1024 * 1024) / elapsed if elapsed > 0 else 0
-                        )
-                        if total_size is not None:
-                            pct = downloaded / total_size * 100
-                            aprint(
-                                f"  {downloaded / (1024**3):.2f} / "
-                                f"{total_size / (1024**3):.2f} GB "
-                                f"({pct:.0f}%) - {rate:.1f} MB/s"
-                            )
-                        else:
-                            aprint(
-                                f"  {downloaded / (1024**3):.2f} GB - {rate:.1f} MB/s"
-                            )
-                        last_report_mb = progress_mb
-
-        final_size = part_path.stat().st_size
+        final_size = _stream_to_part(response, part_path, total_size)
         aprint(f"Download complete: {final_size / (1024**2):.1f} MB")
 
-        # --- Verify the staged bytes before they take the destination name ---
-
-        with open(part_path, "rb") as f:
-            head = f.read(HTML_SNIFF_BYTES)
-        if _looks_like_html(head):
-            raise _reject_staged_download(
-                part_path,
-                "Downloaded file is an HTML page, not data — Google Drive most "
-                "likely returned a quota or permission error.",
-                file_id,
-                output_path,
-            )
-
-        if final_size < MIN_DOWNLOAD_BYTES:
-            raise _reject_staged_download(
-                part_path,
-                f"Downloaded file is too small ({final_size} bytes) — likely a "
-                "Google Drive error page.",
-                file_id,
-                output_path,
-            )
-
-        if total_size is not None and final_size != total_size:
-            raise _reject_staged_download(
-                part_path,
-                f"Download is incomplete: got {final_size} bytes but the "
-                f"server declared {total_size}.",
-                file_id,
-                output_path,
-            )
-
-        # The expected-size floor is checked whether or not a length was
-        # declared. An honest content-length only proves the body arrived whole,
-        # not that it is the body we asked for: Drive also serves small
-        # non-HTML "cannot access this file" responses, which agree with their
-        # own length and would otherwise be promoted AND certified by a sidecar
-        # — where the old heuristic at least re-fetched them every run.
-        if final_size <= expected_min_size * 0.9:
-            raise _reject_staged_download(
-                part_path,
-                f"Download is too short: got {final_size} bytes, well under the "
-                f"{expected_min_size} bytes expected for this file.",
-                file_id,
-                output_path,
-            )
+        # Verify the staged bytes BEFORE they take the destination name.
+        _verify_staged_download(
+            part_path, final_size, total_size, expected_min_size, file_id, output_path
+        )
 
         # Verified: take the destination name atomically, then record the size
         # so the next run can tell a complete cache from a truncated one.
@@ -989,8 +1019,189 @@ def _load_thumbnail_part(path: Path) -> tuple[list[bytes], list[int], int] | Non
     return blobs, test_indices, n_crops
 
 
+def _read_bundle_blobs(path: Path, expected_count: int | None) -> list[bytes] | None:
+    """Read an assembled thumbnail bundle, or ``None`` if it cannot be used.
+
+    Two ways a bundle is unusable, and both quarantine it so the caller
+    rebuilds rather than crashing or degrading forever:
+
+    * it does not parse — a truncated npz used to crash every subsequent run
+      until the user deleted it by hand;
+    * it parses but holds the wrong number of blobs. That is the *silent*
+      failure, and the one a bundle cannot self-report: the loser of the
+      pre-staging rename race is a perfectly valid npz whose blob count belongs
+      to another run's mapping. The scene builder refuses a mismatched count
+      (it cannot align the thumbnails to the points), so such a bundle costs
+      every future run its hover images with nothing on disk ever repairing it.
+      *expected_count* is the caller's point count; ``None`` skips the check.
+    """
+    try:
+        with np.load(path, allow_pickle=True) as data:
+            blobs = [bytes(b) for b in data["blobs"]]
+    except Exception as exc:
+        aprint(f"  ⚠ Cached thumbnail bundle unreadable ({exc}) — rebuilding")
+        _quarantine_download(path, reason="unreadable thumbnail bundle")
+        return None
+
+    if expected_count is not None and len(blobs) != expected_count:
+        aprint(
+            f"  ⚠ Cached thumbnail bundle holds {len(blobs):,} thumbnails but "
+            f"{expected_count:,} are needed — rebuilding"
+        )
+        _quarantine_download(path, reason="thumbnail bundle with a stale blob count")
+        return None
+
+    return blobs
+
+
+def _load_cached_thumbnails(
+    cache_dir: Path, expected_count: int | None
+) -> list[bytes] | None:
+    """Return the assembled thumbnails already on disk, or ``None`` to rebuild.
+
+    Looks first for the versioned bundle, then adopts one written before the
+    name carried a version: the v1 contents are byte-identical to the
+    unversioned ones, so renaming is sound and spares an existing user a
+    multi-gigabyte re-download for a pure rename. The literal comparison below
+    is the enforcement, not a note — bump the encoding to v2 and adoption stops
+    by itself, so a stale bundle is rebuilt instead of laundered into the new
+    name.
+    """
+    thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
+    if thumbnails_cache.exists():
+        with asection("Loading cached image thumbnails"):
+            blobs = _read_bundle_blobs(thumbnails_cache, expected_count)
+            if blobs is not None:
+                aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
+                return blobs
+
+    legacy_cache = cache_dir / LEGACY_THUMBNAIL_CACHE_NAME
+    if (
+        THUMBNAIL_CACHE_NAME != "image_labels_test_webp_v1.npz"
+        or not legacy_cache.exists()
+    ):
+        return None
+
+    with asection("Adopting pre-versioning thumbnail cache"):
+        # Validated BEFORE the rename: a legacy bundle is exactly the vintage
+        # that can carry a raced blob count, and adopting one under the v1 name
+        # would make that permanent.
+        blobs = _read_bundle_blobs(legacy_cache, expected_count)
+        if blobs is None:
+            return None
+        try:
+            legacy_cache.replace(thumbnails_cache)
+        except OSError as exc:
+            # Un-renameable (an open handle on Windows, a read-only cache). The
+            # bytes are good, so use them; the next run tries the rename again.
+            aprint(
+                f"  ⚠ Could not rename the legacy bundle ({exc}) — using it in place"
+            )
+        else:
+            aprint(
+                f"Adopted {len(blobs):,} thumbnails from "
+                f"{LEGACY_THUMBNAIL_CACHE_NAME} as {THUMBNAIL_CACHE_NAME}"
+            )
+        return blobs
+
+
+def _reusable_thumbnail_part(
+    part_path: Path,
+    filename: str,
+    global_to_test: dict[int, list[int]],
+    global_offset: int,
+) -> tuple[list[bytes], list[int], int] | None:
+    """A part cache for *filename* that the CURRENT row mapping can reuse.
+
+    A part cache holds everything one ``Image_data`` file contributes,
+    INCLUDING its crop count — the caller advances a running global offset by
+    that count, so a skipped file must still move the offset or every later
+    file would match the wrong rows.
+    """
+    part = _load_thumbnail_part(part_path)
+    if part is None:
+        return None
+    if part[1] != _expected_test_indices(global_to_test, global_offset, part[2]):
+        # The part was built against a different row mapping — a repaired
+        # Label_data CSV shifts it without changing its length. Reusing it would
+        # paste every blob onto the wrong row and then freeze that into the
+        # bundle, so rebuild instead.
+        aprint(f"  ⚠ Stale thumbnail part cache for {filename} — rebuilding")
+        _quarantine_download(part_path, reason="stale thumbnail part cache")
+        return None
+    return part
+
+
+def _build_thumbnail_part(
+    cache_dir: Path,
+    part_path: Path,
+    filename: str,
+    file_id: str,
+    position: str,
+    global_to_test: dict[int, list[int]],
+    global_offset: int,
+) -> tuple[list[bytes], list[int], int]:
+    """Download one ``Image_data`` file, encode its matched crops, checkpoint.
+
+    The checkpoint is written before returning, so a failure on a later file
+    costs only that file's work rather than the whole multi-hour encode.
+    """
+    img_path = cache_dir / filename
+    _download_from_google_drive(
+        file_id, img_path, expected_min_size=MIN_SIZE_IMAGE_DATA
+    )
+
+    with asection(f"Processing {filename} ({position})"):
+        arr = _load_downloaded_artifact(
+            img_path, np.load, file_id, expected_min_size=MIN_SIZE_IMAGE_DATA
+        )
+
+        n_crops = arr.shape[0]
+        aprint(f"Shape: {arr.shape}, dtype: {arr.dtype}")
+
+        # Find which local indices in this file are needed
+        local_indices = []
+        local_to_test_map: list[tuple[int, int]] = []
+        for local_idx in range(n_crops):
+            global_idx = global_offset + local_idx
+            if global_idx in global_to_test:
+                local_indices.append(local_idx)
+                for test_idx in global_to_test[global_idx]:
+                    local_to_test_map.append((local_idx, test_idx))
+
+        new_blobs: list[bytes] = []
+        new_test_indices: list[int] = []
+        if local_indices:
+            # Extract and encode only the needed crops
+            unique_local = sorted(set(local_indices))
+            encoded = _encode_crops_to_webp(arr[unique_local])
+
+            # Map encoded blobs back to test indices
+            local_to_encoded = {li: ei for ei, li in enumerate(unique_local)}
+            for local_idx, test_idx in local_to_test_map:
+                new_blobs.append(encoded[local_to_encoded[local_idx]])
+                new_test_indices.append(test_idx)
+
+            aprint(
+                f"Encoded {len(unique_local):,} matched crops (of {n_crops:,} total)"
+            )
+        else:
+            aprint(f"No matched crops in this file ({n_crops:,} total)")
+
+        _write_npz_atomic(
+            part_path,
+            blobs=np.array(new_blobs, dtype=object),
+            test_indices=np.asarray(new_test_indices, dtype=np.int64),
+            n_crops=np.int64(n_crops),
+        )
+        del arr
+
+    return new_blobs, new_test_indices, n_crops
+
+
 def load_cytoself_images(
     cache_dir: Path | None = None,
+    expected_count: int | None = None,
 ) -> list[bytes]:
     """Load and encode CytoSelf image crops as WebP thumbnails.
 
@@ -1003,6 +1214,11 @@ def load_cytoself_images(
 
     Args:
         cache_dir: Directory for caching downloads and encoded thumbnails.
+        expected_count: How many thumbnails the caller needs, one per point. A
+            cached bundle holding a different number is unusable (the scene
+            builder cannot align it) and is rebuilt rather than returned, and a
+            freshly assembled one is not written to disk. ``None`` disables both
+            checks.
 
     Returns:
         List of WebP-encoded bytes aligned with label.csv / embeddings. If
@@ -1015,54 +1231,9 @@ def load_cytoself_images(
         cache_dir = DEFAULT_CACHE_DIR
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check for cached encoded thumbnails (test-aligned)
-    thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
-    if thumbnails_cache.exists():
-        with asection("Loading cached image thumbnails"):
-            try:
-                with np.load(thumbnails_cache, allow_pickle=True) as data:
-                    blobs = [bytes(b) for b in data["blobs"]]
-                aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
-                return blobs
-            except Exception as exc:
-                # A truncated bundle used to crash every run until the user
-                # deleted it by hand; quarantine it and rebuild instead.
-                aprint(f"  ⚠ Cached thumbnail bundle unreadable ({exc}) — rebuilding")
-                _quarantine_download(
-                    thumbnails_cache, reason="unreadable thumbnail bundle"
-                )
-
-    # Adopt a bundle written before the name carried a version. The v1 contents
-    # are byte-identical to the unversioned ones, so renaming is sound and
-    # spares an existing user a multi-gigabyte re-download for a pure rename.
-    # The literal below is the enforcement, not a note: bump the encoding to v2
-    # and this stops matching, so the stale bundle is rebuilt instead of
-    # laundered into the new name.
-    legacy_cache = cache_dir / LEGACY_THUMBNAIL_CACHE_NAME
-    if (
-        THUMBNAIL_CACHE_NAME == "image_labels_test_webp_v1.npz"
-        and legacy_cache.exists()
-    ):
-        with asection("Adopting pre-versioning thumbnail cache"):
-            try:
-                with np.load(legacy_cache, allow_pickle=True) as data:
-                    blobs = [bytes(b) for b in data["blobs"]]
-                legacy_cache.replace(thumbnails_cache)
-            except Exception as exc:
-                # Unreadable, or un-renameable (an open handle on Windows).
-                # Either way, fall through and rebuild.
-                aprint(
-                    f"  ⚠ Legacy thumbnail bundle not adoptable ({exc}) — rebuilding"
-                )
-                _quarantine_download(
-                    legacy_cache, reason="unusable legacy thumbnail bundle"
-                )
-            else:
-                aprint(
-                    f"Adopted {len(blobs):,} thumbnails from "
-                    f"{LEGACY_THUMBNAIL_CACHE_NAME} as {THUMBNAIL_CACHE_NAME}"
-                )
-                return blobs
+    cached = _load_cached_thumbnails(cache_dir, expected_count)
+    if cached is not None:
+        return cached
 
     # Step 1: Build index mapping (test row -> global image row)
     mapping, n_test = _build_test_index_mapping(cache_dir)
@@ -1079,93 +1250,33 @@ def load_cytoself_images(
 
     with asection("Downloading and encoding matched image crops"):
         for i, (filename, file_id) in enumerate(GDRIVE_IMAGE_IDS.items()):
-            img_path = cache_dir / filename
+            position = f"{i + 1}/{len(GDRIVE_IMAGE_IDS)}"
             part_path = _thumbnail_part_path(cache_dir, i)
 
-            # A part cache holds everything this file contributes, INCLUDING its
-            # crop count — the loop advances `global_offset` by that count, so a
-            # skipped file must still move the offset or every later file would
-            # match the wrong rows.
-            part = _load_thumbnail_part(part_path)
-            if part is not None and part[1] != _expected_test_indices(
-                global_to_test, global_offset, part[2]
-            ):
-                # The part was built against a different row mapping — a repaired
-                # Label_data CSV shifts it without changing its length. Reusing
-                # it would paste every blob onto the wrong row and then freeze
-                # that into the bundle, so rebuild instead.
-                aprint(f"  ⚠ Stale thumbnail part cache for {filename} — rebuilding")
-                _quarantine_download(part_path, reason="stale thumbnail part cache")
-                part = None
-            if part is not None:
-                part_blobs, part_test_indices, n_crops = part
-                for blob, test_idx in zip(part_blobs, part_test_indices):
-                    result_blobs[test_idx] = blob
-                    matched_count += 1
-                aprint(
-                    f"Reusing {len(part_blobs):,} cached thumbnails for {filename} "
-                    f"({i + 1}/{len(GDRIVE_IMAGE_IDS)})"
-                )
-                global_offset += n_crops
-                continue
-
-            _download_from_google_drive(
-                file_id, img_path, expected_min_size=MIN_SIZE_IMAGE_DATA
+            part = _reusable_thumbnail_part(
+                part_path, filename, global_to_test, global_offset
             )
-
-            with asection(f"Processing {filename} ({i + 1}/{len(GDRIVE_IMAGE_IDS)})"):
-                arr = _load_downloaded_artifact(
-                    img_path, np.load, file_id, expected_min_size=MIN_SIZE_IMAGE_DATA
+            if part is not None:
+                aprint(
+                    f"Reusing {len(part[0]):,} cached thumbnails for {filename} "
+                    f"({position})"
                 )
-
-                n_crops = arr.shape[0]
-                aprint(f"Shape: {arr.shape}, dtype: {arr.dtype}")
-
-                # Find which local indices in this file are needed
-                local_indices = []
-                local_to_test_map: list[tuple[int, int]] = []
-                for local_idx in range(n_crops):
-                    global_idx = global_offset + local_idx
-                    if global_idx in global_to_test:
-                        local_indices.append(local_idx)
-                        for test_idx in global_to_test[global_idx]:
-                            local_to_test_map.append((local_idx, test_idx))
-
-                new_blobs: list[bytes] = []
-                new_test_indices: list[int] = []
-                if local_indices:
-                    # Extract and encode only the needed crops
-                    unique_local = sorted(set(local_indices))
-                    subset = arr[unique_local]
-                    encoded = _encode_crops_to_webp(subset)
-
-                    # Map encoded blobs back to test indices
-                    local_to_encoded = {li: ei for ei, li in enumerate(unique_local)}
-                    for local_idx, test_idx in local_to_test_map:
-                        encoded_idx = local_to_encoded[local_idx]
-                        result_blobs[test_idx] = encoded[encoded_idx]
-                        new_blobs.append(encoded[encoded_idx])
-                        new_test_indices.append(test_idx)
-                        matched_count += 1
-
-                    aprint(
-                        f"Encoded {len(unique_local):,} matched crops "
-                        f"(of {n_crops:,} total)"
-                    )
-                else:
-                    aprint(f"No matched crops in this file ({n_crops:,} total)")
-
-                # Checkpoint this file's contribution before moving on, so a
-                # failure on a later file costs only that file's work.
-                _write_npz_atomic(
+            else:
+                part = _build_thumbnail_part(
+                    cache_dir,
                     part_path,
-                    blobs=np.array(new_blobs, dtype=object),
-                    test_indices=np.asarray(new_test_indices, dtype=np.int64),
-                    n_crops=np.int64(n_crops),
+                    filename,
+                    file_id,
+                    position,
+                    global_to_test,
+                    global_offset,
                 )
 
-                global_offset += n_crops
-                del arr
+            part_blobs, part_test_indices, n_crops = part
+            for blob, test_idx in zip(part_blobs, part_test_indices):
+                result_blobs[test_idx] = blob
+                matched_count += 1
+            global_offset += n_crops
 
         aprint(f"Total matched: {matched_count:,}/{n_test:,}")
 
@@ -1201,6 +1312,7 @@ def load_cytoself_images(
     # matching has regressed, in which case the thumbnails are still returned
     # (a partly-working tooltip beats none) but never frozen onto disk, where
     # they would be reused unquestioned for good.
+    wrong_count = expected_count is not None and len(final_blobs) != expected_count
     if matching_looks_broken:
         aprint(
             f"⚠️  Only {matched_unique:,}/{n_test:,} test rows "
@@ -1209,7 +1321,18 @@ def load_cytoself_images(
             "broken, so the thumbnails were NOT cached. The per-file caches "
             "were kept, so a retry only redoes the assembly."
         )
+    elif wrong_count:
+        # label.csv and the embeddings disagree on how many rows there are, so
+        # the scene builder will refuse these thumbnails anyway. Writing the
+        # bundle would only hand the next run a cache it has to quarantine —
+        # the per-file caches keep the reassembly cheap either way.
+        aprint(
+            f"⚠️  Assembled {len(final_blobs):,} thumbnails but the scene needs "
+            f"{expected_count:,} — label.csv and the embeddings disagree, so "
+            "the thumbnails were NOT cached."
+        )
     else:
+        thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
         with asection("Caching test-aligned thumbnails"):
             _write_npz_atomic(
                 thumbnails_cache, blobs=np.array(final_blobs, dtype=object)
@@ -1475,7 +1598,10 @@ def main() -> None:
     if not without_images:
         try:
             require_module("PIL.Image")
-            image_labels = load_cytoself_images()
+            # The point count is what makes a cached bundle usable or not, so
+            # pass it in: a bundle with a different blob count is rebuilt rather
+            # than silently costing every future run its hover images.
+            image_labels = load_cytoself_images(expected_count=len(coordinates))
         except MissingDependencyError as exc:
             aprint(f"WARNING: skipping image labels — {exc}")
         except Exception as e:
