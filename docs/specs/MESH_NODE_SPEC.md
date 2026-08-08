@@ -1430,48 +1430,6 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 | ~~**Mesh import formats** (PLY/OBJ/STL/glTF)~~ — **landed** | Independent of the node type, which is why it could ship on its own afterwards. | Shipped as `luxar mesh import` (`luxar/mesh/interop/`), mirroring `gsplat import` |
 | ~~**`kind=partition`**~~ — **landed** | The exclusion was bookkeeping, not correctness, and the bookkeeping is now written. | Shipped as `add_mesh(partition=…)`; see §9.2 |
 
-### 9.2 `kind=partition` — lifted
-
-**Shipped.** `add_mesh(partition=True | {"max_elements": N, "rule": …})` writes a
-`kind=partition` wrapper with one independently-drawable `Mesh` child per BSP part, and
-`GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both sides of the contract.
-
-This row was always the weakest of the structural exclusions, for the reason the old table
-gave: it was **bookkeeping, not correctness**. What the bookkeeping had to do:
-
-* **Split on face CENTROIDS, never through a face.** A triangle is the indivisible unit, so
-  `max_elements` counts FACES. No geometry is cut and no vertex is invented.
-* **Re-index, do not slice.** The sibling adders hand each part a slice of their element
-  arrays because their elements are independent rows. A triangle is three *references* into
-  a shared vertex table, so each part gathers the vertices its own faces use and renumbers
-  those faces against the gathered table (`luxar/mesh/split.py`).
-* **Duplicate across the cut.** A vertex referenced from both sides appears in both parts.
-  That is the cost, and it is what makes each part stand alone as a drawable leaf. It is
-  bounded by `3F` in the pathological case and is a few percent in practice — only the cut
-  surface duplicates. The writer reports the measured factor.
-* **Gather every per-vertex attribute**, including the per-vertex label CSR the old table
-  called out: `normals`, `colors`, `scalars` and `labels` all travel with their vertices
-  (via the shared `slice_optional_array`, which gathers on length and so leaves a uniform
-  RGB triple or a colormap name alone).
-
-**The seam question resolves the way the old row predicted.** With stored normals split
-verbatim, a duplicated boundary vertex carries an identical position AND an identical normal
-in both parts, so nothing seams under §6.2's shading; the derivative variant is per-fragment
-off the rasterized triangle and is part-agnostic by construction. **Revisit this the moment
-shading gains anything RECOMPUTED per part** — area-averaged normals, tangent frames, UVs,
-baked AO — because each of those is computed from a part's own contents and would differ
-across the cut.
-
-**No `bsp_tree` attr is written**, matching the three sibling leaf adders (only the gsplat
-LOD recipes emit one). Opaque parts do not need back-to-front ordering, and the depth-sort
-coordinator falls back to a per-part centroid heuristic if a translucent mesh partition ever
-needs it. Note also that `render-order.ts::traverseBspBackToFront` would order parts
-back-to-front, which for opaque mesh parts is *correct but pointless* — it forfeits
-front-to-back early-Z. That is a known non-issue, recorded so it is not rediscovered as a bug.
-
-Still excluded, and unaffected by this: a partition of a mesh LOD ladder, since there is no
-mesh LOD ladder to partition.
-
 ### 9.1 Reveal ladders — an additive prefix as an EFFECT, never as a LOD
 
 An additive prefix over a mesh is a legitimate thing to *offer*, as a deliberate
@@ -1538,6 +1496,55 @@ cannot inherit machinery that assumes a prefix approximates the whole.
 stamp it. No clobber ever resulted — `validate_render_attrs`'s reject-unknown gate already failed such a
 write, just with the *unknown-attr* message instead of the *reserved* one — so it was only an
 error-message gap. #1220 added the key to all three sibling sets, matching `MESH_RESERVED_ATTRS` (§3.3).
+
+### 9.2 `kind=partition` — lifted
+
+**Shipped.** `add_mesh(partition=True | {"max_elements": N, "rule": …})` writes a
+`kind=partition` wrapper with one independently-drawable `Mesh` child per BSP part, and
+`GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both sides of the contract.
+
+This row was always the weakest of the structural exclusions, for the reason the old table
+gave: it was **bookkeeping, not correctness**. What the bookkeeping had to do:
+
+* **Split on face CENTROIDS, never through a face.** A triangle is the indivisible unit, so
+  `max_elements` counts FACES. No geometry is cut and no vertex is invented.
+* **Re-index, do not slice.** The sibling adders hand each part a slice of their element
+  arrays because their elements are independent rows. A triangle is three *references* into
+  a shared vertex table, so each part gathers the vertices its own faces use and renumbers
+  those faces against the gathered table (`luxar/mesh/split.py`).
+* **Duplicate across the cut.** A vertex referenced from both sides appears in both parts.
+  That is the cost, and it is what makes each part stand alone as a drawable leaf. It is
+  bounded by `3F` in the pathological case and is a few percent in practice — only the cut
+  surface duplicates. The writer reports the measured factor.
+* **Gather every per-vertex attribute**, including the per-vertex label CSR the old table
+  called out: `normals`, `colors`, `scalars` and `labels` all travel with their vertices
+  (via the shared `slice_optional_array`, which gathers on length and so leaves a uniform
+  RGB triple or a colormap name alone).
+
+**The seam question resolves the way the old row predicted.** With stored normals split
+verbatim, a duplicated boundary vertex carries an identical position AND an identical normal
+in both parts, so nothing seams under §6.2's shading; the derivative variant is per-fragment
+off the rasterized triangle and is part-agnostic by construction. **Revisit this the moment
+shading gains anything RECOMPUTED per part** — area-averaged normals, tangent frames, UVs,
+baked AO — because each of those is computed from a part's own contents and would differ
+across the cut.
+
+**No `bsp_tree` attr is written**, matching the three sibling leaf adders (only the gsplat
+LOD recipes emit one). Opaque parts do not need back-to-front ordering, and the depth-sort
+coordinator falls back to a per-part centroid heuristic if a translucent mesh partition ever
+needs it. Note also that `render-order.ts::traverseBspBackToFront` would order parts
+back-to-front, which for opaque mesh parts is *correct but pointless* — it forfeits
+front-to-back early-Z. That is a known non-issue, recorded so it is not rediscovered as a bug.
+
+**One refusal survives the lift.** A mesh may go under a `kind=partition` group whose
+`display_type` is `'mesh'` — nothing else. A partition is homogeneous by definition, and
+`validate_partition_group`'s homogeneity check has no production caller, so declaring a
+`points` partition and dropping a mesh into it would write clean and load as a layer
+claiming to be points. The adder refuses that pairing by name, fail-fast, before any array
+reaches disk.
+
+Still excluded, and unaffected by this: a partition of a mesh LOD ladder, since there is no
+mesh LOD ladder to partition.
 
 ---
 

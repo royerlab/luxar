@@ -67,10 +67,13 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
     ``coverage_fraction``. Conflating the two (as this message once did) tells a
     user the feature is impossible when it is merely unwritten.
 
-    ``kind=partition`` is NOT refused any more. It used to be, on the grounds that
-    a BSP cut runs through faces — which is true, and is exactly what
-    ``add_mesh(partition=...)`` now handles by duplicating boundary vertices, so
-    the mesh children it writes must be allowed through here.
+    ``kind=partition`` is no longer refused OUTRIGHT — mesh is partition-capable
+    now, and a mesh leaf under a ``display_type='mesh'`` partition is exactly what
+    ``add_mesh(partition=...)`` writes. What is still refused is a partition whose
+    declared ``display_type`` is some OTHER geometry type: homogeneity is mandatory
+    for a partition, and nothing else enforces it before finalize, so a caller who
+    declares a ``points`` partition and drops a mesh into it would otherwise make
+    the group's declared display type a lie.
     """
     kind = parent_node.attrs.get("kind")
     if kind == "lod":
@@ -82,9 +85,17 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
             "structurally fine and simply have no producer — mesh decimation does "
             "not exist yet. Add the mesh to a plain group instead."
         )
-    # No ``kind == "partition"`` arm: mesh IS partition-capable now. A mesh leaf
-    # under a kind=partition group is exactly what ``add_mesh(partition=...)``
-    # writes, so refusing it here would refuse this adder's own output.
+    if kind == "partition":
+        display = parent_node.attrs.get("display_type")
+        if display != "mesh":
+            raise ValueError(
+                f"Cannot add mesh '{name}' to a kind=partition group declared "
+                f"display_type={display!r}. A partition is homogeneous — every "
+                "part must resolve to the parent's display type — so a mesh child "
+                "here would make that attr a lie, and nothing re-checks it before "
+                "the store is finalized. Use display_type='mesh', or let "
+                "add_mesh(partition=...) build the wrapper for you."
+            )
 
 
 # Reason per structural parameter the sibling adders take and mesh does not. Same
@@ -318,6 +329,12 @@ def add_mesh_impl(
         # every part inherits coordinates and visibility already in final form
         # and the per-part recursion must not re-apply them.
         if partition is not None and partition is not False:
+            # ``extend_to_all`` was just RESOLVED into ``attrs`` above, and this
+            # call also passes it by name — so hand the split a copy of attrs
+            # without the key, or the two collide as a duplicate keyword argument
+            # and every partitioned+extended mesh fails. The parts get the
+            # resolved dimension names (re-resolving a name list is a no-op).
+            partition_attrs = {k: v for k, v in attrs.items() if k != "extend_to_all"}
             wrapper = _add_mesh_partition(
                 group,
                 name=name,
@@ -333,8 +350,8 @@ def add_mesh_impl(
                 labels=labels,
                 image_labels=image_labels,
                 parent_node=parent_node,
-                extend_to_all=extend_to_all,
-                **attrs,
+                extend_to_all=final_extend_dims or extend_to_all,
+                **partition_attrs,
             )
             if wrapper is not None:
                 return wrapper
@@ -444,6 +461,7 @@ def _add_mesh_partition(
     attribute today.
     """
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
+    from ....validation.base import validate_faces_for_writing
     from ..partition import (
         median_bsp_partition,
         midpoint_bsp_partition,
@@ -464,6 +482,15 @@ def _add_mesh_partition(
             "splitting it would silently change what each part's labels index. "
             "Decompose manually or omit image_labels."
         )
+
+    # Validate the ORIGINAL indices before they are used to gather anything. On
+    # the plain-leaf path the writer does this, but the split runs first and
+    # every one of these failures is silent or unrecognisable here: numpy WRAPS a
+    # negative index while gathering, so `-1` would quietly become the last
+    # vertex and write a triangle the author never wound, and an out-of-range or
+    # float index surfaces as a bare IndexError from inside the centroid gather
+    # instead of the guided message the same input gets without partition=.
+    validate_faces_for_writing(faces_arr, int(vert_arr.shape[0]))
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)

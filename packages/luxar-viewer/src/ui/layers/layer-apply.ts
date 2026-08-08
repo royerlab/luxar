@@ -328,38 +328,44 @@ export class LayerApplyEngine {
   }
 
   /**
-   * Push the three mesh shading values (§6.2) to the layer's own leaf material.
+   * Push the three mesh shading values (§6.2) to the layer's mesh leaves.
    *
    * Deliberately NOT routed through {@link applyComposed}, which is what every other
-   * control here uses. Two reasons, and both are the point:
+   * control here uses, because these values **do not compose along the ancestry**:
+   * `opacity`/`gamma`/`intensity` multiply and `offset` sums, so an ancestor's value
+   * has to fold into a descendant's, whereas a shade floor is a per-surface appearance
+   * choice with no composition rule — multiplying two ambients would mean nothing.
    *
-   * 1. **These do not compose along the ancestry.** `opacity`/`gamma`/`intensity`
-   *    multiply and `offset` sums, so an ancestor's value has to fold into a
-   *    descendant's. A shade floor is a per-surface appearance choice with no
-   *    composition rule — multiplying two ambients would mean nothing — so there is
-   *    nothing for `composeEffective` to compute.
-   * 2. **Only mesh materials have the setters.** `applyComposed` fans out to every data
-   *    leaf under a group layer; here a non-mesh leaf simply has no `updateAmbient`, so
-   *    the optional-chaining below is the whole type gate. The panel already hides the
-   *    sliders off a mesh layer, so this is the second line of defense rather than the
-   *    first.
+   * It still has to FAN OUT like `applyComposed` does, though. A mesh layer is no
+   * longer always a leaf: `add_mesh(partition=…)` writes a kind=partition wrapper and
+   * the panel presents that wrapper as one `mesh` layer, so `layer.path` resolves to a
+   * `THREE.Group` with no material of its own. Writing only there left all three
+   * sliders visible and completely inert on a partitioned surface. A non-mesh leaf
+   * needs no extra gate — it simply has no `updateAmbient`, so the optional chaining
+   * below is the type check.
    *
    * `alphaCutoff` also rides to the PICK material, because the pick pass applies the
    * identical cutout (§6.5): a threshold that moved on screen but not in the pick
    * buffer would make a freshly-dissolved region still hoverable.
    */
   applyMeshAppearance(layer: LayerInfo): void {
-    const obj = this.getMesh(layer.path);
-    if (!obj) return;
-    const mat = this.getLeafMaterial(obj);
-    if (!mat) return;
-    mat.updateAmbient?.(layer.ambient);
-    mat.updateShadeExponent?.(layer.shadeExponent);
-    mat.updateAlphaCutoff?.(layer.alphaCutoff);
-    if (syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff })) {
-      this.deps.invalidatePickBuffer?.();
+    let applied = false;
+    let pickDirty = false;
+    for (const leaf of this.getAffectedDataLeaves(layer.path)) {
+      const obj = this.getMesh(leaf.path);
+      if (!obj) continue;
+      const mat = this.getLeafMaterial(obj);
+      if (!mat) continue;
+      applied = true;
+      mat.updateAmbient?.(layer.ambient);
+      mat.updateShadeExponent?.(layer.shadeExponent);
+      mat.updateAlphaCutoff?.(layer.alphaCutoff);
+      if (syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff })) {
+        pickDirty = true;
+      }
     }
-    this.deps.requestRender();
+    if (pickDirty) this.deps.invalidatePickBuffer?.();
+    if (applied) this.deps.requestRender();
   }
 
   applyBlendingMode(layer: LayerInfo): void {

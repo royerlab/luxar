@@ -368,7 +368,10 @@ class Group(Node):
         ``partition`` IS supported. Returns the ``kind=partition`` wrapper
         :class:`Group` instead of a :class:`Mesh` when the split yields more than
         one part (a single part falls through to a plain leaf), matching
-        ``add_points`` / ``add_gsplats``.
+        ``add_points`` / ``add_gsplats``. A mesh may also be added directly to a
+        ``kind=partition`` group you built yourself, provided that group declares
+        ``display_type='mesh'`` — a partition is homogeneous, so a mismatched
+        declaration is refused.
 
         Args:
             name: Name of the mesh node.

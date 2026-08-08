@@ -2470,6 +2470,91 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(invalidate).toHaveBeenCalled();
   });
 
+  it('mesh shading reaches every part of a kind=partition mesh layer', () => {
+    // `add_mesh(partition=…)` writes a kind=partition wrapper and the panel shows
+    // that wrapper as one `mesh` layer — so `layer.path` resolves to a THREE.Group
+    // with no material. Writing only there left Ambient / Shade exponent / Alpha
+    // cutoff visible and completely inert on a partitioned surface. The panel must
+    // fan out to the parts, the way every composing control already does.
+    const makePartMaterial = (): Record<string, unknown> => {
+      const mat: Record<string, unknown> = {
+        userData: { blendingMode: 'opaque' },
+        uniforms: { uOpacity: { value: 1.0 } },
+        defines: {},
+        updateIntensity: vi.fn(),
+        updateOffset: vi.fn(),
+        updateGamma: vi.fn(),
+        updateOpacity: vi.fn(),
+        updateAmbient: vi.fn(),
+        updateShadeExponent: vi.fn(),
+        updateAlphaCutoff: vi.fn(),
+        applyBlendingMode: vi.fn(),
+      };
+      mat.clone = vi.fn(() => mat);
+      return mat;
+    };
+    const materials = [makePartMaterial(), makePartMaterial()];
+    const rootGroup = new THREE.Group();
+    const wrapper = new THREE.Group();
+    wrapper.name = '/surface';
+    wrapper.userData.kind = 'partition';
+    rootGroup.add(wrapper);
+    materials.forEach((mat, i) => {
+      const part = new THREE.Mesh(new THREE.BufferGeometry(), mat as unknown as THREE.Material);
+      part.name = `/surface/part_${i}`;
+      part.userData._layerMaterialCloned = true;
+      part.userData.nodeType = 'mesh';
+      wrapper.add(part);
+    });
+
+    const sceneGraph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'surface',
+          path: '/surface',
+          type: 'group',
+          // `layer` is a compositing attr, so the writer puts it on the wrapper;
+          // the shading attrs are not, so they land on each part.
+          attrs: { layer: true, kind: 'partition', display_type: 'mesh', max_elements: 10 },
+          children: [0, 1].map((i) => ({
+            name: `part_${i}`,
+            path: `/surface/part_${i}`,
+            type: 'mesh',
+            attrs: { type: 'mesh', ambient: 0.4, shade_exponent: 3, alpha_cutoff: 0.25 },
+            children: [],
+          })),
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, sceneGraph);
+    panel.show();
+
+    const layer = panel.layerState.getLayer('/surface')!;
+    expect(layer.type).toBe('mesh');
+    // The wrapper carries no shading attrs of its own, so the sliders must open on
+    // what the parts are actually rendering with — not on the material defaults.
+    expect(layer.ambient).toBe(0.4);
+    expect(layer.shadeExponent).toBe(3);
+    expect(layer.alphaCutoff).toBe(0.25);
+
+    layer.ambient = 0.1;
+    (
+      panel as unknown as { applyEngine: { applyMeshAppearance(l: unknown): void } }
+    ).applyEngine.applyMeshAppearance(layer);
+
+    for (const mat of materials) {
+      expect(mat.updateAmbient).toHaveBeenCalledWith(0.1);
+      expect(mat.updateShadeExponent).toHaveBeenCalledWith(3);
+      expect(mat.updateAlphaCutoff).toHaveBeenCalledWith(0.25);
+    }
+  });
+
   it('a non-mesh opacity edit does not touch the pick buffer', () => {
     // The converse: a points/lines/gsplat pick material is not mesh-pick-aware, so
     // the sync is a no-op and there is nothing new to render. Invalidating the
