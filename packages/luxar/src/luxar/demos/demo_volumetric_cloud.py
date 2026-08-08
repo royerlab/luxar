@@ -372,6 +372,7 @@ def generate_volumetric_cloud(
                 opacity=0.95,  # Slightly transparent
                 blending_mode="additive",  # Clouds accumulate light
                 intensity=0.016,
+                layer=True,
             )
 
             # Overlay annotations

@@ -48,6 +48,105 @@ Regenerate the demo dataset to pick up the new look.
 `docs/images/readme/gallery/atp_synthase.{webp,webm}` — the README gallery tile —
 were recaptured through the gallery harness against the new look.
 
+#### Tractography tracts identify themselves on hover (#1386)
+
+The HCP-1065 demo drew 87 bundles whose only names were the atlas's own codes —
+`AF_L`, `IFOF_R`, `DRTT_L` — and hovering one showed nothing at all. Each tract
+now carries a label expanding the code into its full anatomical name plus a
+one-line gloss of what it does: `AF_L — Arcuate fasciculus (left) · association
+· frontal (Broca) and temporal (Wernicke) language areas`. A 46-entry table
+keyed on the hemisphere-stripped base code covers all 87 bundles; the split is
+lookup-guarded because six base codes (`CPT_F`, `CPT_O`, `CS_S`, ...) end in a
+single-letter underscore group of their own, and `CPT_F_L` must resolve to
+`CPT_F` rather than to `CPT`.
+
+Lines labels are per-vertex, so the one tract string is broadcast across the
+node — which is also what makes the lookup safe, since the line picker reports a
+segment slot that is fed unremapped into a vertex-sorted array. Every entry
+being identical, the index does not have to be right.
+
+The honest limitation is that labels ride the ladder's finest level only, and
+nothing selects that level from the opening pose. Flying the camera into the
+tractogram is the route that works: `projectBoxDiagonalPx` saturates to the
+finest child when the camera is inside a group's box, so proximity — not
+magnification — is what makes a cranial nerve hoverable. The scene says so in a
+bottom-left hint rather than leaving it in a docstring.
+
+Two changes are the viewer's, not the demo's:
+
+- **A consecutive run of equal labels is decoded once.** `LabelLoader` decoded
+  and retained one string per element, so a broadcast label cost ~39 MB for a
+  168k-vertex node. It now compares each element's bytes to the previous one's
+  and reuses the string on a match. An intern `Map` was tried first and rejected:
+  it pays a hash and a full compare on every element, and the all-distinct case
+  that every other labelled demo has (a 4M-label embedding node) got 2x slower.
+  What the run check buys is retained memory rather than time — a full byte
+  compare costs about what the decode it replaces does — so it rejects on length
+  and on both *end* bytes before scanning the interior. Distinct labels
+  overwhelmingly differ at one end, which keeps that case at parity; without the
+  end probes, equal-length labels sharing a prefix measured ~1.7x the old loop.
+- **An unlabelled node no longer logs a warning.** The pick handler asks any
+  node it hits for a label, and most have no `label_offsets` array; that is an
+  ordinary miss, now logged at info via the house `isNotFoundError` guard. The
+  demotion is scoped to that one open: a missing `label_bytes` beside present
+  offsets, a missing chunk, a decode failure or bad metadata all still warn.
+
+#### Mesh — `kind=partition` (spec §9.2)
+
+`add_mesh(partition=True | {"max_elements": N, "rule": "median"|"midpoint"|"sah"})`
+splits a surface into independently drawable, frustum-cullable parts under a
+`kind=partition` wrapper — the fourth geometry type joining Points / Lines /
+GSplats, and the last of the mesh spec's structural exclusions that was
+bookkeeping rather than correctness.
+
+- **Faces are never cut.** The BSP splits on face centroids, so a triangle is the
+  indivisible unit and `max_elements` counts FACES.
+- **Parts are re-indexed, not sliced** (`luxar/mesh/split.py`). A triangle is three
+  references into a shared vertex table, so each part gathers the vertices its own
+  faces use and renumbers those faces against the gathered table. A vertex on the
+  cut is duplicated into both parts — the cost that makes each part stand alone.
+  The writer reports the measured duplication factor.
+- **Every per-vertex attribute follows its vertices**, including the per-vertex
+  label CSR (`normals`, `colors`, `scalars`, `labels`); a uniform RGB triple or a
+  colormap name is passed through untouched.
+- **No seams.** Duplicated boundary vertices carry identical position *and*
+  identical stored normal, and the derivative shading variant is per-fragment.
+  Revisit if shading ever gains a per-part recomputation (area-averaged normals,
+  tangent frames, UVs, baked AO).
+- **Wrong-length per-vertex inputs are refused up front**, against the SOURCE vertex
+  count, so a mesh fails identically with and without `partition=` (the gather is
+  length-keyed, so an off-length array would otherwise be passed through whole and
+  could be accepted by a part whose own vertex count happened to match).
+- `GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both the Python and
+  TypeScript sides; `image_labels` is refused alongside `partition=`.
+- A partition stays **homogeneous in both directions**: every leaf adder now refuses a
+  leaf whose type contradicts a hand-built wrapper's declared `display_type`
+  (`reject_mismatched_partition_parent`). Previously only the mesh side checked, and
+  `validate_partition_group` — the whole-tree equivalent — has no production caller.
+
+Mesh still has **no LOD ladder** — a separate axis, and unaffected by this.
+
+#### Demos: every scene now has something in the Layers panel (#1362)
+
+The panel lists only nodes whose zarr attrs carry `layer: true`, and `Node.layer`
+defaults to `False`. Twenty-eight demos never passed it, so nothing in them — in
+most cases their one and only geometry node — could be toggled, re-ranged,
+gamma'd or re-blended at view time. They pass it now.
+
+Two of those demos emit many sibling nodes (one per L-system tree — 663 at the
+default sampling — and 100 embryo copies), where a row each would be worse than
+none, so the siblings sit under one
+`layer=True` container group that the panel treats as a composite and fans its
+controls down from. `demo_nd_transforms` gets the same treatment for a different
+reason: its rulers, cursors, rails, ghosts and markers — 66 nodes from twelve
+call sites — are the two halves of one measuring instrument, so they now hang off
+`Frame_Section` and `Channel_Section`, and the bench goes from no panel rows to
+two. A new AST lint, `demos/tests/test_demo_layers.py`, pins both the weak
+invariant (a demo that authors geometry exposes at least one layer) and the
+per-call one, with an exemption list for the composite-group cases that is itself
+checked against the group each exemption names.
+
+
 #### Demos — the CELLxGENE Census UMAP no longer opens dark (#1375)
 
 The 1M-cell cloud was barely visible on first paint, and most of that was the
@@ -157,6 +256,7 @@ accepts either whitespace form, so organization names and country codes reach
 node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
+
 
 #### Real join geometry for lines: the miter (#790, #795)
 

@@ -278,6 +278,7 @@ def generate_performance_test_dataset(
                 opacity=0.8,
                 blending_mode="additive",
                 intensity=0.1,
+                layer=True,
             )
 
             # --- Overlays ---
