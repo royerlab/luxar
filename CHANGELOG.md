@@ -6,6 +6,104 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### The CytoSelf demo's cache survives an interrupted run
+
+The demo downloads a 4.23 GB embedding file and ten `Image_data` archives of
+11.3-23.6 GB apiece, and until now it trusted whatever it found on disk. The stream
+wrote straight to the destination name, so killing the run left a truncated file
+at the canonical path; the cache check accepted anything within 10% of an
+expected size, so that truncated file was then trusted forever and `np.load`
+failed with an opaque numpy error on every subsequent run. Worse, the only
+integrity guard was a 1 KB floor, and a Google Drive quota page is 2-3 KB of
+HTML — it sailed through and got cached under a `.npy` name.
+
+Downloads now stage into a process-private `.part` file (each run reclaims the
+staging files of runs whose process is gone, so private names do not become a
+private leak) and are verified before they take the destination name: the head
+must not be an HTML document, a small absolute floor applies, the bytes written
+must match a declared content-length, and — whether or not a length was
+declared — the total must clear the size expected for that artifact. That last
+gate is not redundant with the first: Drive also serves small non-HTML "cannot
+access this file" bodies that agree with their own length, and an honest length
+only proves a body arrived whole, not that it is the body we asked for. A
+rejection deletes the staging file and raises with the manual drive.google.com
+URL, so nothing bad is ever cached. On success the rename is atomic and a
+`.complete` sidecar records the verified size, which is what the next run's
+cache check reads — a file truncated behind the sidecar's back is re-fetched
+rather than trusted. A sidecar is only ever removed together with the file it
+describes (quarantine moves both at once); nothing clears it in advance of a
+replacement, because until that replacement exists it is the only evidence that
+the file at the destination is bad.
+
+The expected sizes are now measured rather than guessed. Range probes of the
+Drive files give 4,232,208,512 B for the embeddings, 6,553,361 B for
+`label.csv`, 3.95-8.74 MB per `Label_data` and 11.28-23.60 GB per `Image_data`,
+and those numbers sit next to the floor constants. The previous 400 MB
+placeholder for a 23.6 GB file meant the floor only ever caught a stream cut
+inside the first 3%. The calibration cuts both ways and the tests now say so:
+each floor must reject a large fragment *and* still accept the smallest real
+file of its kind, which a first pass at the `Label_data` floor did not — it was
+set above the smallest of the ten, with only the 0.9 slack keeping the demo
+alive.
+
+Verifying a length means insisting on an identity byte stream, which cost a
+round of debugging to appreciate: `requests` advertises gzip by default and
+inflates the body for you, while `Content-Length` counts the *compressed* bytes,
+so a gzipped `label.csv` looked 99% truncated and was destroyed on arrival —
+every run, forever. `luxar.utils.download` had already codified this
+precondition; only the verification half had been borrowed. The header is now
+set on the session so all four Drive confirmation strategies inherit it, and the
+length is parsed leniently (a duplicated header reads as unknown, never as a
+size).
+
+Caches written before this change have no sidecar and still fall back to the old
+size heuristic; tightening it would have forced everyone to re-download
+gigabytes for no evidence of a problem, so the residual risk is handled at the
+consumer instead. Every load of a downloaded artifact (the embeddings, both
+label tables, the image archives) now quarantines the file and re-downloads once
+if it cannot be parsed — with `MemoryError` and `ImportError` excluded, since
+neither says anything about the bytes on disk and re-fetching 4.23 GB to meet the
+same wall twice is the worst possible response.
+
+The thumbnail pipeline had a separate and more annoying failure: it processed
+all ten `Image_data` files and wrote its npz at the very end, so a failure on
+file ten discarded the multi-hour WebP encode of files one through nine. Each
+file's encoded blobs are now checkpointed to `thumbs_partNN_v1.npz` as soon as
+it is done, alongside that file's crop count — which is the piece that makes
+skipping safe, since the loop advances a running global offset and a skipped
+file that did not move it would silently mis-match every later file. When the
+assembled bundle is missing — the state a resumed run is in, and the only one
+in which the parts are consulted at all — a part is reused only if the test rows
+it stores are exactly the ones the freshly built row mapping asks of that file,
+in order. A repaired `Label_data` CSV shifts that mapping without changing its
+length, and reusing a part across the shift would paste every thumbnail onto
+the wrong cell and then freeze it into the bundle. The assembled
+bundle is versioned, written atomically through a process-private staging name
+(a shared one lets two runs rename each other's bytes into place, and the loser
+of that race is a perfectly valid npz with the wrong blob count — nothing
+downstream can detect it), and quarantined and rebuilt rather than crashing when
+it is unreadable. A bundle written before the name carried a version is adopted
+under the new name rather than rebuilt, since the contents are byte-identical;
+the adoption is gated on the versioned name literally being the v1 one, so a
+future encoding change disables it by itself instead of relying on a comment.
+
+One new tripwire: if fewer than half the test rows match an image crop, the
+thumbnails are still returned but are not cached. The row matching is a
+heuristic composite-key join, and its failure mode was to fill the gaps with a
+1×1 black placeholder and cache the result permanently. Refusing to write is
+enough to stop that; refusing to *run* would turn a partly-working tooltip into
+no tooltip. Half is the right place for it: on the real dataset the bundle is
+114,806 blobs with exactly zero placeholders — a match fraction of 1.000 — so
+the tripwire has 2x headroom and only fires on a genuine regression. The
+per-file caches survive either way, so a retry is cheap.
+
+The declared download size finally matches reality: 186000 MB, not the 3900 MB
+it claimed. The artifacts sum to 185,838,193,451 B, and the figure matters
+operationally — `luxar demo run --all --max-download-mb 20000` used to wave this
+demo through and then fill a 100 GB disk. `--without-images` is ~4240 MB, which
+is the embeddings plus `label.csv`; the `Label_data` CSVs are fetched only to
+place the thumbnails.
+
 #### Mesh is per-triangle depth sorted
 
 `normal`-mode meshes composited in index order: whichever triangle the writer

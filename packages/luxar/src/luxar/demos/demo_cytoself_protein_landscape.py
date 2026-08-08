@@ -9,6 +9,20 @@ identity.
 Run behavior:
   First run: Download embeddings from Google Drive, compute 3D UMAP (~10-30 min)
   Subsequent runs: Load cached results instantly
+  Interrupted runs: Every download is streamed into a sibling ".part" file and
+    renamed onto its cache name only after the bytes are verified, so a killed
+    run never leaves a truncated file behind. Image thumbnails are cached per
+    source Image_data file, so a re-run only re-fetches and re-encodes the
+    pieces that are missing.
+
+Download size (exact, from Range probes of the Drive files; decimal GB/MB):
+  185.8 GB with hover thumbnails, which are ON by default:
+    Global_representation.npy   4.23 GB
+    label.csv                   6.55 MB
+    Label_data00..09.csv        64.7 MB total (3.95-8.74 MB each)
+    Image_data00..09.npy        181.5 GB total (11.28-23.60 GB each)
+  Pass --without-images for a ~4.24 GB run: the embeddings and label.csv only,
+  since the Label_data CSVs are needed solely to place the thumbnails.
 
 Data source: OpenCell / CytoSelf (CC BY 4.0)
   - Embeddings: Global VQ-VAE-2 representations (9,216-dim per image)
@@ -38,7 +52,12 @@ DEMO_META = {
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
-        "download_mb": 3900,
+        # 185,838,193,451 B = 185,838 MB, from Range probes of the Drive files:
+        # 4.23 GB embeddings, 71.3 MB of CSVs, 181.5 GB of Image_data crops (ten
+        # files of 11.28-23.60 GB). Hover thumbnails are ON by default, so this
+        # is the figure `--max-download-mb` must screen against; --without-images
+        # fetches only the embeddings and label.csv, ~4240 MB.
+        "download_mb": 186000,
         "compute": "heavy",
         "gpu": "none",
         "local_data": None,
@@ -47,10 +66,14 @@ DEMO_META = {
     "outputs": ["cytoself_protein_landscape", "cytoself_landscape"],
 }
 
+import json
+import os
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, TypeVar
 
 import numpy as np
 from arbol import aprint, asection
@@ -67,7 +90,10 @@ from luxar.utils._umap_utils import (
     build_legend_html,
     generate_all_legends,
 )
+from luxar.utils.download import quarantine_file
 from luxar.utils.paths import get_demos_output_dir
+
+_T = TypeVar("_T")
 
 # =============================================================================
 # Configuration
@@ -111,6 +137,56 @@ GDRIVE_LABEL_DATA_IDS = {
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "luxar" / "cytoself"
 
+# Staging suffixes — `.part` for an in-flight download, `.tmp` for an atomic
+# rewrite of a local file — and the completion sidecar written next to a
+# download once its bytes are verified. Both staging names are process-private
+# (see `_part_path` / `_tmp_sibling`), so two runs sharing this cache directory
+# cannot write over each other's in-flight bytes.
+PART_SUFFIX = ".part"
+TMP_SUFFIX = ".tmp"
+COMPLETE_SUFFIX = ".complete"
+
+# Absolute floor below which no CytoSelf artifact can be genuine, and the HTML
+# markers a Google Drive quota/error page starts with (those pages are 2-3 KB,
+# so a size floor alone waves them through).
+MIN_DOWNLOAD_BYTES = 1_000
+HTML_SNIFF_BYTES = 512
+HTML_MARKERS = (b"<!doctype html", b"<html", b"<head")
+
+# Per-artifact size floors. Exact sizes, from HTTP Range probes of the Drive
+# files themselves (185,838,193,451 B for the whole set):
+#   Global_representation.npy  4,232,208,512 B                       (4.23 GB)
+#   label.csv                      6,553,361 B                       (6.55 MB)
+#   Label_data*.csv            3,950,974 - 8,742,330 B each   (64.7 MB total)
+#   Image_data*.npy      11,282,720,128 - 23,603,040,128 each (181.5 GB total)
+# Both users of these floors compare against `floor * 0.9` (the legacy
+# sidecar-less cache check, and the promotion gate for a stream that declared no
+# content-length), so each floor is chosen with that factor in mind: the 0.9 bar
+# must land BELOW the smallest real file of its kind — with margin, since these
+# are the sizes today and a re-upload could shrink them slightly — while still
+# being high enough to refuse a large fragment. Guessing low is what let a
+# 500 MB fragment of a 23.6 GB file pass; guessing high would reject the real
+# thing and brick the demo, so the smallest file in each family is what matters.
+MIN_SIZE_EMBEDDINGS = 4_000_000_000
+MIN_SIZE_LABELS_CSV = 5_000_000
+MIN_SIZE_LABEL_DATA_CSV = 3_000_000
+MIN_SIZE_IMAGE_DATA = 10_000_000_000
+
+# Per-Image_data thumbnail part caches and the assembled test-aligned bundle.
+# Both are versioned so a change to the encoding invalidates them by name.
+# The unversioned bundle is what the pre-versioning code wrote; its contents are
+# byte-identical to v1, so it is adopted rather than rebuilt (see
+# `load_cytoself_images`).
+THUMBNAIL_PART_TEMPLATE = "thumbs_part{index:02d}_v1.npz"
+THUMBNAIL_CACHE_NAME = "image_labels_test_webp_v1.npz"
+LEGACY_THUMBNAIL_CACHE_NAME = "image_labels_test_webp.npz"
+
+# Regression tripwire, NOT a quality bar: unmatched test rows are normal (they
+# get a placeholder), but a match rate this low means the composite-key row
+# matching itself has broken. Below it the assembled thumbnails are still
+# returned — they are simply not frozen into the cache.
+MIN_MATCH_FRACTION = 0.5
+
 # Per-cell sphere radius in scene units. Deliberately LARGER than the ~0.4x
 # median-nearest-neighbour rule the other embedding demos follow (median NN here
 # is ~0.016, so that rule would give ~0.0065). This landscape is 115k cells on
@@ -126,10 +202,216 @@ POINT_RADIUS = 0.02
 # =============================================================================
 
 
+def _sidecar_path(output_path: Path) -> Path:
+    """Path of the completion sidecar that records a verified download's size."""
+    return output_path.with_name(output_path.name + COMPLETE_SUFFIX)
+
+
+def _part_path(output_path: Path) -> Path:
+    """Process-private staging path for an in-flight download of *output_path*.
+
+    The cache directory is shared, so a fixed ``<name>.part`` would let two
+    concurrent runs write over each other's bytes (and one of them promote the
+    other's partial file). Keying on the PID gives each run its own staging
+    file, which it is also the only one to delete — see
+    :func:`_sweep_dead_staging_files` for how the strays are reclaimed.
+    """
+    return output_path.with_name(f"{output_path.name}.{os.getpid()}{PART_SUFFIX}")
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Whether *pid* names a live process (conservatively ``True`` if unsure).
+
+    POSIX only. On Windows ``os.kill(pid, 0)`` does not probe, it TERMINATES,
+    so there the answer is always "alive" and no staging file is ever swept.
+    """
+    if os.name != "posix":
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        # Most often PermissionError: the process exists, someone else owns it.
+        return True
+    return True
+
+
+def _sweep_dead_staging_files(target: Path, suffix: str) -> None:
+    """Delete ``<target>.<pid><suffix>`` files left behind by dead runs.
+
+    Process-private staging names fix the concurrent-clobber problem but move
+    the leak: every interrupted run would otherwise strand its own staging file
+    for good, and nothing else ever looks at them again. So the writers reclaim
+    the ones whose owning process is gone first. A live owner's file, and any
+    name we cannot parse a PID out of, are left strictly alone.
+
+    Called for the multi-gigabyte leaks — ``.part`` downloads and ``.tmp`` npz
+    archives. The completion sidecar's own ``.tmp`` is a few dozen bytes and is
+    NOT swept; that stray is not worth a directory scan per download.
+    """
+    prefix = f"{target.name}."
+    for candidate in target.parent.glob(f"{target.name}.*{suffix}"):
+        raw_pid = candidate.name[len(prefix) : -len(suffix)]
+        try:
+            pid = int(raw_pid)
+        except ValueError:
+            continue
+        if pid == os.getpid() or _pid_is_alive(pid):
+            continue
+        aprint(f"  Reclaiming abandoned staging file: {candidate.name}")
+        candidate.unlink(missing_ok=True)
+
+
+def _parse_content_length(headers: Any) -> int | None:
+    """Parse a *positive* Content-Length, else ``None`` (unknown).
+
+    Mirrors the ``_parse_len`` closure inside
+    :func:`luxar.utils.download.robust_download`, which is nested and so cannot
+    be imported: a duplicated header arrives as ``"100, 100"`` and a chunked
+    host sends ``0``. Both mean *unknown* and must never be read as a real size.
+    """
+    raw = headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        size = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return size if size > 0 else None
+
+
+def _tmp_sibling(path: Path) -> Path:
+    """Process-private staging sibling for an atomic write of *path*.
+
+    Same reasoning as :func:`_part_path`: a shared ``<name>.tmp`` in a shared
+    cache directory lets two runs write one file and rename the other's bytes
+    into place — which for the thumbnail bundle produces a perfectly VALID npz
+    holding the wrong number of blobs, so nothing downstream ever flags it.
+    """
+    return path.with_name(f"{path.name}.{os.getpid()}{TMP_SUFFIX}")
+
+
+def _write_completion_sidecar(output_path: Path, size: int) -> None:
+    """Record *size* as the verified byte count of *output_path* (atomically)."""
+    sidecar = _sidecar_path(output_path)
+    tmp_path = _tmp_sibling(sidecar)
+    tmp_path.write_text(json.dumps({"size": int(size)}), encoding="utf-8")
+    tmp_path.replace(sidecar)
+
+
+def _cached_file_is_complete(path: Path, expected_min_size: int) -> bool:
+    """Decide whether a cached download can be trusted without re-fetching.
+
+    A sidecar written by this module is authoritative: the file is accepted only
+    when the recorded size still matches the file on disk, so a copy truncated
+    behind the sidecar's back is re-fetched instead of trusted.
+
+    Without a sidecar (a cache written before staging existed) we fall back to
+    the ``size > expected_min_size * 0.9`` heuristic. The floors it reads are now
+    the measured ones, but the rule stays a floor rather than an equality: the
+    exact sizes are today's, and pinning a legacy cache to them would re-download
+    gigabytes the moment a file is re-uploaded a byte different. The residual
+    risk — a legacy file truncated by less than 10% — is covered on the consumer
+    side by :func:`_load_downloaded_artifact`, which quarantines an unreadable
+    artifact and re-downloads it once.
+    """
+    if not path.is_file():
+        return False
+
+    size = path.stat().st_size
+    sidecar = _sidecar_path(path)
+    if sidecar.exists():
+        try:
+            recorded = int(json.loads(sidecar.read_text(encoding="utf-8"))["size"])
+        except Exception:
+            # An unreadable sidecar says nothing about the file: do not trust it.
+            return False
+        return recorded == size
+
+    return size > expected_min_size * 0.9
+
+
+def _looks_like_html(head: bytes) -> bool:
+    """True when the leading bytes of a file look like an HTML document."""
+    lowered = head.lower()
+    return any(marker in lowered for marker in HTML_MARKERS)
+
+
+def _reject_staged_download(
+    part_path: Path, reason: str, file_id: str, output_path: Path
+) -> RuntimeError:
+    """Discard a staged download and build the error explaining why."""
+    part_path.unlink(missing_ok=True)
+    return RuntimeError(
+        f"{reason} Try downloading manually from: "
+        f"https://drive.google.com/file/d/{file_id}/view?usp=sharing "
+        f"and place it at {output_path}"
+    )
+
+
+def _quarantine_download(path: Path, reason: str) -> None:
+    """Move a rejected cached artifact aside and drop its completion sidecar.
+
+    Dropping the sidecar matters as much as the rename: a stale sidecar left
+    behind would keep describing a file that is no longer there and could shadow
+    the freshly written one after a re-fetch.
+    """
+    _sidecar_path(path).unlink(missing_ok=True)
+    try:
+        quarantine_file(path, reason=reason)
+    except FileNotFoundError:
+        # Already gone — either never written, or a concurrent run quarantined
+        # the same artifact between our check and theirs. Either way it is out
+        # from under the canonical name, which is all this needs to guarantee.
+        pass
+
+
+def _load_downloaded_artifact(
+    path: Path,
+    loader: Callable[[Path], _T],
+    file_id: str,
+    expected_min_size: int = 0,
+) -> _T:
+    """Load a downloaded artifact, self-healing once if it cannot be read.
+
+    A cached file that survives :func:`_cached_file_is_complete` but still fails
+    to parse (a legacy truncated copy, a half-written pre-fix download) would
+    otherwise crash every subsequent run with an opaque error. Here it is
+    quarantined, re-downloaded once, and re-read; a second failure propagates.
+
+    ONLY parse/integrity failures count as corruption. Faults that say nothing
+    about the bytes on disk are re-raised untouched: ``MemoryError`` (the
+    embeddings need ~16 GB of RAM, so re-downloading 4.23 GB would fail
+    identically) and ``ImportError`` (a reader reaching for an engine that is
+    not installed — ``pd.read_csv`` does this — is a broken environment, not a
+    broken file).
+    """
+    try:
+        return loader(path)
+    except (MemoryError, ImportError):
+        raise
+    except Exception as exc:
+        aprint(f"  ⚠ Cached file {path.name} could not be read ({exc})")
+        _quarantine_download(path, reason="unreadable cached download")
+        _download_from_google_drive(file_id, path, expected_min_size=expected_min_size)
+        return loader(path)
+
+
 def _download_from_google_drive(
     file_id: str, output_path: Path, expected_min_size: int = 0
 ) -> Path:
     """Download a file from Google Drive, handling the virus-scan confirmation.
+
+    Only the confirmation dance below is genuinely custom — Google Drive's
+    four-way "are you sure" flow has no equivalent in
+    :mod:`luxar.utils.download`, which is why ``robust_download`` cannot be used
+    directly. The FINISH, however, now matches ``robust_download``'s contract:
+    the body is streamed into a process-private sibling ``.part`` file, verified
+    (HTML sniff, absolute floor, declared content-length, expected-size floor),
+    and only then renamed onto *output_path*, followed by a completion sidecar
+    recording the verified size. Staging files abandoned by dead runs are swept
+    first — see :func:`_sweep_dead_staging_files`.
 
     Args:
         file_id: Google Drive file ID.
@@ -138,9 +420,13 @@ def _download_from_google_drive(
 
     Returns:
         Path to downloaded file.
+
+    Raises:
+        RuntimeError: The response was an HTML error page, was truncated, or
+            disagreed with its declared content-length. Nothing is cached.
     """
     # Check if already downloaded
-    if output_path.exists() and output_path.stat().st_size > expected_min_size * 0.9:
+    if _cached_file_is_complete(output_path, expected_min_size):
         aprint(f"File already downloaded: {output_path.name}")
         aprint(f"  Size: {output_path.stat().st_size / (1024**2):.1f} MB")
         return output_path
@@ -152,7 +438,27 @@ def _download_from_google_drive(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
+    # Stage into a sibling ".part" so an interruption can never leave a
+    # truncated file at the destination. No HTTP resume: the confirmation dance
+    # makes a byte-range continuation unreliable, so our own stale part is
+    # discarded and the stream restarted. Any existing sidecar is deliberately
+    # LEFT ALONE — it is the only evidence that the file already at the
+    # destination is bad, and deleting it before the replacement exists would
+    # promote that bad file to "plausible legacy cache" if this fetch fails.
+    # `_write_completion_sidecar` overwrites it atomically on success.
+    part_path = _part_path(output_path)
+    part_path.unlink(missing_ok=True)
+    _sweep_dead_staging_files(output_path, PART_SUFFIX)
+
     session = requests.Session()
+    # `requests` advertises `gzip, deflate` by default and `iter_content`
+    # DECODES the body, while Content-Length describes the COMPRESSED bytes — a
+    # gzipped text/csv would then look truncated and be rejected even though it
+    # arrived intact. `luxar.utils.download._force_identity_encoding` codifies
+    # this precondition, but its "unless the caller already set it" guard would
+    # preserve the Session's own gzip default, so the header is set outright.
+    # Setting it on the session makes all four strategies below inherit it.
+    session.headers["Accept-Encoding"] = "identity"
 
     with asection(f"Downloading {output_path.name} from Google Drive"):
         aprint(f"File ID: {file_id}")
@@ -212,8 +518,8 @@ def _download_from_google_drive(
 
         response.raise_for_status()
 
-        total_size = int(response.headers.get("content-length", 0))
-        if total_size > 0:
+        total_size = _parse_content_length(response.headers)
+        if total_size is not None:
             aprint(f"Download size: {total_size / (1024**2):.1f} MB")
 
         downloaded = 0
@@ -221,7 +527,7 @@ def _download_from_google_drive(
         start_time = time.time()
         chunk_size = 1024 * 1024  # 1 MB
 
-        with open(output_path, "wb") as f:
+        with open(part_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=chunk_size):
                 if chunk:
                     f.write(chunk)
@@ -233,7 +539,7 @@ def _download_from_google_drive(
                         rate = (
                             downloaded / (1024 * 1024) / elapsed if elapsed > 0 else 0
                         )
-                        if total_size > 0:
+                        if total_size is not None:
                             pct = downloaded / total_size * 100
                             aprint(
                                 f"  {downloaded / (1024**3):.2f} / "
@@ -246,18 +552,59 @@ def _download_from_google_drive(
                             )
                         last_report_mb = progress_mb
 
-        final_size = output_path.stat().st_size
+        final_size = part_path.stat().st_size
         aprint(f"Download complete: {final_size / (1024**2):.1f} MB")
 
-        # Sanity check — Google Drive HTML error pages are small
-        if final_size < 1_000:
-            output_path.unlink()
-            raise RuntimeError(
-                "Downloaded file is too small — likely a Google Drive error page. "
-                "Try downloading manually from: "
-                f"https://drive.google.com/file/d/{file_id}/view?usp=sharing "
-                f"and place it at {output_path}"
+        # --- Verify the staged bytes before they take the destination name ---
+
+        with open(part_path, "rb") as f:
+            head = f.read(HTML_SNIFF_BYTES)
+        if _looks_like_html(head):
+            raise _reject_staged_download(
+                part_path,
+                "Downloaded file is an HTML page, not data — Google Drive most "
+                "likely returned a quota or permission error.",
+                file_id,
+                output_path,
             )
+
+        if final_size < MIN_DOWNLOAD_BYTES:
+            raise _reject_staged_download(
+                part_path,
+                f"Downloaded file is too small ({final_size} bytes) — likely a "
+                "Google Drive error page.",
+                file_id,
+                output_path,
+            )
+
+        if total_size is not None and final_size != total_size:
+            raise _reject_staged_download(
+                part_path,
+                f"Download is incomplete: got {final_size} bytes but the "
+                f"server declared {total_size}.",
+                file_id,
+                output_path,
+            )
+
+        # The expected-size floor is checked whether or not a length was
+        # declared. An honest content-length only proves the body arrived whole,
+        # not that it is the body we asked for: Drive also serves small
+        # non-HTML "cannot access this file" responses, which agree with their
+        # own length and would otherwise be promoted AND certified by a sidecar
+        # — where the old heuristic at least re-fetched them every run.
+        if final_size <= expected_min_size * 0.9:
+            raise _reject_staged_download(
+                part_path,
+                f"Download is too short: got {final_size} bytes, well under the "
+                f"{expected_min_size} bytes expected for this file.",
+                file_id,
+                output_path,
+            )
+
+        # Verified: take the destination name atomically, then record the size
+        # so the next run can tell a complete cache from a truncated one.
+        part_path.replace(output_path)
+        _write_completion_sidecar(output_path, final_size)
 
     return output_path
 
@@ -273,7 +620,7 @@ def load_cytoself_data(
 ) -> tuple[np.ndarray, dict, dict]:
     """Load CytoSelf embeddings and compute 3D UMAP.
 
-    Downloads Global_representation.npy (~3.9 GB) and label.csv from Google Drive,
+    Downloads Global_representation.npy (4.23 GB) and label.csv from Google Drive,
     then runs UMAP dimensionality reduction (cached after first run).
 
     Args:
@@ -301,17 +648,22 @@ def load_cytoself_data(
         _download_from_google_drive(
             GDRIVE_EMBEDDINGS_ID,
             embeddings_path,
-            expected_min_size=4_000_000_000,  # ~3.9 GB
+            expected_min_size=MIN_SIZE_EMBEDDINGS,
         )
         _download_from_google_drive(
             GDRIVE_LABELS_ID,
             labels_path,
-            expected_min_size=5_000_000,  # ~6 MB
+            expected_min_size=MIN_SIZE_LABELS_CSV,
         )
 
     # --- Extract attributes from labels ---
     with asection("Processing Labels"):
-        df = pd.read_csv(labels_path)
+        df = _load_downloaded_artifact(
+            labels_path,
+            pd.read_csv,
+            GDRIVE_LABELS_ID,
+            expected_min_size=MIN_SIZE_LABELS_CSV,
+        )
         aprint(f"Loaded {len(df):,} rows with columns: {list(df.columns)}")
 
         attributes: dict[str, np.ndarray] = {}
@@ -349,7 +701,12 @@ def load_cytoself_data(
 
         with asection("Computing 3D UMAP (this may take 10-30 minutes)"):
             aprint("Loading embeddings into memory...")
-            embeddings = np.load(embeddings_path)
+            embeddings = _load_downloaded_artifact(
+                embeddings_path,
+                np.load,
+                GDRIVE_EMBEDDINGS_ID,
+                expected_min_size=MIN_SIZE_EMBEDDINGS,
+            )
             aprint(f"Embeddings shape: {embeddings.shape}")
             aprint("Parameters: n_neighbors=15, min_dist=0.1, metric=cosine")
 
@@ -457,8 +814,15 @@ def _build_test_index_mapping(
         label_dfs = []
         for filename, file_id in GDRIVE_LABEL_DATA_IDS.items():
             csv_path = cache_dir / filename
-            _download_from_google_drive(file_id, csv_path, expected_min_size=1_000_000)
-            df = pd.read_csv(csv_path, header=None)
+            _download_from_google_drive(
+                file_id, csv_path, expected_min_size=MIN_SIZE_LABEL_DATA_CSV
+            )
+            df = _load_downloaded_artifact(
+                csv_path,
+                lambda p: pd.read_csv(p, header=None),
+                file_id,
+                expected_min_size=MIN_SIZE_LABEL_DATA_CSV,
+            )
             label_dfs.append(df)
 
         full_labels = pd.concat(label_dfs, ignore_index=True)
@@ -467,7 +831,12 @@ def _build_test_index_mapping(
         )
 
         # Load test-split labels
-        test_labels = pd.read_csv(cache_dir / "label.csv")
+        test_labels = _load_downloaded_artifact(
+            cache_dir / "label.csv",
+            pd.read_csv,
+            GDRIVE_LABELS_ID,
+            expected_min_size=MIN_SIZE_LABELS_CSV,
+        )
         aprint(f"Test labels: {len(test_labels):,} rows")
 
         # The Label_data CSVs have no header; label.csv has headers.
@@ -524,6 +893,75 @@ def _build_test_index_mapping(
     return mapping, len(test_labels)
 
 
+def _write_npz_atomic(path: Path, **arrays: Any) -> None:
+    """Write an ``.npz`` archive so readers never see a half-written file.
+
+    ``np.savez`` appends ``.npz`` to a *path* that lacks the suffix, which would
+    defeat a ``foo.npz.tmp`` staging name — so the archive is written through an
+    open file handle and the finished file is renamed into place. The staging
+    name is process-private (see :func:`_tmp_sibling`).
+    """
+    _sweep_dead_staging_files(path, TMP_SUFFIX)
+    tmp_path = _tmp_sibling(path)
+    try:
+        with open(tmp_path, "wb") as handle:
+            np.savez(handle, **arrays)
+        tmp_path.replace(path)
+    except BaseException:
+        # A failure here is most often ENOSPC on the ~114k-blob bundle. Leaving
+        # a full-size stray behind would waste the space exactly when it is
+        # scarcest, and nothing else ever reclaims it.
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _thumbnail_part_path(cache_dir: Path, index: int) -> Path:
+    """Cache path of the encoded thumbnails from one ``Image_data`` file."""
+    return cache_dir / THUMBNAIL_PART_TEMPLATE.format(index=index)
+
+
+def _expected_test_indices(
+    global_to_test: dict[int, list[int]], global_offset: int, n_crops: int
+) -> list[int]:
+    """The test rows an ``Image_data`` file at *global_offset* must contribute.
+
+    Built in exactly the order the encode path appends them, so a part cache's
+    stored ``test_indices`` can be compared against it element by element. That
+    equality is what keys a part cache to the CURRENT row mapping: a part built
+    against a different mapping — even one of the same length — disagrees here
+    and is rebuilt rather than pasted onto the wrong rows.
+    """
+    expected: list[int] = []
+    for local_idx in range(n_crops):
+        expected.extend(global_to_test.get(global_offset + local_idx, ()))
+    return expected
+
+
+def _load_thumbnail_part(path: Path) -> tuple[list[bytes], list[int], int] | None:
+    """Load a per-file thumbnail part cache.
+
+    Returns ``(blobs, test_indices, n_crops)``, or ``None`` when the part has
+    not been built yet or could not be read (in which case it is quarantined so
+    the caller rebuilds it).
+    """
+    if not path.exists():
+        return None
+
+    try:
+        with np.load(path, allow_pickle=True) as data:
+            blobs = [bytes(b) for b in data["blobs"]]
+            test_indices = [int(i) for i in data["test_indices"]]
+            n_crops = int(data["n_crops"])
+        if len(blobs) != len(test_indices):
+            raise ValueError("blobs and test_indices have different lengths")
+    except Exception as exc:
+        aprint(f"  ⚠ Thumbnail part cache unreadable ({exc}) — rebuilding")
+        _quarantine_download(path, reason="unreadable thumbnail part cache")
+        return None
+
+    return blobs, test_indices, n_crops
+
+
 def load_cytoself_images(
     cache_dir: Path | None = None,
 ) -> list[bytes]:
@@ -533,24 +971,71 @@ def load_cytoself_images(
     crops correspond to the 114K test-split embeddings, then downloads and
     encodes only the matched crops from the Image_data .npy files.
 
+    Work is checkpointed per ``Image_data`` file, so an interrupted run resumes
+    where it stopped instead of discarding every file it had already encoded.
+
     Args:
         cache_dir: Directory for caching downloads and encoded thumbnails.
 
     Returns:
-        List of WebP-encoded bytes aligned with label.csv / embeddings.
+        List of WebP-encoded bytes aligned with label.csv / embeddings. If
+        fewer than :data:`MIN_MATCH_FRACTION` of the test rows matched a crop
+        the thumbnails are still returned, but they are NOT cached: that match
+        rate reads as a regression in the row matching, and freezing it would
+        make it permanent.
     """
     if cache_dir is None:
         cache_dir = DEFAULT_CACHE_DIR
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Check for cached encoded thumbnails (test-aligned)
-    thumbnails_cache = cache_dir / "image_labels_test_webp.npz"
+    thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
     if thumbnails_cache.exists():
         with asection("Loading cached image thumbnails"):
-            data = np.load(thumbnails_cache, allow_pickle=True)
-            blobs = list(data["blobs"])
-            aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
-            return [bytes(b) for b in blobs]
+            try:
+                with np.load(thumbnails_cache, allow_pickle=True) as data:
+                    blobs = [bytes(b) for b in data["blobs"]]
+                aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
+                return blobs
+            except Exception as exc:
+                # A truncated bundle used to crash every run until the user
+                # deleted it by hand; quarantine it and rebuild instead.
+                aprint(f"  ⚠ Cached thumbnail bundle unreadable ({exc}) — rebuilding")
+                _quarantine_download(
+                    thumbnails_cache, reason="unreadable thumbnail bundle"
+                )
+
+    # Adopt a bundle written before the name carried a version. The v1 contents
+    # are byte-identical to the unversioned ones, so renaming is sound and
+    # spares an existing user a multi-gigabyte re-download for a pure rename.
+    # The literal below is the enforcement, not a note: bump the encoding to v2
+    # and this stops matching, so the stale bundle is rebuilt instead of
+    # laundered into the new name.
+    legacy_cache = cache_dir / LEGACY_THUMBNAIL_CACHE_NAME
+    if (
+        THUMBNAIL_CACHE_NAME == "image_labels_test_webp_v1.npz"
+        and legacy_cache.exists()
+    ):
+        with asection("Adopting pre-versioning thumbnail cache"):
+            try:
+                with np.load(legacy_cache, allow_pickle=True) as data:
+                    blobs = [bytes(b) for b in data["blobs"]]
+                legacy_cache.replace(thumbnails_cache)
+            except Exception as exc:
+                # Unreadable, or un-renameable (an open handle on Windows).
+                # Either way, fall through and rebuild.
+                aprint(
+                    f"  ⚠ Legacy thumbnail bundle not adoptable ({exc}) — rebuilding"
+                )
+                _quarantine_download(
+                    legacy_cache, reason="unusable legacy thumbnail bundle"
+                )
+            else:
+                aprint(
+                    f"Adopted {len(blobs):,} thumbnails from "
+                    f"{LEGACY_THUMBNAIL_CACHE_NAME} as {THUMBNAIL_CACHE_NAME}"
+                )
+                return blobs
 
     # Step 1: Build index mapping (test row -> global image row)
     mapping, n_test = _build_test_index_mapping(cache_dir)
@@ -568,21 +1053,43 @@ def load_cytoself_images(
     with asection("Downloading and encoding matched image crops"):
         for i, (filename, file_id) in enumerate(GDRIVE_IMAGE_IDS.items()):
             img_path = cache_dir / filename
+            part_path = _thumbnail_part_path(cache_dir, i)
+
+            # A part cache holds everything this file contributes, INCLUDING its
+            # crop count — the loop advances `global_offset` by that count, so a
+            # skipped file must still move the offset or every later file would
+            # match the wrong rows.
+            part = _load_thumbnail_part(part_path)
+            if part is not None and part[1] != _expected_test_indices(
+                global_to_test, global_offset, part[2]
+            ):
+                # The part was built against a different row mapping — a repaired
+                # Label_data CSV shifts it without changing its length. Reusing
+                # it would paste every blob onto the wrong row and then freeze
+                # that into the bundle, so rebuild instead.
+                aprint(f"  ⚠ Stale thumbnail part cache for {filename} — rebuilding")
+                _quarantine_download(part_path, reason="stale thumbnail part cache")
+                part = None
+            if part is not None:
+                part_blobs, part_test_indices, n_crops = part
+                for blob, test_idx in zip(part_blobs, part_test_indices):
+                    result_blobs[test_idx] = blob
+                    matched_count += 1
+                aprint(
+                    f"Reusing {len(part_blobs):,} cached thumbnails for {filename} "
+                    f"({i + 1}/{len(GDRIVE_IMAGE_IDS)})"
+                )
+                global_offset += n_crops
+                continue
 
             _download_from_google_drive(
-                file_id, img_path, expected_min_size=400_000_000
+                file_id, img_path, expected_min_size=MIN_SIZE_IMAGE_DATA
             )
 
             with asection(f"Processing {filename} ({i + 1}/{len(GDRIVE_IMAGE_IDS)})"):
-                try:
-                    arr = np.load(img_path)
-                except Exception:
-                    aprint("  ⚠ Corrupt file detected, re-downloading...")
-                    img_path.unlink(missing_ok=True)
-                    _download_from_google_drive(
-                        file_id, img_path, expected_min_size=400_000_000
-                    )
-                    arr = np.load(img_path)
+                arr = _load_downloaded_artifact(
+                    img_path, np.load, file_id, expected_min_size=MIN_SIZE_IMAGE_DATA
+                )
 
                 n_crops = arr.shape[0]
                 aprint(f"Shape: {arr.shape}, dtype: {arr.dtype}")
@@ -597,6 +1104,8 @@ def load_cytoself_images(
                         for test_idx in global_to_test[global_idx]:
                             local_to_test_map.append((local_idx, test_idx))
 
+                new_blobs: list[bytes] = []
+                new_test_indices: list[int] = []
                 if local_indices:
                     # Extract and encode only the needed crops
                     unique_local = sorted(set(local_indices))
@@ -608,6 +1117,8 @@ def load_cytoself_images(
                     for local_idx, test_idx in local_to_test_map:
                         encoded_idx = local_to_encoded[local_idx]
                         result_blobs[test_idx] = encoded[encoded_idx]
+                        new_blobs.append(encoded[encoded_idx])
+                        new_test_indices.append(test_idx)
                         matched_count += 1
 
                     aprint(
@@ -617,10 +1128,27 @@ def load_cytoself_images(
                 else:
                     aprint(f"No matched crops in this file ({n_crops:,} total)")
 
+                # Checkpoint this file's contribution before moving on, so a
+                # failure on a later file costs only that file's work.
+                _write_npz_atomic(
+                    part_path,
+                    blobs=np.array(new_blobs, dtype=object),
+                    test_indices=np.asarray(new_test_indices, dtype=np.int64),
+                    n_crops=np.int64(n_crops),
+                )
+
                 global_offset += n_crops
                 del arr
 
         aprint(f"Total matched: {matched_count:,}/{n_test:,}")
+
+    # Count the DISTINCT test rows that got a real crop, straight off the result
+    # array rather than from the running counter — that way the figure survives
+    # a corrupted offset chain, which is exactly the condition under which it
+    # needs to be believed.
+    matched_unique = sum(1 for blob in result_blobs if blob is not None)
+    match_fraction = matched_unique / n_test if n_test else 0.0
+    matching_looks_broken = match_fraction < MIN_MATCH_FRACTION
 
     # Fill any unmatched slots with a 1x1 transparent placeholder
     import io
@@ -642,10 +1170,24 @@ def load_cytoself_images(
 
     final_blobs: list[bytes] = [b for b in result_blobs if b is not None]
 
-    # Cache the test-aligned thumbnails
-    with asection("Caching test-aligned thumbnails"):
-        np.savez(thumbnails_cache, blobs=np.array(final_blobs, dtype=object))
-        aprint(f"Cached {len(final_blobs):,} thumbnails to {thumbnails_cache}")
+    # Cache the test-aligned thumbnails — unless the match rate says the row
+    # matching has regressed, in which case the thumbnails are still returned
+    # (a partly-working tooltip beats none) but never frozen onto disk, where
+    # they would be reused unquestioned for good.
+    if matching_looks_broken:
+        aprint(
+            f"⚠️  Only {matched_unique:,}/{n_test:,} test rows "
+            f"({match_fraction:.1%}) matched an image crop, below the "
+            f"{MIN_MATCH_FRACTION:.0%} tripwire — the label row matching looks "
+            "broken, so the thumbnails were NOT cached. The per-file caches "
+            "were kept, so a retry only redoes the assembly."
+        )
+    else:
+        with asection("Caching test-aligned thumbnails"):
+            _write_npz_atomic(
+                thumbnails_cache, blobs=np.array(final_blobs, dtype=object)
+            )
+            aprint(f"Cached {len(final_blobs):,} thumbnails to {thumbnails_cache}")
 
     return final_blobs
 
@@ -882,10 +1424,12 @@ def main() -> None:
     aprint("  OpenCell: Cho et al., Science 2022")
     aprint("  GitHub:   https://github.com/royerlab/cytoself")
     aprint("")
-    aprint("NOTE: First run downloads ~4 GB embeddings + ~4-17 GB images")
-    aprint("      and computes UMAP (~10-30 min). Requires ~16 GB RAM.")
-    aprint("      Subsequent runs load from cache.")
-    aprint("      Use --without-images to skip image download.")
+    aprint("NOTE: First run downloads 185.8 GB — 4.23 GB of embeddings, 71 MB")
+    aprint("      of label CSVs, and ten Image_data files of 11.3-23.6 GB each")
+    aprint("      (181.5 GB) for the hover thumbnails — and computes UMAP")
+    aprint("      (~10-30 min). Needs ~16 GB RAM and ~186 GB of free disk.")
+    aprint("      Subsequent runs load from cache; an interrupted run resumes")
+    aprint("      per file. Use --without-images for the ~4.24 GB run.")
     aprint("")
 
     recompute = "--recompute" in sys.argv

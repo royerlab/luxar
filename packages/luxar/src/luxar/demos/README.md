@@ -412,7 +412,7 @@ A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedde
 
 **Run**: `luxar demo run cytoself_protein_landscape [-- --no-serve] [-- --recompute]`
 
-**Requires**: Internet access (downloads embeddings from Google Drive), `umap-learn`, `pandas`, `requests`. First run computes 3D UMAP (~10-30 min); subsequent runs load cached results.
+**Requires**: Internet access (downloads embeddings from Google Drive), `umap-learn`, `pandas`, `requests`. First run computes 3D UMAP (~10-30 min); subsequent runs load cached results. With hover thumbnails on (the default) the download is 185.8 GB — 4.23 GB of embeddings, 71 MB of label CSVs, and ten `Image_data` files of 11.3-23.6 GB each — so budget the disk; `--without-images` keeps it to ~4.24 GB. Downloads are staged and verified before they take their cache name and thumbnails are cached per source file, so an interrupted run resumes instead of starting over.
 
 **Demonstrates**: Self-supervised image embeddings (CytoSelf VQ-VAE-2, 9,216-dim), subcellular localization landscape, ~1,311 OpenCell proteins, categorical attribute switching (localization vs protein), UMAP dimensionality reduction.
 
