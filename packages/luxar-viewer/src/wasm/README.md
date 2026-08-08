@@ -76,7 +76,7 @@ non-standard location.
 - `interpolate_clipped_positions()` — Interpolate positions at clip boundaries
 - `interpolate_scalars_batch()` / `interpolate_colors_batch()` — Interpolate attributes
 - `calculate_segment_lengths()` — Compute segment lengths for LOD
-- `compute_cap_suppression()` — Per-endpoint cap suppression in [0, 1] (clipped endpoints + interior polyline joints) for the shader cap factor
+- `compute_joint_codes()` — Per-endpoint joint code: a sentinel (free end / slice-clipped / degree-≥​3 hub) or a signed reference to the partner segment's storage slot, driving the shader's join geometry and endpoint cap
 
 ### Mesh Culling
 

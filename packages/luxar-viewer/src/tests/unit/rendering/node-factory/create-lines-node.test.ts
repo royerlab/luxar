@@ -24,6 +24,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type * as THREE from 'three';
 import { NodeFactory } from '../../../../rendering/node-factory';
 import {
   materialManager,
@@ -32,8 +33,12 @@ import {
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import type { LineMaterial } from '../../../../rendering/materials/line/material-glsl';
+import type { LinePickingMaterial } from '../../../../rendering/picking/line/material';
+import type { PickingSystem } from '../../../../rendering/picking/picking-system';
 import { getLineTexture, type InstancedLinesMeshConfig } from '../../../../rendering/line-geometry';
+import { LINE_JOIN_UNIFORM } from '../../../../types/line-join';
 import type { LinesMetadata, LinesDataLoader } from '../../../../types/lines';
+import { log } from '../../../../utils/log';
 
 /** One-segment processed config; optionally scalar-bearing (colormap path). */
 function makeProcessed(withScalars = false): InstancedLinesMeshConfig {
@@ -47,8 +52,8 @@ function makeProcessed(withScalars = false): InstancedLinesMeshConfig {
     startSharpness: new Float32Array([2.0]),
     endSharpness: new Float32Array([2.0]),
     segmentLengths: new Float32Array([1.0]),
-    startCapSuppression: new Float32Array([0]),
-    endCapSuppression: new Float32Array([0]),
+    startJointCode: new Float32Array([0]),
+    endJointCode: new Float32Array([0]),
     segmentCount: 1,
   };
   if (withScalars) {
@@ -144,6 +149,55 @@ describe('createLinesNode material wiring', () => {
       expect(material.uniforms.uIntensity.value).toBeCloseTo(2.0, 6);
       expect(material.uniforms.uOffset.value).toBeCloseTo(0.1, 6);
       expect(material.userData.blendingMode).toBe('normal');
+    });
+
+    it('reads the join style from nodeAttrs, onto BOTH the visual and pick materials', () => {
+      // `join` is a COMPOSITING attr, so on a partitioned lines node it arrives
+      // here composed from the wrapper and is absent from the raw leaf attrs.
+      // The pick material must get the same style — the pick pass builds the same
+      // screen-space quad, so a divergence makes a mitred corner unpickable.
+      const factory = new NodeFactory();
+      const pickIds: number[] = [];
+      const registered: THREE.Mesh[] = [];
+      factory.setPickingSystem({
+        allocatePickId: () => {
+          pickIds.push(pickIds.length + 1);
+          return pickIds.length;
+        },
+        registerNode: (_main: THREE.Object3D, pick: THREE.Mesh) => registered.push(pick),
+      } as unknown as PickingSystem);
+
+      const mesh = factory.createLinesNode(
+        '/tracks/part_0',
+        { join: 'none' },
+        rawAttrs,
+        makeProcessed(),
+        makeLoader()
+      );
+
+      const material = mesh.material as LineMaterial;
+      expect(material.uniforms.uLineJoin.value).toBe(LINE_JOIN_UNIFORM.none);
+      const pick = registered[0].material as LinePickingMaterial;
+      expect(pick.uniforms.uLineJoin.value).toBe(LINE_JOIN_UNIFORM.none);
+    });
+
+    it('warns and falls back to the default on an unrecognised join style', () => {
+      // A typo must never quietly mean "no joins": the file would render with the
+      // default and the author would have nothing to go on.
+      const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const factory = new NodeFactory();
+      const mesh = factory.createLinesNode(
+        '/tracks',
+        { join: 'mitre' },
+        rawAttrs,
+        makeProcessed(),
+        makeLoader()
+      );
+
+      const material = mesh.material as LineMaterial;
+      expect(material.uniforms.uLineJoin.value).toBe(LINE_JOIN_UNIFORM.miter);
+      expect(warn).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('"mitre"'));
+      warn.mockRestore();
     });
 
     it('per-leaf geometry attrs (max_width) still come from raw attrs', () => {

@@ -130,8 +130,8 @@ export async function projectLinesTo3D(
   /** Per-segment end alpha (empty Float32Array unless colorComponents=4). */
   endAlphas: Float32Array;
   segmentLengths: Float32Array;
-  startCapSuppression: Float32Array;
-  endCapSuppression: Float32Array;
+  startJointCode: Float32Array;
+  endJointCode: Float32Array;
   visibleSegmentCount: number;
   /**
    * Fused-scan cull metadata (AABB over start+end positions + max
@@ -223,8 +223,8 @@ export async function projectLinesTo3D(
         startAlphas: new Float32Array(0),
         endAlphas: new Float32Array(0),
         segmentLengths: new Float32Array(0),
-        startCapSuppression: emptyFlags,
-        endCapSuppression: new Float32Array(0),
+        startJointCode: emptyFlags,
+        endJointCode: new Float32Array(0),
         visibleSegmentCount: 0,
       },
       [emptyPositions.buffer, emptyColors.buffer, emptyScalars.buffer, emptyFlags.buffer]
@@ -376,24 +376,25 @@ export async function projectLinesTo3D(
   const segmentLengths = new Float32Array(visibleCount);
   wasmModule.calculate_segment_lengths(startPositions, endPositions, visibleCount, segmentLengths);
 
-  // Step 8: Per-endpoint cap suppression using WASM. Runs AFTER the
-  // positions are clipped because a joint's suppression depends on the
-  // rendered 3D directions of the two segments meeting there.
-  const startCapSuppression = new Float32Array(visibleCount);
-  const endCapSuppression = new Float32Array(visibleCount);
+  // Step 8: Per-endpoint joint codes using WASM. Purely topological — it reads
+  // connectivity and the clip parameters, never positions, because the bend
+  // angle is now measured in SCREEN space by the vertex stage (which is what
+  // lets it track the camera; the stored data-space angle could not, #795).
+  // The visible-stream index it emits is a line-texture storage slot, so it
+  // must be computed over the same visible ordering the texel writer consumes.
+  const startJointCode = new Float32Array(visibleCount);
+  const endJointCode = new Float32Array(visibleCount);
   const vertexCount = Math.floor(positions.length / ndim);
 
-  wasmModule.compute_cap_suppression(
+  wasmModule.compute_joint_codes(
     segments,
     visibility,
     t1Params,
     t2Params,
     segmentCount,
     vertexCount,
-    startPositions,
-    endPositions,
-    startCapSuppression,
-    endCapSuppression
+    startJointCode,
+    endJointCode
   );
 
   // Build transferable list
@@ -411,8 +412,8 @@ export async function projectLinesTo3D(
     startAlphas.buffer as ArrayBuffer,
     endAlphas.buffer as ArrayBuffer,
     segmentLengths.buffer as ArrayBuffer,
-    startCapSuppression.buffer as ArrayBuffer,
-    endCapSuppression.buffer as ArrayBuffer,
+    startJointCode.buffer as ArrayBuffer,
+    endJointCode.buffer as ArrayBuffer,
   ];
 
   return transfer(
@@ -430,8 +431,8 @@ export async function projectLinesTo3D(
       startAlphas,
       endAlphas,
       segmentLengths,
-      startCapSuppression,
-      endCapSuppression,
+      startJointCode,
+      endJointCode,
       visibleSegmentCount: visibleCount,
       bounds: computeLinesProjectionBounds(
         startPositions,
