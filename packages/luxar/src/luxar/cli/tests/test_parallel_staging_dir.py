@@ -15,10 +15,10 @@ import os
 import socket
 from pathlib import Path
 
-from luxar.cli.gsplat_ops.fitting_fit_utils import (
+from luxar.cli.gsplat_ops.fitting.fit_utils import (
     _invocation_token,
 )
-from luxar.cli.gsplat_ops.fitting_fit_utils import (
+from luxar.cli.gsplat_ops.fitting.fit_utils import (
     _parallel_staging_dir as _tiles_staging_dir,
 )
 from luxar.cli.gsplat_ops.planner import (

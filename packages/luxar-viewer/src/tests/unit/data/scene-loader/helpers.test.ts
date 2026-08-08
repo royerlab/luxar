@@ -101,4 +101,83 @@ describe('applyEffectiveAttrs', () => {
     // Composed opacity: 0.5 (root) * 0.5 (intermediate) * 0.5 (leaf) = 0.125
     expect(result.opacity).toBeCloseTo(0.125, 5);
   });
+
+  it("carries a wrapper's join down to a leaf that does not set one", () => {
+    // The partition case: `add_lines(..., join="none", partition={...})`
+    // writes `join` on the WRAPPER only (COMPOSITING_ATTRS), so if it does
+    // not compose, every part silently renders with the default miter.
+    const leaf: SceneNode = {
+      path: 'tracks/part_0',
+      type: 'lines',
+      attrs: { type: 'lines' } as SceneNode['attrs'],
+      children: [],
+      hasSpatialIndex: false,
+    };
+    const root: SceneNode = {
+      path: '',
+      type: 'group',
+      attrs: { type: 'group' } as SceneNode['attrs'],
+      children: [
+        {
+          path: 'tracks',
+          type: 'group',
+          attrs: { type: 'group', kind: 'partition', join: 'none' } as SceneNode['attrs'],
+          children: [leaf],
+          hasSpatialIndex: false,
+        },
+      ],
+      hasSpatialIndex: false,
+    };
+    expect(applyEffectiveAttrs(root, leaf).join).toBe('none');
+  });
+
+  it("keeps a leaf's own join when no ancestor sets one", () => {
+    // The unpartitioned case. Composition rebuilds the whole rendering-attr bag, so
+    // a leaf-authored join has to survive the spread rather than be overwritten with
+    // the `undefined` of an ancestor that never set it.
+    const leaf: SceneNode = {
+      path: 'tracks',
+      type: 'lines',
+      attrs: { type: 'lines', join: 'none' } as SceneNode['attrs'],
+      children: [],
+      hasSpatialIndex: false,
+    };
+    const root: SceneNode = {
+      path: '',
+      type: 'group',
+      attrs: { type: 'group' } as SceneNode['attrs'],
+      children: [leaf],
+      hasSpatialIndex: false,
+    };
+    expect(applyEffectiveAttrs(root, leaf).join).toBe('none');
+  });
+
+  it('lets the leaf win when a wrapper and the leaf both set join', () => {
+    // Nearest-ancestor-wins, root-to-leaf: the leaf is its own nearest setter. This
+    // is the escape hatch for a part that must differ from its wrapper, and the
+    // direction is the one a user expects (the more specific value).
+    const leaf: SceneNode = {
+      path: 'tracks/part_0',
+      type: 'lines',
+      attrs: { type: 'lines', join: 'miter' } as SceneNode['attrs'],
+      children: [],
+      hasSpatialIndex: false,
+    };
+    const root: SceneNode = {
+      path: '',
+      type: 'group',
+      attrs: { type: 'group' } as SceneNode['attrs'],
+      children: [
+        {
+          path: 'tracks',
+          type: 'group',
+          attrs: { type: 'group', kind: 'partition', join: 'none' } as SceneNode['attrs'],
+          children: [leaf],
+          hasSpatialIndex: false,
+        },
+      ],
+      hasSpatialIndex: false,
+    };
+    expect(applyEffectiveAttrs(root, leaf).join).toBe('miter');
+  });
 });

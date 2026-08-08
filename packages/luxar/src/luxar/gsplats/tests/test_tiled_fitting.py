@@ -1249,7 +1249,7 @@ def _single_tile_ctx(tile: str, tile_size: int = 48, overlap: int = 16):
     """
     import dataclasses
 
-    from luxar.cli.gsplat_ops.fitting_fit_utils import FitPipelineCtx
+    from luxar.cli.gsplat_ops.fitting.fit_utils import FitPipelineCtx
 
     kwargs: dict = {f.name: None for f in dataclasses.fields(FitPipelineCtx)}
     kwargs.update(
@@ -1277,7 +1277,7 @@ class TestSingleTileWorkerFloor:
 
     def test_live_spec_resolved_against_whole_volume(self, monkeypatch) -> None:
         import luxar.gsplats.fit_tiled_gsplats as ftg
-        from luxar.cli.gsplat_ops.fitting_fit_utils import fit_single_tile
+        from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
         from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
 
         volume = self._pedestal_volume()
@@ -1296,7 +1296,7 @@ class TestSingleTileWorkerFloor:
         not taken at face value by fit_tile — which would silently clip the
         whole tile to zero and skip the fit."""
         import luxar.gsplats.fit_tiled_gsplats as ftg
-        from luxar.cli.gsplat_ops.fitting_fit_utils import fit_single_tile
+        from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
 
         volume = self._pedestal_volume()
         records: list = []
@@ -1318,7 +1318,7 @@ class TestSingleTileWorkerFloor:
         single-tile worker, exactly as on the sequential and non-tiled paths
         (it must not be remapped to 'auto')."""
         import luxar.gsplats.fit_tiled_gsplats as ftg
-        from luxar.cli.gsplat_ops.fitting_fit_utils import fit_single_tile
+        from luxar.cli.gsplat_ops.fitting.fit_utils import fit_single_tile
 
         volume = self._pedestal_volume()
         records: list = []
