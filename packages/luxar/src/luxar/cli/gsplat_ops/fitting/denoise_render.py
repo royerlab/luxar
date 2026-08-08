@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 from arbol import aprint, asection
 
-from ..utils import format_memory_size
+from ...utils import format_memory_size
 
 
 def run_denoise_volume_cmd(
