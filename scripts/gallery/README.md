@@ -81,7 +81,9 @@ README gallery table.
   committed README tiles are non-zero at the 0.04 lit cutoff, and luma alone does
   not separate a real crop from a faint background wash or an unhinted full-bleed
   composition. So the harness logs the **number** on every demo as a per-tile
-  regression signal, and the number matters more than the boolean; the audit
+  regression signal, and the number matters more than the boolean; it also logs
+  `poses=<measured>/<attempted>`, since a measurement that fails is skipped rather
+  than fatal and the worst-of-the-rest would otherwise read as complete; the audit
   behind that (and `BORDER_LIT_MAX`, the one floor to raise if the warning gets
   noisy) is documented in `crop-policy.ts`.
 - **Seamless orbit:** a small-angle **sinusoidal rock** of ±20° about the

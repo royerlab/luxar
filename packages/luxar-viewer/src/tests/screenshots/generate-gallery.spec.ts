@@ -696,6 +696,26 @@ async function measureBorderLit(page: any, shot: Buffer, label: string): Promise
 }
 
 /**
+ * `measureBorderLit` that never throws — a diagnostic must not cost the capture (a
+ * mid-run Vite reload or a page crash rejects the in-page decode, and throwing
+ * would lose the video conversion and the frames-dir cleanup). Says WHY the pose
+ * was dropped, because the alternative is a silently short sample set: the log
+ * line's `poses=<measured>/<attempted>` says one went missing, and this says
+ * whether it was a dead page or a broken decode.
+ */
+async function measureBorderLitOrNull(
+  page: any,
+  shot: Buffer,
+  label: string,
+  demoId: string
+): Promise<BorderSample | null> {
+  return await measureBorderLit(page, shot, label).catch((e: unknown) => {
+    console.warn(`[${demoId}] border-lit pose "${label}" not measured: ${e}`);
+    return null;
+  });
+}
+
+/**
  * Pick an exposure in three phases (the decision itself lives in
  * `./exposure-policy::computeAutoExposure`; this only wires it to the page):
  *   1. Percentile pass — converge so the lit foreground's high percentile hits
@@ -739,12 +759,17 @@ async function autoExpose(page: any): Promise<AutoExposureResult> {
  * capture loop free of measurement work, so no in-page decode is interleaved with
  * the frames. (It is not a guarantee of an undisturbed orbit — a timelapse already
  * awaits a slice load every few frames, which dwarfs a decode.)
+ *
+ * `borderPosesAttempted` is how many poses were RETAINED for measurement, so the
+ * caller can report a short sample set: a measurement that fails is skipped, and
+ * without the attempted count a partial set would print an ordinary-looking
+ * verdict computed from fewer poses than it claims.
  */
 async function captureOrbitFrames(
   page: any,
   framesDir: string,
   demo?: DemoEntry
-): Promise<{ frames: number; borderSamples: BorderSample[] }> {
+): Promise<{ frames: number; borderSamples: BorderSample[]; borderPosesAttempted: number }> {
   // Timelapse warm-up: for 4D time-series, PLAY the time dim a couple of cycles
   // first so the slice cache is primed (the built-in t+1 prefetch warms the next
   // timepoint), then we step it deterministically during capture. Returns the
@@ -825,7 +850,7 @@ async function captureOrbitFrames(
     };
     return true;
   }, upAxis);
-  if (!ok) return { frames: 0, borderSamples: [] };
+  if (!ok) return { frames: 0, borderSamples: [], borderPosesAttempted: 0 };
 
   fs.mkdirSync(framesDir, { recursive: true });
   const ampRad = (ORBIT_AMPLITUDE_DEG * Math.PI) / 180;
@@ -921,17 +946,16 @@ async function captureOrbitFrames(
       });
     }
   }
-  // Capture loop done — now decode the retained frames. A diagnostic
-  // must never cost the capture: a mid-run Vite reload or a page crash would
-  // reject the evaluate, and throwing here would lose the video conversion and
-  // the frames-dir cleanup. Skip the sample instead (evaluateBorderLit copes with
-  // fewer, or zero, samples).
+  // Capture loop done — now decode the retained frames. A failed decode skips
+  // that pose (evaluateBorderLit copes with fewer, or zero, samples) and is
+  // reported by measureBorderLitOrNull; the returned attempted count lets the
+  // caller flag the short set.
   const borderSamples: BorderSample[] = [];
   for (const { label, shot } of borderShots) {
-    const sample = await measureBorderLit(page, shot, label).catch(() => null);
+    const sample = await measureBorderLitOrNull(page, shot, label, demo?.id ?? 'orbit');
     if (sample) borderSamples.push(sample);
   }
-  return { frames: ORBIT_FRAMES, borderSamples };
+  return { frames: ORBIT_FRAMES, borderSamples, borderPosesAttempted: borderShots.length };
 }
 
 /**
@@ -1057,14 +1081,18 @@ for (const demo of DEMOS) {
     // Orbit: capture explicit per-angle frames (reliable in headless), then
     // assemble the WebM master + animated WebP.
     const framesDir = path.join(OUTPUT_DIR, `_frames_${demo.id}`);
-    const { frames: n, borderSamples } = await captureOrbitFrames(page, framesDir, demo);
+    const {
+      frames: n,
+      borderSamples,
+      borderPosesAttempted,
+    } = await captureOrbitFrames(page, framesDir, demo);
     // Measure the still LAST (but while the page is still open): decoding a
     // retained buffer doesn't care where the camera ended up, and doing it here
     // keeps the crop check from inserting seconds between the still screenshot
     // and the orbit's rAF freeze — progressive LOD is still streaming there, so a
     // diagnostic must not change what the media pipeline captures. Failure-
     // tolerant for the same reason as the orbit samples.
-    const stillSample = await measureBorderLit(page, stillShot, 'still').catch(() => null);
+    const stillSample = await measureBorderLitOrNull(page, stillShot, 'still', demo.id);
     await page.close();
 
     // Crop check (before the orbit-failure return — the still sample alone is
@@ -1078,23 +1106,26 @@ for (const demo of DEMOS) {
       distance: demo.distance,
       autoFrame: demo.autoFrame,
     };
-    const verdict = evaluateBorderLit({
-      demoId: demo.id,
-      // Still first, so a tie names the pose easiest to reproduce by hand.
-      samples: [...(stillSample ? [stillSample] : []), ...borderSamples],
-      framing,
-    });
+    // Still first, so a tie names the pose easiest to reproduce by hand.
+    const samples = [...(stillSample ? [stillSample] : []), ...borderSamples];
+    const verdict = evaluateBorderLit({ demoId: demo.id, samples, framing });
+    // ALWAYS report measured/attempted poses: the verdict is the worst of whatever
+    // could be measured, so a skipped pose (each one warned about above) would
+    // otherwise print an ordinary-looking count that silently misses a crop
+    // confined to the dropped pose.
+    const posesAttempted = 1 + borderPosesAttempted; // the still, plus the orbit poses
+    const poses = `poses=${samples.length}/${posesAttempted}`;
     if (verdict.worst) {
       const w = verdict.worst;
       console.log(
         `[${demo.id}] border-lit=${w.borderLit}/${w.borderPixels} ` +
-          `(${borderLitPercent(w).toFixed(1)}%) worst=${w.label}`
+          `(${borderLitPercent(w).toFixed(1)}%) worst=${w.label} ${poses}`
       );
     } else {
       // Say so loudly: with every measurement swallowed, a broken in-page decode
       // would otherwise just stop printing the count for every demo — silence
       // indistinguishable from the check not existing.
-      console.log(`[${demo.id}] border-lit=unmeasured (no pose could be measured)`);
+      console.log(`[${demo.id}] border-lit=unmeasured (${poses})`);
     }
     if (verdict.cropped) console.warn(verdict.message);
 
