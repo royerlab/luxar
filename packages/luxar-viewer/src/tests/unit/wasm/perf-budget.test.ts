@@ -34,11 +34,9 @@
  * workflow). A scheduled perf workflow is a future follow-up.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { existsSync, readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 import type { WasmModule } from '../../../wasm/types';
+import { loadWasmArtifact, wasmArtifactExists } from '../../helpers/wasm-artifact';
 
 /** Minimum acceptable WASM speedup over the TypeScript fallback. See file comment. */
 const MIN_SPEEDUP = 1.15;
@@ -60,11 +58,7 @@ const RUNS = 5;
  */
 const SIZE = 1_000_000;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const wasmJsPath = join(__dirname, '../../../../public/wasm/luxar_wasm.js');
-const wasmBinaryPath = join(__dirname, '../../../../public/wasm/luxar_wasm_bg.wasm');
-const wasmAvailable = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
+const wasmAvailable = wasmArtifactExists();
 
 let wasmModule: WasmModule | null = null;
 let tsModule: WasmModule;
@@ -72,14 +66,9 @@ let tsModule: WasmModule;
 beforeAll(async () => {
   tsModule = new TypeScriptFallback();
   if (!wasmAvailable) return;
-
-  // Use the same loader shape as the benchmark script: read the .wasm
-  // bytes, then `initSync` from the JS shim. This bypasses any bundler
-  // path resolution that vitest/jsdom would mangle.
-  const wasmBinary = readFileSync(wasmBinaryPath);
-  const wasm = await import(wasmJsPath);
-  wasm.initSync({ module: wasmBinary });
-  wasmModule = wasm as unknown as WasmModule;
+  // Strict on purpose: an incompatible or stale build fails here by name
+  // rather than mid-benchmark.
+  wasmModule = await loadWasmArtifact();
 });
 
 function measure(fn: () => void): number {

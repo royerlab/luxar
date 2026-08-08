@@ -7,11 +7,35 @@
  * fallback path lands a working WasmModule, that isWasmSupported
  * detects WebAssembly correctly, and that getFallback returns a fresh
  * TypeScriptFallback every call.
+ *
+ * `assertRequiredWasmExports` is covered directly here because the artifact
+ * it rejects (a stale build missing a newer kernel) cannot be synthesized in
+ * jsdom — the stub below stands in for one.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { initWasm, isWasmSupported, getFallback, setWasmJsUrl } from '../../../wasm';
+import {
+  initWasm,
+  isWasmSupported,
+  getFallback,
+  setWasmJsUrl,
+  assertRequiredWasmExports,
+} from '../../../wasm';
 import { TypeScriptFallback } from '../../../wasm/typescript';
+
+/**
+ * A module stub that answers EVERY property with a function, minus the
+ * explicitly withheld/overridden ones. Built as a Proxy so the required-export
+ * list stays single-sourced in `wasm/index.ts` instead of being copied here.
+ */
+function stubModule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return new Proxy(overrides, {
+    get: (target, prop) =>
+      Object.prototype.hasOwnProperty.call(target, prop)
+        ? (target as Record<string | symbol, unknown>)[prop]
+        : () => undefined,
+  }) as Record<string, unknown>;
+}
 
 describe('initWasm', () => {
   beforeEach(() => {
@@ -30,6 +54,54 @@ describe('initWasm', () => {
     expect(wasm).toBeInstanceOf(TypeScriptFallback);
     // Reset so subsequent tests in the run don't see the override.
     setWasmJsUrl('');
+  });
+});
+
+describe('assertRequiredWasmExports', () => {
+  it('accepts a module exposing every required kernel', () => {
+    expect(() => assertRequiredWasmExports(stubModule())).not.toThrow();
+  });
+
+  it('names the missing export AND the remediation when a kernel is absent', () => {
+    // `compute_joint_codes` is the export whose absence in a stale
+    // gitignored build motivated the guard — pin the message format on it.
+    // The build hint is part of the message on purpose: on the direct-import
+    // path this throw is the only diagnosis the reader gets.
+    expect(() => assertRequiredWasmExports(stubModule({ compute_joint_codes: undefined }))).toThrow(
+      'Loaded WASM module is stale: missing required export "compute_joint_codes" — ' +
+        'rebuild it with pnpm build:wasm (or make build-wasm)'
+    );
+  });
+
+  // One negative case PER required export, with the names restated literally.
+  // This is a deliberate tripwire against the production list silently
+  // shrinking, which would make the check pass on a build it should reject:
+  // iterating REQUIRED_WASM_EXPORTS here instead would be tautological —
+  // deleting a name would delete its own test. Do not "simplify" these into a
+  // loop over the exported list.
+  it('names mesh_vertex_visibility_mask when only that kernel is missing', () => {
+    expect(() =>
+      assertRequiredWasmExports(stubModule({ mesh_vertex_visibility_mask: undefined }))
+    ).toThrow(/missing required export "mesh_vertex_visibility_mask"/);
+  });
+
+  it('names compact_visible_faces when only that kernel is missing', () => {
+    expect(() =>
+      assertRequiredWasmExports(stubModule({ compact_visible_faces: undefined }))
+    ).toThrow(/missing required export "compact_visible_faces"/);
+  });
+
+  it('rejects a required export that is present but not callable', () => {
+    // wasm-bindgen shims can expose a non-function binding (e.g. a memory
+    // view or a renamed constant); `typeof !== 'function'` must catch it,
+    // otherwise the cast still hands out an unusable "kernel".
+    expect(() => assertRequiredWasmExports(stubModule({ compute_joint_codes: 42 }))).toThrow(
+      /missing required export "compute_joint_codes"/
+    );
+  });
+
+  it('rejects an empty module', () => {
+    expect(() => assertRequiredWasmExports({})).toThrow(/missing required export/);
   });
 });
 

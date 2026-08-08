@@ -18,24 +18,23 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 import { ArrayDecoder } from '../../../data/array-decoder/decoder';
 import type { WasmModule } from '../../../wasm/types';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { existsSync, readFileSync } from 'fs';
 import {
   arraysEqual as sharedArraysEqual,
   arraysAlmostEqual as sharedArraysAlmostEqual,
 } from '../../helpers/array-compare';
+import {
+  WASM_BUILD_HINT,
+  tryLoadWasmArtifact,
+  wasmArtifactExists,
+  wasmJsPath,
+} from '../../helpers/wasm-artifact';
 
 // WASM module reference (loaded dynamically)
 let wasmModule: WasmModule | null = null;
 let tsModule: WasmModule;
 
 // Pre-check if WASM files exist (synchronous check at module load time)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const wasmJsPath = join(__dirname, '../../../../public/wasm/luxar_wasm.js');
-const wasmBinaryPath = join(__dirname, '../../../../public/wasm/luxar_wasm_bg.wasm');
-const wasmFilesExist = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
+const wasmFilesExist = wasmArtifactExists();
 const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
 
 /**
@@ -79,27 +78,17 @@ beforeAll(async () => {
   // Skip WASM loading if files don't exist
   if (!wasmFilesExist) {
     console.log('[Test] WASM module not found at:', wasmJsPath);
-    console.log('[Test] Build WASM with: pnpm build:wasm (or make build-wasm)');
+    console.log(`[Test] ${WASM_BUILD_HINT}`);
     return;
   }
 
-  // Try to load WASM module
-  try {
-    // Read WASM binary synchronously
-    const wasmBinary = readFileSync(wasmBinaryPath);
-
-    // Dynamic import the JS module
-    const wasm = await import(wasmJsPath);
-
-    // Use initSync with the binary buffer (works in Node.js without fetch)
-    wasm.initSync({ module: wasmBinary });
-
-    wasmModule = wasm as unknown as WasmModule;
-    console.log('[Test] WASM module loaded successfully');
-  } catch (error) {
+  // A load failure is a soft skip; a STALE build still throws by name (see
+  // tests/helpers/wasm-artifact.ts).
+  wasmModule = await tryLoadWasmArtifact((error) => {
     console.log('[Test] WASM module failed to load:', error);
-    console.log('[Test] Build WASM with: pnpm build:wasm (or make build-wasm)');
-  }
+    console.log(`[Test] ${WASM_BUILD_HINT}`);
+  });
+  if (wasmModule) console.log('[Test] WASM module loaded successfully');
 });
 
 describe('WASM artifact requirement', () => {

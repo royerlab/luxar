@@ -6,6 +6,21 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A stale WASM build now names the kernel it is missing (#1412)
+
+`public/wasm/` is gitignored, so a checkout can hold a build that imports and
+`initSync`s fine while predating a newer kernel. `initWasm()` already rejected
+that, but the tests and benchmarks that load the artifact themselves — `await
+import(...)` plus `as unknown as WasmModule`, which promises the whole interface
+regardless of what was loaded — failed instead as an opaque
+`x is not a function` deep inside an unrelated kernel test. All six of those
+sites now share one loader (`src/tests/helpers/wasm-artifact.ts`) that calls
+`assertRequiredWasmExports` before the cast, so the failure reads "missing
+required export `<kernel>` — rebuild it with pnpm build:wasm". A source-level
+tripwire (`direct-import-guard.test.ts`) keeps the next such site on that
+loader: it fails on any other viewer source that both names `luxar_wasm.js` and
+calls `initSync(`.
+
 #### CAIDA country coloring parses current organization snapshots (#1373)
 
 The CAIDA AS-topology demo expected a space in the upstream

@@ -136,6 +136,36 @@ Build output goes to `public/wasm/`:
 
 If WASM is not built, `initWasm()` logs a warning with build instructions and falls back to TypeScript.
 
+### Loading the built artifact directly
+
+Tests and benchmarks that need the compiled kernels rather than the fallback can't use
+`initWasm()` (it resolves a browser URL and substitutes `TypeScriptFallback` when that fails). They
+all go through one shared loader, `src/tests/helpers/wasm-artifact.ts`:
+
+```typescript
+import {
+  loadWasmArtifact,
+  tryLoadWasmArtifact,
+  wasmArtifactExists,
+} from '../helpers/wasm-artifact';
+
+const wasmAvailable = wasmArtifactExists(); // gate describe.skipIf / it.runIf
+
+const wasm = await loadWasmArtifact(); // strict: absent, incompatible or stale all throw
+const maybe = await tryLoadWasmArtifact(); // soft: null on a load failure, still throws when stale
+```
+
+It reads the `.wasm` bytes, `initSync`s the shim, and calls `assertRequiredWasmExports` on the
+namespace **before** the `as unknown as WasmModule` cast and **outside** the catch that downgrades a
+load failure to a skip. The cast promises the whole `WasmModule` interface while a stale gitignored
+build may be missing newer kernels, so without the check a stale build fails as an opaque
+`x is not a function` deep in an unrelated kernel test instead of naming the missing export and
+pointing at `pnpm build:wasm (or make build-wasm)`; inside that catch the named message would be
+swallowed instead. `src/tests/unit/wasm/direct-import-guard.test.ts` keeps the rule structural
+rather than policed: it fails if any `.ts` under `src/`, `tools/` or `scripts/` other than that
+helper (and `src/wasm/index.ts`, the production loader) both mentions `luxar_wasm.js` and calls
+`initSync(`.
+
 ## File Structure
 
 ```
