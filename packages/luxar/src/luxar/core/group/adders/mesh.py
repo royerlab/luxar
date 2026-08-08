@@ -541,6 +541,26 @@ def add_mesh_substitutive_lod_wrapper_impl(
         else None
     )
 
+    # Checked HERE so a non-finite field is refused BEFORE `add_lod_group` runs.
+    # The array writer refuses NaN/inf anyway ("scalars: Contains N NaN or Inf
+    # value(s)"), which is why a plain leaf fails cleanly and writes nothing —
+    # but on this path that refusal arrives from inside `child_0`, with the
+    # kind=lod group already created. The store was then left holding a CHILDLESS
+    # kind=lod node, which no viewer path can load: a ladder is resolved from its
+    # children. Cheaper here too, ahead of every decimation pass.
+    #
+    # Not conditional on a derived window: an explicit `_scalar_data_range` does
+    # not make the values writable, so gating on it only moved the same failure
+    # back to where it could not write nothing.
+    if per_vertex_scalars is not None and not bool(
+        np.all(np.isfinite(per_vertex_scalars))
+    ):
+        raise ValueError(
+            f"Mesh '{name}': scalars contain NaN or Inf, which no level can "
+            "store. Remove or replace them (e.g. np.nan_to_num) before building "
+            "a ladder."
+        )
+
     coarse: List[Any] = []
     previous = 0
     for power in range(levels, 0, -1):

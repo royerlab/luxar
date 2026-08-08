@@ -345,6 +345,41 @@ class TestScalarDataRangeIsInternal:
                 )
         assert not (store / "surf").exists(), "a refused mesh must write nothing"
 
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf")])
+    @pytest.mark.parametrize("explicit_window", [None, (-1.0, 1.0)])
+    def test_a_nonfinite_field_leaves_no_childless_group(
+        self, tmp_path: Path, bad_value: float, explicit_window: Any
+    ) -> None:
+        """A ladder must refuse a NaN/Inf field the way a plain leaf does.
+
+        The array writer refuses non-finite values regardless, so a plain
+        `add_mesh` fails and writes nothing. On the ladder path that refusal used
+        to arrive from inside `child_0` — with `add_lod_group` already run — so
+        the store was left holding a CHILDLESS `kind=lod` node, which no viewer
+        path can load: a ladder is resolved from its children. An explicit window
+        does not make the values writable, so it must not buy a way past this.
+        """
+        verts, faces = octasphere(3)
+        scalars = verts[:, 2].astype(np.float32).copy()
+        scalars[3] = bad_value
+        store = tmp_path / "nonfinite.luxar.zarr"
+        extra = (
+            {} if explicit_window is None else {"_scalar_data_range": explicit_window}
+        )
+        with pytest.raises(ValueError, match="NaN or Inf"):
+            with LuxarZarrCompiler(store) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_mesh(
+                    "surf",
+                    verts,
+                    faces,
+                    scalars=scalars,
+                    colormap="viridis",
+                    substitutive_lod=True,
+                    **extra,
+                )
+        assert not (store / "surf").exists(), "no childless kind=lod may be left"
+
 
 class TestExtendToAll:
     """`extend_to_all=` and `substitutive_lod=` must compose.

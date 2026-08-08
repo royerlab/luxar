@@ -66,6 +66,12 @@ thing it cannot carry, because the reader does not surface them. It normalizes
 `--output` to `<stem>.luxar.zarr` before every path guard, and validates the method and
 the attrs before `--overwrite` deletes anything.
 
+A non-finite scalar field is refused before the group exists. NaN/Inf is rejected by the
+array writer either way — so a plain `add_mesh` fails and writes nothing — but on the
+ladder path that refusal arrived from inside `child_0`, with `add_lod_group` already run,
+leaving a **childless `kind=lod`** node in the store: unloadable, since a ladder is
+resolved from its children. Checked up front now, ahead of every decimation pass.
+
 #### CAIDA country coloring parses current organization snapshots (#1373)
 
 The CAIDA AS-topology demo expected a space in the upstream
