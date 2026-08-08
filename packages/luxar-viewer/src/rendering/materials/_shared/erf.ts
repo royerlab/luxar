@@ -21,11 +21,21 @@
  *    fixture and codegen snapshot are its consumers until then).
  *    Degree-13 constrained least-squares fit with P(3) = 1 (to 1e-9 for
  *    the printed coefficient set), so the clamp is continuous. Max abs
- *    error 5.4e-4 against the exact erf;
- *    the worst *difference* error `(erf(x1) − erf(x0))` consumers see is
- *    1.4e-3 of the peak when the two arguments are ≥ 0.5 apart (callers
- *    with closer arguments must use a midpoint/Taylor lane instead of
- *    the difference — see the volumetric line fragment shader).
+ *    error 5.4e-4 against the exact erf; the worst error in the
+ *    difference QUOTIENT `(erf(x1) − erf(x0)) / (x1 − x0)` is 1.4e-3
+ *    absolute (0.13% of its 2/√π ≈ 1.128 peak) when the two arguments
+ *    are ≥ 0.5 apart (callers with closer arguments must use a
+ *    midpoint/Taylor lane instead of the difference — see the volumetric
+ *    line fragment shader).
+ *
+ *    Two consequences of this being a least-squares fit rather than a
+ *    bounded approximation — both well inside that error bound, both easy
+ *    to trip over: it is NOT clamped to ±1 (it peaks at 1.00032 near
+ *    |x| ≈ 2.72) and it is NOT strictly monotone near saturation, so an
+ *    `erf(x1) − erf(x0)` window with x1 > x0 can come out slightly
+ *    NEGATIVE (worst −8.8e-4, at x0 ≈ 2.72 / x1 ≈ 2.94). A consumer that
+ *    needs a non-negative window — an optical depth, a coverage weight —
+ *    must clamp at zero rather than trust the sign.
  *
  * The GLSL string and the TSL builder are BOTH generated from
  * `ERF_POLY_COEFFS`, so the two backends cannot drift in VALUE. The

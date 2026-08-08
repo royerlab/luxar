@@ -107,7 +107,32 @@ describe('erfPoly (the shader polynomial)', () => {
     }
   });
 
-  it('keeps the difference error under 3e-3 of the peak for arguments >= 0.5 apart', () => {
+  it('overshoots 1 and dips near saturation — the two caveats consumers must clamp for', () => {
+    // A least-squares fit, not a bounded approximation. Both effects sit
+    // inside the 5.4e-4 error bound, but a consumer that reads the value
+    // as a coverage/probability, or a window as an optical depth, has to
+    // clamp instead of trusting the range or the sign. Pinned here so a
+    // coefficient change cannot quietly widen either one.
+    let peak = 0;
+    for (let i = 0; i <= 30000; i++) {
+      peak = Math.max(peak, erfPoly((3 * i) / 30000));
+    }
+    expect(peak).toBeGreaterThan(1.0); // documented: ~1.00032
+    expect(peak - 1).toBeLessThan(5e-4);
+
+    // Most negative forward window erf(x1) - erf(x0), x1 > x0.
+    let runningMax = -Infinity;
+    let worstWindow = 0;
+    for (let i = 0; i <= 30000; i++) {
+      const y = erfPoly((3.5 * i) / 30000);
+      runningMax = Math.max(runningMax, y);
+      worstWindow = Math.min(worstWindow, y - runningMax);
+    }
+    expect(worstWindow).toBeLessThan(0); // documented: ~-8.8e-4
+    expect(worstWindow).toBeGreaterThan(-1.5e-3);
+  });
+
+  it('keeps the difference-quotient error under 3e-3 for arguments >= 0.5 apart', () => {
     // The volumetric line shader computes (erf(x1) - erf(x0)) / dx and
     // switches to a midpoint/Taylor lane below dx = 0.5 — this bound is
     // what makes that lane threshold sufficient.
@@ -158,7 +183,6 @@ describe('GLSL / TSL single-source serialization', () => {
       .replaceAll('float ', 'let ')
       .replaceAll('min(', 'Math.min(')
       .replaceAll('abs(', 'Math.abs(');
-    // eslint-disable-next-line no-new-func
     const glslErf = new Function('x', body) as (x: number) => number;
     for (let i = 0; i <= 4000; i++) {
       const x = -5 + (10 * i) / 4000;
