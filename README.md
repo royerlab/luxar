@@ -107,7 +107,8 @@ category, what it needs, and whether you have already built it:
 
   #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
 ───────────────────────────────────────────────────────────────────────────────────────────────────
-  1  arxiv_papers                           points       embeddings     ⬇20MB                cached
+  1  arxiv_papers_kaggle                    points       embeddings     ⬇30000MB 🔑kaggle
+  2  arxiv_papers_semantic_scholar          points       embeddings     ⬇20MB                cached
   7  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
   9  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
  25  gsplats_2d_cmu1_pathology              gsplats      medical        ⬇150MB GPU* LFS      cached
@@ -492,10 +493,11 @@ Normals are optional: omit them and the shader derives a flat per-face normal
 from screen-space derivatives. `normal_dims` is required whenever you *do* pass
 them, because in nD there is no implicit "first three dimensions".
 
-LOD, spatial partitioning and `volumetric` blending are not supported, and none
-of them degrades silently: `add_mesh` raises on all three, and a `volumetric`
-that reaches the viewer by *inheritance* from an ancestor group logs a warning
-naming the node and falls back to `opaque`. See
+Spatial partitioning **is** supported — `add_mesh(partition=…)` splits a large
+surface into frustum-cullable parts, though each part still loads whole. LOD and
+`volumetric` blending are not, and neither degrades silently: `add_mesh` raises
+on both, and a `volumetric` that reaches the viewer by *inheritance* from an
+ancestor group logs a warning naming the node and falls back to `opaque`. See
 [the mesh spec](docs/specs/MESH_NODE_SPEC.md) §9 for why, per exclusion.
 
 ---

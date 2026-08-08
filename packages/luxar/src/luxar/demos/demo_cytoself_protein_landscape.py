@@ -774,6 +774,7 @@ def create_cytoself_scene(
                 intensity=0.18,
                 labels=labels,
                 image_labels=all_image_labels,
+                layer=True,
             )
 
             # --- Overlays ---

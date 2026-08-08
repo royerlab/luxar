@@ -13,6 +13,8 @@ the best for the README gallery (TODO **R19**).
 | `../../packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts` | Playwright capture: auto-center + fill-to-frame, auto-exposure, orbit, still + video. |
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
 | `../../packages/luxar-viewer/src/tests/screenshots/crop-policy.ts` | The border-lit (**cropped subject**) verdict + its warning floor, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-crop-policy.test.ts`). |
+| `../../packages/luxar-viewer/src/tests/screenshots/frame-similarity.ts` | The still-vs-orbit-frame **correlation** (`COMPARE_SIZE`, `DISAGREEMENT_THRESHOLD`), split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-frame-similarity.test.ts`). |
+| `../../packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts` | Which **signed world axis** the rock revolves about, derived from the camera's own up-vector, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-orbit-axis.test.ts`). |
 | `../../packages/luxar-viewer/playwright.gallery.config.ts` | Playwright config (GPU flags, viewer + data servers, video recording). |
 | `score_exposure.py` | Offline scorer for the captured stills: flags `OVER` (blown highlights) and `FLAT` (narrow, uniformly over-exposed). Hand-synced with `exposure-policy.ts`. |
 | `tests/` | Unit tests for `score_exposure.py`, incl. a parity test that pins its mirrored thresholds to the ones in `exposure-policy.ts`. On the default Python suite. |
@@ -91,23 +93,51 @@ README gallery table.
   behind that (and `BORDER_LIT_MAX`, the one floor to raise if the warning gets
   noisy) is documented in `crop-policy.ts`.
 - **Seamless orbit:** a small-angle **sinusoidal rock** of ±20° about the
-  subject's up axis (`"orbitUp"`, default world-Y), captured as 120 explicit
-  per-angle screenshots — not Playwright's passive video, which does not
-  reliably record the viewer's rAF repaints in headless. `sin` returns to its
-  start, so the loop is seamless with no pre-roll to trim. ffmpeg assembles the
-  frames 1:1 (no motion interpolation, which warps fine structure) into a VP9
-  WebM master and a smaller animated WebP for the README.
+  subject's up axis (`"orbitUp"`, defaulting to whichever signed world axis the
+  **camera's own up-vector** most nearly points along — so a scene that bakes
+  `up=(0,0,1)` in its `viewer_config` rocks about +Z without being told to),
+  captured as 120 explicit per-angle screenshots — not Playwright's passive
+  video, which does not reliably record the viewer's rAF repaints in headless.
+  `sin` returns to its start, so the loop is seamless with no pre-roll to trim.
+  ffmpeg assembles the frames 1:1 (no motion interpolation, which warps fine
+  structure) into a VP9 WebM master and a smaller animated WebP for the README.
 
-  **The orbit sets `cam.up` from `orbitUp` on every frame, so a scene whose
-  `viewer_config` bakes a non-Y `up` needs `orbitUp` set to match.** The still
-  keeps the baked pose (`F` restores it) but the orbit does not, so leaving the
-  default silently ships an animation rolled away from its own poster, and turns
-  the turntable into a tumble — `mesh_isosurface_cells3d` swung 130% in subject
-  aspect before its `orbitUp: "x"` was set. Setting `orbitUp` also runs
+  The orbit **hard-sets `cam.up` every frame**, so that axis has to be right. It
+  used to default to world-Y unconditionally, which silently discarded any baked
+  non-Y up: the still keeps the baked pose (`F` restores it) but the animation
+  did not, so a demo baking a non-Y up renders an animation rolled ~90° away from
+  its own poster, turntable degenerating into tumble — `mesh_isosurface_cells3d`
+  swung 130% in subject aspect over one rock before its `orbitUp: "x"` was set
+  (#1377). Five manifest demos bake a non-Y up and only two of them declare
+  `orbitUp`, so three were left on the wrong axis; two of those three were
+  measurably shipping the roll (the asteroids/cosmicflows correlations pinned in
+  `gallery-frame-similarity.test.ts`), and the third is a 4D timelapse whose
+  camera was barely orbiting in the first place (#1383).
+  Deriving the default from the camera makes `orbitUp` a true **override**,
+  needed only to rock about something other than the scene's own up. The derived
+  axis keeps its **sign**, so a baked `up=(0,0,-1)` rocks about −Z rather than
+  being flipped 180° from the still. Setting `orbitUp` explicitly also runs
   `positionForOrbitUp`, which re-parks the camera on an axis and discards the
-  baked framing, so check that pose: it needs a `viewAngle` next to it whenever
-  the parked pose lands edge-on (as this slab's did — whereas
-  `gsplats_3d_ct_totalsegmentator`'s `orbitUp: "z"` parks coronal and needs none).
+  baked framing — so an explicit `orbitUp` usually wants a `viewAngle` beside it
+  whenever that parked pose lands edge-on (as this mesh slab's does, hence its
+  `viewAngle` 45/40, whereas `gsplats_3d_ct_totalsegmentator`'s `orbitUp: "z"`
+  parks coronal and needs none), while the derived default leaves framing alone.
+
+  **Timelapse demos need the rAF loop re-frozen every frame.** The orbit freezes
+  it once at setup, but a timelapse slice load restarts it, and a live loop runs
+  `controls.update()`, which re-derives the camera from the controls' stored
+  spherical state and snaps it back to the pre-orbit pose. Before this was
+  handled, a 4D tile's camera sat at the baked pose in 6 of 8 frames — it barely
+  orbited at all while its time dimension advanced (#1383). The reset lands
+  *after* the per-frame `page.evaluate` returns, so re-applying the pose inside
+  that evaluate does not help; the loop has to be stopped. The freeze is gated on
+  the demo being a timelapse, so captures that were never broken are untouched.
+
+  After each capture the harness compares the still against orbit frame 0 — the
+  same nominal pose — and **warns** if they correlate below 0.85. That is the
+  check whose absence let #1377 ship. Timelapse demos are exempt: their still is
+  framed at `timelapse.framePoint` while frame 0 sits at the clip start, so the
+  two legitimately differ.
 
   **Judge a tile on its orbit frames, not on the still.** The README embeds the
   animated WebP; the PNG is a byproduct that ships nowhere. A framing tuned on
@@ -123,7 +153,10 @@ Optional capture hints (see the `DemoEntry` interface in the capture spec for
 the authoritative list and defaults): `exposure` (log2 stops, overrides
 auto-exposure), `autoExpose` / `autoFrame` (set `false` to use the scene's baked
 `viewer_config` instead), `fillTarget`, `zoom`, `distance`, `viewAngle`
-(`{azimuth, elevation}`), `orbitUp` (`'x' | 'y' | 'z'`), `dimensionNav`
+(`{azimuth, elevation}`), `orbitUp` (`'x' | 'y' | 'z'`, the world axis the rock
+revolves about; default = the camera's own signed up axis, so set it only to
+override — and note it re-parks the camera and so usually wants a `viewAngle`
+beside it), `dimensionNav`
 (`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
 `readme` (a current top README pick), `note` (free-text human annotation; the
 capture code never reads it).

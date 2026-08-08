@@ -725,6 +725,7 @@ def create_storm_scene(
                     opacity=0.8,
                     absorption=1.0,
                     blending_mode="volumetric",
+                    layer=True,
                 )
 
                 aprint(f"✓ Added {n_splats * 2:,} splats (2 views × {n_splats:,})")
