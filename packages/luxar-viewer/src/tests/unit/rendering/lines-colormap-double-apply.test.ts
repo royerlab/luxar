@@ -49,8 +49,8 @@ function makeLinesConfig(withScalars: boolean = true): InstancedLinesMeshConfig 
     startSharpness: new Float32Array([0.5]),
     endSharpness: new Float32Array([0.5]),
     segmentLengths: one(),
-    startCapSuppression: one(),
-    endCapSuppression: one(),
+    startJointCode: one(),
+    endJointCode: one(),
     segmentCount: 1,
   } as InstancedLinesMeshConfig;
   if (withScalars) {

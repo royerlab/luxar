@@ -55,6 +55,7 @@ import {
 import type { MeshDataLoader, MeshMetadata } from '../types/mesh';
 import { isMeshPickAwareMaterial } from './picking/mesh/pick-mode';
 import type { GeometryTypeName } from '../types/format-contract';
+import { lineJoinStyleFromUniform, type LineJoinStyle } from '../types/line-join';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
@@ -89,8 +90,9 @@ interface PickMaterialRecipe {
  *
  * Each recipe reads whatever its type's pick material needs off the visual node: points
  * need the geometry's `radiusScale` (the 80%-radius pick footprint derives from it),
- * mesh needs the node opacity and cutout threshold (they are its coverage term). Lines
- * and gsplats need only the id.
+ * lines need the join style (the pick pass builds the same screen-space quad), mesh
+ * needs the node opacity and cutout threshold (they are its coverage term). Only
+ * gsplats need nothing but the id.
  */
 const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
   points: {
@@ -101,7 +103,11 @@ const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
       }),
   },
   lines: {
-    build: (_obj, pickId) => materialManager.createLinePickingMaterial({ nodeId: pickId }),
+    build: (obj, pickId) =>
+      materialManager.createLinePickingMaterial({
+        nodeId: pickId,
+        join: lineJoinStyleFromVisual(obj),
+      }),
   },
   gsplats: {
     build: (_obj, pickId) => materialManager.createGSplatPickingMaterial({ nodeId: pickId }),
@@ -118,6 +124,41 @@ const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
     afterRegister: syncMeshPickMaterialToVisual,
   },
 };
+
+/**
+ * Recover a lines node's join style (#790) from its LIVE VISUAL MATERIAL.
+ *
+ * The pick pass builds the same screen-space quad as the visual one, so a divergence
+ * leaves the outer wedge of a mitred corner pickable while nothing renders there —
+ * and, because this pass is the one production takes on a first load while
+ * `createLinesNode` handles the second, the same scene would pick differently on a
+ * re-load.
+ *
+ * Read from the material rather than from `obj.userData.attrs`, which holds the RAW
+ * leaf attrs and by construction lacks a wrapper-composed `join` (it rides on the
+ * `kind=partition` / `kind=lod` wrapper — see COMPOSITING_ATTRS). The material is the
+ * only place the composed value survives.
+ *
+ * The two backends store it differently, so both are checked: TSL bakes the style into
+ * the graph and keeps the UNRESOLVED style on `userData.lineJoin`, GLSL keeps the
+ * resolved code in the `uLineJoin` uniform. The unresolved form is preferred where it
+ * exists; either way re-resolving is idempotent, since `resolveLineJoin` applies the
+ * same `?lineJoin=` session override that produced the value being read.
+ *
+ * `undefined` (no lines material, or one with neither marker) means "unauthored" and
+ * resolves through the normal precedence — NOT `'none'`.
+ */
+function lineJoinStyleFromVisual(obj: THREE.Mesh): LineJoinStyle | undefined {
+  const visual = obj.material as THREE.Material | THREE.Material[] | undefined;
+  const single = Array.isArray(visual) ? visual[0] : visual;
+  if (!single) return undefined;
+  const stored = single.userData?.lineJoin as LineJoinStyle | undefined;
+  if (stored !== undefined) return stored;
+  const uniforms = (single as THREE.Material & { uniforms?: Record<string, { value?: unknown }> })
+    .uniforms;
+  const code = uniforms?.uLineJoin?.value;
+  return lineJoinStyleFromUniform(typeof code === 'number' ? code : undefined);
+}
 
 /**
  * Copy the visual material's per-epoch state onto a mesh's freshly-created pick

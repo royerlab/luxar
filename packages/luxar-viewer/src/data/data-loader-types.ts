@@ -92,6 +92,8 @@ export interface SceneNode {
     intensity?: number;
     offset?: number;
     blending_mode?: string;
+    /** Lines-only join style at degree-2 polyline joints: `'none' | 'miter'` (#790). */
+    join?: string;
     max_radius?: number;
     n_points?: number;
 
