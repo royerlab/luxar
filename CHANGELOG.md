@@ -24,13 +24,33 @@ elongated cloud on a portrait viewport, 0.307) to a metric of 1.23, while the ot
 shapes span 1.7-3.4 over 16:9 / 9:16 / 1:1. Detail is still dropped well before the
 object is tiny: for the usual K=8 / 3-level ladder a cube on 16:9 leaves the finest
 level at ~2.0x zoomed out from the opening framing and reaches the coarsest at ~14x
-(~2.1x / ~15.7x counting the downgrade hysteresis); on 1:1 it is ~2.8x / ~20x. The fix is deliberately in the VIEWER rather than in Python's
-`coverage_fractions()`, so **every scene already written to disk is fixed on
-reload** — no regeneration.
+(~2.1x / ~15.7x counting the downgrade hysteresis); on 1:1 it is ~2.8x / ~20x.
+The fix is deliberately in the VIEWER rather than in Python's
+`coverage_fractions()`, so **every whole-object ladder already written to disk is
+fixed on reload** — no regeneration. (Partition-bound ladders are the exception;
+see below.)
 
-**This changes which level renders for every existing dataset.** Nothing needs
-regenerating and no store is invalidated, but a scene now shows more detail at the
-same camera than it did before.
+**This changes which level renders for every existing dataset.** No store is
+invalidated and a whole-object ladder (`levels`, `stream`, `add_points`/`add_lines`
+`substitutive_lod=`) needs nothing done to it — it simply shows more detail at the
+same camera than it did before, which is the fix. That detail is not free: such a
+layer now commits its finer levels at the opening framing, so expect more resident
+geometry than before (bounded, as always, by the shared VRAM eviction budget).
+
+**Two topologies DO need regenerating: an `adaptive` or `overview` store written
+before this change.** Their ladders are on disk anchored at `1.0`, and the viewer
+honors what it reads, so the ×4 metric makes them select too fine a level: an old
+`overview` store loads its whole fine partition on frame 1, and every tile of an old
+`adaptive` store jumps toward its finest level at whole-object framing (~16× the
+resident geometry for a K=4/L=2 ladder). Both are behavioral, not corrupting —
+nothing is lost — but the recipe's memory contract is gone until the store is
+rebuilt. The cheap fix, since `gsplat lod` will not take an already-tiled store as
+input: run it through any `luxar gsplat transform` that touches geometry — that
+scrubs the thresholds and re-derives them, and the re-derivation is topology-aware,
+so it restamps the partition-bound anchor. Re-running
+`luxar gsplat lod --recipe adaptive|overview` from the original flat fit works too.
+The same applies to a hand-built partition of per-part ladders (the shape
+`examples/partition_of_lod_example.py` builds): scale its authored thresholds by 4.
 
 **If you hand-tuned `coverage_fractions=[...]`, multiply every threshold by 4.**
 The metric is 4x larger at a given framing, so a x4 rescale reproduces the previous
@@ -39,7 +59,9 @@ proportional to inter-threshold gaps, so they scale with it). To make that
 expressible, the upper bound on an explicit list widened from `1.0` to
 `MAX_COVERAGE_FRACTION = 4.0` — which is `1 / FILL_FACTOR`, the metric a
 screen-filling object produces, so the bound still means exactly what `1.0` meant
-before. `validate_lod_group` now enforces that range for hand-built ladders too.
+before. `validate_lod_group` now enforces that range for hand-built ladders too, and
+both it and the explicit-list resolvers reject a non-finite threshold (a `NaN` used
+to satisfy every comparison and silence the ascent check for the rest of the ladder).
 `coverage_fractions()`'s derived output is unchanged and still lands in `[0, 1]`.
 
 Ladders bound to a spatial partition keep the old fills-screen anchor via the new
@@ -60,6 +82,16 @@ metric normalises by the diagonal, so for aspect >= 1 the raw fraction falls as
 so on a 21:9 or 32:9 canvas the flattest shapes still miss the finest level. Fixing
 that means changing what the two sides normalise by, not lowering `FILL_FACTOR`
 further.
+
+#### CAIDA country coloring parses current organization snapshots (#1373)
+
+The CAIDA AS-topology demo expected a space in the upstream
+`# format: org_id` / `# format: aut` section headers, but current
+`as-org2info` snapshots use `# format:org_id` / `# format:aut`. The parser now
+accepts either whitespace form, so organization names and country codes reach
+node colors and hover labels again. A snapshot missing either required section
+now raises an actionable error instead of silently producing an all-unknown
+country view.
 
 #### Real join geometry for lines: the miter (#790, #795)
 
@@ -120,7 +152,6 @@ pixels — the measurement is zero, the small ceiling only absorbs a seam pixel
 the shaders' float32 operand order can cost — so unmitred rendering cannot
 come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
 under `make test-e2e`.)
-
 
 #### Mesh is per-triangle depth sorted
 

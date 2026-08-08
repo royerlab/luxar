@@ -259,6 +259,31 @@ class TestLODGroupValidation:
             with pytest.raises(ValueError, match=r"must lie in \[0, 4\]"):
                 validate_lod_group(lod)
 
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_validate_rejects_non_finite_coverage_fraction(
+        self, bad: float, tmp_path
+    ) -> None:
+        """NaN is the dangerous one: every comparison against it is false, so it
+        would pass BOTH the range check and the monotonicity check, then become
+        ``prev`` and silence the monotonicity check for the rest of the ladder —
+        yielding a store the viewer cannot select from predictably. ±inf would
+        likewise satisfy strict ascent."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires")
+            # A descending tail AFTER the bad value: with the value accepted the
+            # ladder would validate despite 0.5 < 0.9, which is the real hazard.
+            for i, cf in enumerate([0.0, bad, 0.9, 0.5]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            with pytest.raises(ValueError, match="not a finite number"):
+                validate_lod_group(lod)
+
     def test_validate_rejects_negative_coverage_fraction(self, tmp_path) -> None:
         with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -732,6 +757,17 @@ class TestPartitionedCoverageFractions:
         resolved = resolve_substitutive_axis({"coverage_fractions": derived}, "Points")
         assert resolved is not None
         assert resolved["coverage_fractions"] == pytest.approx(derived)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_explicit_list_rejects_non_finite_entries(self, bad: float) -> None:
+        """The shared strict-ascent check is the only gate on an explicit list, and
+        ``bad <= prev`` is false for NaN — so without an explicit finite test a NaN
+        entry would be accepted and would then silence the ascent check for every
+        entry after it (here the descending 0.9 → 0.5 tail)."""
+        with pytest.raises(ValueError, match="finite"):
+            resolve_substitutive_axis(
+                {"coverage_fractions": [0.0, bad, 0.9, 0.5]}, "Points"
+            )
 
 
 # ────────────────────────────────────────────────────────────────────────

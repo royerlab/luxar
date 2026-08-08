@@ -43,6 +43,7 @@ This module hosts:
 
 from __future__ import annotations
 
+import math
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Dict, Final, List, Literal, Optional
 
@@ -153,9 +154,18 @@ def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
     paths apply the same invariant — and so explicit lists fail at the
     resolver instead of deferring to a later :func:`validate_lod_group` call
     that the user may never make.
+
+    Non-finite entries are rejected up front: ``NaN <= prev`` is false, so a NaN
+    would pass this check AND become ``prev``, which then makes every later
+    comparison false too — the whole tail of the ladder would go unvalidated.
     """
     prev = float("-inf")
     for i, v in enumerate(thresholds):
+        if not math.isfinite(v):
+            raise ValueError(
+                f"{source}: coverage_fractions entries must be finite numbers; "
+                f"entry {i}={v} is not"
+            )
         if v <= prev:
             raise ValueError(
                 f"{source}: coverage_fractions must be strictly increasing in "
@@ -340,10 +350,11 @@ def validate_lod_group(group: "Node") -> None:
     - any child is missing ``coverage_fraction`` in its attrs;
     - the per-child ``coverage_fraction`` values are not strictly monotonic
       increasing in insertion order;
-    - any ``coverage_fraction`` falls outside ``[0, MAX_COVERAGE_FRACTION]``
-      (the same bound the explicit-``coverage_fractions=`` resolvers enforce —
-      this is the check for a hand-built ``add_lod_group`` ladder, which does
-      not go through those resolvers).
+    - any ``coverage_fraction`` is not finite (NaN / ±inf), or falls outside
+      ``[0, MAX_COVERAGE_FRACTION]`` (the same bound the
+      explicit-``coverage_fractions=`` resolvers enforce — this is the check for
+      a hand-built ``add_lod_group`` ladder, which does not go through those
+      resolvers).
 
     Call this manually before finalizing if you want eager validation;
     otherwise the viewer falls back to silently ignoring malformed
@@ -366,6 +377,15 @@ def validate_lod_group(group: "Node") -> None:
                 "'coverage_fraction' in its attrs"
             )
         value = float(child.attrs["coverage_fraction"])
+        # Non-finite values must be rejected FIRST: every comparison below is
+        # false for NaN, so a NaN would slip past both the range check and the
+        # monotonicity one — and then become ``prev``, disabling the monotonicity
+        # check for the whole rest of the ladder. ±inf would pass monotonicity too.
+        if not math.isfinite(value):
+            raise ValueError(
+                f"LOD-group child {i} ({child.name!r}) has "
+                f"coverage_fraction={value}, which is not a finite number"
+            )
         if value < 0.0 or value > MAX_COVERAGE_FRACTION:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) has "
