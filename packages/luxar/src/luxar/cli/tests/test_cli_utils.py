@@ -159,6 +159,36 @@ class TestCheckPortAvailable:
 
         assert check_port_available(port) is True
 
+    def test_reuseaddr_is_posix_only(self) -> None:
+        """The lenient probe is gated on asyncio's own platform condition.
+
+        Off POSIX the option must NOT be set: there ``SO_REUSEADDR`` lets a bind
+        succeed over a *live* listener, so a lenient probe would call an occupied
+        port free and the real bind would then fail hard — trading a warned port
+        shift for a crash. Pinned both ways so the guard can't be "simplified"
+        away.
+        """
+        import socket
+
+        with (
+            patch("luxar.cli.utils.os.name", "posix"),
+            patch("luxar.cli.utils.sys.platform", "linux"),
+            patch("luxar.cli.utils.socket.socket") as mock_socket,
+        ):
+            mock_socket.return_value = MagicMock()
+            assert check_port_available(12345) is True
+            mock_socket.return_value.setsockopt.assert_called_once_with(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+            )
+
+        with (
+            patch("luxar.cli.utils.os.name", "nt"),
+            patch("luxar.cli.utils.socket.socket") as mock_socket,
+        ):
+            mock_socket.return_value = MagicMock()
+            assert check_port_available(12345) is True
+            mock_socket.return_value.setsockopt.assert_not_called()
+
     def test_socket_closed_on_error(self) -> None:
         """Test check_port_available closes socket after bind failure."""
         with patch("luxar.cli.utils.socket.socket") as mock_socket:
