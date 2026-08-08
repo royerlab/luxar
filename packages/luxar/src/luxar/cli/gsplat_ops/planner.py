@@ -18,7 +18,7 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
-from .fitting_fit_utils import _invocation_token
+from .fitting.fit_utils import _invocation_token
 
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import SplatDensity

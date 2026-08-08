@@ -6,7 +6,7 @@ breakpoint parsing, bytes-per-splat estimation/measurement, store-encoding
 detection, and the ``--target-ms`` streaming-knob validation/resolution.
 
 Moved from ``cli/lod.py`` (which keeps the ``lod`` command and re-imports
-these names) — six sibling ``gsplat_ops`` modules previously had to import a
+these names) — six ``gsplat_ops`` modules previously had to import a
 sub-command module to reach this shared validation surface.
 """
 
