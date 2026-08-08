@@ -294,7 +294,7 @@ def test_tree_from_substitutive_levels_stamps_coverage_fractions():
     assert cov[0] == 0.0  # coarsest = always-eligible floor
     # coarsest-first counts are [50, 200, 800]; N_finest = 800.
     assert cov[1] == pytest.approx(math.sqrt(200 / 800))
-    assert cov[2] == pytest.approx(1.0)  # finest fills the screen
+    assert cov[2] == pytest.approx(1.0)  # finest rung is anchored at 1.0
     assert cov[2] > cov[1] > cov[0]  # ascending coarsest→finest
 
 

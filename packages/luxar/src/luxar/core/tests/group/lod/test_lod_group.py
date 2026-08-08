@@ -30,9 +30,11 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.group import (
+    MAX_COVERAGE_FRACTION,
     compose_additive_under_substitutive,
     compute_lod_display_type,
     coverage_fractions,
+    partitioned_coverage_fractions,
     resolve_display_type,
     resolve_substitutive_axis,
     validate_lod_group,
@@ -230,6 +232,96 @@ class TestLODGroupValidation:
             with pytest.raises(ValueError, match="default_level=99"):
                 validate_lod_group(lod)
 
+    def test_validate_rejects_coverage_fraction_above_the_ceiling(
+        self, tmp_path
+    ) -> None:
+        """A hand-built ladder does not go through the explicit-list resolvers, so
+        ``validate_lod_group`` is the only thing enforcing the documented
+        ``[0, MAX_COVERAGE_FRACTION]`` bound.
+
+        The bound is a POLICY, not an unreachability fact: a metric above 4.0 is
+        perfectly attainable (it just needs the projected diagonal to exceed the
+        viewport diagonal, i.e. zoomed in past screen-filling). 4.0 is the point
+        past which a threshold stops expressing anything a viewport-relative
+        selector should encode, so authoring above it is refused rather than
+        silently honoured."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires")
+            for i, cf in enumerate([0.0, MAX_COVERAGE_FRACTION + 0.5]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            with pytest.raises(ValueError, match=r"must lie in \[0, 4\]"):
+                validate_lod_group(lod)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_validate_rejects_non_finite_coverage_fraction(
+        self, bad: float, tmp_path
+    ) -> None:
+        """NaN is the dangerous one: every comparison against it is false, so it
+        would pass BOTH the range check and the monotonicity check, then become
+        ``prev`` and silence the monotonicity check for the rest of the ladder —
+        yielding a store the viewer cannot select from predictably. ±inf would
+        likewise satisfy strict ascent."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires")
+            # A descending tail AFTER the bad value: with the value accepted the
+            # ladder would validate despite 0.5 < 0.9, which is the real hazard.
+            for i, cf in enumerate([0.0, bad, 0.9, 0.5]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            with pytest.raises(ValueError, match="not a finite number"):
+                validate_lod_group(lod)
+
+    def test_validate_rejects_negative_coverage_fraction(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires")
+            for i, cf in enumerate([-0.1, 1.0]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            with pytest.raises(ValueError, match=r"must lie in \[0, 4\]"):
+                validate_lod_group(lod)
+
+    def test_validate_accepts_the_partitioned_anchor_at_the_ceiling(
+        self, tmp_path
+    ) -> None:
+        """The bound is INCLUSIVE: a partition-bound ladder anchors its finest
+        exactly at MAX_COVERAGE_FRACTION, so that must validate."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires")
+            for i, cf in enumerate(partitioned_coverage_fractions([25, 100, 400])):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            validate_lod_group(lod)  # must not raise
+            assert [float(c.attrs["coverage_fraction"]) for c in lod.children] == [
+                0.0,
+                2.0,
+                MAX_COVERAGE_FRACTION,
+            ]
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Auto-derivation heuristic
@@ -281,8 +373,10 @@ class TestCoverageFractions:
 
     def test_equal_count_tail_stays_within_unit_interval(self) -> None:
         # Regression: counts [10, 1000, 1000] used to derive [0.0, 1.0, 1.1] —
-        # the upward bump violated the [0, 1]/finest==1.0 contract (and the
-        # explicit-input validators reject 1.1). Duplicates must resolve by
+        # the upward bump violated the [0, 1]/finest==1.0 contract, silently
+        # pushing the finest level's switch point PAST the anchor the derivation
+        # promises (going above 1.0 is the explicit-list escape hatch, not
+        # something a count ladder may trigger). Duplicates must resolve by
         # nudging the coarser entry DOWN instead.
         fractions = coverage_fractions([10, 1000, 1000])
         assert fractions[0] == 0.0
@@ -299,8 +393,9 @@ class TestCoverageFractions:
 
     def test_derived_values_round_trip_explicit_validator(self) -> None:
         # The derived fractions must be accepted verbatim by the explicit
-        # coverage_fractions= validator (strict-ascending, within [0, 1]) —
-        # including for the degenerate ladders the guard has to repair.
+        # coverage_fractions= validator: derived output stays in [0, 1], a strict
+        # subset of the validator's [0, MAX_COVERAGE_FRACTION] — including for
+        # the degenerate ladders the guard has to repair.
         for counts in (
             [10, 1000, 1000],  # equal-count tail (used to derive 1.1)
             [100, 100, 100],  # all-equal
@@ -609,3 +704,126 @@ class TestComposeAdditiveUnderSubstitutive:
                 suppress_reason="image_labels is set",
             )
         assert result is None
+
+
+# ────────────────────────────────────────────────────────────────────────
+# partitioned_coverage_fractions — the fills-screen anchor for tiled ladders
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestPartitionedCoverageFractions:
+    """A ladder bound to a spatial partition keeps the pre-#1361 anchor.
+
+    ``coverage_fractions`` anchors the finest at 1.0, which the viewer reaches at
+    ~a quarter of the viewport diagonal. That is right for a WHOLE-OBJECT ladder
+    and wrong for a per-tile one (a tile projects to a fraction of the object, so
+    every tile would sit on its finest level at whole-object framing). The
+    partitioned variant scales by ``MAX_COVERAGE_FRACTION`` so the finest means
+    "this node fills the viewport" — exactly what 1.0 meant before the move.
+    """
+
+    def test_is_the_derived_ladder_scaled_by_the_ceiling(self) -> None:
+        counts = [25, 100, 400]
+        assert coverage_fractions(counts) == pytest.approx([0.0, 0.5, 1.0])
+        assert partitioned_coverage_fractions(counts) == pytest.approx([0.0, 2.0, 4.0])
+
+    def test_anchors_finest_at_the_ceiling_and_coarsest_at_zero(self) -> None:
+        for counts in ([100, 400], [25, 100, 400], [1, 10, 100, 1000]):
+            out = partitioned_coverage_fractions(counts)
+            assert out[0] == 0.0
+            assert out[-1] == pytest.approx(MAX_COVERAGE_FRACTION)
+
+    def test_scaling_preserves_strict_ascent_and_the_explicit_bound(self) -> None:
+        # Including the degenerate ladders the monotonicity guard has to repair —
+        # scaling is by a power of two, so ascent and the bound both survive.
+        for counts in (
+            [10, 1000, 1000],  # equal-count tail
+            [100, 100, 100],  # all-equal
+            [10, 0, 20],  # zero-count intermediate
+            [100, 1000, 10],  # non-monotone (derives > 1 pre-cap)
+            [1, 1000, 1_000_000],  # extreme ratio
+        ):
+            out = partitioned_coverage_fractions(counts)
+            assert all(out[i] > out[i - 1] for i in range(1, len(out))), counts
+            assert all(0.0 <= f <= MAX_COVERAGE_FRACTION for f in out), counts
+
+    def test_single_level_is_just_the_floor(self) -> None:
+        assert partitioned_coverage_fractions([42]) == [0.0]
+
+    def test_output_round_trips_through_the_explicit_validator(self) -> None:
+        # The whole point of raising the explicit bound to MAX_COVERAGE_FRACTION:
+        # a partition-bound ladder must be expressible as an explicit list.
+        derived = partitioned_coverage_fractions([25, 100, 400])
+        resolved = resolve_substitutive_axis({"coverage_fractions": derived}, "Points")
+        assert resolved is not None
+        assert resolved["coverage_fractions"] == pytest.approx(derived)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_explicit_list_rejects_non_finite_entries(self, bad: float) -> None:
+        """The shared strict-ascent check is the only gate on an explicit list, and
+        ``bad <= prev`` is false for NaN — so without an explicit finite test a NaN
+        entry would be accepted and would then silence the ascent check for every
+        entry after it (here the descending 0.9 → 0.5 tail)."""
+        with pytest.raises(ValueError, match="finite"):
+            resolve_substitutive_axis(
+                {"coverage_fractions": [0.0, bad, 0.9, 0.5]}, "Points"
+            )
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Cross-language constant lock
+# ────────────────────────────────────────────────────────────────────────
+
+
+def test_max_coverage_fraction_matches_the_viewer_fill_factor() -> None:
+    """``MAX_COVERAGE_FRACTION`` must stay ``1 / FILL_FACTOR``.
+
+    The viewer compares every ``coverage_fraction`` against
+    ``projectedDiagonalPx / (FILL_FACTOR * viewportDiagonalPx)``, so a
+    screen-filling object produces a metric of exactly ``1 / FILL_FACTOR`` — the
+    largest value an authored threshold can usefully take. The two constants live
+    in different languages with no build-time link, so this test IS the link:
+    it parses the TypeScript source. Prose comments on both sides are not enough.
+    """
+    import re
+    from pathlib import Path
+
+    from luxar.core.group.lod import group as lod_group_module
+
+    # Walk up from luxar/core/group/lod/group.py to the repo root (the ancestor
+    # holding packages/luxar-viewer) rather than hard-coding a parent depth, which
+    # a package move would silently break.
+    rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
+    start = Path(lod_group_module.__file__).resolve()
+    registry = next(
+        (parent / rel for parent in start.parents if (parent / rel).is_file()),
+        None,
+    )
+    assert registry is not None, (
+        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
+        "update this test — do NOT delete it: it is the only link keeping "
+        "MAX_COVERAGE_FRACTION and the viewer's FILL_FACTOR reciprocal."
+    )
+    source = registry.read_text(encoding="utf-8")
+    # Tolerates `export const`, plain `const`, and an optional type annotation.
+    match = re.search(
+        r"^\s*(?:export\s+)?const\s+FILL_FACTOR\s*(?::\s*number\s*)?=\s*"
+        r"([0-9]*\.?[0-9]+)\s*;",
+        source,
+        re.MULTILINE,
+    )
+    assert match is not None, (
+        f"no `const FILL_FACTOR = <number>;` declaration found in {registry}. "
+        "If it was renamed or computed, update this test — do NOT delete it."
+    )
+    fill_factor = float(match.group(1))
+    assert fill_factor > 0.0, f"FILL_FACTOR must be positive, read {fill_factor}"
+    assert MAX_COVERAGE_FRACTION == pytest.approx(1.0 / fill_factor), (
+        f"MAX_COVERAGE_FRACTION ({MAX_COVERAGE_FRACTION}) must equal "
+        f"1 / FILL_FACTOR (1 / {fill_factor} = {1.0 / fill_factor}). These two "
+        "constants are one decision expressed twice: FILL_FACTOR anchors the "
+        "viewer's coverage metric and MAX_COVERAGE_FRACTION bounds what a scene "
+        f"author may write. Change BOTH — {registry} and the constant in "
+        "luxar/core/group/lod/group.py — or the bound stops meaning "
+        "'may be required to fill the screen, at most'."
+    )
