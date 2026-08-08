@@ -74,6 +74,12 @@ type ScenarioSpec =
       /** Lightweight zarr URL used to bootstrap the viewer before injection. */
       bootstrapUrl: string;
       count: number;
+      /** Per-endpoint width for every segment (default 1.0). */
+      width?: number;
+      /** Random-walk step as a fraction of bounds (default 0.01). */
+      stepScale?: number;
+      /** Max per-step turning angle (radians) — smooth-walk variant. */
+      turnAngle?: number;
     };
 
 const SCENARIOS: ScenarioSpec[] = [
@@ -96,10 +102,49 @@ const SCENARIOS: ScenarioSpec[] = [
     bootstrapUrl: `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`,
     count: 10_000_000,
   },
+  // The two #1352 fill-regime scenarios: segments much WIDER than they
+  // are long (drawn half-width = 2 × width texel = 6 world units vs
+  // ~1-unit steps), which is the worst case for footprint-area cost.
+  // The SMOOTH variant (gentle ≤ ~14°/step turns) is the realistic
+  // thick-streamline proxy; the NOISE variant turns ~90° at every
+  // vertex — adversarial for any join-aware renderer, and measured 4-5×
+  // more expensive than smooth on the G0 spike's volumetric primitive.
+  {
+    type: 'synthetic-lines',
+    id: 'synthetic-lines-thick-smooth',
+    label: 'synthetic thick smooth curves, 2 M segments (fill bound)',
+    bootstrapUrl: `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`,
+    count: 2_000_000,
+    width: 3.0,
+    turnAngle: 0.25,
+  },
+  {
+    type: 'synthetic-lines',
+    id: 'synthetic-lines-thick-noise',
+    label: 'synthetic thick 90°-noise walk, 2 M segments (fill bound, adversarial joins)',
+    bootstrapUrl: `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`,
+    count: 2_000_000,
+    width: 3.0,
+  },
 ];
 
 const BACKENDS = ['webgl', 'webgpu'] as const;
 type Backend = (typeof BACKENDS)[number];
+
+/**
+ * Line-primitive axis (#1352): comma-separated list of `?linePrimitive=`
+ * values to cross with every scenario × backend, e.g.
+ * `LUXAR_PERF_LINE_PRIMITIVES=default,volumetric` for the quad-vs-
+ * volumetric A/B. The sentinel `default` omits the URL parameter
+ * entirely (today's shipping primitive), so the axis is a no-op until a
+ * toggle exists — and stays harmless if one never does. Non-default
+ * primitives are baked into the scenarioId (`<id>-<primitive>`) so
+ * `perf-diff.mjs` keys both arms separately.
+ */
+const LINE_PRIMITIVES = (process.env.LUXAR_PERF_LINE_PRIMITIVES ?? 'default')
+  .split(',')
+  .map((p) => p.trim())
+  .filter((p) => p.length > 0);
 
 const SAMPLE_WINDOW_MS = 3_000;
 // Warmup is small + time-capped so very slow scenes (millions of
@@ -213,10 +258,13 @@ async function urlExists(url: string): Promise<boolean> {
 async function measureScenario(
   page: Page,
   scn: ScenarioSpec,
-  backend: Backend
+  backend: Backend,
+  primitive = 'default'
 ): Promise<ScenarioResult> {
-  const scenarioId = scn.id;
-  const scenarioLabel = scn.label;
+  const scenarioId = primitive === 'default' ? scn.id : `${scn.id}-${primitive}`;
+  const scenarioLabel =
+    primitive === 'default' ? scn.label : `${scn.label} [linePrimitive=${primitive}]`;
+  const primitiveParam = primitive === 'default' ? '' : `&linePrimitive=${primitive}`;
   const notes: string[] = [];
   // `?perf-timestamp` opts WebGPURenderer into `{trackTimestamp: true}`
   // so we can read per-frame GPU duration via
@@ -231,8 +279,8 @@ async function measureScenario(
   // measureScenario try/catch upstream.
   const navUrl =
     scn.type === 'zarr'
-      ? `/?src=${scn.url}&renderer=${backend}&debug&perf-timestamp`
-      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perf-timestamp`;
+      ? `/?src=${scn.url}&renderer=${backend}&debug&perf-timestamp${primitiveParam}`
+      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perf-timestamp${primitiveParam}`;
   await page.goto(navUrl, { timeout: 300_000 });
   await waitForLuxarReady(page, 120_000);
 
@@ -248,45 +296,54 @@ async function measureScenario(
   // 10M scenario the bootstrap is small enough to be in the noise,
   // but cheap to fix and makes smaller synthetic counts meaningful.
   if (scn.type === 'synthetic-lines') {
-    await page.evaluate(async (count: number) => {
-      const dbg = (
-        window as unknown as {
-          __luxarDebug?: {
-            injectSyntheticScene?: (spec: { type: 'lines'; count: number }) => Promise<unknown>;
-            app?: {
-              sceneManager?: {
-                scene?: {
-                  traverse?: (cb: (o: unknown) => void) => void;
+    await page.evaluate(
+      async (spec: { count: number; width?: number; stepScale?: number; turnAngle?: number }) => {
+        const dbg = (
+          window as unknown as {
+            __luxarDebug?: {
+              injectSyntheticScene?: (spec: {
+                type: 'lines';
+                count: number;
+                width?: number;
+                stepScale?: number;
+                turnAngle?: number;
+              }) => Promise<unknown>;
+              app?: {
+                sceneManager?: {
+                  scene?: {
+                    traverse?: (cb: (o: unknown) => void) => void;
+                  };
                 };
               };
             };
+          }
+        ).__luxarDebug;
+        if (!dbg?.injectSyntheticScene) {
+          throw new Error(
+            'synthetic scenario requires __luxarDebug.injectSyntheticScene (added in F2)'
+          );
+        }
+        // Hide every existing line node BEFORE injection so the
+        // synthetic mesh is the only line geometry rendered. Hiding
+        // (vs `scene.remove`) keeps the loader's bookkeeping intact —
+        // the bootstrap dataset still owns its uploaded buffers, just
+        // doesn't render.
+        dbg?.app?.sceneManager?.scene?.traverse?.((obj: unknown) => {
+          const o = obj as {
+            userData?: { nodeType?: string; synthetic?: boolean };
+            visible?: boolean;
           };
-        }
-      ).__luxarDebug;
-      if (!dbg?.injectSyntheticScene) {
-        throw new Error(
-          'synthetic scenario requires __luxarDebug.injectSyntheticScene (added in F2)'
-        );
-      }
-      // Hide every existing line node BEFORE injection so the
-      // synthetic mesh is the only line geometry rendered. Hiding
-      // (vs `scene.remove`) keeps the loader's bookkeeping intact —
-      // the bootstrap dataset still owns its uploaded buffers, just
-      // doesn't render.
-      dbg?.app?.sceneManager?.scene?.traverse?.((obj: unknown) => {
-        const o = obj as {
-          userData?: { nodeType?: string; synthetic?: boolean };
-          visible?: boolean;
-        };
-        if (o.userData?.nodeType === 'lines' && o.userData?.synthetic !== true) {
-          o.visible = false;
-        }
-      });
-      await dbg.injectSyntheticScene({ type: 'lines', count });
-      // Yield one rAF so the renderer has a chance to upload the
-      // attribute buffers before the bench's first measurement frame.
-      await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    }, scn.count);
+          if (o.userData?.nodeType === 'lines' && o.userData?.synthetic !== true) {
+            o.visible = false;
+          }
+        });
+        await dbg.injectSyntheticScene({ type: 'lines', ...spec });
+        // Yield one rAF so the renderer has a chance to upload the
+        // attribute buffers before the bench's first measurement frame.
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      },
+      { count: scn.count, width: scn.width, stepScale: scn.stepScale, turnAngle: scn.turnAngle }
+    );
   }
 
   // Probe the active backend and visible segment count up front so a
@@ -595,51 +652,53 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
       continue;
     }
     for (const backend of BACKENDS) {
-      // Resilience: huge scenes can lose the WebGPU device or trip
-      // nav timeouts. A single failing scenario should not block the
-      // rest of the bench or, more importantly, the JSON write at the
-      // end. Wrap each measurement in try/catch and synthesize a
-      // skipped result on failure.
-      let result: ScenarioResult;
-      try {
-        result = await measureScenario(page, scn, backend);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // Truncate the stack trace — long Playwright error messages
-        // make the JSON unwieldy.
-        const shortMsg = msg.split('\n').slice(0, 3).join(' | ');
-        result = {
-          scenarioId: scn.id,
-          scenarioLabel: scn.label,
-          backend,
-          actualApi: null,
-          isWebGLBackend: false,
-          visibleSegments: 0,
-          frameMs: null,
-          postSettleFrameMs: null,
-          gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
-          notes: [`measurement threw: ${shortMsg}`],
-          skipped: true,
-          skipReason: 'measurement error',
-        };
-      }
-      scenarios.push(result);
+      for (const primitive of LINE_PRIMITIVES) {
+        // Resilience: huge scenes can lose the WebGPU device or trip
+        // nav timeouts. A single failing scenario should not block the
+        // rest of the bench or, more importantly, the JSON write at the
+        // end. Wrap each measurement in try/catch and synthesize a
+        // skipped result on failure.
+        let result: ScenarioResult;
+        try {
+          result = await measureScenario(page, scn, backend, primitive);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Truncate the stack trace — long Playwright error messages
+          // make the JSON unwieldy.
+          const shortMsg = msg.split('\n').slice(0, 3).join(' | ');
+          result = {
+            scenarioId: primitive === 'default' ? scn.id : `${scn.id}-${primitive}`,
+            scenarioLabel: scn.label,
+            backend,
+            actualApi: null,
+            isWebGLBackend: false,
+            visibleSegments: 0,
+            frameMs: null,
+            postSettleFrameMs: null,
+            gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
+            notes: [`measurement threw: ${shortMsg}`],
+            skipped: true,
+            skipReason: 'measurement error',
+          };
+        }
+        scenarios.push(result);
 
-      const fm = result.frameMs;
-      const summary = result.skipped
-        ? `SKIP (${result.skipReason})`
-        : fm
-          ? `median=${fm.median.toFixed(2)}ms p95=${fm.p95.toFixed(2)}ms p99=${fm.p99.toFixed(2)}ms mean=${fm.mean.toFixed(2)}ms count=${fm.count}`
-          : 'no samples';
-      const gpuSummary =
-        result.gpu.supported && result.gpu.medianMs !== null
-          ? ` gpu_median=${result.gpu.medianMs.toFixed(2)}ms (n=${result.gpu.count})`
-          : '';
-      console.log(
-        `  [${scn.id}/${backend} → ${result.actualApi ?? '?'}${
-          result.isWebGLBackend ? ' (webgl-bk)' : ''
-        }] segs=${result.visibleSegments} ${summary}${gpuSummary}`
-      );
+        const fm = result.frameMs;
+        const summary = result.skipped
+          ? `SKIP (${result.skipReason})`
+          : fm
+            ? `median=${fm.median.toFixed(2)}ms p95=${fm.p95.toFixed(2)}ms p99=${fm.p99.toFixed(2)}ms mean=${fm.mean.toFixed(2)}ms count=${fm.count}`
+            : 'no samples';
+        const gpuSummary =
+          result.gpu.supported && result.gpu.medianMs !== null
+            ? ` gpu_median=${result.gpu.medianMs.toFixed(2)}ms (n=${result.gpu.count})`
+            : '';
+        console.log(
+          `  [${result.scenarioId}/${backend} → ${result.actualApi ?? '?'}${
+            result.isWebGLBackend ? ' (webgl-bk)' : ''
+          }] segs=${result.visibleSegments} ${summary}${gpuSummary}`
+        );
+      }
     }
   }
 
@@ -691,18 +750,23 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   // must not pass when it fails on every backend.
   const isUnreachable = (s: ScenarioResult): boolean =>
     s.skipped && s.skipReason === 'dataset not reachable';
+  // A scenario row's id carries a `-<primitive>` suffix on the non-default
+  // arms of the LINE_PRIMITIVES axis, so ownership is prefix-based.
+  const rowBelongsTo = (rowId: string, scnId: string): boolean =>
+    rowId === scnId || LINE_PRIMITIVES.some((p) => p !== 'default' && rowId === `${scnId}-${p}`);
   const successfulIds = new Set(
     scenarios.filter((s) => !s.skipped && s.frameMs !== null).map((s) => s.scenarioId)
   );
   const failedScenarios = SCENARIOS.filter((scn) => {
-    if (successfulIds.has(scn.id)) return false;
+    if (LINE_PRIMITIVES.some((p) => successfulIds.has(p === 'default' ? scn.id : `${scn.id}-${p}`)))
+      return false;
     // Every row for this scenario was unreachable → environment skip,
     // not a failure.
-    return !scenarios.filter((s) => s.scenarioId === scn.id).every(isUnreachable);
+    return !scenarios.filter((s) => rowBelongsTo(s.scenarioId, scn.id)).every(isUnreachable);
   });
   if (failedScenarios.length > 0) {
     const skipNotes = scenarios
-      .filter((s) => failedScenarios.some((scn) => scn.id === s.scenarioId))
+      .filter((s) => failedScenarios.some((scn) => rowBelongsTo(s.scenarioId, scn.id)))
       .map((s) => `  - ${s.scenarioId}/${s.backend}: ${s.skipReason ?? 'unknown'}`)
       .join('\n');
     throw new Error(
