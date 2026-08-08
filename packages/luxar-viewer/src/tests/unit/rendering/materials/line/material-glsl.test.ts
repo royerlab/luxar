@@ -7,6 +7,15 @@ import {
   getLineTexture,
 } from '../../../../../rendering/line-geometry';
 import { LINE_FLOATS_PER_SEGMENT } from '../../../../../rendering/element-texture-layout';
+import {
+  GLSL_LINE_JOINT_CODE,
+  GLSL_LINE_JOIN,
+  LINE_JOIN_MIN_HALF_WIDTH,
+} from '../../../../../rendering/materials/_shared/glsl-lib';
+import {
+  LINE_PICK_VERTEX_SHADER,
+  LINE_PICK_FRAGMENT_SHADER,
+} from '../../../../../rendering/picking/line/shaders';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -94,6 +103,46 @@ describe('LineMaterial', () => {
   });
 
   describe('shaders', () => {
+    it('carries no backtick in any line GLSL source (template-literal guard)', () => {
+      // The GLSL sources are template literals, so a single backtick anywhere in
+      // them -- including inside a comment, where it reads as ordinary prose
+      // quoting -- closes the string early and turns the rest of the module into
+      // a parse error. It is a genuinely expensive mistake to diagnose: Vite
+      // reports it far from the cause, and a stale dev-server cache keeps serving
+      // the broken module afterwards. It happened four times while this file was
+      // being written, so pin every line GLSL source, including the shared block
+      // and the picking pair (whose sources are assembled the same way).
+      const material = new LineMaterial();
+      const sources: Array<[string, string]> = [
+        ['visual vertex', material.vertexShader],
+        ['visual fragment', material.fragmentShader],
+        ['shared joint-code block', GLSL_LINE_JOINT_CODE],
+        ['shared join-geometry block', GLSL_LINE_JOIN],
+        ['pick vertex', LINE_PICK_VERTEX_SHADER],
+        ['pick fragment', LINE_PICK_FRAGMENT_SHADER],
+      ];
+      for (const [label, src] of sources) {
+        expect(src, `${label} must contain no backtick`).not.toContain('`');
+        expect(src.length, `${label} should be non-empty`).toBeGreaterThan(0);
+      }
+    });
+
+    it('emits the width gate from the SHARED constant, not a second literal', () => {
+      // The threshold used to be hardcoded in the GLSL string while the TSL twin
+      // read a named constant — two sources of truth for one gate. It is now
+      // interpolated from LINE_JOIN_MIN_HALF_WIDTH, which the TSL side imports
+      // from the same module, so the two backends cannot drift. Pinned because a
+      // template interpolation fails SILENTLY: a wrong expression yields
+      // "[object Object]" or "undefined" inside the shader body, which compiles
+      // to a link error far from the cause.
+      expect(GLSL_LINE_JOIN).toContain(
+        `float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};`
+      );
+      expect(GLSL_LINE_JOIN).toContain('float joinMinHalfWidth = 2.0;');
+      expect(GLSL_LINE_JOIN).not.toContain('object Object');
+      expect(GLSL_LINE_JOIN).not.toContain('undefined');
+    });
+
     it('should have correct vertex shader with screen-space expansion', () => {
       const material = new LineMaterial();
 
@@ -111,8 +160,8 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('vec3 aEndPos = lineT1.xyz');
       expect(material.vertexShader).toContain('float aEndWidth = lineT1.w');
       expect(material.vertexShader).toContain('float aSegmentLength = lineT4.x');
-      expect(material.vertexShader).toContain('float aStartCapSuppress = lineT4.y');
-      expect(material.vertexShader).toContain('float aEndCapSuppress = lineT4.z');
+      expect(material.vertexShader).toContain('float aStartJointCode = lineT4.y');
+      expect(material.vertexShader).toContain('float aEndJointCode = lineT4.z');
       // The interleaved era's per-instance attribute declarations are gone.
       expect(material.vertexShader).not.toContain('in vec3 aStartPos;');
       expect(material.vertexShader).not.toContain('in vec3 aStartColor;');
@@ -134,9 +183,12 @@ describe('LineMaterial', () => {
 
       // Check for screen-space expansion with aspect ratio handling
       expect(material.vertexShader).toContain('perpendicular');
-      // pixel width is now `clampedPixelWidth`/`rawPixelWidth`/`vPixelWidth`
+      // pixel width is `rawPixelWidth` (what `vPixelWidth` / `vWidthFade`
+      // carry) plus the two per-END clamps the quad actually expands by,
       // because the vertex shader applies a max-pixel-width clamp.
-      expect(material.vertexShader).toContain('clampedPixelWidth');
+      expect(material.vertexShader).toContain('rawPixelWidth');
+      expect(material.vertexShader).toContain('startEndPixelWidth');
+      expect(material.vertexShader).toContain('endEndPixelWidth');
       // `pixelDir` is computed directly from NDC endpoints — `pixelStart`
       // / `pixelEnd` no longer exist (the +0.5 bias cancels under
       // subtraction).
@@ -184,6 +236,53 @@ describe('LineMaterial', () => {
       // Check for discard outside line width
       expect(material.fragmentShader).toContain('discard');
       expect(material.fragmentShader).toContain('p >= 1.0');
+    });
+
+    it('#790 the join block orients the partner leg on atEnd and guards BOTH far endpoints', () => {
+      // Orienting on `partnerSharesItsStart` yields the PARTNER's traversal
+      // direction, which is the negation of what an END-END or START-START
+      // joint needs: a collinear joint then reads turn = -1, the miter limit
+      // rejects it, and clamp(turn, 0, 1) keeps the soft cap (#780 dimming).
+      // The numeric pin is tests/unit/rendering/line-join-math.test.ts; this
+      // ties the shader text to that mirror.
+      expect(GLSL_LINE_JOIN).toContain(
+        'vec2 partnerDelta = atEnd ? (farPx.xy - sharedPx) : (sharedPx - farPx.xy);'
+      );
+      expect(GLSL_LINE_JOIN).not.toMatch(/partnerDelta\s*=\s*partnerSharesItsStart/);
+      // ...and the near-plane guard is the CONJUNCTION over both far
+      // endpoints, so the two sides test the same pair and branch alike.
+      expect(GLSL_LINE_JOIN).toContain('float selfFarDepth');
+      expect(GLSL_LINE_JOIN).toContain('farPx.z >= nearCull && selfFarDepth >= nearCull');
+    });
+
+    it('#790 both vertex stages hand luxarLineJoin each END its own segment-constant width', () => {
+      // The join writes two `flat` cap varyings, so a per-VERTEX width lets the
+      // t=0 and t=1 corners of a tapered / foreshortened segment straddle the
+      // 2 px gate and disagree — resolved from the provoking vertex alone,
+      // which WebGL takes from the last vertex and WGSL from the first.
+      const material = new LineMaterial();
+      const stages: Array<[string, string]> = [
+        ['visual vertex', material.vertexShader],
+        ['pick vertex', LINE_PICK_VERTEX_SHADER],
+      ];
+      for (const [label, src] of stages) {
+        expect(src, `${label}: start end`).toContain(
+          'lineDir, pixelLen, startEndPixelWidth, endDepth, nearCull'
+        );
+        expect(src, `${label}: end end`).toContain(
+          'lineDir, pixelLen, endEndPixelWidth, startDepth, nearCull'
+        );
+        // Each width comes from the shared per-END helper...
+        expect(src, `${label}: shared end-width helper`).toContain(
+          'luxarLineEndPixelWidth(mix(startW, endW, tA), mvStart.z, nearCull)'
+        );
+        expect(src, `${label}: shared end-width helper`).toContain(
+          'luxarLineEndPixelWidth(mix(startW, endW, tB), mvEnd.z, nearCull)'
+        );
+        // ...and the per-VERTEX clamped width is gone entirely, so nothing can
+        // route it into the join.
+        expect(src, `${label}: no per-vertex width`).not.toContain('clampedPixelWidth');
+      }
     });
   });
 
@@ -443,8 +542,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0, 1.0]),
       endSharpness: new Float32Array([1.0, 1.0]),
       segmentLengths: new Float32Array([1.0, 1.414]),
-      startCapSuppression: new Float32Array([0, 0]),
-      endCapSuppression: new Float32Array([0, 0]),
+      startJointCode: new Float32Array([0, 0]),
+      endJointCode: new Float32Array([0, 0]),
       segmentCount: 2,
     };
 
@@ -485,7 +584,7 @@ describe('createInstancedLinesMesh', () => {
     expect(Array.from(data.subarray(o + 8, o + 12))).toEqual([0, 1, 0, 1]);
     // texel 3: endColor.rgb, endSharpness
     expect(Array.from(data.subarray(o + 12, o + 16))).toEqual([0, 1, 0, 1]);
-    // texel 4: segmentLength, startCapSuppression, endCapSuppression
+    // texel 4: segmentLength, startJointCode, endJointCode
     expect(data[o + 16]).toBeCloseTo(1.414, 5);
     expect(data[o + 17]).toBe(0);
     expect(data[o + 18]).toBe(0);
@@ -505,8 +604,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0]),
       endSharpness: new Float32Array([1.0]),
       segmentLengths: new Float32Array([17.32]),
-      startCapSuppression: new Float32Array([0]),
-      endCapSuppression: new Float32Array([0]),
+      startJointCode: new Float32Array([0]),
+      endJointCode: new Float32Array([0]),
       segmentCount: 1,
     };
 
@@ -535,8 +634,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0]),
       endSharpness: new Float32Array([1.0]),
       segmentLengths: new Float32Array([10]),
-      startCapSuppression: new Float32Array([0]),
-      endCapSuppression: new Float32Array([0]),
+      startJointCode: new Float32Array([0]),
+      endJointCode: new Float32Array([0]),
       segmentCount: 1,
     };
 

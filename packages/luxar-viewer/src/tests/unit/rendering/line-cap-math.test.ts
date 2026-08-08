@@ -26,8 +26,8 @@ function capFactor(
   t: number,
   segmentLength: number,
   width: number,
-  startCapSuppression: number | boolean,
-  endCapSuppression: number | boolean
+  startJointCode: number | boolean,
+  endJointCode: number | boolean
 ): number {
   const distFromStart = t * segmentLength;
   const distFromEnd = (1 - t) * segmentLength;
@@ -43,9 +43,8 @@ function capFactor(
   // shorter than 2*width) with unequal suppressions; a residual step can
   // remain ACROSS a joint seam for sub-width segments — see the #796
   // tests below.
-  const startCap =
-    0.5 + 0.5 * startRamp + (1.0 - (0.5 + 0.5 * startRamp)) * Number(startCapSuppression);
-  const endCap = 0.5 + 0.5 * endRamp + (1.0 - (0.5 + 0.5 * endRamp)) * Number(endCapSuppression);
+  const startCap = 0.5 + 0.5 * startRamp + (1.0 - (0.5 + 0.5 * startRamp)) * Number(startJointCode);
+  const endCap = 0.5 + 0.5 * endRamp + (1.0 - (0.5 + 0.5 * endRamp)) * Number(endJointCode);
   return Math.min(startCap, endCap);
 }
 
@@ -101,7 +100,7 @@ describe('line cap math (fragment-side)', () => {
   // The `0.5` endpoint dip is only correct where a neighbouring quad overlaps
   // and adds the missing half back. Collinear neighbours TILE (the quad spans
   // exactly [start, end]), so an unsuppressed interior joint reads as a dark
-  // notch of axial length 2*width bottoming out at 0.5. `compute_cap_suppression`
+  // notch of axial length 2*width bottoming out at 0.5. `compute_joint_codes`
   // hands the shader a per-endpoint suppression scalar; these pin how the
   // fragment stage consumes it.
 
