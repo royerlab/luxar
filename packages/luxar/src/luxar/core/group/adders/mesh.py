@@ -501,8 +501,36 @@ def add_mesh_substitutive_lod_wrapper_impl(
     coarse to reduce — the ladder is abandoned and a plain leaf is written, which
     is the same degenerate-path behaviour the Points wrapper has.
     """
+    from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
     from ....mesh.decimate import decimate_cluster
     from ..lod.group import coverage_fractions, resolve_coarsen_dims
+
+    # Fail-fast pre-write gate, part two: the ARRAYS, run BEFORE any decimation
+    # and before `add_lod_group` creates the group. The adder already ran the
+    # child's attr/extend_to_all gates on the way in; these are the rest of what
+    # a child write checks, and without them a malformed channel was refused
+    # only from inside a child — colours with two components, a wrong-length
+    # scalars array or a typo'd `shading` from `child_0`, a bad normals array or
+    # `labels` length from the FINEST child, which is written last. Either way
+    # the store was left holding a `kind=lod` group with no children (or with
+    # its finest one missing), where the plain-leaf path writes nothing at all.
+    #
+    # The authored arrays are the right thing to check: a level's decimated
+    # arrays are derived from them (cluster means keep the dtype, the channel
+    # count and the value range; recomputed normals are always (V, 3)), so an
+    # input the writer accepts cannot produce a level it refuses. This is also
+    # what catches a NON-FINITE scalar field, which no level can store.
+    validate_mesh_arrays(
+        vert_arr,
+        faces_arr,
+        normals=normals,
+        normal_dims=normal_dims,
+        colors=colors,
+        scalars=scalars,
+        shading=shading,
+        double_sided=double_sided,
+        labels=labels,
+    )
 
     n_vertices = int(vert_arr.shape[0])
     ndim = int(vert_arr.shape[1])
@@ -555,26 +583,6 @@ def add_mesh_substitutive_lod_wrapper_impl(
         if isinstance(scalars, np.ndarray) and scalars.shape[:1] == (n_vertices,)
         else None
     )
-
-    # Checked HERE so a non-finite field is refused BEFORE `add_lod_group` runs.
-    # The array writer refuses NaN/inf anyway ("scalars: Contains N NaN or Inf
-    # value(s)"), which is why a plain leaf fails cleanly and writes nothing —
-    # but on this path that refusal arrives from inside `child_0`, with the
-    # kind=lod group already created. The store was then left holding a CHILDLESS
-    # kind=lod node, which no viewer path can load: a ladder is resolved from its
-    # children. Cheaper here too, ahead of every decimation pass.
-    #
-    # Not conditional on a derived window: an explicit `_scalar_data_range` does
-    # not make the values writable, so gating on it only moved the same failure
-    # back to where it could not write nothing.
-    if per_vertex_scalars is not None and not bool(
-        np.all(np.isfinite(per_vertex_scalars))
-    ):
-        raise ValueError(
-            f"Mesh '{name}': scalars contain NaN or Inf, which no level can "
-            "store. Remove or replace them (e.g. np.nan_to_num) before building "
-            "a ladder."
-        )
 
     coarse: List[Any] = []
     previous = 0

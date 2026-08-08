@@ -66,11 +66,16 @@ thing it cannot carry, because the reader does not surface them. It normalizes
 `--output` to `<stem>.luxar.zarr` before every path guard, and validates the method and
 the attrs before `--overwrite` deletes anything.
 
-A non-finite scalar field is refused before the group exists. NaN/Inf is rejected by the
-array writer either way — so a plain `add_mesh` fails and writes nothing — but on the
-ladder path that refusal arrived from inside `child_0`, with `add_lod_group` already run,
-leaving a **childless `kind=lod`** node in the store: unloadable, since a ladder is
-resolved from its children. Checked up front now, ahead of every decimation pass.
+A malformed input is refused before the group exists. Every array check the writer's
+fail-fast gate runs now lives in one shared `validate_mesh_arrays`, which the ladder
+calls before it decimates anything and before `add_lod_group`. Without it the refusal
+arrived from inside whichever child first carried the bad array — a non-finite scalar
+field, two-component colours or a typo'd `shading` from `child_0`, leaving a **childless
+`kind=lod`** node; a wrong-length normals array or `labels` list from the FINEST child,
+which is written last, leaving a ladder missing its real surface. Both are stores no
+viewer path can load, where the plain-leaf path writes nothing at all. Sharing the
+function rather than repeating the checks is what keeps the two paths from drifting: the
+ladder gate IS what the child write runs.
 
 #### Tooling — the complexity limit is now enforced as a ratchet (#1379)
 
@@ -108,7 +113,6 @@ what the gate enforces for new code. The checker runs in
 `hatch run lint` / `hatch run check`, as `make check-complexity`, and — the path
 that actually gates PRs — from the Python test suite. Regenerate with
 `hatch run check-complexity --update-baseline`.
-
 
 #### CAIDA country coloring parses current organization snapshots (#1373)
 

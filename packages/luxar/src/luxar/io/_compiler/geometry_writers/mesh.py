@@ -89,6 +89,110 @@ def _mesh_authoring_warning_key(ctx: GeometryWriteCtx, path: str) -> str:
     return path
 
 
+def _validate_normal_pair(
+    normals: Any, normal_dims: Any, n_vertices: int, n_dims: int
+) -> None:
+    """Normals and their companion attr are a PAIR — each is meaningless alone.
+
+    A normal array with no ``normal_dims`` cannot be oriented (storing normals
+    against an implicit "first three dimensions" is the bug the attr exists to
+    prevent: for a ``(t, x, y, z)`` mesh those are ``(t, x, y)``), and
+    ``normal_dims`` with no normals describes nothing.
+    """
+    from ....validation.base import (
+        validate_normal_dims_for_writing,
+        validate_normals_for_writing,
+    )
+
+    if normals is not None:
+        validate_normals_for_writing(normals, n_vertices)
+        if normal_dims is None:
+            raise ValueError(
+                "normal_dims is required when normals are supplied: it names "
+                "which three dimension indices the 3-component normals describe. "
+                "Pass e.g. normal_dims=(0, 1, 2)."
+            )
+        validate_normal_dims_for_writing(normal_dims, n_dims)
+    elif normal_dims is not None:
+        raise ValueError(
+            "normal_dims was supplied without normals. It names the dimensions "
+            "that a normals array describes, so it has no meaning on its own — "
+            "pass normals=..., or drop normal_dims."
+        )
+
+
+def validate_mesh_arrays(
+    vertices: Any,
+    faces: Any,
+    *,
+    normals: Any = None,
+    normal_dims: Any = None,
+    colors: Any = None,
+    scalars: Any = None,
+    shading: Optional[str] = None,
+    double_sided: bool = True,
+    labels: Any = None,
+) -> Tuple[int, int]:
+    """Validate a mesh's arrays and channels. Pure — reads nothing, writes nothing.
+
+    Steps 0c-0g of :func:`write_mesh`'s fail-fast gate, factored out because a
+    SECOND caller needs exactly them and nothing else:
+    ``add_mesh(substitutive_lod=…)`` runs this before it decimates anything and
+    before ``add_lod_group`` creates the zarr group. Without that, a malformed
+    optional channel — colours with two components, a wrong-length normals
+    array, a typo'd ``shading`` — was refused only from inside a CHILD write,
+    with the ``kind=lod`` group already on disk, leaving a childless (or
+    finest-child-less) ladder that no viewer path can load. The plain-leaf path
+    writes nothing in the same situation, and the two must agree.
+
+    Sharing the function rather than repeating the checks is what keeps that
+    promise true as the rules change: the ladder gate cannot drift from what the
+    child write accepts, because it IS what the child write runs.
+
+    Returns:
+        ``(n_vertices, n_dims)``, since the caller needs both and only the
+        vertex validator can produce them.
+    """
+    from ....validation.base import (
+        validate_colors_for_writing,
+        validate_faces_for_writing,
+        validate_labels_for_writing,
+        validate_positions_for_writing,
+        validate_vertices_for_writing,
+    )
+
+    # Vertices shape/finiteness (shared coordinate path), then the mesh-only
+    # vertex-count ceiling. Order matters: the cap reads shape[0], which is only
+    # meaningful once the array is known to be 2D.
+    n_vertices, n_dims = validate_positions_for_writing(vertices, context="vertices")
+    validate_vertices_for_writing(vertices)
+    # Faces: layout, integer dtype, and both index bounds. Runs before the
+    # writer's uint32 cast, which is what makes the bounds check meaningful.
+    validate_faces_for_writing(faces, n_vertices)
+    _validate_normal_pair(normals, normal_dims, n_vertices, n_dims)
+    # Shading is metadata the viewer acts on, so a typo must not reach zarr: an
+    # unrecognised value would silently take the stored-normal path.
+    if shading is not None and shading not in ("smooth", "flat"):
+        raise ValueError(f"shading must be 'smooth' or 'flat', got {shading!r}")
+    if not isinstance(double_sided, bool):
+        raise ValueError(
+            f"double_sided must be a bool, got {type(double_sided).__name__}"
+        )
+    # Optional per-vertex channels.
+    if colors is not None:
+        if isinstance(colors, np.ndarray):
+            # channels=(3, 4): the optional 4th component is per-vertex opacity,
+            # load-bearing in every blending mode — mirrors points/lines.
+            validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
+        elif isinstance(colors, (list, tuple)):
+            validate_broadcast_color(colors, "colors")
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_vertices)
+    if labels is not None:
+        validate_labels_for_writing(labels, n_vertices)
+    return n_vertices, n_dims
+
+
 def write_mesh(
     ctx: GeometryWriteCtx,
     path: NodePath,
@@ -108,15 +212,7 @@ def write_mesh(
 
     Returns the node metadata; the caller records it in the metadata cache.
     """
-    from ....validation.base import (
-        validate_colors_for_writing,
-        validate_faces_for_writing,
-        validate_labels_for_writing,
-        validate_normal_dims_for_writing,
-        validate_normals_for_writing,
-        validate_positions_for_writing,
-        validate_vertices_for_writing,
-    )
+    from ....validation.base import validate_colors_for_writing
 
     # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group is
     # created and before any array lands on disk, so an invalid input cannot
@@ -138,54 +234,20 @@ def write_mesh(
     # 0b. Node path: an empty path would resolve require_group("") to the scene
     # ROOT and clobber it.
     path = validate_node_path(path)
-    # 0c. Vertices shape/finiteness (shared coordinate path), then the mesh-only
-    # vertex-count ceiling. Order matters: the cap reads shape[0], which is only
-    # meaningful once the array is known to be 2D.
-    n_vertices, n_dims = validate_positions_for_writing(vertices, context="vertices")
-    validate_vertices_for_writing(vertices)
-    # 0d. Faces: layout, integer dtype, and both index bounds. Runs before the
-    # uint32 cast below, which is what makes the bounds check meaningful.
-    validate_faces_for_writing(faces, n_vertices)
-    # 0e. Normals and their companion attr are a PAIR — each is meaningless
-    # without the other. A normal array with no normal_dims cannot be oriented
-    # (storing normals against an implicit "first three dimensions" is the bug
-    # the attr exists to prevent: for a (t, x, y, z) mesh those are (t, x, y)),
-    # and normal_dims with no normals describes nothing.
-    if normals is not None:
-        validate_normals_for_writing(normals, n_vertices)
-        if normal_dims is None:
-            raise ValueError(
-                "normal_dims is required when normals are supplied: it names "
-                "which three dimension indices the 3-component normals describe. "
-                "Pass e.g. normal_dims=(0, 1, 2)."
-            )
-        validate_normal_dims_for_writing(normal_dims, n_dims)
-    elif normal_dims is not None:
-        raise ValueError(
-            "normal_dims was supplied without normals. It names the dimensions "
-            "that a normals array describes, so it has no meaning on its own — "
-            "pass normals=..., or drop normal_dims."
-        )
-    # 0f. Shading is metadata the viewer acts on, so a typo must not reach zarr:
-    # an unrecognised value would silently take the stored-normal path.
-    if shading is not None and shading not in ("smooth", "flat"):
-        raise ValueError(f"shading must be 'smooth' or 'flat', got {shading!r}")
-    if not isinstance(double_sided, bool):
-        raise ValueError(
-            f"double_sided must be a bool, got {type(double_sided).__name__}"
-        )
-    # 0g. Optional per-vertex channels.
-    if colors is not None:
-        if isinstance(colors, np.ndarray):
-            # channels=(3, 4): the optional 4th component is per-vertex opacity,
-            # load-bearing in every blending mode — mirrors points/lines.
-            validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
-        elif isinstance(colors, (list, tuple)):
-            validate_broadcast_color(colors, "colors")
-    if scalars is not None:
-        validate_scalars_preflight(scalars, n_vertices)
-    if labels is not None:
-        validate_labels_for_writing(labels, n_vertices)
+    # 0c-0g. Vertices, faces, and every optional channel — one shared gate,
+    # because `add_mesh(substitutive_lod=…)` runs the very same function before
+    # it creates the `kind=lod` group. See :func:`validate_mesh_arrays`.
+    n_vertices, n_dims = validate_mesh_arrays(
+        vertices,
+        faces,
+        normals=normals,
+        normal_dims=normal_dims,
+        colors=colors,
+        scalars=scalars,
+        shading=shading,
+        double_sided=double_sided,
+        labels=labels,
+    )
     # 0h. Transform / nd_transform normalization is pure attr processing, so it
     # belongs in the gate too — and prepare_transform_attrs is NOT idempotent
     # (it transposes the matrix), so it must run exactly once.

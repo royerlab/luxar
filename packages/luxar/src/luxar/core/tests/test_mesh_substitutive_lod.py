@@ -381,6 +381,132 @@ class TestScalarDataRangeIsInternal:
         assert not (store / "surf").exists(), "no childless kind=lod may be left"
 
 
+def malformed_array_cases(n_vertices: int) -> List[Any]:
+    """One case per array validator: (id, add_mesh kwargs, expected message).
+
+    Sized against `octasphere(3)`, whose vertex count the tests assert.
+    """
+    rgb = np.zeros((n_vertices, 3), dtype=np.float32)
+    cases: List[Tuple[str, Dict[str, Any], str]] = [
+        ("colors_channels", {"colors": np.zeros((n_vertices, 2), np.float32)}, "3"),
+        ("colors_length", {"colors": rgb[:-1]}, "match"),
+        ("colors_uniform", {"colors": (1.0, 0.0)}, "RGB"),
+        (
+            "normals_shape",
+            {
+                "normals": np.zeros((n_vertices, 2), np.float32),
+                "normal_dims": (0, 1, 2),
+            },
+            "normals",
+        ),
+        (
+            "normals_length",
+            {
+                "normals": np.zeros((n_vertices - 1, 3), np.float32),
+                "normal_dims": (0, 1, 2),
+            },
+            "normals",
+        ),
+        ("normal_dims_alone", {"normal_dims": (0, 1, 2)}, "normal_dims"),
+        ("shading", {"shading": "gouraud"}, "shading"),
+        ("double_sided", {"double_sided": "yes"}, "double_sided"),
+        ("labels", {"labels": ["a"] * (n_vertices - 1)}, "Labels length"),
+        (
+            "scalars_length",
+            {"scalars": np.zeros(n_vertices - 1, np.float32), "colormap": "viridis"},
+            "scalars",
+        ),
+    ]
+    return [pytest.param(kwargs, message, id=id_) for id_, kwargs, message in cases]
+
+
+class TestMalformedArraysWriteNothing:
+    """Every array a child write validates must be validated before the group exists.
+
+    The ladder writes the coarse children first and the ORIGINAL surface last, so
+    a malformed input surfaced from whichever child first carried it: colours with
+    two components or a typo'd `shading` died in `child_0` (leaving a childless
+    `kind=lod` group), while a wrong-length normals array or `labels` list died in
+    the FINEST child (leaving a ladder with its real surface missing). Both are
+    stores no viewer path can load, and the plain-leaf path writes nothing at all
+    in the same situation.
+
+    Parametrized over one case per validator rather than one per channel, since
+    the fix is a shared gate: what is being pinned is that the gate runs on the
+    ladder path, for the whole set.
+    """
+
+    @pytest.mark.parametrize("kwargs, message", malformed_array_cases(258))
+    def test_a_malformed_array_leaves_no_group_behind(
+        self, tmp_path: Path, kwargs: Dict[str, Any], message: str
+    ) -> None:
+        verts, faces = octasphere(3)
+        assert len(verts) == 258, "the parametrized shapes assume this vertex count"
+        store = tmp_path / "bad.luxar.zarr"
+        with pytest.raises(ValueError, match=message):
+            with LuxarZarrCompiler(store) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_mesh("surf", verts, faces, substitutive_lod=True, **kwargs)
+        assert not (store / "surf").exists(), (
+            "a refused mesh must not leave a half-built LOD group behind"
+        )
+
+    @pytest.mark.parametrize("kwargs, message", malformed_array_cases(258))
+    def test_the_plain_leaf_refuses_it_the_same_way(
+        self, tmp_path: Path, kwargs: Dict[str, Any], message: str
+    ) -> None:
+        """The control: the ladder gate must not be stricter or laxer than a leaf.
+
+        Both paths run the same validator now, so what this pins is that the two
+        agree — a case the leaf accepts must not be refused by the ladder.
+        """
+        verts, faces = octasphere(3)
+        store = tmp_path / "leaf.luxar.zarr"
+        with pytest.raises(ValueError, match=message):
+            with LuxarZarrCompiler(store) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_mesh("surf", verts, faces, **kwargs)
+        assert not (store / "surf").exists()
+
+    def test_a_wrong_dtype_faces_array_is_refused_before_the_group(
+        self, tmp_path: Path
+    ) -> None:
+        """Float faces reached the finest child only — the coarse ones are recast.
+
+        `decimate_cluster` casts its faces to uint32, so every coarse level came
+        out valid and only the ORIGINAL array was refused, three children into the
+        write.
+        """
+        verts, faces = octasphere(3)
+        store = tmp_path / "faces.luxar.zarr"
+        with pytest.raises(ValueError, match="integer array"):
+            with LuxarZarrCompiler(store) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_mesh(
+                    "surf", verts, faces.astype(np.float32), substitutive_lod=True
+                )
+        assert not (store / "surf").exists()
+
+    def test_non_finite_vertices_say_so_instead_of_blaming_the_decimator(
+        self, tmp_path: Path
+    ) -> None:
+        """A NaN coordinate is a data problem, not a degenerate surface.
+
+        It used to be diagnosed as "decimation collapsed every triangle … the
+        input is degenerate (collinear or coincident vertices)", because a NaN
+        cell key makes every triangle collapse. Nothing wrote, so the store was
+        fine; the message sent the author looking for the wrong mistake.
+        """
+        verts, faces = octasphere(3)
+        verts = verts.copy()
+        verts[5, 1] = np.nan
+        store = tmp_path / "nan.luxar.zarr"
+        with pytest.raises(ValueError, match="vertices: Contains 1 NaN or Inf"):
+            with LuxarZarrCompiler(store) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_mesh("surf", verts, faces, substitutive_lod=True)
+
+
 class TestExtendToAll:
     """`extend_to_all=` and `substitutive_lod=` must compose.
 
