@@ -7,11 +7,13 @@ leaf?"* — a **vocabulary**. Several writer-side questions are narrower than th
 * may it back a ``kind=partition`` group's ``display_type``?
 
 Those are **capabilities**, and a type can be a perfectly valid geometry leaf
-without having them: ``mesh`` is writable but has no LOD ladder and no partition
-path — see ``docs/specs/MESH_NODE_SPEC.md`` §9. Note the LOD flavours are
-excluded for different reasons: the ADDITIVE prefix ladder assumes independent
-elements and cannot apply to a surface at all, whereas SUBSTITUTIVE levels make
-no such assumption and are missing only a producer (mesh decimation).
+without having them: ``mesh`` is writable and partitionable but has no LOD ladder
+— see ``docs/specs/MESH_NODE_SPEC.md`` §9. Note the LOD flavours are excluded for
+different reasons: the ADDITIVE prefix ladder assumes independent elements and
+cannot apply to a surface at all, whereas SUBSTITUTIVE levels make no such
+assumption and are missing only a producer (mesh decimation). Partition needed
+neither assumption — only the bookkeeping to duplicate vertices across a cut,
+which ``luxar.mesh.split`` now does.
 
 Answering a capability question with the vocabulary is how a type gets admitted
 to a code path that cannot represent it. Answering it with a hand-written tuple
@@ -50,9 +52,9 @@ GEOMETRY_CAPABILITIES: Final[dict[GeometryTypeName, GeometryCapabilities]] = {
     "points": GeometryCapabilities(lod=True, partition=True),
     "lines": GeometryCapabilities(lod=True, partition=True),
     "gsplats": GeometryCapabilities(lod=True, partition=True),
-    # Mesh: writable, but neither LOD nor partition exists yet (spec §9). Flip a
+    # Mesh: writable and partitionable, but still no LOD ladder (spec §9). Flip a
     # flag here when the corresponding path lands — not at the call sites.
-    "mesh": GeometryCapabilities(lod=False, partition=False),
+    "mesh": GeometryCapabilities(lod=False, partition=True),
 }
 
 

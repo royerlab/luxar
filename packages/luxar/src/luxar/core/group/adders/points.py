@@ -32,6 +32,7 @@ from ..compositing import (
     sync_custom_colormap_attr,
 )
 from ..dim_order import apply_dim_order_positions
+from ..partition import reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -81,6 +82,7 @@ def add_points_impl(
 
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
+        reject_mismatched_partition_parent(parent or group, "points", name)
         reject_lines_only_join("points", name, attrs)
 
         scene = group._find_scene()
@@ -732,8 +734,18 @@ def add_points_substitutive_lod_wrapper_impl(
         coverage_vals = list(explicit)
     else:
         # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (count ratios;
-        # the viewer anchors the finest at fills-screen). No per-level radius or
-        # world-extent needed.
+        # the viewer anchors the finest at a quarter of the live viewport diagonal,
+        # i.e. any normal full-frame view). No per-level radius or world-extent
+        # needed.
+        #
+        # This is the WHOLE-OBJECT anchor. ``add_points`` rejects
+        # ``partition=`` together with ``substitutive_lod=``, so the library path
+        # cannot build a per-tile ladder here — but a caller CAN hand-build a
+        # ``kind=partition`` wrapper and call this per part (that is what
+        # ``demo_biodiversity_planetary_scale`` does). Such a ladder needs the
+        # fills-screen anchor instead (see ``partitioned_coverage_fractions``);
+        # until this path can detect it, pass an explicit
+        # ``coverage_fractions=[...]`` scaled by ``MAX_COVERAGE_FRACTION``.
         coverage_vals = coverage_fractions(counts)
 
     # Compositing attrs ride on the kind=lod Group; everything else (colormap,

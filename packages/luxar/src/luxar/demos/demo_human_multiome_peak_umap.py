@@ -250,6 +250,7 @@ def create_human_scene(
                 opacity=0.8,
                 intensity=0.11,
                 labels=labels,
+                layer=True,
                 substitutive_lod=substitutive_lod_or_flat(
                     dict(compression_factor=8, levels=3, device="auto")
                 ),

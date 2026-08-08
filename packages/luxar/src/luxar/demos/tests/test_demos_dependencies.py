@@ -453,10 +453,11 @@ class TestSubstitutiveLodGate:
 class TestScannedModuleSet:
     """The guards below are only as good as the set of files they read.
 
-    Six guards read :func:`scanned_demo_modules` — four here, plus the
-    entry-point preflight and the substitutive-LOD guards next door. A gate that
-    moves out of a ``demo_*.py`` into a shared helper must stay covered, so the
-    set is a denylist over ``demos/*.py`` rather than an opt-in filename pattern.
+    Seven guards read :func:`scanned_demo_modules` — four here, plus the
+    entry-point preflight, substitutive-LOD and Layers-panel guards next door.
+    A gate that moves out of a ``demo_*.py`` into a shared helper must stay
+    covered, so the set is a denylist over ``demos/*.py`` rather than an opt-in
+    filename pattern.
     """
 
     def test_shared_helpers_are_scanned(self) -> None:
@@ -468,7 +469,7 @@ class TestScannedModuleSet:
 
     def test_the_set_is_a_denylist_over_every_module(self) -> None:
         # Not an allowlist: a new demos/_plot_helpers.py must be picked up with
-        # no edit here, or it would silently escape all six guards.
+        # no edit here, or it would silently escape all seven guards.
         demos_dir = Path(__file__).resolve().parents[1]
         on_disk = {p.name for p in demos_dir.glob("*.py")}
         scanned = {p.name for p in scanned_demo_modules()}

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
-from .group import _assert_strict_ascending
+from .group import MAX_COVERAGE_FRACTION, _assert_strict_ascending
 
 if TYPE_CHECKING:
     from ....gsplats.gsplat_data import GSplatData
@@ -42,11 +42,14 @@ def resolve_substitutive_axis_gsplats(
     Returns ``(resolved_data, explicit_coverage_fractions_or_None)``.
 
     - ``explicit_coverage_fractions`` is non-None only when the user passed
-      ``dict(coverage_fractions=[...])`` (strict-ascending, in ``[0, 1]``) —
+      ``dict(coverage_fractions=[...])`` (strict-ascending, in
+      ``[0, MAX_COVERAGE_FRACTION]``; ``1.0`` is the auto-derived finest anchor
+      and higher values hold a level until the object is larger still) —
       otherwise downstream code auto-derives per-level thresholds from splat
       counts via :func:`luxar.core.group.lod.group.coverage_fractions`
       (``sqrt(N_i/N_finest)``). There is no method selector or per-dataset anchor
-      knob: the viewer anchors the finest at fills-screen via the live viewport.
+      knob: the viewer anchors the finest at a quarter of the live viewport
+      diagonal — any normal full-frame view.
 
     Semantics:
 
@@ -112,18 +115,23 @@ def resolve_substitutive_axis_gsplats(
             if not explicit_coverage_fractions:
                 raise ValueError(
                     "lod_group=dict(coverage_fractions=...) must be non-empty "
-                    "(one strictly-ascending value in [0, 1] per substitutive level)"
+                    f"(one strictly-ascending value in "
+                    f"[0, {MAX_COVERAGE_FRACTION:g}] per substitutive level)"
                 )
             _assert_strict_ascending(
                 explicit_coverage_fractions, "lod_group=dict(coverage_fractions=...)"
             )
             if (
                 explicit_coverage_fractions[0] < 0.0
-                or explicit_coverage_fractions[-1] > 1.0
+                or explicit_coverage_fractions[-1] > MAX_COVERAGE_FRACTION
             ):
                 raise ValueError(
                     "lod_group=dict(coverage_fractions=...): values must lie in "
-                    f"[0, 1] (coarsest→finest); got {explicit_coverage_fractions}"
+                    f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
+                    f"{explicit_coverage_fractions}. The upper bound is "
+                    "1/FILL_FACTOR — the coverage metric a screen-filling object "
+                    "produces; 1.0 is the auto-derived finest anchor (~a quarter "
+                    "of the viewport diagonal)."
                 )
 
         if data.n_substitutive > 1 and not recompute:

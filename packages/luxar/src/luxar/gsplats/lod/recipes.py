@@ -48,6 +48,10 @@ from typing import Callable, List, Literal, Optional, Union, get_args
 
 import numpy as np
 
+from luxar.core.group.lod.group import (
+    coverage_fractions,
+    partitioned_coverage_fractions,
+)
 from luxar.core.group.partition import DEFAULT_MAX_ELEMENTS
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import (
@@ -161,7 +165,7 @@ class RecipeParams:
     # ``core.group.lod.group.coverage_fractions``. No method selector or
     # per-dataset anchor knob: the fraction is a count ratio (immune to
     # non-displayed-dimension multiplicity) and the viewer anchors the finest at
-    # fills-screen via the live viewport diagonal.
+    # a quarter of the live viewport diagonal (any normal full-frame view).
     # Q·e quality stamps: measure each coarse substitutive level's mixture-L²
     # quality Q vs its group's finest content and stamp it (with the
     # reference_energy weight w) into level_stats — the build-time half of the
@@ -297,9 +301,19 @@ def build_tiles(
     )
 
 
-def _substitutive_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode:
+def _substitutive_for_part(
+    part: GSplatNode,
+    params: RecipeParams,
+    *,
+    coverage: Callable[[List[int]], List[float]] = partitioned_coverage_fractions,
+) -> GSplatNode:
     """Rebuild one partition child as its own substitutive lod group (coarse↔fine
-    swap), the per-part analogue of :func:`_ladder_for_part`."""
+    swap), the per-part analogue of :func:`_ladder_for_part`.
+
+    ``coverage`` is the selector-threshold derivation, defaulting to the
+    partition-bound (fills-screen) anchor — see the note below the ladder build
+    and :func:`~luxar.core.group.lod.group.partitioned_coverage_fractions`.
+    """
     import math
 
     if params.refine == "volume":
@@ -361,10 +375,17 @@ def _substitutive_for_part(part: GSplatNode, params: RecipeParams) -> GSplatNode
                 substitutive_level=s,
             )
     # Build each part's lod group with viewport-relative coverage_fraction
-    # thresholds, so adaptive's per-part coarse↔fine switch anchors at fills-screen.
+    # thresholds. These are PARTITIONED ladders, and here the reason is GEOMETRIC:
+    # the switching group's bbox is one BSP tile, intrinsically a fraction of the
+    # whole object's, so its metric reads systematically low. They therefore keep
+    # the fills-screen anchor (finest = MAX_COVERAGE_FRACTION) instead of the
+    # whole-object quarter-viewport one — see partitioned_coverage_fractions.
+    # Without this every tile would sit on its FINEST level while the object is
+    # merely full-frame (~16x the resident geometry for a K=4/L=2 ladder). The
+    # caller overrides it when the "partition" turns out to hold a single part.
     from luxar.gsplats.tree import tree_from_substitutive_levels
 
-    return tree_from_substitutive_levels(sub.substitutive_levels)
+    return tree_from_substitutive_levels(sub.substitutive_levels, coverage=coverage)
 
 
 def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:
@@ -384,8 +405,22 @@ def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:
         max_elements=params.effective_max_elements,
         rule=params.partition_rule,
     )
+    # A one-part "partition" is not a tiling. The BSP stops as soon as the whole
+    # dataset fits ``max_elements`` (default 1,000,000 — so this is the COMMON
+    # case, not an edge one), and ``to_spatial_partition`` still wraps that single
+    # leaf in a ``GSplatPartition``. That part's bbox IS the whole object's, so
+    # the geometric reason for the fills-screen anchor is absent and applying it
+    # anyway would hold the finest level back until the object overfills the
+    # screen — precisely the #1361 blur this recipe's sibling anchors exist to
+    # avoid. Fall back to the whole-object anchor for that shape.
+    coverage = (
+        partitioned_coverage_fractions
+        if len(partition.children) > 1
+        else coverage_fractions
+    )
     children: List[GSplatNode] = [
-        _substitutive_for_part(part, params) for part in partition.children
+        _substitutive_for_part(part, params, coverage=coverage)
+        for part in partition.children
     ]
     return GSplatPartition(
         children=children,
@@ -403,13 +438,16 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     The result is a ``kind=lod`` group with children **coarsest→finest in memory**
     (``[coarse_leaf, fine_partition]``, matching the on-disk order). Each child's
     ``coverage_fraction`` selector threshold is stamped onto its ``meta`` (honored
-    by both the standalone writer and the scene graft) via ``coverage_fractions``
-    (``sqrt(N_i/N_finest)``): the coarse cap gets a fraction below the fine branch's
-    1.0, so the fine branch shows at fills-screen and the coarse cap takes over as
-    the node shrinks. The viewer anchors the finest at fills-screen via the live
-    viewport diagonal (no per-dataset tuning; see ``RecipeParams``).
+    by both the standalone writer and the scene graft) via
+    ``partitioned_coverage_fractions`` (``sqrt(N_i/N_finest)`` re-anchored at
+    fills-screen): the coarse cap gets a fraction below the fine branch's
+    ``MAX_COVERAGE_FRACTION``, so the coarse overview shows at the opening framing
+    and the fine partition takes over once you zoom the node up to filling the
+    viewport. The fills-screen anchor is deliberate here — see
+    ``partitioned_coverage_fractions`` for why a partition-bound ladder does not
+    take the whole-object quarter-viewport anchor (no per-dataset tuning; see
+    ``RecipeParams``).
     """
-    from luxar.core.group.lod.group import coverage_fractions
     from luxar.gsplats.tree import total_splats
 
     base = data.flattened()
@@ -469,7 +507,15 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     # is the whole partition via ``total_splats``) and stamp into the children's
     # (mutable) meta in place — same pattern as tree_from_substitutive_levels.
     group = GSplatLodGroup(children=[coarse_leaf, fine_partition])
-    coarse_cov, fine_cov = coverage_fractions(
+    # PARTITIONED anchor — but by CONTRACT, not geometry (unlike adaptive's
+    # per-tile groups). Both children cover the whole dataset, so this group's bbox
+    # IS the whole object and its metric reads exactly like a `levels` group's.
+    # It is pinned at fills-screen because the fine child is the zoom-in branch:
+    # under the whole-object anchor it would be selected at the opening framing,
+    # loading the entire dataset on frame 1 and inverting the recipe, whose whole
+    # purpose is an instant coarse overview with fine tiles on zoom. So #1361's
+    # blur is deliberately RETAINED here — use `levels` for detail immediately.
+    coarse_cov, fine_cov = partitioned_coverage_fractions(
         [total_splats(coarse_leaf), total_splats(fine_partition)]
     )
     coarse_leaf.meta["coverage_fraction"] = coarse_cov

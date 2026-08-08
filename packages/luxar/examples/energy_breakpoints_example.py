@@ -18,7 +18,8 @@ Demonstrates the LOD refinements landed in PR #321:
 
 3. **``coverage_fraction=``** — a hand-built ``add_lod_group`` where each
    child sets its own viewport-relative switch threshold (0.0 coarsest →
-   1.0 finest); the finest child shows when the object fills the screen.
+   1.0 finest); the finest child shows at any normal full-frame view (once the
+   object's projected size reaches ~a quarter of the viewport diagonal).
 
 4. **Compiler-side ``display_type`` back-fill** — explicit-builder
    lod_groups without an authored ``display_type`` get one filled in
@@ -132,8 +133,9 @@ def main() -> None:
 
         # === 3. Hand-built lod_group with explicit coverage_fraction thresholds ===
         # Each child sets its own viewport-relative switch threshold: the coarse
-        # subset is the always-eligible floor (0.0) and the fine level only takes
-        # over as the object approaches filling the screen (1.0). Also exercises
+        # subset is the always-eligible floor (0.0) and the fine level (1.0) takes
+        # over once the object's projected size reaches ~a quarter of the viewport
+        # diagonal, i.e. at any normal full-frame view. Also exercises
         # the display_type back-fill: we never set `display_type=`, but the layers
         # panel still reads "points" because the compiler fills it from the finest
         # child.
@@ -168,7 +170,8 @@ def main() -> None:
                 "On 'energy_ordered' the bright coloured stars paint first, then dust fills in.",
                 "'size_ordered' paints largest-first regardless of colour.",
                 "'custom_lod' reports type 'points' (display_type back-fill).",
-                "custom_lod's fine level (coverage_fraction=1.0) shows only near fills-screen.",
+                "custom_lod's fine level (coverage_fraction=1.0) shows at a normal "
+                "full-frame view; zoom out and the coarse subset takes over.",
             ],
             observe_label="Look for",
         )
@@ -191,8 +194,9 @@ def main() -> None:
         "  → 'size_ordered' paints big-first regardless of color.\n"
         "  → 'custom_lod' should report type 'points' on its badge —\n"
         "     proof of the compiler-side display_type back-fill.\n"
-        "  → 'custom_lod's fine level (coverage_fraction=1.0) only shows\n"
-        "     near fills-screen; zoom out to see the coarse subset take over."
+        "  → 'custom_lod's fine level (coverage_fraction=1.0) shows at a\n"
+        "     normal full-frame view; zoom out to see the coarse subset\n"
+        "     take over."
     )
 
 
