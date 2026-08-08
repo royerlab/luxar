@@ -168,13 +168,16 @@ capture code never reads it).
 
 ## Troubleshooting
 
-Both `webServer` entries are silent by default, so a server that starts but never
-becomes reachable at the port Playwright is watching shows up as nothing more than
+Both `webServer` entries keep their **stdout** quiet by default (a sweep is long
+and vite logs every request), so a server that starts but never becomes reachable
+at the port Playwright is watching shows up as nothing more than
 `Timed out waiting 90000ms from config.webServer`. Re-run with
 `GALLERY_DEBUG=1 pnpm gallery` (or `GALLERY_DEBUG=1 make generate-gallery`) to
-forward vite's and `luxar serve`'s output to the reporter. (The data server
+forward vite's and `luxar serve`'s stdout to the reporter. (The data server
 always runs with `PYTHONUNBUFFERED=1`; without it a piped, block-buffered stdout
-loses its last lines when Playwright kills the process on timeout.)
+loses its last lines when Playwright kills the process on timeout.) **stderr is
+never suppressed** — a server that dies outright still reports why without the
+flag.
 
 The usual cause is the data server binding a *different* port than the one
 Playwright waits on: `luxar serve` shifts to the next free port when its probe

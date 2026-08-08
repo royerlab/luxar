@@ -7,7 +7,7 @@
  * Usage:
  *   pnpm gallery
  *   GALLERY_ONLY=lorenz,desi_galaxies pnpm gallery
- *   GALLERY_DEBUG=1 pnpm gallery    # forward both servers' output to the reporter
+ *   GALLERY_DEBUG=1 pnpm gallery    # forward both servers' stdout to the reporter
  *
  * Prerequisites:
  *   - Datasets: hatch run python scripts/gallery/generate_gallery_datasets.py
@@ -26,14 +26,19 @@ const DATA_PORT = Number(process.env.GALLERY_DATA_PORT ?? 9899);
 // binary from another checkout to avoid a slow per-worktree env-create; `luxar
 // serve` only streams static zarr files by path, so any working install serves.
 const SERVE = process.env.GALLERY_LUXAR_BIN ?? 'hatch run luxar';
-// Both webServers are silent by default (see the note on the vite entry). Set
-// GALLERY_DEBUG to forward their output to the reporter instead — the only way
-// to see a `luxar serve` "port busy, using N instead" warning, which otherwise
-// turns into a mute `Timed out waiting 90000ms from config.webServer`.
+// Both webServers' STDOUT is silent by default (see the note on the vite entry).
+// Set GALLERY_DEBUG to forward it to the reporter instead — the only way to see a
+// `luxar serve` "port busy, using N instead" warning, which otherwise turns into
+// a mute `Timed out waiting 90000ms from config.webServer`.
 // Compared against '1' rather than tested for truthiness, matching the other
 // opt-in flags in this directory (LUXAR_PERF_HEADLESS, LUXAR_REQUIRE_WASM_TESTS)
 // — otherwise GALLERY_DEBUG=0 would turn debug output ON.
-const SERVER_STDIO: 'pipe' | 'ignore' = process.env.GALLERY_DEBUG === '1' ? 'pipe' : 'ignore';
+// stderr is NOT gated on it: that is where a server that dies at startup says
+// why, and suppressing it leaves only Playwright's bare "Process from
+// config.webServer was not able to start. Exit code: N" — the same dead end this
+// flag exists to remove. Every other playwright.*.config.ts here pipes stderr
+// for that reason; only stdout is noisy enough to be worth muting.
+const SERVER_STDOUT: 'pipe' | 'ignore' = process.env.GALLERY_DEBUG === '1' ? 'pipe' : 'ignore';
 
 /**
  * Chromium flags that actually reach the GPU, per platform.
@@ -139,8 +144,8 @@ export default defineConfig({
       // sweep. ('pipe' is safe — Playwright attaches a `data` listener to both
       // pipes either way and only forwards conditionally, so nothing can fill
       // the OS pipe buffer.) GALLERY_DEBUG=1 turns the forwarding on.
-      stdout: SERVER_STDIO,
-      stderr: SERVER_STDIO,
+      stdout: SERVER_STDOUT,
+      stderr: 'pipe',
     },
     {
       command: `${SERVE} serve . -p ${DATA_PORT}`,
@@ -160,8 +165,8 @@ export default defineConfig({
       // timeout path Playwright SIGKILLs the process group, so the port-shift
       // warning would be written and then destroyed with the buffer.
       env: { PYTHONUNBUFFERED: '1' },
-      stdout: SERVER_STDIO,
-      stderr: SERVER_STDIO,
+      stdout: SERVER_STDOUT,
+      stderr: 'pipe',
     },
   ],
 

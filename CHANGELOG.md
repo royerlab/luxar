@@ -31,9 +31,12 @@ same address conflicts either way, wildcard binds included. The
 `test_unavailable_port` case was tightened to `listen()` accordingly — bound but
 never listening no longer models an occupied port, which is the point.
 
-The muteness was its own bug. Both gallery `webServer` entries discard stdout and
+The muteness was its own bug. Both gallery `webServer` entries discarded stdout and
 stderr, so the port-shift warning had nowhere to go; `GALLERY_DEBUG=1 pnpm
-gallery` now forwards both servers' output to the reporter. Forwarding alone
+gallery` now forwards both servers' stdout to the reporter, and stderr is no
+longer suppressed at all — it is where a server that dies at startup says why, and
+muting it left only Playwright's bare exit code (every other
+`playwright.*.config.ts` here already pipes it). Forwarding alone
 wasn't enough: `aprint` doesn't flush and Python block-buffers a piped stdout,
 while Playwright's timeout path SIGKILLs the process group — so the data server
 now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
@@ -136,7 +139,6 @@ two. A new AST lint, `demos/tests/test_demo_layers.py`, pins both the weak
 invariant (a demo that authors geometry exposes at least one layer) and the
 per-call one, with an exemption list for the composite-group cases that is itself
 checked against the group each exemption names.
-
 
 #### Demos — the CELLxGENE Census UMAP no longer opens dark (#1375)
 
