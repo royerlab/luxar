@@ -207,6 +207,118 @@ than the type vocabulary were checked and deliberately left at three — mesh ta
 part in none of those, and the `?debug` synthetic-scene bench injector genuinely
 still builds only points, lines and gsplats.
 
+#### Fixed — z-fighting and z-popping from an unbounded near/far ratio
+
+Zooming in far enough to put the camera inside the scene's bounding _sphere_ — an
+ordinary amount of zoom, since the circumscribed sphere is 1.73x the half-side of
+a cube — collapsed the near plane to `2e-6 · R`. On a diagonal-100 scene viewed
+from 8.5 units that is `near = 1.05e-4` against `far = 61`: a **580,000:1 ratio**.
+The depth buffer is 24-bit fixed point, where quantization in world units is
+`d² · (far − near) / (near · far) · 2⁻²⁴`, so that ratio buckets depth at ~4e-2
+world units — coarse enough to z-fight visibly on depth-writing geometry (mesh and
+opaque `normal`-mode geometry), and to _pop_ while orbiting, because `near`
+tracks camera distance and the quantization changes with it.
+
+The near-plane floor is now `nearPlaneFloor(R, far) = max(minNearForRadius(R),
+far / MAX_NEAR_FAR_RATIO)` with `MAX_NEAR_FAR_RATIO = 1200`, shared by the
+auto-adjust and per-frame dynamic paths. On
+the case above `near` becomes 0.0508 and depth quantization improves
+4.10e-2 → 8.47e-5 world units — **485x** finer.
+
+`1200` is derived, not picked. A larger C means a smaller floor, so two
+constraints push C _up_ and only the wish to keep precision pushes down:
+C > 551 keeps the floor in front of the orbit target at maximum zoom-in, and
+C ≥ 992 keeps it inside the band where the Points / Lines / GSplats vertex
+shaders already discard geometry (`perspectiveNearFade` below
+`1.0589 · nearCull`, the root of `smoothstep(1, 2, x) = 0.01`). The worst case there is not the camera on the sphere
+surface but the crossover just outside it — `dist = R(C+1)/(C-1) ≈ 1.002 · R`,
+the last distance at which the floor still beats the surface term, where the
+floor sits highest relative to `nearCull`. The second binds at 992, and 1200
+clears it by **20.9%** —
+margin chosen deliberately rather than sitting at the minimum-viable 1000,
+because it turns out to be nearly free: the step from 1000 to 1200 gives away
+**0.03%** of the total precision gain and buys survival of ordinary tuning
+elsewhere. Measured: a 10% tightening of `nearCull` requires C ≥ 1104, and
+reducing the fade reject headroom to 1.0 requires C ≥ 1051 — C = 1000 would have
+become silently lossy under either. Both constraints are pinned as executable
+arithmetic — with the near-cull factor, the minimum-distance factor and the fade
+reject threshold taken from their real sources rather than re-typed, and the
+shader premises they model grep-locked against the GLSL — and the margin is
+enforced by a property test against the shaders' own reject threshold plus an
+assertion that the constant survives that 10% tightening. Being derived from `far` (itself scene-scaled) the floor also
+keeps the tiny-scene guarantee that motivated the radius-proportional floor, so
+`MIN_NEAR_RADIUS_FACTOR` is now a dominated backstop that only surfaces on a
+degenerate zero-radius sphere.
+
+The bound is **perspective-only**. An orthographic projection maps eye depth
+linearly to the depth buffer, so its resolution is `(far − near) / 2²⁴`
+regardless of `near` — and `perspectiveNearFade` returns 1.0 under ortho, so all
+four geometry types render right up to the near plane there. Applying the ratio
+bound under ortho was measured to clip 43.8% of the eye-to-target depth at the
+deepest legal orbit distance for a 0.1% change in depth resolution, so both
+clipping paths now read the live camera and drop the bound for ortho.
+
+#### Hardened — non-finite clipping planes can no longer reach the projection matrix
+
+`applyClippingPlanes` rejected `near >= far`, but every comparison against NaN is
+false, so a NaN would have sailed through into `camera.near` and blanked the view
+with no diagnostic. Both clipping paths now refuse non-finite planes explicitly.
+
+This is defensive rather than a live bug: every present caller passes values that
+already went through `validateRenderingSettings` or the number controller's
+`parseNumber` fallback, so none can deliver a non-finite pair today — that is a
+property of the callers, not of the function's contract.
+
+One consequence is a real fix, though. The per-frame path now treats a non-finite
+CURRENT value as changed: without that, a camera already holding NaN was stuck
+forever, because the 0.1% change gate computes
+`Math.abs(camera.near - near) / camera.near` and never reopens once that is NaN.
+Recovery was impossible, not merely unlikely.
+
+#### Fixed — near/far sliders were ranged absolutely on a scene-relative quantity
+
+Their authored range (`near` 0.0001–10, `far` 1–100000) never matched the values
+they display, which are all scene-relative. Under dynamic clipping the sliders
+are live read-only readouts, so on a diagonal-100 scene at a framed camera
+`near` is ~44: the number input read it truthfully while `<input type=range>`
+clamped its own value and pinned the thumb at the 10 end. On a micron-scale
+scene the entire useful range sat below the 0.0001 minimum instead. Both are now
+re-ranged from the scene diagonal in `updateSceneScale`, alongside the fly-speed
+slider that already worked this way — which also gave that method its first test
+coverage.
+
+#### Changed — authored clipping planes warn when dynamic clipping will override them
+
+`viewer_config` `camera.near` / `camera.far` are applied correctly (after
+auto-adjust), but the per-frame dynamic update recomputes them on the next
+frame, so authored values survived one frame and vanished silently. Precedence
+is deliberately unchanged — dynamic clipping is an explicit auto mode, and
+disabling it behind the author's back would be more surprising — but the case
+now logs a warning naming the fix (`dynamic_clipping_enabled=False`).
+
+#### Fixed — dynamic clipping persisted its transient planes as manual ones
+
+The dynamic-clipping display loop writes the live `camera.near` / `camera.far`
+into the settings object so the greyed-out sliders read out current values, and
+`saveSettingsToStorage` serialized the whole object. So any later change to an
+unrelated control snapshotted whatever pose the camera was in, and the next load
+re-applied those numbers as **fixed manual planes** (`setSceneId` →
+`updateClippingPlanes`) — leaving a scene pinned at e.g. `near = 0.0001`,
+`far = 61` with the Dynamic Clipping checkbox showing unchecked, which is
+untraceable to any user action. `near` / `far` are now omitted from storage while
+dynamic clipping owns them, so defaults + auto-adjust take over on load. With
+dynamic clipping off they are real user intent and persist unchanged.
+`captureViewerState` skips them on the same condition, so a Ctrl+Shift+S export
+no longer writes a zoomed-in pose's planes into `viewer_config` as if they had
+been authored.
+
+The readout those transient values feed is also gated relatively now (0.1% of
+the live value, matching the gate the per-frame update applies before it moves
+the camera at all) instead of by absolute epsilons of 1e-4 / 0.1. Same
+scene-relative-vs-absolute mistake as the slider ranges above: on a
+micron-scale scene no real change ever cleared them, so the sliders sat frozen
+on their defaults while dynamic clipping moved the planes every frame.
+
 #### Removed — unreachable accelerated gsplat code paths
 
 Three optimized paths existed and were maintained but could not be selected by

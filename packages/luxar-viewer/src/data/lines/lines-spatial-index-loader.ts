@@ -648,8 +648,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // Fallback: Load to separate arrays (allocations when accumulator disabled)
     let vertexPositions: Float32Array;
     let widths: Float32Array;
-    let colors: Float32Array | Uint8Array | Uint16Array | null = null;
-    let sharpness: Float32Array | null = null;
+    let colors: Float32Array | Uint8Array | Uint16Array | null;
+    let sharpness: Float32Array | null;
     // optional per-vertex scalars for colormap lookup. Optional +
     // undefined matches `LoadedLinesData.scalars?: ScalarArray`.
     let scalars: Float32Array | undefined;
