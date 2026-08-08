@@ -10,6 +10,7 @@ from `luxar.core.gsplats`.
 
 | Module | Purpose |
 |---|---|
+| [`decimate.py`](decimate.py) | Produce a genuinely coarser SURFACE — the producer a substitutive LOD ladder needs. `cluster` snaps vertices to a grid, collapses each occupied cell to its centroid, reindexes the faces and drops the triangles that collapsed. Vectorized NumPy, no new dependencies. |
 | [`interop/`](interop/README.md) | Import classical mesh files — PLY, OBJ, STL, glTF/GLB — into a `TriangleMesh`, the intermediate the CLI writes into a scene. NumPy + stdlib only, no new dependencies. |
 
 ## Why this is not `luxar.core.mesh`
@@ -47,9 +48,12 @@ luxar mesh import bunny.ply bunny.luxar.zarr
 
 - **The `Mesh` node class, the writer, and the reader** — `luxar.core.mesh`,
   `luxar.io._compiler.geometry_writers.mesh`, `luxar.io.reader`.
-- **Decimation / LOD.** Mesh has no LOD ladder yet: the additive prefix flavour cannot
-  apply to a surface at all, and substitutive levels are missing only a producer (QEM).
-  See `docs/specs/MESH_NODE_SPEC.md` §9. When that producer lands, `luxar/mesh/simplify/`
-  is where it belongs.
+- **An *additive* (prefix) LOD ladder.** That flavour cannot apply to a surface at all —
+  a prefix of an index buffer is a surface with holes in it, not a coarser one — so it is
+  refused on principle. *Substitutive* levels, which were missing only a producer, now
+  work: `decimate.py` above is that producer (vertex clustering; a Garland-Heckbert
+  `qem` tier is the one this is shaped to admit next, issue #1348), and
+  `add_mesh(substitutive_lod=…)` writes the resulting `kind=lod` group. See
+  `docs/specs/MESH_NODE_SPEC.md` §9.
 - **Export.** The inverse direction (`.luxar.zarr` → PLY/OBJ/STL) has no consumer yet;
   `gsplats/interop/inria_export.py` is the shape it would take.

@@ -679,11 +679,4 @@ known-first-party = ["luxar"]
 # explicitly and ratchets it against `scripts/complexity_baseline.json`, so THIS
 # value is what the gate enforces for new code. Run `hatch run check-complexity`.
 [tool.ruff.lint.mccabe]
-# INERT as configured: `C901` (the rule this limit feeds) is not in
-# `[tool.ruff.lint] select` above, so nothing checks it and no complexity limit
-# is enforced anywhere. Kept as a statement of intent, NOT of current behaviour
-# — do not cite it as "the linter will force this to be split", which a module
-# docstring did until 2026-08. Turning it on is a project-wide decision, not a
-# drive-by: `ruff check --select C901 packages/luxar/src/luxar/` reports 214
-# violations today, the worst at complexity 66.
 max-complexity = 10

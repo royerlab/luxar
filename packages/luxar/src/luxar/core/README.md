@@ -496,7 +496,8 @@ gaps:
   whole, so a chunk index has nothing to skip).
 
 Each of those is refused with an explanation — including adding a mesh under a
-`kind=lod` / `kind=partition` parent — rather than silently degrading.
+`kind=partition` parent — rather than silently degrading. A `kind=lod` parent is
+*accepted*: that is exactly the shape `substitutive_lod=` builds.
 
 **Usage Example:**
 ```python

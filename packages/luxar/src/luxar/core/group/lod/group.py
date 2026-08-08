@@ -2,8 +2,8 @@
 
 The LOD-kind ``Group`` selects one of N alternative children at runtime based
 on a view-driven metric (currently: the projected bbox diagonal in pixels). It
-is geometry-agnostic — children can be ``points``, ``lines``, ``gsplats``, or
-themselves a specialized group (``kind=lod`` / ``kind=partition``).
+is geometry-agnostic — children can be ``points``, ``lines``, ``gsplats``,
+``mesh``, or themselves a specialized group (``kind=lod`` / ``kind=partition``).
 
 Each child carries its own ``coverage_fraction`` attribute (strictly monotonic
 increasing in coarsest→finest order; coarsest = 0.0, finest = 1.0). This is a
@@ -22,8 +22,11 @@ every level's count equally and cancels), and it makes no absolute-resolution cl
 (a coarse/blocky level is simply mapped onto a smaller apparent size, not a true
 detail estimate).
 
-Everything here is type-agnostic and shared across all leaf geometries
-(Points, Lines, GSplats) and the Partition kind. The geometry-specific
+Almost everything here is type-agnostic and shared across all leaf geometries
+(Points, Lines, GSplats, Mesh) and the Partition kind; the one exception is the
+mesh coarsening-method constants (``MESH_SUBSTITUTIVE_METHODS`` /
+``DEFAULT_MESH_SUBSTITUTIVE_METHOD``), which live here beside the mixture-reducer
+set they are deliberately disjoint from. The geometry-specific
 ``lod_group=`` / ``additive_lod=`` axis resolvers live next to their data
 types (e.g. ``lod.gsplats`` for ``GSplatData``).
 

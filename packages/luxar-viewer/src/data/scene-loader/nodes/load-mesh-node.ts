@@ -5,7 +5,7 @@
  * update always have a target, then routes the fetch through the same
  * `deriveNodeViewState` + `processMeshData` / `commitMeshGeometry` path the update
  * sweep and the retry path use. Structurally the same as `load-points-node.ts`,
- * with two differences that follow from mesh having no LOD:
+ * with one difference, which follows from mesh having no ADDITIVE ladder:
  *
  * - **No progressive branch.** `n_additive_sublods` on a mesh is a malformed store;
  *   `createProgressiveMeshLoader` rejects it with an explanation. That rejection is

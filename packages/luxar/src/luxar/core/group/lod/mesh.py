@@ -42,7 +42,7 @@ where the two names meet.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .group import (
     DEFAULT_MESH_SUBSTITUTIVE_METHOD,
@@ -74,6 +74,56 @@ _LIFT_ONLY_KEYS: Dict[str, str] = {
         "initialization and nothing to converge, so there is no RNG to fix"
     ),
 }
+
+
+def _reject_lift_only_keys(kwargs: Dict[str, Any]) -> None:
+    """Refuse the four :data:`_LIFT_ONLY_KEYS` with the reason each cannot apply.
+
+    Run BEFORE the generic unknown-key sweep at the end of the resolver so these
+    get their specific explanation rather than being lumped into a list of typos.
+    Extracted from :func:`resolve_substitutive_axis_mesh` so the mesh-specific
+    vocabulary refusal reads as one step (and to keep the resolver under the C901
+    limit the complexity ratchet enforces); insertion order of the table decides
+    which key a multi-key call is told about.
+    """
+    for key, why in _LIFT_ONLY_KEYS.items():
+        if key in kwargs:
+            raise ValueError(
+                f"substitutive_lod for Mesh: {key!r} does not apply to a mesh — "
+                f"{why}. It is valid for Points/Lines/GSplats, which coarsen by "
+                "reducing a Gaussian mixture; a mesh coarsens by decimation."
+            )
+
+
+def _validate_coverage_fractions_spec(value: Any) -> Optional[List[float]]:
+    """Coerce and shape-check an explicit ``coverage_fractions`` list (or ``None``).
+
+    ``None`` passes through as ``None`` (the ladder derives its own thresholds from
+    the per-level element counts). Anything else must be a non-empty,
+    strictly-ascending sequence of values in ``[0, 1]``, coarsest→finest — the same
+    contract :func:`luxar.core.group.lod.group.resolve_substitutive_axis` enforces
+    for the lifting geometries, and named after its ``_validate_coarsen_dims_spec``
+    peer. The LENGTH is not checked here: it must match the ladder that actually
+    got written, which is only known once levels that could not reduce the surface
+    have been dropped, so the adder's wrapper checks it.
+    """
+    if value is None:
+        return None
+    explicit_coverage = [float(m) for m in value]
+    if not explicit_coverage:
+        raise ValueError(
+            "substitutive_lod=dict(coverage_fractions=...) must be non-empty "
+            "(one strictly-ascending value in [0, 1] per LOD level)"
+        )
+    _assert_strict_ascending(
+        explicit_coverage, "substitutive_lod=dict(coverage_fractions=...)"
+    )
+    if explicit_coverage[0] < 0.0 or explicit_coverage[-1] > 1.0:
+        raise ValueError(
+            "substitutive_lod=dict(coverage_fractions=...): values must lie in "
+            f"[0, 1] (coarsest→finest); got {explicit_coverage}"
+        )
+    return explicit_coverage
 
 
 def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
@@ -109,13 +159,7 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
 
     # Checked BEFORE the generic unknown-key sweep so these get their specific
     # explanation rather than being lumped into a list of typos.
-    for key, why in _LIFT_ONLY_KEYS.items():
-        if key in kwargs:
-            raise ValueError(
-                f"substitutive_lod for Mesh: {key!r} does not apply to a mesh — "
-                f"{why}. It is valid for Points/Lines/GSplats, which coarsen by "
-                "reducing a Gaussian mixture; a mesh coarsens by decimation."
-            )
+    _reject_lift_only_keys(kwargs)
 
     compression_factor = int(
         kwargs.pop("compression_factor", kwargs.pop("K", DEFAULT_SUBSTITUTIVE_K))
@@ -141,22 +185,9 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
             "which is decimated instead."
         )
 
-    explicit_coverage = kwargs.pop("coverage_fractions", None)
-    if explicit_coverage is not None:
-        explicit_coverage = [float(m) for m in explicit_coverage]
-        if not explicit_coverage:
-            raise ValueError(
-                "substitutive_lod=dict(coverage_fractions=...) must be non-empty "
-                "(one strictly-ascending value in [0, 1] per LOD level)"
-            )
-        _assert_strict_ascending(
-            explicit_coverage, "substitutive_lod=dict(coverage_fractions=...)"
-        )
-        if explicit_coverage[0] < 0.0 or explicit_coverage[-1] > 1.0:
-            raise ValueError(
-                "substitutive_lod=dict(coverage_fractions=...): values must lie in "
-                f"[0, 1] (coarsest→finest); got {explicit_coverage}"
-            )
+    explicit_coverage = _validate_coverage_fractions_spec(
+        kwargs.pop("coverage_fractions", None)
+    )
 
     # Shape/type only here; names and the "display" default are resolved against
     # the scene in the adder, exactly as the other three geometries do it.

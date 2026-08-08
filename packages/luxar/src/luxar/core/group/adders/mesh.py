@@ -229,6 +229,40 @@ def validate_scalar_data_range(name: str, value: Any) -> Optional[tuple[float, f
     return (lo, hi)
 
 
+def _resolve_mesh_vertices(vertices: Any) -> np.ndarray:
+    """Coerce ``vertices`` to an array and refuse a shape a mesh cannot render.
+
+    Extracted whole from ``add_mesh_impl`` so the coercion and the two shape
+    refusals read as one step, and so the adder body stays under the C901 limit
+    the complexity ratchet enforces. Pure: no scene state, no writes — it runs
+    BEFORE ``dim_order`` is applied so that both refusals judge the AUTHORED
+    array. ``dim_order`` does not merely permute the coordinate columns, it also
+    WIDENS them, padding unmapped scene dimensions with constant ``fill`` values;
+    a 1-column input would come out a technically-valid 2-D one whose extra axis
+    is a constant, i.e. still arealess. Checking first keeps the error about what
+    the caller actually wrote.
+    """
+    vert_arr: np.ndarray = (
+        vertices if isinstance(vertices, np.ndarray) else np.asarray(vertices)
+    )
+    if vert_arr.ndim != 2:
+        raise ValueError(f"Vertices must have shape (V, D), got shape {vert_arr.shape}")
+    # A floor of 2 dimensions, which the sibling adders deliberately do NOT have.
+    # Points and Lines are meaningful in 1D — a scatter along an axis, segments with
+    # length — so they take whatever width they are given. A TRIANGLE needs two
+    # dimensions to enclose any area: in 1D every face is collinear, so the mesh
+    # writes and loads successfully and then renders nothing at all, with no
+    # diagnostic anywhere. Refusing at the adder is the only place that can say why.
+    if vert_arr.shape[1] < 2:
+        raise ValueError(
+            f"Vertices must have at least 2 dimensions, got shape {vert_arr.shape}. "
+            "A triangle needs two dimensions to have any area — in 1D every face is "
+            "collinear and the surface renders nothing. Use Points or Lines for "
+            "1D data."
+        )
+    return vert_arr
+
+
 def add_mesh_impl(
     group: "Group",
     *,
@@ -276,26 +310,7 @@ def add_mesh_impl(
 
         scene = group._find_scene()
 
-        vert_arr: np.ndarray = (
-            vertices if isinstance(vertices, np.ndarray) else np.asarray(vertices)
-        )
-        if vert_arr.ndim != 2:
-            raise ValueError(
-                f"Vertices must have shape (V, D), got shape {vert_arr.shape}"
-            )
-        # A floor of 2 dimensions, which the sibling adders deliberately do NOT have.
-        # Points and Lines are meaningful in 1D — a scatter along an axis, segments with
-        # length — so they take whatever width they are given. A TRIANGLE needs two
-        # dimensions to enclose any area: in 1D every face is collinear, so the mesh
-        # writes and loads successfully and then renders nothing at all, with no
-        # diagnostic anywhere. Refusing at the adder is the only place that can say why.
-        if vert_arr.shape[1] < 2:
-            raise ValueError(
-                f"Vertices must have at least 2 dimensions, got shape {vert_arr.shape}. "
-                "A triangle needs two dimensions to have any area — in 1D every face is "
-                "collinear and the surface renders nothing. Use Points or Lines for "
-                "1D data."
-            )
+        vert_arr = _resolve_mesh_vertices(vertices)
 
         # Apply dim_order before validation. Vertices are coordinates and get
         # reordered like every other geometry type's positions; `faces` is INDEX
