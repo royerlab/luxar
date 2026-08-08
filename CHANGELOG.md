@@ -116,7 +116,7 @@ node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
 
-#### CytoSelf hover no longer strands its tooltip in an empty slot
+#### CytoSelf hover no longer strands its tooltip in an empty slot (#1398)
 
 The CytoSelf demo's hover layout is a bespoke pair: an image thumbnail anchored
 top-right at `0.98`, and the text label at `x = 0.82` so it sits immediately to

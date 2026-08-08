@@ -52,6 +52,7 @@ DEMO_META = {
     "outputs": ["cytoself_protein_landscape", "cytoself_landscape"],
 }
 
+import os
 import sys
 import tempfile
 import time
@@ -534,6 +535,99 @@ def _build_test_index_mapping(
     return mapping, len(test_labels)
 
 
+def _load_image_file(file_id: str, img_path: Path) -> np.ndarray:
+    """``np.load`` one Image_data file, re-downloading it once if it is corrupt."""
+    try:
+        return np.load(img_path)
+    except Exception:
+        aprint("  ⚠ Corrupt file detected, re-downloading...")
+        img_path.unlink(missing_ok=True)
+        _download_from_google_drive(file_id, img_path, expected_min_size=400_000_000)
+        return np.load(img_path)
+
+
+def _encode_matched_crops(
+    arr: np.ndarray,
+    global_offset: int,
+    global_to_test: dict[int, list[int]],
+    result_blobs: list[bytes | None],
+) -> int:
+    """Encode this file's matched crops into ``result_blobs``; return how many.
+
+    ``global_offset`` is the global row of this file's first crop, so
+    ``global_offset + local_idx`` is the key into ``global_to_test``. Only the
+    matched crops are decoded and encoded — the files hold ~1.1M crops of which
+    ~114K are in the test split.
+    """
+    n_crops = arr.shape[0]
+    local_indices = []
+    local_to_test_map: list[tuple[int, int]] = []
+    for local_idx in range(n_crops):
+        global_idx = global_offset + local_idx
+        if global_idx in global_to_test:
+            local_indices.append(local_idx)
+            for test_idx in global_to_test[global_idx]:
+                local_to_test_map.append((local_idx, test_idx))
+
+    if not local_indices:
+        aprint(f"No matched crops in this file ({n_crops:,} total)")
+        return 0
+
+    # Extract and encode only the needed crops
+    unique_local = sorted(set(local_indices))
+    encoded = _encode_crops_to_webp(arr[unique_local])
+
+    # Map encoded blobs back to test indices
+    local_to_encoded = {li: ei for ei, li in enumerate(unique_local)}
+    for local_idx, test_idx in local_to_test_map:
+        result_blobs[test_idx] = encoded[local_to_encoded[local_idx]]
+
+    aprint(f"Encoded {len(unique_local):,} matched crops (of {n_crops:,} total)")
+    return len(local_to_test_map)
+
+
+def _read_thumbnails_cache(thumbnails_cache: Path) -> list[bytes] | None:
+    """Return the cached test-aligned thumbnails, or None on a cache miss.
+
+    An UNREADABLE bundle counts as a miss rather than an error: this cache
+    short-circuits before any download, so raising here left a plain re-run
+    reproducing the same failure forever.
+    """
+    if not thumbnails_cache.exists():
+        return None
+
+    with asection("Loading cached image thumbnails"):
+        try:
+            data = np.load(thumbnails_cache, allow_pickle=True)
+            blobs = list(data["blobs"])
+        except Exception as exc:
+            aprint(f"  ⚠ Unreadable cached bundle ({type(exc).__name__})")
+            aprint(f"    {thumbnails_cache}")
+            aprint("    Rebuilding it — already-downloaded files are reused.")
+            return None
+        aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
+        return [bytes(b) for b in blobs]
+
+
+def _write_thumbnails_cache(thumbnails_cache: Path, blobs: list[bytes]) -> None:
+    """Write the thumbnail bundle atomically (same idiom as `cache_computed`).
+
+    With --recompute this can overwrite a VALID bundle, and np.savez truncates
+    on open, so an interrupted write would leave a BadZipFile behind that every
+    later run trips over. The temporary name carries the pid so two concurrent
+    rebuilds cannot share — and truncate — a single inode.
+    """
+    tmp = thumbnails_cache.with_suffix(f".npz.{os.getpid()}.tmp")
+    try:
+        # Write through a handle, not a path: np.savez APPENDS ".npz" to a
+        # filename that lacks it, which would defeat the rename.
+        with open(tmp, "wb") as f:
+            np.savez(f, blobs=np.array(blobs, dtype=object))
+        tmp.replace(thumbnails_cache)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def load_cytoself_images(
     cache_dir: Path | None = None,
     recompute: bool = False,
@@ -560,24 +654,13 @@ def load_cytoself_images(
 
     # Check for cached encoded thumbnails (test-aligned)
     thumbnails_cache = cache_dir / THUMBNAILS_CACHE_NAME
-    if thumbnails_cache.exists() and recompute:
-        aprint("Rebuilding thumbnails (--recompute): ignoring the cached bundle")
-    elif thumbnails_cache.exists():
-        with asection("Loading cached image thumbnails"):
-            try:
-                data = np.load(thumbnails_cache, allow_pickle=True)
-                blobs = list(data["blobs"])
-            except Exception as exc:
-                # A bundle written before the rename below (or a truncated
-                # copy) is unreadable, and this branch short-circuits before
-                # any download — so a plain re-run would hit the same file
-                # forever. Treat it as a cache miss: the rebuild replaces it.
-                aprint(f"  ⚠ Unreadable cached bundle ({type(exc).__name__})")
-                aprint(f"    {thumbnails_cache}")
-                aprint("    Rebuilding it — already-downloaded files are reused.")
-            else:
-                aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
-                return [bytes(b) for b in blobs]
+    if recompute:
+        if thumbnails_cache.exists():
+            aprint("Rebuilding thumbnails (--recompute): ignoring the cached bundle")
+    else:
+        cached = _read_thumbnails_cache(thumbnails_cache)
+        if cached is not None:
+            return cached
 
     # Step 1: Build index mapping (test row -> global image row)
     mapping, n_test = _build_test_index_mapping(cache_dir)
@@ -609,52 +692,13 @@ def load_cytoself_images(
                 with asection(
                     f"Processing {filename} ({i + 1}/{len(GDRIVE_IMAGE_IDS)})"
                 ):
-                    try:
-                        arr = np.load(img_path)
-                    except Exception:
-                        aprint("  ⚠ Corrupt file detected, re-downloading...")
-                        img_path.unlink(missing_ok=True)
-                        _download_from_google_drive(
-                            file_id, img_path, expected_min_size=400_000_000
-                        )
-                        arr = np.load(img_path)
-
-                    n_crops = arr.shape[0]
+                    arr = _load_image_file(file_id, img_path)
                     aprint(f"Shape: {arr.shape}, dtype: {arr.dtype}")
 
-                    # Find which local indices in this file are needed
-                    local_indices = []
-                    local_to_test_map: list[tuple[int, int]] = []
-                    for local_idx in range(n_crops):
-                        global_idx = global_offset + local_idx
-                        if global_idx in global_to_test:
-                            local_indices.append(local_idx)
-                            for test_idx in global_to_test[global_idx]:
-                                local_to_test_map.append((local_idx, test_idx))
-
-                    if local_indices:
-                        # Extract and encode only the needed crops
-                        unique_local = sorted(set(local_indices))
-                        subset = arr[unique_local]
-                        encoded = _encode_crops_to_webp(subset)
-
-                        # Map encoded blobs back to test indices
-                        local_to_encoded = {
-                            li: ei for ei, li in enumerate(unique_local)
-                        }
-                        for local_idx, test_idx in local_to_test_map:
-                            encoded_idx = local_to_encoded[local_idx]
-                            result_blobs[test_idx] = encoded[encoded_idx]
-                            matched_count += 1
-
-                        aprint(
-                            f"Encoded {len(unique_local):,} matched crops "
-                            f"(of {n_crops:,} total)"
-                        )
-                    else:
-                        aprint(f"No matched crops in this file ({n_crops:,} total)")
-
-                    global_offset += n_crops
+                    matched_count += _encode_matched_crops(
+                        arr, global_offset, global_to_test, result_blobs
+                    )
+                    global_offset += arr.shape[0]
                     del arr
             except MissingDependencyError:
                 # Has its own handler (and its own pip/extra hint) in main();
@@ -689,20 +733,8 @@ def load_cytoself_images(
 
     final_blobs: list[bytes] = [b for b in result_blobs if b is not None]
 
-    # Cache the test-aligned thumbnails. Atomic write (same idiom as
-    # `cache_computed`): with --recompute this can overwrite a VALID bundle,
-    # and np.savez truncates on open, so an interrupted write would leave a
-    # BadZipFile behind that every later run trips over.
     with asection("Caching test-aligned thumbnails"):
-        tmp = thumbnails_cache.with_suffix(".npz.tmp")
-        try:
-            # Write through a handle, not a path: np.savez APPENDS ".npz" to a
-            # filename that lacks it, which would defeat the rename.
-            with open(tmp, "wb") as f:
-                np.savez(f, blobs=np.array(final_blobs, dtype=object))
-            tmp.replace(thumbnails_cache)
-        finally:
-            tmp.unlink(missing_ok=True)
+        _write_thumbnails_cache(thumbnails_cache, final_blobs)
         aprint(f"Cached {len(final_blobs):,} thumbnails to {thumbnails_cache}")
 
     return final_blobs
@@ -711,6 +743,47 @@ def load_cytoself_images(
 # =============================================================================
 # Scene Construction
 # =============================================================================
+
+
+def _resolve_image_labels(
+    image_labels: list[bytes] | None,
+    *,
+    n_points: int,
+    n_views: int,
+    images_expected: bool,
+) -> list[bytes] | None:
+    """Replicate the hover thumbnails per attribute view, or explain their absence.
+
+    Only used if the count matches the embeddings — the image .npy files may
+    contain more crops than the embedding/label rows. Returns None whenever the
+    scene has to fall back to the text-only hover tooltip.
+    """
+    if image_labels is None:
+        if images_expected:
+            # The caller (main()) has already explained WHY they are missing
+            # and how to get them back — only state the consequence here so
+            # the advice is printed exactly once.
+            aprint("  ⚠ No image labels — hover tooltip will be text-only")
+        else:
+            aprint("  Building without hover thumbnails (--without-images)")
+        return None
+
+    if len(image_labels) == n_points:
+        return image_labels * n_views
+
+    aprint(
+        f"  ⚠ Skipping image labels: count mismatch "
+        f"({len(image_labels):,} images vs {n_points:,} embeddings)"
+    )
+    aprint("    Hover falls back to the text-only tooltip. This is")
+    aprint("    usually a stale cached bundle, which a plain re-run")
+    aprint("    reuses — delete it and re-run to rebuild:")
+    aprint(f"      {DEFAULT_CACHE_DIR / THUMBNAILS_CACHE_NAME}")
+    aprint("    (--recompute does the same, but also throws away the")
+    aprint("    cached UMAP: a 10-30 min recompute. If the mismatch")
+    aprint("    survives a rebuild, label.csv and the embeddings")
+    aprint("    themselves disagree.)")
+    return None
 
 
 def create_cytoself_scene(
@@ -814,33 +887,12 @@ def create_cytoself_scene(
                     per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
 
-            # Image labels: replicate per attribute view (same as text labels).
-            # Only use if count matches embeddings — the image .npy files may
-            # contain more crops than the embedding/label rows.
-            all_image_labels = None
-            if image_labels is None:
-                if images_expected:
-                    # The caller (main()) has already explained WHY they are
-                    # missing and how to get them back — only state the
-                    # consequence here so the advice is printed exactly once.
-                    aprint("  ⚠ No image labels — hover tooltip will be text-only")
-                else:
-                    aprint("  Building without hover thumbnails (--without-images)")
-            elif len(image_labels) == n_points:
-                all_image_labels = image_labels * len(available_attrs)
-            else:
-                aprint(
-                    f"  ⚠ Skipping image labels: count mismatch "
-                    f"({len(image_labels):,} images vs {n_points:,} embeddings)"
-                )
-                aprint("    Hover falls back to the text-only tooltip. This is")
-                aprint("    usually a stale cached bundle, which a plain re-run")
-                aprint("    reuses — delete it and re-run to rebuild:")
-                aprint(f"      {DEFAULT_CACHE_DIR / THUMBNAILS_CACHE_NAME}")
-                aprint("    (--recompute does the same, but also throws away the")
-                aprint("    cached UMAP: a 10-30 min recompute. If the mismatch")
-                aprint("    survives a rebuild, label.csv and the embeddings")
-                aprint("    themselves disagree.)")
+            all_image_labels = _resolve_image_labels(
+                image_labels,
+                n_points=n_points,
+                n_views=len(available_attrs),
+                images_expected=images_expected,
+            )
 
             scene.add_points(
                 "Images",
