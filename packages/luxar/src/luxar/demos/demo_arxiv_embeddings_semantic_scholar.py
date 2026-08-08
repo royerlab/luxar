@@ -710,7 +710,7 @@ def main() -> None:
     aprint("")
     aprint("⏱️  Expected time:")
     aprint("  • First run: minutes to hours, scaling with the paper count")
-    aprint("    (download + compute embeddings; see the scale table in NOTES)")
+    aprint("    (download + embeddings: ~5k papers 2-5 min, ~100k 30-60 min)")
     aprint("  • Cached run: <30 seconds (results cached automatically)")
     aprint("")
 
