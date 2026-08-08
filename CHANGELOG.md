@@ -14,8 +14,9 @@ now carries a label expanding the code into its full anatomical name plus a
 one-line gloss of what it does: `AF_L — Arcuate fasciculus (left) · association
 · frontal (Broca) and temporal (Wernicke) language areas`. A 46-entry table
 keyed on the hemisphere-stripped base code covers all 87 bundles; the split is
-lookup-guarded because six base codes (`CPT_F`, `CS_S`, `C_PO`, ...) end in
-what looks like a hemisphere suffix, and `CPT_F_L` must not become `CPT_F_`.
+lookup-guarded because six base codes (`CPT_F`, `CPT_O`, `CS_S`, ...) end in a
+single-letter underscore group of their own, and `CPT_F_L` must resolve to
+`CPT_F` rather than to `CPT`.
 
 Lines labels are per-vertex, so the one tract string is broadcast across the
 node — which is also what makes the lookup safe, since the line picker reports a
@@ -37,11 +38,16 @@ Two changes are the viewer's, not the demo's:
   and reuses the string on a match. An intern `Map` was tried first and rejected:
   it pays a hash and a full compare on every element, and the all-distinct case
   that every other labelled demo has (a 4M-label embedding node) got 2x slower.
-  The run check costs a length compare, so distinct labels are unaffected.
+  What the run check buys is retained memory rather than time — a full byte
+  compare costs about what the decode it replaces does — so it rejects on length
+  and on both *end* bytes before scanning the interior. Distinct labels
+  overwhelmingly differ at one end, which keeps that case at parity; without the
+  end probes, equal-length labels sharing a prefix measured ~1.7x the old loop.
 - **An unlabelled node no longer logs a warning.** The pick handler asks any
   node it hits for a label, and most have no `label_offsets` array; that is an
-  ordinary miss, now logged at info via the house `isNotFoundError` guard.
-  Decode failures, corrupt chunks and bad metadata still warn.
+  ordinary miss, now logged at info via the house `isNotFoundError` guard. The
+  demotion is scoped to that one open: a missing `label_bytes` beside present
+  offsets, a missing chunk, a decode failure or bad metadata all still warn.
 
 #### Real join geometry for lines: the miter (#790, #795)
 
@@ -102,7 +108,6 @@ pixels — the measurement is zero, the small ceiling only absorbs a seam pixel
 the shaders' float32 operand order can cost — so unmitred rendering cannot
 come back unnoticed. (The E2E job is not part of the per-PR CI run; it runs
 under `make test-e2e`.)
-
 
 #### Mesh is per-triangle depth sorted
 

@@ -207,6 +207,42 @@ describe('LabelLoader.getLabel — fetch + cache', () => {
       warnSpy.mockRestore();
     }
   });
+
+  it('still warns when label_bytes is missing but label_offsets is not', async () => {
+    // Offsets present, bytes absent: a corrupt/incomplete labelled store, NOT
+    // an unlabelled node. Only the first open may be innocently absent, so the
+    // info demotion must not swallow this.
+    const loader = makeLoader();
+    mockOpen.mockResolvedValueOnce({ kind: 'offsets-array' } as never);
+    mockOpen.mockRejectedValueOnce(
+      new NotFoundError('v2 array', { path: '/x/label_bytes/.zarray' })
+    );
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await loader.getLabel('/HalfLabelled', 0)).toBeNull();
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('still warns when a label chunk fetch reports the key as missing', async () => {
+    // Both arrays open, then a chunk read fails as not-found. Same reasoning:
+    // the data is there per the metadata, so this is a failure, not an absence.
+    const loader = makeLoader();
+    mockOpen.mockResolvedValueOnce({ kind: 'offsets-array' } as never);
+    mockOpen.mockResolvedValueOnce({ kind: 'bytes-array' } as never);
+    mockGet.mockRejectedValueOnce(new Error('HTTP 404: /x/label_offsets/0'));
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await loader.getLabel('/BrokenChunk', 0)).toBeNull();
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 describe('LabelLoader.getLabel — a consecutive run of equal labels decodes once', () => {
@@ -248,6 +284,57 @@ describe('LabelLoader.getLabel — a consecutive run of equal labels decodes onc
     } finally {
       decodeSpy.mockRestore();
     }
+  });
+
+  it('keeps equal-length labels apart when they differ at only one byte', async () => {
+    // `bytesEqual` probes both END bytes before scanning the interior, so these
+    // three shapes exercise each rejection point on labels the length check
+    // cannot separate: differing at the last byte, at the first, and in the
+    // middle. A wrong probe here would silently serve a neighbour's label.
+    const loader = makeLoader();
+    programOneLoad([
+      'chr1:1000',
+      'chr1:1001', // last byte only
+      'ahr1:1001', // first byte only
+      'ahr9:1001', // interior only
+    ]);
+
+    expect(await loader.getLabel('/Adjacent', 0)).toBe('chr1:1000');
+    expect(await loader.getLabel('/Adjacent', 1)).toBe('chr1:1001');
+    expect(await loader.getLabel('/Adjacent', 2)).toBe('ahr1:1001');
+    expect(await loader.getLabel('/Adjacent', 3)).toBe('ahr9:1001');
+  });
+
+  it('reuses a repeat that differs from its neighbour only in length', async () => {
+    // The mirror case: the length check must not be the only thing standing
+    // between two labels, and must not stop a genuine repeat being reused.
+    const loader = makeLoader();
+    programOneLoad(['ab', 'abc', 'abc']);
+
+    const decodeSpy = vi.spyOn(TextDecoder.prototype, 'decode');
+    try {
+      expect(await loader.getLabel('/Lengths', 0)).toBe('ab');
+      expect(await loader.getLabel('/Lengths', 1)).toBe('abc');
+      expect(await loader.getLabel('/Lengths', 2)).toBe('abc');
+      expect(decodeSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      decodeSpy.mockRestore();
+    }
+  });
+
+  it('reuses single-byte and two-byte repeats', async () => {
+    // Short ranges are where the end probes overlap the interior scan: at
+    // length 1 both probes read the same byte, at length 2 they cover the whole
+    // range and the loop body never runs.
+    const loader = makeLoader();
+    programOneLoad(['a', 'a', 'b', 'xy', 'xy', 'xz']);
+
+    expect(await loader.getLabel('/Short', 0)).toBe('a');
+    expect(await loader.getLabel('/Short', 1)).toBe('a');
+    expect(await loader.getLabel('/Short', 2)).toBe('b');
+    expect(await loader.getLabel('/Short', 3)).toBe('xy');
+    expect(await loader.getLabel('/Short', 4)).toBe('xy');
+    expect(await loader.getLabel('/Short', 5)).toBe('xz');
   });
 
   it('keeps distinct labels distinct when repeats and empties are interleaved', async () => {

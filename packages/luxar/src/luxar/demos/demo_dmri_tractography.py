@@ -88,12 +88,13 @@ Two honest caveats, and the first is the big one:
   disk, and the viewer's label loader collapses a consecutive run of equal
   labels to a single decoded string, so the tract name is retained once rather
   than 168,000 times. The cost is the *fetch*: `write_labels_csr` chunks
-  `label_bytes` at 65,536 bytes, so one bundle is ~278 chunks (~275 plus 3 for
-  `label_offsets`) and its first hover issues ~278 small requests totalling
-  ~42 KB over the wire. Round-trip count, not decode and not memory, is what
-  you wait for — and across 87 bundles it is also ~24,000 extra files in the
-  store, which is worth knowing before `luxar export` writes them all to an
-  offline folder or you put the scene on static hosting.
+  `label_bytes` at 65,536 bytes, so one bundle is ~280-380 chunks (its ~18-25 MB
+  over 64 KiB, plus 3 for `label_offsets`) and its first hover issues that many
+  small requests, together a few tens of KB over the wire once compressed.
+  Round-trip count, not decode and not memory, is what you wait for — and across
+  87 bundles it is also ~30,000 extra files in the store, which is worth knowing
+  before `luxar export` writes them all to an offline folder or you put the
+  scene on static hosting.
 
 RENDERING NOTE — `additive`, AND WHY NOT `normal`
 -------------------------------------------------
@@ -1099,9 +1100,10 @@ def scene_marker_matches(marker: Path, *, points: int, per_bundle: int) -> bool:
 def load_or_build_scene(output_path: Path) -> Path:
     """Return the built scene path, regenerating on a fresh system.
 
-    Reuse is keyed on the sizing knobs as well as on the file existing: the
-    scene path is fixed, so nothing else distinguishes a scene built at the
-    defaults from one built with ``--points`` / ``--per-bundle``.
+    Reuse is keyed on the sizing knobs and on :data:`SCENE_SCHEMA_VERSION` as
+    well as on the file existing: the scene path is fixed, so nothing else
+    distinguishes a scene built at the defaults from one built with ``--points``
+    / ``--per-bundle``, or from one built before the labels existed.
     """
     if (
         output_path.exists()

@@ -25,8 +25,8 @@ The two loaders differ in how aggressively they fetch:
 - **`LabelLoader`** bulk-loads and UTF-8-decodes **every** label for a
   node on first hover, then serves all subsequent lookups from memory.
   That is usually cheap, but not always: labels are stored per element,
-  so a node that tags all 168k of its vertices with one 107-byte tract
-  name carries ~18 MB of raw CSR bytes over ~275 chunks. The first hover
+  so a node that tags all 168k of its vertices with one ~120-byte tract
+  name carries ~20 MB of raw CSR bytes over ~300 chunks. The first hover
   of such a node pays that fetch (a few tens of KB once compressed) and
   one synchronous decode pass; consecutive equal labels are decoded once
   (see Invariants), so the retained strings stay small.
@@ -75,11 +75,13 @@ loader.dispose(); // clear caches + in-flight map
 
 `getLabel` returns `null` when the node has no labels, the element's
 label is empty, or the index is out of range. A failed zarr fetch
-resolves to an empty label set rather than throwing. A node that simply
-has no `label_offsets` array is the ordinary case — the picker calls
-`getLabel` for whatever it hit, and most nodes are unlabelled — so that
-is logged at info; everything else (decode failures, corrupt chunks, bad
-metadata) still logs a warning (`Modules.SCENE_LOADER`).
+resolves to an empty label set rather than throwing. A node whose
+`label_offsets` array is simply absent is the ordinary case — the picker
+calls `getLabel` for whatever it hit, and most nodes are unlabelled — so
+**that one open** is logged at info. Everything after it still logs a
+warning (`Modules.SCENE_LOADER`): a missing `label_bytes` next to
+present offsets is a corrupt store rather than an unlabelled node, and so
+are missing chunks, decode failures and bad metadata.
 
 ### ImageLabelLoader (`image-label-loader.ts`)
 
@@ -121,8 +123,12 @@ WebP (`RIFF…WEBP`) are detected, with `image/png` as the fallback.
   compares each element's bytes to the previous element's and reuses the
   string on a match, so a broadcast label (one value repeated across a
   whole node) costs one decode and one retained string instead of `N`.
-  Only _consecutive_ runs collapse — a general pool would cost more than
-  it saves on the common all-distinct case.
+  The saving is retained memory, not time: a full byte compare costs about
+  what the decode it replaces does, so the comparison rejects on length and
+  on both _end_ bytes before scanning the interior — that is what keeps the
+  all-distinct case at parity instead of ~1.7x. Only _consecutive_ runs
+  collapse — a general pool would cost more than it saves on the common
+  all-distinct case.
 - **Path normalization.** A leading `/` on `nodePath` is stripped before
   `rootLoc.resolve(...)`, so both `/points/cells` and `points/cells`
   resolve identically.
