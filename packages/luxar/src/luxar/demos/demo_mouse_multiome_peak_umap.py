@@ -246,6 +246,7 @@ def create_mouse_scene(
                 opacity=0.8,
                 intensity=0.25,
                 labels=labels,
+                layer=True,
                 # Substitutive Points LOD (coarsen x/y/z, group by the attribute
                 # barrier) — same wiring as the census demo.
                 substitutive_lod=substitutive_lod_or_flat(

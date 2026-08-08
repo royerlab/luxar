@@ -4,13 +4,18 @@ Pure function taking a ``group: Group`` parameter as the first arg. Called by
 ``Group.add_mesh`` (a thin signature + docstring + delegate) in
 ``core/group/group.py``.
 
-Notably shorter than its siblings, and structurally so: mesh has no
-``additive_lod`` / ``substitutive_lod`` / ``partition`` branches, because none of
-those paths exist for a mesh yet — for three different reasons, spelled out in the
-rejections below and in MESH_NODE_SPEC.md §9. What remains is the
-single-leaf write path the other adders reach after their LOD/partition
-dispatch — plus one rejection those adders never need, since a specialized-group
-parent is the one way a mesh could end up somewhere it cannot be rendered.
+Still shorter than its siblings, and structurally so: mesh has a ``partition``
+branch but no ``additive_lod`` / ``substitutive_lod`` one, because those paths do
+not exist for a mesh — for two different reasons, spelled out in the rejections
+below and in MESH_NODE_SPEC.md §9. It also keeps one rejection those adders never
+need, since a ``kind=lod`` parent is the one way a mesh could still end up
+somewhere it cannot be rendered.
+
+The partition branch differs from the sibling adders' in the one way that
+matters: theirs hand each part a SLICE of the element arrays, because their
+elements are independent rows. A triangle is not a row — it is three references
+into a shared vertex table — so a mesh part is a re-indexing, not a slice, and
+the split lives in :mod:`luxar.mesh.split`.
 """
 
 from __future__ import annotations
@@ -30,8 +35,15 @@ import numpy as np
 from arbol import aprint
 
 from ...mesh import Mesh
-from ..compositing import reject_lines_only_join, sync_custom_colormap_attr
+from ..compositing import (
+    COMPOSITING_ATTRS,
+    position_bounds_from_array,
+    reject_lines_only_join,
+    slice_optional_array,
+    sync_custom_colormap_attr,
+)
 from ..dim_order import apply_dim_order_positions
+from ..partition import reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -39,22 +51,13 @@ if TYPE_CHECKING:
 
 
 def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
-    """Refuse to write a mesh leaf under a ``kind=lod`` / ``kind=partition`` group.
+    """Refuse to write a mesh leaf under a ``kind=lod`` group.
 
-    Mesh supports neither (spec §9), and the two group kinds fail differently if
-    a mesh slips in:
-
-    * ``kind=partition`` — ``add_partition_group`` already rejects
-      ``display_type='mesh'``, but nothing stops a caller from creating a
-      ``points`` partition and then adding a mesh child into it, which would make
-      the group's declared display type a lie.
-    * ``kind=lod`` — there is no mesh LOD producer, and the display type resolved
-      from a mesh child is refused by the LOD guard. That guard fires at finalize,
-      i.e. AFTER the mesh's arrays are on disk; catching it here keeps the failure
-      fail-fast and leaves no partial node.
-
-    Both are caller mistakes with no valid interpretation, so they raise rather
-    than warn.
+    Mesh has no LOD ladder (spec §9), and the guard that would otherwise catch it
+    resolves the display type from the children at FINALIZE — i.e. after the
+    mesh's arrays are already on disk. Catching it here keeps the failure
+    fail-fast and leaves no partial node. It is a caller mistake with no valid
+    interpretation, so it raises rather than warns.
 
     The two LOD flavours are refused for DIFFERENT reasons and the message says so
     (spec §9). The additive prefix ladder is excluded on principle — a prefix of an
@@ -65,7 +68,17 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
     independently-authored ``(vertices, faces)`` pair chosen by
     ``coverage_fraction``. Conflating the two (as this message once did) tells a
     user the feature is impossible when it is merely unwritten.
+
+    ``kind=partition`` is no longer refused OUTRIGHT — mesh is partition-capable
+    now, and a mesh leaf under a ``display_type='mesh'`` partition is exactly what
+    ``add_mesh(partition=...)`` writes. A partition declaring some OTHER geometry
+    type is still refused, by the shared
+    :func:`~luxar.core.group.partition.reject_mismatched_partition_parent` every
+    leaf adder calls — the rule is symmetric (a points leaf under a
+    ``display_type='mesh'`` partition is refused the same way), so it does not
+    belong to mesh.
     """
+    reject_mismatched_partition_parent(parent_node, "mesh", name)
     kind = parent_node.attrs.get("kind")
     if kind == "lod":
         raise ValueError(
@@ -75,13 +88,6 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
             "holes in it, not a coarser surface), while SUBSTITUTIVE levels are "
             "structurally fine and simply have no producer — mesh decimation does "
             "not exist yet. Add the mesh to a plain group instead."
-        )
-    if kind == "partition":
-        raise ValueError(
-            f"Cannot add mesh '{name}' to a kind=partition group. Mesh has no "
-            "spatial-partition path yet: a BSP cut runs through faces, so each "
-            "part needs its boundary vertices duplicated and the per-vertex label "
-            "CSR split to match. Add the mesh to a plain group instead."
         )
 
 
@@ -98,26 +104,27 @@ _UNSUPPORTED_STRUCTURE_PARAMS: Dict[str, str] = {
         "SUBSTITUTIVE levels are structurally fine and simply have no producer — "
         "mesh decimation does not exist yet"
     ),
-    "partition": (
-        "a BSP cut runs through faces, so each part needs its boundary vertices "
-        "duplicated and the per-vertex label CSR split to match"
-    ),
+    # NOTE: ``partition`` is deliberately absent — it is a real ``add_mesh``
+    # parameter now, so it never reaches ``**attrs``.
 }
 
 
 def _reject_structure_params(name: str, attrs: Dict[str, Any]) -> None:
-    """Refuse the sibling adders' ``additive_lod`` / ``substitutive_lod`` / ``partition``.
+    """Refuse the sibling adders' ``additive_lod`` / ``substitutive_lod``.
 
     ``add_mesh`` has no such parameters, so a caller who passes one lands in
     ``**attrs`` and gets the generic UNKNOWN-attribute rejection from
     ``validate_render_attrs`` — "The viewer would silently ignore it… Remove it or
-    use a supported attribute", plus a "Did you mean 'absorption'?" hint for
-    ``partition``. That is a typo diagnostic, and this caller made no typo: they
-    asked for a real feature the other three geometry types have, by its real name.
+    use a supported attribute". That is a typo diagnostic, and this caller made no
+    typo: they asked for a real feature the other three geometry types have, by
+    its real name.
 
     The refusal is correct either way; only its stated reason was wrong, which is the
     same defect the parent-group message above carried. Answering with the per-flavour
     reason (spec §9) is what tells a user whether to wait for the feature.
+
+    ``partition`` is no longer in this table — it is a real ``add_mesh``
+    parameter, so it is bound by name and never reaches ``**attrs``.
     """
     for key, reason in _UNSUPPORTED_STRUCTURE_PARAMS.items():
         if key in attrs:
@@ -131,7 +138,7 @@ def _reject_structure_params(name: str, attrs: Dict[str, Any]) -> None:
 def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
     """Refuse ``blending_mode='volumetric'`` on a mesh (spec §9).
 
-    The other §9 exclusions are refused already — LOD and partition by
+    The other §9 exclusions are refused already — LOD by
     :func:`_reject_specialized_parent`, the additive ladder by the viewer's
     progressive-loader factory — but this one was documented and never enforced, so
     a volumetric mesh wrote and loaded cleanly.
@@ -142,7 +149,8 @@ def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
     that path length. A triangle is a zero-thickness surface, so its path length is
     identically zero and there is no medium to absorb anything — the mode has no
     per-element quantity to integrate. That makes it a caller mistake with no valid
-    interpretation, which is the same bar the LOD/partition refusals are held to, so
+    interpretation, which is the same bar the surviving structural refusals are held to
+    (the LOD parent, and a partition parent declaring a non-mesh ``display_type``), so
     it raises rather than warns.
 
     Refused at the ADDER rather than in ``validate_blending_mode``, which is
@@ -209,6 +217,40 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
         )
 
 
+def _resolve_mesh_vertices(vertices: Any) -> np.ndarray:
+    """Coerce ``vertices`` to an array and refuse a shape a mesh cannot render.
+
+    Extracted whole from ``add_mesh_impl`` so the coercion and the two shape
+    refusals read as one step, and so the adder body stays under the C901 limit
+    the complexity ratchet enforces. Pure: no scene state, no writes — it runs
+    BEFORE ``dim_order`` is applied so that both refusals judge the AUTHORED
+    array. ``dim_order`` does not merely permute the coordinate columns, it also
+    WIDENS them, padding unmapped scene dimensions with constant ``fill`` values;
+    a 1-column input would come out a technically-valid 2-D one whose extra axis
+    is a constant, i.e. still arealess. Checking first keeps the error about what
+    the caller actually wrote.
+    """
+    vert_arr: np.ndarray = (
+        vertices if isinstance(vertices, np.ndarray) else np.asarray(vertices)
+    )
+    if vert_arr.ndim != 2:
+        raise ValueError(f"Vertices must have shape (V, D), got shape {vert_arr.shape}")
+    # A floor of 2 dimensions, which the sibling adders deliberately do NOT have.
+    # Points and Lines are meaningful in 1D — a scatter along an axis, segments with
+    # length — so they take whatever width they are given. A TRIANGLE needs two
+    # dimensions to enclose any area: in 1D every face is collinear, so the mesh
+    # writes and loads successfully and then renders nothing at all, with no
+    # diagnostic anywhere. Refusing at the adder is the only place that can say why.
+    if vert_arr.shape[1] < 2:
+        raise ValueError(
+            f"Vertices must have at least 2 dimensions, got shape {vert_arr.shape}. "
+            "A triangle needs two dimensions to have any area — in 1D every face is "
+            "collinear and the surface renders nothing. Use Points or Lines for "
+            "1D data."
+        )
+    return vert_arr
+
+
 def add_mesh_impl(
     group: "Group",
     *,
@@ -223,12 +265,13 @@ def add_mesh_impl(
     double_sided: bool = True,
     labels: Optional[Union[List[str], Sequence[str]]] = None,
     image_labels: Optional[Any] = None,
+    partition: Any = None,
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     **attrs: Any,
-) -> Mesh:
+) -> Union[Mesh, "Group"]:
     try:
         # Fail-fast pre-write gate: reject invalid names (empty/'/'/dot-prefixed —
         # an empty name resolves to the zarr ROOT group and would clobber the
@@ -246,26 +289,7 @@ def add_mesh_impl(
 
         scene = group._find_scene()
 
-        vert_arr: np.ndarray = (
-            vertices if isinstance(vertices, np.ndarray) else np.asarray(vertices)
-        )
-        if vert_arr.ndim != 2:
-            raise ValueError(
-                f"Vertices must have shape (V, D), got shape {vert_arr.shape}"
-            )
-        # A floor of 2 dimensions, which the sibling adders deliberately do NOT have.
-        # Points and Lines are meaningful in 1D — a scatter along an axis, segments with
-        # length — so they take whatever width they are given. A TRIANGLE needs two
-        # dimensions to enclose any area: in 1D every face is collinear, so the mesh
-        # writes and loads successfully and then renders nothing at all, with no
-        # diagnostic anywhere. Refusing at the adder is the only place that can say why.
-        if vert_arr.shape[1] < 2:
-            raise ValueError(
-                f"Vertices must have at least 2 dimensions, got shape {vert_arr.shape}. "
-                "A triangle needs two dimensions to have any area — in 1D every face is "
-                "collinear and the surface renders nothing. Use Points or Lines for "
-                "1D data."
-            )
+        vert_arr = _resolve_mesh_vertices(vertices)
 
         # Apply dim_order before validation. Vertices are coordinates and get
         # reordered like every other geometry type's positions; `faces` is INDEX
@@ -309,6 +333,41 @@ def add_mesh_impl(
 
         parent_node = parent or group
 
+        # Spatial partition — split the surface into independently drawable
+        # parts under a kind=partition wrapper, so the viewer can frustum-cull
+        # per part. Placed here, after dim_order/extend_to_all resolution, so
+        # every part inherits coordinates and visibility already in final form
+        # and the per-part recursion must not re-apply them.
+        if partition is not None and partition is not False:
+            # ``extend_to_all`` was just RESOLVED into ``attrs`` above, and this
+            # call also passes it by name — so hand the split a copy of attrs
+            # without the key, or the two collide as a duplicate keyword argument
+            # and every partitioned+extended mesh fails. The parts get the
+            # resolved dimension names (re-resolving a name list is a no-op).
+            partition_attrs = {k: v for k, v in attrs.items() if k != "extend_to_all"}
+            wrapper = _add_mesh_partition(
+                group,
+                name=name,
+                vert_arr=vert_arr,
+                faces_arr=faces_arr,
+                partition=partition,
+                normals=normals,
+                normal_dims=normal_dims,
+                colors=colors,
+                scalars=scalars,
+                shading=shading,
+                double_sided=double_sided,
+                labels=labels,
+                image_labels=image_labels,
+                parent_node=parent_node,
+                extend_to_all=final_extend_dims or extend_to_all,
+                **partition_attrs,
+            )
+            if wrapper is not None:
+                return wrapper
+            # 1 part → fall through to the plain single-leaf write, exactly as
+            # the sibling adders do. A wrapper around one part is pure overhead.
+
         writer = group._require_scene_writer(scene)
         path = f"{parent_node.path}/{name}" if parent_node.path else name
         metadata = writer.write_mesh(
@@ -344,3 +403,275 @@ def add_mesh_impl(
     except (ValueError, TypeError) as e:
         aprint(f"Failed to add mesh node '{name}': {e}")
         raise ValueError(f"Could not add mesh '{name}': {e}") from e
+
+
+def _resolve_mesh_partition(partition: Any) -> tuple[int, str]:
+    """Validate ``partition=`` and return ``(max_elements, rule)``.
+
+    Same vocabulary as the sibling adders (``True`` / ``{max_elements, rule}``)
+    so a caller who knows ``add_points(partition=...)`` already knows this one.
+
+    ``max_elements`` counts **faces**, not vertices. The BSP recurses on face
+    centroids — one triangle is one indivisible unit of the split — so faces are
+    the quantity the cap can actually bound. A part's vertex count is whatever
+    its faces reference (at most ``3 * max_elements``, in practice far less).
+    """
+    from ..partition import DEFAULT_MAX_ELEMENTS
+
+    if partition is True:
+        return DEFAULT_MAX_ELEMENTS, "median"
+    if isinstance(partition, dict):
+        max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
+        if max_elements < 1:
+            raise ValueError(f"partition max_elements must be >= 1, got {max_elements}")
+        rule = str(partition.get("rule", "median"))
+        if rule not in ("median", "midpoint", "sah"):
+            raise ValueError(
+                f"partition rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
+            )
+        return max_elements, rule
+    raise TypeError(
+        f"partition must be None, True, or dict; got {type(partition).__name__}"
+    )
+
+
+def _is_broadcast_color(colors: Any) -> bool:
+    """Whether ``colors`` is a uniform RGB(A) sequence rather than per-vertex data.
+
+    Classifies on SHAPE only — a list/tuple of 3 or 4 numeric components — which is
+    the admission test
+    :func:`~luxar.io._compiler.node_common.validate_broadcast_color` applies at the
+    writer. Values (finite, non-negative, alpha in range) are deliberately left to
+    that validator, so a bad uniform color fails with the same message it gets
+    without ``partition=``.
+
+    A per-vertex list of triples fails the component test (its entries are
+    sequences, not numbers) and is gathered normally, as are numpy colors of any
+    shape — the writer refuses a 1-D numpy color outright, so only a list/tuple can
+    be the broadcast form.
+    """
+    if not isinstance(colors, (list, tuple)) or len(colors) not in (3, 4):
+        return False
+    return all(isinstance(c, (int, float, np.integer, np.floating)) for c in colors)
+
+
+def _validate_partition_sources(
+    faces_arr: np.ndarray,
+    n_vertices: int,
+    *,
+    normals: Any,
+    colors: Any,
+    scalars: Any,
+    labels: Any,
+    image_labels: Any,
+) -> None:
+    """Run the plain-leaf write gates against the SOURCE arrays, before the split.
+
+    Extracted whole from :func:`_add_mesh_partition` — the rejections are one
+    cohesive step (everything that must fail before a single index is used to
+    gather), and hoisting them keeps that function under the C901 limit the
+    complexity ratchet enforces. Order is load-bearing and preserved exactly:
+    ``image_labels`` first, then faces, then the per-vertex channels in
+    ``normals``, ``colors``, ``scalars``, ``labels`` order — a call that trips
+    several is told about the same one it was told about before.
+    """
+    from ....io._compiler.node_common import (
+        validate_broadcast_color,
+        validate_scalars_preflight,
+    )
+    from ....validation.base import (
+        validate_colors_for_writing,
+        validate_faces_for_writing,
+        validate_labels_for_writing,
+        validate_normals_for_writing,
+    )
+
+    if image_labels is not None:
+        raise ValueError(
+            "image_labels is not supported alongside partition=. It is a "
+            "whole-node image-to-label mapping with no per-part meaning, and "
+            "splitting it would silently change what each part's labels index. "
+            "Decompose manually or omit image_labels."
+        )
+
+    # Validate the ORIGINAL indices before they are used to gather anything. On
+    # the plain-leaf path the writer does this, but the split runs first and
+    # every one of these failures is silent or unrecognisable here: numpy WRAPS a
+    # negative index while gathering, so `-1` would quietly become the last
+    # vertex and write a triangle the author never wound, and an out-of-range or
+    # float index surfaces as a bare IndexError from inside the centroid gather
+    # instead of the guided message the same input gets without partition=.
+    validate_faces_for_writing(faces_arr, n_vertices)
+
+    # Same argument for the per-VERTEX channels, and the failure here is worse
+    # than a bad message: `slice_optional_array` gathers only when the leading
+    # length matches the vertex count and otherwise passes the value through
+    # WHOLE, which is exactly what makes a uniform RGB triple or a colormap name
+    # work. A wrong-length per-vertex array takes the same pass-through branch —
+    # and if its length happens to equal a part's OWN vertex count, that part's
+    # writer accepts it and silently pairs the values with the wrong vertices.
+    # (Two disconnected triangles: six source vertices, two three-vertex parts,
+    # three normals — rejected outright without `partition=`, accepted by both
+    # parts with it.) So run the plain-leaf gate against the SOURCE count first;
+    # a given input then fails identically whether or not it is partitioned.
+    if normals is not None:
+        validate_normals_for_writing(normals, n_vertices)
+    if isinstance(colors, np.ndarray):
+        validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
+    elif isinstance(colors, (list, tuple)):
+        validate_broadcast_color(colors, "colors")
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_vertices)
+    if labels is not None:
+        validate_labels_for_writing(labels, n_vertices)
+
+
+def _add_mesh_partition(
+    group: "Group",
+    *,
+    name: str,
+    vert_arr: np.ndarray,
+    faces_arr: np.ndarray,
+    partition: Any,
+    normals: Any,
+    normal_dims: Optional[Sequence[int]],
+    colors: Any,
+    scalars: Any,
+    shading: Optional[str],
+    double_sided: bool,
+    labels: Any,
+    image_labels: Any,
+    parent_node: "Node",
+    extend_to_all: Optional[Union[List[str], str]],
+    **attrs: Any,
+) -> Optional["Group"]:
+    """Write a kind=partition wrapper with one independent Mesh child per part.
+
+    Returns ``None`` when the BSP could not split into more than one part, so the
+    caller falls through to a plain single-leaf write.
+
+    Unlike the sibling wrappers this cannot slice its inputs: a part's faces
+    reference a shared vertex table, so each part gathers and renumbers its own
+    vertices (see :mod:`luxar.mesh.split`). Boundary vertices are therefore
+    duplicated across parts — that is what makes each part independently
+    drawable, and it is invisible in the render because both copies carry
+    identical position and identical stored normal.
+
+    Per-VERTEX attributes (``normals`` / ``colors`` / ``scalars`` / ``labels``)
+    are gathered through the part's ``vertex_index``; per-face data has no
+    attribute today.
+    """
+    from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
+    from ..partition import (
+        median_bsp_partition,
+        midpoint_bsp_partition,
+        sah_bsp_partition,
+        warn_if_oversized_single_part,
+    )
+
+    max_elements, rule = _resolve_mesh_partition(partition)
+
+    # No `warn_if_partition_needs_more_dims` call: it guards against <2 spatial
+    # dims, and add_mesh_impl has already refused those outright with a
+    # mesh-specific message (a 1D triangle encloses no area). Unreachable here.
+
+    n_vertices = int(vert_arr.shape[0])
+    _validate_partition_sources(
+        faces_arr,
+        n_vertices,
+        normals=normals,
+        colors=colors,
+        scalars=scalars,
+        labels=labels,
+        image_labels=image_labels,
+    )
+
+    # A uniform RGB(A) list/tuple is the one leaf parameter whose OWN length can
+    # collide with the vertex count, and mesh is the geometry where that collision
+    # is reachable: every part holds at least three vertices (a triangle's worth),
+    # so a 4-vertex source with an RGBA color satisfies `slice_optional_array`'s
+    # length test and is gathered as if its four channels were four vertex rows.
+    # Each part then receives a different rotated 3-slice of the components —
+    # SILENTLY, because a 3-element result is itself a valid uniform RGB. Classify
+    # the broadcast form up front so every part gets the color the caller wrote.
+    uniform_color = _is_broadcast_color(colors)
+
+    faces2d = faces_arr.reshape(-1, 3)
+    centroids = face_centroids(vert_arr, faces2d)
+    if rule == "sah":
+        face_parts = sah_bsp_partition(centroids, max_elements)
+    elif rule == "midpoint":
+        face_parts = midpoint_bsp_partition(centroids, max_elements)
+    else:
+        face_parts = median_bsp_partition(centroids, max_elements)
+
+    warn_if_oversized_single_part(
+        len(face_parts),
+        int(face_parts[0].size) if face_parts else 0,
+        max_elements,
+        name,
+    )
+    if len(face_parts) <= 1:
+        return None
+
+    parts = split_mesh_by_faces(faces2d, face_parts)
+
+    wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
+    leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+
+    wrapper = parent_node.add_partition_group(
+        name=name,
+        display_type="mesh",
+        max_elements=max_elements,
+        **wrapper_attrs,
+    )
+
+    aprint(
+        f"  ✂️  Partitioned mesh '{name}' into {len(parts)} parts via BSP "
+        f"(max_elements={max_elements:,} faces, "
+        f"face counts={[int(p.faces.shape[0]) for p in parts]}, "
+        f"vertex duplication x{duplication_factor(parts):.3f})"
+    )
+
+    for i, part in enumerate(parts):
+        # `slice_optional_array` is the same helper the sibling wrappers use, and
+        # it is the right one here for the same reason: it gathers ONLY when the
+        # value's leading length matches the element count, so a per-vertex array
+        # follows its vertices while a uniform RGB triple or a colormap name is
+        # handed to every part untouched. `labels` is per-VERTEX (hover tooltips),
+        # so it is gathered too — passing it whole would give every part V labels
+        # for its own Vi vertices. `colors` is the one exception: a broadcast
+        # RGB(A) sequence is classified by SHAPE above rather than by length, since
+        # its length can coincide with the vertex count (see `uniform_color`).
+        take = part.vertex_index
+        wrapper.add_mesh(
+            name=f"part_{i}",
+            vertices=vert_arr[take],
+            faces=part.faces,
+            normals=slice_optional_array(normals, take, n_vertices),
+            normal_dims=normal_dims,
+            colors=(
+                colors
+                if uniform_color
+                else slice_optional_array(colors, take, n_vertices)
+            ),
+            scalars=slice_optional_array(scalars, take, n_vertices),
+            shading=shading,
+            double_sided=double_sided,
+            labels=slice_optional_array(labels, take, n_vertices),
+            image_labels=None,
+            extend_to_all=extend_to_all,
+            # dim_order / fill were applied to vert_arr upstream — re-applying
+            # per part would permute already-permuted coordinates.
+            dim_order=None,
+            fill=None,
+            # Explicit no-partition, so a part can never recurse into another
+            # partition (mirrors the `False` sentinel the sibling wrappers use).
+            partition=False,
+            **leaf_attrs,
+        )
+
+    # Union of the parts' bounds == the whole input's bounds, computed straight
+    # from the source rather than round-tripped through the children's attrs.
+    wrapper._persist_attr("position_bounds", position_bounds_from_array(vert_arr))
+    return wrapper
