@@ -167,6 +167,7 @@ def generate_rainbow_sphere(
                 # be small for the sphere to sit in range at exposure 0 (a
                 # gain of 0.5 needed the viewer pushed down ~4.4 stops).
                 intensity=0.024,
+                layer=True,
             )
 
             # Overlay annotations

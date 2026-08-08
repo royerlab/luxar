@@ -170,6 +170,7 @@ def main() -> None:
                     opacity=0.8,
                     intensity=0.25,
                     labels=labels,
+                    layer=True,
                 )
 
                 # --- Overlays ---
@@ -263,6 +264,7 @@ def main() -> None:
                     opacity=0.8,
                     intensity=0.25,
                     labels=labels,
+                    layer=True,
                 )
 
                 # --- Overlays ---
