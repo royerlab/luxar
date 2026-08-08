@@ -19,8 +19,10 @@ recompute, and impossible offline. These tests pin the caching that removes it:
   not re-parse. Keyed on the two snapshot FILENAMES, so a new monthly release
   gets its own entry instead of clobbering the previous one.
 * ``_prune_superseded_snapshots`` — superseded raw snapshots and their derived
-  bundles are removed; the memo, the layout cache, unrecognised files and a
-  foreign ``pipeline_…`` file that merely contains a superseded date are not.
+  bundles are removed, including a bundle that outlived the raw files it is keyed
+  on (an interrupted earlier sweep); the memo, the layout cache, unrecognised
+  files and a foreign ``pipeline_…`` file that merely contains a superseded date
+  are not.
 * ``compute_layout`` — cached under a key that IS its input identity (node hash +
   edge count + edge hash), so two node sets get two cache files and each is
   reused, and a rewired graph with the same nodes — even one with the same edge
@@ -912,6 +914,48 @@ class TestPruneSupersededSnapshots:
         out = capsys.readouterr().out
         assert "Skipped" not in out
         assert out.count(both.name) == 1
+
+    def test_a_bundle_whose_raw_snapshots_are_gone_is_still_removed(
+        self, tmp_path: Path
+    ) -> None:
+        # The sweep unlinks raw files BEFORE bundles, so an interrupted run — or
+        # a bundle unlink that failed — leaves a bundle whose date has no raw
+        # snapshot left. A superseded set taken from the raw files alone would
+        # never look at that date again, orphaning a multi-MB bundle forever.
+        cache = tmp_path / "caida"
+        self._populate(cache)
+        for date in ("20250101", "20250201"):
+            (cache / f"{date}.as-rel2.txt.bz2").unlink()
+            (cache / f"{date}.as-org2info.txt.gz").unlink()
+        orphans = [
+            cache / f"pipeline_{date}.as-rel2.txt.bz2_{date}.as-org2info.txt.gz_v1.pkl"
+            for date in ("20250101", "20250201")
+        ]
+        # ...and one for a date NEWER than any raw snapshot on disk, which must
+        # not be mistaken for a release to retain: the keep window is ranked on
+        # the raw dates, so admitting bundle dates to it would drop 20250301.
+        stray_newer = (
+            cache / "pipeline_20250501.as-rel2.txt.bz2_"
+            "20250501.as-org2info.txt.gz_v1.pkl"
+        )
+        stray_newer.write_bytes(b"bundle")
+        assert all(p.exists() for p in orphans)
+
+        demo._prune_superseded_snapshots(
+            cache,
+            keep=2,
+            current=("20250401.as-rel2.txt.bz2", "20250401.as-org2info.txt.gz"),
+        )
+
+        assert not any(p.exists() for p in orphans)
+        assert not stray_newer.exists()
+        # The two newest releases and their own bundles are untouched.
+        for date in ("20250301", "20250401"):
+            assert (cache / f"{date}.as-rel2.txt.bz2").exists()
+            assert (
+                cache
+                / f"pipeline_{date}.as-rel2.txt.bz2_{date}.as-org2info.txt.gz_v1.pkl"
+            ).exists()
 
     def test_a_foreign_pipeline_file_is_never_touched(self, tmp_path: Path) -> None:
         # ``pipeline_`` is not a CAIDA-specific prefix and ``--cache-dir`` can

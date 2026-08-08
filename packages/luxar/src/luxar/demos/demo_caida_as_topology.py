@@ -104,8 +104,10 @@ the memo is fresh — everything else is served from the cache directory
     - ``layout3d_<node-hash>_e<n-edges>_<edge-hash>_v1.pkl`` — the 3D
       coordinates.
 
-Invalidation is by content, not by timestamp: the pipeline cache is keyed
-on the two snapshot FILENAMES and the layout on the node list plus the
+Invalidation is by identity, not by timestamp: the pipeline cache is keyed
+on the two snapshot FILENAMES — a dated CAIDA release is immutable, so the
+name identifies the content (a file swapped under the same name needs
+``--recompute-pipeline``) — and the layout on the node list plus the
 edge list it was computed from, so a new monthly CAIDA release downloads
 once and recomputes both derived artifacts once, while an older snapshot's
 caches stay valid rather than being clobbered. Superseded snapshots (raw
@@ -483,7 +485,12 @@ def _prune_superseded_snapshots(
     have left — with it. A bundle qualifies only by matching
     :data:`PIPELINE_BUNDLE_PATTERN` in full and EMBEDDING the superseded date in
     one of the two snapshot filenames it is keyed on; a shared ``--cache-dir``
-    must not lose someone else's ``pipeline_…`` file to a substring match.
+    must not lose someone else's ``pipeline_…`` file to a substring match. A
+    bundle whose raw files are already gone counts as superseded on its own, so
+    an interrupted sweep (raw files unlink first) or a bundle unlink that failed
+    is retried on the next run instead of orphaning a bundle forever — the keep
+    WINDOW is still ranked on the raw snapshot dates alone, so a stray bundle can
+    never shorten how many releases are retained.
     Nothing else is touched: not the memo, not an
     unrecognised file, and deliberately not a ``layout3d_*`` cache. Those are
     small (~1 MB each) and keyed on their input identity (node set + edge list)
@@ -518,15 +525,23 @@ def _prune_superseded_snapshots(
             # the dates it actually EMBEDS, not by a substring search.
             for embedded in (bundle.group("rel"), bundle.group("org")):
                 bundles_by_date.setdefault(embedded[:8], []).append(path)
-    if not by_date:
+    if not by_date and not bundles_by_date:
         return
 
+    # The window is ranked on the RAW dates only: a bundle that outlived its
+    # snapshots must not be able to shorten how many releases are kept.
     keep_dates = set(sorted(by_date, reverse=True)[:keep]) | {n[:8] for n in current}
-    superseded = sorted(d for d in by_date if d not in keep_dates)
+    # ...but a date known only from a bundle is still superseded, and is the one
+    # case a raw-only date set would never revisit: the sweep unlinks raw files
+    # first, so an interrupted run (or a bundle unlink that failed) leaves exactly
+    # that state and would otherwise orphan a multi-MB bundle forever.
+    superseded = sorted(
+        d for d in (by_date.keys() | bundles_by_date.keys()) if d not in keep_dates
+    )
 
     collected: list[Path] = []
     for date in superseded:
-        collected += by_date[date]
+        collected += by_date.get(date, [])
         collected += bundles_by_date.get(date, [])
     # A bundle whose two dates are BOTH superseded is collected once per date;
     # deleting it twice would report a spurious "Skipped … No such file".
