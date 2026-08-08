@@ -232,7 +232,7 @@ already been burned by and documented: `rendering/depth-sort-coordinator/render-
 that the serialized BSP `axis` is a *center-column* index which must be mapped through `displayDims`,
 and that "the two coincide only for `displayDims == [0, 1, 2]`". An explicit index list is also the
 established convention on the Python side (`gsplat transform --spatial-dims`,
-`cli/gsplat_ops/transforms_commands.py:300`).
+`cli/gsplat_ops/transforms/commands.py:717`).
 
 Making `normal_dims` explicit turns an invisible wrong-orientation render into a cheap, checkable
 equality — and costs one attr.

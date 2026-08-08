@@ -1,6 +1,6 @@
 # `luxar gsplat batch-fit` + `benchmark` — full option reference
 
-Verified from `cli/gsplat_ops/batch.py`, `benchmark.py`, `gsplats/batch/`. Run
+Verified from `cli/gsplat_ops/batch/`, `benchmark.py`, `gsplats/batch/`. Run
 `luxar gsplat batch-fit <sub> --help` for the live list. `submit` = Slurm array;
 `run` = local multi-GPU; `status`/`validate`/`merge`/`cancel` are shared.
 

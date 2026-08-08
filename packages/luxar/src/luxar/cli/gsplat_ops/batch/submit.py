@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 from arbol import aprint
 
-from .batch_submit_pipeline import (
+from .submit_pipeline import (
     build_plan_configs,
     generate_all_scripts,
     resolve_gpu_context,
@@ -16,8 +16,8 @@ from .batch_submit_pipeline import (
     stamp_slurm_fields,
     validate_tiling_arg,
 )
-from .batch_submit_plan_output import print_batch_submit_plan
-from .batch_submit_slurm import submit_batch_jobs
+from .submit_plan_output import print_batch_submit_plan
+from .submit_slurm import submit_batch_jobs
 
 
 def run_batch_submit(
@@ -471,7 +471,7 @@ def run_batch_submit(
 
     try:
         from luxar.cli.gsplat_config import PRESETS
-        from luxar.cli.gsplat_ops.batch_planning import plan_batch
+        from luxar.cli.gsplat_ops.batch.planning import plan_batch
         from luxar.gsplats.batch.env_capture import is_slurm_mps_available
 
         # 1. Load GPU profile (required only for auto tile-size)

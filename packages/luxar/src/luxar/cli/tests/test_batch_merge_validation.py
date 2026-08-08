@@ -79,7 +79,7 @@ class TestResolveMergeRecipeArgs:
     def test_orphaned_knob_without_recipe_raises(self) -> None:
         """A merge knob without --merge-recipe is a silent no-op pre-fix; it must
         now raise rather than return `{}`."""
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -88,7 +88,7 @@ class TestResolveMergeRecipeArgs:
             resolve_merge_recipe_args(MergeConfig(recipe=None, n_lods=6))
 
     def test_no_knobs_no_recipe_returns_empty(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -96,7 +96,7 @@ class TestResolveMergeRecipeArgs:
         assert resolve_merge_recipe_args(MergeConfig()) == {}
 
     def test_valid_recipe_with_knobs_resolves(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -105,7 +105,7 @@ class TestResolveMergeRecipeArgs:
         assert args == {"n-lods": "6"}
 
     def test_cross_recipe_knob_still_rejected(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -200,7 +200,7 @@ class TestMergeStreamingKnobs:
     breakpoints string (manifest schema unchanged) + the exclusion rules."""
 
     def test_target_ms_resolves_to_stored_stream_string(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -224,7 +224,7 @@ class TestMergeStreamingKnobs:
     def test_target_ms_sized_with_true_merged_ndim(self) -> None:
         """merged_ndim=3 (single timepoint, 3 spatial) must size against the
         3D analytic figure (21 B), not the hardcoded 4D default (30 B)."""
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -238,7 +238,7 @@ class TestMergeStreamingKnobs:
     def test_target_ms_accounts_for_channel_colors(self) -> None:
         """A color-carrying multi-channel merge adds ~4 B/splat to the analytic
         estimate, shrinking the first chunk accordingly."""
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -252,7 +252,7 @@ class TestMergeStreamingKnobs:
         assert args["breakpoints"] == "stream:18382"
 
     def test_target_ms_and_breakpoints_mutually_exclusive(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -266,7 +266,7 @@ class TestMergeStreamingKnobs:
         assert "--merge-breakpoints" in str(exc.value)
 
     def test_bandwidth_knob_requires_target_ms(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -277,7 +277,7 @@ class TestMergeStreamingKnobs:
         assert "--merge-target-ms" in str(exc.value)
 
     def test_target_ms_orphaned_without_recipe(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -286,7 +286,7 @@ class TestMergeStreamingKnobs:
             resolve_merge_recipe_args(MergeConfig(target_ms=200.0))
 
     def test_target_ms_cross_recipe_rejected(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             MergeConfig,
             resolve_merge_recipe_args,
         )
@@ -492,7 +492,7 @@ class TestPlanTimeStreamingSizing:
         z[:] = np.zeros(shape, np.float32)
 
     def _plan(self, tmp_path: Path, shape: tuple[int, ...], axes: list[str], merge):
-        from luxar.cli.gsplat_ops.batch_planning import (
+        from luxar.cli.gsplat_ops.batch.planning import (
             ContentKnobs,
             DenoiseConfig,
             FitConfig,
@@ -518,7 +518,7 @@ class TestPlanTimeStreamingSizing:
         )
 
     def test_multi_timepoint_plans_4d_ladder(self, tmp_path: Path) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import MergeConfig
+        from luxar.cli.gsplat_ops.batch.planning import MergeConfig
 
         plan = self._plan(
             tmp_path,
@@ -532,7 +532,7 @@ class TestPlanTimeStreamingSizing:
         assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:20833"
 
     def test_single_timepoint_plans_3d_ladder(self, tmp_path: Path) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import MergeConfig
+        from luxar.cli.gsplat_ops.batch.planning import MergeConfig
 
         plan = self._plan(
             tmp_path,
@@ -544,7 +544,7 @@ class TestPlanTimeStreamingSizing:
         assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:29762"
 
     def test_multichannel_color_merge_plans_color_bytes(self, tmp_path: Path) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import MergeConfig
+        from luxar.cli.gsplat_ops.batch.planning import MergeConfig
 
         plan = self._plan(
             tmp_path,
@@ -569,7 +569,7 @@ class TestMergeTargetMsBytesSource:
         from every centers/.zarray — missing tiles are skipped."""
         import json
 
-        from luxar.cli.gsplat_ops.batch_measurement import (
+        from luxar.cli.gsplat_ops.batch.measurement import (
             measure_tiles_bytes_per_splat as _measure_tiles_bytes_per_splat,
         )
 
@@ -586,7 +586,7 @@ class TestMergeTargetMsBytesSource:
         assert bps == pytest.approx((4000 + len(zarray)) / 100)
 
     def test_measure_tiles_none_when_nothing_on_disk(self, tmp_path: Path) -> None:
-        from luxar.cli.gsplat_ops.batch_measurement import (
+        from luxar.cli.gsplat_ops.batch.measurement import (
             measure_tiles_bytes_per_splat as _measure_tiles_bytes_per_splat,
         )
 
