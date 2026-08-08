@@ -14,18 +14,18 @@ import typer
 if TYPE_CHECKING:
     pass
 
-from luxar.cli.gsplat_ops.batch_denoise_workers import (
+from luxar.cli.gsplat_ops.batch.denoise_workers import (
     run_batch_denoise_calibrate_cmd,
     run_batch_denoise_preprocess_cmd,
 )
-from luxar.cli.gsplat_ops.batch_merge_command import run_batch_merge_cmd
-from luxar.cli.gsplat_ops.batch_run import run_batch_run
-from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
+from luxar.cli.gsplat_ops.batch.merge_command import run_batch_merge_cmd
+from luxar.cli.gsplat_ops.batch.run import run_batch_run
+from luxar.cli.gsplat_ops.batch.status_validate_cancel import (
     run_batch_cancel_cmd,
     run_batch_status_cmd,
     run_batch_validate_cmd,
 )
-from luxar.cli.gsplat_ops.batch_submit import run_batch_submit
+from luxar.cli.gsplat_ops.batch.submit import run_batch_submit
 
 app_batch = typer.Typer(
     help="Fit a whole nD dataset across its axes — locally across GPUs "

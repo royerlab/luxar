@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
-from ..utils import format_memory_size
-from .fitting_recipe_args import (
+from ...utils import format_memory_size
+from .recipe_args import (
     build_fit_recipe_params as _build_fit_recipe_params_impl,
 )
 
