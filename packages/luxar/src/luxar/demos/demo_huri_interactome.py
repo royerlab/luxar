@@ -104,7 +104,6 @@ DEMO_META = {
     "outputs": ["huri_interactome"],
 }
 
-import hashlib
 import shutil
 import sys
 import tempfile
@@ -118,6 +117,16 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import launch_viewer, parse_int_arg, parse_path_arg, require_module
+from luxar.demos._graph_common import (
+    build_adjacency,
+    build_community_legend,
+    compute_communities,
+    download_file,
+    filter_to_lcc,
+    load_hgnc,
+    load_huri_edges,
+    nodes_hash,
+)
 from luxar.utils._umap_utils import build_legend_html, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -175,42 +184,6 @@ CROSS_COMMUNITY_COLOR: tuple[float, float, float] = (0.30, 0.30, 0.32)
 # -----------------------------------------------------------------------------
 # Download / cache
 # -----------------------------------------------------------------------------
-
-
-def _download(url: str, dest: Path, description: str) -> None:
-    """Stream a URL to ``dest``, with progress. No-op if file exists."""
-    if dest.exists() and dest.stat().st_size > 0:
-        size_mb = dest.stat().st_size / (1024 * 1024)
-        aprint(f"  Using cached {dest.name} ({size_mb:.1f} MB)")
-        return
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    aprint(f"  Downloading {description}")
-    aprint(f"    URL: {url}")
-
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    with requests.get(url, stream=True, timeout=120) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        written = 0
-        last_pct = 0.0
-        with open(tmp, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1 << 20):
-                if not chunk:
-                    continue
-                f.write(chunk)
-                written += len(chunk)
-                if total > 0:
-                    pct = 100.0 * written / total
-                    if pct - last_pct >= 20.0:
-                        aprint(
-                            f"    {written / (1024 * 1024):,.0f} / "
-                            f"{total / (1024 * 1024):,.0f} MB  ({pct:.0f}%)"
-                        )
-                        last_pct = pct
-    tmp.rename(dest)
-    size_mb = dest.stat().st_size / (1024 * 1024)
-    aprint(f"  ✓ Saved {dest.name} ({size_mb:.1f} MB)")
 
 
 def _download_corum_zip_member(
@@ -337,8 +310,8 @@ def ensure_data(cache_dir: Path) -> tuple[Path, Path, Path | None]:
     corum_path = cache_dir / CORUM_FILENAME
 
     with asection("Fetching data"):
-        _download(HURI_URL, huri_path, "HuRI network (~2 MB)")
-        _download(HGNC_URL, hgnc_path, "HGNC complete set (~30 MB)")
+        download_file(HURI_URL, huri_path, "HuRI network (~2 MB)")
+        download_file(HGNC_URL, hgnc_path, "HGNC complete set (~30 MB)")
         ok = _download_corum_zip_member(
             CORUM_URLS,
             CORUM_FILENAME,
@@ -354,143 +327,15 @@ def ensure_data(cache_dir: Path) -> tuple[Path, Path, Path | None]:
 
 
 # -----------------------------------------------------------------------------
-# Data loading + HGNC mapping
-# -----------------------------------------------------------------------------
-
-
-def load_hgnc(tsv_path: Path) -> pd.DataFrame:
-    """Return a frame indexed by Ensembl gene id with (symbol, chromosome)."""
-    wanted = {"symbol", "ensembl_gene_id", "location", "status"}
-    with asection("Loading HGNC (Ensembl → symbol)"):
-        df = pd.read_csv(
-            tsv_path,
-            sep="\t",
-            usecols=lambda c: c in wanted,
-            dtype=str,
-            low_memory=False,
-        )
-        if "status" in df.columns:
-            df = df[df["status"] == "Approved"]
-        df = df.dropna(subset=["ensembl_gene_id", "symbol"])
-        # location like "17q21.31" or "Xp22.2" → chromosome prefix
-        df["chromosome"] = (
-            df.get("location", pd.Series([""] * len(df)))
-            .fillna("?")
-            .astype(str)
-            .str.extract(r"^([0-9XYMT]+)", expand=False)
-            .fillna("?")
-        )
-        df = df.set_index("ensembl_gene_id")[["symbol", "chromosome"]]
-        df = df[~df.index.duplicated(keep="first")]
-        aprint(f"  {len(df):,} Ensembl→symbol mappings")
-    return df
-
-
-def load_huri_edges(tsv_path: Path, hgnc: pd.DataFrame) -> pd.DataFrame:
-    """Return the undirected, deduplicated (sym_a, sym_b) edge frame."""
-    with asection("Loading HuRI interactions"):
-        df = pd.read_csv(tsv_path, sep="\t", header=None, dtype=str, low_memory=False)
-        if df.shape[1] < 2:
-            raise RuntimeError(f"Unexpected HuRI format (got {df.shape[1]} columns)")
-        df = df.iloc[:, :2].copy()
-        df.columns = ["ensg_a", "ensg_b"]
-        # Filter to ENSG-looking rows (handles presence or absence of header)
-        df = df[
-            df["ensg_a"].str.startswith("ENSG", na=False)
-            & df["ensg_b"].str.startswith("ENSG", na=False)
-        ]
-        df = df[df["ensg_a"] != df["ensg_b"]]
-        aprint(f"  {len(df):,} ENSG-level pairs")
-
-        symbol_map = hgnc["symbol"].to_dict()
-        sym_a = df["ensg_a"].map(symbol_map)
-        sym_b = df["ensg_b"].map(symbol_map)
-        keep = sym_a.notna() & sym_b.notna()
-        df = pd.DataFrame(
-            {"sym_a": sym_a[keep].to_numpy(), "sym_b": sym_b[keep].to_numpy()}
-        )
-        aprint(f"  {len(df):,} pairs with both endpoints mapped to HGNC")
-
-        # Canonicalize so (A, B) == (B, A) then drop duplicates
-        a = df["sym_a"].to_numpy()
-        b = df["sym_b"].to_numpy()
-        lo = np.where(a < b, a, b)
-        hi = np.where(a < b, b, a)
-        df = pd.DataFrame({"sym_a": lo, "sym_b": hi}).drop_duplicates()
-        aprint(f"  {len(df):,} unique undirected pairs")
-    return df.reset_index(drop=True)
-
-
-def filter_to_lcc(
-    edges: pd.DataFrame, hgnc: pd.DataFrame
-) -> tuple[list[str], pd.DataFrame, pd.DataFrame]:
-    """Restrict to the largest connected component and attach chromosome info."""
-    nx = require_module("networkx")
-
-    with asection("Filtering to largest connected component"):
-        g = nx.Graph()
-        g.add_edges_from(
-            zip(edges["sym_a"].tolist(), edges["sym_b"].tolist(), strict=True)
-        )
-        components = sorted(nx.connected_components(g), key=len, reverse=True)
-        lcc = components[0]
-        aprint(
-            f"  {len(components):,} components; LCC has "
-            f"{len(lcc):,} nodes (dropped {g.number_of_nodes() - len(lcc):,})"
-        )
-
-        lcc_set = set(lcc)
-        mask = edges["sym_a"].isin(lcc_set) & edges["sym_b"].isin(lcc_set)
-        edges = edges[mask].reset_index(drop=True)
-        aprint(f"  {len(edges):,} edges within the LCC")
-
-        nodes = sorted(lcc_set)  # deterministic order → reproducible layout
-        sym_to_chrom = hgnc.groupby("symbol")["chromosome"].first().to_dict()
-        node_df = pd.DataFrame(
-            {
-                "symbol": nodes,
-                "chromosome": [sym_to_chrom.get(s, "?") for s in nodes],
-            }
-        )
-    return nodes, node_df, edges
-
-
-# -----------------------------------------------------------------------------
 # Layout: spectral embedding → UMAP → 3D
 # -----------------------------------------------------------------------------
-
-
-def _build_adjacency(nodes: list[str], edges: pd.DataFrame):
-    """Return a symmetric CSR adjacency matrix, one entry per undirected edge."""
-    from scipy.sparse import csr_matrix
-
-    idx = {s: i for i, s in enumerate(nodes)}
-    rows = np.fromiter((idx[s] for s in edges["sym_a"]), dtype=np.int32)
-    cols = np.fromiter((idx[s] for s in edges["sym_b"]), dtype=np.int32)
-    data = np.ones(len(edges), dtype=np.float32)
-    n = len(nodes)
-    mat = csr_matrix(
-        (
-            np.concatenate([data, data]),
-            (np.concatenate([rows, cols]), np.concatenate([cols, rows])),
-        ),
-        shape=(n, n),
-    )
-    mat.sum_duplicates()
-    mat.data = np.minimum(mat.data, 1.0)
-    return mat
-
-
-def _nodes_hash(nodes: list[str]) -> str:
-    """Deterministic hash of the node list for layout cache invalidation."""
-    return hashlib.sha256("\n".join(nodes).encode("utf-8")).hexdigest()[:16]
 
 
 def compute_layout(
     nodes: list[str], edges: pd.DataFrame, cache_path: Path, recompute: bool
 ) -> np.ndarray:
     """Spectral embedding + UMAP → 3D coordinates, cached to npz."""
-    node_hash = _nodes_hash(nodes)
+    node_hash = nodes_hash(nodes)
 
     if cache_path.exists() and not recompute:
         with asection("Loading cached 3D layout"):
@@ -507,7 +352,7 @@ def compute_layout(
     from scipy.sparse.linalg import eigsh
 
     with asection("Computing spectral + UMAP layout"):
-        adj = _build_adjacency(nodes, edges)
+        adj = build_adjacency(nodes, edges, columns=("sym_a", "sym_b"))
         aprint(f"  Adjacency: {adj.shape[0]} × {adj.shape[0]}, nnz={adj.nnz:,}")
 
         lap = laplacian(adj, normed=True).astype(np.float64)
@@ -557,34 +402,8 @@ def compute_layout(
 
 
 # -----------------------------------------------------------------------------
-# Communities + CORUM
+# CORUM complexes
 # -----------------------------------------------------------------------------
-
-
-def compute_communities(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
-    """Louvain community assignment per node. Communities sorted by size desc."""
-    nx = require_module("networkx")
-
-    with asection("Detecting communities (Louvain)"):
-        g = nx.Graph()
-        g.add_nodes_from(nodes)
-        g.add_edges_from(
-            zip(edges["sym_a"].tolist(), edges["sym_b"].tolist(), strict=True)
-        )
-        partitions = nx.community.louvain_communities(g, seed=42)
-        partitions = sorted(partitions, key=len, reverse=True)
-        aprint(f"  {len(partitions)} communities detected")
-        for i, p in enumerate(partitions[:5]):
-            aprint(f"    #{i}: {len(p):,} nodes")
-        if len(partitions) > 5:
-            aprint(f"    ... + {len(partitions) - 5} smaller")
-
-        idx = {s: i for i, s in enumerate(nodes)}
-        comms = np.full(len(nodes), -1, dtype=np.int32)
-        for comm_id, members in enumerate(partitions):
-            for symbol in members:
-                comms[idx[symbol]] = comm_id
-    return comms
 
 
 def load_corum_lookup(
@@ -862,38 +681,6 @@ def build_edge_lines(
 
 
 # -----------------------------------------------------------------------------
-# Legends
-# -----------------------------------------------------------------------------
-
-
-def _build_community_legend(communities: np.ndarray, top_n: int = 20) -> str:
-    """Top-N communities by size, sorted descending."""
-    unique, counts = np.unique(communities, return_counts=True)
-    order = np.argsort(-counts)
-    unique = unique[order]
-    counts = counts[order]
-    n_comms = len(unique)
-    lines = [
-        '<div style="font-size:1.3vh;line-height:1.5;'
-        "background:rgba(0,0,0,0.55);padding:0.6vh 0.8vh;"
-        'border-radius:4px;max-height:82vh;overflow:hidden">'
-        '<div style="color:#ffcc44;font-weight:bold;margin-bottom:0.4vh">'
-        f"Community ({n_comms})</div>"
-    ]
-    for comm_id, count in zip(unique[:top_n], counts[:top_n], strict=True):
-        r, g, b = get_categorical_color(int(comm_id), n_comms)
-        lines.append(
-            f'<div style="white-space:nowrap">'
-            f'<span style="color:rgb({r},{g},{b})">█</span> '
-            f"#{int(comm_id)} ({int(count):,})</div>"
-        )
-    if n_comms > top_n:
-        lines.append(f'<div style="color:#888">... +{n_comms - top_n} more</div>')
-    lines.append("</div>")
-    return "".join(lines)
-
-
-# -----------------------------------------------------------------------------
 # Scene
 # -----------------------------------------------------------------------------
 
@@ -1018,7 +805,7 @@ def build_scene(
             )
 
             # Per-view captions + legends
-            community_legend = _build_community_legend(communities)
+            community_legend = build_community_legend(communities)
             chrom_legend = build_legend_html("chromosome", chrom_cats, chrom_codes)
 
             for view_id, caption, legend_html in [
@@ -1105,7 +892,7 @@ def main() -> None:
         cache_path=cache_dir / LAYOUT_CACHE_FILENAME,
         recompute=recompute,
     )
-    communities = compute_communities(nodes, edges)
+    communities = compute_communities(nodes, edges, columns=("sym_a", "sym_b"))
     degrees = _node_degrees(nodes, edges)
     corum_lookup = load_corum_lookup(corum_path)
 

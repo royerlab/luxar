@@ -38,6 +38,7 @@ from ...mesh import Mesh
 from ..compositing import (
     COMPOSITING_ATTRS,
     position_bounds_from_array,
+    reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
 )
@@ -246,6 +247,7 @@ def add_mesh_impl(
         _reject_structure_params(name, attrs)
         _reject_volumetric_blending(name, attrs)
         _reject_energy_stamps(name, attrs)
+        reject_lines_only_join("mesh", name, attrs)
 
         scene = group._find_scene()
 

@@ -14,12 +14,22 @@ import {
   projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
+  MAX_NEAR_FAR_RATIO,
   minNearForRadius,
+  nearPlaneFloor,
   getBoundingBoxDiagonal,
   transformBoundingBox,
   BoundingBox,
   CameraConfig,
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
+import { NEAR_CULL_DIAGONAL_FACTOR } from '../../../../../scene/scene-manager/clipping/scene-bounds-cache';
+import { config } from '../../../../../config';
+import { POINT_VERTEX_SHADER } from '../../../../../rendering/materials/point/shader-glsl';
+import { GSPLAT_VERTEX_SHADER } from '../../../../../rendering/materials/gsplat/shader-glsl';
+import { LINE_FRAGMENT_SHADER } from '../../../../../rendering/materials/line/shader-glsl';
+import { GLSL_NEAR_FADE_FUNCTIONS } from '../../../../../rendering/materials/_shared/glsl-lib';
+
+import { fadeRejectHeadroom, NEAR_FADE_REJECT, smoothstep } from './_near-fade-model';
 
 describe('bounds-math', () => {
   describe('getBoundingBoxCenter', () => {
@@ -364,6 +374,160 @@ describe('bounds-math', () => {
     });
   });
 
+  describe('nearPlaneFloor', () => {
+    it('bounds the near/far ratio to MAX_NEAR_FAR_RATIO', () => {
+      // The user-reported pose: diagonal-100 scene (expanded R = 52.5) seen
+      // from 8.5 units off centre → far = 61. The old floor gave
+      // near = 1.05e-4 (ratio 5.8e5:1, ~4e-2 world units of depth
+      // quantization at 24 bits); the bound gives 61 / MAX_NEAR_FAR_RATIO.
+      expect(nearPlaneFloor(52.5, 61)).toBeCloseTo(61 / MAX_NEAR_FAR_RATIO, 9);
+      expect(nearPlaneFloor(52.5, 61)).toBeCloseTo(0.0508333, 6);
+      expect(61 / nearPlaneFloor(52.5, 61)).toBeCloseTo(MAX_NEAR_FAR_RATIO, 6);
+    });
+
+    // The losslessness half of the derivation is a claim about the SHADERS,
+    // not about this module: "everything the floor clips was already being
+    // suppressed by the point / line / gsplat near fade". The arithmetic below
+    // models that fade — a `smoothstep` over [nearCull, 2*nearCull] with a
+    // reject at 0.01 — and arithmetic cannot notice the shaders changing under
+    // it. So pin the premises against the real sources; without this the
+    // derivation tests stay green while the thing they model has moved.
+    // (String-grep regression locks, same rationale and precedent as
+    // `tests/unit/rendering/shader-hot-path.test.ts`.)
+    it('rests on shader premises that still hold in the GLSL sources', () => {
+      // The band: smoothstep from nearCull to 2*nearCull over view depth.
+      expect(GLSL_NEAR_FADE_FUNCTIONS).toMatch(
+        /smoothstep\s*\(\s*nearCull\s*,\s*nearCull\s*\*\s*2\.0\s*,\s*-viewZ\s*\)/
+      );
+      // Ortho returns 1.0, which is why `nearPlaneFloor` opts ortho out of the
+      // ratio bound instead of relying on the fade to hide the clipped slab.
+      expect(GLSL_NEAR_FADE_FUNCTIONS).toMatch(/isOrtho\s*==\s*1\s*\)\s*return\s+1\.0/);
+      // Points and gsplats REJECT the vertex below NEAR_FADE_REJECT. The `.`
+      // is escaped so this cannot pass on some other literal that merely
+      // matches a wildcard.
+      const reject = `<\\s*${String(NEAR_FADE_REJECT).replace('.', '\\.')}\\b`;
+      expect(POINT_VERTEX_SHADER).toMatch(new RegExp(`vNearFade\\s*${reject}`));
+      expect(GSPLAT_VERTEX_SHADER).toMatch(new RegExp(`depthFade\\s*${reject}`));
+      // ...lines instead multiply the fade in per-fragment, so their
+      // contribution is already ~0 across the same band.
+      expect(LINE_FRAGMENT_SHADER).toMatch(
+        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*vViewZ\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
+      );
+    });
+
+    // The two constraints that pin MAX_NEAR_FAR_RATIO, as executable arithmetic
+    // rather than prose. Both are LOWER bounds on C (a bigger C means a smaller
+    // floor), so C wants to be the smallest value clearing both — which is why
+    // the margin below is only 0.8% and why that thinness is intentional.
+    it('satisfies both constraints that pin the constant, and shows how tightly', () => {
+      // All three inputs come from their real sources rather than being
+      // re-typed here: the point of this test is that retuning any of them
+      // must move the derived constraint (and fail below if the constant no
+      // longer clears it), not leave a mirrored copy standing.
+      const NEAR_CULL_FACTOR = NEAR_CULL_DIAGONAL_FACTOR; // scene-bounds-cache.ts
+      const MIN_DISTANCE_FACTOR = config.controls.scaleMultipliers.minDistanceFactor;
+      const FADE_REJECT_HEADROOM = fadeRejectHeadroom(); // smoothstep(nc, 2nc, ·) reject band
+      // Solving it rather than writing it down also corrected it: the value
+      // this derivation was first stated with (1.0582) is the root to three
+      // digits, and slightly CONSERVATIVE — a smaller headroom demands a
+      // larger C — so the constraints below move down by ~0.6, not up.
+      expect(FADE_REJECT_HEADROOM).toBeCloseTo(1.0589, 5);
+      expect(smoothstep(1, 2, FADE_REJECT_HEADROOM)).toBeCloseTo(NEAR_FADE_REJECT, 9);
+      // Per unit R: diagonal = 2R / SPHERE_SAFETY_EXPANSION.
+      const perR = (factor: number) => (factor * 2) / SPHERE_SAFETY_EXPANSION;
+
+      // (1) Don't clip the orbit target at maximum zoom-in (far ~ 1.05 R there).
+      const cMinTarget = SPHERE_SAFETY_EXPANSION / perR(MIN_DISTANCE_FACTOR);
+      // (2) Stay inside the shader reject band. The worst case is the crossover
+      //     just OUTSIDE the sphere — dist = R(C+1)/(C-1) ~ 1.002 R, the last
+      //     distance where the floor still beats the surface term — not the
+      //     surface itself, where the floor is slightly lower.
+      const crossoverOverR = (MAX_NEAR_FAR_RATIO + 1) / (MAX_NEAR_FAR_RATIO - 1);
+      const farAtCrossoverOverR = crossoverOverR + 1;
+      const cMinLossless = farAtCrossoverOverR / (FADE_REJECT_HEADROOM * perR(NEAR_CULL_FACTOR));
+
+      expect(cMinTarget).toBeCloseTo(551, 0);
+      expect(cMinLossless).toBeCloseTo(992, 0);
+      // Strictly tighter than the surface case the derivation used to name.
+      const cMinAtSurface = 2 / (FADE_REJECT_HEADROOM * perR(NEAR_CULL_FACTOR));
+      expect(cMinLossless).toBeGreaterThan(cMinAtSurface);
+      // The lossless constraint binds, and the constant clears it — barely.
+      expect(cMinLossless).toBeGreaterThan(cMinTarget);
+      expect(MAX_NEAR_FAR_RATIO).toBeGreaterThanOrEqual(cMinLossless);
+      // The margin over that constraint is deliberate, and pinned as the
+      // concrete robustness claim it was chosen for rather than as an arbitrary
+      // band: a 10% tightening of `nearCull` must still leave the bound
+      // lossless. C = 1000 (the minimum-viable value) fails this; 1200 passes,
+      // for 0.03% of the total precision gain.
+      const cMinLosslessAt = (ncFactor: number) =>
+        farAtCrossoverOverR / (FADE_REJECT_HEADROOM * perR(ncFactor));
+      expect(cMinLosslessAt(NEAR_CULL_FACTOR * 0.9)).toBeCloseTo(1103, 0);
+      expect(MAX_NEAR_FAR_RATIO).toBeGreaterThanOrEqual(cMinLosslessAt(NEAR_CULL_FACTOR * 0.9));
+      expect(1000).toBeLessThan(cMinLosslessAt(NEAR_CULL_FACTOR * 0.9));
+    });
+
+    it('dominates the minNearForRadius backstop for every non-degenerate sphere', () => {
+      // far >= R always holds (far = dist + R, dist >= 0), so
+      // far/MAX_NEAR_FAR_RATIO is always >= 8.3e-4*R, which is ~420x the
+      // 2e-6*R backstop. The backstop
+      // therefore only ever surfaces at R -> 0. Pinning this keeps the
+      // Math.max in nearPlaneFloor honest: if someone raises
+      // MIN_NEAR_RADIUS_FACTOR back into the dominant position, the
+      // Z-precision bound silently stops applying.
+      for (const R of [1e-3, 1, 52.5, 1e4]) {
+        for (const distFactor of [0, 0.5, 1, 10, 1000]) {
+          const far = R * distFactor + R;
+          expect(nearPlaneFloor(R, far)).toBe(far / MAX_NEAR_FAR_RATIO);
+        }
+      }
+    });
+
+    // Ortho opts OUT of the ratio bound. Its depth is linear in eye space, so
+    // resolution is (far - near) / 2^24 regardless of near — the bound buys it
+    // nothing — while `perspectiveNearFade` returns 1.0 under ortho, meaning
+    // ALL FOUR geometry types render right up to `near` there. Measured: at the
+    // deepest legal orbit distance on a diagonal-100 scene, applying the bound
+    // under ortho clips 43.8% of the eye-to-target depth for a 0.1% change in
+    // depth resolution.
+    it('omits the ratio bound for an orthographic projection', () => {
+      const R = 52.5;
+      const far = 61;
+      expect(nearPlaneFloor(R, far, false)).toBe(minNearForRadius(R));
+      expect(nearPlaneFloor(R, far, false)).toBeCloseTo(1.05e-4, 9);
+      // ...and still applies it for perspective, from the same inputs.
+      expect(nearPlaneFloor(R, far, true)).toBeCloseTo(far / MAX_NEAR_FAR_RATIO, 9);
+      // Default is perspective — the common case must not need the argument.
+      expect(nearPlaneFloor(R, far)).toBe(nearPlaneFloor(R, far, true));
+    });
+
+    it('keeps the absolute floor under ortho for a degenerate zero radius', () => {
+      expect(nearPlaneFloor(0, 0, false)).toBe(MIN_NEAR_PLANE);
+      expect(nearPlaneFloor(0, 100, false)).toBe(MIN_NEAR_PLANE);
+    });
+
+    it('falls back to the absolute floor when far collapses to zero', () => {
+      // Degenerate single-point scene with the camera on the point: R = 0
+      // and far = 0. near must stay > 0 so `near >= far` still trips the
+      // callers' degenerate-frustum guard instead of writing NaNs.
+      expect(nearPlaneFloor(0, 0)).toBe(MIN_NEAR_PLANE);
+    });
+
+    it('stays below the nearCull threshold that already hides points/lines/gsplats', () => {
+      // `perspectiveNearFade` (materials/_shared/glsl-lib.ts) returns 0 at
+      // -viewZ <= nearCull = 1e-3 * diagonal, and the point/line/gsplat
+      // vertex shaders reject the vertex there. A floor at or below nearCull
+      // is therefore provably lossless for those three geometry types --
+      // this is the upper-bound half of the MAX_NEAR_FAR_RATIO derivation.
+      for (const diagonal of [0.01, 1, 100, 1e5]) {
+        const R = 0.5 * diagonal * SPHERE_SAFETY_EXPANSION;
+        const nearCull = diagonal * NEAR_CULL_DIAGONAL_FACTOR;
+        // Worst case for the floor is the camera at the bounds centre,
+        // where far is smallest relative to nothing else raising near.
+        expect(nearPlaneFloor(R, R)).toBeLessThanOrEqual(nearCull);
+      }
+    });
+  });
+
   describe('calculateClippingPlanesFromSphere', () => {
     it('should calculate clipping planes when outside sphere', () => {
       const box: BoundingBox = {
@@ -385,9 +549,9 @@ describe('bounds-math', () => {
     });
 
     // W3: camera exactly on the (expanded) sphere surface, dist == R. The
-    // `dist < R` branch is false, so near = max(minNearForRadius(R), dist - R)
-    // = max(minNearForRadius(R), 0) = the scale-aware floor, and far = 2R.
-    it('clamps near to the scale-aware floor when camera sits on the sphere surface (dist == R)', () => {
+    // `dist < R` branch is false, so near = max(nearPlaneFloor(R, far), dist - R)
+    // = max(nearPlaneFloor(R, 2R), 0) = the floor, and far = 2R.
+    it('clamps near to the depth-precision floor when camera sits on the sphere surface (dist == R)', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
         max: { x: 10, y: 10, z: 10 },
@@ -396,8 +560,13 @@ describe('bounds-math', () => {
       const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       // Place the camera exactly R away from the center along +z.
       const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: R });
-      expect(planes.near).toBe(minNearForRadius(R));
+      expect(planes.near).toBe(nearPlaneFloor(R, 2 * R));
       expect(planes.far).toBeCloseTo(2 * R, 6);
+      // Literal pin: the floor is far/MAX_NEAR_FAR_RATIO, NOT the
+      // dominated minNearForRadius backstop (2e-6*R). Asserting against
+      // nearPlaneFloor alone cannot catch a broken formula inside it.
+      expect(planes.near).toBeCloseTo((2 * R) / MAX_NEAR_FAR_RATIO, 12);
+      expect(planes.near).toBeGreaterThan(minNearForRadius(R) * 100);
     });
 
     // W3: camera very far from the sphere (dist >> R) — near must track
@@ -416,7 +585,7 @@ describe('bounds-math', () => {
       expect(planes.near).toBeGreaterThan(MIN_NEAR_PLANE);
     });
 
-    it('should use minimum near plane when inside sphere', () => {
+    it('should use the depth-precision floor as near plane when inside sphere', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
         max: { x: 10, y: 10, z: 10 },
@@ -428,8 +597,12 @@ describe('bounds-math', () => {
       const cameraPos = { x: 0, y: 0, z: 8 };
       const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
-      expect(planes.near).toBe(minNearForRadius(R));
+      expect(planes.near).toBe(nearPlaneFloor(R, 8 + R));
       expect(planes.far).toBeCloseTo(8 + R, 1);
+      // The regression this floor exists for: near/far must stay within
+      // MAX_NEAR_FAR_RATIO so 24-bit depth stays usable. Before the ratio
+      // bound this arm returned 2e-6*R ≈ 3.6e-5 — a ratio of ~7e5:1.
+      expect(planes.far / planes.near).toBeCloseTo(MAX_NEAR_FAR_RATIO, 6);
     });
 
     it('should enforce a positive near plane for tiny scenes', () => {
@@ -446,12 +619,15 @@ describe('bounds-math', () => {
       expect(planes.near).toBeGreaterThan(0);
     });
 
-    // Regression for the scale-aware near floor: with the 1000x zoom-in
-    // headroom, a tiny scene (diagonal ~0.01) lets the camera orbit at
+    // Regression for scale-invariance of the near floor: with the 1000x
+    // zoom-in headroom, a tiny scene (diagonal ~0.01) lets the camera orbit at
     // distances far below the OLD absolute floor (0.0001). The floor must
     // scale with the scene so target-adjacent geometry is never behind
-    // the near plane at the deepest legal zoom.
-    it('keeps near below the deepest zoom-in distance for tiny scenes (scale-aware floor)', () => {
+    // the near plane at the deepest legal zoom. The far-derived
+    // `nearPlaneFloor` inherits this for free — `far` is itself scene-scaled —
+    // which is why replacing the radius-proportional floor with the ratio
+    // bound does not reintroduce the #573 tiny-scene clipping bug.
+    it('keeps near below the deepest zoom-in distance for tiny scenes (scale-invariant floor)', () => {
       const box: BoundingBox = {
         min: { x: 0, y: 0, z: 0 },
         max: { x: 0.01, y: 0.01, z: 0.01 },
@@ -460,7 +636,7 @@ describe('bounds-math', () => {
       const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       // Deepest legal orbit distance ~ framed distance / ZOOM_IN_FACTOR;
       // framed distance is on the order of the diagonal (~2R), so use
-      // 2R / 1000 as the representative deepest zoom.
+      // 2R / ZOOM_IN_FACTOR as the representative deepest zoom.
       const deepestZoom = (2 * R) / 1000;
       const cameraPos = {
         x: sphere.center.x,
@@ -469,11 +645,16 @@ describe('bounds-math', () => {
       };
       const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
-      // Inside the sphere → near is the scale-aware floor, which must sit
+      // Inside the sphere → near is the depth-precision floor, which must sit
       // strictly below the camera-to-target distance (the old absolute
       // 0.0001 floor failed this: 0.0001 > ~1.8e-5).
-      expect(planes.near).toBe(minNearForRadius(R));
+      expect(planes.near).toBe(nearPlaneFloor(R, planes.far));
       expect(planes.near).toBeLessThan(deepestZoom);
+      // The margin is the reason MAX_NEAR_FAR_RATIO cannot go much below
+      // ~551: at the deepest legal zoom far ≈ R, so the floor is ≈ R/C while
+      // the target sits at 2R/ZOOM_IN_FACTOR — a factor of ~2.4 at C = 1200. Below C ≈ 551
+      // the near plane would swallow the thing you zoomed in on.
+      expect(deepestZoom / planes.near).toBeGreaterThan(1.9);
     });
 
     it('should provide smooth near-plane transition approaching the sphere', () => {

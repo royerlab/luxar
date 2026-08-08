@@ -11,20 +11,20 @@ from typing import TYPE_CHECKING, Literal, Optional
 
 import typer
 
-from .transforms_additive import run_additive_dataset as _run_additive_dataset_impl
-from .transforms_cull import run_cull_dataset as _run_cull_dataset_impl
-from .transforms_filter_slice import (
+from .additive import run_additive_dataset as _run_additive_dataset_impl
+from .cull import run_cull_dataset as _run_cull_dataset_impl
+from .filter_slice import (
     run_filter_dataset as _run_filter_dataset_impl,
 )
-from .transforms_filter_slice import run_slice_dataset as _run_slice_dataset_impl
-from .transforms_merge import run_merge_datasets as _run_merge_datasets_impl
-from .transforms_partition_flatten import (
+from .filter_slice import run_slice_dataset as _run_slice_dataset_impl
+from .merge import run_merge_datasets as _run_merge_datasets_impl
+from .partition_flatten import (
     run_flatten_dataset as _run_flatten_dataset_impl,
 )
-from .transforms_partition_flatten import (
+from .partition_flatten import (
     run_partition_dataset as _run_partition_dataset_impl,
 )
-from .transforms_transform import run_transform_dataset
+from .transform import run_transform_dataset
 
 if TYPE_CHECKING:
     pass

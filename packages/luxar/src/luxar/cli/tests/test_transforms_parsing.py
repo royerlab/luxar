@@ -1,11 +1,11 @@
-"""Unit tests for gsplat_ops.transforms_parsing helpers."""
+"""Unit tests for gsplat_ops.transforms.parsing helpers."""
 
 from __future__ import annotations
 
 import pytest
 import typer
 
-from luxar.cli.gsplat_ops.transforms_parsing import parse_axis_list
+from luxar.cli.gsplat_ops.transforms.parsing import parse_axis_list
 
 
 def test_parse_axis_list_valid() -> None:

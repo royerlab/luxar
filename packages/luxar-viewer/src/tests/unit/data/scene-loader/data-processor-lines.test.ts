@@ -71,8 +71,8 @@ function makeDispatcherLinesResult(visibleSegmentCount = 2) {
     startScalars: new Float32Array(0),
     endScalars: new Float32Array(0),
     segmentLengths: new Float32Array(visibleSegmentCount),
-    startCapSuppression: new Float32Array(visibleSegmentCount),
-    endCapSuppression: new Float32Array(visibleSegmentCount),
+    startJointCode: new Float32Array(visibleSegmentCount),
+    endJointCode: new Float32Array(visibleSegmentCount),
     visibleSegmentCount,
   };
 }
@@ -264,8 +264,8 @@ describe('processLinesData', () => {
       startSharpness: new Float32Array(),
       endSharpness: new Float32Array(),
       segmentLengths: new Float32Array(),
-      startCapSuppression: new Float32Array(),
-      endCapSuppression: new Float32Array(),
+      startJointCode: new Float32Array(),
+      endJointCode: new Float32Array(),
       visibleSegmentCount: 0,
     }));
     mockGetWorkerPool.mockReturnValue({
@@ -369,8 +369,8 @@ describe('projectLinesTo3DUsingWorker', () => {
       startSharpness: new Float32Array(),
       endSharpness: new Float32Array(),
       segmentLengths: new Float32Array(),
-      startCapSuppression: new Float32Array(),
-      endCapSuppression: new Float32Array(),
+      startJointCode: new Float32Array(),
+      endJointCode: new Float32Array(),
       visibleSegmentCount: 1,
     }));
     mockGetWorkerPool.mockReturnValue({
@@ -407,8 +407,8 @@ describe('projectLinesTo3DUsingWorker', () => {
       startAlphas: new Float32Array(),
       endAlphas: new Float32Array(),
       segmentLengths: new Float32Array(),
-      startCapSuppression: new Float32Array(),
-      endCapSuppression: new Float32Array(),
+      startJointCode: new Float32Array(),
+      endJointCode: new Float32Array(),
       visibleSegmentCount: 0,
     }));
     mockGetWorkerPool.mockReturnValue({

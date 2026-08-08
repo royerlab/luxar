@@ -43,11 +43,14 @@ localStorage I/O and defaults building. No DOM, no manager calls — just struct
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `buildBaseDefaults()`                      | Hardcoded base defaults (`config.renderingControls.defaults` + `config.controls.fly.*` defaults). Returns `FullySpecifiedRenderingSettings`. |
 | `buildResetDefaults(zarrViewerConfig?)`    | Base defaults overlaid with zarr `viewer_config` overrides (routed through `validateRenderingSettings` to clamp NaN/Infinity).               |
-| `saveSettingsToStorage(sceneId, settings)` | Quota-safe write under `StorageKeys.rendering(sceneId)`.                                                                                     |
+| `saveSettingsToStorage(sceneId, settings)` | Quota-safe write under `StorageKeys.rendering(sceneId)`, via `stripDynamicClippingPlanes`.                                                   |
+| `stripDynamicClippingPlanes(settings)`     | Drops `near` / `far` when `dynamicClippingEnabled` — see below. Non-mutating.                                                                |
 | `loadSettingsFromStorage(sceneId)`         | Quota-safe read; returns `{ stored, loaded }`.                                                                                               |
 | `clearStoredSettings(sceneId)`             | Quota-safe `removeItem`.                                                                                                                     |
 
 `FullySpecifiedRenderingSettings` narrows the otherwise-optional fly fields to non-optional concretes — useful for callers that don't want `| undefined` everywhere.
+
+**Dynamic clipping never persists its planes.** Two places write the live `camera.near` / `camera.far` into the settings object so the read-only sliders can display them: `ClippingDisplay`'s RAF loop (see below) and `syncCurrentState` on every panel-open. Since `saveSettingsToStorage` serializes the whole object, any later `saveSettings()` from an unrelated control used to snapshot those transient values, and the next load re-applied them as FIXED manual planes through `setSceneId` → `updateClippingPlanes` — pinning e.g. `near = 1.05e-4`, `far = 61` from some zoomed-in pose with the Dynamic Clipping box showing unchecked. `stripDynamicClippingPlanes` omits the two keys while dynamic clipping owns them, so the load path's `{ ...buildBaseDefaults(), ...loaded }` spread leaves `config.renderingControls.defaults` standing for `near` / `far` and `autoAdjustClippingPlanes` takes over. (The `validateRenderingSettings` wrapping that spread only clamps non-finite values — the spread is what supplies the fallback.) With dynamic clipping OFF the values are real user intent and persist unchanged.
 
 ### `controls-utils.ts`
 
@@ -55,7 +58,7 @@ Pure utility functions extracted for testability — no external dependencies be
 
 - `validateRenderingSettings(partial)` — range-clamps every numeric, enum-checks `toneMapping` (`None`, `Linear`, `Reinhard`, `Cineon`, `ACES`, `AgX`, `Neutral`) and `controlType` (`orbit`, `fly`, `ortho`), and replaces non-boolean injections with defaults. Guards against NaN/Infinity in corrupted localStorage or malicious zarr config.
 - `clampMSAASamples(value)` — snaps to a valid power-of-two MSAA count (0, 2, 4, 8, 16). Non-finite or non-numeric input → 0 (disabled); finite values are bucketed by `<=` comparisons.
-- `serializeSettings` / `deserializeSettings` — JSON encode/decode with a null-on-parse-failure return.
+- `serializeSettings` / `deserializeSettings` — JSON encode/decode with a null-on-parse-failure return. `serializeSettings` takes a `Partial<RenderingSettings>` (symmetric with what `deserializeSettings` returns) because callers legitimately omit keys they do not own — see `stripDynamicClippingPlanes`.
 - `mergeSettings(partial, defaults?)` — `{ ...defaults, ...partial }` then validate.
 - `getSettingsRequiringRebuild(current, previous)` — returns the list of changed keys (`'msaa'`, `'ssaa'`, `'fxaa'`, `'toneMapping'`) that force a post-processing pipeline rebuild.
 - `calculatePerformanceImpact(settings)` — heuristic 0–100 score for the AA/bloom/tone-mapping/lens-distortion/auto-rotate combo.
@@ -78,8 +81,9 @@ The post-processing batch goes through `postProcessing.withDeferredRebuild(...)`
 
 `ClippingDisplay` ties the dynamic-clipping toggle to the near/far sliders:
 
-- When `dynamicEnabled === true` it sets `opacity: 0.5` and `pointer-events: none` on the slider containers and starts a throttled (100 ms) `requestAnimationFrame` loop that copies `camera.near` / `camera.far` into `settings.near` / `settings.far` and calls `controller.updateDisplay()` (without firing `onChange`).
-- When `dynamicEnabled === false` it cancels the RAF and restores normal styling.
+- When `dynamicEnabled === true` it sets `opacity: 0.5` and `pointer-events: none` on the slider containers and starts a throttled (100 ms) `requestAnimationFrame` loop that copies `camera.near` / `camera.far` into `settings.near` / `settings.far` and calls `controller.updateDisplay()` (without firing `onChange`). The copy is gated on a RELATIVE 0.1% drift — the same gate `updateDynamicFromCache` applies before it moves the camera at all — because near/far are scene-scaled: the absolute epsilons this replaced (1e-4 / 0.1) froze the readout completely on a micron-scale scene.
+- When `dynamicEnabled === false` it cancels the RAF and restores normal styling. The camera keeps whatever near/far the last dynamic frame left — freezing the current view is the intended behaviour of switching to manual.
+- Those RAF-written `settings.near` / `settings.far` are a DISPLAY mirror, not user intent. `saveSettingsToStorage` omits them while dynamic clipping is on (`stripDynamicClippingPlanes`) — otherwise a transient deep-zoom pair gets persisted and re-applied as fixed planes on the next load.
 - `getNearPlane` / `getFarPlane` are passed as getters because the near/far controllers are created by `setup/camera-setup.ts` and may not exist when this controller is constructed.
 - `dispose()` cancels the RAF; safe to call multiple times.
 

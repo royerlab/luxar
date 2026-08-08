@@ -49,6 +49,19 @@ channel through a 3-D volume share the implementation in
 images, over sampled timepoints, or with demo-specific titles for a
 single-channel volume.
 
+The three network demos (`caida_as_topology`, `huri_interactome`,
+`ppi_flow_field`) share `_graph_common.py`, but not all of it. All three use the
+cache-aware download and Louvain community detection; the sparse adjacency and
+the community legend are shared by `caida_as_topology` and `huri_interactome`
+(`ppi_flow_field` builds its own signed matrix). The HuRI/HGNC loaders and the
+largest-connected-component filter belong to the two protein demos only —
+`caida_as_topology` keeps its own LCC filter, which also detects tier-1 ASes,
+sorts on a numeric ASN key and reindexes an org/country frame. `build_adjacency`
+and `compute_communities` take the two endpoint column names explicitly, because
+the AS graph keys on `asn_a`/`asn_b` and the protein networks on
+`sym_a`/`sym_b`; the HuRI loaders hardcode `sym_a`/`sym_b`, being
+protein-specific by construction.
+
 ## Optional dependencies
 
 The core install deliberately excludes the heavyweight packages some demos need

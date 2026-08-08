@@ -327,7 +327,7 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
     stats.datasetSplats > 0 ? ((stats.visibleSplats / stats.datasetSplats) * 100).toFixed(1) : '0';
 
   // Build primary metrics section
-  let primaryMetrics = '';
+  let primaryMetrics: string;
   if (showAll) {
     // Show all three (points, lines, gsplats)
     primaryMetrics = `
