@@ -18,8 +18,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from luxar.demos import demo_arxiv_paper_embeddings as demo
-from luxar.demos.demo_arxiv_paper_embeddings import (
+from luxar.demos import demo_arxiv_embeddings_semantic_scholar as demo
+from luxar.demos.demo_arxiv_embeddings_semantic_scholar import (
     generate_paper_landscape,
     search_papers_by_field,
 )
@@ -204,7 +204,7 @@ class TestCompleteCacheRunsWithoutLodDeps:
         # machine where the package IS installed.
         monkeypatch.setitem(sys.modules, blocked, None)
 
-        out = tmp_path / "arxiv_papers.luxar.zarr"
+        out = tmp_path / "arxiv_papers_semantic_scholar.luxar.zarr"
         n = generate_paper_landscape(out, fields=_FIELDS, papers_per_field=10)
 
         # The scene was written (no crash).
@@ -228,7 +228,7 @@ class TestCompleteCacheRunsWithoutLodDeps:
         pytest.importorskip("scipy")
         _install_warm_cache(monkeypatch)
 
-        out = tmp_path / "arxiv_papers.luxar.zarr"
+        out = tmp_path / "arxiv_papers_semantic_scholar.luxar.zarr"
         n = generate_paper_landscape(out, fields=_FIELDS, papers_per_field=10)
 
         assert n == 40
