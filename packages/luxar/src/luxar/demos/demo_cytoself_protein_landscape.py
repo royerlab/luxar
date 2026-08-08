@@ -564,10 +564,20 @@ def load_cytoself_images(
         aprint("Rebuilding thumbnails (--recompute): ignoring the cached bundle")
     elif thumbnails_cache.exists():
         with asection("Loading cached image thumbnails"):
-            data = np.load(thumbnails_cache, allow_pickle=True)
-            blobs = list(data["blobs"])
-            aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
-            return [bytes(b) for b in blobs]
+            try:
+                data = np.load(thumbnails_cache, allow_pickle=True)
+                blobs = list(data["blobs"])
+            except Exception as exc:
+                # A bundle written before the rename below (or a truncated
+                # copy) is unreadable, and this branch short-circuits before
+                # any download — so a plain re-run would hit the same file
+                # forever. Treat it as a cache miss: the rebuild replaces it.
+                aprint(f"  ⚠ Unreadable cached bundle ({type(exc).__name__})")
+                aprint(f"    {thumbnails_cache}")
+                aprint("    Rebuilding it — already-downloaded files are reused.")
+            else:
+                aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
+                return [bytes(b) for b in blobs]
 
     # Step 1: Build index mapping (test row -> global image row)
     mapping, n_test = _build_test_index_mapping(cache_dir)

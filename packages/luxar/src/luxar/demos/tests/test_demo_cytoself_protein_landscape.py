@@ -335,6 +335,27 @@ class TestThumbnailCacheRecompute:
         # The temp artefact must not survive a successful rename.
         assert list(cache_dir.glob("*.tmp")) == []
 
+    def test_unreadable_bundle_is_rebuilt_rather_than_raised(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A corrupt bundle must not be a permanent dead end.
+
+        This branch short-circuits before any download, so raising here left a
+        plain re-run reproducing the failure forever, with ``main()`` advising
+        a re-run that could never help.
+        """
+        cache_dir = tmp_path / "cytoself"
+        cache_dir.mkdir(parents=True)
+        bundle = cache_dir / THUMBNAILS_CACHE_NAME
+        bundle.write_bytes(b"PK\x03\x04truncated")
+        _stub_rebuild(monkeypatch)
+
+        blobs = load_cytoself_images(cache_dir)
+
+        assert len(blobs) == _STUB_N_TEST
+        reloaded = np.load(bundle, allow_pickle=True)["blobs"]
+        assert [bytes(b) for b in reloaded] == blobs
+
     def test_interrupted_rebuild_leaves_the_existing_bundle_intact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
