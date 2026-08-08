@@ -14,8 +14,9 @@
  * - `lines.ts` — line + line-pick variants (32 entries)
  * - `gsplats.ts` — gsplat + gsplat-pick variants (18 entries)
  * - `mesh.ts` — mesh + mesh-pick variants (8 entries)
+ * - `erf.ts` — shared-math erf polynomial (1 entry)
  * - `render.ts` — the `renderGLSL` / `renderTSL` executors
- * - `index.ts` — merges the families into the 84-entry `SHADER_REGISTRY`
+ * - `index.ts` — merges the families into the 85-entry `SHADER_REGISTRY`
  *
  * Why a dedicated page rather than reusing the main viewer:
  * - Construction order is explicit and minimal — no app/state machine
