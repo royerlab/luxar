@@ -7,37 +7,37 @@
     "packages/luxar/src/luxar/cli/demo_commands.py::demo_deps": [
       20
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/batch_merge_command.py::run_batch_merge_cmd": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch/merge_command.py::run_batch_merge_cmd": [
       11
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/batch_planning.py::_assemble_fit_args": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch/planning.py::_assemble_fit_args": [
       17
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/batch_planning.py::plan_batch": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch/planning.py::plan_batch": [
       19
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/batch_planning.py::resolve_merge_recipe_args": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch/planning.py::resolve_merge_recipe_args": [
       16
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/batch_recipe_args.py::build_merge_recipe_params": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch/recipe_args.py::build_merge_recipe_params": [
       14
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/batch_status_validate_cancel.py::run_batch_validate_cmd": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch/status_validate_cancel.py::run_batch_validate_cmd": [
       24
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/batch_submit_slurm.py::submit_batch_jobs": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/batch/submit_slurm.py::submit_batch_jobs": [
       19
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/benchmark.py::benchmark_gpu": [
       21
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/fitting_calibrate.py::run_calibrate_command": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/fitting/calibrate.py::run_calibrate_command": [
       32
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/fitting_fit.py::run_fit_volume": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/fitting/fit.py::run_fit_volume": [
       16
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/fitting_recipe_args.py::build_fit_recipe_params": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/fitting/recipe_args.py::build_fit_recipe_params": [
       12
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::compare_quality": [
@@ -64,19 +64,19 @@
     "packages/luxar/src/luxar/cli/gsplat_ops/scene_commands.py::reencode_command": [
       11
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_additive.py::run_additive_dataset": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms/additive.py::run_additive_dataset": [
       14
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_cull.py::run_cull_dataset": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms/cull.py::run_cull_dataset": [
       14
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_filter_slice.py::run_filter_dataset": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms/filter_slice.py::run_filter_dataset": [
       11
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_merge.py::run_merge_datasets": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms/merge.py::run_merge_datasets": [
       11
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/transforms_transform.py::run_transform_dataset": [
+    "packages/luxar/src/luxar/cli/gsplat_ops/transforms/transform.py::run_transform_dataset": [
       47
     ],
     "packages/luxar/src/luxar/cli/info_command.py::_print_tree": [
@@ -167,7 +167,7 @@
       11
     ],
     "packages/luxar/src/luxar/core/node/node.py::__init__": [
-      17
+      18
     ],
     "packages/luxar/src/luxar/core/scene/dim_order.py::apply_dim_order": [
       11
@@ -560,7 +560,7 @@
       12
     ],
     "packages/luxar/src/luxar/io/_compiler/node_common.py::validate_render_attrs": [
-      16
+      17
     ],
     "packages/luxar/src/luxar/io/_ordering/curves/hilbert.py::_get_hilbert_numba_kernel": [
       13
