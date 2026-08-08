@@ -12,6 +12,7 @@ the best for the README gallery (TODO **R19**).
 | `generate_gallery_datasets.py` | Generates each demo's `.luxar.zarr` under `datasets/demos/` (idempotent; skips ones already present; best-effort). |
 | `../../packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts` | Playwright capture: auto-center + fill-to-frame, auto-exposure, orbit, still + video. |
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
+| `../../packages/luxar-viewer/src/tests/screenshots/crop-policy.ts` | The border-lit (**cropped subject**) verdict + its warning floor, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-crop-policy.test.ts`). |
 | `../../packages/luxar-viewer/playwright.gallery.config.ts` | Playwright config (GPU flags, viewer + data servers, video recording). |
 | `score_exposure.py` | Offline scorer for the captured stills: flags `OVER` (blown highlights) and `FLAT` (narrow, uniformly over-exposed). Hand-synced with `exposure-policy.ts`. |
 | `tests/` | Unit tests for `score_exposure.py`, incl. a parity test that pins its mirrored thresholds to the ones in `exposure-policy.ts`. On the default Python suite. |
@@ -63,6 +64,32 @@ README gallery table.
   harness gate deliberately does not have).
   Override per demo with `"exposure": <log2 stops>` in the manifest when auto
   misses.
+- **Crop check:** counts the **lit pixels on the frame's outermost row/column**
+  (the still plus orbit poses on a ~5° grid across the whole rock — plus the last
+  frame of a `timelapse`, where a developing subject is largest — measured off
+  the lossless PNGs the harness already captures, since JPEG ringing next to a
+  bright edge would fake a crop). Sampling only the two rock extremes is not
+  enough: a subject whose projected extent peaks at an intermediate angle comes
+  back inside the frame by the endpoint, so an endpoints-only check reads clean
+  on exactly the tiles it is meant to catch.
+  Lit content on the edge means the subject runs off frame, and the fill
+  loop is blind to it *by construction*: its 3rd–97th-percentile bbox discards
+  exactly the outliers that touch the edge, so a tile can report "82% — a fit"
+  while a nucleus leaves the frame in a third of the orbit frames (measured on
+  `mesh_isosurface_cells3d`: **summed over the 120 orbit frames**, 3389
+  border-lit pixels at `fillTarget` 0.84 — worst single frame 218 — then 1256 at
+  0.75 and 0 at 0.69). It **warns and never fails**, naming the pose and
+  suggesting the knob that actually governs that demo's framing (`fillTarget`,
+  `zoom`, `distance`, or a skipped fill), because cropping is a judgement call at
+  the margin. Honest caveat: a non-zero count looks **common** — 25 of the 28
+  committed README tiles are non-zero at the 0.04 lit cutoff, and luma alone does
+  not separate a real crop from a faint background wash or an unhinted full-bleed
+  composition. So the harness logs the **number** on every demo as a per-tile
+  regression signal, and the number matters more than the boolean; it also logs
+  `poses=<measured>/<attempted>`, since a measurement that fails is skipped rather
+  than fatal and the worst-of-the-rest would otherwise read as complete; the audit
+  behind that (and `BORDER_LIT_MAX`, the one floor to raise if the warning gets
+  noisy) is documented in `crop-policy.ts`.
 - **Seamless orbit:** a small-angle **sinusoidal rock** of ±20° about the
   subject's up axis (`"orbitUp"`, default world-Y), captured as 120 explicit
   per-angle screenshots — not Playwright's passive video, which does not
@@ -70,6 +97,21 @@ README gallery table.
   start, so the loop is seamless with no pre-roll to trim. ffmpeg assembles the
   frames 1:1 (no motion interpolation, which warps fine structure) into a VP9
   WebM master and a smaller animated WebP for the README.
+
+  **The orbit sets `cam.up` from `orbitUp` on every frame, so a scene whose
+  `viewer_config` bakes a non-Y `up` needs `orbitUp` set to match.** The still
+  keeps the baked pose (`F` restores it) but the orbit does not, so leaving the
+  default silently ships an animation rolled away from its own poster, and turns
+  the turntable into a tumble — `mesh_isosurface_cells3d` swung 130% in subject
+  aspect before its `orbitUp: "x"` was set. Setting `orbitUp` also runs
+  `positionForOrbitUp`, which re-parks the camera on an axis and discards the
+  baked framing, so check that pose: it needs a `viewAngle` next to it whenever
+  the parked pose lands edge-on (as this slab's did — whereas
+  `gsplats_3d_ct_totalsegmentator`'s `orbitUp: "z"` parks coronal and needs none).
+
+  **Judge a tile on its orbit frames, not on the still.** The README embeds the
+  animated WebP; the PNG is a byproduct that ships nowhere. A framing tuned on
+  the still can crop at rock extremes the still never visits.
 
 ## Manifest fields
 
