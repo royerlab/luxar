@@ -30,7 +30,10 @@ const SERVE = process.env.GALLERY_LUXAR_BIN ?? 'hatch run luxar';
 // GALLERY_DEBUG to forward their output to the reporter instead — the only way
 // to see a `luxar serve` "port busy, using N instead" warning, which otherwise
 // turns into a mute `Timed out waiting 90000ms from config.webServer`.
-const SERVER_STDIO: 'pipe' | 'ignore' = process.env.GALLERY_DEBUG ? 'pipe' : 'ignore';
+// Compared against '1' rather than tested for truthiness, matching the other
+// opt-in flags in this directory (LUXAR_PERF_HEADLESS, LUXAR_REQUIRE_WASM_TESTS)
+// — otherwise GALLERY_DEBUG=0 would turn debug output ON.
+const SERVER_STDIO: 'pipe' | 'ignore' = process.env.GALLERY_DEBUG === '1' ? 'pipe' : 'ignore';
 
 /**
  * Chromium flags that actually reach the GPU, per platform.

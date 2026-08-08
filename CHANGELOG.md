@@ -49,7 +49,6 @@ node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
 
-
 #### Real join geometry for lines: the miter (#790, #795)
 
 Every line segment is one screen-space quad expanded only *perpendicular* to its
