@@ -3,14 +3,14 @@
  *
  * ## What this measures
  *
- * Consecutive line segments are drawn as independent screen-space quads
- * with no join geometry between them, so at every bend the two quads leave
- * an uncovered wedge on the OUTSIDE of the turn and double-cover a lens on
- * the INSIDE. On a thick curved line that reads as near-black ticks along
- * the outer edge and fainter bright ticks on the inner edge under additive
- * blending. This module turns "reads as ticks" into two numbers so the
- * miter-join series can be judged, and so the already-fixed joint defects
- * (#780, #785) cannot silently regress while the vertex stage is rewritten.
+ * Without join geometry, consecutive line segments are independent
+ * screen-space quads, so at every bend the two quads leave an uncovered
+ * wedge on the OUTSIDE of the turn and double-cover a lens on the INSIDE. On
+ * a thick curved line that reads as near-black ticks along the outer edge and
+ * fainter bright ticks on the inner edge under additive blending. This module
+ * turns "reads as ticks" into two numbers, so that the miter that closes the
+ * wedge is measured rather than eyeballed, and so the joint defects fixed
+ * before it (#780, #785) cannot silently regress alongside it.
  *
  * ## Why there are two metrics, not one
  *
@@ -51,22 +51,26 @@
  *
  * So `darkFraction` is a detector rather than a severity measure, it is
  * non-monotone in defect width, and it is not comparable between bands of
- * different turn angle. The live #790 baseline shows this plainly: the gentle
- * `curve_smooth` band (~10.5° turns) scores 4.94% dark while the 90°
- * `zigzag_right_angle` band scores 0.077%, even though the zigzag's wedge is
- * far the worse defect.
+ * different turn angle. The pre-miter #790 baseline showed this plainly: the
+ * gentle `curve_smooth` band (~10.5° turns) scored 4.94% dark while the 90°
+ * `zigzag_right_angle` band scored 0.076%, even though the zigzag's wedge was
+ * far the worse defect. (Both read 0% on the mitred renderer; the acceptance
+ * spec gates them a couple of pixels above that, for the float32 seam reason
+ * its header gives.)
  *
  * The reason is geometric. The uncovered wedge at a turn of angle θ is a
  * sector of the tube's half-width `h`, so the gap it leaves is not one width
  * — it grows from zero at the centreline to roughly `h·θ` at the tube edge,
  * and the metric counts only the part of it that is still under ~3 px across.
  * At the fixture's framing `h` is 28.8 px, so the curve's 0.183 rad turn
- * leaves a ~5.3 px chord whose inner ~57% is countable, while the zigzag's
- * 1.571 rad turn passes 3 px only ~2 px out from the centreline and is
+ * left a ~5.3 px chord whose inner ~57% was countable, while the zigzag's
+ * 1.571 rad turn passes 3 px only ~2 px out from the centreline and was
  * essentially invisible here. For wedges that wide, read
- * {@link measureAxialFlux}: on that same frame the zigzag's flux p05 is 0.749
- * against 1.000 on the straight bands. (Every figure quoted here is from the
- * acceptance spec's pinned frame — `dpr=1`, headless Chromium, 2026-08-06 —
+ * {@link measureAxialFlux}: on that same frame the zigzag's flux p05 was
+ * 0.780 against 1.000 on the straight bands, and it rose to 0.985 once the
+ * miter landed. (Every figure quoted here is from the acceptance spec's
+ * pinned frame — `dpr=1`, headless Chromium, both columns measured
+ * 2026-08-07, the pre-miter one via `&lineJoin=none` on the same tree —
  * which is what makes them reproducible.)
  *
  * ## Display encoding

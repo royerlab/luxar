@@ -17,7 +17,7 @@
  * runtime import) so they unit-test headlessly. The lines generator's
  * positions/colors/lengths are kept byte-for-byte as originally shipped
  * (pinned by the `line-perf-bench.spec.ts` 10 M-segment scenario
- * contract; the cap-suppression arrays are derived from the same walk
+ * contract; the joint-code arrays are derived from the same walk
  * without consuming PRNG draws, so the pinned arrays are untouched); the
  * points/gsplats generators share the seeded-RNG + gaussian-cluster
  * sampling scaffolding below.
@@ -29,6 +29,7 @@ import type * as THREE from 'three';
 
 import type { InstancedLinesMeshConfig } from '../rendering/line-geometry';
 import type { InstancedGSplatsMeshConfig } from '../rendering/gsplat-geometry';
+import { JOINT_FREE_END, MAX_EXACT_JOINT_SLOT } from '../wasm/typescript/lines-clipping';
 
 export type SyntheticSceneType = 'lines' | 'points' | 'gsplats';
 
@@ -95,7 +96,7 @@ function mulberry32(seed: number): () => number {
  *
  *   source arrays:   count × 17 Float32 (positions×2=6, colors×2=6,
  *                       widths×2=2, sharpness×2=2, length×1=1) × 4 B
- *                    + count × 2 Float32 (cap suppression) × 4 B
+ *                    + count × 2 Float32 (joint codes) × 4 B
  *                  = count × 76 B
  *   line texture:    count × 24 floats × 4 B = count × 96 B
  *                    (6 texels/segment RGBA32F — see line-geometry.ts)
@@ -121,8 +122,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
   const startSharpness = new Float32Array(count);
   const endSharpness = new Float32Array(count);
   const segmentLengths = new Float32Array(count);
-  const startCapSuppression = new Float32Array(count);
-  const endCapSuppression = new Float32Array(count);
+  const startJointCode = new Float32Array(count);
+  const endJointCode = new Float32Array(count);
 
   // Random-walk anchor for segment continuity — visually more
   // interesting than disconnected random pairs and matches what real
@@ -133,11 +134,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
 
   const stepScale = bounds * 0.01;
 
-  // Previous segment's delta + length, for faithful joint suppression
-  // (see the cap-suppression block at the bottom of the loop).
-  let prevDx = 0;
-  let prevDy = 0;
-  let prevDz = 0;
+  // Previous segment's length, to detect a degenerate neighbour when emitting
+  // joint codes (see the block at the bottom of the loop).
   let prevLen = 0;
 
   for (let i = 0; i < count; i++) {
@@ -185,26 +183,29 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
     segmentLengths[i] = len;
 
-    // Faithful cap suppression from the walk's own topology (this path
-    // never runs through compute_cap_suppression, so emit here what the
-    // kernel emits for connected geometry): at the joint between two
-    // consecutive chain segments, suppression = clamp(dot(dir_prev,
-    // dir_cur), 0, 1) on BOTH endpoint sides. Chain breaks (the i % 64
-    // reset above) and free ends stay 0 — keep the soft cap. Degenerate
-    // zero-length segments also stay 0 (the kernel's fallback).
-    startCapSuppression[i] = 0;
-    endCapSuppression[i] = 0;
-    if (i % 64 !== 0 && prevLen > 0 && len > 0) {
-      const s = Math.min(
-        Math.max((prevDx * dx + prevDy * dy + prevDz * dz) / (prevLen * len), 0),
-        1
-      );
-      endCapSuppression[i - 1] = s;
-      startCapSuppression[i] = s;
+    // Faithful joint codes from the walk's own topology (this path never runs
+    // through `compute_joint_codes`, so emit here exactly what the kernel would
+    // emit for connected geometry). The walk is a chain, so segment i-1's END
+    // meets segment i's START: i-1 names segment i at its start (+(i + 1)) and
+    // i names segment i-1 at its end (−((i − 1) + 3)). Note this is purely
+    // topological — unlike the angle-derived scalar it replaces, it does not
+    // depend on the segment directions at all. Chain breaks (the i % 64 reset
+    // above) and free ends stay JOINT_FREE_END, keeping the soft cap;
+    // zero-length segments do too, matching the kernel's degenerate fallback.
+    //
+    // The MAX_EXACT_JOINT_SLOT bound is the kernel's too, and is checked here
+    // for the same reason: these arrays are Float32, so past 2^24 a code rounds
+    // AT THE STORE into a valid-looking but wrong slot. `i` is the larger of
+    // the pair's two slots, so testing it degrades BOTH endpoints together —
+    // the symmetry `jointCodeForEndpoint` enforces, and the thing that keeps a
+    // quad from mitring alone. Only a >16.7M-segment bench reaches it, which is
+    // exactly the size this generator exists to build.
+    startJointCode[i] = JOINT_FREE_END;
+    endJointCode[i] = JOINT_FREE_END;
+    if (i % 64 !== 0 && prevLen > 0 && len > 0 && i <= MAX_EXACT_JOINT_SLOT) {
+      endJointCode[i - 1] = i + 1;
+      startJointCode[i] = -(i - 1 + 3);
     }
-    prevDx = dx;
-    prevDy = dy;
-    prevDz = dz;
     prevLen = len;
   }
 
@@ -218,8 +219,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     startSharpness,
     endSharpness,
     segmentLengths,
-    startCapSuppression,
-    endCapSuppression,
+    startJointCode,
+    endJointCode,
     segmentCount: count,
   };
 }
