@@ -92,11 +92,72 @@ class TestCheckPortAvailable:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", 0))
+            # listen() matters: the probe binds with SO_REUSEADDR (to match
+            # uvicorn's bind), and a merely-bound socket does not conflict with
+            # such a bind. Only a LISTENING socket does — which is exactly the
+            # case this function exists to detect, a port held by a running
+            # server.
+            sock.listen(1)
             bound_port = sock.getsockname()[1]
             result = check_port_available(bound_port)
             assert result is False
         finally:
             sock.close()
+
+    def test_lingering_closed_connection_is_available(self) -> None:
+        """A port left in TIME_WAIT by a previous run reads as AVAILABLE.
+
+        Regression test for the muted gallery-harness failure (#1380): the probe
+        used a plain ``bind()`` while the real server (uvicorn →
+        ``loop.create_server``) binds with ``reuse_address=True``, so a
+        non-listening leftover socket from the previous run made the probe report
+        "busy" on a port that would have bound fine. ``pick_port`` then shifted
+        to the next port, and Playwright — still waiting on the requested one —
+        burned its full 90 s budget.
+
+        The lingering state is produced by closing the *server* side of a
+        loopback connection first, so the local end of the listener's port (not
+        the client's ephemeral one) is what lingers.
+        """
+        import os
+        import socket
+        import sys
+
+        if os.name != "posix" or sys.platform == "cygwin":
+            # The probe only sets SO_REUSEADDR where asyncio itself does, so
+            # elsewhere there is no lenient bind to assert on.
+            pytest.skip("SO_REUSEADDR probe is POSIX-only, matching asyncio")
+
+        try:
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except PermissionError:
+            pytest.skip("Socket operations not permitted in this environment")
+        with listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            client = socket.create_connection(("127.0.0.1", port), timeout=5)
+            accepted, _ = listener.accept()
+            accepted.close()  # server side closes first → its port lingers
+            client.close()
+        # Nothing is listening on `port` any more, only the leftover socket.
+        # Skip rather than assert vacuously on a platform where the leftover
+        # does not linger (then a plain bind would already succeed and the test
+        # would prove nothing).
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind(("127.0.0.1", port))
+            pytest.skip(
+                "no lingering socket on this platform: a plain bind already "
+                "succeeds, so the probe/server mismatch cannot be exercised"
+            )
+        except OSError:
+            pass  # plain bind refuses — the mismatch is reproducible here
+        finally:
+            probe.close()
+
+        assert check_port_available(port) is True
 
     def test_socket_closed_on_error(self) -> None:
         """Test check_port_available closes socket after bind failure."""

@@ -7,6 +7,7 @@
  * Usage:
  *   pnpm gallery
  *   GALLERY_ONLY=lorenz,desi_galaxies pnpm gallery
+ *   GALLERY_DEBUG=1 pnpm gallery    # forward both servers' output to the reporter
  *
  * Prerequisites:
  *   - Datasets: hatch run python scripts/gallery/generate_gallery_datasets.py
@@ -25,6 +26,11 @@ const DATA_PORT = Number(process.env.GALLERY_DATA_PORT ?? 9899);
 // binary from another checkout to avoid a slow per-worktree env-create; `luxar
 // serve` only streams static zarr files by path, so any working install serves.
 const SERVE = process.env.GALLERY_LUXAR_BIN ?? 'hatch run luxar';
+// Both webServers are silent by default (see the note on the vite entry). Set
+// GALLERY_DEBUG to forward their output to the reporter instead — the only way
+// to see a `luxar serve` "port busy, using N instead" warning, which otherwise
+// turns into a mute `Timed out waiting 90000ms from config.webServer`.
+const SERVER_STDIO: 'pipe' | 'ignore' = process.env.GALLERY_DEBUG ? 'pipe' : 'ignore';
 
 /**
  * Chromium flags that actually reach the GPU, per platform.
@@ -126,10 +132,12 @@ export default defineConfig({
       port: VITE_PORT,
       reuseExistingServer: false,
       timeout: 120000,
-      // Drain to /dev/null: with 'pipe' and no consumer, vite's log output can
-      // fill the OS pipe buffer over a long/heavy sweep and stall the server.
-      stdout: 'ignore',
-      stderr: 'ignore',
+      // Quiet by default: vite's per-request log is pure noise over a long
+      // sweep. ('pipe' is safe — Playwright attaches a `data` listener to both
+      // pipes either way and only forwards conditionally, so nothing can fill
+      // the OS pipe buffer.) GALLERY_DEBUG=1 turns the forwarding on.
+      stdout: SERVER_STDIO,
+      stderr: SERVER_STDIO,
     },
     {
       command: `${SERVE} serve . -p ${DATA_PORT}`,
@@ -143,8 +151,14 @@ export default defineConfig({
       cwd: process.env.GALLERY_DATA_ROOT ?? '../..',
       reuseExistingServer: false,
       timeout: 90000,
-      stdout: 'ignore',
-      stderr: 'ignore',
+      // Unconditional, not gated on GALLERY_DEBUG: arbol's `aprint` does not
+      // flush, and Python block-buffers stdout once Playwright hands the child a
+      // pipe (it always does — the `stdout` option only gates FORWARDING). On the
+      // timeout path Playwright SIGKILLs the process group, so the port-shift
+      // warning would be written and then destroyed with the buffer.
+      env: { PYTHONUNBUFFERED: '1' },
+      stdout: SERVER_STDIO,
+      stderr: SERVER_STDIO,
     },
   ],
 

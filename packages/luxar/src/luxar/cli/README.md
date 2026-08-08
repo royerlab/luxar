@@ -486,7 +486,9 @@ Custom static file handler that provides:
 
 ### Utilities
 - `open_browser()` - Cross-platform browser opening
-- `check_port_available()` - Check if a port is available for binding
+- `check_port_available()` - Check if a port is available for binding (probes with
+  `SO_REUSEADDR` on POSIX, matching uvicorn's bind, so a lingering socket from a
+  previous run doesn't read as busy)
 - `check_viewer_built()` - Verify viewer dist exists
 - `get_viewer_dist_path()` - Get path to viewer distribution directory
 - `build_viewer()` - Build viewer using pnpm

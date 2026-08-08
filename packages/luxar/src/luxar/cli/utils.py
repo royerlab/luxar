@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -47,6 +48,23 @@ def open_browser(url: str, suppress_errors: bool = False) -> bool:
 def check_port_available(port: int, host: str = "127.0.0.1") -> bool:
     """Check if a port is available for binding.
 
+    The probe sets ``SO_REUSEADDR`` so it matches the bind it predicts: the real
+    server is uvicorn's ``loop.create_server``, and asyncio passes
+    ``reuse_address=True`` on POSIX. A plain probe is *stricter* than that — a
+    lingering non-listening socket left by a previous run (TIME_WAIT /
+    FIN_WAIT2) makes it report "busy" on a port the server would have bound
+    fine, so a serve-family command shifts to the next port with only a warning
+    — which a harness that discards the server's stdout never sees, leaving it to
+    wait out its timeout on a port nothing came up on.
+    On Linux a LISTENING socket on the same address still conflicts regardless
+    of ``SO_REUSEADDR``, so a genuinely running server is still detected.
+
+    The option is applied under asyncio's own condition rather than
+    unconditionally: on Windows asyncio deliberately omits it, because there
+    ``SO_REUSEADDR`` permits binding over an *active* listener — the probe would
+    call an occupied port free and the real bind would then fail hard, trading a
+    warned port shift for a crash.
+
     Args:
         port: Port number to check.
         host: Host address to check.
@@ -59,6 +77,8 @@ def check_port_available(port: int, host: str = "127.0.0.1") -> bool:
     except OSError:
         return False
     try:
+        if os.name == "posix" and sys.platform != "cygwin":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
         return True
     except OSError:

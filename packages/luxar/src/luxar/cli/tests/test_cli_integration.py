@@ -530,15 +530,21 @@ class TestPortHandling:
     def test_find_available_port(self):
         """Test finding an available port."""
         port = find_available_port(9000, end_port=9100)
-        assert 9000 <= port < 9100
+        assert 9000 <= port <= 9100  # end_port is INCLUSIVE
 
-        # Verify port is actually available
+        # Verify port is actually available. SO_REUSEADDR because the probe's
+        # contract is "bindable the way the SERVER binds" (uvicorn →
+        # loop.create_server, i.e. reuse_address=True on POSIX) — verifying with a
+        # stricter bind tests the wrong thing, and fails outright on a port left
+        # in TIME_WAIT by an earlier run (the E2E suite parks one on 9000).
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", port))
-            sock.close()
         except OSError:
             pytest.fail(f"Port {port} reported as available but couldn't bind")
+        finally:
+            sock.close()
 
     def test_port_conflict_handling(self, available_port):
         """Test that server handles port conflicts gracefully."""
