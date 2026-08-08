@@ -15,6 +15,44 @@
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 
+/**
+ * Whether two byte ranges of `bytes` hold identical content.
+ *
+ * Length, then both END bytes, then the interior. The ends are probed before
+ * the scan because a *full* compare of two equal-length ranges is not cheap
+ * relative to what it saves — measured on this loader's decode loop, scanning
+ * and decoding cost about the same per byte — so the compare only pays for
+ * itself when a mismatch is found in a couple of byte tests. Distinct labels almost
+ * always differ at one end (a trailing index or id, a leading code); without
+ * the end probes, equal-length labels sharing a prefix cost ~1.7x the plain
+ * decode-everything loop, which is exactly the regression this reuse is
+ * supposed to avoid.
+ *
+ * An empty/uninitialised previous range never matches a non-empty one, and a
+ * zero- or negative-length range never matches anything.
+ */
+function bytesEqual(
+  bytes: Uint8Array,
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number
+): boolean {
+  const length = aEnd - aStart;
+  if (length !== bEnd - bStart) return false;
+  // Zero length is the caller's empty-label branch and never arrives here.
+  // Descending offsets (only reachable from a corrupt store) would otherwise
+  // skip the loop entirely and report "equal", silently making this element
+  // inherit the previous label instead of decoding to ''.
+  if (length <= 0) return false;
+  if (bytes[aEnd - 1] !== bytes[bEnd - 1]) return false;
+  if (bytes[aStart] !== bytes[bStart]) return false;
+  for (let i = 1; i < length - 1; i++) {
+    if (bytes[aStart + i] !== bytes[bStart + i]) return false;
+  }
+  return true;
+}
+
 export class LabelLoader {
   /** Cache of decoded labels per node path. */
   private cache = new Map<string, string[]>();
@@ -99,7 +137,32 @@ export class LabelLoader {
       const offsetsLoc = this.rootLoc.resolve(`${cleanPath}/label_offsets`);
       const bytesLoc = this.rootLoc.resolve(`${cleanPath}/label_bytes`);
 
-      const offsetsArr = await zarr.open(offsetsLoc, { kind: 'array' });
+      // Only THIS open may be absent innocently. A node with no labels at all
+      // is the ordinary case, not a failure: the picker calls getLabel for
+      // whatever it hit, and most nodes (every coarse LOD level of a labelled
+      // ladder, for one) simply have no `label_offsets` array. Demote that to
+      // info so it does not drown the console — hovering one labelled tract's
+      // ladder would otherwise log a warning per coarse level.
+      // `isNotFoundError` is the house guard for this (see
+      // gsplats-spatial-index-loader / mesh preflight).
+      //
+      // Everything AFTER this point still warns, deliberately: a node whose
+      // offsets exist but whose `label_bytes` do not is a corrupt store, not an
+      // unlabelled node, and so are missing chunks, decode failures, bad
+      // metadata and aborts.
+      //
+      // Caveat: under MultiLevelCachingStore a retry-exhausted fetch also
+      // surfaces as a missing key, so this one branch can still swallow a
+      // network death on the offsets array. The cache tier logs its own warning
+      // for that.
+      let offsetsArr: zarr.Array;
+      try {
+        offsetsArr = await zarr.open(offsetsLoc, { kind: 'array' });
+      } catch (error) {
+        if (!zarr.isNotFoundError(error)) throw error;
+        log.info(Modules.SCENE_LOADER, `Node carries no labels: ${nodePath}`);
+        return [];
+      }
       const bytesArr = await zarr.open(bytesLoc, { kind: 'array' });
 
       // Get typed data
@@ -113,14 +176,35 @@ export class LabelLoader {
       const nElements = offsets.length - 1;
       const labels: string[] = new Array(nElements);
 
+      // Consecutive-run reuse. `decode` mints a fresh string per element and
+      // the decoded array is cached for the session, so a *broadcast* label
+      // (one string repeated over every element — how a producer tags a whole
+      // node, e.g. one tract name across 168k line vertices) would otherwise
+      // be decoded and retained N times: ~39 MB for a 107-byte label at 168k
+      // elements, which drops to ~1.3 MB when the run collapses to a single
+      // instance. What this buys is RETAINED MEMORY, not time: comparing two
+      // equal-length ranges costs about what decoding one does, so `bytesEqual`
+      // rejects on length and on both end bytes before it scans, which is what
+      // keeps the all-distinct case — the common one (embeddings, protein IDs,
+      // edge labels) — at parity rather than ~1.7x. Deliberately only
+      // *consecutive* runs: a general hash-and-pool of every value is a large
+      // net loss on distinct labels, so interleaved duplicates are left
+      // undeduped.
+      let prevStart = -1;
+      let prevEnd = -1;
+
       for (let i = 0; i < nElements; i++) {
         const start = Number(offsets[i]);
         const end = Number(offsets[i + 1]);
         if (start === end) {
           labels[i] = '';
+        } else if (bytesEqual(bytes, start, end, prevStart, prevEnd)) {
+          labels[i] = labels[i - 1];
         } else {
           labels[i] = this.decoder.decode(bytes.subarray(start, end));
         }
+        prevStart = start;
+        prevEnd = end;
       }
 
       log.info(Modules.SCENE_LOADER, `Loaded ${nElements} labels for ${nodePath}`);

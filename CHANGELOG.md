@@ -6,6 +6,49 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Tractography tracts identify themselves on hover (#1386)
+
+The HCP-1065 demo drew 87 bundles whose only names were the atlas's own codes —
+`AF_L`, `IFOF_R`, `DRTT_L` — and hovering one showed nothing at all. Each tract
+now carries a label expanding the code into its full anatomical name plus a
+one-line gloss of what it does: `AF_L — Arcuate fasciculus (left) · association
+· frontal (Broca) and temporal (Wernicke) language areas`. A 46-entry table
+keyed on the hemisphere-stripped base code covers all 87 bundles; the split is
+lookup-guarded because six base codes (`CPT_F`, `CPT_O`, `CS_S`, ...) end in a
+single-letter underscore group of their own, and `CPT_F_L` must resolve to
+`CPT_F` rather than to `CPT`.
+
+Lines labels are per-vertex, so the one tract string is broadcast across the
+node — which is also what makes the lookup safe, since the line picker reports a
+segment slot that is fed unremapped into a vertex-sorted array. Every entry
+being identical, the index does not have to be right.
+
+The honest limitation is that labels ride the ladder's finest level only, and
+nothing selects that level from the opening pose. Flying the camera into the
+tractogram is the route that works: `projectBoxDiagonalPx` saturates to the
+finest child when the camera is inside a group's box, so proximity — not
+magnification — is what makes a cranial nerve hoverable. The scene says so in a
+bottom-left hint rather than leaving it in a docstring.
+
+Two changes are the viewer's, not the demo's:
+
+- **A consecutive run of equal labels is decoded once.** `LabelLoader` decoded
+  and retained one string per element, so a broadcast label cost ~39 MB for a
+  168k-vertex node. It now compares each element's bytes to the previous one's
+  and reuses the string on a match. An intern `Map` was tried first and rejected:
+  it pays a hash and a full compare on every element, and the all-distinct case
+  that every other labelled demo has (a 4M-label embedding node) got 2x slower.
+  What the run check buys is retained memory rather than time — a full byte
+  compare costs about what the decode it replaces does — so it rejects on length
+  and on both *end* bytes before scanning the interior. Distinct labels
+  overwhelmingly differ at one end, which keeps that case at parity; without the
+  end probes, equal-length labels sharing a prefix measured ~1.7x the old loop.
+- **An unlabelled node no longer logs a warning.** The pick handler asks any
+  node it hits for a label, and most have no `label_offsets` array; that is an
+  ordinary miss, now logged at info via the house `isNotFoundError` guard. The
+  demotion is scoped to that one open: a missing `label_bytes` beside present
+  offsets, a missing chunk, a decode failure or bad metadata all still warn.
+
 #### Mesh — `kind=partition` (spec §9.2)
 
 `add_mesh(partition=True | {"max_elements": N, "rule": "median"|"midpoint"|"sah"})`
