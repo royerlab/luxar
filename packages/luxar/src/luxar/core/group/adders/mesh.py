@@ -217,6 +217,40 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
         )
 
 
+def _resolve_mesh_vertices(vertices: Any) -> np.ndarray:
+    """Coerce ``vertices`` to an array and refuse a shape a mesh cannot render.
+
+    Extracted whole from ``add_mesh_impl`` so the coercion and the two shape
+    refusals read as one step, and so the adder body stays under the C901 limit
+    the complexity ratchet enforces. Pure: no scene state, no writes — it runs
+    BEFORE ``dim_order`` is applied so that both refusals judge the AUTHORED
+    array. ``dim_order`` does not merely permute the coordinate columns, it also
+    WIDENS them, padding unmapped scene dimensions with constant ``fill`` values;
+    a 1-column input would come out a technically-valid 2-D one whose extra axis
+    is a constant, i.e. still arealess. Checking first keeps the error about what
+    the caller actually wrote.
+    """
+    vert_arr: np.ndarray = (
+        vertices if isinstance(vertices, np.ndarray) else np.asarray(vertices)
+    )
+    if vert_arr.ndim != 2:
+        raise ValueError(f"Vertices must have shape (V, D), got shape {vert_arr.shape}")
+    # A floor of 2 dimensions, which the sibling adders deliberately do NOT have.
+    # Points and Lines are meaningful in 1D — a scatter along an axis, segments with
+    # length — so they take whatever width they are given. A TRIANGLE needs two
+    # dimensions to enclose any area: in 1D every face is collinear, so the mesh
+    # writes and loads successfully and then renders nothing at all, with no
+    # diagnostic anywhere. Refusing at the adder is the only place that can say why.
+    if vert_arr.shape[1] < 2:
+        raise ValueError(
+            f"Vertices must have at least 2 dimensions, got shape {vert_arr.shape}. "
+            "A triangle needs two dimensions to have any area — in 1D every face is "
+            "collinear and the surface renders nothing. Use Points or Lines for "
+            "1D data."
+        )
+    return vert_arr
+
+
 def add_mesh_impl(
     group: "Group",
     *,
@@ -255,26 +289,7 @@ def add_mesh_impl(
 
         scene = group._find_scene()
 
-        vert_arr: np.ndarray = (
-            vertices if isinstance(vertices, np.ndarray) else np.asarray(vertices)
-        )
-        if vert_arr.ndim != 2:
-            raise ValueError(
-                f"Vertices must have shape (V, D), got shape {vert_arr.shape}"
-            )
-        # A floor of 2 dimensions, which the sibling adders deliberately do NOT have.
-        # Points and Lines are meaningful in 1D — a scatter along an axis, segments with
-        # length — so they take whatever width they are given. A TRIANGLE needs two
-        # dimensions to enclose any area: in 1D every face is collinear, so the mesh
-        # writes and loads successfully and then renders nothing at all, with no
-        # diagnostic anywhere. Refusing at the adder is the only place that can say why.
-        if vert_arr.shape[1] < 2:
-            raise ValueError(
-                f"Vertices must have at least 2 dimensions, got shape {vert_arr.shape}. "
-                "A triangle needs two dimensions to have any area — in 1D every face is "
-                "collinear and the surface renders nothing. Use Points or Lines for "
-                "1D data."
-            )
+        vert_arr = _resolve_mesh_vertices(vertices)
 
         # Apply dim_order before validation. Vertices are coordinates and get
         # reordered like every other geometry type's positions; `faces` is INDEX
@@ -440,6 +455,77 @@ def _is_broadcast_color(colors: Any) -> bool:
     return all(isinstance(c, (int, float, np.integer, np.floating)) for c in colors)
 
 
+def _validate_partition_sources(
+    faces_arr: np.ndarray,
+    n_vertices: int,
+    *,
+    normals: Any,
+    colors: Any,
+    scalars: Any,
+    labels: Any,
+    image_labels: Any,
+) -> None:
+    """Run the plain-leaf write gates against the SOURCE arrays, before the split.
+
+    Extracted whole from :func:`_add_mesh_partition` — the rejections are one
+    cohesive step (everything that must fail before a single index is used to
+    gather), and hoisting them keeps that function under the C901 limit the
+    complexity ratchet enforces. Order is load-bearing and preserved exactly:
+    ``image_labels`` first, then faces, then the per-vertex channels in
+    ``normals``, ``colors``, ``scalars``, ``labels`` order — a call that trips
+    several is told about the same one it was told about before.
+    """
+    from ....io._compiler.node_common import (
+        validate_broadcast_color,
+        validate_scalars_preflight,
+    )
+    from ....validation.base import (
+        validate_colors_for_writing,
+        validate_faces_for_writing,
+        validate_labels_for_writing,
+        validate_normals_for_writing,
+    )
+
+    if image_labels is not None:
+        raise ValueError(
+            "image_labels is not supported alongside partition=. It is a "
+            "whole-node image-to-label mapping with no per-part meaning, and "
+            "splitting it would silently change what each part's labels index. "
+            "Decompose manually or omit image_labels."
+        )
+
+    # Validate the ORIGINAL indices before they are used to gather anything. On
+    # the plain-leaf path the writer does this, but the split runs first and
+    # every one of these failures is silent or unrecognisable here: numpy WRAPS a
+    # negative index while gathering, so `-1` would quietly become the last
+    # vertex and write a triangle the author never wound, and an out-of-range or
+    # float index surfaces as a bare IndexError from inside the centroid gather
+    # instead of the guided message the same input gets without partition=.
+    validate_faces_for_writing(faces_arr, n_vertices)
+
+    # Same argument for the per-VERTEX channels, and the failure here is worse
+    # than a bad message: `slice_optional_array` gathers only when the leading
+    # length matches the vertex count and otherwise passes the value through
+    # WHOLE, which is exactly what makes a uniform RGB triple or a colormap name
+    # work. A wrong-length per-vertex array takes the same pass-through branch —
+    # and if its length happens to equal a part's OWN vertex count, that part's
+    # writer accepts it and silently pairs the values with the wrong vertices.
+    # (Two disconnected triangles: six source vertices, two three-vertex parts,
+    # three normals — rejected outright without `partition=`, accepted by both
+    # parts with it.) So run the plain-leaf gate against the SOURCE count first;
+    # a given input then fails identically whether or not it is partitioned.
+    if normals is not None:
+        validate_normals_for_writing(normals, n_vertices)
+    if isinstance(colors, np.ndarray):
+        validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
+    elif isinstance(colors, (list, tuple)):
+        validate_broadcast_color(colors, "colors")
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_vertices)
+    if labels is not None:
+        validate_labels_for_writing(labels, n_vertices)
+
+
 def _add_mesh_partition(
     group: "Group",
     *,
@@ -475,17 +561,7 @@ def _add_mesh_partition(
     are gathered through the part's ``vertex_index``; per-face data has no
     attribute today.
     """
-    from ....io._compiler.node_common import (
-        validate_broadcast_color,
-        validate_scalars_preflight,
-    )
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
-    from ....validation.base import (
-        validate_colors_for_writing,
-        validate_faces_for_writing,
-        validate_labels_for_writing,
-        validate_normals_for_writing,
-    )
     from ..partition import (
         median_bsp_partition,
         midpoint_bsp_partition,
@@ -499,37 +575,17 @@ def _add_mesh_partition(
     # dims, and add_mesh_impl has already refused those outright with a
     # mesh-specific message (a 1D triangle encloses no area). Unreachable here.
 
-    if image_labels is not None:
-        raise ValueError(
-            "image_labels is not supported alongside partition=. It is a "
-            "whole-node image-to-label mapping with no per-part meaning, and "
-            "splitting it would silently change what each part's labels index. "
-            "Decompose manually or omit image_labels."
-        )
-
-    # Validate the ORIGINAL indices before they are used to gather anything. On
-    # the plain-leaf path the writer does this, but the split runs first and
-    # every one of these failures is silent or unrecognisable here: numpy WRAPS a
-    # negative index while gathering, so `-1` would quietly become the last
-    # vertex and write a triangle the author never wound, and an out-of-range or
-    # float index surfaces as a bare IndexError from inside the centroid gather
-    # instead of the guided message the same input gets without partition=.
     n_vertices = int(vert_arr.shape[0])
-    validate_faces_for_writing(faces_arr, n_vertices)
+    _validate_partition_sources(
+        faces_arr,
+        n_vertices,
+        normals=normals,
+        colors=colors,
+        scalars=scalars,
+        labels=labels,
+        image_labels=image_labels,
+    )
 
-    # Same argument for the per-VERTEX channels, and the failure here is worse
-    # than a bad message: `slice_optional_array` gathers only when the leading
-    # length matches the vertex count and otherwise passes the value through
-    # WHOLE, which is exactly what makes a uniform RGB triple or a colormap name
-    # work. A wrong-length per-vertex array takes the same pass-through branch —
-    # and if its length happens to equal a part's OWN vertex count, that part's
-    # writer accepts it and silently pairs the values with the wrong vertices.
-    # (Two disconnected triangles: six source vertices, two three-vertex parts,
-    # three normals — rejected outright without `partition=`, accepted by both
-    # parts with it.) So run the plain-leaf gate against the SOURCE count first;
-    # a given input then fails identically whether or not it is partitioned.
-    if normals is not None:
-        validate_normals_for_writing(normals, n_vertices)
     # A uniform RGB(A) list/tuple is the one leaf parameter whose OWN length can
     # collide with the vertex count, and mesh is the geometry where that collision
     # is reachable: every part holds at least three vertices (a triangle's worth),
@@ -539,14 +595,6 @@ def _add_mesh_partition(
     # SILENTLY, because a 3-element result is itself a valid uniform RGB. Classify
     # the broadcast form up front so every part gets the color the caller wrote.
     uniform_color = _is_broadcast_color(colors)
-    if isinstance(colors, np.ndarray):
-        validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
-    elif isinstance(colors, (list, tuple)):
-        validate_broadcast_color(colors, "colors")
-    if scalars is not None:
-        validate_scalars_preflight(scalars, n_vertices)
-    if labels is not None:
-        validate_labels_for_writing(labels, n_vertices)
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)

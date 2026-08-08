@@ -470,6 +470,10 @@ becomes drawable; today both sets include `mesh`.
 - Optional per-vertex `normals`, with a **required** `normal_dims` companion
 - Per-vertex colors (RGB or RGBA) and scalars for colormap lookup
 - `shading` (`"smooth"` / `"flat"`) and `double_sided`
+- `add_mesh(partition=True | {"max_elements": N, "rule": …})` → a `kind=partition`
+  wrapper; the BSP cuts face centroids (`max_elements` counts faces, no triangle
+  split), and each part re-indexes its own vertices — cut ones duplicated,
+  per-vertex attributes gathered. See `docs/specs/MESH_NODE_SPEC.md` §9.2.
 - Progressive writing (data written immediately to Zarr)
 
 **What a mesh does NOT have**, and why the absences are structural rather than
@@ -484,14 +488,12 @@ gaps:
   independence assumption — a level is an independently-authored
   `(vertices, faces)` pair chosen by `coverage_fraction` — and are missing only the
   producer, QEM decimation.
-- **No `kind=partition`.** A BSP cut runs through faces, so each part needs its
-  boundary vertices duplicated and the per-vertex label CSR split to match.
-  Bookkeeping rather than a structural obstacle.
 - **No spatial index** (`ordering` is always `"none"`; the viewer loads a mesh
   whole, so a chunk index has nothing to skip).
 
-Each of those is refused with an explanation — including adding a mesh under a
-`kind=lod` / `kind=partition` parent — rather than silently degrading.
+Each remaining absence is refused with an explanation — including adding a mesh
+under a `kind=lod` parent, or under a `kind=partition` group that declares some
+other `display_type` — rather than silently degrading.
 
 **Usage Example:**
 ```python
