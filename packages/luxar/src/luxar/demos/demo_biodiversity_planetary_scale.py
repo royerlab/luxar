@@ -600,7 +600,11 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: split into T spatial tiles, so at whole-globe framing a tile's projected
 #: diagonal is only ~0.6 of the viewport diagonal — measured in-browser, not
 #: estimated. Against the default thresholds that fraction still lands on a mid
-#: level (tiles sat on 117k and 469k, ~3.6M total).
+#: level (tiles sat on 117k and 469k, ~3.6M total). (#1411 taught the adder to
+#: recognise this hand-built `kind=partition` and auto-anchor its per-tile ladders
+#: at fills-screen, so the default is no longer the whole-object one here — but the
+#: measured thresholds below are still tighter than any count ratio, so the
+#: override stays.)
 #:
 #: UNITS. The thresholds below are in COVERAGE-METRIC space, which is the raw
 #: projected-diagonal fraction divided by the viewer's `FILL_FACTOR` (0.25 — see
