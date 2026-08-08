@@ -22,6 +22,7 @@ import { log, Modules } from '../../utils/log';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
 import { resolveColormapWindow } from '../display-range';
+import { parseLineJoinStyle, LINE_JOIN_STYLES } from '../../types/line-join';
 
 /** Build a Lines mesh + optional picking shadow node. */
 export function createLinesNode(
@@ -52,6 +53,20 @@ export function createLinesNode(
   const composedIntensity = (nodeAttrs.intensity as number | undefined) ?? 1.0;
   const composedOffset = (nodeAttrs.offset as number | undefined) ?? 0.0;
 
+  // Join style at degree-2 polyline joints (#790). COMPOSITED, so a
+  // partitioned / LOD wrapper's children inherit it (see COMPOSITING_ATTRS in
+  // core/group/compositing.py) instead of silently reverting to the default.
+  // An unrecognised value is REJECTED loudly rather than quietly meaning
+  // "no joins": it is far more likely a typo than an intent.
+  const rawJoin = nodeAttrs.join as string | undefined;
+  const join = parseLineJoinStyle(rawJoin) ?? undefined;
+  if (rawJoin !== undefined && join === undefined) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `[${path}] Unknown line join style "${rawJoin}" — expected one of ${LINE_JOIN_STYLES.join(', ')}. Using the default.`
+    );
+  }
+
   const material = materialManager.getLineMaterial({
     opacity: (nodeAttrs.opacity as number | undefined) ?? 1.0,
     absorption: (nodeAttrs.absorption as number | undefined) ?? 1.0,
@@ -59,6 +74,7 @@ export function createLinesNode(
     intensity: composedIntensity,
     offset: composedOffset,
     blendingMode: (nodeAttrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
+    join,
   });
 
   const mesh = createInstancedLinesMesh(processed, material);
@@ -130,7 +146,9 @@ export function createLinesNode(
   if (pickingSystem) {
     const pickId = pickingSystem.allocatePickId();
     mesh.userData.pickId = pickId;
-    const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId });
+    // The SAME join style as the visual material: the pick pass builds the same
+    // screen-space quad, so a divergence makes a mitred corner unpickable.
+    const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId, join });
     materialManager.register(pickMaterial);
     // Share the same InstancedBufferGeometry — only material differs.
     const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
@@ -163,8 +181,8 @@ export function createEmptyLinesNode(
     startSharpness: new Float32Array(0),
     endSharpness: new Float32Array(0),
     segmentLengths: new Float32Array(0),
-    startCapSuppression: new Float32Array(0),
-    endCapSuppression: new Float32Array(0),
+    startJointCode: new Float32Array(0),
+    endJointCode: new Float32Array(0),
     segmentCount: 0,
   };
   // When the node carries a scalar field + colormap, declare empty

@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 from arbol import aprint
 
-from .batch_run_orchestration import run_batch_local_orchestration
+from .run_orchestration import run_batch_local_orchestration
 
 
 def run_batch_run(

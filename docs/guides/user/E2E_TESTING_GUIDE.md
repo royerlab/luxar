@@ -98,6 +98,7 @@ The authoritative list is the directory itself — run
 | **hover-tooltip.spec.ts** | Full hover pipeline: mouse → GPU pick → label → tooltip DOM |
 | **keyboard-input-system.spec.ts** | Fly controls, shortcuts, modifiers |
 | **layers-panel.spec.ts** | Layers panel UI |
+| **line-join-artifact.spec.ts** | ⭐ #780/#785/#790 joint-artifact acceptance measurement — five joint cases as separate world-Y bands, scored on one frame with local-median outliers AND axial flux ripple (needs generate-fixtures) |
 | **line-perf-bench.spec.ts** | Line-rendering frame-time benchmark, WebGL vs WebGPU (opt-in: `pnpm test:perf:e2e`) |
 | **line-renderer-compare-perf.spec.ts** | WebGL vs WebGPU FPS comparison on line-heavy scenes (developer diagnostic, JSON artifact) |
 | **line-rendering-visual.spec.ts** | Lines visual correctness via sampled pixels (cap intensity, near-camera artefacts) |
