@@ -57,6 +57,10 @@ export interface PartitionGroupMetadata {
   /**
    * Per-part element cap that drove the BSP recursion. Recorded for
    * diagnostics and for future partition-aware tools.
+   *
+   * "Element" is the drawn primitive of `display_type`, so for `'mesh'` this
+   * counts FACES, not vertices — the BSP recurses on face centroids and a part's
+   * vertex count is whatever its faces happen to reference.
    */
   max_elements: number;
 

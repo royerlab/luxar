@@ -104,13 +104,24 @@ def split_mesh_by_faces(
         [np.asarray(p, dtype=np.intp).reshape(-1) for p in face_parts]
         or [np.empty(0, dtype=np.intp)]
     )
-    if assigned.size != n_faces or np.unique(assigned).size != n_faces:
+    # `distinct` is sorted, so checking its endpoints against [0, n_faces) is
+    # what makes this a check for `range(n_faces)` rather than merely for the
+    # right COUNT of distinct values. Bounds matter on their own: numpy accepts
+    # a negative index and wraps it, so `[[-1], [1]]` over two faces would pass a
+    # count-and-uniqueness check while dropping face 0 and drawing face 1 twice —
+    # exactly the corruption this guard exists to catch.
+    distinct = np.unique(assigned)
+    out_of_range = distinct.size > 0 and (distinct[0] < 0 or distinct[-1] >= n_faces)
+    if assigned.size != n_faces or distinct.size != n_faces or out_of_range:
         raise ValueError(
             f"face_parts must be a partition of the {n_faces} faces: got "
-            f"{assigned.size} assignments covering {np.unique(assigned).size} "
-            "distinct faces. Every face must appear in exactly one part — a "
-            "dropped face renders as a hole and a duplicated one as an "
-            "invisible double-draw, so neither fails loudly downstream."
+            f"{assigned.size} assignments covering {distinct.size} "
+            f"distinct faces in "
+            f"[{int(distinct[0]) if distinct.size else 0}, "
+            f"{int(distinct[-1]) if distinct.size else 0}]. Every face must "
+            "appear in exactly one part, and every index must be in "
+            f"[0, {n_faces}) — a dropped face renders as a hole and a duplicated "
+            "one as an invisible double-draw, so neither fails loudly downstream."
         )
 
     parts: List[MeshPart] = []

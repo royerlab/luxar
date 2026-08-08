@@ -178,6 +178,22 @@ def test_non_partition_is_rejected(bad_parts: list, reason: str) -> None:
         split_mesh_by_faces(faces, bad_parts)
 
 
+@pytest.mark.parametrize(
+    "bad_parts", [[np.array([-1]), np.array([1])], [np.array([0, 2])]]
+)
+def test_out_of_range_face_indices_are_rejected(bad_parts: list) -> None:
+    """An index outside ``range(F)`` is rejected, not silently wrapped.
+
+    Counting distinct assignments is not enough on its own: numpy accepts a
+    NEGATIVE index and wraps it, so ``[[-1], [1]]`` over two faces has the right
+    count and the right uniqueness while dropping face 0 and drawing face 1
+    twice — the exact corruption the partition check exists to catch.
+    """
+    _, faces = _grid_mesh(2)  # 2 faces
+    with pytest.raises(ValueError, match="must be a partition"):
+        split_mesh_by_faces(faces, bad_parts)
+
+
 def test_bad_face_shape_is_rejected() -> None:
     with pytest.raises(ValueError, match=r"shape \(F, 3\)"):
         split_mesh_by_faces(np.zeros((4, 4), dtype=np.uint32), [np.arange(4)])

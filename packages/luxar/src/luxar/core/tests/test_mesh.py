@@ -340,6 +340,24 @@ def test_mesh_under_a_mesh_partition_group_is_allowed(tmp_path) -> None:
         assert part.add_mesh("part_0", _V, _F) is not None
 
 
+@pytest.mark.parametrize("declared", ["points", "lines", "gsplats"])
+def test_mesh_under_a_partition_of_another_type_is_rejected(tmp_path, declared) -> None:
+    """A partition's declared ``display_type`` must not be made a lie.
+
+    Lifting the blanket ``kind=partition`` refusal must not lift THIS one: a
+    partition is homogeneous, and nothing re-checks that before the store is
+    finalized, so a mesh dropped into a ``points`` partition would write clean
+    and load as a layer claiming to be points.
+    """
+    with LuxarZarrCompiler(tmp_path / f"part_{declared}.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        part = scene.add_partition_group(
+            "parts", display_type=declared, max_elements=100
+        )
+        with pytest.raises(ValueError, match="kind=partition group declared"):
+            part.add_mesh("part_0", _V, _F)
+
+
 def test_lod_refusal_distinguishes_the_two_ladder_flavours(tmp_path) -> None:
     """The REASON is pinned, not just the fact of the refusal.
 
@@ -1420,3 +1438,67 @@ def test_partition_gathers_per_vertex_labels(tmp_path) -> None:
     # Every input label survives somewhere (boundary ones appear more than once,
     # which is the same duplication the vertices undergo).
     assert set(seen) == set(labels)
+
+
+def test_partition_accepts_extend_to_all(tmp_path) -> None:
+    """``partition=`` and ``extend_to_all=`` must compose.
+
+    They did not: the branch runs AFTER the resolved dimension list is folded
+    into ``**attrs``, so the split was handed ``extend_to_all`` twice — once by
+    name and once through the dict — and every partitioned mesh with a resolved
+    extension died on a duplicate keyword argument before splitting anything.
+    """
+    from luxar.core import Dimension
+
+    dims = Dimensions(
+        [
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+            Dimension("t", display=False, discrete=True, range=(0, 4)),
+        ]
+    )
+    vertices = np.concatenate([_GRID_V, np.zeros((36, 1), np.float32)], axis=1)
+
+    store = tmp_path / "ext.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh(
+            "pm", vertices, _GRID_F, partition={"max_elements": 10}, extend_to_all=["t"]
+        )
+
+    root = zarr.open_group(str(store), mode="r")
+    node = root["pm"]
+    assert node.attrs["kind"] == "partition"
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    # The visibility extension reaches every part, not just the wrapper.
+    for part_name in parts:
+        assert node[part_name].attrs["extend_to_all"] == ["t"]
+
+
+@pytest.mark.parametrize(
+    "mutate, match",
+    [
+        (lambda f: f.astype(np.int64) * 0 - 1, "Face index -1 < 0"),
+        (lambda f: np.where(f == 0, 999, f), "out of range"),
+        (lambda f: f.astype(np.float32), "integer array"),
+    ],
+    ids=["negative", "out-of-range", "float"],
+)
+def test_partition_validates_faces_the_same_way_a_plain_leaf_does(
+    tmp_path, mutate, match
+) -> None:
+    """Bad indices must be refused BEFORE the split gathers anything.
+
+    The split runs ahead of the writer's own gate, and each of these failed
+    differently there: numpy WRAPS a negative index, so ``-1`` silently became
+    the last vertex and wrote a triangle the author never wound, while the other
+    two escaped as a bare ``IndexError`` from inside the centroid gather.
+    """
+    with pytest.raises(ValueError, match=match):
+        with LuxarZarrCompiler(tmp_path / "bad.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "pm", _GRID_V, mutate(_GRID_F), partition={"max_elements": 10}
+            )
