@@ -501,9 +501,10 @@ def write_gsplat_node(
     tree and passed straight through. ``None`` → per-leaf auto-detection.
 
     ``under_partition`` is set by the recursion once a ``kind=partition`` ancestor
-    has been crossed. It selects which anchor the FALLBACK ``coverage_fraction``
-    derivation uses for a lod group (see the lod branch below); callers always
-    leave it at the default.
+    with **more than one part** has been crossed (a one-part partition is not a
+    tiling — see the partition branch). It selects which anchor the FALLBACK
+    ``coverage_fraction`` derivation uses for a lod group (see the lod branch
+    below); callers always leave it at the default.
     """
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
@@ -619,6 +620,13 @@ def write_gsplat_node(
 
     if isinstance(node, GSplatPartition):
         child_bounds = []
+        # A one-part partition is not a tiling: its single part covers the whole
+        # object, so a ladder underneath it must keep the whole-object anchor
+        # rather than the fills-screen one (same rule as ``build_adaptive``, which
+        # produces exactly this shape whenever the dataset fits ``max_elements``).
+        # Getting it wrong here would make ``gsplat transform``'s scrub-and-
+        # re-derive silently re-coarsen such a store.
+        parts_are_tiles = len(node.children) > 1
         for i, child in enumerate(node.children):
             child_group = group.require_group(f"part_{i}")
             cmeta = write_gsplat_node(
@@ -634,7 +642,7 @@ def write_gsplat_node(
                 # from enumerating part_10 before part_2.
                 attrs={"child_index": i},
                 barrier_dims=barrier_dims,
-                under_partition=True,
+                under_partition=parts_are_tiles,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])

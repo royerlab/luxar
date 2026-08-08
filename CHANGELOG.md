@@ -74,6 +74,15 @@ frame 1 (inverting "instant coarse overview, fine tiles on zoom") and every
 standalone writer derives the same anchor from the topology, so
 `luxar gsplat transform`'s scrub-and-re-derive stays a no-op.
 
+A **one-part** partition is excluded from that rule, and the exclusion matters more
+than it sounds: `to_spatial_partition` wraps even a single BSP leaf in a
+`kind=partition`, and the BSP stops as soon as the whole dataset fits
+`--max-elements`, whose default is 1,000,000. So `luxar gsplat lod --recipe adaptive`
+on any ordinary dataset produces one "tile" that IS the whole object — and anchoring
+it at fills-screen would have reintroduced exactly the blur this change removes.
+`build_adaptive` and both tree writers' topology fallbacks now use the whole-object
+anchor for that shape, so a scrub-and-re-derive of such a store still round-trips.
+
 Known limitation, documented on the constant and pinned by tests: the anchor drifts
 with viewport ASPECT. `calculateCameraDistance` fits the vertical fov while the
 metric normalises by the diagonal, so for aspect >= 1 the raw fraction falls as

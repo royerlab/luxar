@@ -114,8 +114,10 @@ def graft_gsplat_node(
     a wrapper Group; the rest fall through to children.
 
     ``_under_partition`` is set by the recursion once a ``kind=partition`` ancestor
-    has been crossed; it selects which anchor the FALLBACK ``coverage_fraction``
-    derivation uses (see the lod branch). Callers leave it at the default.
+    with **more than one part** has been crossed (a one-part partition is not a
+    tiling — see the partition branch); it selects which anchor the FALLBACK
+    ``coverage_fraction`` derivation uses (see the lod branch). Callers leave it
+    at the default.
     """
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
@@ -220,14 +222,19 @@ def graft_gsplat_node(
             max_elements=int(node.max_elements),
             **partition_attrs,
         )
+        # Everything under a kind=partition is partition-bound — EXCEPT when the
+        # partition holds a single part, which is not a tiling: that part covers
+        # the whole object, so a ladder underneath it keeps the whole-object
+        # anchor. Mirrors the standalone writer (``gsplat_tree.write_gsplat_node``)
+        # and the shape ``build_adaptive`` emits below ``max_elements``.
+        parts_are_tiles = len(node.children) > 1
         for i, child in enumerate(node.children):
             graft_gsplat_node(
                 wrapper,
                 name=f"part_{i}",
                 node=child,
                 extend_to_all=extend_to_all,
-                # Everything under a kind=partition is partition-bound.
-                _under_partition=True,
+                _under_partition=parts_are_tiles,
                 **child_attrs,
             )
         return wrapper

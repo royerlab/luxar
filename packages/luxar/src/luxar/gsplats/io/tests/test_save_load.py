@@ -1775,3 +1775,55 @@ def test_streaming_partition_writer_uses_the_partitioned_anchor(
         f"streaming writer gave {covs}; every part_<i> is under a kind=partition "
         "root, so the fallback must use the partition-bound anchor"
     )
+
+
+def test_meta_less_one_part_partition_rederives_the_whole_object_anchor(
+    tmp_path: Path,
+) -> None:
+    """A ONE-part partition is not a tiling — its part covers the whole object,
+    so the fallback must NOT hand the fills-screen anchor down.
+
+    ``build_adaptive`` emits exactly this shape whenever the dataset fits
+    ``max_elements``, and it stamps 1.0. If the writer's topology fallback
+    disagreed, a ``gsplat transform`` scrub-and-re-derive would silently
+    re-coarsen the store back to the #1361 behaviour.
+    """
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+    from luxar.gsplats.tree import GSplatPartition
+
+    rng = np.random.default_rng(0)
+    n = 120
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    data = GSplatData(
+        centers=rng.uniform(0, 10, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.1, 1.0, n).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    node = build_recipe(
+        data,
+        "adaptive",
+        # max_elements unset → the default 1,000,000, so the BSP never splits.
+        RecipeParams(compression_factor=4, levels=2, device="cpu", seed=0),
+    )
+    assert isinstance(node, GSplatPartition) and len(node.children) == 1
+
+    stamped = tmp_path / "one_part_stamped.gsplats.zarr"
+    scrubbed = tmp_path / "one_part_scrubbed.gsplats.zarr"
+    write_gsplats_tree(stamped, node)
+    write_gsplats_tree(scrubbed, _strip_coverage(node))
+
+    def _covs(path: Path) -> list[float]:
+        g = zarr.open_group(str(path), mode="r")["part_0"]
+        return [
+            float(g[k].attrs["coverage_fraction"])
+            for k in sorted(g.group_keys(), key=lambda s: int(s.split("_")[1]))
+        ]
+
+    assert _covs(scrubbed)[-1] == pytest.approx(1.0), (
+        f"one-part re-derivation gave {_covs(scrubbed)}, expected the "
+        "whole-object anchor (finest = 1.0)"
+    )
+    # And the round trip is still a no-op, as it is for real tilings.
+    assert _covs(stamped) == pytest.approx(_covs(scrubbed))

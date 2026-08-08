@@ -365,6 +365,36 @@ def test_adaptive_per_part_ladders_keep_the_fills_screen_anchor():
         )
 
 
+def test_adaptive_single_part_keeps_the_whole_object_anchor():
+    """REGRESSION: a ONE-part "partition" is not a tiling, so it must not take
+    the fills-screen anchor.
+
+    ``to_spatial_partition`` wraps even a single BSP leaf in a
+    ``GSplatPartition``, and the BSP stops as soon as the whole dataset fits
+    ``max_elements`` — whose default is 1,000,000, so ``gsplat lod --recipe
+    adaptive`` lands here for any ordinary dataset. That lone part's bbox IS the
+    whole object's, so anchoring its ladder at MAX_COVERAGE_FRACTION would hold
+    the finest level back until the object overfills the screen: exactly the
+    #1361 blur, reintroduced by the fix for it."""
+    data = _make_random_gsplat(n=120)
+    res = build_recipe(
+        data, "adaptive", _params(max_elements=None, compression_factor=4, levels=2)
+    )
+    assert isinstance(res, GSplatPartition)
+    assert res.n_children == 1, "expected the whole dataset to fit one part"
+    (part,) = res.children
+    assert isinstance(part, GSplatLodGroup)
+    covs = [c.meta["coverage_fraction"] for c in part.children]
+    assert covs[0] == 0.0
+    assert covs[-1] == pytest.approx(1.0), (
+        f"a one-part partition must use the whole-object anchor; got {covs}"
+    )
+    # The opening framing (raw diagonal fraction ~0.31 at worst) must already
+    # reach the finest level — the whole point of #1361.
+    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
+    assert 0.31 / fill_factor >= covs[-1]
+
+
 # ── absorption regression: recipes == the builders they wrap ──────────────
 
 

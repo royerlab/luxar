@@ -255,6 +255,13 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
       is precisely the cost this recipe exists to avoid for huge N. Reach for
       ``levels`` instead when you want full detail immediately.
 
+    **A one-part partition is neither of those.** ``to_spatial_partition`` wraps
+    even a single BSP leaf in a ``kind=partition``, and that part's bbox IS the
+    whole object's — so the geometric argument above does not hold and callers
+    must use plain :func:`coverage_fractions` for it, or the finest level would be
+    held back until the object overfills the screen (the very #1361 blur). Both
+    tree writers' topology fallbacks and ``build_adaptive`` special-case it.
+
     In both cases the ladder keeps the pre-#1361 anchor by scaling the derived
     fractions by :data:`MAX_COVERAGE_FRACTION` (``1 / FILL_FACTOR``), so the
     finest lands on ``4.0`` — which in coverage-metric space means exactly what
