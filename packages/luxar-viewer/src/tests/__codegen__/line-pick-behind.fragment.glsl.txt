@@ -39,12 +39,11 @@ layout( location = 0 ) out vec4 fragColor;
 // uniforms
 
 layout( std140 ) uniform object {
-	float nodeUniform0;
-	float nodeUniform1;
+	mat4 nodeUniform1;
 	float nodeUniform2;
 	float nodeUniform3;
-	mat3 nodeUniform5;
-	uint nodeUniform6;
+	float nodeUniform4;
+	float nodeUniform5;
 	mat3 nodeUniform7;
 	uint nodeUniform8;
 	mat3 nodeUniform9;
@@ -53,11 +52,20 @@ layout( std140 ) uniform object {
 	uint nodeUniform12;
 	mat3 nodeUniform13;
 	uint nodeUniform14;
-	mat4 nodeUniform16;
+	mat3 nodeUniform15;
+	uint nodeUniform16;
 	float nodeUniform17;
 	vec2 nodeUniform19;
 	float nodeUniform20;
 	float nodeUniform21;
+	mat3 nodeUniform22;
+	uint nodeUniform23;
+	mat3 nodeUniform24;
+	uint nodeUniform25;
+	mat3 nodeUniform26;
+	uint nodeUniform27;
+	mat3 nodeUniform28;
+	uint nodeUniform29;
 };
 
 
@@ -135,7 +143,7 @@ void main() {
 
 	} else {
 
-		nodeVar5 = max( nodeUniform0, 1e-20 );
+		nodeVar5 = max( nodeUniform2, 1e-20 );
 		nodeVar4 = smoothstep( nodeVar5, ( nodeVar5 * 2.0 ), ( - nodeVarying7 ) );
 
 	}
@@ -150,7 +158,7 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying10, nodeVarying11.x, lineBrightness, nodeVarying11.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform3 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform5 );
 	nodeVar9 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar9;
 	gl_FragDepth = ( 1.0 - clamp( lineBrightness, 0.0, 1.0 ) );

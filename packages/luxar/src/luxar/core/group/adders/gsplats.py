@@ -17,6 +17,7 @@ from ..auto_partition import resolve_auto_partition
 from ..compositing import (
     COMPOSITING_ATTRS,
     position_bounds_from_array,
+    reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
 )
@@ -54,6 +55,7 @@ def add_gsplats_impl(
 
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
+        reject_lines_only_join("gsplats", name, attrs)
 
         scene = group._find_scene()
 
