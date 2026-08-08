@@ -103,7 +103,9 @@ test.describe('lod_group node', () => {
       },
       { timeout: 10000 }
     );
-    // Pin the settled shape: the coarsest level participates at default zoom.
+    // Pin the settled shape: at most two adjacent levels are visible (a single
+    // level, or a cross-fading pair). Which level that is depends on the framing
+    // and the FILL_FACTOR anchor, so the assertions below stay level-agnostic.
     const visibleIdxs = await page.evaluate(() => {
       const debug = (window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } })
         .__luxarDebug;

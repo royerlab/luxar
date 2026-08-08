@@ -124,8 +124,19 @@ class TestResolveSubstitutiveAxisPoints:
             resolve_substitutive_axis_points(5)
 
     def test_coverage_fractions_out_of_range_raises(self) -> None:
-        with pytest.raises(ValueError, match=r"\[0, 1\]"):
-            resolve_substitutive_axis_points(dict(coverage_fractions=[0.0, 2.0]))
+        # The ceiling is MAX_COVERAGE_FRACTION == 1/FILL_FACTOR == 4.0 (the metric
+        # a screen-filling object produces), not 1.0.
+        with pytest.raises(ValueError, match=r"\[0, 4\]"):
+            resolve_substitutive_axis_points(dict(coverage_fractions=[0.0, 4.5]))
+
+    def test_coverage_fractions_above_one_accepted(self) -> None:
+        # Above the auto-derived 1.0 anchor but within the ceiling (inclusive) —
+        # the escape hatch for a level that must hold until the object is LARGER
+        # than a quarter-viewport (e.g. a spatially tiled layer).
+        r = resolve_substitutive_axis_points(dict(coverage_fractions=[0.0, 1.5]))
+        assert r["coverage_fractions"] == [0.0, 1.5]
+        r = resolve_substitutive_axis_points(dict(coverage_fractions=[0.0, 4.0]))
+        assert r["coverage_fractions"] == [0.0, 4.0]
 
     def test_empty_coverage_fractions_raises_clean_error(self) -> None:
         # An empty explicit list must raise an actionable ValueError, NOT an

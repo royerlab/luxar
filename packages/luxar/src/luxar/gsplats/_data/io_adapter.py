@@ -54,8 +54,8 @@ class IOAdapterMixin(_GSplatDataOps):
 
         For a multi-substitutive dataset the per-level ``coverage_fraction`` LOD
         switch thresholds (``sqrt(N_i/N_finest)``) are derived automatically — the
-        viewer anchors the finest at fills-screen via the live viewport, so there
-        is no per-dataset threshold knob. See
+        viewer anchors the finest at a quarter of the live viewport diagonal (any
+        normal full-frame view), so there is no per-dataset threshold knob. See
         ``core.group.lod.group.coverage_fractions``.
 
         Colors are written via the shared COLOR helper, which auto-detects SDR vs

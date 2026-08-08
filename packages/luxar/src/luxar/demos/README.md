@@ -303,7 +303,7 @@ Rows: identity, `offset +5`, `offset -3`, `scale ×2`, `scale ×2 offset +2`, a 
 
 **Run**: `luxar demo run nd_transforms`
 
-**Demonstrates**: `nd_transform` affine on a discrete ordinal dimension (offset, scale, negative scale, scale+offset), categorical permutation, hierarchical composition through nested groups, a spatial 4x4 `transform` and an `nd_transform` on the same group, `extend_to_all` for static furniture and per-section pinning, `visible_range` overlays as a live expected-value readout. Doubles as the visual regression harness for the viewer's no-preimage rule (see `packages/luxar-viewer/src/data/transforms/README.md`).
+**Demonstrates**: `nd_transform` affine on a discrete ordinal dimension (offset, scale, negative scale, scale+offset), categorical permutation, hierarchical composition through nested groups, a spatial 4x4 `transform` and an `nd_transform` on the same group, `extend_to_all` for static furniture and per-section pinning, `visible_range` overlays as a live expected-value readout, and composite group layers (`Frame_Section` / `Channel_Section` are the only `layer=True` nodes, so the Layers panel offers one row per half of the bench instead of one per marker). Doubles as the visual regression harness for the viewer's no-preimage rule (see `packages/luxar-viewer/src/data/transforms/README.md`).
 
 ---
 
@@ -323,7 +323,7 @@ Beautiful procedural forest using L-system grammars to showcase the **Lines** no
 
 **Run**: `luxar demo run forest [-- --iterations=6] [-- --trees=16]`
 
-**Demonstrates**: **Lines node type** as an indexed branching network with shared joint vertices, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes.
+**Demonstrates**: **Lines node type** as an indexed branching network with shared joint vertices, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes, and a `layer=True` `trees` container group so the hundreds of per-tree nodes reach the Layers panel as one composite row.
 
 ---
 
@@ -608,13 +608,13 @@ The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, 
 ---
 
 #### demo_dmri_tractography.py - Human White-Matter Tractography (HCP-1065)
-The wiring of the human brain: all 87 named white-matter tracts of the HCP-1065 population atlas as 252,978 streamlines (7.08M vertices, 6.83M segments) in ICBM 2009a space, coloured by the standard diffusion-MRI direction convention (red = left-right, green = anterior-posterior, blue = inferior-superior). Each tract is its own Lines node exposed as a **Layers-panel** toggle (press **L**), so any bundle can be isolated — the corticospinal tract, the corpus callosum, the arcuate.
+The wiring of the human brain: all 87 named white-matter tracts of the HCP-1065 population atlas as 252,978 streamlines (7.08M vertices, 6.83M segments) in ICBM 2009a space, coloured by the standard diffusion-MRI direction convention (red = left-right, green = anterior-posterior, blue = inferior-superior). Each tract is its own Lines node exposed as a **Layers-panel** toggle (press **L**), so any bundle can be isolated — the corticospinal tract, the corpus callosum, the arcuate. Hover a zoomed-in tract for its full anatomical name and a one-line gloss of what it does, expanded from the terse atlas code.
 
 **Run**: `luxar demo run dmri_tractography [-- --per-bundle 6000 --points 28]`
 
 **Requires**: Internet access on first run — downloads `hcp1065_avg_tracts_trk.zip` (588 MB) to `~/.cache/luxar/dmri_tractography/` and caches the decoded bundles as an `.npz`. Needs `nibabel` (in the `demos` extra). No GPU. Building the scene takes ~25 min because every node lifts its segments to Gaussian beads for the substitutive LOD; it is a one-time cost, paid again only on `--recompute`. Substitutive Lines LOD needs `luxar[gsplats]` (torch + scipy); without it the bundles are written flat (fully viewable, no coarse levels).
 
-**Demonstrates**: Lines as the *native* geometry for data that is already made of curves — no conversion, unlike every volumetric demo. Arc-length resampling (the source is ~0.4 mm-sampled, ~10x finer than any rendered line width); `line_type="indexed"` with per-streamline contiguous vertices so thick tubes render seamless joints; 87 separate nodes, each sized to stay under both the un-laddered-leaf gate (200K vertices) and the per-node element-texture segment bound; per-node **substitutive LOD** at `compression_factor=256` — thin lines need a far larger K than the default, because the bead lift is driven by arc-length ÷ width rather than by segment count (at K=4 the "coarse" level comes out 5.6x heavier than the fine one, and the scene balloons to 2.1 GB); and `blending_mode="additive"` at low opacity with a display window, which is order-independent and so cannot pop as the camera orbits — unlike `normal`, whose per-object transparent-pass sort flips between overlapping bundles. Data: [Yeh 2022](https://doi.org/10.1038/s41467-022-32595-4), [HCP-1065 atlas](https://brain.labsolver.org/hcp_trk_atlas.html) (CC BY-SA 4.0; WU-Minn HCP data-use terms).
+**Demonstrates**: Lines as the *native* geometry for data that is already made of curves — no conversion, unlike every volumetric demo. Arc-length resampling (the source is ~0.4 mm-sampled, ~10x finer than any rendered line width); `line_type="indexed"` with per-streamline contiguous vertices so thick tubes render seamless joints; 87 separate nodes, each sized to stay under both the un-laddered-leaf gate (200K vertices) and the per-node element-texture segment bound; per-node **substitutive LOD** at `compression_factor=256` — thin lines need a far larger K than the default, because the bead lift is driven by arc-length ÷ width rather than by segment count (at K=4 the "coarse" level comes out 5.6x heavier than the fine one, and the scene balloons to 2.1 GB); `blending_mode="additive"` at low opacity with a display window, which is order-independent and so cannot pop as the camera orbits — unlike `normal`, whose per-object transparent-pass sort flips between overlapping bundles; and per-tract **hover labels** broadcast across a node's vertices (Lines labels are per-vertex), which ride the ladder's finest level only, so the tooltip appears once a bundle is zoomed to roughly fill the view. Data: [Yeh 2022](https://doi.org/10.1038/s41467-022-32595-4), [HCP-1065 atlas](https://brain.labsolver.org/hcp_trk_atlas.html) (CC BY-SA 4.0; WU-Minn HCP data-use terms).
 
 ---
 
@@ -858,7 +858,7 @@ Lays out `--count` (default 100) copies of the single adaptive-detail Tribolium 
 
 **Requires**: Precomputed Tribolium splats (Git LFS); no network/GPU needed for the default path. `--recompute` re-fits from Zenodo (network + GPU).
 
-**Demonstrates**: Per-object `coverage_fraction` LOD selection at scale, scene-graph transforms (`add_group(transform=...)`, `transforms.compose`/`rotate`/`translate`) for placement so splat arrays stay identical, automatic `array_ref` array deduplication in the encoder, and initial-camera setup via `ViewerConfig(camera=CameraConfig(...))`. Options: `--count=N`, `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
+**Demonstrates**: Per-object `coverage_fraction` LOD selection at scale, scene-graph transforms (`add_group(transform=...)`, `transforms.compose`/`rotate`/`translate`) for placement so splat arrays stay identical, automatic `array_ref` array deduplication in the encoder, a `layer=True` `embryo_line` container group (one Layers-panel row for the whole line rather than 100), and initial-camera setup via `ViewerConfig(camera=CameraConfig(...))`. Options: `--count=N`, `--levels=N`, `--factor=K`, `--method=NAME`, `--serve-only`.
 
 ---
 
@@ -996,7 +996,8 @@ def generate_my_data(output_path: Path, **params) -> None:
         # 2. Write to zarr
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
-            scene.add_points('name', positions, colors=colors, ...)
+            # `layer=True` is not optional — see §8.
+            scene.add_points('name', positions, colors=colors, layer=True, ...)
 
 def main():
     """Entry point - generate and serve."""
@@ -1197,14 +1198,48 @@ there, or the build fails.
 Soft checks that *degrade a feature* rather than refuse to run are fine and are
 not flagged — e.g. disabling image thumbnails when `Pillow` is absent.
 
+### 8. Expose your geometry as a Layers-panel layer
+
+Pass `layer=True` to every geometry adder (`add_points` / `add_lines` /
+`add_gsplats` / `add_mesh` / `add_gsplats_from_*`). The Layers panel lists only
+nodes whose zarr attrs carry `layer: true`, and it is the only way a viewer can
+toggle a node, re-window its display range, change its gamma or switch its
+blending mode — so a demo that omits the kwarg ships a panel that does nothing,
+often for its one and only geometry node. `Node.layer` defaults to `False`, so
+this is an omission, not a choice.
+
+When a demo emits MANY sibling nodes — one per tile, per tree, per repeat — do
+**not** mark each one; hundreds of rows is worse than none. Put them under a
+container group added with `layer=True` and let the panel treat it as one
+composite row that fans its controls down to every descendant:
+
+```python
+trees = scene.add_group("trees", layer=True)
+for i, tree in enumerate(trees_to_write):
+    trees.add_lines(f"tree_{i:04d}", ...)   # no per-node layer=
+```
+
+When the descendants render with a non-default mode, spell that same
+`blending_mode` on the group: a group that authors none reads as the panel's
+default (`additive`), which mislabels the row and hides mode-specific controls
+such as the `volumetric` absorption slider. Emissive geometry (points, lines,
+gsplats) already defaults to `additive`, so the `trees` group above needs
+nothing; a `volumetric` gsplats wrapper does.
+
+`tests/test_demo_layers.py` fails the build if a demo authors geometry that no
+layer covers. Sibling nodes covered by a container group are listed in its
+`EXEMPT` table together with the group that covers them, and that group is
+checked too — so an exemption cannot outlive the layer it leans on.
+
 ## Creating New Demos
 
 1. **Copy a template** (demo_lorenz.py or demo_cubic_array.py)
 2. **Rename** to demo_yourname.py
 3. **Update docstring** with what it demonstrates
 4. **Implement generation** in the generate_* function (keep everything in that function!)
-5. **Test** by running: `hatch run python demo_yourname.py`
-6. **Ctrl+C** to stop and verify cleanup works
+5. **Expose the geometry** with `layer=True` (or a `layer=True` container group) — see §8
+6. **Test** by running: `hatch run python demo_yourname.py`
+7. **Ctrl+C** to stop and verify cleanup works
 
 ## Tips
 
@@ -1219,10 +1254,12 @@ dims = Dimensions.default_3d()
 with LuxarZarrCompiler(output) as compiler:
     scene = compiler.create_scene(dimensions=dims)
 
-    # Write in batches
+    # Write in batches, under one composite group layer (see §8) rather than
+    # one Layers-panel row per batch
+    batches = scene.add_group('batches', layer=True)
     for i in range(num_batches):
         batch = generate_batch(i)
-        scene.add_points(f'batch_{i}', batch)
+        batches.add_points(f'batch_{i}', batch)
 ```
 
 ### For nD Demos

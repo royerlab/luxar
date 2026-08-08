@@ -83,6 +83,13 @@ function bspPartOf(mesh: THREE.Object3D): { wrapper: THREE.Object3D; partIndex: 
  * `axisToComponent` maps a node's `axis` — a CENTER-COLUMN index of the stored
  * data — to the local x/y/z component that column is displayed as. The two
  * coincide only when `displayDims == [0, 1, 2]`; see {@link bspAxisToComponent}.
+ *
+ * NOTE for mesh partitions (`add_mesh(partition=…)`, spec §9.2): back-to-front is
+ * *correct but pointless* for OPAQUE parts — it forfeits the front-to-back early-Z
+ * rejection an opaque pass would rather have. Not a bug, and deliberately not
+ * special-cased: mesh partitions write no `bsp_tree` today, so they never reach
+ * this function, and a translucent mesh partition would genuinely want this order.
+ * Recorded so it is not rediscovered as one.
  */
 function traverseBspBackToFront(
   node: BspTreeNode,

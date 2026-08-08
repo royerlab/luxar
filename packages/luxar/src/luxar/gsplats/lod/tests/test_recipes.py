@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import make_additive_lod
 from luxar.gsplats.lod.pyramid import make_lod_pyramid
@@ -250,14 +251,47 @@ def test_overview_stamps_coverage_fractions_by_default():
     """overview always pre-stamps the coarse↔fine selector thresholds on the
     children's meta as viewport-relative ``coverage_fraction`` values
     (``sqrt(N_i/N_finest)``): the coarse cap gets 0.0 (always-eligible floor) and
-    the fine partition gets 1.0 (fills-screen)."""
+    the fine partition gets the finest rung.
+
+    The finest rung is ``MAX_COVERAGE_FRACTION``, not 1.0: this is a
+    PARTITION-bound ladder (the fine child is the whole dataset as a
+    kind=partition, reached by zooming in), so it keeps the fills-screen anchor
+    rather than the whole-object quarter-viewport one — see
+    ``partitioned_coverage_fractions``."""
     data = _make_random_gsplat(n=400)
 
     res = build_recipe(data, "overview", _params(max_elements=120))
     coarse, fine = res.children  # coarsest→finest in memory
     assert coarse.meta["coverage_fraction"] == 0.0  # coarsest = always-eligible floor
-    assert fine.meta["coverage_fraction"] == pytest.approx(1.0)  # fills-screen
+    assert fine.meta["coverage_fraction"] == pytest.approx(MAX_COVERAGE_FRACTION)
     assert fine.meta["coverage_fraction"] > coarse.meta["coverage_fraction"]
+
+
+def test_overview_fine_branch_keeps_the_fills_screen_anchor():
+    """Regression for the #1361 anchor move: the overview recipe's contract is
+    "instant coarse overview level + fine tiles on zoom".
+
+    The viewer's coverage metric is ``rawDiagonalFraction / FILL_FACTOR`` with
+    FILL_FACTOR = 0.25, so a node at a normal full-frame view (raw ~0.6) yields a
+    metric of ~2.4. If the fine partition were anchored at 1.0 it would be
+    selected on frame 1 — the entire dataset, eagerly — inverting the recipe. At
+    MAX_COVERAGE_FRACTION (4.0) it is reached only once the node's projected
+    diagonal reaches the viewport diagonal, exactly the pre-#1361 behaviour."""
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(data, "overview", _params(max_elements=120))
+    coarse, fine = res.children
+    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
+
+    # A typical opening framing: the node spans ~60% of the viewport diagonal.
+    opening_metric = 0.60 / fill_factor
+    assert opening_metric < fine.meta["coverage_fraction"], (
+        "the fine partition must NOT be selected at the opening framing"
+    )
+    assert coarse.meta["coverage_fraction"] <= opening_metric  # coarse cap shows
+
+    # Zoomed until the node itself fills the viewport → the fine branch engages.
+    filled_metric = 1.0 / fill_factor
+    assert filled_metric >= fine.meta["coverage_fraction"]
 
 
 def test_overview_is_unbalanced_lod_over_partition():
@@ -301,6 +335,64 @@ def test_adaptive_is_partition_of_substitutive_lod_groups():
     assert total_splats(res) > 400  # synthesized coarse levels add storage
     # leaves are all real gsplat leaves at every level
     assert all(isinstance(leaf, GSplatLeaf) for leaf in iter_leaves(res))
+
+
+def test_adaptive_per_part_ladders_keep_the_fills_screen_anchor():
+    """Each adaptive part is its OWN lod group whose bbox is one BSP tile.
+
+    A tile's projected diagonal is intrinsically a fraction of the whole
+    object's, so the whole-object quarter-viewport anchor would put every tile on
+    its FINEST level while the object is merely full-frame (#1361 follow-up).
+    Per-part ladders therefore keep the fills-screen anchor: coarsest 0.0, finest
+    MAX_COVERAGE_FRACTION, strictly ascending."""
+    data = _make_random_gsplat(n=400)
+    res = build_recipe(
+        data, "adaptive", _params(max_elements=120, compression_factor=4, levels=2)
+    )
+    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
+    # An 8-part split puts a tile at roughly 0.30 of the viewport diagonal at
+    # whole-object framing → metric ~1.19, which must stay below the finest rung.
+    tile_metric_at_whole_object_framing = 0.30 / fill_factor
+    for part in res.children:
+        assert isinstance(part, GSplatLodGroup)
+        covs = [c.meta["coverage_fraction"] for c in part.children]
+        assert covs[0] == 0.0  # coarsest = always-eligible floor
+        assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION)
+        assert covs == sorted(covs) and len(set(covs)) == len(covs)  # strict ascent
+        assert all(0.0 <= c <= MAX_COVERAGE_FRACTION for c in covs)
+        assert tile_metric_at_whole_object_framing < covs[-1], (
+            "a tile must not sit on its finest level at whole-object framing"
+        )
+
+
+def test_adaptive_single_part_keeps_the_whole_object_anchor():
+    """REGRESSION: a ONE-part "partition" is not a tiling, so it must not take
+    the fills-screen anchor.
+
+    ``to_spatial_partition`` wraps even a single BSP leaf in a
+    ``GSplatPartition``, and the BSP stops as soon as the whole dataset fits
+    ``max_elements`` — whose default is 1,000,000, so ``gsplat lod --recipe
+    adaptive`` lands here for any ordinary dataset. That lone part's bbox IS the
+    whole object's, so anchoring its ladder at MAX_COVERAGE_FRACTION would hold
+    the finest level back until the object overfills the screen: exactly the
+    #1361 blur, reintroduced by the fix for it."""
+    data = _make_random_gsplat(n=120)
+    res = build_recipe(
+        data, "adaptive", _params(max_elements=None, compression_factor=4, levels=2)
+    )
+    assert isinstance(res, GSplatPartition)
+    assert res.n_children == 1, "expected the whole dataset to fit one part"
+    (part,) = res.children
+    assert isinstance(part, GSplatLodGroup)
+    covs = [c.meta["coverage_fraction"] for c in part.children]
+    assert covs[0] == 0.0
+    assert covs[-1] == pytest.approx(1.0), (
+        f"a one-part partition must use the whole-object anchor; got {covs}"
+    )
+    # The opening framing (raw diagonal fraction ~0.31 at worst) must already
+    # reach the finest level — the whole point of #1361.
+    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
+    assert 0.31 / fill_factor >= covs[-1]
 
 
 # ── absorption regression: recipes == the builders they wrap ──────────────

@@ -6,8 +6,9 @@
  * with two additions:
  *
  *   1. Each child carries a ``coverage_fraction`` attribute (a per-child
- *      viewport-relative threshold in [0,1]) plus its own ``position_bounds``
- *      (the raw nD AABB). Both are read from the child's zarr attrs.
+ *      viewport-relative threshold; 0.0 coarsest, 1.0 the auto-derived finest
+ *      anchor, up to 4.0 == ``1/FILL_FACTOR`` for an explicitly authored ladder)
+ *      plus its own ``position_bounds`` (the raw nD AABB). Both are read from the child's zarr attrs.
  *      Legacy (pre-v3.2) datasets that still carry ``min_pixel_size`` /
  *      selector ``'pixel_size'`` are auto-adapted with a warning
  *      (see ``resolveCoverageFractions``).
