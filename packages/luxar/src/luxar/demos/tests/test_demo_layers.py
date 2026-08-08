@@ -26,7 +26,9 @@ Two deliberate leniencies, both narrow:
 * A geometry adder that splats ``**attrs`` does not show its kwargs to a
   static reader, so it counts as satisfied — but ONLY when THAT mapping can be
   shown to carry the flag: a dict literal or ``dict(...)`` written inline, or a
-  local name bound to one (including a later ``attrs["layer"] = True``). The
+  name bound to one where the call can actually see it — the innermost scope
+  that binds the name, above the call (including a later
+  ``attrs["layer"] = True``, and honouring a rebinding in between). The
   real case is ``_interop_common.build_interop_scene``, which assembles
   ``dict(..., layer=True)`` and splats it into ``add_gsplats_from_file``; drop
   that ``layer=True`` and the six ``demo_gsplats_interop_*`` demos it serves go
@@ -185,22 +187,23 @@ def _splat_carries_layer(tree: ast.AST, call: ast.Call) -> bool:
 
     A splat hides the kwargs from a static reader, so the mapping ITSELF has to
     be resolvable to something that sets the flag — a dict written inline, or a
-    local name bound to one. Anything else (a parameter, a call result, a
+    name whose binding the call can actually see (same scope or outwards, and
+    written above it). Anything else (a parameter, a call result, a
     ``**a or b``) is not lenient: were it, the rule would degenerate into
     "splats anything ⇒ exempt", and dropping ``layer=True`` from
     ``_interop_common.build_interop_scene`` — which takes six demos' panels down
     with it — would go unnoticed.
     """
     return any(
-        keyword.arg is None and _mapping_sets_layer(tree, keyword.value)
+        keyword.arg is None and _mapping_sets_layer(tree, keyword.value, call)
         for keyword in call.keywords
     )
 
 
-def _mapping_sets_layer(tree: ast.AST, value: ast.expr) -> bool:
+def _mapping_sets_layer(tree: ast.AST, value: ast.expr, call: ast.Call) -> bool:
     """True if the splatted expression is a mapping that sets ``layer``."""
     if isinstance(value, ast.Name):
-        return _binding_sets_layer(tree, value.id)
+        return _binding_sets_layer(tree, value.id, call)
     return _mapping_literal_sets_layer(value)
 
 
@@ -225,14 +228,55 @@ def _mapping_literal_sets_layer(value: ast.expr) -> bool:
     return False
 
 
-def _binding_sets_layer(tree: ast.AST, name: str) -> bool:
-    """True if ``name`` is bound in this module to a mapping that sets ``layer``.
+def _binding_sets_layer(tree: ast.AST, name: str, call: ast.Call) -> bool:
+    """True if the binding of ``name`` that ``call`` sees sets ``layer``.
+
+    Resolution follows Python's own rules rather than "assigned somewhere in
+    the file": the innermost scope that binds the name wins, and only
+    statements ABOVE the call count. Without that, a ``**attrs`` splat of a
+    function PARAMETER would be excused by an unrelated ``attrs = dict(
+    layer=True)`` in a different function, and an assignment BELOW the call
+    would validate it — the very benefit of the doubt the module docstring says
+    an unresolvable splat does not get.
 
     Both spellings the demos use are recognised: the mapping literal itself
     (``attrs = dict(..., layer=True)``, annotated or not) and a later
-    ``attrs["layer"] = True``.
+    ``attrs["layer"] = True``. Rebinding is honoured in source order, so a
+    mapping that sets the flag and is then replaced by something unresolvable
+    is not lenient either.
     """
-    for node in ast.walk(tree):
+    for scope in _scope_chain(tree, call):
+        rebindings, flag_writes = _bindings_of(scope, name)
+        if not rebindings and not flag_writes and not _is_parameter(scope, name):
+            continue  # the name is not bound here; look further out
+        # The name resolves in THIS scope, so judge it here and do not fall
+        # outwards: an outer binding is shadowed.
+        sets_layer = False
+        # (lineno, then rebinding before flag-write) so `attrs = {}` followed by
+        # `attrs["layer"] = True` on ONE line still replays in the right order.
+        ordered = sorted(rebindings + flag_writes, key=lambda b: (b[0], b[1]))
+        for lineno, is_flag_write, value in ordered:
+            if lineno >= call.lineno:
+                break
+            sets_layer = (
+                _is_flag_value(value)
+                if is_flag_write
+                else _mapping_literal_sets_layer(value)
+            )
+        return sets_layer
+    return False
+
+
+#: ``(lineno, is_a_layer_flag_write, assigned_value)`` per statement that binds
+#: or mutates the name, so the two kinds can be replayed in source order.
+_Binding = tuple[int, bool, ast.expr]
+
+
+def _bindings_of(scope: ast.AST, name: str) -> tuple[list[_Binding], list[_Binding]]:
+    """Rebindings of ``name`` and writes to its ``"layer"`` key, in ``scope``."""
+    rebindings: list[_Binding] = []
+    flag_writes: list[_Binding] = []
+    for node in _walk_scope(scope):
         if isinstance(node, ast.AnnAssign):
             targets: list[ast.expr] = [node.target]
         elif isinstance(node, ast.Assign):
@@ -243,18 +287,58 @@ def _binding_sets_layer(tree: ast.AST, name: str) -> bool:
             continue
         for target in targets:
             if isinstance(target, ast.Name) and target.id == name:
-                if _mapping_literal_sets_layer(node.value):
-                    return True
+                rebindings.append((node.lineno, False, node.value))
             elif (
                 isinstance(target, ast.Subscript)
                 and isinstance(target.value, ast.Name)
                 and target.value.id == name
                 and isinstance(target.slice, ast.Constant)
                 and target.slice.value == "layer"
-                and _is_flag_value(node.value)
             ):
-                return True
-    return False
+                flag_writes.append((node.lineno, True, node.value))
+    return rebindings, flag_writes
+
+
+def _scope_chain(tree: ast.AST, call: ast.Call) -> list[ast.AST]:
+    """Scopes enclosing ``call``, innermost first, ending at the module.
+
+    Nested ``def``s open later than the ``def``s they sit in, so ordering the
+    enclosing functions by descending line number orders them innermost-first.
+    """
+    enclosing = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(inner is call for inner in ast.walk(node))
+    ]
+    enclosing.sort(key=lambda node: node.lineno, reverse=True)
+    return [*enclosing, tree]
+
+
+def _walk_scope(scope: ast.AST) -> list[ast.AST]:
+    """Every node of ``scope``'s own body, without descending into inner scopes."""
+    nested = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    found: list[ast.AST] = []
+    stack: list[ast.AST] = list(getattr(scope, "body", []))
+    while stack:
+        node = stack.pop()
+        found.append(node)
+        if not isinstance(node, nested):
+            stack.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _is_parameter(scope: ast.AST, name: str) -> bool:
+    """True if ``name`` is a parameter of ``scope`` — bound, but to nothing legible."""
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    args = scope.args
+    named = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    if args.vararg is not None:
+        named.append(args.vararg)
+    if args.kwarg is not None:
+        named.append(args.kwarg)
+    return any(arg.arg == name for arg in named)
 
 
 def _is_flag_value(value: ast.expr) -> bool:
@@ -384,6 +468,40 @@ SPLAT_CASES = [
     ),
     pytest.param(
         'scene.add_points("a", **build_attrs())', False, id="unresolvable-call"
+    ),
+    pytest.param(
+        # The `_interop_common` shape: bound and splatted in one function.
+        "def build(path):\n"
+        "    attrs = dict(layer=True)\n"
+        '    scene.add_gsplats_from_file(name="a", path=path, **attrs)',
+        True,
+        id="binding-in-the-calls-own-scope",
+    ),
+    pytest.param(
+        # A module-level mapping is in scope inside the function.
+        'ATTRS = dict(layer=True)\ndef build():\n    scene.add_points("a", **ATTRS)',
+        True,
+        id="module-level-binding-seen-from-a-function",
+    ),
+    pytest.param(
+        # `attrs` is a PARAMETER here; another function's local of the same
+        # name says nothing about it.
+        "def build(attrs):\n"
+        '    scene.add_points("a", **attrs)\n'
+        "def other():\n"
+        "    attrs = dict(layer=True)",
+        False,
+        id="parameter-shadows-another-scopes-binding",
+    ),
+    pytest.param(
+        'scene.add_points("a", **attrs)\nattrs = dict(layer=True)',
+        False,
+        id="binding-below-the-call",
+    ),
+    pytest.param(
+        'attrs = dict(layer=True)\nattrs = load_attrs()\nscene.add_points("a", **attrs)',
+        False,
+        id="rebound-to-something-unresolvable",
     ),
 ]
 

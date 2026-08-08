@@ -1217,9 +1217,12 @@ for i, tree in enumerate(trees_to_write):
     trees.add_lines(f"tree_{i:04d}", ...)   # no per-node layer=
 ```
 
-Give the group the `blending_mode` its descendants use: a group that authors
-none falls back to the panel's default (`additive`), which mislabels the row and
-hides mode-specific controls such as the `volumetric` absorption slider.
+When the descendants render with a non-default mode, spell that same
+`blending_mode` on the group: a group that authors none reads as the panel's
+default (`additive`), which mislabels the row and hides mode-specific controls
+such as the `volumetric` absorption slider. Emissive geometry (points, lines,
+gsplats) already defaults to `additive`, so the `trees` group above needs
+nothing; a `volumetric` gsplats wrapper does.
 
 `tests/test_demo_layers.py` fails the build if a demo authors geometry that no
 layer covers. Sibling nodes covered by a container group are listed in its
