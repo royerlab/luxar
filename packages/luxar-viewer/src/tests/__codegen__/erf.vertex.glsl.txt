@@ -56,7 +56,7 @@ layout( location = 0 ) in vec3 position;
 
 // vars
 mat4 modelViewMatrix;
-vec4 VERTEX_nodeVar7;
+vec4 VERTEX_nodeVar4;
 
 // codes
 
@@ -73,8 +73,8 @@ void main() {
 	positionLocal = position;
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform2 );
 	v_positionView = ( modelViewMatrix * vec4( positionLocal, 1.0 ) ).xyz;
-	VERTEX_nodeVar7 = ( cameraProjectionMatrix * vec4( v_positionView, 1.0 ) );
-	VERTEX_v_modelViewProjection = VERTEX_nodeVar7;
+	VERTEX_nodeVar4 = ( cameraProjectionMatrix * vec4( v_positionView, 1.0 ) );
+	VERTEX_v_modelViewProjection = VERTEX_nodeVar4;
 
 	// result
 	gl_Position = VERTEX_v_modelViewProjection;

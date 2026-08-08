@@ -48,9 +48,6 @@ float nodeVar0;
 float nodeVar1;
 float nodeVar2;
 float nodeVar3;
-float nodeVar4;
-float nodeVar5;
-float nodeVar6;
 
 // codes
 
@@ -60,25 +57,12 @@ void main() {
 	// flow
 	// code
 
-	nodeVar1 = ( nodeVarying4.x * 4.0 );
-
-	if ( ( nodeVar1 < 0.0 ) ) {
-
-		nodeVar2 = min( abs( nodeVar1 ), 3.0 );
-		nodeVar3 = ( nodeVar2 * nodeVar2 );
-		nodeVar0 = ( - ( ( ( ( ( ( ( ( ( ( ( ( ( 0.00000369 * nodeVar3 ) + -0.000136121 ) * nodeVar3 ) + 0.002118141 ) * nodeVar3 ) + -0.018376255 ) * nodeVar3 ) + 0.099810298 ) * nodeVar3 ) + -0.366866314 ) * nodeVar3 ) + 1.126454454 ) * nodeVar2 ) );
-
-	} else {
-
-		nodeVar4 = min( abs( nodeVar1 ), 3.0 );
-		nodeVar5 = ( nodeVar4 * nodeVar4 );
-		nodeVar0 = ( ( ( ( ( ( ( ( ( ( ( ( ( 0.00000369 * nodeVar5 ) + -0.000136121 ) * nodeVar5 ) + 0.002118141 ) * nodeVar5 ) + -0.018376255 ) * nodeVar5 ) + 0.099810298 ) * nodeVar5 ) + -0.366866314 ) * nodeVar5 ) + 1.126454454 ) * nodeVar4 );
-
-	}
-
-	nodeVar6 = ( ( nodeVar0 + 1.0 ) * 0.5 );
+	nodeVar0 = ( nodeVarying4.x * 4.0 );
+	nodeVar1 = min( abs( nodeVar0 ), 3.0 );
+	nodeVar2 = ( nodeVar1 * nodeVar1 );
+	nodeVar3 = ( ( ( ( ( ( ( ( ( ( ( ( ( ( ( ( 0.00000369 * nodeVar2 ) + -0.000136121 ) * nodeVar2 ) + 0.002118141 ) * nodeVar2 ) + -0.018376255 ) * nodeVar2 ) + 0.099810298 ) * nodeVar2 ) + -0.366866314 ) * nodeVar2 ) + 1.126454454 ) * nodeVar1 ) * sign( nodeVar0 ) ) + 1.0 ) * 0.5 );
 
 	// result
-	fragColor = vec4( nodeVar6, nodeVar6, nodeVar6, 1.0 );
+	fragColor = vec4( nodeVar3, nodeVar3, nodeVar3, 1.0 );
 
 }

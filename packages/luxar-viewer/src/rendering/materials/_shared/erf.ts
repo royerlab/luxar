@@ -15,8 +15,10 @@
  *
  * 2. `erfPoly` / `GLSL_ERF_FUNCTIONS` / `erfPolyTSL` — a pure odd
  *    polynomial on [-3, 3], clamped to ±1 outside. NO exp, NO division:
- *    the fragment-shader form (the volumetric line primitive evaluates
- *    two erfs per fragment on the most fill-heavy geometry type).
+ *    the fragment-shader form, built for the UPCOMING #1352 volumetric
+ *    line primitive (two erfs per fragment on the most fill-heavy
+ *    geometry type; no production shader consumes it yet — the parity
+ *    fixture and codegen snapshot are its consumers until then).
  *    Degree-13 constrained least-squares fit with P(3) = 1 (to 1e-9 for
  *    the printed coefficient set), so the clamp is continuous. Max abs
  *    error 5.4e-4 against the exact erf;
@@ -36,7 +38,7 @@
  * @module rendering/materials/_shared/erf
  */
 
-import { abs, float, min, select } from 'three/tsl';
+import { abs, float, min, sign } from 'three/tsl';
 import type { TSLNode } from './tsl-helpers';
 
 /** A&S 7.1.26 auxiliary-variable constant: t = 1 / (1 + p·|x|). */
@@ -127,8 +129,12 @@ float luxarErf(float x) {
 /**
  * TSL twin of `luxarErf`, built from the SAME coefficient values (the
  * code generator owns literal formatting — see the module header).
- * Branchless (`select`, not `If`) so it is legal both inside and
- * outside an `Fn()` body.
+ * The sign is applied by multiplying with `sign(x)` — genuinely
+ * branchless in the GENERATED code (a `select` would lower to an
+ * `if`/`else` that duplicates the whole polynomial across both arms),
+ * and legal both inside and outside an `Fn()` body. `sign(0) = 0`
+ * matches the polynomial (`P(0) = 0`), and NaN falls under the same
+ * caveat as the GLSL form.
  */
 export function erfPolyTSL(x: TSLNode): TSLNode {
   const ax = min(abs(x), float(ERF_POLY_CLAMP));
@@ -138,5 +144,5 @@ export function erfPolyTSL(x: TSLNode): TSLNode {
     p = p.mul(t).add(float(ERF_POLY_COEFFS[k]));
   }
   p = p.mul(ax);
-  return select(x.lessThan(float(0.0)), p.negate(), p);
+  return p.mul(sign(x));
 }
