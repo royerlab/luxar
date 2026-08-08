@@ -136,3 +136,50 @@ def test_grafted_partition_parts_are_not_exposed_as_layers() -> None:
 
         _visit(root)
         assert n_layers == 1
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Topology-aware coverage_fraction fallback (parity with the standalone writer)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _one_part_adaptive():
+    """The shape ``gsplat lod --recipe adaptive`` emits below ``max_elements``:
+    a ``kind=partition`` holding a SINGLE per-part lod group."""
+    from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+    from luxar.gsplats.tree import GSplatPartition, without_meta_key
+
+    node = build_recipe(
+        _two_clusters(60),
+        "adaptive",
+        # max_elements unset → the default 1,000,000, so the BSP never splits.
+        RecipeParams(compression_factor=4, levels=2, device="cpu", seed=0),
+    )
+    assert isinstance(node, GSplatPartition) and len(node.children) == 1
+    # Scrubbed, so the graft's FALLBACK derivation is what gets exercised.
+    return without_meta_key(node, "coverage_fraction")
+
+
+def test_grafted_one_part_partition_uses_the_whole_object_anchor() -> None:
+    """A one-part partition is not a tiling, so the ladder under it keeps the
+    whole-object anchor (finest 1.0) — the same rule
+    ``gsplat_tree.write_gsplat_node`` applies, which is what makes a
+    file → scene graft agree with a standalone rewrite."""
+    from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+
+    with tempfile.TemporaryDirectory() as tmp:
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(
+            scene_path, encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            graft_gsplat_node(scene, name="adaptive", node=_one_part_adaptive())
+
+        root = zarr.open_group(str(scene_path), mode="r")
+        lod = root["adaptive"]["part_0"]
+        covs = [
+            float(lod[k].attrs["coverage_fraction"])
+            for k in sorted(lod.group_keys(), key=lambda s: int(s.split("_")[1]))
+        ]
+        assert covs[0] == 0.0
+        assert covs[-1] == 1.0, f"expected the whole-object anchor; got {covs}"
