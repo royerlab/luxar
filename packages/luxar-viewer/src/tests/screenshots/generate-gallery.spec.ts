@@ -151,6 +151,11 @@ interface DemoEntry {
   // the camera up-vector uses it. Default 'y'. Set 'z' (or 'x') for a subject
   // whose long/vertical axis is world-Z — otherwise a world-Y yaw degenerates
   // into an in-plane roll (e.g. a supine CT body lying along Z).
+  // The orbit SETS cam.up from this on every frame, overriding whatever `up` the
+  // scene's viewer_config bakes — so a scene with a non-Y baked up MUST set
+  // orbitUp to match, or its video ships rolled away from its own still. Setting
+  // it also re-parks the camera (positionForOrbitUp), discarding the baked
+  // framing, so pair it with `viewAngle` when that parked pose lands edge-on.
   orbitUp?: 'x' | 'y' | 'z';
   // Multiplicative zoom applied AFTER fill-to-screen: a final dolly by 1/zoom.
   // zoom > 1 zooms IN (e.g. 3 = 3x closer), zoom < 1 zooms OUT (e.g. 0.8 = 20%
