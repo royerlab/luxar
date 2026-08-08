@@ -43,6 +43,17 @@ NOT baked, because it is a workaround for the substitutive-LOD selector tracked 
 scene: an existing `datasets/demos/cellxgene_census_umap.luxar.zarr` keeps the old
 one until the demo is regenerated.
 
+#### CAIDA country coloring parses current organization snapshots (#1373)
+
+The CAIDA AS-topology demo expected a space in the upstream
+`# format: org_id` / `# format: aut` section headers, but current
+`as-org2info` snapshots use `# format:org_id` / `# format:aut`. The parser now
+accepts either whitespace form, so organization names and country codes reach
+node colors and hover labels again. A snapshot missing either required section
+now raises an actionable error instead of silently producing an all-unknown
+country view.
+
+
 #### Real join geometry for lines: the miter (#790, #795)
 
 Every line segment is one screen-space quad expanded only *perpendicular* to its
