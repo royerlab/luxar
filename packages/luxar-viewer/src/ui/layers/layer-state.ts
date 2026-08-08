@@ -153,6 +153,36 @@ function deriveColormapFromDescendants(node: SceneNode): string | undefined {
 }
 
 /**
+ * A numeric mesh shading attr (`ambient` / `shade_exponent` / `alpha_cutoff`) read
+ * from `node`, else from the first descendant that carries one.
+ *
+ * Same shape and same reason as {@link deriveColormapFromDescendants}: these are
+ * NOT compositing attrs on the Python side, so `add_mesh(partition=…, ambient=…)`
+ * stamps them on every `part_<i>` leaf and leaves the kind=partition wrapper bare.
+ * The panel presents that wrapper as the mesh layer, so without this the sliders
+ * would open at the material defaults while the surface renders the authored
+ * values — and the first drag would jump.
+ *
+ * Stops at nested `layer=true` descendants, which own their own appearance row.
+ */
+function deriveMeshAttrFromDescendants(node: SceneNode, attr: string): number | undefined {
+  const own = node.attrs[attr];
+  if (typeof own === 'number') return own;
+  let found: number | undefined;
+  const visit = (n: SceneNode): void => {
+    if (found !== undefined || isLayerEnabled(n.attrs.layer)) return;
+    const value = n.attrs[attr];
+    if (typeof value === 'number') {
+      found = value;
+      return;
+    }
+    n.children?.forEach(visit);
+  };
+  node.children?.forEach(visit);
+  return found;
+}
+
+/**
  * The display window a layer starts at — i.e. what `[displayMin, displayMax]`
  * the panel pushes into the material before the user touches anything.
  *
@@ -541,10 +571,14 @@ export class LayerStateManager {
           // attr is absent, so the slider must open on the same number the surface is
           // already rendering with. They do NOT compose along the ancestry (unlike
           // opacity/gamma) — a shade floor is a per-surface appearance choice, not a
-          // multiplicative attr, and the writer never stamps them on a group.
-          ambient: (node.attrs.ambient as number) ?? MESH_DEFAULTS.ambient,
-          shadeExponent: (node.attrs.shade_exponent as number) ?? MESH_DEFAULTS.shadeExponent,
-          alphaCutoff: (node.attrs.alpha_cutoff as number) ?? MESH_DEFAULTS.alphaCutoff,
+          // multiplicative attr. The writer never stamps them on a PLAIN group, but it
+          // does stamp them on every part of a kind=partition mesh (they are not
+          // compositing attrs), so a wrapper layer reads them off its parts.
+          ambient: deriveMeshAttrFromDescendants(node, 'ambient') ?? MESH_DEFAULTS.ambient,
+          shadeExponent:
+            deriveMeshAttrFromDescendants(node, 'shade_exponent') ?? MESH_DEFAULTS.shadeExponent,
+          alphaCutoff:
+            deriveMeshAttrFromDescendants(node, 'alpha_cutoff') ?? MESH_DEFAULTS.alphaCutoff,
           displayMin,
           displayMax,
           dataMin,
@@ -566,9 +600,17 @@ export class LayerStateManager {
           // value. Without this wrap the panel showed Absorption (which no mesh shader
           // reads) and hid Alpha cutoff exactly when the cutout was active. A no-op for
           // the default path, since `defaultBlendingMode('mesh')` is already `opaque`.
+          //
+          // The default is keyed on `layerType`, NOT `node.type`: a kind=partition /
+          // kind=lod wrapper's raw type is `group` (default `additive`) while the layer —
+          // and every leaf it wraps — is its `display_type`. For the emissive types the
+          // two agree, but a partitioned MESH renders `opaque`, so keying on the raw type
+          // showed "Additive" for an opaque surface and hid the Alpha-cutoff slider
+          // (`layer-controls.ts::syncMeshAppearanceVisibility`) exactly when the cutout
+          // was active. Plain groups and leaves have `layerType === node.type`.
           blendingMode: resolveLayerBlendingMode(
             layerType,
-            composedBlendingMode ?? defaultBlendingMode(node.type)
+            composedBlendingMode ?? defaultBlendingMode(layerType)
           ),
           // Ownership reads the node's OWN attr — see the `LayerInfo` doc for why the
           // composed ancestry would be wrong (stale-snapshot shadowing) and why a

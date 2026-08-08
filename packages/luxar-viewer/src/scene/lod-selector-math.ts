@@ -119,7 +119,11 @@ export function projectBoxDiagonalPx(
  *
  * ``metric`` is the dimensionless coverage metric (projected bbox diagonal ÷
  * ``FILL_FACTOR × viewportDiagonal``) and ``thresholds`` are the per-child
- * ``coverage_fraction`` values; both are in the same [0,1]-ish space. The
+ * ``coverage_fraction`` values; they live in the same space, with the
+ * auto-derived finest threshold (1.0) reached once the projected diagonal is
+ * ``FILL_FACTOR`` (a quarter) of the viewport diagonal — so a full-frame view
+ * puts the metric comfortably above 1, and an explicitly authored threshold may
+ * itself exceed 1 (up to ``1/FILL_FACTOR``) to hold a level until later. The
  * "natural" pick is the finest child whose ``coverageFraction`` is less than or
  * equal to ``metric``. Hysteresis only resists dropping back to a coarser level:
  * when downgrading from index ``currentIdx``, the metric must fall below the

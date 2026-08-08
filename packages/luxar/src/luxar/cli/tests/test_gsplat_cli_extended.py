@@ -4082,12 +4082,19 @@ class TestLODCommand:
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
         """multiscale stamps viewport-relative ``coverage_fraction`` on the coarse
-        cap (0.0, always-eligible) and the fine partition wrapper (1.0, fills-screen)
-        — the on-disk attrs the viewer's selector reads."""
+        cap (0.0, always-eligible) and the fine partition wrapper (the finest rung)
+        — the on-disk attrs the viewer's selector reads.
+
+        The finest rung is ``MAX_COVERAGE_FRACTION``, not 1.0: overview's fine child
+        is the whole dataset as a ``kind=partition`` and is by contract a zoom-in
+        branch, so the pair keeps the fills-screen anchor rather than the
+        whole-object quarter-viewport one (``partitioned_coverage_fractions``)."""
+        from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+
         out = tmp_path / "ms.gsplats.zarr"
         fine_cov = self._multiscale_fine_threshold(runner, medium_gsplats, out)
-        # coverage_fractions([N_coarse, N_fine]) = [0.0, 1.0]: fine fills screen.
-        assert fine_cov == pytest.approx(1.0)
+        # partitioned_coverage_fractions([N_coarse, N_fine]) = [0.0, 4.0].
+        assert fine_cov == pytest.approx(MAX_COVERAGE_FRACTION)
 
     def test_quiet_suppresses_saved_line(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path

@@ -290,13 +290,15 @@ than as a "group".
 
 Picks **one of N alternative children** at runtime based on the current
 view. Each child carries a `coverage_fraction` threshold — a dimensionless,
-viewport-relative value in `[0, 1]`. The viewer projects the LOD group's bbox
+viewport-relative value in `[0, 4]`. The viewer projects the LOD group's bbox
 to screen, takes the diagonal in pixels, multiplies each child's
-`coverage_fraction` by the viewport diagonal (times a small fill-factor
-constant) to get a pixel threshold, and renders the **finest** child whose
+`coverage_fraction` by the viewport diagonal (times a fill-factor constant of
+`0.25`) to get a pixel threshold, and renders the **finest** child whose
 threshold is satisfied (with 10% asymmetric hysteresis on the downgrade
 direction to suppress flicker). Because the threshold is viewport-relative,
-the finest child activates when the object roughly fills the screen —
+the finest child (`coverage_fraction` 1.0) activates once the object's projected
+bbox diagonal reaches about a quarter of the viewport diagonal — i.e. at any
+normal full-frame view — and coarser children step in as it shrinks below that,
 identically on any monitor/viewport size. When the camera is inside or
 straddling a group's bounding box, the group is treated as filling the screen
 and its **finest** child is selected.
@@ -347,10 +349,21 @@ default (the finest level the `.centers` accessor returns).
 - Subgroup naming is **not** enforced; Python's convenience API writes
   `child_0`, `child_1`, … in **coarsest→finest** order, and the loader
   treats insertion order as authoritative.
-- Each child's `.zattrs` MUST carry `"coverage_fraction": <float in [0, 1]>`.
-  Values must be strictly monotonic increasing in coarsest→finest order;
-  the coarsest is always `coverage_fraction: 0.0` (always applicable) and the
-  finest is always `coverage_fraction: 1.0` (fills the screen).
+- Each child's `.zattrs` MUST carry `"coverage_fraction": <float in [0, 4]>`.
+  Values must be strictly monotonic increasing in coarsest→finest order, and
+  the coarsest is always `coverage_fraction: 0.0` (always applicable).
+  A **whole-object** ladder (`sqrt(N_i/N_finest)`, the auto-derivation) anchors
+  its finest at `coverage_fraction: 1.0` — shown at any normal full-frame view,
+  see the fill-factor anchor above — so its values stay in `[0, 1]`.
+  Values above `1.0`, up to the `4.0` ceiling (`1 / FILL_FACTOR`, the metric a
+  screen-filling node produces), hold a level until the node is larger than a
+  quarter-viewport. That is the right anchor whenever a **spatial partition** is
+  part of the switch, because a tile's projected diagonal is intrinsically a
+  fraction of the whole object's; a ladder anchored at `1.0` there would put
+  every tile on its finest level while the object is merely full-frame. Two
+  producers emit it: the `adaptive` / `overview` gsplat recipes (automatically,
+  via `partitioned_coverage_fractions`), and an **explicitly authored**
+  `coverage_fractions=[...]` list on a hand-built partition of per-tile ladders.
 - Children themselves are standard nodes — they retain their own
   `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
   own `kind` attr) and full attr set.
@@ -830,8 +843,11 @@ Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
 Points (see *Per-Element Labels*).
 
 **Not written for a mesh node:** no spatial index (`ordering` is always `"none"`),
-and a mesh may not be a child of a `kind=lod` or `kind=partition` group — the
-writer refuses both rather than producing a store nothing can load.
+and a mesh may not be a child of a `kind=lod` group — the writer refuses that
+rather than producing a store nothing can load. A mesh **may** be a child of a
+`kind=partition` group; `add_mesh(partition=…)` writes exactly that, with each
+part carrying its own gathered-and-renumbered vertex table (vertices on a cut are
+duplicated between neighbouring parts).
 
 ## Scalar Colormap Attributes
 

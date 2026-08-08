@@ -64,7 +64,10 @@ export interface CoverageBlend {
 /**
  * Decide the coverage-band cross-fade for a dimensionless `metric` (projected
  * bbox diagonal ÷ `FILL_FACTOR·viewportDiagonal`) against a level's ascending
- * per-child `coverage_fraction` thresholds (coarsest 0 → finest 1).
+ * per-child `coverage_fraction` thresholds (coarsest 0 → finest 1 for the
+ * auto-derived whole-object ladder, up to `1/FILL_FACTOR` for an explicitly
+ * authored or partition-bound one). Everything here is proportional to the
+ * inter-threshold gaps, so the band scales with the ladder either way.
  *
  * Each inter-level boundary is the activation threshold of the finer level
  * (`thresholds[i+1]`). The band half-width is PROPORTIONAL to the local

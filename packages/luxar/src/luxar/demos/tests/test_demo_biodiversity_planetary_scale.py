@@ -12,6 +12,7 @@ import math
 import numpy as np
 import pytest
 
+from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.demos.demo_biodiversity_planetary_scale import (
     ALL_LIFE_SLOT,
     ALLOWED_LICENSES,
@@ -20,6 +21,8 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     JITTER_CEIL_M,
     JITTER_FLOOR_M,
     N_PERIODS,
+    OCCURRENCE_COVERAGE,
+    OCCURRENCE_LOD_LEVELS,
     OVERSAMPLE_FACTOR,
     PERIOD_ALL_SLOT,
     PERIOD_CATEGORIES,
@@ -834,3 +837,82 @@ def test_bottomk_is_deterministic_for_a_given_seed():
 
     np.testing.assert_array_equal(run(7), run(7))
     assert not np.array_equal(run(7), run(8))
+
+
+# ────────────────────────────────────────────────────────────────────────
+# OCCURRENCE_COVERAGE — the hand-measured per-tile LOD calibration
+#
+# The only above-1.0 coverage ladder in the repo, and ~40 lines of in-browser
+# measurement sit behind it (see the constant's comment block). Nothing else
+# tests it, so an anchor move would silently invalidate the calibration rather
+# than fail. These assertions are written in the units the comment records.
+# ────────────────────────────────────────────────────────────────────────
+
+#: Lower bound INFERRED (not measured) for the largest/nearest tile's projected
+#: bbox diagonal as a fraction of the viewport diagonal at whole-globe framing.
+#: The demo's calibration record is a set of thresholds that FAILED: at 0.78 and
+#: 0.82 two of the four globe tiles still crossed into their middle level, from
+#: which only "the largest tile exceeds 0.78" strictly follows. 0.82 is used here
+#: as the tightest value consistent with that record — treat it as a floor on the
+#: real figure, not an instrument reading. (The 0.60 below IS a direct
+#: measurement of the mean.)
+MEASURED_LARGEST_TILE_RAW_FRACTION = 0.82
+#: …and the mean, at which the coarsest level must still be the one selected.
+MEASURED_MEAN_TILE_RAW_FRACTION = 0.60
+
+
+def test_occurrence_coverage_has_one_threshold_per_level() -> None:
+    assert len(OCCURRENCE_COVERAGE) == OCCURRENCE_LOD_LEVELS + 1
+
+
+def test_occurrence_coverage_is_a_valid_ladder() -> None:
+    """Strictly ascending from the always-eligible floor up to the ceiling."""
+    covs = list(OCCURRENCE_COVERAGE)
+    assert covs[0] == 0.0
+    assert all(covs[i] > covs[i - 1] for i in range(1, len(covs)))
+    assert max(covs) == pytest.approx(MAX_COVERAGE_FRACTION)
+    assert all(0.0 <= c <= MAX_COVERAGE_FRACTION for c in covs)
+
+
+def test_occurrence_coverage_clears_the_measured_largest_tile() -> None:
+    """The calibration's core claim, restated in metric space.
+
+    Selection compares ``threshold <= rawFraction / FILL_FACTOR``. Every
+    non-zero threshold must sit ABOVE the metric the largest tile produces at
+    whole-globe framing, so all tiles hold their coarsest level there; a
+    threshold at or below it is what made the tiles flap (both levels resident,
+    1.07M instead of 186k — see the constant's comment).
+
+    Referencing MAX_COVERAGE_FRACTION rather than a literal 0.25 means a future
+    anchor move fails HERE instead of silently invalidating the measurements.
+    """
+    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
+    largest_tile_metric = MEASURED_LARGEST_TILE_RAW_FRACTION / fill_factor
+    non_zero = [c for c in OCCURRENCE_COVERAGE if c > 0.0]
+    assert non_zero, "ladder has no refinement thresholds"
+    assert min(non_zero) > largest_tile_metric, (
+        f"the first refinement threshold {min(non_zero)} must clear the largest "
+        f"per-tile metric {largest_tile_metric} at whole-globe framing"
+    )
+
+
+def test_occurrence_coverage_keeps_the_coarsest_level_at_whole_globe_framing() -> None:
+    """End-to-end intent: at the measured mean framing the selected level is the
+    coarsest (index 0), i.e. the cheap overview the demo is built around."""
+    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
+    metric = MEASURED_MEAN_TILE_RAW_FRACTION / fill_factor
+    # The viewer picks the finest child whose threshold <= metric.
+    selected = max(i for i, c in enumerate(OCCURRENCE_COVERAGE) if c <= metric)
+    assert selected == 0, (
+        f"whole-globe framing (metric {metric}) selects level {selected}; the "
+        "demo's calibration requires the coarsest level there"
+    )
+
+
+def test_occurrence_coverage_refines_once_a_tile_fills_the_viewport() -> None:
+    """The ceiling must be reachable: a tile that fills the viewport (raw 1.0)
+    selects the finest level, so the ladder is not dead weight."""
+    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
+    metric = 1.0 / fill_factor
+    selected = max(i for i, c in enumerate(OCCURRENCE_COVERAGE) if c <= metric)
+    assert selected == len(OCCURRENCE_COVERAGE) - 1

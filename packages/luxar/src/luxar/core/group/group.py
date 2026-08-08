@@ -354,12 +354,13 @@ class Group(Node):
         double_sided: bool = True,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
+        partition: Any = None,
         parent: Optional["Node"] = None,
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         **attrs: Any,
-    ) -> "Mesh":
+    ) -> Union["Mesh", "Group"]:
         """Add a triangle mesh (surface) node to this group.
 
         The surface geometry type: nD ``vertices`` plus a ``faces`` triangle-index
@@ -370,10 +371,16 @@ class Group(Node):
         Not supported for meshes (each raises rather than silently degrading):
         ``additive_lod`` (a prefix of an index buffer is a surface with holes, not
         a coarser surface), ``substitutive_lod`` (structurally fine — only the
-        producer, mesh decimation, is missing), ``partition`` (a BSP cut needs
-        boundary vertices duplicated per part and the label CSR split to match),
-        and adding one under a ``kind=lod`` / ``kind=partition`` parent. See
-        ``docs/specs/MESH_NODE_SPEC.md`` §9.
+        producer, mesh decimation, is missing), and adding one under a
+        ``kind=lod`` parent. See ``docs/specs/MESH_NODE_SPEC.md`` §9.
+
+        ``partition`` IS supported. Returns the ``kind=partition`` wrapper
+        :class:`Group` instead of a :class:`Mesh` when the split yields more than
+        one part (a single part falls through to a plain leaf), matching
+        ``add_points`` / ``add_gsplats``. A mesh may also be added directly to a
+        ``kind=partition`` group you built yourself, provided that group declares
+        ``display_type='mesh'`` — a partition is homogeneous, so a mismatched
+        declaration is refused.
 
         Args:
             name: Name of the mesh node.
@@ -400,7 +407,15 @@ class Group(Node):
                 flat normals at render time.
             double_sided: Whether back faces render (default ``True``).
             labels: Optional per-vertex strings for hover tooltips.
-            image_labels: Optional per-vertex images for hover thumbnails.
+            image_labels: Optional per-vertex images for hover thumbnails. Not
+                supported alongside ``partition``.
+            partition: ``True`` for the default cap, or
+                ``{"max_elements": int, "rule": "median"|"midpoint"|"sah"}``, to
+                split the surface into spatially-culled parts. ``max_elements``
+                counts FACES — the BSP recurses on face centroids, so a triangle
+                is the indivisible unit. Faces are assigned whole (never cut) and
+                each part gathers and renumbers the vertices its own faces use, so
+                vertices on a cut are duplicated between neighbouring parts.
             parent: Optional explicit parent node (defaults to this group).
             extend_to_all: Dimension name(s) across which this mesh stays visible.
             dim_order: Names of the dimensions the ``vertices`` columns are in,
@@ -431,6 +446,7 @@ class Group(Node):
             double_sided=double_sided,
             labels=labels,
             image_labels=image_labels,
+            partition=partition,
             parent=parent,
             extend_to_all=extend_to_all,
             dim_order=dim_order,

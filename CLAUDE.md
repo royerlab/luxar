@@ -536,9 +536,18 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --target vol.t
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims 1,2,3
 # LOD switch thresholds (ANY recipe with a kind=lod group — overview,
 # levels, adaptive) are auto-derived as viewport-relative
-# `coverage_fraction` = sqrt(N_i/N_finest): the finest level shows when the object
-# fills the screen and coarser levels step in as it shrinks (the viewer anchors to
+# `coverage_fraction` = sqrt(N_i/N_finest). For `levels` (a WHOLE-OBJECT ladder) the
+# finest level shows once the object's
+# projected size reaches ~a quarter of the viewport diagonal (any normal full-frame
+# view) and coarser levels step in as it shrinks below that (the viewer anchors to
 # the live viewport, so it self-calibrates on any monitor — no threshold knob).
+# EXCEPTION — `adaptive` and `overview` are PARTITION-BOUND and keep the older
+# fills-screen anchor (finest = 4.0 = 1/FILL_FACTOR), via
+# `partitioned_coverage_fractions`. For `adaptive` that is geometry (each lod
+# group's bbox is one BSP tile, so it projects to a fraction of the whole object);
+# for `overview` it is the recipe's contract — the coarse cap is what you see at
+# the opening framing and the fine partition is the zoom-in branch, so it does NOT
+# show full detail at a normal full-frame view. Use `levels` if you want that.
 
 # Import classical (photogrammetric) Gaussian-splat files → .gsplats.zarr.
 # Dialects (auto-sniffed): INRIA point_cloud.ply, antimatter15 .splat,
@@ -1080,7 +1089,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
 - **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
-- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. No LOD, no `kind=partition`, no spatial index, no `volumetric` blending; each is refused with an explanation rather than silently degraded.
+- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. `kind=partition` is supported (`add_mesh(partition=…)`, spec §9.2). No LOD and no `volumetric` blending — both refused with an explanation rather than silently degraded — and no spatial index (`ordering="none"`): a mesh loads whole.
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists

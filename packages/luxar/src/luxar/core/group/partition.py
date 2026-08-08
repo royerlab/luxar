@@ -30,6 +30,8 @@ This module hosts:
   polyline-atomic variants for ``add_lines``.
 * :func:`validate_partition_group` — the well-formedness check (free function,
   matches the validator pattern in ``core/group/lod/gsplats.py``).
+* :func:`reject_mismatched_partition_parent` — the add-time half of that
+  homogeneity rule, called by each leaf adder before it writes.
 * :data:`PartitionSpec` — the value-vocabulary type alias for the
   ``partition=`` convenience kwarg on ``add_points`` / ``add_lines`` /
   ``add_gsplats``.
@@ -361,9 +363,9 @@ def warn_if_oversized_single_part(
     All three splitters return a single oversized part on fully-coincident
     (or single-atomic-polyline) input. Each adder's ``len(parts) > 1`` gate
     then falls through to a plain single-leaf write with no indication the
-    cap was violated; this surfaces that case (shared across points / lines /
-    gsplats per the three-geometry symmetry rule). Degraded-but-correct
-    render, not data loss.
+    cap was violated; this surfaces that case (shared by all four adders — for
+    mesh the "elements" counted are FACES). Degraded-but-correct render, not
+    data loss.
     """
     if n_parts == 1 and part_size > max_elements:
         aprint(
@@ -767,6 +769,46 @@ def sah_bsp_partition(
 # ────────────────────────────────────────────────────────────────────────
 # Validator
 # ────────────────────────────────────────────────────────────────────────
+
+
+def reject_mismatched_partition_parent(
+    parent_node: "Node", geometry_type: str, name: str
+) -> None:
+    """Refuse a leaf whose type contradicts its ``kind=partition`` parent.
+
+    The add-time half of :func:`validate_partition_group`'s homogeneity rule, and
+    the only half that runs in production — that validator has no production
+    caller, so without this a hand-built wrapper can declare one
+    ``display_type`` and be filled with leaves of another. Nothing downstream
+    re-checks it: the finalize pass only back-fills a MISSING ``display_type``,
+    so the declared one survives to the viewer, which presents the wrapper as one
+    layer of a type it does not contain.
+
+    Only a ``kind=partition`` parent is checked, and only against a mismatched
+    non-empty ``display_type``. A ``kind=lod`` parent is deliberately untouched:
+    its children are levels, ``add_lod_group`` already gates its own
+    ``display_type``, and the finalize back-fill resolves it from the finest
+    child. A partition whose children are wrappers (a partition of per-part LOD
+    ladders) is untouched too — the leaf adder's parent is then the ladder, not
+    the partition.
+
+    The convenience path (``add_*(partition=…)``) can never trip this: it builds
+    the wrapper with the geometry's own type. This is for a caller who wrote
+    ``add_partition_group(display_type=…)`` by hand.
+    """
+    if parent_node.attrs.get("kind") != "partition":
+        return
+    declared = parent_node.attrs.get("display_type")
+    if not isinstance(declared, str) or not declared or declared == geometry_type:
+        return
+    raise ValueError(
+        f"Cannot add {geometry_type} '{name}' to a kind=partition group declared "
+        f"display_type={declared!r}. A partition is homogeneous — every part must "
+        f"resolve to the parent's display type — so a {geometry_type} child here "
+        "would make that attr a lie, and nothing re-checks it before the store is "
+        f"finalized. Use display_type={geometry_type!r}, or let "
+        f"add_{geometry_type}(partition=...) build the wrapper for you."
+    )
 
 
 def validate_partition_group(group: "Node") -> None:

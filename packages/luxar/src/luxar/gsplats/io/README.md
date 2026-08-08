@@ -218,8 +218,13 @@ arrays live in `additive_<i>/` subgroups; the parent leaf group carries
 
 **Substitutive LOD** (`kind=lod`):
 `child_<i>/` subgroups, coarsest→finest on disk; each child carries
-`coverage_fraction` (a dimensionless, viewport-relative value in `[0, 1]`,
-`sqrt(N_i / N_finest)`; coarsest = 0.0, finest = 1.0).
+`coverage_fraction` (a dimensionless, viewport-relative value,
+`sqrt(N_i / N_finest)`; coarsest = 0.0, finest = 1.0 for a whole-object ladder).
+A ladder bound to a spatial partition — the `adaptive` recipe's per-tile groups,
+the `overview` recipe's coarse-cap/fine-partition pair — is scaled to anchor its
+finest at `MAX_COVERAGE_FRACTION` (4.0) instead, keeping the fills-screen switch
+point a tile needs; the writer derives the same anchor from the topology when a
+node carries no stamped value.
 
 **Spatial partition** (`kind=partition`):
 `part_<i>/` subgroups; the viewer renders all parts simultaneously.

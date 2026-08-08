@@ -1140,6 +1140,7 @@ def generate_protein_landscape(
                 opacity=0.9,
                 intensity=0.124,
                 labels=labels,
+                layer=True,
             )
 
             # --- Overlays ---
