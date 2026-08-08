@@ -336,7 +336,6 @@ export class GPUBufferPool {
    * Public for testing and manual pool management.
    */
   evictUnused(fromAcquire: boolean = false): number {
-    let evicted = 0;
     const currentFrame = this.frameCount;
 
     // Check total pool size
@@ -415,7 +414,7 @@ export class GPUBufferPool {
     const remaining2 = batchCap === Number.POSITIVE_INFINITY ? batchCap : remaining1 - linesEvicted;
     const gsplatsEvicted = evictFromPool(this.gsplats.gsplatBuffers, remaining2);
 
-    evicted = pointsEvicted + linesEvicted + gsplatsEvicted;
+    let evicted = pointsEvicted + linesEvicted + gsplatsEvicted;
     this.stats.evictions += evicted;
     this.typeStats.points.evictions += pointsEvicted;
     this.typeStats.lines.evictions += linesEvicted;

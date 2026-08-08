@@ -18,11 +18,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { NodeFactory } from '../../../../rendering/node-factory';
+import {
+  materialManager,
+  __resetMaterialManagerForTests,
+} from '../../../../rendering/material-manager';
 import { PointPickingMaterial } from '../../../../rendering/picking/point/material';
 import { LinePickingMaterial } from '../../../../rendering/picking/line/material';
 import { GSplatPickingMaterial } from '../../../../rendering/picking/gsplat/material';
 import { MeshPickingMaterial } from '../../../../rendering/picking/mesh/material';
 import { GEOMETRY_TYPES } from '../../../../types/format-contract';
+import { LINE_JOIN_UNIFORM, type LineJoinStyle } from '../../../../types/line-join';
 import type { PickingSystem } from '../../../../rendering/picking/picking-system';
 
 /** Minimal PickingSystem stand-in: the three members the pass touches. */
@@ -59,10 +64,23 @@ function makeNode(nodeType: string, name: string): THREE.Mesh & { material: THRE
   return mesh as THREE.Mesh & { material: THREE.Material };
 }
 
+/** A real line VISUAL material at neutral appearance, varying only the join style. */
+function makeLineMaterial(join?: LineJoinStyle) {
+  return materialManager.getLineMaterial({
+    blendingMode: 'additive',
+    opacity: 1.0,
+    gamma: 1.0,
+    intensity: 1.0,
+    offset: 0.0,
+    join,
+  });
+}
+
 describe('registerExistingSceneNodes', () => {
   let factory: NodeFactory;
 
   beforeEach(() => {
+    __resetMaterialManagerForTests();
     factory = new NodeFactory();
   });
 
@@ -169,6 +187,60 @@ describe('registerExistingSceneNodes', () => {
     expect(pick.uniforms.uAlphaCutoff.value).toBeCloseTo(0.9);
     // The RESOLVED mode, not the authored one.
     expect(pick.uniforms.uAlphaCutout.value).toBe(0);
+  });
+
+  it('gives the lines pick material the join its VISUAL material resolved to', () => {
+    // `join` is a COMPOSITING attr, so on a partitioned lines node it is authored on
+    // the wrapper and never appears in a part's own `userData.attrs`. The visual
+    // material is where the composed value survives — seeding the pick material from
+    // the attrs instead would leave the outer wedge of every mitred corner pickable
+    // on a `join="none"` scene, and only on a FIRST load (`createLinesNode` handles
+    // the second, and passes the style through correctly).
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('lines', '/tracks/part_0');
+    node.material = makeLineMaterial('none');
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as LinePickingMaterial;
+    expect(pick.uniforms.uLineJoin.value).toBe(LINE_JOIN_UNIFORM.none);
+  });
+
+  it('falls back to the default join when the visual material declares none', () => {
+    // The other half: without it, "reads the visual material" could be satisfied by
+    // hard-coding `none`. An unauthored node must still get the default.
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('lines', '/tracks');
+    node.material = makeLineMaterial();
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as LinePickingMaterial;
+    expect(pick.uniforms.uLineJoin.value).toBe(LINE_JOIN_UNIFORM.miter);
+  });
+
+  it('reads the TSL backend unresolved userData.lineJoin marker too', () => {
+    // The backends store the style differently on purpose: GLSL keeps a `uLineJoin`
+    // uniform, TSL bakes the graph variant and stamps the UNRESOLVED style on
+    // `userData.lineJoin`. Only handling the uniform would silently give every
+    // WebGPU session the default join in its pick pass.
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('lines', '/tracks');
+    node.material.userData.lineJoin = 'none';
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as LinePickingMaterial;
+    expect(pick.uniforms.uLineJoin.value).toBe(LINE_JOIN_UNIFORM.none);
   });
 
   it('carries the mesh coverage inputs from the node attrs', () => {

@@ -281,18 +281,25 @@ export interface ProcessedLinesData {
   segmentLengths: Float32Array;
 
   /**
-   * How much of the shader's endpoint cap dimming to suppress at the start
-   * endpoint (M,), in [0, 1]. 1 = suppress entirely (slice-clipped endpoint,
-   * or a straight-through interior joint where the neighbouring quad tiles
-   * rather than overlaps); 0 = keep the soft cap (free polyline end, branch
-   * point, or a bend sharp enough that the quads genuinely overlap).
-   * Produced by `compute_cap_suppression` — see
+   * Per-endpoint joint code for the start endpoint (M,): how the line shader
+   * should treat it, and — at an ordinary two-segment joint — which segment it
+   * joins. `0` free polyline end (keep the soft cap); `-1` slice-clipped
+   * (suppress the cap; no neighbour will arrive); `-2` degree->=3 hub (keep the
+   * cap); `+(slot + 1)` joins visible segment `slot` at that segment's START;
+   * `-(slot + 3)` joins it at that segment's END.
+   *
+   * `slot` indexes the VISIBLE stream, which is exactly a line-texture storage
+   * slot, so it needs no adjustment when the depth-sort worker permutes draw
+   * order. Purely topological: the bend angle is measured in screen space by
+   * the vertex stage, per frame, so it tracks the camera.
+   *
+   * Produced by `compute_joint_codes` — see
    * `wasm/rust/src/lines_clipping.rs` for the derivation.
    */
-  startCapSuppression: Float32Array;
+  startJointCode: Float32Array;
 
-  /** Same for the end endpoint (M,), in [0, 1]. */
-  endCapSuppression: Float32Array;
+  /** Same for the end endpoint (M,). */
+  endJointCode: Float32Array;
 
   /**
    * Start-vertex scalar values (M,), interpolated if clipped, optional.
