@@ -144,7 +144,9 @@ declare global {
        * emits the production depth-sort commit signals so the sort
        * subsystem engages; the first ordering lands asynchronously a
        * frame or two later. `clusters` (points/gsplats) is the gaussian
-       * blob count, default 256.
+       * blob count, default 256. `width` / `stepScale` / `turnAngle`
+       * are lines-only walk knobs (default 1.0 / 0.01 / unset = the
+       * historical fully-random walk).
        *
        * Not present in production bundles when `?debug` is unset.
        */
@@ -155,6 +157,9 @@ declare global {
         seed?: number;
         clusters?: number;
         blending?: string;
+        width?: number;
+        stepScale?: number;
+        turnAngle?: number;
       }) => Promise<
         | { type: 'lines'; segmentCount: number; elementCount: number; mesh: THREE.Mesh }
         | { type: 'points'; pointCount: number; elementCount: number; mesh: THREE.Mesh }

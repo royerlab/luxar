@@ -6,6 +6,43 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Demos — the CELLxGENE Census UMAP no longer opens dark (#1375)
+
+The 1M-cell cloud was barely visible on first paint, and most of that was the
+baked display window. The Layers panel stores a range as
+`intensity = 1/(max - min)`, so the authored `[0, 2.361]` was a gain of 0.4235:
+a window max above 1 ATTENUATES the authored direct colours rather than
+brightening them, and on a direct-colour node the shader applies that as a plain
+colour gain. That cut is only part of the shortfall, though — undoing it is worth
+2.36x, and at the identity window the cloud was still around 4.5x under. The
+window is now `[0, 0.221]`, a 4.52x gain — 10.7x the previous gain. Two gallery
+stills captured at identical neutral exposure put the lit p50 luma at 0.120
+before and 0.744 after, with nothing clipped at either setting.
+
+Absorption drops 10.0 -> 6.5 alongside it, but not as a counterweight. The
+independence runs one way: on Points `tau = kappa * alpha` never sees the display
+gain, so intensity is free of kappa — but kappa still moves brightness, through
+the self-screening below. What did change under kappa was the 2026-08 ray-mass
+unification, which removed a point's world-thickness factor from tau — 0.0413 at
+this demo's radius, so it multiplied this node's tau ~24x and left the stored 10
+meaning something quite different. Kappa 10 was far past opaque: on the finest
+Points level, at peak falloff with the sprite at or above the 1.5 px floor, a cell
+absorbed 0.98 and its own self-screening factor `(1 - e^-tau)/tau` of 0.25 ate
+three quarters of the emission. At 6.5 a cell absorbs 0.92 instead and the
+factor rises to 0.36 — ~1.45x more emission per cell at peak, and more than that
+once composited, since the light from cells behind now survives too. 6.5 is a
+re-tune by eye, not that 24x compensation — the spec's scale-down by
+`1/(thickness * 0.826)`, i.e. kappa x 0.0413, would land near 0.4, and this node
+stays deliberately heavy because the screening is what gives the lobes their
+depth. Coarse levels are lifted gsplats carrying the merged ray mass, so they run
+at higher tau than these figures.
+
+The tuning session also pinned the layer to its finest level; that is deliberately
+NOT baked, because it is a workaround for the substitutive-LOD selector tracked in
+#1361. As with every baked-appearance change, the look lives in the compiled
+scene: an existing `datasets/demos/cellxgene_census_umap.luxar.zarr` keeps the old
+one until the demo is regenerated.
+
 #### Tooling — the complexity limit is now enforced as a ratchet (#1379)
 
 `pyproject.toml` has carried `[tool.ruff.lint.mccabe] max-complexity = 10` since
@@ -42,6 +79,32 @@ what the gate enforces for new code. The checker runs in
 `hatch run lint` / `hatch run check`, as `make check-complexity`, and — the path
 that actually gates PRs — from the Python test suite. Regenerate with
 `hatch run check-complexity --update-baseline`.
+
+#### Changed (breaking) — the Semantic Scholar arXiv demo is renamed `arxiv_papers_semantic_scholar`
+
+Two arXiv embedding demos read as variants of one dataset and were not: one pulls
+the Semantic Scholar API and embeds abstracts with Sentence-BERT, the other reads
+the Kaggle dump's pre-computed OpenAI text-embedding-3-large vectors. The first
+owned the bare name. **RENAME (breaking, no alias):** key `arxiv_papers` →
+`arxiv_papers_semantic_scholar` (the old key errors out with close-match
+suggestions), script `demo_arxiv_paper_embeddings.py` →
+`demo_arxiv_embeddings_semantic_scholar.py`, cache `arxiv_paper` →
+`arxiv_semantic_scholar`, output `arxiv_papers_semantic_scholar.luxar.zarr`. A warm
+cache is not migrated:
+`mv ~/.cache/luxar/arxiv_paper ~/.cache/luxar/arxiv_semantic_scholar` keeps it,
+`luxar demo cache clear --orphans` reclaims it, doing neither recomputes it once; a
+built `arxiv_papers.luxar.zarr` is claimed by no demo now and can be deleted. KEY
+disambiguates the `luxar demo` table, the titles reach `demo info` and the run
+banner, and each scene's own overlay title now names its source too.
+
+The overlap was in metadata and one-directional, not on disk: the Kaggle demo
+declared `arxiv_papers` on top of its own output, and `_status` existence-checks a
+demo's declared outputs, so a Semantic Scholar build made the Kaggle row read
+`output ✓`. Never the reverse: that demo only wrote `arxiv_papers_kaggle.luxar.zarr`
+and its serve-path scene lives in a `TemporaryDirectory`. It now claims only
+`arxiv_papers_kaggle`; that temp scene and its Points node — the zarr group path,
+visible in debug/monitor output — lose the retired name too. A new registry test
+fails if two demos ever resolve an output to the same scene path again (#1363).
 
 #### CAIDA country coloring parses current organization snapshots (#1373)
 
