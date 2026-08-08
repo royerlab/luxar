@@ -565,8 +565,10 @@ function perspectivePixelPos(px: number, py: number, depth: number): [number, nu
  * its own segment-constant width` in
  * `tests/unit/rendering/materials/line/material-glsl.test.ts`, the codegen
  * snapshot `tests/__codegen__/line.vertex.glsl.txt` (generated from the TSL
- * graph, so it pins the TSL twin), and the CPU mirror in
- * `tests/unit/rendering/line-join-math.test.ts`.
+ * graph, so it pins the TSL twin — but only in this `if: false` CI job), the
+ * always-running TSL-source lock
+ * `tests/unit/rendering/materials/line/join-width-tsl.test.ts`, and the CPU
+ * mirror in `tests/unit/rendering/line-join-math.test.ts`.
  *
  * The joint is deliberately one the block DECLINES rather than mitres: a mitred
  * joint's cap is 1.0, which is also the code-implied default of a slot-bearing
