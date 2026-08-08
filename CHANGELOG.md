@@ -40,9 +40,9 @@ capture (mean CIELAB chroma over the lit pixels, averaged over 8 orbit frames),
 26% frame coverage — the same subject at the same scale (lit-mask IoU 0.98), and
 the gap holds after normalising both captures to a common exposure. The hues come
 out stronger, not washed out. NPC was not re-measured at a gain above unity; it
-keeps `normal` on purpose. Those are gallery-harness
-numbers with its auto-exposure, so they sit on a different scale from the per-demo
-figures quoted in the older entry — only the two here compare directly.
+keeps `normal` on purpose. Those are gallery-harness numbers with its
+auto-exposure, so they sit on a different scale from the per-demo figures quoted
+in the older entry — only the two here compare directly.
 
 Regenerate the demo dataset to pick up the new look.
 `docs/images/readme/gallery/atp_synthase.{webp,webm}` — the README gallery tile —
@@ -57,7 +57,6 @@ accepts either whitespace form, so organization names and country codes reach
 node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
-
 
 #### Real join geometry for lines: the miter (#790, #795)
 
