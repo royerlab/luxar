@@ -119,8 +119,53 @@ describe('captureViewerState', () => {
     expect(state.camera!.up).toEqual([0, 1, 0]);
     expect(state.camera!.fov).toBe(47);
     expect(state.camera!.fov_preset).toBe('50mm Normal');
-    expect(state.camera!.near).toBe(0.1);
-    expect(state.camera!.far).toBe(1000);
+    // near/far are omitted here because the mock has dynamic clipping ON — see
+    // the dedicated cases below.
+    expect(state.camera!.near).toBeUndefined();
+    expect(state.camera!.far).toBeUndefined();
+  });
+
+  // `settings.near` / `settings.far` are live camera readouts whenever dynamic
+  // clipping owns them (stamped in by ClippingDisplay's RAF loop and
+  // syncCurrentState). Capturing those authored a zoomed-in pose's planes into
+  // an exported viewer_config as if chosen deliberately — and because the same
+  // capture emits `dynamic_clipping_enabled: true`, loading that export tripped
+  // the "dynamic clipping will override these" warning, whose advice would pin
+  // the pathological pair. Same rule as `stripDynamicClippingPlanes` applies to
+  // localStorage.
+  it('omits near/far while dynamic clipping owns them', () => {
+    const controls = createMockRenderingControls();
+    controls.settings.dynamicClippingEnabled = true;
+    controls.settings.near = 1.05e-4; // a transient deep-zoom readout
+    controls.settings.far = 61;
+
+    const state = captureViewerState(
+      createMockSceneManager() as never,
+      controls as never,
+      createMockSceneDimsManager() as never
+    );
+
+    expect(state.camera!.near).toBeUndefined();
+    expect(state.camera!.far).toBeUndefined();
+    // The rest of the camera block is unaffected — this is a targeted omission.
+    expect(state.camera!.position).toEqual([1, 2, 3]);
+    expect(state.camera!.fov).toBe(47);
+  });
+
+  it('captures near/far when the user owns them (dynamic clipping off)', () => {
+    const controls = createMockRenderingControls();
+    controls.settings.dynamicClippingEnabled = false;
+    controls.settings.near = 0.25;
+    controls.settings.far = 400;
+
+    const state = captureViewerState(
+      createMockSceneManager() as never,
+      controls as never,
+      createMockSceneDimsManager() as never
+    );
+
+    expect(state.camera!.near).toBe(0.25);
+    expect(state.camera!.far).toBe(400);
   });
 
   it('should capture background color', () => {

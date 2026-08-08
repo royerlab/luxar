@@ -85,7 +85,6 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   const { l0Provider, sliceProvider, cacheStatsProvider, loaders, metricsCache, rates } = params;
 
   let totalCacheMemory = 0;
-  let memoryLimit = 0;
   let totalEntries = 0;
   // Sum of the per-tier byte BUDGETS (not usage). Populated from the tiers'
   // resolved maxSize; drives the memory-pressure gauge's denominator so it
@@ -219,7 +218,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   // The memory limit is the sum of the per-tier byte budgets (L0 + S-cache + L1 +
   // L2). When no cache provider exposed a budget (e.g. caching disabled) it stays
   // 0 and the gauge reads "no memory limit configured".
-  memoryLimit = tierBudget;
+  const memoryLimit = tierBudget;
 
   const memoryPercent = memoryLimit > 0 ? (totalCacheMemory / memoryLimit) * 100 : 0;
 

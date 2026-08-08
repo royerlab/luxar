@@ -35,7 +35,7 @@ vi.mock('../../../../utils/log', () => ({
 }));
 
 import { initialize } from '../../../../workers/data-worker/initialize';
-import { setWasmJsUrl } from '../../../../wasm';
+import { initWasm, setWasmJsUrl } from '../../../../wasm';
 import type { WasmCtx } from '../../../../workers/data-worker/state';
 
 function makeCtx(): WasmCtx {
@@ -68,5 +68,20 @@ describe('worker initialize() — wasmPath forwarding', () => {
     const ctx = makeCtx();
     const result = await initialize(ctx, '/custom/wasm.js');
     expect(result.wasmFallback).toBe(false);
+  });
+
+  // The generic "WASM unavailable" text is all the user sees; without `cause`
+  // the REAL initWasm() failure (404, bad MIME type, CSP block) was swallowed,
+  // leaving nothing in the console to debug. Keep the original error reachable.
+  it('attaches the original initWasm() failure as `cause` when init fails', async () => {
+    const ctx = makeCtx();
+    const underlying = new Error('fetch of luxar_wasm_bg.wasm returned 404');
+    vi.mocked(initWasm).mockRejectedValueOnce(underlying);
+
+    const failing = initialize(ctx);
+    await expect(failing).rejects.toThrow(/WASM unavailable/);
+    const caught = (await failing.catch((error: unknown) => error)) as Error;
+    expect(caught.cause).toBe(underlying);
+    expect(ctx.wasm).toBeNull();
   });
 });

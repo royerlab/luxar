@@ -6,7 +6,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { RenderingControls } from '../../../ui/rendering-controls';
+import { RenderingControls, decadeStep } from '../../../ui/rendering-controls';
+import { config } from '../../../config';
+import { log } from '../../../utils/log';
+import { MAX_NEAR_FAR_RATIO } from '../../../scene/scene-manager/clipping/bounds-math';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 
 // Note: PostProcessingManager and SceneManager are not imported because we use
@@ -28,6 +31,13 @@ vi.mock('../../../ui/gui', () => {
     name = vi.fn().mockReturnThis();
     show = vi.fn().mockReturnThis();
     hide = vi.fn().mockReturnThis();
+    // NumberController's fluent range setters. Present so the scale-aware
+    // re-ranging in updateSceneScale is observable: the production code guards
+    // on `typeof ctrl.min === 'function'`, so a mock lacking these silently
+    // skips the whole path and any test of it would be vacuous.
+    min = vi.fn().mockReturnThis();
+    max = vi.fn().mockReturnThis();
+    step = vi.fn().mockReturnThis();
     $input = { value: '' };
   }
 
@@ -92,6 +102,9 @@ describe('RenderingControls', () => {
       autoRotateSpeed: 1.0,
       getControlType: vi.fn(() => 'orbit'),
       getControls: vi.fn(() => mockControls),
+      // Reached via sceneManager.controls by updateSceneScale, whose scale-aware
+      // slider re-ranging is that method's first test coverage.
+      setSceneScale: vi.fn(),
       getFlyConfig: vi.fn(() => ({
         inertialMode: false,
         movementSpeed: 1.0,
@@ -510,6 +523,11 @@ describe('RenderingControls', () => {
       const testUrl = 'initTest';
       controls.sceneId = 'initTest'; // Must match what setSceneId() generates
       controls.settings.fov = 75;
+      // A MANUAL near only persists with dynamic clipping off — with it on,
+      // settings.near is a live camera readout that saveSettingsToStorage
+      // deliberately omits (see stripDynamicClippingPlanes). This test is
+      // about round-tripping user intent, so it takes the manual branch.
+      controls.settings.dynamicClippingEnabled = false;
       controls.settings.near = 0.5;
       controls.settings.flyMovementSpeed = 4.0;
       controls.settings.flyRotationSpeed = 3.0;
@@ -557,6 +575,218 @@ describe('RenderingControls', () => {
         expect.any(Number),
         expect.any(Number)
       );
+    });
+
+    // The user-visible half of the dynamic-clipping persistence bug, pinned at
+    // the facade rather than at the storage helper: a scene visited while
+    // zoomed in used to come BACK with the camera-derived near/far reapplied as
+    // fixed manual planes (e.g. near 1.05e-4 / far 61 with the Dynamic
+    // Clipping box unchecked), untraceable to anything the user did. The
+    // storage-level test proves the keys are omitted; this proves the whole
+    // save → load → apply chain lands on the defaults instead.
+    it('does not resurrect a zoomed-in camera near/far after a dynamic-clipping session', () => {
+      const controls = renderingControls as any;
+      controls.sceneId = 'dynZoom';
+
+      // A dynamic-clipping session: the display RAF loop has stamped the live
+      // camera pose into settings, then some unrelated control saved.
+      controls.settings.dynamicClippingEnabled = true;
+      controls.settings.near = 1.05e-4;
+      controls.settings.far = 61;
+      controls.settings.bloomStrength = 1.23; // the "unrelated control"
+      controls.saveSettings();
+
+      // Fresh instance state.
+      controls.settings.near = 0.1;
+      controls.settings.far = 1000;
+      mockSceneManager.updateClippingPlanes.mockClear();
+
+      controls.setSceneId('dynZoom');
+
+      // The unrelated setting round-trips; the transient planes do not.
+      expect(controls.settings.bloomStrength).toBe(1.23);
+      expect(controls.settings.near).toBe(config.renderingControls.defaults.near);
+      expect(controls.settings.far).toBe(config.renderingControls.defaults.far);
+      expect(mockSceneManager.updateClippingPlanes).toHaveBeenCalledWith(
+        config.renderingControls.defaults.near,
+        config.renderingControls.defaults.far
+      );
+    });
+  });
+
+  describe('Zarr-authored clipping planes', () => {
+    // Authoring works (applyZarrDefaults applies the planes AFTER
+    // autoAdjustClippingPlanes and pushes dynamicClippingEnabled through
+    // applySettings), but authored planes and dynamic clipping conflict: the
+    // per-frame update recomputes near/far next frame. Precedence is
+    // unchanged — dynamic clipping is an explicit auto mode — so the author
+    // gets told instead of silently ignored.
+    it('warns when authored planes coexist with dynamic clipping enabled', () => {
+      const controls = renderingControls as any;
+      const warnSpy = vi.spyOn(log, 'warning');
+      controls.setZarrViewerConfig({
+        camera: { near: 0.5, far: 400 },
+        // Rendering keys live at the TOP level of viewer_config (see
+        // RENDERING_SETTINGS_MAP / ViewerConfig.to_dict), not under `rendering`.
+        dynamic_clipping_enabled: true,
+      });
+
+      controls.applyZarrDefaults();
+
+      expect(mockSceneManager.updateClippingPlanes).toHaveBeenCalledWith(0.5, 400);
+      expect(
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('dynamic clipping is enabled'))
+      ).toBe(true);
+      warnSpy.mockRestore();
+    });
+
+    it('does not warn when the author also disables dynamic clipping', () => {
+      const controls = renderingControls as any;
+      const warnSpy = vi.spyOn(log, 'warning');
+      controls.setZarrViewerConfig({
+        camera: { near: 0.5, far: 400 },
+        dynamic_clipping_enabled: false,
+      });
+
+      controls.applyZarrDefaults();
+
+      expect(mockSceneManager.updateClippingPlanes).toHaveBeenCalledWith(0.5, 400);
+      expect(mockSceneManager.setDynamicClipping).toHaveBeenCalledWith(false);
+      expect(
+        warnSpy.mock.calls.some((c) => String(c[1]).includes('dynamic clipping is enabled'))
+      ).toBe(false);
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('Scale-aware clipping slider ranges', () => {
+    // The sliders' authored range is ABSOLUTE (near 0.0001-10) while every
+    // value they display is scene-relative. Under dynamic clipping they are
+    // live read-only readouts, so on a scene whose framed `near` exceeds 10 the
+    // number input reads the truth while `<input type=range>` clamps and pins
+    // the thumb at the wrong end. Re-ranged off the scene diagonal, alongside
+    // the fly-speed slider that already works this way.
+    it('re-ranges near/far from the scene diagonal on updateSceneScale', () => {
+      const controls = renderingControls as any;
+      mockSceneManager.getSceneScale = vi.fn(() => 95.3); // the mesh demo's diagonal
+
+      controls.updateSceneScale();
+
+      const nearCtrl = controls.controllers.nearPlane;
+      const farCtrl = controls.controllers.farPlane;
+      expect(nearCtrl.min).toHaveBeenCalled();
+      expect(farCtrl.min).toHaveBeenCalled();
+
+      const nearMin = nearCtrl.min.mock.calls.at(-1)[0];
+      const nearMax = nearCtrl.max.mock.calls.at(-1)[0];
+      const farMax = farCtrl.max.mock.calls.at(-1)[0];
+
+      // The range must CONTAIN every near/far the policy can produce over the
+      // whole legal orbit range — asserted by evaluating the policy's own
+      // equations rather than against a hand-picked threshold. An earlier
+      // version used `nearMax = scale` and a sample value of 111.98, which is
+      // itself outside that range: the assertion encoded the bug.
+      const scale = 95.3;
+      const R = 0.5 * scale * 1.05;
+      const distMax = scale * config.controls.scaleMultipliers.maxDistanceFactor;
+      expect(nearMin).toBeCloseTo(R * 2e-6, 12);
+
+      for (const dist of [
+        R * 0.5, // inside the sphere (floor binds)
+        1.7 * scale, // framed — where `nearMax = scale` used to pin
+        scale + R, // the crossover that exposed it
+        distMax, // zoom-out limit
+      ]) {
+        const far = dist + R;
+        const near = Math.max(Math.max(1e-9, R * 2e-6), far / MAX_NEAR_FAR_RATIO, dist - R);
+        expect(near).toBeGreaterThanOrEqual(nearMin);
+        expect(near).toBeLessThanOrEqual(nearMax);
+        expect(far).toBeLessThanOrEqual(farMax);
+      }
+      // far must include the expanded radius, not stop at dist alone.
+      expect(farMax).toBeCloseTo(distMax + R, 6);
+    });
+
+    it('scales the range down for a micron-scale scene', () => {
+      const controls = renderingControls as any;
+      mockSceneManager.getSceneScale = vi.fn(() => 0.01);
+
+      controls.updateSceneScale();
+
+      const nearMin = controls.controllers.nearPlane.min.mock.calls.at(-1)[0];
+      const nearMax = controls.controllers.nearPlane.max.mock.calls.at(-1)[0];
+      // The point of this case is the BOTTOM end: on a micron scene the whole
+      // useful range sat below the old absolute 0.0001 minimum.
+      expect(nearMin).toBeLessThan(0.0001);
+      expect(nearMin).toBeCloseTo(0.5 * 0.01 * 1.05 * 2e-6, 15);
+      // The top end still spans the legal orbit range, so it must NOT collapse
+      // to the diagonal — that spelling made small scenes worse than the old
+      // absolute max of 10.
+      expect(nearMax).toBeGreaterThan(10);
+    });
+
+    // The step is what the GUI reads the DISPLAYED DECIMAL COUNT off of, via
+    // `String(step)`. My first version passed the range minimum straight
+    // through, which is scene-derived and therefore carries float noise:
+    // `String(1.05e-4)` is "0.00010499999999999999", so a near of 117.5
+    // rendered as "117.50000000000000000000". Asserting min/max alone never saw
+    // it — these assert the rendered string, which is what a user sees.
+    const formatLikeGui = (value: number, step: number): string => {
+      const s = String(step);
+      const dot = s.indexOf('.');
+      return value.toFixed(dot === -1 ? 0 : s.length - dot - 1);
+    };
+
+    it.each([
+      [0.01, 0.01175, 0.02225],
+      [1, 1.175, 2.225],
+      [95.3, 111.9775, 212.0425],
+      [100, 117.5, 222.5],
+      [100000, 117500, 222500],
+    ])('keeps the rendered readout clean at scale %p', (scale, sampleNear, sampleFar) => {
+      const controls = renderingControls as any;
+      mockSceneManager.getSceneScale = vi.fn(() => scale);
+      controls.updateSceneScale();
+
+      const nearStep = controls.controllers.nearPlane.step.mock.calls.at(-1)[0];
+      const farStep = controls.controllers.farPlane.step.mock.calls.at(-1)[0];
+
+      // Exact short decimal: no float noise, no exponential notation.
+      for (const step of [nearStep, farStep]) {
+        expect(String(step)).toMatch(/^(?:0\.0*1|1(?:0*)?)$/);
+        expect(String(step)).not.toContain('e');
+      }
+      // ...so the readout carries a sane number of decimals, not 20 and not 0.
+      for (const [value, step] of [
+        [sampleNear, nearStep],
+        [sampleFar, farStep],
+      ] as const) {
+        const rendered = formatLikeGui(value, step);
+        const decimals = (rendered.split('.')[1] ?? '').length;
+        expect(decimals).toBeLessThanOrEqual(6);
+        expect(Number(rendered)).toBeCloseTo(value, 2);
+      }
+    });
+
+    it('decadeStep floors at 1e-6, where String() would go exponential', () => {
+      expect(String(decadeStep(1e-8))).toBe('0.000001');
+      expect(String(decadeStep(1.05e-4))).toBe('0.0001');
+      expect(String(decadeStep(0.0953))).toBe('0.01');
+      expect(String(decadeStep(222500))).toBe('100000');
+      // Degenerate input must not produce NaN/Infinity as a slider step.
+      for (const bad of [0, -1, NaN, Infinity]) {
+        expect(decadeStep(bad)).toBe(1e-6);
+      }
+    });
+
+    it('is a no-op when the scene scale is unknown', () => {
+      const controls = renderingControls as any;
+      mockSceneManager.getSceneScale = vi.fn(() => 0);
+      controls.controllers.nearPlane.min.mockClear();
+
+      controls.updateSceneScale();
+
+      expect(controls.controllers.nearPlane.min).not.toHaveBeenCalled();
     });
   });
 

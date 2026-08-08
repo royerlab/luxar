@@ -81,7 +81,7 @@ export function parseGeneratedFixtureNames(generatorPath: string): string[] {
  *
  * `.zmetadata` is the completeness signal because `LuxarZarrCompiler.finalize()` writes it
  * last, via `zarr.consolidate_metadata()`, after every array and attribute is in place
- * (`packages/luxar/src/luxar/cli/gsplat_ops/batch_validation.py` reads it the same way for
+ * (`packages/luxar/src/luxar/cli/gsplat_ops/batch/validation.py` reads it the same way for
  * the same reason). Cheap enough to run per fixture: one `stat` each, no HTTP.
  *
  * @param fixturePath Absolute path to a `*.zarr` fixture directory.

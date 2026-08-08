@@ -216,7 +216,7 @@ def parse_as_org(path: Path) -> pd.DataFrame:
     headers. Current snapshots omit whitespace after the colon, while older or
     hand-authored fixtures may include it::
 
-        # format:org_id|changed|name|country|source         (organizations)
+        # format:org_id|changed|org_name|country|source     (organizations)
         # format:aut|changed|aut_name|org_id|opaque_id|source  (ASes → org_id)
 
     We stream once, accept either whitespace form, track the active section,

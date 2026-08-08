@@ -50,7 +50,7 @@ print(result.stdout)
 - `serving.py` - HTTP serving internals (`create_server_app`, data/viewer servers; re-exported by `main.py`)
 - `info_command.py` - The `luxar info` command implementation
 - `gsplat_commands.py` - Thin registration hub (~56 lines) that assembles the `gsplat` sub-app: fit, cal, render, denoise, lod, convert, migrate-format, reencode, info, napari, view, compare, annotate-quality, transform, merge, cull, filter, slice, partition, flatten, additive, benchmark; the `batch-fit` group: run/submit/status/validate/cancel/merge/denoise-calibrate/denoise-preprocess
-- `gsplat_ops/` - The gsplat subcommand implementations (~35 modules: fitting, calibration, transforms, batch orchestration, inspection, ...)
+- `gsplat_ops/` - The gsplat subcommand implementations: 7 root modules (scene/inspect/interchange registration, `benchmark`, `recipe_shared`, `planner`, `encoding`) plus three subpackages — `fitting/` (fit/cal/render/denoise), `batch/` (`batch-fit`), `transforms/` (edit-style commands) — 30 modules across them. Each subpackage's registration surface is its `commands.py`; the `__init__.py` files are docstring-only. See `gsplat_ops/README.md`.
 - `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations

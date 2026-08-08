@@ -1,10 +1,10 @@
-"""Pipeline helpers for ``batch-fit submit`` (extracted from ``batch_submit``).
+"""Pipeline helpers for ``batch-fit submit`` (extracted from ``submit``).
 
 Each helper owns one stage of the submit pipeline — tiling validation, GPU
 profile resolution, plan-config assembly, tasks-per-job packing, Slurm-field
 stamping, and sbatch script generation — so ``run_batch_submit`` reads as the
 stage sequence plus the plan/print/submit tail it keeps in its body. Sibling
-of the four existing ``batch_submit_*`` modules.
+of the four existing ``submit_*`` modules.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from typing import Any, Optional
 import typer
 from arbol import aprint
 
-from .batch_submit_packing import resolve_tasks_per_job
-from .batch_submit_preemptible import resolve_preemptible_partition
+from .submit_packing import resolve_tasks_per_job
+from .submit_preemptible import resolve_preemptible_partition
 
 
 def validate_tiling_arg(tiling: str) -> str:
@@ -171,7 +171,7 @@ def build_plan_configs(
     merge_coarsen_dims: Optional[str],
 ) -> PlanConfigs:
     """Map the submit CLI flags onto the ``plan_batch`` config dataclasses."""
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
         FitConfig,
