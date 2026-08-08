@@ -818,13 +818,45 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
       }
     }
     await page.evaluate(
-      async ({ idx, n, amp }: { idx: number; n: number; amp: number }) => {
+      async ({
+        idx,
+        n,
+        amp,
+        isTimelapse,
+      }: {
+        idx: number;
+        n: number;
+        amp: number;
+        isTimelapse: boolean;
+      }) => {
         const debug = (window as any).__luxarDebug;
         const o = (window as any).__orbit;
         // Guard: a mid-run reload would wipe these; skip the frame rather than
         // throw (the run then just has a duplicate frame, not a crash).
         if (!debug?.camera || !o) return;
         const cam = debug.camera;
+        // TIMELAPSE ONLY: re-freeze the rAF loop every frame.
+        //
+        // Setup froze it once, but a timelapse slice load restarts it (the data
+        // path reaches `startAnimation`), and a live loop runs
+        // `controls.update()`, which re-derives the camera from the controls'
+        // stored spherical state and snaps it back to the pre-orbit pose —
+        // AFTER this evaluate returns, so re-applying the pose inside here does
+        // not help (measured: identical output). Before this, the camera sat at
+        // the baked pose in 6 of 8 frames and a 4D tile barely orbited at all
+        // while its time dimension advanced (#1383).
+        //
+        // Gated on `isTimelapse` deliberately, even though the freeze measured
+        // harmless on the heaviest non-timelapse tile (1.5M asteroids: output
+        // byte-identical either way). The restart it defends against is a
+        // timelapse-specific event, so there is no reason to change behaviour
+        // for captures that were never broken, and one demo is thin evidence
+        // for the rest. Non-timelapse captures are byte-identical to before —
+        // verified against this file's pre-change version run back-to-back.
+        if (isTimelapse) {
+          debug.animationController?.stopAnimation?.();
+          debug.controls?.setEnabled?.(false);
+        }
         // Sinusoidal rock: one seamless period over N frames, ±amp radians, in
         // the A,B plane about the up axis U (position = center + r·(sinθ·A +
         // cosθ·B) + compU·U). up = U keeps the subject upright.
@@ -847,7 +879,7 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
         await debug.resortDepthOrderingForCapture?.();
         debug.postProcessing?.render?.(); // synchronous render with the new camera
       },
-      { idx: i, n: ORBIT_FRAMES, amp: ampRad }
+      { idx: i, n: ORBIT_FRAMES, amp: ampRad, isTimelapse: tl !== null }
     );
     await page.screenshot({
       path: path.join(framesDir, `f${String(i).padStart(4, '0')}.png`),
