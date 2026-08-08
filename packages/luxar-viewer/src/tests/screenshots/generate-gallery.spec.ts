@@ -79,9 +79,9 @@ const VIEWER_URL = `http://localhost:${process.env.GALLERY_VITE_PORT ?? 5199}`;
 // 360° turn. A full turn at an affordable frame count has a large, jarring
 // inter-frame angle; a ±20° rock covers only ~4·amplitude of travel per cycle,
 // so the SAME frames give a tiny (~1°) inter-frame angle → smooth, and it loops
-// seamlessly (sin returns to start). Each frame is a screenshot, so orbit frames
-// are captured at a reduced viewport (ORBIT_CAPTURE_PX) for speed; the still
-// stays full-res.
+// seamlessly (sin returns to start). Each frame is a plain screenshot of the
+// same square viewport as the still (1080², set in playwright.gallery.config.ts)
+// — there is no separate orbit capture size.
 // Capture ENOUGH real frames for one gentle rock cycle to play smoothly with NO
 // motion interpolation. An earlier version captured 60 frames and used ffmpeg
 // `minterpolate` (mci) to synthesize a 24 fps master — but motion-compensated
@@ -898,8 +898,10 @@ async function warnIfStillDisagreesWithOrbit(
   // one warning. Do not "align" the two.
   if (demo.timelapse) return;
   if (!fs.existsSync(stillPath) || !fs.existsSync(frameZeroPath)) return;
-  const [a, b] = [stillPath, frameZeroPath].map((f) => fs.readFileSync(f).toString('base64'));
   try {
+    // Read inside the try: an exists/read race or an unreadable file must warn
+    // like any other failure here, not reject and take the whole capture down.
+    const [a, b] = [stillPath, frameZeroPath].map((f) => fs.readFileSync(f).toString('base64'));
     // The page does DECODING only — it is the one place with an image decoder —
     // and hands back plain integer greyscale buffers. The comparison itself runs
     // in Node against `frame-similarity.ts`, so the arithmetic is unit-tested
@@ -1065,7 +1067,14 @@ for (const demo of DEMOS) {
     // assemble the WebM master + animated WebP.
     const framesDir = path.join(OUTPUT_DIR, `_frames_${demo.id}`);
     const n = await captureOrbitFrames(page, framesDir, demo);
-    await warnIfStillDisagreesWithOrbit(page, pngPath, path.join(framesDir, 'f0000.png'), demo);
+    // Only when this run actually produced frames — framesDir is not cleaned
+    // between runs, so on a failed capture f0000.png can be a stale leftover and
+    // comparing the fresh still against it would warn about nothing. Must happen
+    // before page.close() (the check decodes in the page), hence the guard here
+    // rather than after the n === 0 bail-out below.
+    if (n > 0) {
+      await warnIfStillDisagreesWithOrbit(page, pngPath, path.join(framesDir, 'f0000.png'), demo);
+    }
     await page.close();
     if (n === 0) {
       console.error(`[${demo.id}] orbit capture failed (no camera/controls)`);

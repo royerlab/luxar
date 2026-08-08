@@ -17,8 +17,9 @@
 
 /**
  * Side length of the greyscale buffers compared. Both frames are downscaled to
- * this before comparison, so a still captured at full resolution and an orbit
- * frame captured at `ORBIT_CAPTURE_PX` are directly comparable.
+ * this square before comparison, so the check does not depend on the capture
+ * viewport (today a square 1080², set in `playwright.gallery.config.ts`) and
+ * keeps working if the still and the orbit frames ever diverge in size.
  *
  * 256² = 65,536 samples: far more than enough to separate "same pose" from
  * "rolled 90°" (measured separation is ~0.45 of correlation), while small
