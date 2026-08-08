@@ -1,12 +1,15 @@
 /**
  * Gallery crop policy — unit tests for the border-lit verdict.
  *
- * The measurement half is not testable here (see `measureBorderLit`); the DECISION
- * half is pure, so it is tested directly against hand-written samples. No
- * simulation is needed — this is one comparison plus a message, and what actually
- * deserves pinning is the ADVICE: the warning must point at whichever framing knob
- * the demo really used (`fillTarget`, `zoom`, `distance`, or a skipped fill),
- * because suggesting a knob that is not in play is worse than saying nothing.
+ * The pixel-counting half is not testable here (see `measureBorderLit`); the two
+ * pure halves that decide WHICH poses get measured and WHAT the verdict says are.
+ * No simulation is needed for the verdict — it is one comparison plus a message,
+ * and what actually deserves pinning is the ADVICE: the warning must point at
+ * whichever framing knob the demo really used (`fillTarget`, `zoom`, `distance`,
+ * or a skipped fill), because suggesting a knob that is not in play is worse than
+ * saying nothing. For the pose selection, what deserves pinning is COVERAGE of the
+ * rock: sampling only its endpoints misses a subject whose projected extent peaks
+ * at an intermediate angle.
  *
  * Every threshold is asserted through the imported constant, never a literal
  * copy, and the floor is additionally exercised at a NON-default value — so
@@ -18,8 +21,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   borderLitPercent,
+  borderSampleFrames,
   evaluateBorderLit,
   BORDER_LIT_MAX,
+  BORDER_SAMPLE_STEP_DEG,
   FILL_TARGET_MIN,
   FILL_TARGET_SUGGEST_STEP,
   type BorderSample,
@@ -44,6 +49,62 @@ const sample = (label: string, borderLit: number): BorderSample => ({
 const fill = (fillTarget: number): CropFraming => ({ fillTarget, autoFrame: true });
 
 describe('gallery crop policy', () => {
+  describe('which orbit poses get measured', () => {
+    /** The harness values: ±20° rock over 120 captured frames. */
+    const AMP = 20;
+    const FRAMES = 120;
+    const angleAt = (i: number, n = FRAMES): number => AMP * Math.sin((i / n) * Math.PI * 2);
+
+    it('spans the whole rock — every angle is within one grid step of a measured pose', () => {
+      const frames = borderSampleFrames(FRAMES, AMP);
+      const angles = frames.map((i) => angleAt(i));
+      // The endpoints-only version measured exactly these two and nothing else.
+      expect(Math.min(...angles)).toBeCloseTo(-AMP, 6);
+      expect(Math.max(...angles)).toBeCloseTo(AMP, 6);
+      expect(frames.length).toBeGreaterThan(2);
+      // The property that matters: no pose in the sweep is far from a sampled one,
+      // so a subject whose projected extent peaks mid-rock cannot hide between
+      // samples. Walk the sweep finely and check the nearest measured pose.
+      for (let a = -AMP; a <= AMP; a += 0.25) {
+        const nearest = Math.min(...angles.map((x) => Math.abs(x - a)));
+        expect(nearest).toBeLessThanOrEqual(BORDER_SAMPLE_STEP_DEG);
+      }
+    });
+
+    it('still includes the two rock extremes, and stays cheap', () => {
+      const frames = borderSampleFrames(FRAMES, AMP);
+      expect(frames).toContain(FRAMES / 4); // +20°
+      expect(frames).toContain((3 * FRAMES) / 4); // −20°
+      // One in-page PNG decode per pose, so the grid must stay a handful of poses,
+      // not all 120 frames.
+      expect(frames.length).toBeLessThanOrEqual(16);
+      // Sorted, unique, in range.
+      expect([...new Set(frames)]).toEqual(frames);
+      expect([...frames].sort((a, b) => a - b)).toEqual(frames);
+      expect(frames.every((i) => Number.isInteger(i) && i >= 0 && i < FRAMES)).toBe(true);
+    });
+
+    it('degrades sanely on a smoke run with very few frames', () => {
+      // GALLERY_ORBIT_FRAMES=4: fewer distinct poses exist than the grid asks for,
+      // so it must dedup rather than emit repeats or out-of-range indices.
+      const frames = borderSampleFrames(4, AMP);
+      expect(frames.length).toBeGreaterThan(0);
+      expect(frames.every((i) => i >= 0 && i < 4)).toBe(true);
+      expect([...new Set(frames)]).toEqual(frames);
+      expect(borderSampleFrames(1, AMP)).toEqual([0]);
+      expect(borderSampleFrames(0, AMP)).toEqual([]);
+    });
+
+    it('falls back to the endpoints for a coarse step, and never spins on a zero one', () => {
+      // A step wider than the sweep leaves one interval: its two ends.
+      expect(borderSampleFrames(FRAMES, AMP, 1000)).toEqual([FRAMES / 4, (3 * FRAMES) / 4]);
+      // A zero step would be an infinite grid; it is capped at one pose per frame.
+      const dense = borderSampleFrames(8, AMP, 0);
+      expect(dense.length).toBeLessThanOrEqual(8);
+      expect(dense.every((i) => i >= 0 && i < 8)).toBe(true);
+    });
+  });
+
   describe('borderLitPercent', () => {
     it('is the perimeter fraction, and 0 for a degenerate empty perimeter', () => {
       expect(borderLitPercent(sample('still', PERIMETER / 2))).toBeCloseTo(50, 6);

@@ -65,10 +65,14 @@ README gallery table.
   Override per demo with `"exposure": <log2 stops>` in the manifest when auto
   misses.
 - **Crop check:** counts the **lit pixels on the frame's outermost row/column**
-  (the still plus the two rock extremes — plus the last frame of a `timelapse`,
-  where a developing subject is largest — measured off the lossless PNGs the
-  harness already captures, since JPEG ringing next to a bright edge would fake a
-  crop). Lit content on the edge means the subject runs off frame, and the fill
+  (the still plus orbit poses on a ~5° grid across the whole rock — plus the last
+  frame of a `timelapse`, where a developing subject is largest — measured off
+  the lossless PNGs the harness already captures, since JPEG ringing next to a
+  bright edge would fake a crop). Sampling only the two rock extremes is not
+  enough: a subject whose projected extent peaks at an intermediate angle comes
+  back inside the frame by the endpoint, so an endpoints-only check reads clean
+  on exactly the tiles it is meant to catch.
+  Lit content on the edge means the subject runs off frame, and the fill
   loop is blind to it *by construction*: its 3rd–97th-percentile bbox discards
   exactly the outliers that touch the edge, so a tile can report "82% — a fit"
   while a nucleus leaves the frame in a third of the orbit frames (measured on

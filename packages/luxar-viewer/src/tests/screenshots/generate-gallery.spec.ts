@@ -20,8 +20,9 @@
  *     logic is `./exposure-policy` (pure, unit-tested); a per-demo `exposure`
  *     in the manifest overrides the whole thing.
  *   - **Crop check** — counts LIT pixels on the frame's outermost row/column in
- *     the still and the two rock extremes (plus the last frame of a timelapse,
- *     where a developing subject is largest). The fill loop's percentile bbox is
+ *     the still and in orbit poses spread across the whole rock on a ~5° grid
+ *     (plus the last frame of a timelapse, where a developing subject is
+ *     largest). The fill loop's percentile bbox is
  *     blind to exactly this (what touches the edge IS the outliers it discards),
  *     so a tile can report a good fit while the subject runs off frame. Warns
  *     with a suggested knob and never fails — a non-zero count is common and
@@ -62,6 +63,7 @@ import {
 } from './exposure-policy';
 import {
   borderLitPercent,
+  borderSampleFrames,
   evaluateBorderLit,
   type BorderSample,
   type CropFraming,
@@ -644,7 +646,7 @@ async function measureLuminance(page: any): Promise<LumaStats> {
  * structurally cannot see.
  *
  * Takes the PNG buffer of a screenshot the harness already had to take (the
- * still, and up to three orbit frames), so the check costs no extra screenshot;
+ * still, and the sampled orbit frames), so the check costs no extra screenshot;
  * it is decoded back inside the page exactly the way `measureLuminance` does
  * (createImageBitmap → 2D canvas at NATIVE resolution → getImageData).
  *
@@ -756,8 +758,8 @@ async function autoExpose(page: any): Promise<AutoExposureResult> {
  * path that already works.
  *
  * Returns the number of frames written to `framesDir` plus border-lit samples for
- * up to three poses: the two rock extremes (the poses most likely to push the
- * subject off frame) and, for a timelapse, the final timepoint. The measuring
+ * the poses `borderSampleFrames` picks — a ~5° angular grid across the whole rock
+ * — and, for a timelapse, the final timepoint. The measuring
  * happens HERE rather than in the caller because the per-frame screenshot buffers
  * are not retained past the frame loop (and the page is closed on return) — but
  * AFTER that loop rather than inside it: deferring costs nothing and keeps the
@@ -859,15 +861,15 @@ async function captureOrbitFrames(
 
   fs.mkdirSync(framesDir, { recursive: true });
   const ampRad = (ORBIT_AMPLITUDE_DEG * Math.PI) / 180;
-  // Crop check: sample the two ROCK EXTREMES, where sin(2π·i/N) = ±1, i.e. the
-  // poses furthest from the framed still and so the likeliest to run off frame.
+  // Crop check: sample poses on a ~BORDER_SAMPLE_STEP_DEG grid across the WHOLE
+  // ±ORBIT_AMPLITUDE_DEG rock (`borderSampleFrames`), not just its two endpoints —
+  // the pose of greatest projected extent is often an intermediate angle, and an
+  // endpoints-only check reads zero on exactly those subjects.
   // When the time dimension was found, also sample the LAST frame — the final
-  // timepoint at (essentially) the BASE pose, since sin(2π·(N−1)/N) ≈ 0. The
-  // extremes quantize to roughly 35% and 80% of the time range, so for a
-  // late-framed still (`framePoint` 0.87 on gsplats_4d_celegans_tracking) the
-  // largest, final timepoint would otherwise never be measured; the gap is
-  // narrower for an early framePoint (0.45 on gsplats_4d_nexrad_supercell, which
-  // already sits between the two extremes). Keyed on `tl`, not on
+  // timepoint at (essentially) the BASE pose, since sin(2π·(N−1)/N) ≈ 0. The rock
+  // grid spans the clip's first ~80% of the time range, so for a late-framed still
+  // (`framePoint` 0.87 on gsplats_4d_celegans_tracking) the largest, final
+  // timepoint would otherwise never be measured. Keyed on `tl`, not on
   // `demo.timelapse`, so a demo whose time dimension was NOT discovered does not
   // contribute a near-duplicate of the still under a misleading label.
   // Deduped and range-checked because GALLERY_ORBIT_FRAMES can be tiny in a
@@ -875,8 +877,7 @@ async function captureOrbitFrames(
   // out-of-range indices are filtered away).
   const borderMeasureAt = new Set(
     [
-      Math.round(ORBIT_FRAMES / 4),
-      Math.round((3 * ORBIT_FRAMES) / 4),
+      ...borderSampleFrames(ORBIT_FRAMES, ORBIT_AMPLITUDE_DEG),
       ...(tl ? [ORBIT_FRAMES - 1] : []),
     ].filter((i) => i >= 0 && i < ORBIT_FRAMES)
   );

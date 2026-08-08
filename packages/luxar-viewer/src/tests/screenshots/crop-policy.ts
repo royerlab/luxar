@@ -92,6 +92,66 @@ export const FILL_TARGET_SUGGEST_STEP = 0.1;
  */
 export const FILL_TARGET_MIN = 0.3;
 
+/**
+ * Angular spacing, in degrees, of the orbit poses the harness measures — see
+ * {@link borderSampleFrames}.
+ *
+ * WHY A GRID AND NOT JUST THE TWO EXTREMES. The rock's endpoints are the poses
+ * FURTHEST from the framed still, but they are not necessarily the poses of
+ * greatest projected extent: a feature sitting ~90° round from the screen-x axis
+ * reaches its maximum projected |x| at an INTERMEDIATE rock angle and comes back
+ * in by the endpoint, so an endpoints-only check can read zero while the frames in
+ * between visibly crop.
+ *
+ * 5° is fine enough to be equivalent to measuring all 120 frames. The worst pose
+ * is either an endpoint (sampled exactly) or a stationary point of the projected
+ * extent, and at a stationary point the extent falls off only as 1 − cos δ: with
+ * the true worst pose at most `step`/2 = 2.5° from a sampled one, we see it to
+ * within 0.1% of its extent. Halving the step would buy 0.03%; measuring every
+ * frame costs 120 in-page PNG decodes per tile to buy the same.
+ */
+export const BORDER_SAMPLE_STEP_DEG = 5;
+
+/**
+ * The orbit frame indices to measure for border-lit content: for each target
+ * angle on a {@link BORDER_SAMPLE_STEP_DEG} grid spanning the WHOLE ±`amplitudeDeg`
+ * rock, the captured frame closest to it. Returned sorted, without duplicates.
+ *
+ * Frames are captured at `amplitudeDeg·sin(2π·i/orbitFrames)`, i.e. bunched near
+ * the endpoints, so a stride over `i` would sample angles very unevenly; picking
+ * the nearest frame per target angle spreads the poses over the sweep instead.
+ * Ties go to the lower index, which makes the choice deterministic.
+ *
+ * The grid is capped at one target per captured frame — that keeps a smoke run
+ * (`GALLERY_ORBIT_FRAMES=4`) from asking for more distinct poses than exist, and
+ * makes an absurd `stepDeg` degrade to "measure every frame" rather than spin.
+ * `orbitFrames <= 0` yields no poses.
+ */
+export function borderSampleFrames(
+  orbitFrames: number,
+  amplitudeDeg: number,
+  stepDeg: number = BORDER_SAMPLE_STEP_DEG
+): number[] {
+  if (!(orbitFrames > 0)) return [];
+  const angleAt = (i: number): number => amplitudeDeg * Math.sin((i / orbitFrames) * Math.PI * 2);
+  const steps = Math.max(1, Math.min(orbitFrames, Math.round((2 * amplitudeDeg) / stepDeg)));
+  const picked = new Set<number>();
+  for (let k = 0; k <= steps; k++) {
+    const target = -amplitudeDeg + (2 * amplitudeDeg * k) / steps;
+    let best = 0;
+    let bestErr = Infinity;
+    for (let i = 0; i < orbitFrames; i++) {
+      const err = Math.abs(angleAt(i) - target);
+      if (err < bestErr) {
+        bestErr = err;
+        best = i;
+      }
+    }
+    picked.add(best);
+  }
+  return [...picked].sort((a, b) => a - b);
+}
+
 /** One measured pose: how much lit content sat on the frame's outermost ring. */
 export interface BorderSample {
   /** Human label for the pose, e.g. `'still'` or `'rock -20°'`. */
