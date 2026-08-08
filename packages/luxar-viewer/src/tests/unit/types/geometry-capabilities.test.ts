@@ -57,11 +57,12 @@ describe('geometry capabilities', () => {
 
   it('reports no capability for a type outside the vocabulary', () => {
     // The whole point: a type the table has not classified is excluded from
-    // every feature rather than defaulting in.
-    // `mesh` is deliberately NOT one of these: it IS in the vocabulary, so its
-    // answers come from its row and are pinned below. Asserting it here read as
-    // "mesh is unclassified" when what was true was only that its row happened to
-    // be all-false at the time — and it stopped being true.
+    // every feature rather than defaulting in. `mesh` is deliberately NOT one
+    // of these — it is in the vocabulary, so its answers come from its row and
+    // are asserted below, not here. (This case used to assert `mesh` alongside
+    // the outsiders, which read as "mesh is unclassified" when what was true
+    // was only that its row happened to be all-false at the time — and it has
+    // since stopped being true twice over.)
     for (const predicate of [supportsLod, supportsPartition, isPooledGeometry, isDepthSortable]) {
       for (const outsider of ['volume', 'group', 'scene', '', undefined, null, 3]) {
         expect(predicate(outsider), String(outsider)).toBe(false);
@@ -70,16 +71,27 @@ describe('geometry capabilities', () => {
   });
 
   it('classifies mesh per capability, not uniformly', () => {
-    // The row the table exists for. Each answer is its own architectural fact:
-    // `lod` is true and means SUBSTITUTIVE only (a kind=lod group holds levels
-    // that replace one another; the additive prefix ladder is refused elsewhere
-    // and stays impossible), while `pooled` names the instanced-quad stack and
-    // can never become true for an indexed surface.
+    // The row the table exists for: mesh answers two of these yes and two no,
+    // and each answer is a distinct architectural fact (see the comment on the
+    // row itself). Pinned explicitly so a widened literal or a reflexive "flip
+    // them all" cannot pass unnoticed.
     expect(GEOMETRY_CAPABILITIES.mesh).toEqual({
+      // True, and SUBSTITUTIVE only: a kind=lod group holds levels that replace
+      // one another, and `luxar.mesh.decimate` is the producer. The ADDITIVE
+      // prefix ladder stays impossible (a prefix of an index buffer is a holed
+      // surface, not a coarser one) and is refused in `loader-factory.ts`, not
+      // by this flag.
       lod: true,
+      // False only for now: a BSP part is a re-indexing, not a slice, because a
+      // triangle references a shared vertex table.
       partition: false,
+      // Permanently false: `pooled` names the instanced-quad element-texture
+      // stack, which an indexed triangle surface is not drawn from.
       pooled: false,
-      depthSortable: false,
+      // A triangle's center is its vertex centroid, so registration, worker and
+      // kernel are all shared; only the apply differs (index permutation rather
+      // than an `aSortedIndex` indirection).
+      depthSortable: true,
     });
   });
 

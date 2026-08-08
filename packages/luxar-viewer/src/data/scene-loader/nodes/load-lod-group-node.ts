@@ -20,15 +20,15 @@
  * children in that same order for consistent threshold comparisons.
  *
  * **Lazy loading**: only the default level's geometry is loaded eagerly.
- * Every other gsplats, points, *or lines* level is *cheap-attached* (placeholder
- * + loader, no array fetch) with an ``ensureLoaded`` thunk; the registry fires
- * the thunk on demand the first time the per-frame selector wants to show
- * that level. This is what keeps a scene of many lod_groups from loading
+ * Every other gsplats, points, lines *or mesh* level is *cheap-attached*
+ * (placeholder + loader, no array fetch) with an ``ensureLoaded`` thunk; the
+ * registry fires the thunk on demand the first time the per-frame selector wants
+ * to show that level. This is what keeps a scene of many lod_groups from loading
  * every level of every group up front — distant groups stay coarse and
- * their fine levels are never fetched. Deferring the points/lines level matters
- * for the points-/lines-substitutive ladders, whose finest child is the full
- * cloud / line set (eager-loading it would defeat progressive loading). The
- * selector math needs
+ * their fine levels are never fetched. Deferring the points/lines/mesh level
+ * matters for their substitutive ladders, whose finest child is the full
+ * cloud / line set / full-resolution surface (eager-loading it would defeat
+ * progressive loading). The selector math needs
  * only the per-child ``coverage_fraction`` / ``position_bounds`` attrs (read here),
  * not loaded geometry, so deferral is fully correct.
  *
@@ -83,9 +83,9 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * Build a deferred (lazy) ``LODGroupChild`` from an already cheap-attached
  * placeholder. Geometry-agnostic: the caller supplies ``runExpensive`` (fetch +
  * commit) and an optional ``releaseLoaded`` (return GPU buffers to the evictable
- * pool). Shared between the gsplats, points, and lines defer paths so the
- * ready/failed/loading state machine and the abort-discard error handling live
- * in exactly one place.
+ * pool, and/or drop depth-sort state). Shared between the gsplats, points, lines
+ * and mesh defer paths so the ready/failed/loading state machine and the
+ * abort-discard error handling live in exactly one place.
  *
  * **Lazy levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload
@@ -393,13 +393,16 @@ export async function loadLodGroupNode(
           coverageFraction,
           ctx,
           () => loadMeshNodeExpensive(lazyChild, ctx, loader),
-          // No `releaseLazyMesh`, and that is deliberate rather than missing. The
-          // other three release a pooled GPU buffer back to the evictable pool on
-          // demotion; a mesh is `pooled: false` (an indexed BufferGeometry, not the
+          // `releaseLazyMesh` does LESS than its three peers, not nothing. They
+          // release a pooled GPU buffer back to the evictable pool on demotion; a
+          // mesh is `pooled: false` (an indexed BufferGeometry, not the
           // instanced-quad stack), so there is nothing to hand back and no pool
-          // adapter to hand it to. A demoted level keeps its geometry until the node
-          // is disposed, which is the same lifetime a non-LOD mesh already has.
-          undefined,
+          // adapter to hand it to — a demoted level keeps its geometry until the
+          // node is disposed, the same lifetime a non-LOD mesh already has. What it
+          // DOES share is the depth-sort release, because mesh is `depthSortable`
+          // (#1347): a demoted `normal`-mode level would otherwise pin its
+          // coordinator state and worker-side centroids while not being drawn.
+          () => ctx.releaseLazyMesh(lazyChild.path),
           // No `hasMoreLODs` either: a mesh level is whole-node resident in one
           // fetch, so it is complete the moment it is ready. The three that pass one
           // are reporting an ADDITIVE ladder inside the level, which a surface

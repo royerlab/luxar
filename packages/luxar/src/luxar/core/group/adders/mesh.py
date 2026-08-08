@@ -29,7 +29,11 @@ import numpy as np
 from arbol import aprint
 
 from ...mesh import Mesh
-from ..compositing import COMPOSITING_ATTRS, sync_custom_colormap_attr
+from ..compositing import (
+    COMPOSITING_ATTRS,
+    reject_lines_only_join,
+    sync_custom_colormap_attr,
+)
 from ..dim_order import apply_dim_order_positions
 
 if TYPE_CHECKING:
@@ -254,6 +258,8 @@ def add_mesh_impl(
         _reject_structure_params(name, attrs)
         _reject_volumetric_blending(name, attrs)
         _reject_energy_stamps(name, attrs)
+        reject_lines_only_join("mesh", name, attrs)
+
         # Consumed HERE, at the top, so nothing downstream — the substitutive
         # wrapper, the attr gate, the returned node object — ever sees the
         # private key. Validated because it is a real parameter with a real

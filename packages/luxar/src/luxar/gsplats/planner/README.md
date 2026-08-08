@@ -39,7 +39,7 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
 
 ## Consumers
 
-- `cli/gsplat_ops/fitting.py::fit_volume` (`fit --tiling content`) and
+- `cli/gsplat_ops/fitting/fit.py::run_fit_volume` (`fit --tiling content`) and
   `cli/gsplat_ops/planner.py::run_content_fit`.
-- `cli/gsplat_ops/batch.py::batch_submit` (`batch-fit submit --tiling content`)
+- `cli/gsplat_ops/batch/submit.py::run_batch_submit` (`batch-fit submit --tiling content`)
   builds one shared `FitPlan` and fans its boxes across a Slurm array.

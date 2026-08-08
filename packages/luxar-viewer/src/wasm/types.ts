@@ -438,12 +438,16 @@ export interface WasmModule {
   ): void;
 
   /**
-   * Per-endpoint cap suppression in [0, 1] (drives the shader cap factor).
+   * Per-endpoint joint code: how the line shader should treat this endpoint,
+   * and — at an ordinary two-segment joint — which segment it joins.
    *
-   * `1.0` suppresses the shader's endpoint dimming (clipped endpoint, or a
-   * straight-through interior joint where the neighbouring quad tiles rather
-   * than overlaps); `0.0` keeps it (free polyline end, branch point, or a
-   * bend sharp enough that the quads genuinely overlap). See
+   * `0` free polyline end (keep the soft cap); `-1` slice-clipped (suppress the
+   * cap; no neighbour will arrive); `-2` degree->=3 hub (keep the cap);
+   * `+(slot + 1)` joins visible segment `slot` at that segment's START;
+   * `-(slot + 3)` joins it at that segment's END. `slot` is a line-texture
+   * storage slot, so it survives the depth-sort worker's draw-order
+   * permutation. Purely topological — no positions, no angle: the vertex stage
+   * measures the bend in SCREEN space so it tracks the camera. See
    * `wasm/rust/src/lines_clipping.rs` for the full derivation.
    *
    * @param segments - Vertex index pairs [numSegments * 2]
@@ -452,21 +456,17 @@ export interface WasmModule {
    * @param t2Params - End interpolation parameters [numSegments]
    * @param numSegments - Total number of segments
    * @param numVertices - Total number of source vertices
-   * @param startPositions - Clipped start positions [visibleCount * 3]
-   * @param endPositions - Clipped end positions [visibleCount * 3]
-   * @param outputStart - Output start suppression [visibleCount]
-   * @param outputEnd - Output end suppression [visibleCount]
+   * @param outputStart - Output start joint codes [visibleCount]
+   * @param outputEnd - Output end joint codes [visibleCount]
    * @returns Number of visible segments written
    */
-  compute_cap_suppression(
+  compute_joint_codes(
     segments: Uint32Array,
     visibility: Uint8Array,
     t1Params: Float32Array,
     t2Params: Float32Array,
     numSegments: number,
     numVertices: number,
-    startPositions: Float32Array,
-    endPositions: Float32Array,
     outputStart: Float32Array,
     outputEnd: Float32Array
   ): number;

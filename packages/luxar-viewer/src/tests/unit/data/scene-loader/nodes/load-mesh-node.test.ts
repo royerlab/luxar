@@ -71,6 +71,7 @@ function makeCtx(): NodeBuildCtx {
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
+    releaseLazyMesh: vi.fn(),
     kickRefinementIfIdle: vi.fn(),
     applyEffectiveAttrs: (n: SceneNode) => n.attrs,
     deriveNodeViewState: vi.fn(() => ({ skip: false as const, viewState })) as never,

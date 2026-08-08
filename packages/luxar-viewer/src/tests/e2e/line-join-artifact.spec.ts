@@ -1,5 +1,5 @@
 /**
- * Line-joint artifact acceptance measurement (issues #780 / #785 / #790).
+ * Line-joint acceptance test (issues #780 / #785 / #790).
  *
  * Loads `test_line_joins.luxar.zarr` — five joint cases, each in its own
  * horizontal band of world Y — takes one canvas screenshot, and runs the two
@@ -8,31 +8,50 @@
  * compared to each other, so re-screenshotting per band would let a stray
  * frame difference masquerade as a joint defect.
  *
- * Two things are being protected here. What is already correct must stay
- * correct while the vertex stage is rewritten for the miter-join series:
- * both straight bands carry zero dark and zero bright outliers (#785), every
- * band's flux profile is gapless, and the straight profiles are flat (#780 —
- * no bead-chain dip at interior joints). The nine-ray hub stays inside a
- * small ceiling as the never-mitered control. What is still broken is
- * recorded rather than fixed: `curve_smooth` and `zigzag_right_angle` still
- * show the uncovered outer-side wedge and the inner-side double-cover lens,
- * so their outlier fractions are only held under documented ceilings, and
- * the measured numbers are printed for the record.
+ * The spec asserts that the join geometry closes the wedge. Both bending
+ * bands measure ZERO dark and zero bright outliers, exactly like the two
+ * straight bands, and are gated at no more than two of each; the zigzag's
+ * axial flux must additionally stay above 0.9 — the same floor the straight
+ * bands hold. Unmitred rendering cannot clear either gate: it measured 4.94%
+ * dark / 3.52% bright (1918 dark pixels) on `curve_smooth`, 0.076% (30
+ * pixels) on `zigzag_right_angle`, and a flux p05 of 0.780 there.
+ * Alongside that, what was already correct must stay
+ * correct: both straight bands at zero outliers (#785), every
+ * band's flux profile gapless, the straight profiles flat (#780 — no
+ * bead-chain dip at interior joints), and the nine-ray hub inside a small
+ * ceiling as the never-mitered control.
+ *
+ * Why the bend bands are gated at two rather than at the zero they measure.
+ * The miter's design invariant is that both sides of a joint compute the same
+ * miter point, but they compute it from the same operands in a different
+ * float32 order: the vertex path forms `(ndcEnd - ndcStart) * (0.5 *
+ * uResolution)` while the join helper scales each point by `0.5 *
+ * uResolution` and subtracts afterwards, and in float32 those two are not the
+ * same number. Simulated on this fixture the two sides' miter points disagree
+ * by up to 6.6e-05 px on `curve_smooth` and 7.6e-06 px on
+ * `zigzag_right_angle` — enough that subpixel quantisation could in principle
+ * drop or double one seam pixel, which with AA off and a 25/255 threshold
+ * against a ~153/255 tube core scores as a full outlier. Both bands measure 0
+ * on this GPU and driver across four runs, and the ceiling exists only to
+ * absorb that seam pixel. It is not slack in the measurement: a count
+ * anywhere near two means something real has changed and wants investigating,
+ * not re-baselining. Making the two sides agree bit-exactly means subtracting
+ * in NDC and scaling afterwards in both shader backends, which is a separate
+ * change.
  *
  * Some context before reading a number out of this spec. The local-median
  * metric only counts the part of a wedge that is still a couple of pixels
  * across, and a wedge grows from nothing at the centreline to roughly
- * `half_width x turn_angle` at the tube edge — so the gentle `curve_smooth`
- * scores far higher than the 90-degree `zigzag_right_angle`, whose wedge is
- * much worse but much wider. The full measured envelope is in the
- * `line-join-metrics.ts` module header, and the flux profile is what
- * responds on the wide-wedge band.
+ * `half_width x turn_angle` at the tube edge — so on the unmitred renderer
+ * the gentle `curve_smooth` scored far higher than the 90-degree
+ * `zigzag_right_angle`, whose wedge is much worse but much wider. That is
+ * why the zigzag is gated on its flux profile as well: the full measured
+ * envelope is in the `line-join-metrics.ts` module header.
  *
- * Free-end cap behaviour is deliberately outside every measured region in
- * part 1: the four horizontal bands inset their X range by 1.0 world unit so
- * the end ramps never enter a rectangle. Free ends are part of the #785
- * verification set, so whoever closes #790 should not read these assertions
- * as covering them.
+ * Free-end cap behaviour is a standing coverage gap of this spec: the four
+ * horizontal bands inset their X range by 1.0 world unit so the end ramps
+ * never enter a rectangle. Free ends are part of the #785 verification set,
+ * and nothing here measures them.
  *
  * The metrics run on the display-encoded luminance of the composited frame
  * rather than on linearised radiance. Both metrics are relative and the
@@ -43,6 +62,10 @@
  * this spec pins the device pixel ratio with `&dpr=1`, because doubling the
  * DPR does not scale the metric's answer — it slides the wedge across the
  * window's sensitivity boundary.
+ *
+ * Every figure quoted below was measured in headless Chromium at `dpr=1`,
+ * both columns on 2026-08-07 — the unmitred one by re-pointing this spec's
+ * URL at `&lineJoin=none` on the same tree.
  */
 
 import type { Page } from '@playwright/test';
@@ -75,11 +98,13 @@ interface BandBox {
   yMin: number;
   yMax: number;
   /**
-   * Inside-pixel floor, set at roughly half the value measured on
-   * 2026-08-06 with `dpr=1` pinned (38831 / 39030 / 12960 / 53136 / 7010). This is a "the band rendered at all" gate, not a
-   * localisation gate — several bands clear each other's floors, so
-   * `expectedWidth` / `expectedHeight` are what actually pin the camera and
-   * the projection.
+   * Inside-pixel floor, set at roughly half the value measured with `dpr=1`
+   * pinned (41092 / 49296 / 12960 / 53136 / 7010 on the mitred renderer;
+   * 38831 / 39030 / 12960 / 53136 / 7010 unmitred — the miter adds coverage
+   * on the two bend bands and changes neither straight band). This is a "the
+   * band rendered at all" gate, not a localisation gate — several bands clear
+   * each other's floors, so `expectedWidth` / `expectedHeight` are what
+   * actually pin the camera and the projection.
    */
   minInsidePixels: number;
   /**
@@ -185,44 +210,31 @@ const RECT_HEIGHT_TOLERANCE_PX = 2;
 const EXPECTED_LINE_SEGMENTS = 120 + 16 + 40 + 20 + 9;
 
 /**
- * Dark- and bright-outlier ceilings for the two bending cases.
+ * Floor on the zigzag band's axial flux p05.
  *
- * Measured 2026-08-06, headless Chromium, at the fixture's pinned framing
- * with `dpr=1`: `curve_smooth` 4.94% dark / 3.53% bright,
- * `zigzag_right_angle` 0.077% dark / 0.077% bright. The ceilings sit well
- * above those with room for GPU, driver and resolution differences — they
- * are guard rails against a blow-up, not spec values, and they are geometry-
- * and resolution-dependent, so re-measure before tightening them.
+ * The bend bands are gated on outlier COUNTS below (at most two of each, both
+ * measuring 0), not on a fraction. The zigzag needs this
+ * second gate because its wedge is far too wide for the local-median metric
+ * to see: unmitred it scored only 0.076% dark, and its flux p05 is what
+ * actually responded — 0.780 unmitred against 0.985 mitred (2026-08-07),
+ * with the straight bands at 1.000.
  *
- * The bright ceiling is 0.06 rather than 0.04 because pinning the device
- * pixel ratio moved the curve's bright fraction from 1.35% (taken at the
- * machine's native DPR) to 3.53%. Pinning is the right call — that is simply
- * what the pinned frame measures — but it is a reminder that these fractions
- * shift by whole points when a rendering input changes, so a ceiling needs
- * real headroom rather than a snug fit.
- *
- * When the miter join lands the dark ceiling drops to zero: a later part of
- * the #790 series is expected to replace it with `toBe(0)`, matching what
- * the straight bands already assert.
+ * 0.9 is the same floor the straight bands hold, and it brackets the whole
+ * join-free envelope: the measured unmitred 0.780 sits 0.12 below it, and
+ * even an IDEAL join-free zigzag only models to 0.898 — still under the
+ * floor. So a regression to unmitred rendering fails here even if the
+ * outlier counts somehow did not, while the mitred 0.985 clears it with
+ * 0.085 to spare. Both margins are the headroom for GPU, driver and
+ * resolution differences — do not raise the floor into the upper one, and do
+ * not lower it into the lower one.
  */
-const BEND_DARK_CEILING = 0.08;
-const BEND_BRIGHT_CEILING = 0.06;
-
-/**
- * Floor on the zigzag band's axial flux p05. Measured 0.749; an ideal
- * join-free zigzag models to 0.898, and the curve barely moves either way
- * (0.860 to 0.855), so this is the one band where the flux profile
- * genuinely discriminates. Set loose in the same guard-rail spirit as the
- * outlier ceilings — this is the number the miter part of the series should
- * watch climb.
- */
-const ZIGZAG_FLUX_P05_FLOOR = 0.6;
+const ZIGZAG_FLUX_P05_FLOOR = 0.9;
 
 /**
  * Ceilings for the never-mitered control. A degree-9 branch point has all
  * nine quads stacked around the hub with cap suppression at 0, so it has no
- * uncovered wedge to begin with; measured 0.157% dark / 0.114% bright, and
- * it is here to stay stable.
+ * uncovered wedge to begin with; measured 0.157% dark / 0.114% bright both
+ * before and after the miter landed, and it is here to stay stable.
  */
 const HUB_OUTLIER_CEILING = 0.01;
 
@@ -370,8 +382,8 @@ test.describe('Line-joint artifact measurement (#790)', () => {
       const flux = measureAxialFlux(luminance, frame.width, frame.height, rect, 'x');
       byName.set(ndc.name, { rect, outliers, flux });
 
-      // Printed for the record — these are the #790 baseline the later parts
-      // of the series are judged against.
+      // Printed for the record, so a failure report carries the full
+      // per-band numbers rather than just the one assertion that tripped.
       console.log(
         `[line-join] ${ndc.name}: rect=${rect.x},${rect.y} ${rect.width}x${rect.height} ` +
           `inside=${outliers.insidePixels} ` +
@@ -445,30 +457,52 @@ test.describe('Line-joint artifact measurement (#790)', () => {
       HUB_OUTLIER_CEILING
     );
 
-    // #790, recorded rather than fixed: both bending cases still leave an
-    // uncovered wedge on the outside of every turn and a double-covered lens
-    // on the inside. Asserting 0 here would fail today, and pinning the exact
-    // buggy value would be just as wrong, so they are held under documented
-    // ceilings that the miter-join part of the series is expected to replace
-    // with `toBe(0)`.
-    expect(curve.outliers.darkFraction, 'curve_smooth dark fraction').toBeLessThan(
-      BEND_DARK_CEILING
-    );
-    expect(curve.outliers.brightFraction, 'curve_smooth bright fraction').toBeLessThan(
-      BEND_BRIGHT_CEILING
-    );
-    expect(zigzag.outliers.darkFraction, 'zigzag_right_angle dark fraction').toBeLessThan(
-      BEND_DARK_CEILING
-    );
-    expect(zigzag.outliers.brightFraction, 'zigzag_right_angle bright fraction').toBeLessThan(
-      BEND_BRIGHT_CEILING
-    );
+    // #790: the miter closes the outer-side wedge and removes the inner-side
+    // double-cover lens, so both bending cases now measure exactly what the
+    // straight bands do — not a single tick, dark or bright. Unmitred, the
+    // curve scored 4.94% dark / 3.52% bright (1918 dark pixels) here and the
+    // zigzag 0.076% (30 pixels).
+    //
+    // The MEASURED value on both bands is 0, across four runs, and the
+    // ceiling of 2 is not slack in that measurement. It is there because the
+    // two sides of a joint are not guaranteed to land on the same miter point
+    // bit-for-bit: they use the same operands in a different float32 order —
+    // the vertex path forms `(ndcEnd - ndcStart) * (0.5 * uResolution)`, the
+    // join helper scales each point and subtracts afterwards — which on this
+    // fixture puts them up to 6.6e-05 px apart on the curve (7.6e-06 px on the
+    // zigzag). Subpixel quantisation can turn that into one dropped or doubled
+    // seam pixel, and with AA off that scores as a full outlier. Two still
+    // leaves ~960x margin on the curve and ~15x on the zigzag against unmitred
+    // rendering, so a count anywhere near the ceiling is not the seam: it means
+    // something real has changed and should be investigated, not re-baselined.
+    // (Making the two sides agree exactly means subtracting in NDC and scaling
+    // afterwards in both shader backends — see `_shared/glsl-lib.ts`.)
+    //
+    // Positive control, run 2026-08-07: re-pointing this spec's URL at
+    // `&lineJoin=none` reproduces 4.941% dark / 3.520% bright on the curve and
+    // drops the zigzag's flux p05 to 0.780, so all five assertions below fail
+    // without the join geometry. They are a regression detector, not a
+    // tautology — if you widen them, re-run that A/B before believing the
+    // result.
+    expect(curve.outliers.darkOutliers, 'curve_smooth dark outliers').toBeLessThanOrEqual(2);
+    expect(curve.outliers.brightOutliers, 'curve_smooth bright outliers').toBeLessThanOrEqual(2);
+    expect(zigzag.outliers.darkOutliers, 'zigzag_right_angle dark outliers').toBeLessThanOrEqual(2);
+    expect(
+      zigzag.outliers.brightOutliers,
+      'zigzag_right_angle bright outliers'
+    ).toBeLessThanOrEqual(2);
 
-    // Note for whoever closes #790: a zero dark fraction on the zigzag would
-    // not prove its wedge is closed. That wedge is a 28.8 px-radius quarter
-    // disc, far wider than the local-median metric's couple-of-pixels
-    // envelope, so it reads 0.077% today while the far gentler curve reads
-    // 4.94%. The flux dip below is the measure that responds on this band.
+    // Zero outliers alone would not prove the zigzag's wedge is closed. That
+    // wedge is a 28.8 px-radius quarter disc, far wider than the local-median
+    // metric's couple-of-pixels envelope, so unmitred it read only 0.076%
+    // while the far gentler curve read 4.94%. The flux profile is the measure
+    // that responds on this band: 0.780 unmitred, 0.985 mitred.
     expect(zigzag.flux.p05, 'zigzag_right_angle axial p05').toBeGreaterThan(ZIGZAG_FLUX_P05_FLOOR);
+
+    // `curve_smooth`'s flux is deliberately NOT gated. Its p05/p95 measure
+    // 0.856 / 1.116, and that spread is the sinusoid's own oblique
+    // cross-section: the tube is not axis-aligned, so a column sum genuinely
+    // varies along screen-x. It is geometry, not a defect — do not "tighten"
+    // it to the straight bands' bounds.
   });
 });

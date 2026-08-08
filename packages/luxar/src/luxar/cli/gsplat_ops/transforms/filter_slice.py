@@ -8,9 +8,9 @@ from typing import Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
-from ..utils import format_memory_size
-from .encoding import _resolve_encoding_mode
-from .transforms_parsing import (
+from ...utils import format_memory_size
+from ..encoding import _resolve_encoding_mode
+from .parsing import (
     parse_axis_list,
     parse_bbox,
     parse_slices,

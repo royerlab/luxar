@@ -82,6 +82,14 @@ export interface GeometryCapabilities {
   /**
    * Registers per-element centers with the depth-sort coordinator, so switching
    * blending mode has to start or stop sorting for the layer.
+   *
+   * "Center" is per-type — splat/point centers, line segment midpoints, triangle
+   * centroids — and so is the APPLY: the three instanced types permute an
+   * `aSortedIndex` draw-slot indirection, mesh permutes `geometry.index` itself.
+   * Neither distinction belongs here. What this flag answers is the one question
+   * its consumer asks (`ui/layers/layer-apply.ts` →
+   * `noteDepthSortBlendingModeSwitch`): does a mode change into or out of an
+   * order-dependent mode have to reprocess/release this node?
    */
   readonly depthSortable: boolean;
 }
@@ -96,12 +104,17 @@ export interface GeometryCapabilities {
  *
  * Points / Lines / GSplats are uniformly capable — they are all soft, emissive,
  * per-element primitives drawn as instanced quads. `mesh` is the row that proves
- * the table earns its keep: it is uniformly INCAPABLE, but not for one blanket
- * reason. `pooled` is architectural — a mesh is an indexed `BufferGeometry`, so
- * there is nothing to pool. `lod` is not: substitutive levels need only a
- * decimator on the writer side and a widened `LODGroupMetadata.display_type`
- * here. The row comment below gives each flag its own reason; do not read
- * "impossible" into a column that means "not yet".
+ * the table earns its keep: its four flags have four different answers, for four
+ * unrelated reasons. `lod` and `depthSortable` are TRUE — the first because a
+ * `kind=lod` group's levels REPLACE one another and `luxar.mesh.decimate` is the
+ * producer that was missing, the second because a triangle's center is its vertex
+ * centroid, so registration, worker and kernel are all shared. `pooled` is FALSE
+ * architecturally — a mesh is an indexed `BufferGeometry`, so there is nothing to
+ * pool, and that column can never become true. `partition` is FALSE only for now:
+ * a BSP cut is a re-indexing rather than a slice, because a triangle references a
+ * shared vertex table, so each part must gather and renumber its own vertices.
+ * The row comment below gives each flag its own reason; do not read "impossible"
+ * into a column that means "not yet".
  *
  * Readonly + frozen: every predicate reads this object live, so a mutation
  * would globally flip a capability for the whole session. (The record is
@@ -121,13 +134,18 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     //                 impossible (a prefix of an index buffer is a HOLED surface,
     //                 not a coarser one) and this flag never gated it — that
     //                 refusal lives in `loader-factory.ts`.
-    //   partition     a BSP cut needs vertex duplication at part boundaries.
+    //   partition     a BSP cut needs vertex duplication at part boundaries: a
+    //                 triangle references a shared vertex table, so a part is a
+    //                 re-indexing, not a slice of element rows.
     //   pooled        mesh renders as an indexed BufferGeometry, NOT through the
-    //                 instanced-quad element-texture stack.
-    //   depthSortable sorting a mesh means permuting an index buffer, not an
-    //                 instance list, so it registers no per-element centers.
+    //                 instanced-quad element-texture stack. Permanently false.
+    //   depthSortable TRUE: a triangle's center is its vertex centroid, so the
+    //                 registration, the worker and the kernel are all shared. Only
+    //                 the apply differs — the ordering permutes `geometry.index`
+    //                 instead of an `aSortedIndex` indirection (§9,
+    //                 `rendering/depth-sort-coordinator/triangle-ordering.ts`).
     // Flip a flag here when the corresponding path lands — never at a call site.
-    mesh: { lod: true, partition: false, pooled: false, depthSortable: false },
+    mesh: { lod: true, partition: false, pooled: false, depthSortable: true },
   });
 
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */

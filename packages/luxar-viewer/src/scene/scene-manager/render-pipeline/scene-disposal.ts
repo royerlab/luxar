@@ -40,8 +40,9 @@ import {
 export function disposeObjectTree(obj: THREE.Object3D): void {
   if (obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh) {
     // Depth sorting: drop the node's SortWorker registration (transferred
-    // center buffers) with the mesh. Unconditional — only sortable nodes
-    // (gsplats, points, and lines) ever register, and the release
+    // center buffers) with the mesh, plus any written-but-undrawn index
+    // permutation's profiler lifecycle. Unconditional — only sortable nodes
+    // (all four geometry types) ever register, and the release
     // is a cheap map-delete no-op for everything else; an in-flight sort
     // resolves onto the deleted coordinator state and is discarded.
     releaseDepthSortNode(obj);
