@@ -49,7 +49,7 @@ let wasmJsUrlOverride: string | undefined;
  * otherwise failing later at first use — where the symptom is an opaque
  * "x is not a function" rather than "your WASM build is old".
  *
- * - `compute_cap_suppression` — added with the line cap-suppression kernel.
+ * - `compute_joint_codes` — added with the line cap-suppression kernel.
  * - `mesh_vertex_visibility_mask` / `compact_visible_faces` — added with the
  *   mesh culling kernels.
  *
@@ -58,7 +58,7 @@ let wasmJsUrlOverride: string | undefined;
  * fallback path, which is correct but slower — `make build-wasm` is the fix.
  */
 const REQUIRED_WASM_EXPORTS = [
-  'compute_cap_suppression',
+  'compute_joint_codes',
   'mesh_vertex_visibility_mask',
   'compact_visible_faces',
 ] as const satisfies readonly (keyof WasmModule)[];

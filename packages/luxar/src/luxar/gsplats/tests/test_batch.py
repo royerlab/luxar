@@ -14,7 +14,7 @@ class TestSelectPlanTimepoints:
     """The shared content-plan timepoint sampler (`--plan-timepoint`/`--plan-samples`)."""
 
     def test_pinned_timepoint_scans_only_that_one(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import _select_plan_timepoints
+        from luxar.cli.gsplat_ops.batch.planning import _select_plan_timepoints
 
         assert _select_plan_timepoints(
             [0, 5, 10, 15], plan_timepoint=10, plan_samples=16
@@ -23,13 +23,13 @@ class TestSelectPlanTimepoints:
     def test_pinned_timepoint_out_of_range_raises(self) -> None:
         import typer
 
-        from luxar.cli.gsplat_ops.batch_planning import _select_plan_timepoints
+        from luxar.cli.gsplat_ops.batch.planning import _select_plan_timepoints
 
         with pytest.raises(typer.BadParameter):
             _select_plan_timepoints([0, 5, 10], plan_timepoint=7, plan_samples=16)
 
     def test_fewer_timepoints_than_samples_returns_all(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import _select_plan_timepoints
+        from luxar.cli.gsplat_ops.batch.planning import _select_plan_timepoints
 
         assert _select_plan_timepoints(
             [0, 1, 2, 3], plan_timepoint=None, plan_samples=16
@@ -41,7 +41,7 @@ class TestSelectPlanTimepoints:
         ]
 
     def test_caps_to_evenly_spaced_sample_with_endpoints(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import _select_plan_timepoints
+        from luxar.cli.gsplat_ops.batch.planning import _select_plan_timepoints
 
         out = _select_plan_timepoints(
             list(range(100)), plan_timepoint=None, plan_samples=5
@@ -51,7 +51,7 @@ class TestSelectPlanTimepoints:
         assert out == sorted(set(out))  # strictly increasing, deduplicated
 
     def test_real_indices_preserved_in_sample(self) -> None:
-        from luxar.cli.gsplat_ops.batch_planning import _select_plan_timepoints
+        from luxar.cli.gsplat_ops.batch.planning import _select_plan_timepoints
 
         # Sliced selection (e.g. --timepoints '::10') keeps REAL dataset indices.
         real = [0, 10, 20, 30, 40, 50, 60, 70]
@@ -63,7 +63,7 @@ class TestSelectPlanTimepoints:
     def test_zero_samples_raises(self) -> None:
         import typer
 
-        from luxar.cli.gsplat_ops.batch_planning import _select_plan_timepoints
+        from luxar.cli.gsplat_ops.batch.planning import _select_plan_timepoints
 
         with pytest.raises(typer.BadParameter):
             _select_plan_timepoints([0, 1, 2], plan_timepoint=None, plan_samples=0)
@@ -1558,7 +1558,7 @@ class TestMergeOrchestrator:
         to the canonical `kmeans_lloyd`, like the `gsplat lod` command — else it
         reaches make_substitutive_lod invalid and raises. Fails pre-fix (the raw
         hyphenated string was passed through verbatim)."""
-        from luxar.cli.gsplat_ops.batch_recipe_args import (
+        from luxar.cli.gsplat_ops.batch.recipe_args import (
             build_merge_recipe_params as _build_merge_recipe_params,
         )
 
@@ -1598,7 +1598,7 @@ class TestMergeOrchestrator:
 
         from typer.testing import CliRunner
 
-        from luxar.cli.gsplat_ops.batch_commands import app_batch
+        from luxar.cli.gsplat_ops.batch.commands import app_batch
         from luxar.gsplats.batch.manifest import (
             BatchManifest,
             output_filename,
@@ -1667,7 +1667,7 @@ class TestMergeOrchestrator:
         string was wrapped into RecipeParams unchecked)."""
         import typer
 
-        from luxar.cli.gsplat_ops.batch_recipe_args import (
+        from luxar.cli.gsplat_ops.batch.recipe_args import (
             build_merge_recipe_params as _build_merge_recipe_params,
         )
 
@@ -1686,7 +1686,7 @@ class TestMergeOrchestrator:
         ValueError surfaced as a traceback. Fails pre-fix (unwrapped int())."""
         import typer
 
-        from luxar.cli.gsplat_ops.batch_recipe_args import (
+        from luxar.cli.gsplat_ops.batch.recipe_args import (
             build_merge_recipe_params as _build_merge_recipe_params,
         )
 
@@ -1707,7 +1707,7 @@ class TestMergeOrchestrator:
         that no output file was created. Fails pre-fix (deep raise left a stub)."""
         from typer.testing import CliRunner
 
-        from luxar.cli.gsplat_ops.batch_commands import app_batch
+        from luxar.cli.gsplat_ops.batch.commands import app_batch
         from luxar.gsplats.batch.manifest import (
             BatchManifest,
             output_filename,
@@ -2254,7 +2254,7 @@ class TestMergeRecipeAdditiveKnobs:
     additive ladder method/breakpoints and the lod-method are tunable."""
 
     def test_build_merge_recipe_params_additive_knobs(self) -> None:
-        from luxar.cli.gsplat_ops.batch_recipe_args import (
+        from luxar.cli.gsplat_ops.batch.recipe_args import (
             build_merge_recipe_params as _build_merge_recipe_params,
         )
 
@@ -2281,7 +2281,7 @@ class TestMergeRecipeAdditiveKnobs:
         # a bad additive method fails fast
         import typer
 
-        from luxar.cli.gsplat_ops.batch_recipe_args import (
+        from luxar.cli.gsplat_ops.batch.recipe_args import (
             build_merge_recipe_params as _build_merge_recipe_params,
         )
 

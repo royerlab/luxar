@@ -530,7 +530,7 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 **How It Works:**
 
 1. Each frame, computes a bounding sphere from the cached scene bounds (with safety margin)
-2. Near plane = `max(minNearForRadius(R), distToCenter - R)` where `R` is the safety-expanded radius and `minNearForRadius(R) = max(MIN_NEAR_PLANE, R * MIN_NEAR_RADIUS_FACTOR)` is a scale-aware floor -- smoothly transitions to that floor as the camera enters the sphere
+2. Near plane = `max(nearPlaneFloor(R, far), distToCenter - R)` where `R` is the safety-expanded radius and `nearPlaneFloor(R, far) = max(minNearForRadius(R), far / MAX_NEAR_FAR_RATIO)` -- smoothly transitions to that floor as the camera enters the sphere
 3. Far plane = `distToCenter + R` -- distance to farthest point on the sphere
 4. The bounds cache is invalidated on scene load/clear; zero per-frame scene-graph traversal in steady state
 
@@ -538,7 +538,7 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 
 - Always-optimal Z-buffer precision as camera moves
 - **Direction-independent clipping** -- no sharp jumps at bounding box edges
-- Near plane continuously drops to the scale-aware floor as camera enters the scene
+- Near plane drops to the floor as camera enters the scene, but no further: `MAX_NEAR_FAR_RATIO = 1200` caps the near/far ratio so 24-bit depth stays usable (an unbounded ratio z-fights, and pops while orbiting). The cap sits below the `nearCull` depth at which Points/Lines/GSplats already vanish, so it costs those types nothing
 - Eliminates need for manual clipping adjustment
 - Perfect for exploring large-scale scenes from any viewpoint
 
