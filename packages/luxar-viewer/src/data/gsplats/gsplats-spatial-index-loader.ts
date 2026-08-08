@@ -490,7 +490,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     let centers: Float32Array;
     let amplitudes: Float32Array;
     let choleskyFactors: Float32Array;
-    let colors: Float32Array | Uint8Array | Uint16Array | null = null;
+    let colors: Float32Array | Uint8Array | Uint16Array | null;
 
     // All four attribute arrays load CONCURRENTLY (distinct zarr arrays,
     // distinct freshly-allocated output buffers).

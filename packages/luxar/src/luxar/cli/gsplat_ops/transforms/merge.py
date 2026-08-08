@@ -8,7 +8,7 @@ from typing import Literal, Optional
 import typer
 from arbol import aprint, asection
 
-from .encoding import _resolve_encoding_mode
+from ..encoding import _resolve_encoding_mode
 
 
 def run_merge_datasets(

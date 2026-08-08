@@ -1037,9 +1037,9 @@ describe('OverlayManager HTML sanitization (issue #720)', () => {
       return original.call(this, node, ref) as T;
     };
 
-    let movesDeepOnly = 0;
-    let movesWithPayload = 0;
-    let outWithPayload = '';
+    let movesDeepOnly: number;
+    let movesWithPayload: number;
+    let outWithPayload: string;
     try {
       // Baseline: same depth, single payload node.
       moves = 0;
