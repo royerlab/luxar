@@ -101,7 +101,7 @@ void main() {
 	if ( ( nodeVar0 >= 1.0 ) ) {
 
 		discard;
-
+		
 
 	}
 
@@ -135,7 +135,7 @@ void main() {
 	if ( ( max( nodeVarying0.x, max( nodeVarying0.y, nodeVarying0.z ) ) < 0.0001 ) ) {
 
 		discard;
-
+		
 
 	}
 

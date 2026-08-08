@@ -60,8 +60,8 @@ layout( std140 ) uniform object {
 };
 
 layout( std140 ) uniform render {
-	mat4 cameraProjectionMatrix;
 	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
 };
 uniform sampler2D nodeUniform8;
 
@@ -169,7 +169,7 @@ float nodeVar84;
 void main() {
 
 	// transforms
-
+	
 
 	// flow
 	// code

@@ -122,11 +122,6 @@ function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: str
 // variants so attribute-packing changes (Float16 colours, etc.) have a
 // regression gate across Points, Lines, and GSplats.
 const SHADERS = [
-  // Shared-math erf polynomial (materials/_shared/erf.ts): the snapshot
-  // pins the LITERALS the TSL code generator emits for the coefficient
-  // values — the textual half of the value-level parity contract (the
-  // pixel half is the parity spec's 'erf' test).
-  'erf',
   'line',
   'line-pick',
   'line-gamma-one',
@@ -209,6 +204,16 @@ const SHADERS = [
   'mesh-flat-normal',
   'mesh-colormap',
   'mesh-pick',
+  // Shared-math erf polynomial (materials/_shared/erf.ts): the snapshot
+  // pins the LITERALS the TSL code generator emits for the coefficient
+  // values — the textual half of the value-level parity contract (the
+  // pixel half is the parity spec's 'erf' test). MUST STAY LAST: the
+  // shared `render` std140 uniform group accumulates members in
+  // first-encounter order across the whole run, so a new entry built
+  // BEFORE the geometry shaders reorders `cameraViewMatrix` /
+  // `cameraProjectionMatrix` in every subsequent snapshot (49 files of
+  // spurious churn when 'erf' briefly led this list).
+  'erf',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {
