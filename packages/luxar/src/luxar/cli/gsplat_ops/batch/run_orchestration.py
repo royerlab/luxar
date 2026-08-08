@@ -68,14 +68,14 @@ def run_batch_local_orchestration(
 ) -> None:
     """Build a local batch plan, print summary, and execute local workers."""
     from luxar.cli.gsplat_config import parse_hex_color
-    from luxar.cli.gsplat_ops.batch_planning import (
+    from luxar.cli.gsplat_ops.batch.planning import (
         ContentKnobs,
         DenoiseConfig,
         FitConfig,
         MergeConfig,
         plan_batch,
     )
-    from luxar.cli.gsplat_ops.batch_recipe_args import (
+    from luxar.cli.gsplat_ops.batch.recipe_args import (
         build_merge_recipe_params as _build_merge_recipe_params_impl,
     )
     from luxar.gsplats.batch.local_runner import run_batch_local
