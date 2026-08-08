@@ -110,14 +110,17 @@ edge list it was computed from, so a new monthly CAIDA release downloads
 once and recomputes both derived artifacts once, while an older snapshot's
 caches stay valid rather than being clobbered. Superseded snapshots (raw
 files plus their derived pipeline bundles) are pruned to the newest
-``--keep-snapshots`` releases on every run.
+``--keep-snapshots`` releases on every successful run — after the pipeline has
+loaded, so a snapshot the parser rejects cannot delete the previous release,
+which is then still on disk to go back to once the rejected file is deleted. A
+run that never loads therefore reclaims nothing.
 
 Two things are deliberately never deleted. The layout pickles (~1 MB each)
 have no release date to key them by, so they are not pruned — running this
 demo monthly for years accumulates a few tens of MB, and
-``luxar demo cache clear caida`` wipes the lot. And a ``layout_3d.npz``
-left by an older version of this demo is left alone, because that filename
-belongs to ``demo_huri_interactome``'s live layout cache and
+``luxar demo cache clear caida_as_topology`` wipes the lot. And a
+``layout_3d.npz`` left by an older version of this demo is left alone, because
+that filename belongs to ``demo_huri_interactome``'s live layout cache and
 ``--cache-dir`` may well point both demos at one shared directory.
 
 Usage:
@@ -199,13 +202,13 @@ AS_ORG_NAME_PATTERN = re.compile(r"\d{8}\.as-org2info\.txt\.gz")
 AS_REL_FILE_PATTERN = re.compile(rf'href="({AS_REL_NAME_PATTERN.pattern})"')
 AS_ORG_FILE_PATTERN = re.compile(rf'href="({AS_ORG_NAME_PATTERN.pattern})"')
 
-# The as-org2info section markers. CAIDA writes them with NO space after the
-# colon ("# format:org_id|changed|org_name|country|source"); mirrored/older
-# copies use "# format: org_id". Accept both — matching neither leaves every AS
-# labelled "unknown"/"??", which is silent (the demo still renders) and was
-# exactly the state of the "Country" color view before this was made tolerant.
-ORG_SECTION_PATTERN = re.compile(r"format:\s*org_id\b")
-AUT_SECTION_PATTERN = re.compile(r"format:\s*aut\b")
+# The as-org2info section marker. CAIDA writes it with NO space after the colon
+# ("# format:org_id|changed|org_name|country|source"); mirrored/older copies use
+# "# format: org_id". One anchored, whitespace-tolerant pattern accepts both, and
+# its capture group names the section that follows ("org_id" or "aut").
+AS_ORG_SECTION_PATTERN = re.compile(
+    r"^\s*#\s*format\s*:\s*(org_id|aut)(?:\||\s|$)", re.IGNORECASE
+)
 
 # Snapshot discovery memo: which snapshot pair was current, and when we checked.
 # Discovery costs two directory-listing GETs and CAIDA publishes monthly, so
@@ -483,9 +486,10 @@ def _prune_superseded_snapshots(
     must not lose someone else's ``pipeline_…`` file to a substring match.
     Nothing else is touched: not the memo, not an
     unrecognised file, and deliberately not a ``layout3d_*`` cache. Those are
-    small (~1 MB each) and keyed on the node SET rather than the release, so
-    there is no date to prune them by, and an unchanged node set across releases
-    reuses the same one.
+    small (~1 MB each) and keyed on their input identity (node set + edge list)
+    rather than on the release, so there is no date to prune them by — and since
+    a release that rewires or grows the edge list gets a new key, they accumulate
+    roughly one per release.
 
     Deletions are best-effort: a file that vanishes underfoot is skipped rather
     than allowed to abort a run that has already paid for its download. There is
@@ -558,15 +562,18 @@ def parse_as_org(path: Path) -> pd.DataFrame:
     """Return a DataFrame indexed by ASN with ``org_name`` and ``country``.
 
     The CAIDA as-org2info file has two sections separated by format-comment
-    headers, written with no space after the colon:
-        # format:org_id|changed|org_name|country|source        (organizations)
+    headers. Current snapshots omit whitespace after the colon, while older or
+    hand-authored fixtures may include it::
+
+        # format:org_id|changed|org_name|country|source     (organizations)
         # format:aut|changed|aut_name|org_id|opaque_id|source  (ASes → org_id)
-    We stream once, tracking which section we're in, and join. The markers are
-    matched whitespace-tolerantly (:data:`ORG_SECTION_PATTERN` /
-    :data:`AUT_SECTION_PATTERN`), so recognition does not hinge on one spelling
-    of the separator — and an empty section warns, because the failure mode is
-    otherwise invisible: every row is skipped, every AS comes out
-    ``unknown``/``??``, and the demo still renders with a flat "Country" view.
+
+    We stream once, accept either whitespace form
+    (:data:`AS_ORG_SECTION_PATTERN`), track the active section, and join the ASN
+    records to their organizations. An empty section raises, because the failure
+    mode is otherwise invisible: every row would be skipped, every AS would come
+    out ``unknown``/``??``, and the demo would still render — with a flat
+    "Country" view that is easy to miss.
     """
     org_info: dict[str, tuple[str, str]] = {}
     asn_to_org: dict[str, str] = {}
@@ -576,12 +583,14 @@ def parse_as_org(path: Path) -> pd.DataFrame:
         opener = gzip.open if path.suffix == ".gz" else open
         with opener(path, "rt", encoding="utf-8", errors="replace") as f:
             for raw in f:
-                line = raw.rstrip("\n")
-                if line.startswith("#"):
-                    if ORG_SECTION_PATTERN.search(line):
-                        mode = "org"
-                    elif AUT_SECTION_PATTERN.search(line):
-                        mode = "aut"
+                line = raw.rstrip("\r\n")
+                section_match = AS_ORG_SECTION_PATTERN.match(line)
+                if section_match:
+                    mode = (
+                        "org" if section_match.group(1).lower() == "org_id" else "aut"
+                    )
+                    continue
+                if line.lstrip().startswith("#"):
                     continue
                 if not line.strip():
                     continue
@@ -594,14 +603,20 @@ def parse_as_org(path: Path) -> pd.DataFrame:
                     asn_to_org[asn.strip()] = org_id.strip()
 
         if not org_info or not asn_to_org:
-            # The failure this parser is most prone to, made loud. A marker the
-            # regexes do not recognise skips every row and still renders — the
-            # "Country" view just goes one flat colour, which is easy to miss.
-            aprint(
-                "  ⚠ No organization/AS section recognised in this file — its "
-                "format-comment markers have changed."
+            missing = []
+            if not org_info:
+                missing.append("organization records")
+            if not asn_to_org:
+                missing.append("ASN-to-organization records")
+            raise ValueError(
+                f"CAIDA AS-organization file {path} contains no parsed "
+                f"{' and no '.join(missing)}; expected '# format:org_id|...' and "
+                "'# format:aut|...' section headers. A cached non-empty snapshot "
+                "is never re-downloaded, so while that file is the current "
+                "release neither --refresh-snapshots nor --recompute-pipeline "
+                "can heal this: delete that file (or run "
+                "'luxar demo cache clear caida_as_topology') to re-fetch it."
             )
-            aprint("    Every AS will be labelled unknown/??.")
 
         rows = []
         for asn, org_id in asn_to_org.items():
@@ -1432,11 +1447,16 @@ def main() -> None:
     aprint("")
 
     rel_path, org_path = ensure_data(cache_dir, refresh=refresh_snapshots)
-    _prune_superseded_snapshots(
-        cache_dir, keep=keep_snapshots, current=(rel_path.name, org_path.name)
-    )
     nodes, node_df, edges, tier1, communities, degrees = load_pipeline(
         rel_path, org_path, cache_dir, recompute=recompute_pipeline
+    )
+    # Pruned only once the pipeline has loaded, because loading is what proves the
+    # new release usable: a snapshot the parser rejects must never be able to
+    # delete the last release that still is. The deliberate cost is that a run
+    # which never loads reclaims nothing — acceptable, since the parse error names
+    # the file to delete, and the previous release is then still on disk.
+    _prune_superseded_snapshots(
+        cache_dir, keep=keep_snapshots, current=(rel_path.name, org_path.name)
     )
     coords = compute_layout(
         nodes,

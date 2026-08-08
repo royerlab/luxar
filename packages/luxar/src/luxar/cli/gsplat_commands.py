@@ -1,8 +1,9 @@
 """Aggregator for the ``luxar gsplat`` command group.
 
-The command implementations live in ``cli/gsplat_ops/`` — one module per thematic
-group (inspect / transforms / fitting / scene / benchmark / batch), plus the
-``lod`` recipe command in ``cli/lod.py``. This module builds the ``app_gsplat``
+The command implementations live in ``cli/gsplat_ops/`` — one root module or
+subpackage per thematic group (inspect / transforms / fitting / scene /
+interchange / benchmark / batch), plus the ``lod`` recipe command in
+``cli/lod.py``. This module builds the ``app_gsplat``
 Typer and registers each group onto it, keeping itself a thin registration
 surface rather than a multi-thousand-line god-file.
 
@@ -13,13 +14,13 @@ from __future__ import annotations
 
 import typer
 
-from .gsplat_ops.batch_commands import app_batch
+from .gsplat_ops.batch.commands import app_batch
 from .gsplat_ops.benchmark import register_benchmark_commands
-from .gsplat_ops.fitting import register_fitting_commands
+from .gsplat_ops.fitting.commands import register_fitting_commands
 from .gsplat_ops.inspect_commands import register_inspect_commands
 from .gsplat_ops.interchange_commands import register_interchange_commands
 from .gsplat_ops.scene_commands import register_scene_commands
-from .gsplat_ops.transforms_commands import register_transforms_commands
+from .gsplat_ops.transforms.commands import register_transforms_commands
 from .lod import register_lod_command
 
 app_gsplat = typer.Typer(

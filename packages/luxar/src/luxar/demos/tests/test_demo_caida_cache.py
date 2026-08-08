@@ -26,14 +26,18 @@ recompute, and impossible offline. These tests pin the caching that removes it:
   reused, and a rewired graph with the same nodes — even one with the same edge
   COUNT — is not served last month's geometry.
 * ``parse_as_org`` — the section markers CAIDA really emits carry NO space after
-  the colon (``# format:org_id|…``). Matching only the spaced spelling yields an
-  empty table and hence ``unknown``/``??`` for every AS — a silent failure the
-  demo renders straight through, so the fixture below uses the real spelling and
-  a second case pins that the spaced variant still parses.
+  the colon (``# format:org_id|…``). Matching no marker at all would yield an
+  empty table and hence ``unknown``/``??`` for every AS — a failure the demo
+  would render straight through — so it raises instead; the fixture below uses
+  the real spelling, a second case pins that the spaced variant still parses,
+  and a third pins the raise when neither section is recognised.
 * ``main()`` end to end on a warm cache — the issue's actual acceptance
   criterion: no network, no re-parse, no Louvain, no layout recompute. Plus the
   flag wiring (``--refresh-snapshots`` / ``--keep-snapshots`` /
-  ``--recompute-pipeline``).
+  ``--recompute-pipeline``) and the ORDER of the two: pruning runs only once the
+  pipeline has proven the new snapshot pair loadable — and when it never does, not
+  at all, so a rejected snapshot can never delete the release still worth going
+  back to.
 
 No network: ``requests.get`` is replaced in every test that could reach it, and
 the warm-run tests (including the COLD half of the ``main()`` one, which needs
@@ -601,8 +605,8 @@ class TestLoadPipeline:
             for col in exp_node_df.columns:
                 assert list(node_df[col]) == list(exp_node_df[col]), (col, label)
             # The REAL org names and countries must reach the nodes. If the
-            # section markers stopped matching, every row here would be
-            # "unknown"/"??" — silent in the render, so assert it somewhere.
+            # ASN → org join broke, every row here would be "unknown"/"??" —
+            # silent in the render, so assert it somewhere.
             assert list(node_df["org_name"]) == [
                 "Alpha Networks",
                 "Beta Telecom",
@@ -700,7 +704,7 @@ class TestLoadPipeline:
 
 
 class TestParseAsOrgSections:
-    """A marker mismatch is silent: an empty table renders as unknown/??."""
+    """Both marker spellings parse; a file with neither section fails loud."""
 
     @staticmethod
     def _parse(tmp_path: Path, text: str) -> Any:
@@ -727,25 +731,30 @@ class TestParseAsOrgSections:
         assert df.loc["1", "org_name"] == "Alpha Networks"
         assert df.loc["1", "country"] == "US"
 
-    def test_an_unmatched_marker_yields_an_empty_table_and_warns(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    def test_an_unmatched_marker_raises_naming_both_missing_kinds(
+        self, tmp_path: Path
     ) -> None:
-        # The anti-case: no recognisable section header at all, so every row is
-        # skipped. The demo still renders, which is exactly why it has to say so
-        # — an unannounced flat "Country" view is how the old spaced-marker bug
-        # survived unnoticed.
-        df = self._parse(tmp_path, ORG_TEXT.replace("# format:", "# columns:"))
+        # The anti-case: no recognisable section header at all, so BOTH sections
+        # come out empty and every row is skipped. Silently returning that table
+        # would still render — an unannounced flat "Country" view is how the old
+        # spaced-marker bug survived unnoticed — so the parser refuses.
+        with pytest.raises(ValueError) as exc_info:
+            self._parse(tmp_path, ORG_TEXT.replace("# format:", "# columns:"))
 
-        assert len(df) == 0
-        out = capsys.readouterr().out
-        assert "No organization/AS section recognised" in out
-
-    def test_a_recognised_file_does_not_warn(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        self._parse(tmp_path, ORG_TEXT)
-
-        assert "No organization/AS section recognised" not in capsys.readouterr().out
+        message = str(exc_info.value)
+        # WHICH file: the hint says to delete it, so naming it is the whole point.
+        assert "20250301.as-org2info.txt.gz" in message
+        # The joined phrase, not the two kinds separately: "organization records"
+        # is a substring of "ASN-to-organization records", so naming only the
+        # latter would satisfy both halves while hiding half the diagnosis.
+        assert (
+            "no parsed organization records and no ASN-to-organization records"
+            in message
+        )
+        # And the way out, since a cached non-empty snapshot is never re-fetched.
+        # The DEMO KEY, not the cache name: 'cache clear caida' exits with
+        # "unknown demo 'caida'", so a wrong spelling here is a dead end.
+        assert "luxar demo cache clear caida_as_topology" in message
 
 
 # =============================================================================
@@ -1117,8 +1126,13 @@ class TestMainWarmRun:
     the old inline chain and every other test here would stay green.
     """
 
-    @pytest.fixture(autouse=True)
-    def _needs_networkx(self) -> None:
+    @pytest.fixture
+    def needs_networkx(self) -> None:
+        """Requested only by the tests that really run the graph pipeline.
+
+        The prune-ordering tests below die inside ``parse_as_org``, long before
+        any graph code, so they stay meaningful in a pandas-only environment.
+        """
         pytest.importorskip("networkx")
 
     @staticmethod
@@ -1131,7 +1145,7 @@ class TestMainWarmRun:
         return ["demo_caida_as_topology", "--no-serve", "--cache-dir", str(cache)]
 
     def test_second_run_needs_no_network_and_recomputes_nothing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, needs_networkx: None
     ) -> None:
         import time as _time
 
@@ -1175,6 +1189,94 @@ class TestMainWarmRun:
         demo.main()
 
         assert scene.exists()
+
+    def test_a_pipeline_failure_leaves_the_previous_release_on_disk(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pruning must come AFTER the pipeline, because the pipeline is what
+        # proves the new pair usable: a newly-discovered snapshot whose headers
+        # ``parse_as_org`` rejects would otherwise take the last known-good
+        # release with it (with --keep-snapshots 1, every older one) before the
+        # run dies, leaving no usable release on disk to go back to.
+        import time as _time
+
+        cache = tmp_path / "caida"
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        old_rel, old_org = _write_snapshot_pair(
+            cache,
+            rel_name="20250101.as-rel2.txt.bz2",
+            org_name="20250101.as-org2info.txt.gz",
+        )
+        # The module defaults, i.e. the REALISTIC case: the current pair spans two
+        # releases of its own (20250401 rel + 20250301 org), because the two
+        # indexes are scraped independently and CAIDA does not publish them in
+        # lockstep.
+        _new_rel, new_org = _write_snapshot_pair(cache)  # the newer, current pair
+        with gzip.open(new_org, "wt", encoding="utf-8") as f:
+            f.write(ORG_TEXT.replace("# format:", "# columns:"))  # unparseable
+        _write_memo(cache, checked_at=_time.time())  # names the newer pair
+
+        monkeypatch.setattr(demo, "get_demos_output_dir", lambda: out_dir)
+        monkeypatch.setattr(sys, "argv", self._argv(cache) + ["--keep-snapshots", "1"])
+        _forbid_network(monkeypatch)
+
+        with pytest.raises(ValueError, match="contains no parsed"):
+            demo.main()
+
+        assert old_rel.exists() and old_org.exists(), (
+            "the last known-good release was pruned before the new one loaded"
+        )
+
+    def test_a_failing_run_prunes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The deliberate trade-off, stated as an assertion: a run whose pipeline
+        # raises reclaims NO disk at all, whatever --keep-snapshots asks for. No
+        # "prune anyway, but keep the newest N" softening works here, because the
+        # two series have different cadences — ``as-rel2`` monthly, ``as-org2info``
+        # quarterly — so most date groups are rel-only and a date-counted window
+        # can drop the one older date that carries an org file, leaving the
+        # rejected org as the only one on disk.
+        import time as _time
+
+        cache = tmp_path / "caida"
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        good_rel, good_org = _write_snapshot_pair(
+            cache,
+            rel_name="20250401.as-rel2.txt.bz2",
+            org_name="20250401.as-org2info.txt.gz",  # the older, GOOD org
+        )
+        rels = [good_rel]
+        for date in ["20250501", "20250601", "20250701"]:  # rel-only releases
+            rel = cache / f"{date}.as-rel2.txt.bz2"
+            rel.write_bytes(good_rel.read_bytes())
+            rels.append(rel)
+        cur_org_name = "20250701.as-org2info.txt.gz"
+        cur_org = cache / cur_org_name
+        with gzip.open(cur_org, "wt", encoding="utf-8") as f:
+            f.write(ORG_TEXT.replace("# format:", "# columns:"))  # unparseable
+        _write_memo(
+            cache,
+            checked_at=_time.time(),
+            rel_name=rels[-1].name,
+            org_name=cur_org_name,
+        )
+
+        monkeypatch.setattr(demo, "get_demos_output_dir", lambda: out_dir)
+        monkeypatch.setattr(sys, "argv", self._argv(cache) + ["--keep-snapshots", "1"])
+        _forbid_network(monkeypatch)
+
+        with pytest.raises(ValueError, match="contains no parsed"):
+            demo.main()
+
+        assert good_org.exists(), (
+            "the only usable org snapshot was pruned by a run that never loaded"
+        )
+        for rel in rels:
+            assert rel.exists(), f"{rel.name} was pruned by a run that never loaded"
+        assert cur_org.exists()
 
     def test_flags_reach_the_helpers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

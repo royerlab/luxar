@@ -3,7 +3,7 @@
  *
  * Pure helper: given a scene graph and a node, return a copy of the
  * node's attrs with `opacity`, `absorption`, `gamma`, `intensity`,
- * `offset`, and `blending_mode` replaced by the values from
+ * `offset`, `blending_mode`, and `join` replaced by the values from
  * {@link getEffectiveAttrs}. Falls back to the raw attrs when the
  * scene graph is unavailable.
  *
@@ -36,5 +36,6 @@ export function applyEffectiveAttrs(
     intensity: eff.intensity,
     offset: eff.offset,
     blending_mode: eff.blending_mode,
+    join: eff.join,
   };
 }
