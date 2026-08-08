@@ -100,12 +100,55 @@ describe('OPFSStore', () => {
     await store.init();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     // [cache.md/O5][P10] Explicitly unstub globals so tests that re-stub
     // navigator mid-test (e.g. 'slow set + concurrent clear') do not bleed
     // into subsequent tests if test order changes. beforeEach also re-stubs,
     // but explicit cleanup is robust against reordering.
     vi.unstubAllGlobals();
+
+    // #1390 leaked-delete guard. OPFSStore.pendingDeletesByDataset is STATIC
+    // and keyed by datasetId, so an unsettled delete registered by one test
+    // outlives that test and is still registered for every store this file
+    // builds under 'test-dataset-id'. dispose() drains that registry under
+    // withTimeout(..., config.cache.opfsOperationTimeoutMs) — 10 s in the real
+    // config — so one never-settling removeEntry mock silently adds ~10 s to
+    // EVERY downstream dispose() and pushes those tests to the edge of the 15 s
+    // per-test budget (they then flake under coverage or worker contention).
+    // Fail here, on the test that leaked, rather than paying the tax file-wide.
+    // vi.waitFor absorbs the deregistration microtask: delete() deregisters
+    // from `void real.finally(...)`, i.e. a tick after the delete settles.
+    const registry = (
+      OPFSStore as unknown as {
+        pendingDeletesByDataset: Map<string, Map<string, Set<Promise<void>>>>;
+      }
+    ).pendingDeletesByDataset;
+    // Assert the handle up front: if the private static is ever renamed,
+    // `registry` is undefined and both the waitFor callback and the cleanup
+    // below throw an opaque TypeError, in every test, after burning the full
+    // waitFor timeout each time.
+    expect(
+      registry,
+      'OPFSStore.pendingDeletesByDataset was renamed — update this guard'
+    ).toBeInstanceOf(Map);
+    try {
+      await vi.waitFor(
+        () => {
+          const leaked = [...registry].flatMap(([datasetId, byKey]) =>
+            [...byKey.keys()].map((key) => `${datasetId}/${key}`)
+          );
+          expect(leaked, 'unsettled OPFSStore delete(s) still registered').toEqual([]);
+        },
+        { timeout: 250, interval: 10 }
+      );
+    } finally {
+      // Drop whatever is left so a single leak fails exactly one test instead
+      // of cascading into a wall of unrelated afterEach failures. On the happy
+      // path the registry is already empty and this is a no-op. No optional
+      // chaining: the assert above is the single rename guard, and it has
+      // already thrown by here if the handle went missing.
+      registry.clear();
+    }
   });
 
   describe('Initialization', () => {
@@ -392,30 +435,63 @@ describe('OPFSStore', () => {
       await store.set('stuck', new Uint8Array(500));
       const before = store.getStats();
 
+      // The hang must be RELEASABLE. delete() registers the real
+      // (un-timed-out) removeEntry settlement in the STATIC
+      // OPFSStore.pendingDeletesByDataset, so a removeEntry that never settles
+      // stays registered for the rest of the file and taxes every downstream
+      // dispose() with the full 10 s delete-drain timeout (#1390). Holding on
+      // to the resolve keeps the caller-side timeout path fully covered and
+      // still lets the delete actually settle before the test returns.
+      // ONE gate promise shared by every stubbed call (the `removeGate` shape
+      // used in opfs-store-correctness.test.ts): a per-call promise would let a
+      // second removeEntry overwrite the resolver and strand the first call
+      // forever, tripping the afterEach guard despite a correct release.
+      let releaseHang!: () => void;
+      const hangGate = new Promise<void>((resolve) => {
+        releaseHang = resolve; // hangs until the finally block below releases it
+      });
       const originalRemoveEntry = mockFS.mockDirHandle.removeEntry;
-      mockFS.mockDirHandle.removeEntry = () => new Promise(() => {}); // hangs forever
+      mockFS.mockDirHandle.removeEntry = () => hangGate;
 
       const { config: realConfig } = await import('../../../config');
       const originalTimeout = realConfig.cache.opfsOperationTimeoutMs;
       realConfig.cache.opfsOperationTimeoutMs = 50;
 
       try {
-        const start = Date.now();
+        try {
+          const start = Date.now();
+          await store.delete('stuck');
+          expect(Date.now() - start).toBeLessThan(2000);
+
+          // Timeout is treated as transient: totalSize and index unchanged.
+          const stats = store.getStats();
+          expect(stats.size).toBe(before.size);
+          expect(stats.count).toBe(before.count);
+        } finally {
+          realConfig.cache.opfsOperationTimeoutMs = originalTimeout;
+          mockFS.mockDirHandle.removeEntry = originalRemoveEntry;
+        }
+
+        // With the handle working again, the retry completes the deletion.
         await store.delete('stuck');
-        expect(Date.now() - start).toBeLessThan(2000);
-
-        // Timeout is treated as transient: totalSize and index unchanged.
-        const stats = store.getStats();
-        expect(stats.size).toBe(before.size);
-        expect(stats.count).toBe(before.count);
+        expect(store.getStats()).toMatchObject({ size: 0, count: 0 });
       } finally {
-        realConfig.cache.opfsOperationTimeoutMs = originalTimeout;
-        mockFS.mockDirHandle.removeEntry = originalRemoveEntry;
+        // Let the stuck removeEntry land, the way a genuinely slow OPFS call
+        // eventually would. It MUST be released: its real settlement is
+        // registered in the static OPFSStore.pendingDeletesByDataset, and an
+        // unsettled entry there taxes every downstream dispose() with the full
+        // delete-drain timeout (#1390). Release only AFTER the retry's
+        // assertion, though: releasing first resumes the hung doDelete() ahead
+        // of the retry, which then re-reads the index, finds nothing and
+        // returns — leaving the assertion above proving the released hang
+        // reconciled rather than the retry it was written for. Resolving
+        // (rather than rejecting) is safe: doDelete() re-reads the index after
+        // its await precisely because deletes do not serialize against each
+        // other, so the released hang finds the retry's reconcile already done
+        // and returns without double-subtracting totalSize. Releasing a gate
+        // nobody awaited (delete() never reached removeEntry) is harmless.
+        releaseHang();
       }
-
-      // With the handle working again, the retry completes the deletion.
-      await store.delete('stuck');
-      expect(store.getStats()).toMatchObject({ size: 0, count: 0 });
     });
 
     // [cache OOS] Pre-fix, `delete(key)` decremented `totalSize` BEFORE
