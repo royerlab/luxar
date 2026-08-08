@@ -35,8 +35,8 @@ export default defineConfig({
       //    to pull in `styles/index.css` so Vite emits a single
       //    `luxar-viewer.css` sidecar for consumers to import directly.
       entry: {
-        'luxar-viewer': resolve(__dirname, 'src/index.ts'),
-        'luxar-viewer-styles': resolve(__dirname, 'src/lib-styles-entry.ts'),
+        'luxar-viewer': resolve(import.meta.dirname, 'src/index.ts'),
+        'luxar-viewer-styles': resolve(import.meta.dirname, 'src/lib-styles-entry.ts'),
       },
       formats: ['es'],
       fileName: (_format, name) => `${name}.js`,
@@ -72,7 +72,7 @@ export default defineConfig({
   },
 
   resolve: {
-    alias: { '@': resolve(__dirname, 'src') },
+    alias: { '@': resolve(import.meta.dirname, 'src') },
   },
 
   worker: {
