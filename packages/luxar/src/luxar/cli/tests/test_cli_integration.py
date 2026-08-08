@@ -546,37 +546,45 @@ class TestPortHandling:
         finally:
             sock.close()
 
-    def test_port_conflict_handling(self, available_port):
-        """Test that server handles port conflicts gracefully."""
-        # Occupy the port
+    def test_port_conflict_handling(self, available_port, sample_scene):
+        """`serve` shifts off an occupied port instead of failing.
+
+        The invocation needs a real dataset path. Without one, `serve` exits on
+        "Path required unless using --viewer-only" *before* it resolves a port,
+        so the previous `exit_code != 0` assertion passed without ever reaching
+        the occupied-port path. `uvicorn.run` is stubbed so the command returns
+        instead of blocking, and the port it is handed is what gets asserted.
+        """
+        from typer.testing import CliRunner
+
+        from luxar.cli import app
+        from luxar.cli import main as cli_main
+
+        # listen(), not a bare bind(): the probe binds with SO_REUSEADDR to
+        # match uvicorn, and only a LISTENING socket conflicts with that.
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", available_port))
         sock.listen(1)
 
+        served_ports: list[int] = []
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            cli_main.uvicorn, "run", lambda *a, **kw: served_ports.append(kw["port"])
+        )
         try:
-            # Try to start server on occupied port
-            from typer.testing import CliRunner
-
-            from luxar.cli import app
-
-            runner = CliRunner()
-            # NOTE: serve has no --no-viewer flag (the viewer is opt-in via
-            # --viewer); passing it here used to make this test vacuously
-            # pass on the unknown-option exit code without ever exercising
-            # the occupied-port path.
-            result = runner.invoke(
+            result = CliRunner().invoke(
                 app,
-                ["serve", "--port", str(available_port)],
+                ["serve", str(sample_scene), "--port", str(available_port)],
                 catch_exceptions=True,
             )
-
-            # Should either fail with clear error or find alternative port
-            # (Behavior depends on implementation)
-            assert result.exit_code != 0 or "alternative" in result.stdout.lower()
-
         finally:
+            monkeypatch.undo()
             sock.close()
+
+        assert result.exit_code == 0, result.stdout
+        assert served_ports and served_ports[0] > available_port
+        assert f"port {available_port} busy" in result.stdout.lower()
 
 
 @pytest.mark.slow
