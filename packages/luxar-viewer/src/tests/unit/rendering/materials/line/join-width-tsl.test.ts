@@ -228,10 +228,12 @@ describe('TSL line join width wiring (#790 / #1345)', () => {
         // satisfied by a second, block-scoped declaration of the same name
         // inside the join `if` that binds a per-vertex value — whatever that
         // value happens to be called.
+        // Every binding form, not just `const`: `let startEndPixelWidth = <per-vertex>`
+        // inside the join `if` shadows exactly as well as a `const` would.
         const { source } = parseFactory(relativePath);
         for (const name of PER_END_WIDTHS) {
           expect(
-            source.match(new RegExp(`\\bconst\\s+${name}\\b`, 'g')) ?? [],
+            source.match(new RegExp(`\\b(?:const|let|var)\\s+${name}\\b`, 'g')) ?? [],
             `${label}: ${name} must be declared exactly once — a second ` +
               'declaration shadows the segment-constant width inside the join block'
           ).toHaveLength(1);
