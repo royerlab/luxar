@@ -105,7 +105,8 @@ const SCENARIOS: ScenarioSpec[] = [
   // The two #1352 fill-regime scenarios: segments much WIDER than they
   // are long (drawn half-width = 2 × width texel = 6 world units vs
   // ~1-unit steps), which is the worst case for footprint-area cost.
-  // The SMOOTH variant (gentle ≤ ~14°/step turns) is the realistic
+  // The SMOOTH variant (gentle turns: ~8°/step on average, ~18° worst)
+  // is the realistic
   // thick-streamline proxy; the NOISE variant turns ~90° at every
   // vertex — adversarial for any join-aware renderer, and measured 4-5×
   // more expensive than smooth on the G0 spike's volumetric primitive.
@@ -140,11 +141,32 @@ type Backend = (typeof BACKENDS)[number];
  * toggle exists — and stays harmless if one never does. Non-default
  * primitives are baked into the scenarioId (`<id>-<primitive>`) so
  * `perf-diff.mjs` keys both arms separately.
+ *
+ * An empty or whitespace-only value falls back to `['default']`: with
+ * no arms at all the measurement loop below never runs and the final
+ * validation would vacuously pass on zero result rows. Duplicates are
+ * collapsed so a `default,default` typo can't emit two rows under the
+ * same `scenarioId/backend` key into the shared results.json.
  */
-const LINE_PRIMITIVES = (process.env.LUXAR_PERF_LINE_PRIMITIVES ?? 'default')
-  .split(',')
-  .map((p) => p.trim())
-  .filter((p) => p.length > 0);
+const LINE_PRIMITIVES = ((): string[] => {
+  const parsed = [
+    ...new Set(
+      (process.env.LUXAR_PERF_LINE_PRIMITIVES ?? 'default')
+        .split(',')
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0)
+    ),
+  ];
+  return parsed.length > 0 ? parsed : ['default'];
+})();
+
+/**
+ * Result-row id for one (scenario, primitive) arm. The `default` arm
+ * keeps the bare scenario id so its rows stay comparable against every
+ * pre-axis results.json.
+ */
+const armId = (scenarioId: string, primitive: string): string =>
+  primitive === 'default' ? scenarioId : `${scenarioId}-${primitive}`;
 
 const SAMPLE_WINDOW_MS = 3_000;
 // Warmup is small + time-capped so very slow scenes (millions of
@@ -261,7 +283,7 @@ async function measureScenario(
   backend: Backend,
   primitive = 'default'
 ): Promise<ScenarioResult> {
-  const scenarioId = primitive === 'default' ? scn.id : `${scn.id}-${primitive}`;
+  const scenarioId = armId(scn.id, primitive);
   const scenarioLabel =
     primitive === 'default' ? scn.label : `${scn.label} [linePrimitive=${primitive}]`;
   const primitiveParam = primitive === 'default' ? '' : `&linePrimitive=${primitive}`;
@@ -620,7 +642,13 @@ async function measureScenario(
 }
 
 test('line perf bench — JS frame timing across backends', async ({ page }) => {
-  test.setTimeout(900_000);
+  // ~90 s of budget per (scenario × backend × primitive) row, floored at
+  // the historical 15 min. A timeout aborts before the JSON write at the
+  // end, i.e. it loses the WHOLE run rather than one row, so the budget
+  // has to grow with the primitive axis instead of staying fixed.
+  test.setTimeout(
+    Math.max(900_000, 90_000 * SCENARIOS.length * BACKENDS.length * LINE_PRIMITIVES.length)
+  );
 
   const sha = currentCommitSha();
   const outDir = path.join(VIEWER_ROOT, 'perf-results', sha);
@@ -667,7 +695,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
           // make the JSON unwieldy.
           const shortMsg = msg.split('\n').slice(0, 3).join(' | ');
           result = {
-            scenarioId: primitive === 'default' ? scn.id : `${scn.id}-${primitive}`,
+            scenarioId: armId(scn.id, primitive),
             scenarioLabel: scn.label,
             backend,
             actualApi: null,
@@ -740,38 +768,41 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   // synthetic injector could produce a "passing" test with zero
   // useful rows for a critical scenario.
   //
-  // Pass criteria: every *reachable* scenario must have AT LEAST one
-  // successful backend row. "Reachable" excludes scenarios whose
-  // dataset URL was unreachable up front (urlExists() failed) — those
-  // are environment skips, not failures. The stricter per-scenario
-  // gate (vs the older global-zero check) is what makes the dedicated
-  // perf suite meaningful: if `synthetic-lines-10M` is the
-  // bandwidth-bound scenario the suite exists to measure, the test
-  // must not pass when it fails on every backend.
+  // Pass criteria: every *reachable* scenario ARM (scenario × requested
+  // primitive) must have AT LEAST one successful backend row.
+  // "Reachable" excludes scenarios whose dataset URL was unreachable up
+  // front (urlExists() failed) — those are environment skips, not
+  // failures. The stricter per-scenario gate (vs the older global-zero
+  // check) is what makes the dedicated perf suite meaningful: if
+  // `synthetic-lines-10M` is the bandwidth-bound scenario the suite
+  // exists to measure, the test must not pass when it fails on every
+  // backend. Arms are checked INDEPENDENTLY: with
+  // `LUXAR_PERF_LINE_PRIMITIVES=default,volumetric`, a volumetric arm
+  // that failed everywhere is exactly the one-sided A/B this guard
+  // exists to catch, so a healthy default arm must not cover for it.
   const isUnreachable = (s: ScenarioResult): boolean =>
     s.skipped && s.skipReason === 'dataset not reachable';
-  // A scenario row's id carries a `-<primitive>` suffix on the non-default
-  // arms of the LINE_PRIMITIVES axis, so ownership is prefix-based.
-  const rowBelongsTo = (rowId: string, scnId: string): boolean =>
-    rowId === scnId || LINE_PRIMITIVES.some((p) => p !== 'default' && rowId === `${scnId}-${p}`);
   const successfulIds = new Set(
     scenarios.filter((s) => !s.skipped && s.frameMs !== null).map((s) => s.scenarioId)
   );
-  const failedScenarios = SCENARIOS.filter((scn) => {
-    if (LINE_PRIMITIVES.some((p) => successfulIds.has(p === 'default' ? scn.id : `${scn.id}-${p}`)))
-      return false;
-    // Every row for this scenario was unreachable → environment skip,
-    // not a failure.
-    return !scenarios.filter((s) => rowBelongsTo(s.scenarioId, scn.id)).every(isUnreachable);
+  const failedArms = SCENARIOS.flatMap((scn) =>
+    LINE_PRIMITIVES.map((primitive) => ({ scn, id: armId(scn.id, primitive) }))
+  ).filter(({ scn, id }) => {
+    if (successfulIds.has(id)) return false;
+    // An unreachable dataset short-circuits before any arm runs and
+    // records one un-suffixed row per backend, so a single such row
+    // means the whole scenario was an environment skip.
+    return !scenarios.some((s) => s.scenarioId === scn.id && isUnreachable(s));
   });
-  if (failedScenarios.length > 0) {
+  if (failedArms.length > 0) {
+    const failedIds = new Set(failedArms.map((a) => a.id));
     const skipNotes = scenarios
-      .filter((s) => failedScenarios.some((scn) => rowBelongsTo(s.scenarioId, scn.id)))
+      .filter((s) => failedIds.has(s.scenarioId))
       .map((s) => `  - ${s.scenarioId}/${s.backend}: ${s.skipReason ?? 'unknown'}`)
       .join('\n');
     throw new Error(
-      `perf-bench: ${failedScenarios.length} scenario(s) produced no successful timing on any backend ` +
-        `(${failedScenarios.map((s) => s.id).join(', ')}). ` +
+      `perf-bench: ${failedArms.length} scenario arm(s) produced no successful timing on any backend ` +
+        `(${[...failedIds].join(', ')}). ` +
         `JSON still written to ${outPath} for inspection. Per-row reasons:\n${skipNotes}`
     );
   }
