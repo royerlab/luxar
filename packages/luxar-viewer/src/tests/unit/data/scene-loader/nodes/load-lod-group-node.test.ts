@@ -13,7 +13,6 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 
 const loadSceneNodesMock = vi.fn();
@@ -65,6 +64,7 @@ vi.mock('../../../../../data/scene-loader/nodes/load-mesh-node', () => ({
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
+import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 
@@ -218,14 +218,15 @@ function makeLodGroupNode(
 }
 
 function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
-  // Build the minimum NodeBuildCtx surface that loadLodGroupNode
-  // actually reads — the rest is forwarded to the mocked
-  // loadSceneNodes child recursion.
+  // `applyTransform` is the only nodeFactory member loadLodGroupNode reaches —
+  // placeholder construction happens in the mocked loadSceneNodes recursion.
   const nodeFactory = {
     applyTransform: vi.fn(),
   } as unknown as NodeBuildCtx['nodeFactory'];
 
-  return {
+  // Only the members loadLodGroupNode actually reads are named here; the rest
+  // come from the shared factory (see make-test-node-build-ctx.ts).
+  return makeTestNodeBuildCtx({
     registry: {
       registerGSplatsLoader: vi.fn(),
       registerPointsLoader: vi.fn(),
@@ -236,26 +237,7 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     lodGroupRegistry: registry,
     nodeFactory,
     viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
-    getViewVersion: () => 1,
-    factoryDeps: {} as never,
-    isDatasetLive: () => true,
-    releaseLazyGSplats: vi.fn(),
-    releaseLazyPoints: vi.fn(),
-    releaseLazyLines: vi.fn(),
-    releaseLazyMesh: vi.fn(),
-    kickRefinementIfIdle: vi.fn(),
-    applyEffectiveAttrs: (n) => n.attrs,
-    deriveNodeViewState: vi.fn() as never,
-    connectLoaderToMonitor: vi.fn(),
-    processLinesData: vi.fn() as never,
-    commitLinesGeometry: vi.fn(),
-    processGSplatsData: vi.fn() as never,
-    processPointsData,
-    commitPointsGeometry: vi.fn(),
-    commitGSplatsGeometry: vi.fn(),
-    processMeshData: vi.fn(),
-    commitMeshGeometry: vi.fn(),
-  };
+  });
 }
 
 /**
