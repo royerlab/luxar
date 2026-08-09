@@ -460,6 +460,48 @@ node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
 
+#### CytoSelf hover no longer strands its tooltip in an empty slot (#1398)
+
+The CytoSelf demo's hover layout is a bespoke pair: an image thumbnail anchored
+top-right at `0.98`, and the text label at `x = 0.82` so it sits immediately to
+the panel's LEFT. Defining any `hover=True` overlay suppresses the compiler's
+auto-injected default, so that pair owns the whole hover experience. But the two
+halves were guarded independently, and the image half is the fragile one — a
+single failed `Image_data*.npy` download, or the count-mismatch guard rejecting a
+stale thumbnail bundle, dropped it while the text label stayed pinned at `0.82`.
+The tooltip then rendered into the gap reserved for a panel that did not exist,
+which read as hovering doing nothing at all.
+
+The two shapes are now both spelled out. With thumbnails, the two-panel layout is
+unchanged. Without them the label moves to the centre-left slot (`(0.02, 0.5)`,
+`center-left`), which nothing else in this scene occupies — the legend is
+center-RIGHT. The parameters are copied from `demo_chromatrace_choir_umap`, whose
+overlay layout is otherwise identical and which is one of seven siblings already
+using that slot for a text-only tooltip; the viewer's control rail is docked at
+that same edge house-wide, and matching the siblings beats diverging from them.
+Falling back to auto-injection would have been the smaller diff and the wrong
+answer: that overlay is the same corner, only 16% of the viewport further into it.
+
+The reporting around the loss got honest too, and it differs per path because the
+remedies do. One silent skip became loud — no thumbnails at all used to say
+nothing — and the terse count-mismatch line gained a remediation: delete the
+cached `.npz` (the message names the file and its default directory), since a
+plain re-run short-circuits on that file before any network call and reproduces
+the mismatch forever. A bundle that cannot be read at all — truncated, or structurally fine
+but holding entries that are not image bytes — is now treated as a cache miss and
+rebuilt, since raising on that path made a plain re-run reproduce the failure
+forever too. `--recompute` now reaches `load_cytoself_images` as well, which is the
+same rebuild from the CLI, but it also discards the cached UMAP for a 10-30 minute
+recompute, so it is offered second and with that caveat attached. A download
+failure names the `Image_data*.npy` file that failed, and says plainly that
+re-running skips whole completed files rather than resuming a partial one. That
+promise now holds under memory pressure as well: only a format/IO failure counts
+as a corrupt file worth deleting and refetching, so a `MemoryError` on a valid
+~1.7 GB array no longer throws the file away and re-downloads it on every run,
+and the same applies to reading the thumbnail bundle — running out of RAM is not
+a cache miss. A
+deliberate `--without-images` run stays quiet, and `main()`'s navigation hint no
+longer promises fluorescence images the scene does not contain.
 
 #### Real join geometry for lines: the miter (#790, #795)
 
