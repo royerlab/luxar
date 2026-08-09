@@ -23,8 +23,15 @@
  *   the exact convolution. Chain-end segments (one of each) use the
  *   inclusion–exclusion closed form.
  * - PEAK-family blending (max, normal, opaque) takes the max along the ray:
- *   today's profile at the ray→clamped-segment distance (a Gaussian-shoulder
- *   capsule), exact for any sharpness β and idempotent under gl.MAX.
+ *   today's profile at the ray→segment distance (a Gaussian-shoulder
+ *   capsule), exact for any sharpness β. Interior joints apply the same
+ *   bisector cut as a RAY-DOMAIN interval — a cut end is the unbounded rod
+ *   restricted to its own half-space, so face-on (the view direction lies
+ *   in the bisector plane) exactly one cell shades each ray. That single
+ *   coverage is what `normal`/`opaque` need — their compositing is not
+ *   idempotent the way gl.MAX is. Obliquely the two cells can still both
+ *   be pierced by one ray, which those two modes composite twice; a
+ *   surface model cannot avoid that per-segment without a depth pre-pass.
  *
  * The lane structure, constants, and closed forms are the SHARED ones in
  * `_shared/line-volumetric.ts`, whose CPU reference is quadrature-validated
@@ -503,20 +510,69 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
       float I;
       #ifdef LUXAR_PEAK_PROJECTION
       // PEAK family (max, normal, opaque): Gaussian-shoulder capsule —
-      // today's profile at the ray-to-clamped-segment distance. Exact for
-      // any sharpness beta. No parallel lane needed: point-to-ray-line
+      // today's profile at the ray-to-segment distance. Exact for any
+      // sharpness beta. No parallel lane needed: point-to-ray-line
       // distance is s-independent for parallel geometry, so a clamped
       // garbage sM still yields the right distance.
-      float sC = clamp(sM, -0.5 * L, 0.5 * L);
+      //
+      // Interior joints carry the SAME bisector cut the sum lanes use,
+      // applied here as a ray-DOMAIN interval [tLo, tHi]: a cut end is the
+      // unbounded rod restricted to my half-space (the miter), not a round
+      // cap. Face-on the view direction lies IN the bisector plane, so
+      // every ray is wholly on one side and exactly one of the two cells
+      // shades it — single coverage, which the non-idempotent surface
+      // modes (normal, opaque) need and gl.MAX never did. It also fills
+      // the outer wedge of a bend with rod rather than the dimmer (and
+      // stencil-truncated) cap.
+      //
+      // No near-plane clip here, unlike the sum lanes: the peak is ONE
+      // sampled ray point and perspectiveNearFade keys on that same
+      // point's depth, so behind-eye material can never contribute.
+      bool hardA = vCutA.w > 0.5;
+      bool hardB = vCutB.w > 0.5;
+      float tLo = -1e30;
+      float tHi = 1e30;
+      bool dead = false;
+      if (hardA) {
+        float dn = dot(dRaw, vCutA.xyz);
+        float sn = dot(vSegA.xyz - rayO, vCutA.xyz);
+        if (abs(dn) <= 1e-7 * rn) {
+          dead = dead || (sn < 0.0);
+        } else {
+          float tX = sn / dn;
+          if (dn > 0.0) tHi = min(tHi, tX); else tLo = max(tLo, tX);
+        }
+      }
+      if (hardB) {
+        vec3 Bp = vSegA.xyz + w * L;
+        float dn = dot(dRaw, vCutB.xyz);
+        float sn = dot(Bp - rayO, vCutB.xyz);
+        if (abs(dn) <= 1e-7 * rn) {
+          dead = dead || (sn < 0.0);
+        } else {
+          float tX = sn / dn;
+          if (dn > 0.0) tHi = min(tHi, tX); else tLo = max(tLo, tX);
+        }
+      }
+      if (dead || tHi < tLo) discard;
+      // s is bounded only at SOFT ends — a cut end is the unbounded rod.
+      float sLoC = hardA ? -1e30 : -0.5 * L;
+      float sHiC = hardB ? 1e30 : 0.5 * L;
+      float sC = clamp(sM, sLoC, sHiC);
       vec3 qv = (M + sC * w) - rayO;
-      float proj = dot(qv, dRaw);
-      float dist2 = max(dot(qv, qv) - proj * proj / n2, 0.0);
+      // dist(ray(t), cell) is convex in t, so clamping the unconstrained
+      // optimum into [tLo, tHi] and re-projecting once IS the exact
+      // constrained minimum (and an identity when neither end is cut).
+      float tHit = clamp(dot(qv, dRaw) / n2, tLo, tHi);
+      vec3 pRay = rayO + dRaw * tHit;
+      vec3 dv = pRay - (M + clamp(dot(pRay - M, w), sLoC, sHiC) * w);
+      float dist2 = dot(dv, dv);
       float qn2 = dist2 * invSE * invSE * (1.0 / ${G.T_SQ});
       if (qn2 >= 1.0) discard;
       float beta = exp2(6.0 * sharp - 2.0);
       float qn = sqrt(qn2);
       I = max(exp(-${G.K} * pow(qn, beta)) - ${G.C}, 0.0) * ${G.INV_ONE_MINUS_C};
-      camZ = rayO.z + dRaw.z * (proj / n2);
+      camZ = rayO.z + dRaw.z * tHit;
       #else
       // SUM family: normalized closed-form ray integral (I = ∫ρ du / σ√2π).
       // Four lanes, quadrature-validated against the CPU reference in

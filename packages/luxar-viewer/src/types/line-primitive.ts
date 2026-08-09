@@ -9,8 +9,8 @@
  * | `volumetric`   | segment ⊛ isotropic 3D Gaussian: the quad is only a      |
  * |                | rasterization stencil; every shading quantity is solved  |
  * |                | per-fragment against the true camera-space segment, so   |
- * |                | end-on viewing is exact and joins are seam-free by       |
- * |                | linearity (sum modes) / gl.MAX idempotence (peak modes)  |
+ * |                | end-on viewing is exact and a joint's two cells partition |
+ * |                | the bend at a bisector plane instead of overlapping      |
  *
  * `volumetric` is calibrated so the side-on appearance matches
  * `screen-space` by construction (σ = drawnHalfWidth / T with T the shared

@@ -546,10 +546,50 @@ export function volumetricLineWebGPUFactory(
     const I: TSLNode = float(0.0).toVar();
     if (peakGraph) {
       // PEAK family: Gaussian-shoulder capsule (exact for any sharpness β).
-      const sC: TSLNode = clamp(sM, L.mul(-0.5), L.mul(0.5)).toVar();
+      // Interior joints apply the same bisector cut as the sum lanes, here
+      // as a ray-DOMAIN interval [tLo, tHi]: a cut end is the unbounded rod
+      // restricted to its own half-space (the miter), not a round cap, so
+      // face-on exactly one cell of a joint shades each ray. See the GLSL
+      // twin's block comment for why the peak lane needs no near clip.
+      const hardA: TSLNode = vCutA.w.greaterThan(0.5).toVar();
+      const hardB: TSLNode = vCutB.w.greaterThan(0.5).toVar();
+      const BpPeak: TSLNode = vec3(vSegA).add(w.mul(L)).toVar();
+      const tLo: TSLNode = float(-1e30).toVar();
+      const tHi: TSLNode = float(1e30).toVar();
+      const deadPeak: TSLNode = float(0.0).toVar();
+      const applyCut = (normal: TSLNode, through: TSLNode, present: TSLNode) => {
+        If(present, () => {
+          const dn: TSLNode = dot(dRaw, normal).toVar();
+          const sn: TSLNode = dot(through.sub(rayO), normal).toVar();
+          If(abs(dn).lessThanEqual(rn.mul(1e-7)), () => {
+            If(sn.lessThan(0.0), () => {
+              deadPeak.assign(1.0);
+            });
+          }).Else(() => {
+            const tX: TSLNode = sn.div(dn).toVar();
+            If(dn.greaterThan(0.0), () => {
+              tHi.assign(min(tHi, tX));
+            }).Else(() => {
+              tLo.assign(max(tLo, tX));
+            });
+          });
+        });
+      };
+      applyCut(vec3(vCutA), vec3(vSegA), hardA);
+      applyCut(vec3(vCutB), BpPeak, hardB);
+      Discard(deadPeak.greaterThan(0.5).or(tHi.lessThan(tLo)));
+      // s is bounded only at SOFT ends — a cut end is the unbounded rod.
+      const sLoC: TSLNode = hardA.select(float(-1e30), L.mul(-0.5)).toVar();
+      const sHiC: TSLNode = hardB.select(float(1e30), L.mul(0.5)).toVar();
+      const sC: TSLNode = clamp(sM, sLoC, sHiC).toVar();
       const qv: TSLNode = M.add(w.mul(sC)).sub(rayO).toVar();
-      const proj: TSLNode = dot(qv, dRaw).toVar();
-      const dist2: TSLNode = max(dot(qv, qv).sub(proj.mul(proj).div(n2)), 0.0).toVar();
+      // Convex in t: clamping the unconstrained optimum into [tLo, tHi] and
+      // re-projecting once IS the exact constrained minimum (an identity
+      // when neither end is cut).
+      const tHit: TSLNode = clamp(dot(qv, dRaw).div(n2), tLo, tHi).toVar();
+      const pRay: TSLNode = rayO.add(dRaw.mul(tHit)).toVar();
+      const dv: TSLNode = pRay.sub(M.add(w.mul(clamp(dot(pRay.sub(M), w), sLoC, sHiC)))).toVar();
+      const dist2: TSLNode = dot(dv, dv).toVar();
       const qn2: TSLNode = dist2
         .mul(invSE)
         .mul(invSE)
@@ -563,7 +603,7 @@ export function volumetricLineWebGPUFactory(
           INV_ONE_MINUS_FALLOFF_FLOOR
         )
       );
-      camZ.assign(rayO.z.add(dRaw.z.mul(proj.div(n2))));
+      camZ.assign(rayO.z.add(dRaw.z.mul(tHit)));
     } else {
       // SUM family: normalized closed-form ray integral, four lanes —
       // quadrature-validated in _shared/line-volumetric.ts; keep the three

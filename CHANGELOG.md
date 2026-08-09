@@ -20,7 +20,11 @@ sum-family modes integrate the density along each view ray in closed form,
 with interior joints as bisector-plane cuts that partition the rod exactly
 at any bend angle (no partner blending, single-covered, C0); peak-family
 modes take the ray maximum (a Gaussian-shoulder capsule, exact for any
-sharpness β). Chain-end segments (one cut, one soft cap) use a
+sharpness β) with the same cut applied as a ray-domain interval, so a cut
+end is the unbounded rod restricted to its own half-space rather than a
+round cap — face-on, exactly one cell of a joint shades each ray, the
+single coverage `normal`/`opaque` need and `gl.MAX` never did.
+Chain-end segments (one cut, one soft cap) use a
 sign-selected inclusion–exclusion closed form — the ray integral is an
 Owen-T-class integral with no elementary form, but the available splits
 (bracket-primary, cap-primary, a saturated-cap bracket-only shortcut, and
@@ -38,13 +42,15 @@ reference validated against brute numerical quadrature
 (`line-volumetric-integral.test.ts`: exact lanes < 0.6%, error envelopes
 pinned with sensitivity controls), and both shader backends mirror it —
 GLSL as a second source pair (the codebase's first genuine shader-source
-selection) and TSL as a twin factory, with nine `line-volprim-*` parity
+selection) and TSL as a twin factory, with eleven `line-volprim-*` parity
 fixtures pinning pixel-level backend agreement, including the partner
 fetch, the mixed-lane splits, the peak capsule, the fragment-stage
 colormap LUT, a near-plane-straddling telephoto disc, and a straddling
 fat chain end that carries a dedicated MAX-divergence gate (all
 mutation-calibrated: disabling the clip or its branch selection on one
-backend fails parity). The mixed-end lane uses the A&S exponential erf
+backend fails parity). A `-cut` / `-uncut` pair renders one leg of a V in
+isolation and requires the peak lane to leave the partner's half-space
+completely black — it fails outright if the cut is dropped. The mixed-end lane uses the A&S exponential erf
 (`GLSL_ERF_AS_FUNCTIONS` / `erfAsTSL`, new in `_shared/erf.ts`) because its
 terms are amplified by 1/sin(ray, axis); the hot lanes keep the cheap
 polynomial. With the flag off, the screen-space pipeline is byte-identical

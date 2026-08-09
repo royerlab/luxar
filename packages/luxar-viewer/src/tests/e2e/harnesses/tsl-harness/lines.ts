@@ -4,7 +4,8 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * behind-camera + ortho-near culling, sorted-index permutation) plus
  * the line-pick counterparts + multi-row, cap-suppression, clipping-remap,
- * and exact-near-plane boundary variants. 32 registry entries.
+ * and exact-near-plane boundary variants, plus the volumetric-primitive
+ * (`line-volprim-*`) family. 42 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -708,6 +709,48 @@ function buildStraddlingJoinTexelSource(): LineTexelSource {
     // (code +1).
     startJointCode: new Float32Array([-4, 0]),
     endJointCode: new Float32Array([0, 1]),
+  };
+}
+
+/**
+ * {@link buildJoinTexelSource} with every joint code replaced by the
+ * free-end sentinel: identical geometry, no bisector cut. The control half
+ * of the `line-volprim-peak-cut` / `-uncut` pair.
+ */
+function buildFreeEndJoinTexelSource(): LineTexelSource {
+  const src = buildJoinTexelSource();
+  return {
+    ...src,
+    startJointCode: new Float32Array([0, 0]),
+    endJointCode: new Float32Array([0, 0]),
+  };
+}
+
+/**
+ * One registry entry of the peak-lane bisector-cut pair: the V's texels in
+ * the (2-row) uniform texture so the partner fetch resolves, but a mesh of
+ * ONE instance so only the first leg renders. MAX blending + the peak
+ * define, i.e. the lane under test.
+ */
+function peakCutEntry(src: LineTexelSource): RegistryEntry {
+  return {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () => buildVisualLineUniforms(buildJoinDataTexture(src), true),
+    buildDefines: () => ({ LUXAR_PEAK_PROJECTION: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => {
+      const mesh = createInstancedLinesMesh({ ...src, segmentCount: 1 }, material);
+      mesh.frustumCulled = false;
+      return mesh;
+    },
   };
 }
 
@@ -1601,6 +1644,18 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
   },
+  // The peak lane's BISECTOR CUT, rendered in isolation: the same V, but
+  // only the FIRST leg is drawn (one instance; the partner still lives in
+  // the texture so the vertex stage can fetch its direction). Its cut end
+  // is the unbounded rod restricted to the half-space x_world <= 0, so
+  // nothing may light the far side of the plane — the partner would have
+  // owned it. `-uncut` is the same fixture with the joint codes replaced
+  // by free-end sentinels: there the soft cap DOES reach across, which is
+  // what proves the `-cut` assertion is not vacuous. Face-on the view
+  // direction lies IN the bisector plane, so this pair also drives the
+  // |dn| ≈ 0 side test rather than a finite plane crossing.
+  'line-volprim-peak-cut': peakCutEntry(buildJoinTexelSource()),
+  'line-volprim-peak-uncut': peakCutEntry(buildFreeEndJoinTexelSource()),
   // Width taper: σ varies with the clamped closest-approach coordinate
   // sHat (NOT the rasterised quad t) — a per-fragment σ(sHat), invSE, and
   // energy-compensation path no constant-width fixture exercises.

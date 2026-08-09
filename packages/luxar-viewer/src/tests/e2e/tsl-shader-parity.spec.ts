@@ -2242,6 +2242,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-volprim-endon-persp',
     'line-volprim-joint',
     'line-volprim-peak',
+    'line-volprim-peak-cut',
+    'line-volprim-peak-uncut',
     'line-volprim-taper',
     'line-volprim-colormap',
     'line-volprim-nearclip',
@@ -2279,6 +2281,38 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       maxDiff = Math.max(maxDiff, Math.abs(glsl[i] - tsl.pixels[i]));
     }
     expect(maxDiff, 'max per-channel |GLSL − TSL|').toBeLessThanOrEqual(8);
+  });
+
+  test('line-volprim-peak-cut: the peak lane stops dead at the bisector plane', async ({
+    page,
+  }) => {
+    // The peak family carries the same bisector cut as the sum lanes, so a
+    // joint's two cells partition the bend instead of overlapping — the
+    // single coverage `normal`/`opaque` need (gl.MAX never did). Only the
+    // FIRST leg of the V is drawn here, and its cut end owns exactly the
+    // half-space `x_world <= 0` (pixel column 32 under this ortho setup),
+    // so nothing of it may light the far side. `-uncut` is the same
+    // geometry with free-end codes: its soft cap DOES reach across, which
+    // is what makes the black assertion below non-vacuous (without the
+    // cut, `-cut` renders `-uncut`).
+    await bootHarness(page);
+    const cut = await runGLSL(page, 'line-volprim-peak-cut');
+    const uncut = await runGLSL(page, 'line-volprim-peak-uncut');
+    // Max over the far side, leaving 2 px of margin for rasterisation.
+    const farSideMax = (p: number[]) => {
+      let m = 0;
+      for (let y = 0; y < 64; y++) {
+        for (let x = 34; x < 64; x++) {
+          const i = (y * 64 + x) * 4;
+          m = Math.max(m, p[i], p[i + 1], p[i + 2]);
+        }
+      }
+      return m;
+    };
+    expect(farSideMax(uncut), 'control: the uncapped end must reach across').toBeGreaterThan(64);
+    expect(farSideMax(cut), 'cut cell must not light the partner half-space').toBeLessThanOrEqual(
+      2
+    );
   });
 
   test('line-volprim-endon-ortho: the end-on segment renders a finite bright disc', async ({

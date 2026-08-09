@@ -285,10 +285,16 @@ per end), and the fragment solves against the TRUE camera-space segment:
   lanes there first, prove them in `line-volumetric-integral.test.ts`,
   then mirror into both shader twins.**
 - **Peak-family blending** (max, normal, opaque) takes the ray maximum:
-  today's profile at the ray→clamped-segment distance, exact for any
-  sharpness β. The peak/sum split is the `LUXAR_PEAK_PROJECTION` define
-  (GLSL) / a graph variant (TSL), managed by `applyBlendingMode` beside the
-  other blending defines.
+  today's profile at the ray→segment distance, exact for any sharpness β.
+  The bisector cut applies here too, as a ray-DOMAIN interval — a cut end is
+  the unbounded rod restricted to its own half-space, so face-on (the view
+  direction lies in the bisector plane) exactly one cell of a joint shades
+  each ray. That single coverage is what `normal`/`opaque` need, their
+  compositing not being idempotent the way `gl.MAX` is; obliquely one ray can
+  still pierce both cells and those two modes composite it twice, which no
+  per-segment surface model avoids without a depth pre-pass. The peak/sum
+  split is the `LUXAR_PEAK_PROJECTION` define (GLSL) / a graph variant (TSL),
+  managed by `applyBlendingMode` beside the other blending defines.
 
 End-on viewing is exact (the screen-space quad degenerates there), and the
 sum output is normalized by σ√2π so a long segment's side-on core matches
