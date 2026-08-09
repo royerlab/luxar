@@ -569,11 +569,14 @@ class TestNodeNdTransform:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            # A (t, x, y, z) scene: the setter validates the key against the
+            # scene dimensions (issue #1418), so it must name a real
+            # non-displayed dimension.
+            scene = compiler.create_scene(dimensions=Dimensions.default_timeseries())
+            positions = np.array([[0.0, 0.0, 0.0, 0.0]], dtype=np.float32)
             points = scene.add_points("test", positions)
 
-            points.nd_transform = {"dim0": {"scale": 1.0, "offset": 0.0}}
+            points.nd_transform = {"t": {"scale": 1.0, "offset": 0.0}}
             assert points.nd_transform is not None
 
             points.nd_transform = None
@@ -584,13 +587,19 @@ class TestNodeNdTransform:
         store_path = tmp_path / "test.zarr"
 
         with LuxarZarrCompiler(store_path) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            positions = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+            scene = compiler.create_scene(dimensions=Dimensions.default_timeseries())
+            positions = np.array([[0.0, 0.0, 0.0, 0.0]], dtype=np.float32)
             points = scene.add_points("test", positions)
 
-            # Empty dict entry (no scale/offset or permutation)
-            with pytest.raises(ValueError):
-                points.nd_transform = {"time": {}}
+            # Empty dict entry (no scale/offset or permutation) on a REAL
+            # non-displayed dim, so the structural failure is the one under test
+            # and not the unknown-key one below.
+            with pytest.raises(ValueError, match="must have"):
+                points.nd_transform = {"t": {}}
+
+            # Unknown dimension name (issue #1418)
+            with pytest.raises(ValueError, match="not found"):
+                points.nd_transform = {"nope": {"scale": 2.0}}
 
             # Non-dict value
             with pytest.raises(TypeError):

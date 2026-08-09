@@ -30,12 +30,15 @@ A node is constructed with a `name`, an optional `parent`, an optional `writer`
 (`ZarrWriterProtocol`), and arbitrary keyword `attrs`. On construction it:
 
 - rejects names containing `/` (use `add_group()` to nest instead),
-- links itself into `parent.children`, rejecting duplicate sibling names,
+- rejects duplicate sibling names,
 - computes its `path` (`parent_path/name`, or `""` for a root),
 - validates any recognized attributes (`transform`, `nd_transform`, `opacity`,
-  `absorption`, `gamma`, `intensity`, `offset`, `blending_mode`, `layer`,
+  `absorption`, `gamma`, `intensity`, `offset`, `blending_mode`, `join`, `layer`,
   `visible`, `colormap`) and, if a writer is present, writes the group attrs immediately
-  and caches them.
+  and caches them,
+- links itself into `parent.children` **last**, so a node refused by attribute
+  validation leaves nothing behind and the same name can be retried with the
+  attribute corrected.
 
 When no writer is supplied the node runs in **metadata-only mode**: attributes
 are cached but nothing is written to disk.
@@ -92,6 +95,19 @@ dimensions (e.g. time, channel).
 |----------|-------------|
 | `nd_transform` | Local per-dimension transform dict. Setter validates via `validation.nd_transforms.validate_nd_transform` and persists; `None` deletes. |
 | `world_nd_transform` | Composes nd_transforms up the parent chain via `compose_nd_transforms` (root outermost). Empty dict means identity. |
+
+Both doors into the attr — the creation-time `**attrs` and the property setter —
+validate it **against the scene dimensions** (`Node._resolve_scene_dimensions`:
+the root `Scene` found by walking the parent chain, else `scene_dimensions` read
+off the writer's store). So a key naming a dimension the scene does not declare,
+or naming a *displayed* one, is refused on a `Group` — including a `kind=lod` /
+`kind=partition` wrapper, where `nd_transform` is hoisted as a compositing attr —
+and, newly, through the property setter on **every** node type, leaves included
+(only the leaf's creation-time path was already covered, by the geometry
+writers). It can no longer be written clean and then silently ignored by the
+viewer. Structure-only validation remains the fallback for a node with neither a
+`Scene` above it nor a writer store to read — a strictly smaller set than
+"detached", since a writer-attached orphan is still checked.
 
 See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for the full specification.
 

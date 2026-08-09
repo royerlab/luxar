@@ -50,6 +50,48 @@ conservative stencil is still required; and its additivity means the joint-code 
 cap-suppression subsystem and the screen-space coverage compensations would
 double-count rather than merely be redundant.
 
+#### `nd_transform` on a group — and on any node's property setter — is checked against the scene dimensions
+
+A geometry leaf's *creation-time* `nd_transform` has always been validated against
+the scene: the writers call `prepare_transform_attrs`, which reads the dimension
+list out of the store, so `add_points(..., nd_transform={"nope": …})` is refused. A
+**group** was not, and neither was the `nd_transform` property SETTER on any node
+type. `Node.__init__` ran the structure-only check and then flagged the write
+`_transform_normalized=True`, which is exactly what tells `write_group` to skip its
+own store-aware pass — so `add_group("g", nd_transform={"nope": …})` and
+`points.nd_transform = {"nope": …}` both wrote clean and the viewer then ignored a
+transform nothing said had been asked for.
+
+Both doors into the attr — creation-time `**attrs` and the property setter, on
+groups and leaves alike — now resolve the scene `Dimensions` and run the writers'
+check: unknown key, *displayed* dimension, and affine-vs-permutation domain
+mismatch are all refused. `Node._resolve_scene_dimensions` takes the root `Scene`
+found by walking the parent chain (the non-raising counterpart of
+`Group._find_scene`) and, failing that, reads `scene_dimensions` off the writer's
+store — a node can be writer-attached but Scene-detached (`Group("orphan",
+writer=compiler)`, or the `parent=` kwarg on the adders), and there the store is
+authoritative even though the chain is empty. Only a node with neither a Scene nor
+a store keeps the structure-only contract.
+
+This reaches the `kind=lod` and `kind=partition` wrappers too, which is where it
+bites hardest — `nd_transform` is a compositing attr, so `add_points(…,
+substitutive_lod=True, nd_transform=<typo>)` hoists the typo onto the wrapper, the
+one node that used to accept anything.
+
+One ordering consequence worth stating: the dimension must already be declared when
+the node is created. `scene.add_group("g", nd_transform={"Time": …})` followed by a
+widening of the scene dimensions to include `Time` used to be accepted and now
+raises.
+
+A refused construction is now recoverable: `Node.__init__` used to append the child
+to `parent.children` before validating any attr, so a rejection left a phantom
+sibling and the obvious retry — fix the dimension name, call the same adder again —
+died with "Duplicate child name". The append moved to the END of the constructor,
+after every attr is validated and written, so a group refused at construction time
+leaves no phantom entry (leaf writers have their own post-write attr steps and are
+unchanged here). Attr-agnostic, so it fixes the same trap for a bad `opacity` /
+`transform`. Fixes #1418.
+
 #### The hover label lookup finds the CSR again on a partitioned layer (#1415)
 
 Authoring a layer with `partition=` and `labels=` produced a silently empty
