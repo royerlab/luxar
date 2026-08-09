@@ -41,9 +41,13 @@ describe('embedder event bus', () => {
     bus.on('dimensions-changed', onDims);
     bus.on('selection', onSel);
 
-    bus.emit('selection', { nodeName: 'pts', elementIndex: 3 });
+    bus.emit('selection', { nodeName: 'pts', elementIndex: 3, hitNodeName: 'pts/part_0' });
 
-    expect(onSel).toHaveBeenCalledWith({ nodeName: 'pts', elementIndex: 3 });
+    expect(onSel).toHaveBeenCalledWith({
+      nodeName: 'pts',
+      elementIndex: 3,
+      hitNodeName: 'pts/part_0',
+    });
     expect(onDims).not.toHaveBeenCalled();
   });
 

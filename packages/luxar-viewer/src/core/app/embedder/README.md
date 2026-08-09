@@ -15,12 +15,12 @@ Unlike the rest of `app/` (private orchestrator support), this subpackage is re-
 
 `LuxarApp.on(event, listener)` subscribes to these app-scoped events (emitted on a per-app `EventEmitter`, not the cross-layer singleton):
 
-| Event                  | Payload                         | Description                                                                                                                                                                     |
-| ---------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `'dataset-loaded'`     | `{ src: string }`               | Fires when a dataset finishes loading (initial `init()`, browser selection, or `switchDataset()`).                                                                              |
-| `'dataset-error'`      | `{ src: string; error: Error }` | Fires when a dataset fails to load.                                                                                                                                             |
-| `'dimensions-changed'` | `EmbedderDimensions`            | Fires on any slice-position change (slider, keyboard, or `setDimensionValue()`). Includes current step, displayed dims, metadata, and navigable ranges (all **cloned** copies). |
-| `'selection'`          | `SelectionPayload \| null`      | Fires when the hover-pick changes (`nodeName` + `elementIndex` under the cursor, or `null` when cleared). Subscribe **before** `init()` to provision picking for all datasets.  |
+| Event                  | Payload                         | Description                                                                                                                                                                                    |
+| ---------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `'dataset-loaded'`     | `{ src: string }`               | Fires when a dataset finishes loading (initial `init()`, browser selection, or `switchDataset()`).                                                                                             |
+| `'dataset-error'`      | `{ src: string; error: Error }` | Fires when a dataset fails to load.                                                                                                                                                            |
+| `'dimensions-changed'` | `EmbedderDimensions`            | Fires on any slice-position change (slider, keyboard, or `setDimensionValue()`). Includes current step, displayed dims, metadata, and navigable ranges (all **cloned** copies).                |
+| `'selection'`          | `SelectionPayload \| null`      | Fires when the hover-pick changes (`nodeName` + `elementIndex` + `hitNodeName` under the cursor, or `null` when cleared). Subscribe **before** `init()` to provision picking for all datasets. |
 
 ## Usage
 
@@ -63,6 +63,7 @@ unsubscribe();
 - All dimension arrays (`currentStep`, `displayed`, `ranges`, `metadata`) are **cloned** before the event fires — an embedder may read them freely without mutating viewer internals.
 - The `selection` event fires on **hover** changes (the element under the cursor), not click-to-select.
 - Picking is provisioned when a `selection` listener exists at dataset load time — subscribe **before** `init()` / `switchDataset()` to enable picking on all datasets.
+- `SelectionPayload.nodeName` is the user-facing layer (the outermost `kind=partition` wrapper when the hit sits under one), so it is **not** the node `elementIndex` is local to. Resolve the element against `hitNodeName`, which is the leaf that was hit and equals `nodeName` when the node is not partitioned.
 
 ## See Also
 

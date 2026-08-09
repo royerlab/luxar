@@ -220,11 +220,12 @@ describe('buildPickResultHandler', () => {
     warnSpy.mockRestore();
   });
 
-  it('reports the kind=partition wrapper path when the hit sits under one', async () => {
-    // Partition-aware picking: a hit on an inner ``part_<i>`` leaf must
-    // surface the wrapper's path as ``nodeName`` (and as the path used
-    // to look up labels). Matches the layers-panel's outermost-as-layer
-    // convention.
+  it('reports the kind=partition wrapper path but QUERIES the leaf', async () => {
+    // Partition-aware picking (#1415): a hit on an inner ``part_<i>`` leaf
+    // surfaces the wrapper's path as ``nodeName`` (layers-panel
+    // outermost-as-layer convention), while the label/image lookup goes to
+    // the LEAF — the wrapper is a bare group with no label CSR, and
+    // ``elementId`` is part-local.
     const s = makeStubs();
     s.getLabel.mockResolvedValue('Cell 42');
     const wrapper = new THREE.Group();
@@ -240,7 +241,7 @@ describe('buildPickResultHandler', () => {
     });
 
     await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: part });
-    expect(s.getLabel).toHaveBeenCalledWith('/Splat', 42);
+    expect(s.getLabel).toHaveBeenCalledWith('/Splat/part_3', 42);
     expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
       label: 'Cell 42',
       imageUrl: null,
@@ -249,7 +250,43 @@ describe('buildPickResultHandler', () => {
     });
   });
 
-  it('picks the OUTERMOST kind=partition when nested', async () => {
+  it('resolves a tooltip whose label only exists under the leaf path', async () => {
+    // Regression pin for #1415. Before the reported/queried split, both
+    // loaders were handed the wrapper path. A realistic store answers only
+    // for the leaf (that is where the writer put ``label_offsets`` /
+    // ``label_bytes``), so the wrapper query returned null and the tooltip
+    // was silently empty on EVERY hover of a partitioned layer. This test
+    // fails with the pre-fix handler.
+    const s = makeStubs();
+    s.getLabel.mockImplementation(async (path) => (path === '/Splat/part_3' ? 'Cell 42' : null));
+    s.getImageUrl.mockImplementation(async (path) =>
+      path === '/Splat/part_3' ? 'thumbs/42.png' : null
+    );
+    const wrapper = new THREE.Group();
+    wrapper.name = '/Splat';
+    wrapper.userData.kind = 'partition';
+    const part = new THREE.Object3D();
+    part.name = '/Splat/part_3';
+    wrapper.add(part);
+
+    const handle = buildPickResultHandler({
+      labelLoader: { getLabel: s.getLabel },
+      imageLabelLoader: { getImageUrl: s.getImageUrl },
+      overlayManager: { updateHoverContent: s.updateHoverContent },
+    });
+
+    await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: part });
+
+    expect(s.getImageUrl).toHaveBeenCalledWith('/Splat/part_3', 42);
+    expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
+      label: 'Cell 42',
+      imageUrl: 'thumbs/42.png',
+      nodeName: '/Splat',
+      elementIndex: 42,
+    });
+  });
+
+  it('picks the OUTERMOST kind=partition to report, still querying the leaf', async () => {
     const s = makeStubs();
     s.getLabel.mockResolvedValue('Cell 42');
     const outer = new THREE.Group();
@@ -269,7 +306,15 @@ describe('buildPickResultHandler', () => {
     });
 
     await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: leaf });
-    expect(s.getLabel).toHaveBeenCalledWith('/Outer', 42);
+    // Queried on the innermost leaf (the only node that owns a label CSR)...
+    expect(s.getLabel).toHaveBeenCalledWith('/Outer/part_1/part_0', 42);
+    // ...reported as the outermost wrapper.
+    expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith({
+      label: 'Cell 42',
+      imageUrl: null,
+      nodeName: '/Outer',
+      elementIndex: 42,
+    });
   });
 
   it('falls back to the leaf name when no kind=partition ancestor exists', async () => {
@@ -366,8 +411,13 @@ describe('buildPickResultHandler', () => {
 
       await handle(makeResult('/Cells', 9));
 
-      // ...but selection still reports the picked element.
-      expect(onSelection).toHaveBeenCalledExactlyOnceWith({ nodeName: '/Cells', elementIndex: 9 });
+      // ...but selection still reports the picked element. With no partition
+      // wrapper the reported and hit nodes coincide.
+      expect(onSelection).toHaveBeenCalledExactlyOnceWith({
+        nodeName: '/Cells',
+        elementIndex: 9,
+        hitNodeName: '/Cells',
+      });
       expect(s.updateHoverContent).toHaveBeenCalledExactlyOnceWith(null);
     });
 
@@ -383,7 +433,7 @@ describe('buildPickResultHandler', () => {
       expect(onSelection).toHaveBeenCalledExactlyOnceWith(null);
     });
 
-    it('reports the outermost partition wrapper as the selection node', async () => {
+    it('reports the outermost partition wrapper as the selection node, and the hit leaf as hitNodeName', async () => {
       const s = makeStubs();
       s.getLabel.mockResolvedValue('Cell 42');
       const onSelection = vi.fn();
@@ -402,7 +452,75 @@ describe('buildPickResultHandler', () => {
 
       await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: part });
 
-      expect(onSelection).toHaveBeenCalledExactlyOnceWith({ nodeName: '/Splat', elementIndex: 42 });
+      // The reported/queried split (#1415) is visible in the payload itself:
+      // `nodeName` is the user-facing layer, `hitNodeName` is the leaf that
+      // `elementIndex` is local to and that an embedder must index against.
+      expect(onSelection).toHaveBeenCalledExactlyOnceWith({
+        nodeName: '/Splat',
+        elementIndex: 42,
+        hitNodeName: '/Splat/part_3',
+      });
+      // The loader is still asked about the leaf.
+      expect(s.getLabel).toHaveBeenCalledWith('/Splat/part_3', 42);
+    });
+
+    it('carries the innermost leaf as hitNodeName under nested partitions', async () => {
+      // `nodeName` climbs to the OUTERMOST kind=partition wrapper, but the
+      // element index belongs to the innermost leaf — so a two-level partition
+      // is where the two fields are furthest apart, and the only place a
+      // `hitNodeName` that merely copied `nodeName` would go unnoticed.
+      const s = makeStubs();
+      s.getLabel.mockResolvedValue('Cell 42');
+      const onSelection = vi.fn();
+      const outer = new THREE.Group();
+      outer.name = '/Outer';
+      outer.userData.kind = 'partition';
+      const inner = new THREE.Group();
+      inner.name = '/Outer/part_1';
+      inner.userData.kind = 'partition';
+      outer.add(inner);
+      const leaf = new THREE.Object3D();
+      leaf.name = '/Outer/part_1/part_0';
+      inner.add(leaf);
+
+      const handle = buildPickResultHandler({
+        labelLoader: { getLabel: s.getLabel },
+        overlayManager: { updateHoverContent: s.updateHoverContent },
+        onSelection,
+      });
+
+      await handle({ nodeId: 1, elementId: 42, brightness: 1.0, mainNode: leaf });
+
+      expect(onSelection).toHaveBeenCalledExactlyOnceWith({
+        nodeName: '/Outer',
+        elementIndex: 42,
+        hitNodeName: '/Outer/part_1/part_0',
+      });
+    });
+
+    it('sets hitNodeName equal to nodeName when no partition wrapper exists', async () => {
+      // Plain (non-partition) group ancestors must not split the two paths —
+      // the additive field is a no-op for the ordinary case.
+      const s = makeStubs();
+      s.getLabel.mockResolvedValue('hi');
+      const onSelection = vi.fn();
+      const plainGroup = new THREE.Group();
+      plainGroup.name = '/Plain';
+      const leaf = new THREE.Object3D();
+      leaf.name = '/Plain/leaf';
+      plainGroup.add(leaf);
+
+      const handle = buildPickResultHandler({
+        labelLoader: { getLabel: s.getLabel },
+        overlayManager: { updateHoverContent: s.updateHoverContent },
+        onSelection,
+      });
+
+      await handle({ nodeId: 1, elementId: 7, brightness: 1.0, mainNode: leaf });
+
+      const sel = onSelection.mock.calls[0][0] as { nodeName: string; hitNodeName: string };
+      expect(sel.hitNodeName).toBe('/Plain/leaf');
+      expect(sel.hitNodeName).toBe(sel.nodeName);
     });
 
     it('does not emit a superseded selection', async () => {

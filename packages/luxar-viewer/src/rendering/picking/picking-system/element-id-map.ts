@@ -53,14 +53,24 @@
  *    Points pays. All of it is gated on `has_labels` / `has_image_labels`.
  *  - **Lines** — same class of divergence, still outstanding: on top of range
  *    loading it has a segment-vs-vertex granularity mismatch.
- *  - **Partitioned points and gsplats** — a known gap for BOTH.
+ *  - **Partitioned points and gsplats** — composed, no longer a gap.
  *    `core/group/adders/points.py` and `core/group/adders/gsplats.py` slice the
  *    CSR onto each `part_<i>` leaf, so a partitioned labelled node publishes a
- *    map in the PART's local on-disk space while
- *    `core/app/picking/pick-result-handler.ts` still resolves labels against
- *    the outermost `kind=partition` wrapper (which has no CSR, so the tooltip
- *    is null either way today). #1415/#1420 moves the lookup to the leaf, and
- *    the two then compose.
+ *    map in the PART's local on-disk space — which is exactly the space that
+ *    leaf's sliced CSR is keyed by. Since #1415/#1420,
+ *    `core/app/picking/pick-result-handler.ts` looks labels up on the hit LEAF
+ *    (`lookupPath = result.mainNode.name`; the outermost `kind=partition`
+ *    wrapper is now the reported path only). The two halves cannot drift apart,
+ *    because they name the same object: `picking-system.ts::readbackAndVote`
+ *    builds the result with `elementId: resolveOnDiskElementId(nodeEntry.main,
+ *    …)` and `mainNode: nodeEntry.main`, so the node this helper reads the map
+ *    from is the node whose `name` becomes the CSR path. One composition still
+ *    falls through: `partition=` forwards `additive_lod=` into every part
+ *    (`core/group/adders/points.py`), and the part's CSR is then written per
+ *    `additive_<i>` sub-group while the part group itself never receives
+ *    `has_labels` — so such a part publishes no map and carries no readable
+ *    labels at all. That is the per-level label gap (#1422), not a hole in the
+ *    partition slicing above.
  *
  * **Identity fallback is not always a safe answer**, so the map's lifetime is
  * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::
