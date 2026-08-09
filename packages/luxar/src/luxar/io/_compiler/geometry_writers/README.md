@@ -169,16 +169,24 @@ Writes an in-memory `GSplatLeaf` (a single splat set or an additive ladder) into
 The shortest of the four, and structurally so: no spatial ordering (the viewer
 loads a mesh whole, so a chunk index has nothing to skip), no primary size scalar
 (a triangle's extent comes from its own vertices, not a per-element
-radius/width/covariance), no LOD and no partition.
+radius/width/covariance), and no partition. A *substitutive* LOD level is just a
+normal mesh leaf, so it comes through here like any other; what mesh has no path
+for is an *additive* ladder inside a single leaf.
 
 1. **Fail-fast pre-write gate** (runs BEFORE zarr group creation):
    - `validate_render_attrs(attrs, MESH_RESERVED_ATTRS)`
    - `validate_node_path(path)`
-   - `validate_positions_for_writing(vertices, context="vertices")` → `(n_vertices, n_dims)`, then `validate_vertices_for_writing(vertices)` for the `MAX_MESH_VERTICES` (2^27) ceiling. Order matters: the cap reads `shape[0]`, meaningful only once the array is known 2D
-   - `validate_faces_for_writing(faces, n_vertices)` — layout `(F,3)` or flat `(3F,)`, integer dtype, `min >= 0`, `max < n_vertices`, `F >= 1`. Runs BEFORE the `uint32` cast, which is what makes the bounds check meaningful
-   - `normals` / `normal_dims` are enforced as a **pair in both directions** — each is meaningless alone
-   - `shading` must be `"smooth"` / `"flat"`; `double_sided` must be a bool
-   - `validate_colors_for_writing(..., channels=(3,4))` or `validate_broadcast_color`, `validate_scalars_preflight`, `validate_labels_for_writing`
+   - `validate_mesh_arrays(vertices, faces, …)` — every array check, in one shared
+     function because `add_mesh(substitutive_lod=…)` runs **exactly this** before it
+     decimates anything and before `add_lod_group` creates the group. Without that, a
+     malformed channel was refused only from inside a child write, leaving a
+     `kind=lod` group with no children (or missing its finest one) where the
+     plain-leaf path writes nothing. It covers:
+     - `validate_positions_for_writing(vertices, context="vertices")` → `(n_vertices, n_dims)`, then `validate_vertices_for_writing(vertices)` for the `MAX_MESH_VERTICES` (2^27) ceiling. Order matters: the cap reads `shape[0]`, meaningful only once the array is known 2D
+     - `validate_faces_for_writing(faces, n_vertices)` — layout `(F,3)` or flat `(3F,)`, integer dtype, `min >= 0`, `max < n_vertices`, `F >= 1`. Runs BEFORE the `uint32` cast, which is what makes the bounds check meaningful
+     - `normals` / `normal_dims` enforced as a **pair in both directions** — each is meaningless alone
+     - `shading` must be `"smooth"` / `"flat"`; `double_sided` must be a bool
+     - `validate_colors_for_writing(..., channels=(3,4))` or `validate_broadcast_color`, `validate_scalars_preflight`, `validate_labels_for_writing`
    - `prepare_transform_attrs(attrs, ctx.store)` — not idempotent, so exactly once
 
 2. **Normalize faces** to `(F, 3)` `uint32`. Safe only here: the validator has established an integer dtype and both bounds, and the vertex cap keeps every admitted index far below 2^32, so the cast is value-preserving.

@@ -92,6 +92,46 @@ def test_write_scalars_records_range_and_requires_position() -> None:
     assert lo == 0.0 and hi == 1.0
 
 
+def test_write_scalars_bounds_widen_to_the_ladder_window() -> None:
+    # `bounds` is what a LEVEL of an LOD ladder stamps so every level shares one
+    # colormap window instead of its own contracted min/max.
+    g = _group()
+    write_positions(g, np.random.rand(10, 3).astype(np.float32), None, _ctx())
+    scalars = np.linspace(0.0, 1.0, 10, dtype=np.float32)
+    write_scalars(g, scalars, None, 10, _ctx(), bounds=(-2.0, 5.0))
+    assert g.attrs["scalar_data_range"] == [-2.0, 5.0]
+
+
+def test_write_scalars_bounds_are_WIDENED_never_narrowed() -> None:
+    """A window narrower than the data must not become the stored range.
+
+    The stamped pair is also the BOUNDED_SCALAR quantization range, so honouring
+    a too-narrow window verbatim would put real data outside its own encoding.
+    Widening keeps the two meanings consistent, and this is the assertion that
+    separates the two implementations: assigning `bounds` directly leaves every
+    other test in the tree green.
+    """
+    g = _group()
+    write_positions(g, np.random.rand(4, 3).astype(np.float32), None, _ctx())
+    scalars = np.array([-10.0, 0.0, 5.0, 42.0], dtype=np.float32)
+    write_scalars(g, scalars, None, 4, _ctx(), bounds=(0.0, 1.0))
+    lo, hi = g.attrs["scalar_data_range"]
+    assert lo <= -10.0 and hi >= 42.0, "the window must cover the data it encodes"
+    # Unclipped on the way back: the tolerance is the quantization step of the
+    # window itself (AUTO picks uint8 for this many elements), not a fudge.
+    decoded = ArrayDecoder().decode(g["scalars"], g)
+    np.testing.assert_allclose(decoded, scalars, atol=(hi - lo) / 255 * 2)
+
+
+def test_write_scalars_bounds_apply_to_a_UNIFORM_value_too() -> None:
+    # The broadcast branch stamps [v, v] on its own; a level of a ladder must
+    # still report the ladder's window, or the parameter means two things.
+    g = _group()
+    write_positions(g, np.random.rand(6, 3).astype(np.float32), None, _ctx())
+    write_scalars(g, 0.5, None, 6, _ctx(), bounds=(0.0, 4.0))
+    assert g.attrs["scalar_data_range"] == [0.0, 4.0]
+
+
 def test_write_scalars_without_position_raises() -> None:
     g = _group()
     try:
