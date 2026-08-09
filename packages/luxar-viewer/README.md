@@ -125,7 +125,10 @@ app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hit
 ```
 
 > **Note on `selection`:** fires with the element under the cursor (or `null`
-> when the hover clears) on any dataset. Subscribe **before** the dataset loads
+> when the hover clears) on any dataset. What `elementIndex` counts is per-node —
+> see `SelectionPayload` for the exact contract: a labelled node reports an
+> on-disk index (for a labelled **lines** node, the picked segment's start-vertex
+> row), while an unlabelled one reports the visible-buffer slot. Subscribe **before** the dataset loads
 > (i.e. before `init()` / `switchDataset()`) — the GPU picking pipeline is
 > provisioned at load time only when a listener exists, so picking stays
 > zero-cost for pages that never consume it. Hover-driven; click-to-select is

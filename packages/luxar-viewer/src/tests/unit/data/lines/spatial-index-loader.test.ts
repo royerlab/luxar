@@ -672,6 +672,89 @@ describe('LinesSpatialIndexLoader', () => {
       });
     });
 
+    // ────────────────────────────────────────────────────────────────
+    // Issue #1424: the on-disk VERTEX range bounds (index space A) are the
+    // loader's half of the slot → on-disk map picking resolves per-vertex
+    // labels through. Gated on the node declaring a label CSR, exactly like
+    // the Points / GSplats twins.
+    describe('vertexRangeBounds publication (picking element IDs)', () => {
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      };
+
+      /** A copy of the body fixture's node with one label flag flipped on. */
+      function makeLabelledNode(flag: 'has_labels' | 'has_image_labels'): SceneNode {
+        const base = makeLinesNode();
+        return { ...base, attrs: { ...base.attrs, [flag]: true } } as SceneNode;
+      }
+
+      function makeLabelledLoader(flag: 'has_labels' | 'has_image_labels') {
+        return new LinesSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof LinesSpatialIndexLoader>[0],
+          makeLabelledNode(flag)
+        );
+      }
+
+      it('omits vertexRangeBounds for a node with no label CSR', async () => {
+        const result = await bodyLoader.loadLines(viewState);
+        expect(result.vertexRangeBounds).toBeUndefined();
+      });
+
+      it('publishes the merged on-disk vertex ranges for a has_labels node', async () => {
+        // The body fixture's spatial query returns segment ranges [0,50) and
+        // [100,150), and each segment r references vertices (r, r+1) — so the
+        // loaded vertex set is [0,51) ∪ [100,151), a genuinely multi-range,
+        // NON-zero-anchored space. This is exactly the shape that makes the
+        // raw pick slot the wrong answer.
+        const labelled = makeLabelledLoader('has_labels');
+        try {
+          const result = await labelled.loadLines(viewState);
+          // FLAT `[start0, end0, start1, end1]` pairs in a `Uint32Array` — the
+          // shape the slice cache measures and deep-copies (see
+          // `LoadedLinesData.vertexRangeBounds`).
+          expect(result.vertexRangeBounds).toBeInstanceOf(Uint32Array);
+          expect(Array.from(result.vertexRangeBounds!)).toEqual([0, 51, 100, 151]);
+          // The ranges describe the loaded vertex arrays exactly.
+          expect(result.vertexCount).toBe(102);
+        } finally {
+          labelled.dispose();
+        }
+      });
+
+      it('publishes them for a has_image_labels node too', async () => {
+        const labelled = makeLabelledLoader('has_image_labels');
+        try {
+          const result = await labelled.loadLines(viewState);
+          expect(result.vertexRangeBounds).toHaveLength(4); // 2 ranges x 2 bounds
+        } finally {
+          labelled.dispose();
+        }
+      });
+
+      it('publishes them on the accumulator-disabled FALLBACK path as well', async () => {
+        // Both return sites must stamp the field: the accumulator path returns
+        // a fresh `getData()` literal, the fallback path its own object literal.
+        // Dropping either leaves picking silently on the raw-slot fallback for
+        // half the configurations.
+        const labelled = makeLabelledLoader('has_labels');
+        try {
+          // First load initializes (and creates the accumulator); then drop it
+          // so the second load takes the allocating fallback branch.
+          const viaAccumulator = await labelled.loadLines(viewState);
+          expect(viaAccumulator.vertexRangeBounds).toHaveLength(4);
+
+          (labelled as unknown as { _accumulator: unknown })._accumulator = null;
+          const viaFallback = await labelled.loadLines(viewState);
+          expect(viaFallback.vertexRangeBounds).toBeInstanceOf(Uint32Array);
+          expect(Array.from(viaFallback.vertexRangeBounds!)).toEqual([0, 51, 100, 151]);
+        } finally {
+          labelled.dispose();
+        }
+      });
+    });
+
     describe('monitoring (during load)', () => {
       it('should emit query events', async () => {
         const listener = vi.fn();

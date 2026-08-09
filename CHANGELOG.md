@@ -194,9 +194,9 @@ each sub-LOD, so it is never built there); per-level label resolution is #1422. 
 resolves labels against the hit `part_<i>` leaf rather than the outermost wrapper, and
 that leaf is both the node whose sliced CSR is read and the node this map is stamped on.
 
-Points only. GSplats (#1423) and Lines (#1424) have the same class of bug; gsplats
-needed a Rust WASM kernel change and is fixed in the entry below, while lines carries a
-segment-vs-vertex granularity mismatch on top of it and remains outstanding. Mesh was
+Points only. GSplats (#1423) and Lines (#1424) had the same class of bug; gsplats
+needed a Rust WASM kernel change and lines carries a segment-vs-vertex granularity
+mismatch on top of it — both are fixed in the entries below. Mesh was
 already correct: its pick shader reports `gl_VertexID`, which for an indexed draw IS the
 on-disk vertex ordinal, so the lookup no-ops.
 
@@ -234,8 +234,55 @@ branch is unreachable and even an uncompacted labelled node allocates a full N-e
 map. It is likewise never published across an additive ladder — each sub-LOD is a
 distinct on-disk array, so no single map is meaningful; the loader factory clears the
 label flags on each synthesized `additive_<i>` node and the ladder concat strips the
-field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) remains the
-last outstanding geometry.
+field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) is fixed in
+the entry below.
+
+#### Hover labels index the right line vertex (#1424)
+
+The Lines half of #1421, and the awkward one: it was wrong **twice over**, and both had
+to be fixed together. The lines pick shader emits `aSortedIndex`, the visible-segment
+storage slot — but line labels are per-VERTEX (the writer validates them against
+`n_vertices` and permutes them by `vertex_sort_indices`), so the tooltip was indexing a
+per-vertex string array with a segment number: wrong granularity. And that segment
+number is not an on-disk segment row either — the spatial index loads only the visible
+segment ranges, `remapSegmentIndices` rewrites every on-disk vertex index into a
+range-local one, and the clip pass compacts the segment stream on every commit: wrong
+index space.
+
+Fixing it means walking four index spaces, so they are named in the code: **E** the
+visible segment slot → **D** the loaded segment row → **C** the loaded-local vertex
+index → **A** the on-disk sorted vertex row the CSR is keyed by. Each link already
+existed or was one line away. The projection gained an opt-in `sourceSegmentIndices`
+output for E → D, derived in a single forward pass over the same `visibility` mask every
+clipping kernel already compacts against — so the table cannot drift from the stream it
+describes, and no WASM/Rust change was needed for either backend. That pass also
+cross-checks the mask's set-bit count against the count the clip kernel returned and
+publishes nothing if they disagree, rather than shipping a right-length table with a
+zero-filled tail that every later guard would wave through. D → C is just
+`segments[2·row]`. C → A reuses the shared composer (`buildElementIdMap`) over the
+loader's newly published `vertexRangeBounds` — a FLAT `Uint32Array` of `[start, end)`
+pairs rather than an object array, because this payload is cached and the slice cache
+measures and deep-copies exactly the own typed-array properties (an object array would be
+retained by the LRU at a billed zero bytes, and shared by reference with every stored
+snapshot). Note the E → D → C sequence is deliberately NOT
+handed to that composer as its "kept indices": segment rows are spatially permuted and
+consecutive segments of a polyline share vertices, so the sequence is neither ascending
+nor duplicate-free and the composer's strict-ascent guard would (correctly) reject it.
+
+**A segment has two endpoints and one pick id**, which is a `flat` vertex-stage varying
+— a per-fragment nearest-endpoint choice would need the shader to emit two ids. So the
+reported vertex is by convention the segment's **start**, and the embedder's
+`SelectionPayload.elementIndex` documents that for lines. Every gate matches the
+Points/GSplats twins: nothing is
+published for a node declaring neither `has_labels` nor `has_image_labels`, the map is
+stamped onto the mesh in lockstep with `committedData` (and cleared with it), it is never
+built across an additive ladder — the loader factory clears both label flags on each
+synthesized `additive_<i>` node and the ladder concat strips the field belt-and-braces
+(per-level labels are #1422) — and every inconsistency fails closed to the raw slot
+rather than to a plausible-looking wrong answer, warning wherever the composer can tell
+the difference. All four geometry types now resolve hover labels through the one
+`resolveOnDiskElementId` seam; mesh needs no map of its own, since it loads whole and its
+`gl_VertexID` slot already is the on-disk row.
 
 #### The port probe now matches the bind it predicts
 

@@ -62,7 +62,7 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
   }));
   vi.doMock('../../../../utils/log', () => ({
     log: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
-    Modules: { WORKER_POOL: 'WorkerPool' },
+    Modules: { WORKER_POOL: 'WorkerPool', LINES_LOADER: 'LinesSpatialIndexLoader' },
   }));
   vi.doMock('comlink', () => ({
     expose: vi.fn(),
@@ -401,6 +401,147 @@ describe('projectLinesTo3D — happy paths', () => {
     expect(arr[1]).toBeCloseTo(128 / 255, 5);
     expect(arr[2]).toBeCloseTo(1, 5);
     expect(arr[3]).toBeCloseTo(64 / 255, 5);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// Issue #1424: the E → D half of the lines picking chain (visible slot →
+// LOADED SEGMENT ROW). Opt-in, and derived from the same `visibility` mask the
+// clipping kernels compact against, so it cannot drift from the visible stream.
+describe('projectLinesTo3D — sourceSegmentIndices (picking element IDs)', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Assert the worker warned about a dropped table, naming both counts. The
+   * mocked `utils/log` module is the very one the worker imported (same
+   * `vi.doMock` registry), so its `warning` spy is observable from here.
+   */
+  async function expectDropWarning(...fragments: string[]): Promise<void> {
+    const { log } = (await import('../../../../utils/log')) as unknown as {
+      log: { warning: ReturnType<typeof vi.fn> };
+    };
+    const messages = log.warning.mock.calls.map((c) => String(c[1]));
+    for (const fragment of fragments) {
+      expect(messages.some((m) => m.includes(fragment))).toBe(true);
+    }
+  }
+
+  /**
+   * A 4D fixture of four INDEPENDENT segments where the hidden dim 3 places
+   * segments 1 and 3 far outside the slice: visibility is [1,0,1,0], so the
+   * visible stream is compacted to 2 entries and slot 0/1 come from segment
+   * rows 0/2.
+   */
+  const partiallyClipped = {
+    positions: new Float32Array([
+      0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 20, 1, 1, 0, 20, 0, 2, 0, 0, 1, 2, 0, 0, 0, 3, 0, 20, 1, 3,
+      0, 20,
+    ]),
+    segments: new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7]),
+    widths: new Float32Array(8).fill(1),
+    colors: null,
+    sharpness: null,
+    scalars: null,
+    viewState: {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1e6, 1e6, 1e6, 0.5],
+    },
+    ndim: 4,
+    segmentCount: 4,
+  };
+
+  it('omits sourceSegmentIndices unless emitSourceIndices is requested', async () => {
+    const { mod } = await loadWorker();
+    const result = (await mod.workerAPI.projectLinesTo3D({ ...partiallyClipped })) as {
+      visibleSegmentCount: number;
+      sourceSegmentIndices?: Uint32Array;
+    };
+    expect(result.visibleSegmentCount).toBe(2);
+    expect(result.sourceSegmentIndices).toBeUndefined();
+  });
+
+  it('equals the SET-BIT positions of the visibility mask for a partially-clipped input', async () => {
+    const { mod, wasm } = await loadWorker();
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      ...partiallyClipped,
+      emitSourceIndices: true,
+    })) as { visibleSegmentCount: number; sourceSegmentIndices?: Uint32Array };
+
+    expect(result.visibleSegmentCount).toBe(2);
+    expect(result.sourceSegmentIndices).toBeInstanceOf(Uint32Array);
+    // Slot 0 came from segment row 0, slot 1 from row 2 — NOT rows 0 and 1.
+    expect(Array.from(result.sourceSegmentIndices!)).toEqual([0, 2]);
+
+    // And it is the SAME visibility array every downstream kernel consumed
+    // (arg 7 of clip_segments_batch), which is what makes drift impossible.
+    const visibility = (wasm.clip_segments_batch.mock.calls[0] as unknown[])[7] as Uint8Array;
+    const setBits: number[] = [];
+    for (let r = 0; r < visibility.length; r++) if (visibility[r] !== 0) setBits.push(r);
+    expect(Array.from(result.sourceSegmentIndices!)).toEqual(setBits);
+  });
+
+  it('drops the table when the clip kernel writes no visibility but reports a count', async () => {
+    // The fail-closed shape `data/loaders/element-ids.ts` names: a stale prebuilt
+    // `public/wasm/` whose glue predates a changed out-param signature, so the
+    // caller's `visibility` buffer stays all-zeros while the return value is
+    // non-zero. A published table would keep its correct LENGTH with a
+    // zero-filled tail, pass every downstream guard, and resolve every unfilled
+    // slot to segment row 0 — a wrong-but-plausible label, silently.
+    const { mod, wasm } = await loadWorker();
+    wasm.clip_segments_batch.mockImplementation(() => 2);
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      ...partiallyClipped,
+      emitSourceIndices: true,
+    })) as {
+      visibleSegmentCount: number;
+      sourceSegmentIndices?: Uint32Array;
+      startPositions: Float32Array;
+      startWidths: Float32Array;
+    };
+    expect(result.sourceSegmentIndices).toBeUndefined();
+    // Only the picking table is dropped — the projection itself is untouched.
+    expect(result.visibleSegmentCount).toBe(2);
+    expect(result.startPositions.length).toBe(6);
+    expect(result.startWidths.length).toBe(2);
+    // …and BOTH counts are reported here, at the only place that knows them:
+    // the composer downstream can only observe that no table arrived.
+    await expectDropWarning('0 set bits', '2 visible segments');
+  });
+
+  it('drops the table when the visibility mask has FEWER set bits than the reported count', async () => {
+    // Same class, one step subtler: a partially-written mask. One set bit for a
+    // count of 2 means slot 1 would silently read as segment row 0.
+    const { mod, wasm } = await loadWorker();
+    wasm.clip_segments_batch.mockImplementation((...args: unknown[]) => {
+      (args[7] as Uint8Array)[0] = 1;
+      return 2;
+    });
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      ...partiallyClipped,
+      emitSourceIndices: true,
+    })) as { visibleSegmentCount: number; sourceSegmentIndices?: Uint32Array };
+    expect(result.visibleSegmentCount).toBe(2);
+    expect(result.sourceSegmentIndices).toBeUndefined();
+    await expectDropWarning('1 set bits', '2 visible segments');
+  });
+
+  it('omits sourceSegmentIndices when nothing is visible (there are no slots)', async () => {
+    const { mod } = await loadWorker();
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      ...partiallyClipped,
+      // Slice far from every segment on the hidden axis.
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1000],
+        tolerance: [1e6, 1e6, 1e6, 0.5],
+      },
+      emitSourceIndices: true,
+    })) as { visibleSegmentCount: number; sourceSegmentIndices?: Uint32Array };
+    expect(result.visibleSegmentCount).toBe(0);
+    expect(result.sourceSegmentIndices).toBeUndefined();
   });
 });
 
