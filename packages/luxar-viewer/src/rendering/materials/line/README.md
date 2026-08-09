@@ -14,12 +14,14 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 
 ## Module map
 
-| File               | Role                                                                                                                                                                                                                                   |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `material-glsl.ts` | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
-| `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
-| `shader-glsl.ts`   | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
-| `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
+| File                        | Role                                                                                                                                                                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `material-glsl.ts`          | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
+| `material-tsl.ts`           | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
+| `shader-glsl.ts`            | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
+| `shader-tsl.ts`             | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
+| `shader-glsl-volumetric.ts` | `VOLUMETRIC_LINE_VERTEX_SHADER` + `VOLUMETRIC_LINE_FRAGMENT_SHADER` + `VOLUMETRIC_LINE_SOURCE` — the volumetric primitive's GLSL pair (see the section below).                                                                         |
+| `shader-tsl-volumetric.ts`  | `volumetricLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the volumetric pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                |
 
 ## Rendering model in one paragraph
 
@@ -252,6 +254,43 @@ only 0.076% — and why the zigzag is gated on its flux profile instead.
 (Both columns measured in headless Chromium with `dpr=1` pinned on
 2026-08-07, the unmitred one via `&lineJoin=none`. The E2E job is not part of the
 per-PR CI run; the spec runs under `make test-e2e`.)
+
+## Volumetric primitive (`?linePrimitive=volumetric`, #1352)
+
+An alternative rendering model for the whole session, selected by the
+`?linePrimitive=` URL parameter (see `types/line-primitive.ts`; default
+remains `screen-space`). Instead of shading a screen-space cross-section,
+each segment is treated as a true 3D density — the segment convolved with an
+isotropic 3D Gaussian, σ calibrated so the side-on appearance matches the
+quad by construction (`σ = drawnHalfWidth / T`, `_shared/line-volumetric.ts`).
+The quad becomes a pure rasterization stencil (a "stadium" extended axially
+per end), and the fragment solves against the TRUE camera-space segment:
+
+- **Sum-family blending** (additive, luminous, volumetric) integrates the
+  density along the view ray in closed form (Gaussian×erf identity). Interior
+  polyline joints are **bisector cuts** — the rod density clipped by the
+  plane between the segment and its partner (fetched via the joint-code
+  partner slot), which partitions exactly at any bend angle. Free ends keep
+  the erf cap; chain-end segments (one cut, one cap) use a sign-selected
+  inclusion–exclusion closed form. Four fragment lanes (structural parallel /
+  soft-soft / hard-hard / mixed), all quadrature-validated against the CPU
+  reference in `_shared/line-volumetric.ts` — **edit the lanes there first,
+  prove them in `line-volumetric-integral.test.ts`, then mirror into both
+  shader twins.**
+- **Peak-family blending** (max, normal, opaque) takes the ray maximum:
+  today's profile at the ray→clamped-segment distance, exact for any
+  sharpness β. The peak/sum split is the `LUXAR_PEAK_PROJECTION` define
+  (GLSL) / a graph variant (TSL), managed by `applyBlendingMode` beside the
+  other blending defines.
+
+End-on viewing is exact (the screen-space quad degenerates there), and the
+sum output is normalized by σ√2π so a long segment's side-on core matches
+the quad's core intensity exactly — the calibration that makes the session
+A/B meaningful. Sharpness in sum modes is β=2 regardless of the knob (the
+closed form is Gaussian-only; the LUT is #1352 PR-4); peak modes honour β.
+Picking still uses the screen-space footprint while the flag is off-default
+(#1352 PR-3). The primitive is BUILD-time: it selects the GLSL source pair /
+TSL factory at material construction and never changes on a live material.
 
 ## Geometry and storage layout
 

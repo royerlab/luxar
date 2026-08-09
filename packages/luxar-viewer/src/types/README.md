@@ -361,6 +361,10 @@ if (isLinesMetadata(attrs)) {
 
 See `lines.ts` for complete interface definitions including `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, and `LinesViewState`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query/spatial-query-builder.ts`; lines additionally carry the vertex-side bounds inside the loader.
 
+## Line Primitive Types
+
+`line-primitive.ts` owns the session-wide line rendering primitive selection (issue #1352): `'screen-space'` is today's flat quad, `'volumetric'` draws each segment as its true 3D density (segment ⊛ isotropic Gaussian — exact end-on, seam-free joints). Unlike `line-join.ts` there is no authored node attribute: the primitive is a renderer implementation choice, set once from `?linePrimitive=` and resolved through `resolveLinePrimitive(explicit?)` (the explicit argument exists for harnesses that never run bootstrap). Same layering rationale as `line-join.ts` below.
+
 ## Line Join Types
 
 `line-join.ts` owns the joint style a polyline's vertex stage uses at a degree-2 joint (issue #790): `'none'` leaves the uncovered wedge at every bend, `'miter'` closes it exactly. It lives in `types/` rather than `rendering/` because `config/url-params.ts` must both parse the `?lineJoin=` override and install it, and `config/` may not import from `rendering/`.
@@ -866,6 +870,7 @@ The types package provides the type-safe foundation for all nD visualization ope
 - `points.ts` -- `EffectiveRadiusConfig`, `PointsMetadata`, `LoadedPointsData`, `PointRange`, `PointsViewState`, `PointsDataLoader`, `PointsUserData`, `PositionArray` / `ColorArray` / `ScalarArray` aliases, and `isPointsMetadata` / `isPointsUserData` guards.
 - `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and `isLinesMetadata` / `isLinesUserData` / `isValidLineType` guards.
 - `line-join.ts` -- `LineJoinStyle`, `DEFAULT_LINE_JOIN`, `LINE_JOIN_UNIFORM`, `LINE_JOIN_STYLES`, and the `parseLineJoinStyle()` / `setLineJoinOverride()` / `resolveLineJoin()` / `lineJoinStyleFromUniform()` helpers.
+- `line-primitive.ts` -- `LinePrimitive`, `DEFAULT_LINE_PRIMITIVE`, `LINE_PRIMITIVES`, and the `parseLinePrimitive()` / `setLinePrimitiveOverride()` / `resolveLinePrimitive()` helpers (#1352).
 - `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, `isGSplatsMetadata` / `isGSplatsUserData` guards, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
 - `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` / `isPointsNode` guards.
 - `format-contract.ts` -- Generated cross-language format-contract constants (the TypeScript consumer half of the Python <-> TypeScript contract; single source of truth is `format-contract/contract.yaml`, regenerate via `make gen-contract`): `SCENE_FORMAT_VERSION` / `SUPPORTED_SCENE_VERSIONS`, `GSPLATS_FORMAT_VERSION` / `SUPPORTED_GSPLATS_FORMAT_VERSIONS`, `FORMAT_TYPE_GSPLATS`, `NODE_TYPES`, `NODE_KINDS`, `ENCODING_NAMES`, `ATTR_KEYS`, `ARRAY_NAMES`, and their corresponding union types (`SceneFormatVersion`, `GSplatsFormatVersion`, `NodeTypeName`, `NodeKind`, `EncodingName`, ...).

@@ -48,7 +48,7 @@
  * @module rendering/materials/_shared/erf
  */
 
-import { abs, float, min, sign } from 'three/tsl';
+import { abs, exp, float, min, sign } from 'three/tsl';
 import type { TSLNode } from './tsl-helpers';
 
 /** A&S 7.1.26 auxiliary-variable constant: t = 1 / (1 + p·|x|). */
@@ -135,6 +135,44 @@ float luxarErf(float x) {
   return (x < 0.0) ? -p : p;
 }
 `;
+
+/**
+ * GLSL implementation of `erfRef` — `float luxarErfAS(float x)`, the A&S
+ * 7.1.26 rational form (max abs error 1.5e-7, one `exp` + one division).
+ *
+ * For the FEW shader lanes where the polynomial's 5.4e-4 error gets
+ * amplified past visibility: the volumetric line primitive's mixed-end
+ * lane multiplies its erf terms by pref ∝ 1/sin(ray, axis), which is
+ * unbounded, so it pays the exp for exactness. Population there is only
+ * the two chain-end segments of each polyline. Hot lanes keep
+ * {@link GLSL_ERF_FUNCTIONS}. Value-locked to `erfRef` via the shared
+ * constants; same NaN caveat as `luxarErf`.
+ */
+export const GLSL_ERF_AS_FUNCTIONS = `
+float luxarErfAS(float x) {
+  float ax = abs(x);
+  float t = 1.0 / (1.0 + ${glslNum(ERF_AS_P)} * ax);
+  float p = 1.0 - t * (${glslNum(ERF_AS_COEFFS[0])} + t * (${glslNum(ERF_AS_COEFFS[1])}
+          + t * (${glslNum(ERF_AS_COEFFS[2])} + t * (${glslNum(ERF_AS_COEFFS[3])}
+          + t * ${glslNum(ERF_AS_COEFFS[4])})))) * exp(-min(ax * ax, 80.0));
+  return (x < 0.0) ? -p : p;
+}
+`;
+
+/**
+ * TSL twin of `luxarErfAS`, built from the SAME constants (see the
+ * `GLSL_ERF_AS_FUNCTIONS` docblock for when to pay for it).
+ */
+export function erfAsTSL(x: TSLNode): TSLNode {
+  const ax = abs(x);
+  const t = float(1.0).div(float(1.0).add(float(ERF_AS_P).mul(ax)));
+  let poly: TSLNode = float(ERF_AS_COEFFS[ERF_AS_COEFFS.length - 1]);
+  for (let k = ERF_AS_COEFFS.length - 2; k >= 0; k--) {
+    poly = poly.mul(t).add(float(ERF_AS_COEFFS[k]));
+  }
+  const p = float(1.0).sub(poly.mul(t).mul(exp(min(ax.mul(ax), float(80.0)).negate())));
+  return p.mul(sign(x));
+}
 
 /**
  * TSL twin of `luxarErf`, built from the SAME coefficient values (the

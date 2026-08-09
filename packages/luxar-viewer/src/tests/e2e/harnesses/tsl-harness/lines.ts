@@ -11,6 +11,8 @@
 
 import * as THREE from 'three';
 import { LINE_SOURCE } from '../../../../rendering/materials/line/shader-glsl';
+import { VOLUMETRIC_LINE_SOURCE } from '../../../../rendering/materials/line/shader-glsl-volumetric';
+import { volumetricLineWebGPUFactory } from '../../../../rendering/materials/line/shader-tsl-volumetric';
 import {
   lineWebGPUFactory,
   buildLineTSLNodesFromUniforms,
@@ -1440,5 +1442,167 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildSortedPermutedLinesMesh,
+  },
+
+  // ============================================================
+  // VOLUMETRIC LINE PRIMITIVE (#1352, ?linePrimitive=volumetric).
+  // `volprim` = the PRIMITIVE — distinct from the `line-volumetric-*`
+  // fixtures above, which exercise the volumetric BLENDING MODE on the
+  // screen-space quad. Value-level parity contract: the two backends
+  // share every constant through _shared/line-volumetric.ts and
+  // _shared/erf.ts, and the lane math is quadrature-validated in
+  // line-volumetric-integral.test.ts — these fixtures pin that the two
+  // CODE PATHS (GLSL strings vs TSL graph) evaluate it identically.
+  // NOTE for snapshot hygiene: entries are appended at the END of
+  // LINE_SHADERS (codegen snapshot order shifts shared-UBO layouts).
+  // ============================================================
+
+  // Side-on segment, additive: the σ-calibration anchor (core intensity
+  // must match the screen-space quad by construction) through the
+  // soft/soft erf-difference lane.
+  'line-volprim-sideon': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () => buildVisualLineUniforms(buildLineDataTexture(), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // End-on segment under an ORTHO camera: every fragment's ray is
+  // structurally parallel to the axis — the lane the screen-space quad
+  // degenerates on (#1352's headline case) and the only fixture that
+  // reaches the parallel closed forms (G_len, Ψ) in both backends.
+  'line-volprim-endon-ortho': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, VOLUMETRIC_LINE_ALPHAS),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, VOLUMETRIC_LINE_ALPHAS),
+  },
+  // End-on under a PERSPECTIVE camera: rays diverge slightly off-axis, so
+  // fragments sweep the NEAR-axial region of the general soft lane (the
+  // Taylor branch and the kk→0 behaviour) instead of the structural lane.
+  'line-volprim-endon-persp': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildLineDataTexture([0, 0, 0.5], [0, 0, -0.3]), false),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [0, 0, 0.5], [0, 0, -0.3]),
+    buildCamera: buildBehindCamera,
+  },
+  // A REAL degree-2 joint (the join fixtures' V geometry, slot-bearing
+  // joint codes): the only fixture that reaches the partner fetch, the
+  // bisector-cut construction, and the MIXED (one hard cut, one soft cap)
+  // fragment lane — both its splits — in both backends. Additive, so the
+  // two segments must partition the bend seamlessly.
+  'line-volprim-joint': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
+  },
+  // The same joint under MAX blending: the peak-family capsule body
+  // (LUXAR_PEAK_PROJECTION on the GLSL side, the peak graph variant on
+  // the TSL side) plus the max-mode premultiplied output tail.
+  'line-volprim-peak': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
+    buildDefines: () => ({ LUXAR_PEAK_PROJECTION: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
+  },
+  // Width taper: σ varies with the clamped closest-approach coordinate
+  // sHat (NOT the rasterised quad t) — a per-fragment σ(sHat), invSE, and
+  // energy-compensation path no constant-width fixture exercises.
+  'line-volprim-taper': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, REMAP_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, REMAP_STYLE),
+  },
+  // Colormap path: the volumetric primitive samples the LUT in the
+  // FRAGMENT stage at sHat (the quad samples per-vertex scalars smoothly
+  // interpolated by t) — a genuinely new sampling site needing its own
+  // parity pin. Scalars 0.2 → 0.8 across the segment.
+  'line-volprim-colormap': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () => ({
+      ...buildVisualLineUniforms(buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]), true),
+      uColormapTex: { value: buildColormapTexture() },
+      uScalarMin: { value: 0.0 },
+      uScalarScale: { value: 1.0 },
+    }),
+    buildDefines: () => ({ USE_COLORMAP: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(
+        buildLineTSLNodesFromUniforms(uniforms, { useColormap: true }),
+        {
+          useColormap: true,
+          blendingMode: 'additive',
+          isOrtho: true,
+        }
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]),
   },
 };

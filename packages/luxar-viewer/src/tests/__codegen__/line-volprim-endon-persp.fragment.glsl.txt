@@ -1,0 +1,906 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform object {
+	vec2 nodeUniform0;
+	vec2 nodeUniform1;
+	float nodeUniform2;
+	float nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	float nodeUniform8;
+	float nodeUniform9;
+	mat3 nodeUniform11;
+	uint nodeUniform12;
+	mat3 nodeUniform13;
+	uint nodeUniform14;
+	mat3 nodeUniform15;
+	uint nodeUniform16;
+	mat3 nodeUniform17;
+	uint nodeUniform18;
+	mat3 nodeUniform19;
+	uint nodeUniform20;
+	mat3 nodeUniform21;
+	uint nodeUniform22;
+	mat4 nodeUniform24;
+	float nodeUniform25;
+	mat3 nodeUniform26;
+	uint nodeUniform27;
+	mat3 nodeUniform28;
+	uint nodeUniform29;
+	mat3 nodeUniform30;
+	uint nodeUniform31;
+	mat3 nodeUniform32;
+	uint nodeUniform33;
+	vec2 nodeUniform35;
+	float nodeUniform36;
+	float nodeUniform37;
+};
+
+
+// varyings
+flat  in vec4 nodeVarying0;
+flat  in vec4 nodeVarying1;
+flat  in vec4 nodeVarying2;
+flat  in vec4 nodeVarying3;
+flat  in vec4 nodeVarying4;
+flat  in vec4 nodeVarying5;
+flat  in vec3 nodeVarying6;
+flat  in vec3 nodeVarying7;
+
+
+// vars
+vec4 DiffuseColor;
+vec2 nodeVar0;
+vec3 nodeVar1;
+vec3 nodeVar2;
+float nodeVar3;
+vec3 nodeVar4;
+vec3 nodeVar5;
+vec3 nodeVar6;
+float nodeVar7;
+float nodeVar8;
+float nodeVar9;
+float nodeVar10;
+float nodeVar11;
+float nodeVar12;
+bool nodeVar13;
+float nodeVar14;
+float nodeVar15;
+float nodeVar16;
+float nodeVar17;
+vec3 nodeVar18;
+float nodeVar19;
+float nodeVar20;
+vec3 nodeVar21;
+float nodeVar22;
+float nodeVar23;
+float nodeVar24;
+float nodeVar25;
+float nodeVar26;
+float nodeVar27;
+float nodeVar28;
+float nodeVar29;
+float nodeVar30;
+float nodeVar31;
+float nodeVar32;
+float nodeVar33;
+bool nodeVar34;
+bool nodeVar35;
+float nodeVar36;
+vec3 nodeVar37;
+float nodeVar38;
+float nodeVar39;
+float nodeVar40;
+float nodeVar41;
+float nodeVar42;
+float nodeVar43;
+float nodeVar44;
+float nodeVar45;
+float nodeVar46;
+float nodeVar47;
+float nodeVar48;
+float nodeVar49;
+float nodeVar50;
+float nodeVar51;
+float nodeVar52;
+float nodeVar53;
+float nodeVar54;
+float nodeVar55;
+float nodeVar56;
+float nodeVar57;
+float nodeVar58;
+float nodeVar59;
+float nodeVar60;
+float nodeVar61;
+float nodeVar62;
+float nodeVar63;
+float nodeVar64;
+float nodeVar65;
+float nodeVar66;
+float nodeVar67;
+float nodeVar68;
+float nodeVar69;
+float nodeVar70;
+float nodeVar71;
+float nodeVar72;
+float nodeVar73;
+float nodeVar74;
+float nodeVar75;
+float nodeVar76;
+float nodeVar77;
+float nodeVar78;
+float nodeVar79;
+float nodeVar80;
+float nodeVar81;
+float nodeVar82;
+float nodeVar83;
+float nodeVar84;
+float nodeVar85;
+float nodeVar86;
+float nodeVar87;
+float nodeVar88;
+float nodeVar89;
+float nodeVar90;
+float nodeVar91;
+float nodeVar92;
+float nodeVar93;
+float nodeVar94;
+float nodeVar95;
+float nodeVar96;
+bool nodeVar97;
+float nodeVar98;
+float nodeVar99;
+float nodeVar100;
+float nodeVar101;
+float nodeVar102;
+float nodeVar103;
+float nodeVar104;
+float nodeVar105;
+float nodeVar106;
+float nodeVar107;
+bool nodeVar108;
+bool nodeVar109;
+bool nodeVar110;
+bool nodeVar111;
+float nodeVar112;
+float nodeVar113;
+float nodeVar114;
+float nodeVar115;
+float nodeVar116;
+float nodeVar117;
+float nodeVar118;
+float nodeVar119;
+float nodeVar120;
+float nodeVar121;
+float nodeVar122;
+float nodeVar123;
+float nodeVar124;
+float nodeVar125;
+float nodeVar126;
+float nodeVar127;
+float nodeVar128;
+float nodeVar129;
+float nodeVar130;
+float nodeVar131;
+float nodeVar132;
+float nodeVar133;
+float nodeVar134;
+float nodeVar135;
+float nodeVar136;
+float nodeVar137;
+float nodeVar138;
+float nodeVar139;
+float nodeVar140;
+float nodeVar141;
+float nodeVar142;
+float nodeVar143;
+float nodeVar144;
+float nodeVar145;
+float nodeVar146;
+float nodeVar147;
+float nodeVar148;
+float nodeVar149;
+float nodeVar150;
+float nodeVar151;
+float nodeVar152;
+vec3 nodeVar153;
+vec3 nodeVar154;
+float nodeVar155;
+float nodeVar156;
+vec4 Output;
+vec4 nodeVar157;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+	nodeVar0 = vec2( vec2( gl_FragCoord.xy.x, nodeUniform0.y - gl_FragCoord.xy.y ).x, ( nodeUniform0.y - vec2( gl_FragCoord.xy.x, nodeUniform0.y - gl_FragCoord.xy.y ).y ) );
+	nodeVar1 = vec3( 0.0, 0.0, 0.0 );
+	nodeVar2 = vec3( ( ( nodeVar0 - ( nodeUniform1 * vec2( 0.5 ) ) ) * vec2( ( 2.0 / nodeUniform2 ) ) ), -1.0 );
+	nodeVar3 = nodeVarying0.w;
+	nodeVar4 = nodeVarying1.xyz;
+	nodeVar5 = ( nodeVarying0.xyz + ( nodeVar4 * vec3( ( nodeVar3 * 0.5 ) ) ) );
+	nodeVar6 = ( nodeVar1 - nodeVar5 );
+	nodeVar7 = dot( nodeVar2, nodeVar2 );
+	nodeVar8 = sqrt( nodeVar7 );
+	nodeVar9 = dot( nodeVar2, nodeVar4 );
+	nodeVar10 = dot( nodeVar6, nodeVar2 );
+	nodeVar11 = dot( nodeVar6, nodeVar4 );
+	nodeVar12 = ( nodeVar7 - ( nodeVar9 * nodeVar9 ) );
+	nodeVar13 = ( nodeVar12 < ( nodeVar7 * 0.00001 ) );
+	nodeVar14 = 0.0;
+	nodeVar15 = 0.0;
+	nodeVar16 = 0.0;
+
+	if ( nodeVar13 ) {
+
+		nodeVar17 = ( 1.0 / nodeVar7 );
+		nodeVar18 = ( nodeVar6 - ( nodeVar2 * vec3( ( nodeVar10 * nodeVar17 ) ) ) );
+		nodeVar19 = dot( nodeVar18, nodeVar4 );
+		nodeVar15 = max( ( dot( nodeVar18, nodeVar18 ) - ( nodeVar19 * nodeVar19 ) ), 0.0 );
+		nodeVar16 = ( ( - nodeVar10 ) * nodeVar17 );
+
+
+	} else {
+
+		nodeVar20 = ( 1.0 / nodeVar12 );
+		nodeVar14 = ( ( ( nodeVar11 * nodeVar7 ) - ( nodeVar9 * nodeVar10 ) ) * nodeVar20 );
+		nodeVar16 = ( ( ( nodeVar9 * nodeVar11 ) - nodeVar10 ) * nodeVar20 );
+		nodeVar21 = ( ( nodeVar6 + ( nodeVar2 * vec3( nodeVar16 ) ) ) - ( nodeVar4 * vec3( nodeVar14 ) ) );
+		nodeVar15 = dot( nodeVar21, nodeVar21 );
+
+
+	}
+
+	nodeVar22 = ( nodeVar1.z + ( nodeVar2.z * nodeVar16 ) );
+	nodeVar23 = clamp( ( ( nodeVar14 / max( nodeVar3, 1e-20 ) ) + 0.5 ), 0.0, 1.0 );
+	nodeVar24 = mix( nodeVarying2.x, nodeVarying2.y, nodeVar23 );
+	nodeVar25 = mix( nodeVarying3.x, nodeVarying3.y, nodeVar23 );
+	nodeVar26 = max( nodeUniform3, 1e-20 );
+	nodeVar27 = ( ( max( ( - nodeVar22 ), nodeVar26 ) * 2.0 ) / nodeUniform2 );
+	nodeVar28 = ( nodeVar24 * 0.659010227979693 );
+	nodeVar29 = inversesqrt( ( ( ( nodeVar28 * nodeVar28 ) + ( ( nodeVar27 * nodeVar27 ) * 0.3 ) ) + 1e-30 ) );
+	nodeVar30 = ( nodeVar28 * nodeVar29 );
+	nodeVar31 = ( ( nodeVar15 * nodeVar29 ) * nodeVar29 );
+	nodeVar32 = 0.0;
+
+	if ( ( nodeVar31 >= 9.2103404 ) ) {
+
+		discard;
+
+
+	}
+
+	nodeVar33 = ( max( ( exp( ( nodeVar31 * -0.5 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 );
+	nodeVar34 = ( nodeVarying4.w > 0.5 );
+	nodeVar35 = ( nodeVarying5.w > 0.5 );
+	nodeVar36 = ( nodeVar14 + ( nodeVar3 * 0.5 ) );
+	nodeVar37 = ( nodeVarying0.xyz + ( nodeVar4 * vec3( nodeVar3 ) ) );
+	nodeVar38 = 0.0;
+	nodeVar39 = 0.0;
+
+	if ( nodeVar13 ) {
+
+		nodeVar40 = ( nodeVar29 * 0.7071067811865476 );
+		nodeVar41 = -1e30;
+		nodeVar42 = 1e30;
+		nodeVar43 = 0.0;
+
+		if ( nodeVar34 ) {
+
+			nodeVar44 = dot( nodeVar2, nodeVarying4.xyz );
+			nodeVar45 = dot( ( nodeVarying0.xyz - nodeVar1 ), nodeVarying4.xyz );
+
+			if ( ( abs( nodeVar44 ) <= ( nodeVar8 * 1e-7 ) ) ) {
+
+
+				if ( ( nodeVar45 < 0.0 ) ) {
+
+					nodeVar43 = 1.0;
+
+
+				}
+
+
+
+			} else {
+
+				nodeVar46 = ( nodeVar36 + ( ( ( nodeVar45 / nodeVar44 ) - nodeVar16 ) * nodeVar9 ) );
+
+				if ( ( ( nodeVar44 * nodeVar9 ) > 0.0 ) ) {
+
+					nodeVar42 = min( nodeVar42, nodeVar46 );
+
+
+				} else {
+
+					nodeVar41 = max( nodeVar41, nodeVar46 );
+
+
+				}
+
+
+
+			}
+
+
+
+		}
+
+
+		if ( nodeVar35 ) {
+
+			nodeVar47 = dot( nodeVar2, nodeVarying5.xyz );
+			nodeVar48 = dot( ( nodeVar37 - nodeVar1 ), nodeVarying5.xyz );
+
+			if ( ( abs( nodeVar47 ) <= ( nodeVar8 * 1e-7 ) ) ) {
+
+
+				if ( ( nodeVar48 < 0.0 ) ) {
+
+					nodeVar43 = 1.0;
+
+
+				}
+
+
+
+			} else {
+
+				nodeVar49 = ( nodeVar36 + ( ( ( nodeVar48 / nodeVar47 ) - nodeVar16 ) * nodeVar9 ) );
+
+				if ( ( ( nodeVar47 * nodeVar9 ) > 0.0 ) ) {
+
+					nodeVar42 = min( nodeVar42, nodeVar49 );
+
+
+				} else {
+
+					nodeVar41 = max( nodeVar41, nodeVar49 );
+
+
+				}
+
+
+
+			}
+
+
+
+		}
+
+		nodeVar50 = 0.0;
+
+		if ( ( ( nodeVar43 < 0.5 ) && ( nodeVar42 > nodeVar41 ) ) ) {
+
+
+			if ( ( (!nodeVar34) && (!nodeVar35) ) ) {
+
+				nodeVar50 = nodeVar3;
+
+
+			} else {
+
+
+				if ( ( nodeVar34 && nodeVar35 ) ) {
+
+					nodeVar50 = max( ( nodeVar42 - nodeVar41 ), 0.0 );
+
+
+				} else {
+
+
+					if ( nodeVar34 ) {
+
+						nodeVar51 = ( ( nodeVar41 - nodeVar3 ) * nodeVar40 );
+						nodeVar52 = abs( nodeVar51 );
+						nodeVar53 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar52 ) ) );
+						nodeVar54 = ( 0.5 * ( ( exp( ( - ( nodeVar51 * nodeVar51 ) ) ) * 0.5641895835477563 ) - ( nodeVar51 * ( 1.0 - ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar53 ) + -1.453152027 ) * nodeVar53 ) + 1.421413741 ) * nodeVar53 ) + -0.284496736 ) * nodeVar53 ) + 0.254829592 ) * nodeVar53 ) * exp( ( - min( ( nodeVar52 * nodeVar52 ), 80.0 ) ) ) ) ) * sign( nodeVar51 ) ) ) ) ) );
+						nodeVar55 = ( - nodeVar51 );
+
+						if ( ( nodeVar51 > 6.0 ) ) {
+
+							nodeVar56 = 0.0;
+
+						} else {
+
+
+							if ( ( nodeVar51 < -6.0 ) ) {
+
+								nodeVar57 = nodeVar55;
+
+							} else {
+
+								nodeVar57 = nodeVar54;
+
+							}
+
+							nodeVar56 = nodeVar57;
+
+						}
+
+						nodeVar58 = nodeVar56;
+						nodeVar59 = ( ( nodeVar42 - nodeVar3 ) * nodeVar40 );
+						nodeVar60 = abs( nodeVar59 );
+						nodeVar61 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar60 ) ) );
+						nodeVar62 = ( 0.5 * ( ( exp( ( - ( nodeVar59 * nodeVar59 ) ) ) * 0.5641895835477563 ) - ( nodeVar59 * ( 1.0 - ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar61 ) + -1.453152027 ) * nodeVar61 ) + 1.421413741 ) * nodeVar61 ) + -0.284496736 ) * nodeVar61 ) + 0.254829592 ) * nodeVar61 ) * exp( ( - min( ( nodeVar60 * nodeVar60 ), 80.0 ) ) ) ) ) * sign( nodeVar59 ) ) ) ) ) );
+						nodeVar63 = ( - nodeVar59 );
+
+						if ( ( nodeVar59 > 6.0 ) ) {
+
+							nodeVar64 = 0.0;
+
+						} else {
+
+
+							if ( ( nodeVar59 < -6.0 ) ) {
+
+								nodeVar65 = nodeVar63;
+
+							} else {
+
+								nodeVar65 = nodeVar62;
+
+							}
+
+							nodeVar64 = nodeVar65;
+
+						}
+
+						nodeVar66 = nodeVar64;
+						nodeVar50 = ( ( nodeVar58 - nodeVar66 ) / nodeVar40 );
+
+
+					} else {
+
+						nodeVar67 = ( ( - nodeVar42 ) * nodeVar40 );
+						nodeVar68 = abs( nodeVar67 );
+						nodeVar69 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar68 ) ) );
+						nodeVar70 = ( 0.5 * ( ( exp( ( - ( nodeVar67 * nodeVar67 ) ) ) * 0.5641895835477563 ) - ( nodeVar67 * ( 1.0 - ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar69 ) + -1.453152027 ) * nodeVar69 ) + 1.421413741 ) * nodeVar69 ) + -0.284496736 ) * nodeVar69 ) + 0.254829592 ) * nodeVar69 ) * exp( ( - min( ( nodeVar68 * nodeVar68 ), 80.0 ) ) ) ) ) * sign( nodeVar67 ) ) ) ) ) );
+						nodeVar71 = ( - nodeVar67 );
+
+						if ( ( nodeVar67 > 6.0 ) ) {
+
+							nodeVar72 = 0.0;
+
+						} else {
+
+
+							if ( ( nodeVar67 < -6.0 ) ) {
+
+								nodeVar73 = nodeVar71;
+
+							} else {
+
+								nodeVar73 = nodeVar70;
+
+							}
+
+							nodeVar72 = nodeVar73;
+
+						}
+
+						nodeVar74 = nodeVar72;
+						nodeVar75 = ( ( - nodeVar41 ) * nodeVar40 );
+						nodeVar76 = abs( nodeVar75 );
+						nodeVar77 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar76 ) ) );
+						nodeVar78 = ( 0.5 * ( ( exp( ( - ( nodeVar75 * nodeVar75 ) ) ) * 0.5641895835477563 ) - ( nodeVar75 * ( 1.0 - ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar77 ) + -1.453152027 ) * nodeVar77 ) + 1.421413741 ) * nodeVar77 ) + -0.284496736 ) * nodeVar77 ) + 0.254829592 ) * nodeVar77 ) * exp( ( - min( ( nodeVar76 * nodeVar76 ), 80.0 ) ) ) ) ) * sign( nodeVar75 ) ) ) ) ) );
+						nodeVar79 = ( - nodeVar75 );
+
+						if ( ( nodeVar75 > 6.0 ) ) {
+
+							nodeVar80 = 0.0;
+
+						} else {
+
+
+							if ( ( nodeVar75 < -6.0 ) ) {
+
+								nodeVar81 = nodeVar79;
+
+							} else {
+
+								nodeVar81 = nodeVar78;
+
+							}
+
+							nodeVar80 = nodeVar81;
+
+						}
+
+						nodeVar82 = nodeVar80;
+						nodeVar50 = ( ( nodeVar74 - nodeVar82 ) / nodeVar40 );
+
+
+					}
+
+
+
+				}
+
+
+
+			}
+
+
+
+		}
+
+
+		if ( ( nodeVar50 <= 0.0 ) ) {
+
+			nodeVar39 = 1.0;
+
+
+		}
+
+		nodeVar38 = ( ( max( nodeVar50, 0.0 ) * nodeVar29 ) * 0.3989422804014327 );
+
+
+	} else {
+
+
+		if ( ( nodeVar34 || nodeVar35 ) ) {
+
+			nodeVar83 = -4.0;
+			nodeVar84 = 4.0;
+			nodeVar85 = ( ( sqrt( nodeVar12 ) * nodeVar29 ) * 0.7071067811865476 );
+			nodeVar86 = 0.0;
+			nodeVar87 = 0.0;
+
+			if ( nodeVar34 ) {
+
+				nodeVar88 = dot( nodeVar2, nodeVarying4.xyz );
+				nodeVar89 = dot( ( nodeVarying0.xyz - nodeVar1 ), nodeVarying4.xyz );
+				nodeVar87 = nodeVar88;
+
+				if ( ( abs( nodeVar88 ) > ( nodeVar8 * 1e-7 ) ) ) {
+
+					nodeVar90 = clamp( ( ( ( nodeVar89 / nodeVar88 ) - nodeVar16 ) * nodeVar85 ), -4.0, 4.0 );
+
+					if ( ( nodeVar88 > 0.0 ) ) {
+
+						nodeVar84 = min( nodeVar84, nodeVar90 );
+
+
+					} else {
+
+						nodeVar83 = max( nodeVar83, nodeVar90 );
+
+
+					}
+
+
+
+				} else {
+
+
+					if ( ( nodeVar89 < 0.0 ) ) {
+
+						nodeVar86 = 1.0;
+
+
+					}
+
+
+
+				}
+
+
+
+			}
+
+
+			if ( nodeVar35 ) {
+
+				nodeVar91 = dot( nodeVar2, nodeVarying5.xyz );
+				nodeVar92 = dot( ( nodeVar37 - nodeVar1 ), nodeVarying5.xyz );
+				nodeVar87 = nodeVar91;
+
+				if ( ( abs( nodeVar91 ) > ( nodeVar8 * 1e-7 ) ) ) {
+
+					nodeVar93 = clamp( ( ( ( nodeVar92 / nodeVar91 ) - nodeVar16 ) * nodeVar85 ), -4.0, 4.0 );
+
+					if ( ( nodeVar91 > 0.0 ) ) {
+
+						nodeVar84 = min( nodeVar84, nodeVar93 );
+
+
+					} else {
+
+						nodeVar83 = max( nodeVar83, nodeVar93 );
+
+
+					}
+
+
+
+				} else {
+
+
+					if ( ( nodeVar92 < 0.0 ) ) {
+
+						nodeVar86 = 1.0;
+
+
+					}
+
+
+
+				}
+
+
+
+			}
+
+
+			if ( ( ( nodeVar86 > 0.5 ) || ( nodeVar83 >= nodeVar84 ) ) ) {
+
+				nodeVar39 = 1.0;
+
+
+			}
+
+
+			if ( ( ( nodeVar86 < 0.5 ) && ( nodeVar83 < nodeVar84 ) ) ) {
+
+				nodeVar94 = ( ( nodeVar84 + nodeVar83 ) * 0.5 );
+				nodeVar95 = ( nodeVar84 - nodeVar83 );
+				nodeVar96 = ( ( nodeVar8 * 0.5 ) * inversesqrt( max( nodeVar12, ( nodeVar7 * 1e-12 ) ) ) );
+				nodeVar97 = ( nodeVar95 < 0.5 );
+				nodeVar98 = min( ( nodeVar94 * nodeVar94 ), 80.0 );
+				nodeVar99 = ( ( ( exp( ( - nodeVar98 ) ) * 1.1283791670955126 ) * ( ( ( ( nodeVar95 * nodeVar95 ) * ( ( nodeVar98 * 4.0 ) - 2.0 ) ) * 0.041666666666666664 ) + 1.0 ) ) * nodeVar95 );
+
+				if ( ( nodeVar34 && nodeVar35 ) ) {
+
+					nodeVar100 = min( abs( nodeVar84 ), 3.0 );
+					nodeVar101 = ( nodeVar100 * nodeVar100 );
+					nodeVar102 = min( abs( nodeVar83 ), 3.0 );
+					nodeVar103 = ( nodeVar102 * nodeVar102 );
+					nodeVar104 = ( ( ( ( ( ( ( ( ( ( ( ( ( ( ( 0.00000369 * nodeVar101 ) + -0.000136121 ) * nodeVar101 ) + 0.002118141 ) * nodeVar101 ) + -0.018376255 ) * nodeVar101 ) + 0.099810298 ) * nodeVar101 ) + -0.366866314 ) * nodeVar101 ) + 1.126454454 ) * nodeVar100 ) * sign( nodeVar84 ) ) - ( ( ( ( ( ( ( ( ( ( ( ( ( ( 0.00000369 * nodeVar103 ) + -0.000136121 ) * nodeVar103 ) + 0.002118141 ) * nodeVar103 ) + -0.018376255 ) * nodeVar103 ) + 0.099810298 ) * nodeVar103 ) + -0.366866314 ) * nodeVar103 ) + 1.126454454 ) * nodeVar102 ) * sign( nodeVar83 ) ) );
+
+					if ( nodeVar97 ) {
+
+						nodeVar105 = nodeVar99;
+
+					} else {
+
+						nodeVar105 = nodeVar104;
+
+					}
+
+					nodeVar106 = nodeVar105;
+					nodeVar38 = ( nodeVar96 * max( nodeVar106, 0.0 ) );
+
+
+				} else {
+
+					nodeVar107 = ( nodeVar85 / nodeVar8 );
+					nodeVar108 = ( ( nodeVar9 * nodeVar9 ) > nodeVar12 );
+					nodeVar109 = ( ( nodeVar87 * nodeVar9 ) < 0.0 );
+
+					if ( nodeVar34 ) {
+
+						nodeVar110 = (!nodeVar109);
+
+					} else {
+
+						nodeVar110 = nodeVar109;
+
+					}
+
+					nodeVar111 = nodeVar110;
+					nodeVar112 = ( ( nodeVar36 - nodeVar3 ) * nodeVar107 );
+					nodeVar113 = ( nodeVar36 * nodeVar107 );
+
+					if ( ( nodeVar108 && nodeVar111 ) ) {
+
+						nodeVar114 = abs( nodeVar112 );
+						nodeVar115 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar114 ) ) );
+						nodeVar116 = ( 1.0 - ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar115 ) + -1.453152027 ) * nodeVar115 ) + 1.421413741 ) * nodeVar115 ) + -0.284496736 ) * nodeVar115 ) + 0.254829592 ) * nodeVar115 ) * exp( ( - min( ( nodeVar114 * nodeVar114 ), 80.0 ) ) ) ) ) * sign( nodeVar112 ) ) );
+						nodeVar117 = abs( nodeVar113 );
+						nodeVar118 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar117 ) ) );
+						nodeVar119 = ( 1.0 + ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar118 ) + -1.453152027 ) * nodeVar118 ) + 1.421413741 ) * nodeVar118 ) + -0.284496736 ) * nodeVar118 ) + 0.254829592 ) * nodeVar118 ) * exp( ( - min( ( nodeVar117 * nodeVar117 ), 80.0 ) ) ) ) ) * sign( nodeVar113 ) ) );
+
+						if ( nodeVar34 ) {
+
+							nodeVar120 = nodeVar116;
+
+						} else {
+
+							nodeVar120 = nodeVar119;
+
+						}
+
+						nodeVar121 = nodeVar120;
+						nodeVar38 = ( nodeVar96 * max( nodeVar121, 0.0 ) );
+
+
+					} else {
+
+						nodeVar122 = abs( nodeVar84 );
+						nodeVar123 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar122 ) ) );
+						nodeVar124 = abs( nodeVar83 );
+						nodeVar125 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar124 ) ) );
+						nodeVar126 = ( ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar123 ) + -1.453152027 ) * nodeVar123 ) + 1.421413741 ) * nodeVar123 ) + -0.284496736 ) * nodeVar123 ) + 0.254829592 ) * nodeVar123 ) * exp( ( - min( ( nodeVar122 * nodeVar122 ), 80.0 ) ) ) ) ) * sign( nodeVar84 ) ) - ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar125 ) + -1.453152027 ) * nodeVar125 ) + 1.421413741 ) * nodeVar125 ) + -0.284496736 ) * nodeVar125 ) + 0.254829592 ) * nodeVar125 ) * exp( ( - min( ( nodeVar124 * nodeVar124 ), 80.0 ) ) ) ) ) * sign( nodeVar83 ) ) );
+
+						if ( nodeVar97 ) {
+
+							nodeVar127 = nodeVar99;
+
+						} else {
+
+							nodeVar127 = nodeVar126;
+
+						}
+
+						nodeVar128 = nodeVar127;
+						nodeVar129 = abs( nodeVar112 );
+						nodeVar130 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar129 ) ) );
+						nodeVar131 = ( 1.0 + ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar130 ) + -1.453152027 ) * nodeVar130 ) + 1.421413741 ) * nodeVar130 ) + -0.284496736 ) * nodeVar130 ) + 0.254829592 ) * nodeVar130 ) * exp( ( - min( ( nodeVar129 * nodeVar129 ), 80.0 ) ) ) ) ) * sign( nodeVar112 ) ) );
+						nodeVar132 = abs( nodeVar113 );
+						nodeVar133 = ( 1.0 / ( 1.0 + ( 0.3275911 * nodeVar132 ) ) );
+						nodeVar134 = ( 1.0 - ( ( 1.0 - ( ( ( ( ( ( ( ( ( ( 1.061405429 * nodeVar133 ) + -1.453152027 ) * nodeVar133 ) + 1.421413741 ) * nodeVar133 ) + -0.284496736 ) * nodeVar133 ) + 0.254829592 ) * nodeVar133 ) * exp( ( - min( ( nodeVar132 * nodeVar132 ), 80.0 ) ) ) ) ) * sign( nodeVar113 ) ) );
+
+						if ( nodeVar34 ) {
+
+							nodeVar135 = nodeVar131;
+
+						} else {
+
+							nodeVar135 = nodeVar134;
+
+						}
+
+						nodeVar136 = nodeVar135;
+						nodeVar38 = ( nodeVar96 * max( ( nodeVar128 - nodeVar136 ), 0.0 ) );
+
+
+					}
+
+
+
+				}
+
+
+
+			}
+
+
+
+		} else {
+
+			nodeVar137 = ( ( ( sqrt( nodeVar12 ) * inversesqrt( nodeVar7 ) ) * nodeVar29 ) * 0.7071067811865476 );
+			nodeVar138 = ( nodeVar14 * nodeVar137 );
+			nodeVar139 = ( nodeVar3 * nodeVar137 );
+			nodeVar140 = ( nodeVar138 - ( nodeVar139 * 0.5 ) );
+			nodeVar141 = ( nodeVar138 + ( nodeVar139 * 0.5 ) );
+
+			if ( ( ( nodeVar140 > 3.0 ) || ( nodeVar141 < -3.0 ) ) ) {
+
+				nodeVar39 = 1.0;
+
+
+			}
+
+
+			if ( ( ( nodeVar140 <= 3.0 ) && ( nodeVar141 >= -3.0 ) ) ) {
+
+				nodeVar142 = min( ( nodeVar138 * nodeVar138 ), 80.0 );
+				nodeVar143 = ( ( exp( ( - nodeVar142 ) ) * 1.1283791670955126 ) * ( ( ( ( nodeVar139 * nodeVar139 ) * ( ( nodeVar142 * 4.0 ) - 2.0 ) ) * 0.041666666666666664 ) + 1.0 ) );
+				nodeVar144 = min( abs( nodeVar141 ), 3.0 );
+				nodeVar145 = ( nodeVar144 * nodeVar144 );
+				nodeVar146 = min( abs( nodeVar140 ), 3.0 );
+				nodeVar147 = ( nodeVar146 * nodeVar146 );
+				nodeVar148 = ( ( ( ( ( ( ( ( ( ( ( ( ( ( ( ( 0.00000369 * nodeVar145 ) + -0.000136121 ) * nodeVar145 ) + 0.002118141 ) * nodeVar145 ) + -0.018376255 ) * nodeVar145 ) + 0.099810298 ) * nodeVar145 ) + -0.366866314 ) * nodeVar145 ) + 1.126454454 ) * nodeVar144 ) * sign( nodeVar141 ) ) - ( ( ( ( ( ( ( ( ( ( ( ( ( ( 0.00000369 * nodeVar147 ) + -0.000136121 ) * nodeVar147 ) + 0.002118141 ) * nodeVar147 ) + -0.018376255 ) * nodeVar147 ) + 0.099810298 ) * nodeVar147 ) + -0.366866314 ) * nodeVar147 ) + 1.126454454 ) * nodeVar146 ) * sign( nodeVar140 ) ) ) / max( nodeVar139, 1e-30 ) );
+
+				if ( ( nodeVar139 < 0.5 ) ) {
+
+					nodeVar149 = nodeVar143;
+
+				} else {
+
+					nodeVar149 = nodeVar148;
+
+				}
+
+				nodeVar150 = nodeVar149;
+				nodeVar38 = ( ( ( max( nodeVar150, 0.0 ) * nodeVar3 ) * nodeVar29 ) * 0.35355339059327373 );
+
+
+			}
+
+
+
+		}
+
+
+
+	}
+
+
+	if ( ( nodeVar39 > 0.5 ) ) {
+
+		discard;
+
+
+	}
+
+	nodeVar32 = ( nodeVar33 * max( nodeVar38, 0.0 ) );
+
+	if ( ( nodeVar22 >= 0.0 ) ) {
+
+		nodeVar151 = 0.0;
+
+	} else {
+
+		nodeVar151 = smoothstep( nodeVar26, ( nodeVar26 * 2.0 ), ( - nodeVar22 ) );
+
+	}
+
+	nodeVar152 = ( ( ( nodeVar32 * nodeVar30 ) * nodeVarying1.w ) * nodeVar151 );
+	nodeVar153 = mix( nodeVarying6, nodeVarying7, nodeVar23 );
+	nodeVar154 = max( ( ( nodeVar153 * vec3( nodeUniform4 ) ) + vec3( nodeUniform5 ) ), vec3( 0.0, 0.0, 0.0 ) );
+	nodeVar155 = max( nodeVar154.x, max( nodeVar154.y, nodeVar154.z ) );
+	nodeVar156 = ( nodeVar152 * nodeVar25 );
+
+	if ( ( nodeVar155 < 0.0001 ) ) {
+
+		discard;
+
+
+	}
+
+	DiffuseColor = vec4( pow( nodeVar154, vec3( nodeUniform6 ) ), ( nodeVar156 * nodeUniform7 ) );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform8 );
+	nodeVar157 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar157;
+
+	// result
+	fragColor = nodeVar157;
+
+}

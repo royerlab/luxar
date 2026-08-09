@@ -207,13 +207,23 @@ const SHADERS = [
   // Shared-math erf polynomial (materials/_shared/erf.ts): the snapshot
   // pins the LITERALS the TSL code generator emits for the coefficient
   // values — the textual half of the value-level parity contract (the
-  // pixel half is the parity spec's 'erf' test). MUST STAY LAST: the
-  // shared `render` std140 uniform group accumulates members in
-  // first-encounter order across the whole run, so a new entry built
-  // BEFORE the geometry shaders reorders `cameraViewMatrix` /
-  // `cameraProjectionMatrix` in every subsequent snapshot (49 files of
-  // spurious churn when 'erf' briefly led this list).
+  // pixel half is the parity spec's 'erf' test). MUST STAY LAST among the
+  // pre-#1352 entries: the shared `render` std140 uniform group
+  // accumulates members in first-encounter order across the whole run, so
+  // a new entry built BEFORE the geometry shaders reorders
+  // `cameraViewMatrix` / `cameraProjectionMatrix` in every subsequent
+  // snapshot (49 files of spurious churn when 'erf' briefly led this
+  // list). New entries append BELOW, never above.
   'erf',
+  // Volumetric line PRIMITIVE (#1352, ?linePrimitive=volumetric) — one
+  // entry per distinct GRAPH: ortho sum (sideon; endon-ortho/joint/taper
+  // share its code, differing only in uniforms), perspective sum
+  // (adds the perspective ray + near-fade branches), peak family, and
+  // the colormap fragment-stage LUT sampling.
+  'line-volprim-sideon',
+  'line-volprim-endon-persp',
+  'line-volprim-peak',
+  'line-volprim-colormap',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

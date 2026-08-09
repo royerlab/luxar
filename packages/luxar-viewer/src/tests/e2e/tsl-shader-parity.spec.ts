@@ -2224,4 +2224,72 @@ test.describe('TSL ↔ GLSL shader parity', () => {
         `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
     ).toBeLessThan(2.0);
   });
+
+  // ============================================================
+  // Volumetric line PRIMITIVE (#1352, ?linePrimitive=volumetric).
+  // The lane math itself is quadrature-validated on the CPU
+  // (line-volumetric-integral.test.ts); these tests pin that the two
+  // shader CODE PATHS evaluate it identically — every fragment lane has
+  // at least one fixture that reaches it (see the fixture comments in
+  // harnesses/tsl-harness/lines.ts).
+  // ============================================================
+
+  for (const variant of [
+    'line-volprim-sideon',
+    'line-volprim-endon-ortho',
+    'line-volprim-endon-persp',
+    'line-volprim-joint',
+    'line-volprim-peak',
+    'line-volprim-taper',
+    'line-volprim-colormap',
+  ] as const) {
+    test(`${variant}: volumetric line primitive parity across backends`, async ({ page }) => {
+      await bootHarness(page);
+
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant}: per-covered-pixel parity (footprint-invariant)`
+      ).toBeLessThan(2.0);
+    });
+  }
+
+  test('line-volprim-endon-ortho: the end-on segment renders a finite bright disc', async ({
+    page,
+  }) => {
+    // The #1352 headline case: the screen-space quad DEGENERATES end-on
+    // (zero-area projected quad → nothing rasterises), while the
+    // volumetric primitive integrates the full segment length through
+    // every axial ray. The disc must be present, centred, and brighter
+    // than the same-width side-on core (path length L ≫ chord 2σ).
+    await bootHarness(page);
+
+    const endon = await runGLSL(page, 'line-volprim-endon-ortho');
+    const sideon = await runGLSL(page, 'line-volprim-sideon');
+    const px = (p: number[], x: number, y: number) =>
+      Math.max(p[(y * 64 + x) * 4], p[(y * 64 + x) * 4 + 1], p[(y * 64 + x) * 4 + 2]);
+
+    const centre = px(endon, 32, 32);
+    expect(centre, 'end-on centre must be lit').toBeGreaterThan(32);
+    // Radially symmetric: four compass points at r=4px agree closely.
+    const ring = [px(endon, 36, 32), px(endon, 28, 32), px(endon, 32, 36), px(endon, 32, 28)];
+    for (const v of ring) {
+      expect(Math.abs(v - ring[0]), 'end-on disc must be radially symmetric').toBeLessThanOrEqual(
+        12
+      );
+    }
+    // Far corner stays empty (finite disc, not a smeared quad).
+    expect(px(endon, 4, 4), 'end-on far field must be black').toBeLessThanOrEqual(2);
+    // Path-length brightening vs the side-on core of the same width. Both
+    // saturate the 8-bit readback at 255 here (the end-on path is ~L/2σ ≈
+    // 1.8× over an already-saturating core), so ≥ is the strongest
+    // brightness claim this readback can make; the finite-disc and
+    // symmetry assertions above carry the shape claim.
+    expect(centre, 'end-on centre at least matches the side-on core').toBeGreaterThanOrEqual(
+      px(sideon, 32, 32)
+    );
+  });
 });

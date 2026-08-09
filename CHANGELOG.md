@@ -6,6 +6,42 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Volumetric line primitive behind `?linePrimitive=` (#1352, part 1)
+
+Lines gain a second rendering primitive, session-selected by
+`?linePrimitive=screen-space|volumetric` (default unchanged:
+`screen-space`). The volumetric primitive draws each segment as its true 3D
+density — the segment convolved with an isotropic 3D Gaussian, with σ
+calibrated so side-on appearance matches the quad by construction. The quad
+becomes a pure rasterization stencil and every shading quantity is solved
+per fragment against the true camera-space segment, so **end-on viewing is
+exact** (the quad degenerates there) and **interior joints are seam-free**:
+sum-family modes integrate the density along each view ray in closed form,
+with interior joints as bisector-plane cuts that partition the rod exactly
+at any bend angle (no partner blending, single-covered, C0); peak-family
+modes take the ray maximum (a Gaussian-shoulder capsule, exact for any
+sharpness β). Chain-end segments (one cut, one soft cap) use a
+sign-selected inclusion–exclusion closed form — the ray integral is an
+Owen-T-class integral with no elementary form, but the two available
+splits have complementary error domains and the residual is a measured,
+bounded underestimate confined to sharp bends at short end segments.
+
+The lane math lives once in `_shared/line-volumetric.ts` as a CPU
+reference validated against brute numerical quadrature
+(`line-volumetric-integral.test.ts`: exact lanes < 0.6%, error envelopes
+pinned with sensitivity controls), and both shader backends mirror it —
+GLSL as a second source pair (the codebase's first genuine shader-source
+selection) and TSL as a twin factory, with seven `line-volprim-*` parity
+fixtures pinning pixel-level backend agreement, including the partner
+fetch, both mixed-lane splits, the peak capsule, and the fragment-stage
+colormap LUT. The mixed-end lane uses the A&S exponential erf
+(`GLSL_ERF_AS_FUNCTIONS` / `erfAsTSL`, new in `_shared/erf.ts`) because its
+terms are amplified by 1/sin(ray, axis); the hot lanes keep the cheap
+polynomial. With the flag off, the screen-space pipeline is byte-identical
+(unit-asserted) and codegen snapshots are unchanged. Picking and the
+sum-mode sharpness LUT follow in later #1352 parts; the flip to
+volumetric-by-default is gated on the full perf + visual A/B (G1).
+
 #### Real join geometry for lines: the miter (#790, #795)
 
 Every line segment is one screen-space quad expanded only *perpendicular* to its

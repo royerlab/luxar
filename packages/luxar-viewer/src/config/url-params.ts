@@ -20,6 +20,7 @@
  * field via constructor/init options rather than read `window.location`.
  */
 import { parseLineJoinStyle, type LineJoinStyle } from '../types/line-join';
+import { parseLinePrimitive, type LinePrimitive } from '../types/line-primitive';
 
 const MAX_SRC_LENGTH = 4096;
 const URL_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
@@ -229,6 +230,19 @@ export interface UrlParams {
    * `types/line-join.ts`.
    */
   lineJoin: LineJoinStyle | null;
+
+  /**
+   * Select the line rendering primitive for the session
+   * (`?linePrimitive=screen-space|volumetric`, issue #1352).
+   *
+   * `volumetric` draws each segment as its true 3D density (segment ⊛
+   * isotropic Gaussian) solved per fragment — exact end-on, seam-free
+   * joins — instead of the screen-space quad. Session-wide by design (a
+   * renderer implementation choice, not scene content — there is no
+   * authored per-node attribute). `null` (missing or unrecognised) means
+   * the built-in default. See `types/line-primitive.ts`.
+   */
+  linePrimitive: LinePrimitive | null;
 }
 
 /**
@@ -264,6 +278,7 @@ export function readUrlParams(search?: string): UrlParams {
     cacheBudgetMB: parseNonNegativeInt(params.get('cacheBudgetMB')),
     dpr: parsePositiveFloat(params.get('dpr')),
     lineJoin: parseLineJoinStyle(params.get('lineJoin')),
+    linePrimitive: parseLinePrimitive(params.get('linePrimitive')),
   };
 }
 
