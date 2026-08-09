@@ -42,11 +42,32 @@
  *   Every term is erf-only (half-line: plain erf; full-line: the identity).
  *   J1 drops the cap-COMPLEMENT's mass on the ray's excluded side of the
  *   plane, J2 the CAP's — for axis-dominant rays exactly one is
- *   exponentially exact. The residual survives only where the plane sits
- *   within ~3σ of the cap's support (short chain-end segments; sharp bends,
- *   where the binding metric is PERPENDICULAR distance to the near-axial
- *   plane, which longer segments do not grow): a measured, bounded
- *   UNDERestimate (clamped at 0), pinned in the unit tests.
+ *   exponentially exact. A THIRD split covers the saturated-cap regime:
+ *
+ *     J0 = [plane bracket alone, cap ignored]
+ *
+ *   selected when the cap's pointwise ramp lies wholly outside the bracket
+ *   on its saturated side — then the window is ≡1 over every unit of
+ *   bracket mass and J0 is exact. This is what carries a biting near-plane
+ *   clip (camera inside a chain-end segment): J1 would double-count the
+ *   exclusion, J2 would keep the clipped mass; J2 is additionally min()ed
+ *   with the bracket, both being upper bounds of the exact integral. The
+ *   residual survives only where a plane sits within ~3σ of the cap's
+ *   support (short chain-end segments; sharp bends, where the binding
+ *   metric is PERPENDICULAR distance to the near-axial plane, which longer
+ *   segments do not grow): a measured, bounded UNDERestimate (clamped at
+ *   0), pinned in the unit tests.
+ *
+ * ## Near plane (review finding 2, PR #1426)
+ *
+ * Sum lanes integrate the ray closed-form, so a segment straddling the
+ * perspective near plane would otherwise contribute light from BEHIND the
+ * eye. The near plane is treated as ONE MORE PLANE CLIP where that stays
+ * closed-form: the structural-parallel lane maps it to an s-bound, the
+ * general plane lane to a ξ-bound (see {@link SumIntegralOptions.tMin}).
+ * The soft/soft general lane keeps the documented full-line + near-fade
+ * convention — its behind-eye mass is exponentially small outside the
+ * few-degrees-of-axial cone the structural lane owns.
  *
  * ## The load-bearing identity
  *
@@ -183,6 +204,19 @@ export interface SumIntegralOptions {
   readonly erf?: (x: number) => number;
   /** Round every intermediate through float32 (`Math.fround`) to emulate the GPU. */
   readonly f32?: boolean;
+  /**
+   * Ray-domain lower bound, in RAW-ray parameter units (the same `t` that
+   * multiplies `dRaw`): material only at t ≥ tMin. This is the perspective
+   * near plane — with the shader's ray convention (rayO.z = 0, dRaw.z = −1)
+   * the crossing sits at exactly t = nearCull — treated as ONE MORE PLANE
+   * CLIP in the lanes where it stays closed-form: the structural-parallel
+   * lane (mapped to an s-bound) and the general plane lane (a ξ-bound).
+   * The soft/soft general lane deliberately IGNORES it and keeps the
+   * documented full-line + near-fade convention: its behind-eye mass is
+   * exponentially small except within a few degrees of axial, where the
+   * structural lane takes over. Undefined = whole line (the ortho path).
+   */
+  readonly tMin?: number;
 }
 
 /**
@@ -225,6 +259,7 @@ export function lineVolumetricSumIntegral(
 ): number {
   const erf = opts.erf ?? erfRef;
   const fr = opts.f32 ? Math.fround : (x: number) => x;
+  const tMin = opts.tMin;
 
   const segVec = sub(seg.b, seg.a);
   const L = fr(norm(segVec));
@@ -316,11 +351,28 @@ export function lineVolumetricSumIntegral(
     if (hardA && !applyParallel(seg.cutA as Vec3, seg.a)) return 0;
     if (hardB && !applyParallel(seg.cutB as Vec3, seg.b)) return 0;
 
+    // Near-plane ray-domain bound: one more plane clip, mapped to an
+    // s-bound via s(t) = sAtCenter + (t − tCenter)·dw. Material at
+    // t > tMin, and |dw| ≈ rn > 0 structurally in this lane.
+    if (tMin !== undefined) {
+      const sX = fr(sAtCenter + (tMin - tCenter) * dw);
+      if (dw > 0) sLo = Math.max(sLo, sX);
+      else sHi = Math.min(sHi, sX);
+    }
+
     // Soft caps as axial windows; hard bounds as sharp limits. Effective
     // windowed length G, then I = radial · G · invSE / √(2π).
     let G: number;
     if (!hardA && !hardB) {
-      G = L; // exact: the soft window integrates to exactly L over ℝ
+      // Only the near bound can clip here. H(x) = ∫ₓ^∞ W ds =
+      // (Ψ((x−L)c) − Ψ(x·c))/c; bounds clamped into the window's support
+      // keep the Ψ difference well-conditioned (H(−7/c) = L, H(L+7/c) = 0
+      // exactly through the saturation guards, no 1e30-scale cancellation).
+      const lo = Math.max(sLo, -7 / c);
+      const hi = Math.min(sHi, L + 7 / c);
+      const H = (x: number) =>
+        (erfCapRemainder((x - L) * c, erf) - erfCapRemainder(x * c, erf)) / c;
+      G = hi > lo ? H(lo) - H(hi) : 0;
     } else if (hardA && hardB) {
       const lo = Math.max(sLo, -1e30);
       const hi = Math.min(sHi, 1e30);
@@ -355,6 +407,11 @@ export function lineVolumetricSumIntegral(
     };
     if (hardA && !applyGeneral(seg.cutA as Vec3, seg.a)) return 0;
     if (hardB && !applyGeneral(seg.cutB as Vec3, seg.b)) return 0;
+    // Near-plane ray-domain bound: ξ increases with t (kxi > 0), so
+    // material at t > tMin tightens the LOWER edge of the bracket.
+    if (tMin !== undefined) {
+      xiLo = Math.max(xiLo, fr(Math.min(Math.max((tMin - tCenter) * kxi, -4), 4)));
+    }
     if (xiLo >= xiHi) return 0;
 
     const pref = fr((0.5 * rn) / Math.sqrt(Math.max(A, 1e-12 * n2)));
@@ -409,17 +466,47 @@ export function lineVolumetricSumIntegral(
       const complementOnExcludedSide = hardA
         ? !excludedTowardMinusS // soft cap at B ⇒ complement at +∞
         : excludedTowardMinusS; // soft cap at A ⇒ complement at −∞
-      if (axialDominant && complementOnExcludedSide) {
-        // Cap-only split: the plane's clip removes only cap-tail mass.
-        const capOnly = hardA
-          ? fr(1 - erfMixed((sAtCenter - L) * kk))
-          : fr(1 + erfMixed(sAtCenter * kk));
-        return radial * pref * Math.max(capOnly, 0);
-      }
       // Re-evaluate the plane bracket with the precise erf too (the poly
       // bracket is fine for hard/hard where the Taylor lane covers narrow
       // intervals, but here pref amplification demands the exact form).
       const preciseBracket = dxi < 0.5 ? bracket : fr(erfMixed(xiHi) - erfMixed(xiLo));
+      // SATURATED-CAP SHORTCUTS (the J0 split): when the cap's pointwise
+      // ramp (s-width 3σ√2, mapped to ξ through ds/dξ = dw/kxi) lies
+      // entirely outside the bracket on its SATURATED side, the window is
+      // ≡1 across every unit of bracket mass and the pure plane bracket is
+      // the exact form; entirely outside on the dead side, the integral is
+      // 0. This is what carries a near-plane clip whose crossing has moved
+      // past the cap (camera inside a chain-end segment): J1 would
+      // subtract the full-line cap complement even though the bracket
+      // already excludes it — double-counting the exclusion — and J2 would
+      // keep the behind-camera cap mass the clip removed.
+      if (axialDominant) {
+        const capAtA = hardB; // soft cap at the A end (hard cut at B)
+        const sEdge = capAtA ? 0 : L;
+        const xiEdge = fr(((sEdge - sAtCenter) * kxi) / dw);
+        const halfRamp = fr((3 * Math.sqrt(A)) / Math.abs(dw));
+        const satHigh = capAtA === dw > 0; // cap saturates toward high ξ
+        if (satHigh ? xiEdge + halfRamp <= xiLo : xiEdge - halfRamp >= xiHi) {
+          return radial * pref * Math.max(preciseBracket, 0);
+        }
+        if (satHigh ? xiEdge - halfRamp >= xiHi : xiEdge + halfRamp <= xiLo) {
+          return 0;
+        }
+      }
+      if (axialDominant && complementOnExcludedSide) {
+        // Cap-only split: the bisector's clip removes only cap-tail mass.
+        // Both capOnly (full-line cap integral) and the bracket (interval
+        // integral, cap ignored) are UPPER BOUNDS of the exact clipped
+        // integral, so min() is at least as good as either — and it is
+        // what carries a biting near-plane clip: once the near crossing
+        // moves past the cap's ramp the bracket becomes the exact form,
+        // while capOnly (which ignores plane clips) would keep the full
+        // behind-camera cap mass.
+        const capOnly = hardA
+          ? fr(1 - erfMixed((sAtCenter - L) * kk))
+          : fr(1 + erfMixed(sAtCenter * kk));
+        return radial * pref * Math.max(Math.min(capOnly, preciseBracket), 0);
+      }
       const capTerm = hardA
         ? fr(1 + erfMixed((sAtCenter - L) * kk)) // complement of the B cap
         : fr(1 - erfMixed(sAtCenter * kk)); // complement of the A cap

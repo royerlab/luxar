@@ -50,7 +50,13 @@ function vdot(a: Vec3, b: Vec3): number {
  * ± 8σ, radial support ± 8σ/sin(angle) around the closest approach), so
  * near-axial rays get the long window they need.
  */
-function quadrature(rayO: Vec3, dRaw: Vec3, seg: VolumetricSegment, steps = 40001): number {
+function quadrature(
+  rayO: Vec3,
+  dRaw: Vec3,
+  seg: VolumetricSegment,
+  steps = 40001,
+  tMin?: number
+): number {
   const rn = vnorm(dRaw);
   const dHat = vscale(dRaw, 1 / rn);
   const axis = vnormalize(vsub(seg.b, seg.a));
@@ -90,6 +96,8 @@ function quadrature(rayO: Vec3, dRaw: Vec3, seg: VolumetricSegment, steps = 4000
     t0 = Math.max(t0, Math.min(ta, tb));
     t1 = Math.min(t1, Math.max(ta, tb));
   }
+  // Ray-domain lower bound (raw-ray units → arc length along dHat).
+  if (tMin !== undefined) t0 = Math.max(t0, tMin * rn);
   if (t1 <= t0) return 0;
   const h = (t1 - t0) / (steps - 1);
   let sum = 0;
@@ -383,6 +391,101 @@ describe('lineVolumetricSumIntegral vs quadrature', () => {
           }
         }
       }
+    });
+  });
+
+  describe('near-plane ray-domain bound (tMin — the perspective near clip)', () => {
+    it('parallel lane, soft/soft segment straddling the near plane: exact clip', () => {
+      // Camera INSIDE the segment looking along it — the severe leak case
+      // review finding 2 is about. Without the bound, the lane counts the
+      // whole rod including everything behind the eye.
+      const seg: VolumetricSegment = { a: [-10, 0.8, 0], b: [20, 0.8, 0], sigma: SIGMA };
+      const o: Vec3 = [0, 0, 0];
+      const d: Vec3 = [1, 0, 0];
+      for (const tMin of [0.1, 2, 8]) {
+        const lane = lineVolumetricSumIntegral(o, d, seg, { tMin });
+        const ref = quadrature(o, d, seg, 40001, tMin);
+        expect(Math.abs(lane - ref), `tMin=${tMin}`).toBeLessThan(2.5e-3 * Math.max(ref, 0.05));
+      }
+      // Sensitivity: the unbounded lane counts the behind-eye half too.
+      const unbounded = lineVolumetricSumIntegral(o, d, seg);
+      const clipped = lineVolumetricSumIntegral(o, d, seg, { tMin: 0.1 });
+      expect(unbounded - clipped).toBeGreaterThan(0.25 * unbounded);
+    });
+
+    it('parallel lane, chain-end segment (soft A, hard B) straddling: exact clip', () => {
+      const { main } = jointAtB(12, 30, 10); // soft cap at A, hard cut at B
+      const o: Vec3 = [3, 0.4, 0];
+      const d: Vec3 = [1, 0, 0]; // axial ray from inside the segment
+      for (const tMin of [0.5, 3]) {
+        const lane = lineVolumetricSumIntegral(o, d, main, { tMin });
+        const ref = quadrature(o, d, main, 40001, tMin);
+        expect(Math.abs(lane - ref), `tMin=${tMin}`).toBeLessThan(4e-3 * Math.max(ref, 0.05));
+      }
+    });
+
+    it('general plane lane, hard/hard: the near clip tightens the ξ-bracket exactly', () => {
+      const { main } = jointAtB(10, 30, 10);
+      const nA = bisectorNormal([1, 0, 0], [-1, 0, 0] as Vec3);
+      const seg: VolumetricSegment = { ...main, cutA: nA };
+      const { o, d } = obliqueRay([5, 0.4, 0], 45); // closest approach at t ≈ 50
+      for (const tMin of [49, 50, 50.7]) {
+        const lane = lineVolumetricSumIntegral(o, d, seg, { tMin });
+        const ref = quadrature(o, d, seg, 40001, tMin);
+        expect(Math.abs(lane - ref), `tMin=${tMin}`).toBeLessThan(2.5e-3 * Math.max(ref, 0.05));
+      }
+    });
+
+    it('mixed lane with a biting near clip falls through to the bracketed split', () => {
+      const { main } = jointAtB(10, 30, 10);
+      for (const tilt of [45, 15]) {
+        const { o, d } = obliqueRay([5, 0.4, 0], tilt);
+        for (const tMin of [49.5, 50]) {
+          const lane = lineVolumetricSumIntegral(o, d, main, { tMin });
+          const ref = quadrature(o, d, main, 40001, tMin);
+          expect(Math.abs(lane - ref), `tilt=${tilt} tMin=${tMin}`).toBeLessThan(
+            8e-3 * Math.max(ref, 0.05)
+          );
+        }
+      }
+    });
+
+    it('mass is only ever removed: I(tMin) is non-increasing in tMin, every lane', () => {
+      const { main } = jointAtB(10, 30, 10);
+      const nA = bisectorNormal([1, 0, 0], [-1, 0, 0] as Vec3);
+      const lanes: Array<{ seg: VolumetricSegment; o: Vec3; d: Vec3; label: string }> = [
+        {
+          seg: { a: [-10, 0.8, 0], b: [20, 0.8, 0], sigma: SIGMA },
+          o: [0, 0, 0],
+          d: [1, 0, 0],
+          label: 'parallel',
+        },
+        { seg: { ...main, cutA: nA }, ...obliqueRay([5, 0.4, 0], 45), label: 'hardhard' },
+        { seg: main, ...obliqueRay([5, 0.4, 0], 45), label: 'mixed' },
+      ];
+      for (const { seg, o, d, label } of lanes) {
+        let prev = Number.POSITIVE_INFINITY;
+        for (const tMin of [40, 46, 49, 50, 51, 54, 60]) {
+          const v = lineVolumetricSumIntegral(o, d, seg, { tMin });
+          expect(v, `${label} tMin=${tMin}`).toBeLessThanOrEqual(prev + 1e-9);
+          prev = v;
+        }
+      }
+    });
+
+    it('soft/soft GENERAL lane deliberately ignores tMin (documented residual leak)', () => {
+      // The accepted design: oblique soft/soft rays keep the full-line
+      // closed form (+ near fade in the shader). Pin both halves: the lane
+      // ignores the bound, and the true clipped mass genuinely differs when
+      // the clip cuts through the support (so the exemption is a real,
+      // known leak — not a vacuous statement).
+      const seg: VolumetricSegment = { a: [0, 0, 0], b: [10, 0, 0], sigma: SIGMA };
+      const { o, d } = obliqueRay([5, 0.4, 0], 45);
+      const unbounded = lineVolumetricSumIntegral(o, d, seg);
+      const withBound = lineVolumetricSumIntegral(o, d, seg, { tMin: 50 });
+      expect(withBound).toBe(unbounded);
+      const refClipped = quadrature(o, d, seg, 40001, 50);
+      expect(unbounded - refClipped).toBeGreaterThan(0.3 * unbounded);
     });
   });
 

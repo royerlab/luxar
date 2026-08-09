@@ -589,11 +589,37 @@ export function volumetricLineWebGPUFactory(
         };
         applyPlane(vec3(vCutA), vec3(vSegA), hardA);
         applyPlane(vec3(vCutB), Bp, hardB);
+        if (!isOrtho) {
+          // Near-plane ray-domain clip: one more s-bound (rayO.z = 0 and
+          // dRaw.z = −1 put the crossing at exactly t = nearCull; |dw| is
+          // ~rn in this lane, so the mapping through s(t) is well-posed).
+          const sX: TSLNode = sAtCenter.add(nearCull.sub(tCenter).mul(dw)).toVar();
+          If(dw.greaterThan(0.0), () => {
+            sLo.assign(max(sLo, sX));
+          }).Else(() => {
+            sHi.assign(min(sHi, sX));
+          });
+        }
 
         const Glen: TSLNode = float(0.0).toVar();
         If(dead.lessThan(0.5).and(sHi.greaterThan(sLo)), () => {
           If(hardA.not().and(hardB.not()), () => {
-            Glen.assign(L); // the soft window integrates to exactly L
+            If(sLo.greaterThan(-1e29).or(sHi.lessThan(1e29)), () => {
+              // Near-bound clips the exact-L window: H(x) = ∫ₓ^∞ W ds =
+              // (Ψ((x−L)c) − Ψ(x·c))/c, bounds clamped into the window's
+              // support so the Ψ difference stays well-conditioned.
+              const lo: TSLNode = max(sLo, float(-7.0).div(c)).toVar();
+              const hi: TSLNode = min(sHi, L.add(float(7.0).div(c))).toVar();
+              Glen.assign(
+                erfCapRemainderTSL(lo.sub(L).mul(c))
+                  .sub(erfCapRemainderTSL(lo.mul(c)))
+                  .sub(erfCapRemainderTSL(hi.sub(L).mul(c)))
+                  .add(erfCapRemainderTSL(hi.mul(c)))
+                  .div(c)
+              );
+            }).Else(() => {
+              Glen.assign(L); // the soft window integrates to exactly L
+            });
           })
             .ElseIf(hardA.and(hardB), () => {
               Glen.assign(max(sHi.sub(sLo), 0.0));
@@ -649,6 +675,11 @@ export function volumetricLineWebGPUFactory(
           };
           applyPlane(vec3(vCutA), vec3(vSegA), hardA);
           applyPlane(vec3(vCutB), Bp, hardB);
+          if (!isOrtho) {
+            // Near-plane ray-domain clip: ξ increases with t (kxi > 0), so
+            // material at t > nearCull tightens the LOWER bracket edge.
+            xiLo.assign(max(xiLo, clamp(nearCull.sub(tCenter).mul(kxi), -4.0, 4.0)));
+          }
 
           If(dead.greaterThan(0.5).or(xiLo.greaterThanEqual(xiHi)), () => {
             killed.assign(1.0); // GLSL twin: `if (dead || xiLo >= xiHi) discard;`
@@ -680,7 +711,8 @@ export function volumetricLineWebGPUFactory(
               F.assign(pref.mul(max(bracket, 0.0)));
             }).Else(() => {
               // MIXED — see the GLSL twin / CPU reference for the split
-              // selection rationale.
+              // selection rationale (J0 saturated-cap shortcuts + the
+              // sign-selected J1/J2 inclusion–exclusion).
               const kk: TSLNode = kxi.div(rn).toVar();
               const axialDominant: TSLNode = dw.mul(dw).greaterThan(A).toVar();
               const excludedTowardMinusS: TSLNode = dnHard.mul(dw).lessThan(0.0).toVar();
@@ -689,26 +721,68 @@ export function volumetricLineWebGPUFactory(
                 .toVar();
               const xCapB: TSLNode = sAtCenter.sub(L).mul(kk).toVar();
               const xCapA: TSLNode = sAtCenter.mul(kk).toVar();
-              If(axialDominant.and(complementOnExcludedSide), () => {
-                const capOnly: TSLNode = hardA
-                  .select(
-                    float(1.0).sub(erfAsTSL(xCapB)).toVar(),
-                    float(1.0).add(erfAsTSL(xCapA)).toVar()
-                  )
-                  .toVar();
-                F.assign(pref.mul(max(capOnly, 0.0)));
-              }).Else(() => {
-                const bracket: TSLNode = narrow
-                  .select(bracketTaylor, erfAsTSL(xiHi).sub(erfAsTSL(xiLo)).toVar())
-                  .toVar();
-                const capTerm: TSLNode = hardA
-                  .select(
-                    float(1.0).add(erfAsTSL(xCapB)).toVar(),
-                    float(1.0).sub(erfAsTSL(xCapA)).toVar()
-                  )
-                  .toVar();
-                F.assign(pref.mul(max(bracket.sub(capTerm), 0.0)));
+              const bracketAS: TSLNode = narrow
+                .select(bracketTaylor, erfAsTSL(xiHi).sub(erfAsTSL(xiLo)).toVar())
+                .toVar();
+              // Saturated-cap shortcuts (the J0 split) — computed only
+              // under axialDominant, where |dw| > √A keeps the division
+              // well-posed (a perpendicular-dominant dw ≈ 0 would feed the
+              // comparisons backend-dependent garbage).
+              const capSaturated: TSLNode = float(0.0).toVar();
+              const capDead: TSLNode = float(0.0).toVar();
+              If(axialDominant, () => {
+                const sEdge: TSLNode = hardA.select(L, float(0.0)).toVar();
+                const xiEdge: TSLNode = sEdge.sub(sAtCenter).mul(kxi).div(dw).toVar();
+                const halfRamp: TSLNode = sqrt(A).mul(3.0).div(abs(dw)).toVar();
+                // GLSL twin: `(!hardA) == (dw > 0.0)` (bool equality
+                // spelled with and/or — TSL-safe).
+                const dwPos: TSLNode = dw.greaterThan(0.0).toVar();
+                const satHigh: TSLNode = hardA.not().and(dwPos).or(hardA.and(dwPos.not())).toVar();
+                If(
+                  satHigh.select(
+                    xiEdge.add(halfRamp).lessThanEqual(xiLo),
+                    xiEdge.sub(halfRamp).greaterThanEqual(xiHi)
+                  ),
+                  () => {
+                    capSaturated.assign(1.0);
+                  }
+                );
+                If(
+                  satHigh.select(
+                    xiEdge.sub(halfRamp).greaterThanEqual(xiHi),
+                    xiEdge.add(halfRamp).lessThanEqual(xiLo)
+                  ),
+                  () => {
+                    capDead.assign(1.0);
+                  }
+                );
               });
+              If(capSaturated.greaterThan(0.5), () => {
+                F.assign(pref.mul(max(bracketAS, 0.0)));
+              })
+                .ElseIf(capDead.greaterThan(0.5), () => {
+                  killed.assign(1.0); // GLSL twin: capDead discard
+                })
+                .ElseIf(axialDominant.and(complementOnExcludedSide), () => {
+                  // Cap-only split, min()ed with the bracket: both are
+                  // upper bounds of the exact clipped integral.
+                  const capOnly: TSLNode = hardA
+                    .select(
+                      float(1.0).sub(erfAsTSL(xCapB)).toVar(),
+                      float(1.0).add(erfAsTSL(xCapA)).toVar()
+                    )
+                    .toVar();
+                  F.assign(pref.mul(max(min(capOnly, bracketAS), 0.0)));
+                })
+                .Else(() => {
+                  const capTerm: TSLNode = hardA
+                    .select(
+                      float(1.0).add(erfAsTSL(xCapB)).toVar(),
+                      float(1.0).sub(erfAsTSL(xCapA)).toVar()
+                    )
+                    .toVar();
+                  F.assign(pref.mul(max(bracketAS.sub(capTerm), 0.0)));
+                });
             });
           });
         })

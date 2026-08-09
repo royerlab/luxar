@@ -1605,4 +1605,59 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]),
   },
+  // NEAR-PLANE STRADDLING (review finding 2 on PR #1426): an end-on
+  // segment that starts BEHIND the eye (camera-space z = +0.5) and ends in
+  // front (z = −1.5), with a deliberately large nearCull (0.35) so the
+  // ray-domain clip cuts visibly into the in-front portion too (counted
+  // chord 1.15 of 2.0 — a ~0.57× core). Exercises the STRUCTURAL-PARALLEL
+  // lane's near s-bound plus the vertex stage's quad near-clip reshaping
+  // on both backends. Two knobs are load-bearing, both mutation-verified
+  // (disabling the clip on one backend must FAIL parity):
+  // - TELEPHOTO rays (uPerspectiveLineScale 6400): at the default 64 even
+  //   the central pixel ray sits at sin² ≈ 5e-4, far above the 1e-5
+  //   structural threshold, so every fragment lands in the soft/soft
+  //   GENERAL lane — which deliberately keeps the full-line convention
+  //   (the documented residual) and never sees the clip.
+  // - THIN world width (0.002 → σ ≈ 8 px at this scale) with the extent
+  //   clamp raised to 128: at the default width 0.1 the near-clipped
+  //   endpoint's raw stencil width (width·scale/nearCull ≈ 37 px… 640 px
+  //   pre-clip) trips the coverageFade cull and NOTHING renders — a
+  //   uniform buffer that the vacuous-parity guard rejects.
+  // - LINEAR range via uOpacity 0.0034: the additive tail carries the
+  //   integral in the ALPHA channel (fragColor = vec4(color, intensity ·
+  //   uOpacity)), and at this fixture's scale the raw intensity is ~236
+  //   (unclipped) vs ~136 (clipped) — both clamp to alpha 1.0 and the
+  //   clip ratio vanishes. uOpacity scales alpha into the 8-bit linear
+  //   range (~0.80 vs ~0.46); uIntensity would only scale the COLOR.
+  'line-volprim-nearclip': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () => ({
+      ...buildVisualLineUniforms(
+        buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+          startWidth: 0.002,
+          endWidth: 0.002,
+        }),
+        false,
+        0.35
+      ),
+      uPerspectiveLineScale: { value: 6400.0 },
+      uMaxLinePixelWidth: { value: 128.0 },
+      uOpacity: { value: 0.0034 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+        startWidth: 0.002,
+        endWidth: 0.002,
+      }),
+    buildCamera: buildBehindCamera,
+  },
 };

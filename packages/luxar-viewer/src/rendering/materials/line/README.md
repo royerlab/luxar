@@ -272,11 +272,17 @@ per end), and the fragment solves against the TRUE camera-space segment:
   plane between the segment and its partner (fetched via the joint-code
   partner slot), which partitions exactly at any bend angle. Free ends keep
   the erf cap; chain-end segments (one cut, one cap) use a sign-selected
-  inclusion–exclusion closed form. Four fragment lanes (structural parallel /
-  soft-soft / hard-hard / mixed), all quadrature-validated against the CPU
-  reference in `_shared/line-volumetric.ts` — **edit the lanes there first,
-  prove them in `line-volumetric-integral.test.ts`, then mirror into both
-  shader twins.**
+  inclusion–exclusion closed form (three splits: bracket-primary,
+  cap-primary, and a saturated-cap bracket-only shortcut). The perspective
+  **near plane is one more plane clip** where it stays closed-form — an
+  s-bound in the structural-parallel lane, a ξ-bound in the general plane
+  lane — so a segment straddling the eye no longer contributes light from
+  behind the camera (the soft/soft oblique lane keeps the documented
+  full-line + near-fade convention). Four fragment lanes (structural
+  parallel / soft-soft / hard-hard / mixed), all quadrature-validated
+  against the CPU reference in `_shared/line-volumetric.ts` — **edit the
+  lanes there first, prove them in `line-volumetric-integral.test.ts`,
+  then mirror into both shader twins.**
 - **Peak-family blending** (max, normal, opaque) takes the ray maximum:
   today's profile at the ray→clamped-segment distance, exact for any
   sharpness β. The peak/sum split is the `LUXAR_PEAK_PROJECTION` define

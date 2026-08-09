@@ -2242,6 +2242,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-volprim-peak',
     'line-volprim-taper',
     'line-volprim-colormap',
+    'line-volprim-nearclip',
   ] as const) {
     test(`${variant}: volumetric line primitive parity across backends`, async ({ page }) => {
       await bootHarness(page);

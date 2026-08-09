@@ -543,11 +543,28 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
             if ((dn > 0.0) == (dw > 0.0)) sHi = min(sHi, sX); else sLo = max(sLo, sX);
           }
         }
+        if (uIsOrtho == 0) {
+          // Near-plane ray-domain clip: one more s-bound (rayO.z = 0 and
+          // dRaw.z = -1 put the crossing at exactly t = nearCull; |dw| is
+          // ~rn in this lane, so the mapping through s(t) is well-posed).
+          float sX = sAtCenter + (nearCull - tCenter) * dw;
+          if (dw > 0.0) sLo = max(sLo, sX); else sHi = min(sHi, sX);
+        }
         float Glen;
         if (dead || sHi <= sLo) {
           Glen = 0.0;
         } else if (!hardA && !hardB) {
-          Glen = L; // the soft window integrates to exactly L over the line
+          if (sLo > -1e29 || sHi < 1e29) {
+            // Near-bound clips the exact-L window: H(x) = int_x^inf W ds =
+            // (Psi((x-L)c) - Psi(x*c))/c, bounds clamped into the window's
+            // support so the Psi difference stays well-conditioned.
+            float lo = max(sLo, -7.0 / c);
+            float hi = min(sHi, L + 7.0 / c);
+            Glen = (luxarErfCapRemainder((lo - L) * c) - luxarErfCapRemainder(lo * c)
+                  - luxarErfCapRemainder((hi - L) * c) + luxarErfCapRemainder(hi * c)) / c;
+          } else {
+            Glen = L; // the soft window integrates to exactly L over the line
+          }
         } else if (hardA && hardB) {
           Glen = max(sHi - sLo, 0.0);
         } else if (hardA) {
@@ -590,6 +607,11 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
             dead = true;
           }
         }
+        if (uIsOrtho == 0) {
+          // Near-plane ray-domain clip: xi increases with t (kxi > 0), so
+          // material at t > nearCull tightens the LOWER bracket edge.
+          xiLo = max(xiLo, clamp((nearCull - tCenter) * kxi, -4.0, 4.0));
+        }
         if (dead || xiLo >= xiHi) discard;
         float xim = 0.5 * (xiLo + xiHi);
         float dxi = xiHi - xiLo;
@@ -626,13 +648,37 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
           bool complementOnExcludedSide = hardA ? !excludedTowardMinusS : excludedTowardMinusS;
           float xCapB = (sAtCenter - L) * kk;  // B-edge in identity coords
           float xCapA = sAtCenter * kk;        // A-edge in identity coords
-          if (axialDominant && complementOnExcludedSide) {
+          float bracketAS = narrow ? bracketTaylor : (luxarErfAS(xiHi) - luxarErfAS(xiLo));
+          // Saturated-cap shortcuts (the J0 split): when the cap's
+          // pointwise ramp (s-width 3*sigma*sqrt2, mapped through
+          // ds/dxi = dw/kxi) lies wholly outside the bracket on its
+          // SATURATED side, the window is ==1 over every unit of bracket
+          // mass and the pure bracket is exact — this is what carries a
+          // biting near-plane clip (camera inside a chain-end segment),
+          // where J1 double-counts the exclusion and J2 keeps the clipped
+          // mass. On the dead side, the integral is 0.
+          bool capSaturated = false;
+          bool capDead = false;
+          if (axialDominant) {
+            float sEdge = hardA ? L : 0.0;    // the SOFT cap's edge
+            float xiEdge = (sEdge - sAtCenter) * kxi / dw;
+            float halfRamp = 3.0 * sqrt(A) / abs(dw);
+            bool satHigh = (!hardA) == (dw > 0.0);
+            capSaturated = satHigh ? (xiEdge + halfRamp <= xiLo) : (xiEdge - halfRamp >= xiHi);
+            capDead = satHigh ? (xiEdge - halfRamp >= xiHi) : (xiEdge + halfRamp <= xiLo);
+          }
+          if (capSaturated) {
+            F = pref * max(bracketAS, 0.0);
+          } else if (capDead) {
+            discard; // bracket entirely in the cap's dead zone: no mass
+          } else if (axialDominant && complementOnExcludedSide) {
+            // Cap-only split, min()ed with the bracket: both are upper
+            // bounds of the exact clipped integral.
             float capOnly = hardA ? (1.0 - luxarErfAS(xCapB)) : (1.0 + luxarErfAS(xCapA));
-            F = pref * max(capOnly, 0.0);
+            F = pref * max(min(capOnly, bracketAS), 0.0);
           } else {
-            float bracket = narrow ? bracketTaylor : (luxarErfAS(xiHi) - luxarErfAS(xiLo));
             float capTerm = hardA ? (1.0 + luxarErfAS(xCapB)) : (1.0 - luxarErfAS(xCapA));
-            F = pref * max(bracket - capTerm, 0.0);
+            F = pref * max(bracketAS - capTerm, 0.0);
           }
         }
       } else {
