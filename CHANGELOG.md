@@ -380,8 +380,6 @@ re-running skips whole completed files rather than resuming a partial one. A
 deliberate `--without-images` run stays quiet, and `main()`'s navigation hint no
 longer promises fluorescence images the scene does not contain.
 
-
-
 #### Real join geometry for lines: the miter (#790, #795)
 
 Every line segment is one screen-space quad expanded only *perpendicular* to its
