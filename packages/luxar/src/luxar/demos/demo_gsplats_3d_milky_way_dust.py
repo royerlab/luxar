@@ -76,17 +76,17 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import require_module
-from luxar.encoding import EncodingMode
-from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import (
+from luxar.demos import (
     detect_device,
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
     parse_int_arg,
+    require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.encoding import EncodingMode
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
