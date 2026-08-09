@@ -189,6 +189,35 @@ class TestCheckPortAvailable:
             assert check_port_available(12345) is True
             mock_socket.return_value.setsockopt.assert_not_called()
 
+    def test_ipv6_host_uses_an_ipv6_socket(self) -> None:
+        """An IPv6 host is probed on AF_INET6, not reported permanently busy.
+
+        ``::1`` is a supported bind address (``_warn_if_lan_exposed`` counts it
+        as loopback), but the probe used to hardcode ``AF_INET``, so binding an
+        IPv6 literal raised for *every* port and ``pick_port`` gave up with "No
+        available ports found" on a completely free one.
+        """
+        import socket
+
+        try:
+            listener = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        except OSError:
+            pytest.skip("no IPv6 support in this environment")
+        with listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                listener.bind(("::1", 0))
+            except OSError:
+                pytest.skip("IPv6 loopback is not bindable in this environment")
+            listener.listen(1)
+            busy_port = listener.getsockname()[1]
+            # A live IPv6 listener is still detected...
+            assert check_port_available(busy_port, "::1") is False
+
+        # ...and once it is gone the same port reads as available again, which
+        # the AF_INET probe could never report for an IPv6 host.
+        assert check_port_available(busy_port, "::1") is True
+
     def test_socket_closed_on_error(self) -> None:
         """Test check_port_available closes socket after bind failure."""
         with patch("luxar.cli.utils.socket.socket") as mock_socket:

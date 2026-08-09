@@ -31,6 +31,13 @@ same address conflicts either way, wildcard binds included. The
 `test_unavailable_port` case was tightened to `listen()` accordingly — bound but
 never listening no longer models an occupied port, which is the point.
 
+The same probe also hardcoded `AF_INET`, so an IPv6 bind address raised for every
+port and `serve --host ::1` exited with "No available ports found near 8000" on a
+completely free one. `::1` is already a first-class loopback host elsewhere in the
+serve path, so the probe now picks its family from the host — for IPv6 *literals*
+only; a name like `localhost` stays on `AF_INET` rather than inheriting whatever
+order the resolver returns.
+
 The muteness was its own bug. Both gallery `webServer` entries discarded stdout and
 stderr, so the port-shift warning had nowhere to go; `GALLERY_DEBUG=1 pnpm
 gallery` now forwards both servers' stdout to the reporter, and stderr is no
@@ -112,7 +119,6 @@ which is written last, leaving a ladder missing its real surface. Both are store
 viewer path can load, where the plain-leaf path writes nothing at all. Sharing the
 function rather than repeating the checks is what keeps the two paths from drifting: the
 ladder gate IS what the child write runs.
-
 
 #### A warm CAIDA AS-topology run is fully offline and recomputes nothing (#1372)
 

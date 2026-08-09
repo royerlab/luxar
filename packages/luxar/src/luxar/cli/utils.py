@@ -65,6 +65,13 @@ def check_port_available(port: int, host: str = "127.0.0.1") -> bool:
     call an occupied port free and the real bind would then fail hard, trading a
     warned port shift for a crash.
 
+    The address family follows the host: an IPv6 literal (``::1``, ``::``) needs
+    an ``AF_INET6`` socket, and probing it on ``AF_INET`` fails for every port —
+    which ``pick_port`` reports as "No available ports found", so
+    ``luxar serve --host ::1`` died on a completely free port. Only literals are
+    switched; names (``localhost``) stay on ``AF_INET`` as before rather than
+    inheriting whatever order the resolver happens to return.
+
     Args:
         port: Port number to check.
         host: Host address to check.
@@ -72,8 +79,9 @@ def check_port_available(port: int, host: str = "127.0.0.1") -> bool:
     Returns:
         True if port is available, False if in use.
     """
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock = socket.socket(family, socket.SOCK_STREAM)
     except OSError:
         return False
     try:
