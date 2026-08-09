@@ -1223,10 +1223,27 @@ Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `t
 | Variable | Description |
 |----------|-------------|
 | `{hover_label}` | The label string for the picked element |
-| `{hover_node}` | Zarr path of the picked node (e.g., "/cells") |
-| `{hover_index}` | Element index within the node |
+| `{hover_node}` | Zarr path of the picked layer (e.g., "/cells") |
+| `{hover_index}` | Element index within the node that was hit (on-disk index or buffer slot — see below) |
 
 When labels exist on any node but no hover overlay is explicitly defined, a default hover overlay is auto-injected at scene finalization time.
+
+Under a `kind=partition` layer, `{hover_node}` and `{hover_index}` are reported
+against different nodes and are not directly joinable: `{hover_node}` is the
+outermost partition wrapper (the layer the user sees, matching the layers panel),
+while `{hover_index}` is local to the `part_<i>` leaf that was hit. For a
+non-partitioned node both refer to the same node.
+
+Whether `{hover_index}` is the *on-disk* element index — the one the node's
+arrays and its label CSR are keyed by — depends on the geometry. It is the
+on-disk index for a Points or GSplats node that declares `has_labels` or
+`has_image_labels`, and for a Mesh always, since mesh picking reports the
+vertex's on-disk ordinal directly. For **Lines** it never is: a line is drawn
+one instance per *segment* and picking reports that segment's slot, while the
+lines label CSR is written per *vertex* — so the index misses its CSR row even
+on a fully loaded, unsliced layer, and spatial range loading (only the visible
+on-disk ranges are concatenated) or an nD slice compacting invisible elements
+out shifts it further. Tracked as #1424.
 
 ### Compound Ordering
 

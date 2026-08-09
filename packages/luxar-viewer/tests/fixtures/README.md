@@ -82,6 +82,7 @@ expectations.
 | `test_lines.luxar.zarr` | Lines geometry (vertices, widths, optional colors and segments). |
 | `test_gsplats.luxar.zarr` | GSplats (Gaussian Splats) geometry (centers, amplitudes, Cholesky factors, colors). |
 | `test_labelled_points.luxar.zarr` | Small labelled-points dataset used by the `hover-tooltip.spec.ts` E2E spec. |
+| `test_labelled_partitioned_points.luxar.zarr` | The partitioned sibling of the above: 301 labelled points behind a `kind=partition` wrapper (four `part_<i>` leaves), with one isolated hover target at the world origin. The label CSR lives on the leaves, so `hover-tooltip.spec.ts` can pin the #1415 reported-vs-queried path split — the flat fixture cannot see it. |
 | `test_line_joins.luxar.zarr` | Five polyline-joint cases in separate world-Y bands (smooth curve, 90° zigzag, thin and thick straights, nine-ray indexed hub) under a photometry-grade pinned viewer config. Acceptance fixture for `line-join-artifact.spec.ts` (issues #780 / #785 / #790). |
 
 ## Files

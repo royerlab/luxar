@@ -37,6 +37,132 @@ passes a mis-sized list through whole, so all parts got the *same* labels and pa
 tooltips were part 0's. Each wrapper now checks the full element count before it
 slices, leaving the plain-leaf gate order untouched.
 
+#### Lines — the volumetric primitive's ray-integral math (#1352, no rendering change)
+
+Groundwork for replacing the Lines screen-space quad with a cylindrically
+symmetric primitive. The quad is ill-posed when a segment points at the camera:
+the projected axis collapses, so the quad's orientation is decided by noise while
+its width stays full, and tubes viewed end-on turn into a starburst of needles.
+The replacement is a segment convolved with an isotropic 3D Gaussian,
+`rho = a·G_2D(r)·W(s)` with an erf-softened axial window — orientation-free by
+construction, and linear in the source measure, so independently-drawn segments
+sum to exactly the ideal bent tube with no join machinery at all.
+
+`materials/line/ray-integral.ts` is the closed form for it: a CPU reference, a
+GLSL block and TSL builders for the sum-mode ray integral and the peak-mode
+capsule profile, all generated from one constant set (the same single-source
+shape as `_shared/erf.ts`, which it consumes). **Nothing renders differently** —
+no production shader imports it yet. It lands first so the wiring slice has a
+pinned reference to be tested against, exactly as the erf polynomial did.
+
+The two analytic limits are pinned as tests: side-on reduces to the untruncated
+Gaussian stroke at `sigma = 2·width / GAUSSIAN_EQUIVALENT_TRUNCATION`, and end-on
+to `a·L·G(r0)` — path length times the radial profile, finite and orientation-free
+where the quad degenerates. So is additivity, the property the whole design rests
+on: splitting a segment and summing the halves reproduces the whole, across the
+lane boundary and at near-end-on angles.
+
+Most of the work is in the numerics, which is where this would actually break.
+The `|u| → 0` end-on singularity and the near-coincident-erf-argument hazard turn
+out to be the same condition — writing the window's argument gap as
+`Δ = L·|u|/(sigma·√2)` cancels the `1/|u|` algebraically — so there is one
+derivative lane keyed on `Δ`, threshold 0.5, chosen where `erfPoly`'s difference
+quotient stops being trustworthy rather than by taste. Three float32 clamps keep
+both `mix` arms finite (a discarded arm that overflows still poisons the result
+through `Inf·0`), pinned by a `Math.fround` harness against a deliberately
+unguarded mutant. The window is clamped non-negative because the shader erf is a
+least-squares fit that can go slightly negative near saturation.
+
+Three things this does NOT do, spelled out in the module header so the wiring
+slice does not inherit them as surprises: it covers `beta = 2` only, so the
+`sharpness` knob needs the LUT the issue proposes; it changes fragment shading,
+not the screen-space footprint, and end-on the quad IS the sliver, so a
+conservative stencil is still required; and its additivity means the joint-code /
+cap-suppression subsystem and the screen-space coverage compensations would
+double-count rather than merely be redundant.
+
+#### `nd_transform` on a group — and on any node's property setter — is checked against the scene dimensions
+
+A geometry leaf's *creation-time* `nd_transform` has always been validated against
+the scene: the writers call `prepare_transform_attrs`, which reads the dimension
+list out of the store, so `add_points(..., nd_transform={"nope": …})` is refused. A
+**group** was not, and neither was the `nd_transform` property SETTER on any node
+type. `Node.__init__` ran the structure-only check and then flagged the write
+`_transform_normalized=True`, which is exactly what tells `write_group` to skip its
+own store-aware pass — so `add_group("g", nd_transform={"nope": …})` and
+`points.nd_transform = {"nope": …}` both wrote clean and the viewer then ignored a
+transform nothing said had been asked for.
+
+Both doors into the attr — creation-time `**attrs` and the property setter, on
+groups and leaves alike — now resolve the scene `Dimensions` and run the writers'
+check: unknown key, *displayed* dimension, and affine-vs-permutation domain
+mismatch are all refused. `Node._resolve_scene_dimensions` takes the root `Scene`
+found by walking the parent chain (the non-raising counterpart of
+`Group._find_scene`) and, failing that, reads `scene_dimensions` off the writer's
+store — a node can be writer-attached but Scene-detached (`Group("orphan",
+writer=compiler)`, or the `parent=` kwarg on the adders), and there the store is
+authoritative even though the chain is empty. Only a node with neither a Scene nor
+a store keeps the structure-only contract.
+
+This reaches the `kind=lod` and `kind=partition` wrappers too, which is where it
+bites hardest — `nd_transform` is a compositing attr, so `add_points(…,
+substitutive_lod=True, nd_transform=<typo>)` hoists the typo onto the wrapper, the
+one node that used to accept anything.
+
+One ordering consequence worth stating: the dimension must already be declared when
+the node is created. `scene.add_group("g", nd_transform={"Time": …})` followed by a
+widening of the scene dimensions to include `Time` used to be accepted and now
+raises.
+
+A refused construction is now recoverable: `Node.__init__` used to append the child
+to `parent.children` before validating any attr, so a rejection left a phantom
+sibling and the obvious retry — fix the dimension name, call the same adder again —
+died with "Duplicate child name". The append moved to the END of the constructor,
+after every attr is validated and written, so a group refused at construction time
+leaves no phantom entry (leaf writers have their own post-write attr steps and are
+unchanged here). Attr-agnostic, so it fixes the same trap for a bad `opacity` /
+`transform`. Fixes #1418.
+
+#### The hover label lookup finds the CSR again on a partitioned layer (#1415)
+
+Authoring a layer with `partition=` and `labels=` produced a silently empty
+tooltip on every hover, for all four geometry types. The pick-result handler
+resolved the hit's outermost `kind=partition` ancestor and then used that wrapper
+path for everything — including the two label lookups. A wrapper is a bare group:
+`add_points` / `add_lines` / `add_gsplats` / `add_mesh` slice `labels` per part
+and write the CSR (`label_offsets` / `label_bytes`) onto each `part_<i>` leaf, so
+the loader opened a path that does not exist, cached an empty label array for the
+session, and returned `null` forever after. Nothing raised — the miss is demoted
+to an info log, because an unlabelled node is the ordinary case.
+
+The wrapper path was not wrong, only overloaded. It is the right answer for the
+two things it was picked for — the selection event's `nodeName` and the overlay's
+title, mirroring how the layers panel treats a partition wrapper as the layer the
+user sees — so the handler now resolves two paths instead of one: the wrapper is
+what gets *reported*, the hit leaf is what gets *queried*. The lookup therefore
+lands on the node that actually owns the CSR. Of the two queries only the text
+label is reachable today — all four adders refuse `image_labels` alongside
+`partition=`, so no `part_<i>` ever owns an image CSR — and the image lookup
+moves with it for consistency, so the split is one rule rather than two if that
+combination is ever allowed. That is the whole fix wherever the pick's element id
+already is the on-disk index the CSR is keyed by — which it now is for Points and
+GSplats, both of which resolve a labelled node's slot through a published slot →
+on-disk map (or trivially, where the identity holds and none is published), and
+for Mesh, which never needed one because its `gl_VertexID` is the on-disk vertex
+ordinal. Lines resolves nothing yet, so there the id remains a visible-buffer
+storage slot — a per-*segment* one, while the lines CSR is per *vertex*, so the
+wrong text lands in the tooltip already on a plain 3D layer with nothing hidden,
+on a partitioned layer and a flat one alike; chunk culling and compaction only
+shift it further. The partitioned-layer miss was itself pre-existing too, and
+independent of the mesh partition work that surfaced it.
+
+The public `selection` embedder event grew a third field, `hitNodeName`, carrying
+that hit leaf. `nodeName` and `elementIndex` keep their meanings — the layer and
+an index local to the leaf — which under a partition are not joinable; embedders
+that need to resolve the element index against the store should index against
+`hitNodeName`, which equals `nodeName` whenever there is no partition wrapper.
+
+
 #### Tooling — the demos converge on one import spelling (#1304)
 
 The shared demo plumbing (`launch_viewer`, `parse_demo_flags`, `cached_download`,
@@ -96,9 +222,9 @@ keeps reporting the storage slot, unchanged. It is also deliberately stripped ac
 additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
 so no single map is meaningful (the loader factory now also clears the label flags on
 each sub-LOD, so it is never built there); per-level label resolution is #1422. A
-`kind=partition` points layer needs one more fix to hover correctly — the handler still
-resolves labels against the outermost wrapper path rather than the leaf that owns the
-CSR (#1415, in flight separately); the two compose.
+`kind=partition` points layer composes with the fix above (#1415): the handler now
+resolves labels against the hit `part_<i>` leaf rather than the outermost wrapper, and
+that leaf is both the node whose sliced CSR is read and the node this map is stamped on.
 
 Points only. GSplats (#1423) and Lines (#1424) have the same class of bug; gsplats
 needed a Rust WASM kernel change and is fixed in the entry below, while lines carries a
@@ -185,6 +311,7 @@ wasn't enough: `aprint` doesn't flush and Python block-buffers a piped stdout,
 while Playwright's timeout path SIGKILLs the process group — so the data server
 now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
 behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
+
 
 #### Mesh gets substitutive LOD
 
