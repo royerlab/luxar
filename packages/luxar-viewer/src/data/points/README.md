@@ -33,7 +33,8 @@ implementation; the loader calls it directly with a WASM backend from
 `getPointsBackend(ndim)`. It is always on the main thread (WASM-accelerated)
 — there is no worker round-trip for Points.
 
-It also emits `elementIds` (via `buildPointElementIds`): the visible-buffer
+It also emits `elementIds` (via the shared `buildElementIdMap` in
+`data/loaders/element-ids.ts`, which GSplats composes with too): the visible-buffer
 slot → on-disk element index map that picking uses for per-element label
 lookups. It is built only for a node declaring `has_labels` /
 `has_image_labels` — the label reader it exists for, and it costs 4 B/point on

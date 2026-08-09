@@ -1965,9 +1965,16 @@ describe('depth-sort coordinator', () => {
     });
 
     const mesh = makeGSplatsMesh(2, 'normal');
+    const elementIdMap = new Uint32Array([2048, 2049]);
+    mesh.userData.elementIdMap = elementIdMap;
     coord.noteDepthSortBlendingModeSwitch(mesh, 'normal', 'additive');
     expect(mesh.userData.committedData).toBeUndefined();
     expect(requestReprocess).toHaveBeenCalledTimes(1);
+    // The picking slot → on-disk map SURVIVES: the geometry stays on the GPU
+    // and pickable until the async reprocess commits, so the map still
+    // describes it. Dropping it would make hover in that window fall back to
+    // the raw storage slot — a silently wrong label (#1421/#1423).
+    expect(mesh.userData.elementIdMap).toBe(elementIdMap);
   });
 
   it('mode switch AWAY from normal releases the node and kills in-flight applies', async () => {

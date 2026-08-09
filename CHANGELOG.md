@@ -35,11 +35,48 @@ each sub-LOD, so it is never built there); per-level label resolution is #1422. 
 resolves labels against the outermost wrapper path rather than the leaf that owns the
 CSR (#1415, in flight separately); the two compose.
 
-Points only. GSplats (#1423) and Lines (#1424) have the same class of bug and are
-separate follow-ups — gsplats needs a Rust WASM kernel change, and lines carries a
-segment-vs-vertex granularity mismatch on top of it. Mesh was already correct: its pick
-shader reports `gl_VertexID`, which for an indexed draw IS the on-disk vertex ordinal,
-so the lookup no-ops.
+Points only. GSplats (#1423) and Lines (#1424) have the same class of bug; gsplats
+needed a Rust WASM kernel change and is fixed in the entry below, while lines carries a
+segment-vs-vertex granularity mismatch on top of it and remains outstanding. Mesh was
+already correct: its pick shader reports `gl_VertexID`, which for an indexed draw IS the
+on-disk vertex ordinal, so the lookup no-ops.
+
+#### Hover labels index the right splat (#1423)
+
+The GSplats half of #1421. The gsplat pick shaders emit `aSortedIndex` — the
+visible-buffer storage slot — as `elementId`, while the per-element label CSR is keyed
+by the on-disk splat index. The two diverge the same two ways Points did, and for the
+same reasons: the spatial index concatenates only the visible on-disk ranges, and the
+fused nD→3D kernel compacts hidden-dim-attenuated splats out in place. Hover a labelled
+gsplat layer on a slice that culls chunks, or with any hidden dimension, and the tooltip
+showed another splat's label.
+
+The composition is now shared with Points (`data/loaders/element-ids.ts`), but GSplats
+has to assemble it one stage later: its projection runs downstream of the loader, in the
+worker (or the in-process dispatcher), so the loader publishes only its half — the
+visible `ranges` — and `project_gsplats_nd_to_3d` gained a trailing
+`out_source_indices` output recording which source splat each emitted slot came from.
+Both twins (Rust kernel and the uncapped TypeScript reference that serves >16D) take an
+empty slice as the opt-out, so every caller that has no map to build pays nothing. The
+data processor composes the two halves and the commit stamps the result onto the mesh —
+in lockstep with `committedData`, and cleared when a commit produces none, so a stale
+map can never outlive the geometry it described. The stamp is deliberately mesh-level
+rather than a field on the loaded payload: that payload can be a SliceCache-owned
+snapshot handed back by reference on a hit, whose byte size was measured once at store
+time. Points now reads through the same stamp.
+
+The same cheapness gates as Points apply: ranges are published only for a node
+declaring `has_labels` / `has_image_labels`, the standard-3D fast path (every splat
+emitted in order) records nothing because slot IS the source index there, and on that
+same fast path the map is omitted entirely when the visible set is one range from 0 (the
+identity). That last saving does not carry over to the general, compacting path: source
+indices are supplied there whenever `ranges` is published, so the composer's identity
+branch is unreachable and even an uncompacted labelled node allocates a full N-element
+map. It is likewise never published across an additive ladder — each sub-LOD is a
+distinct on-disk array, so no single map is meaningful; the loader factory clears the
+label flags on each synthesized `additive_<i>` node and the ladder concat strips the
+field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) remains the
+last outstanding geometry.
 
 #### Mesh gets substitutive LOD
 

@@ -110,10 +110,13 @@ export interface LoadedPointsData {
   /**
    * Visible-buffer slot → ON-DISK element index map (size: numPoints, optional).
    *
-   * Produced by `data/points/projection.ts::projectPointsTo3D` and consumed
-   * by `rendering/picking/picking-system/element-id-map.ts` so hover labels
-   * index the per-element label CSR (`label_offsets` / `label_bytes`) by the
-   * on-disk index rather than by the storage slot the pick shader reports.
+   * Produced by `data/points/projection.ts::projectPointsTo3D` and consumed at
+   * commit by `data/scene-loader/commit/commit-points-geometry.ts`, which
+   * forwards it to `types/committed-data::setElementIdMap`. Picking reads that
+   * MESH-level stamp — not this field — via
+   * `rendering/picking/picking-system/element-id-map.ts`, so hover labels index
+   * the per-element label CSR (`label_offsets` / `label_bytes`) by the on-disk
+   * index rather than by the storage slot the pick shader reports.
    * The two diverge after spatial range loading (only the visible ranges are
    * concatenated) or effective-radius compaction (zero-radius points are
    * dropped in place).

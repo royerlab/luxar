@@ -25,8 +25,9 @@
  * Stored in a module-owned {@link WeakMap} keyed on the concat-result object,
  * NOT as a field on the data:
  * - The data object is sometimes SHARED (the single-LOD concat returns the raw
- *   LOD object directly — for Points only when that object carries no
- *   `elementIds` map, which the concat must strip) or DEEP-CLONED
+ *   LOD object directly, but only when that object publishes no picking index
+ *   space — `elementIds` for Points, `ranges` for GSplats — which the concat
+ *   must otherwise strip off a shallow copy) or DEEP-CLONED
  *   (slice-cache ladder restore), so a
  *   mutable field would alias or be lost; identity-keyed WeakMap entries are
  *   immune. A restored-from-cache clone simply has no entry → no append on the
