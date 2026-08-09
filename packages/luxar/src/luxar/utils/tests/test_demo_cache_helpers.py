@@ -53,6 +53,30 @@ def test_cache_computed_version_and_recompute():
     )
 
 
+def test_cache_computed_explicit_cache_dir_is_used_verbatim(tmp_path):
+    """``cache_dir=`` writes/reads there, and never touches the default root.
+
+    The three graph demos take a ``--cache-dir`` override and must be able to put
+    a derived result beside the raw downloads it came from — so the directory has
+    to be usable verbatim, with ``name`` demoted to a log label.
+    """
+    calls = {"n": 0}
+    explicit = tmp_path / "elsewhere" / "caida"
+
+    def compute():
+        calls["n"] += 1
+        return {"coords": np.arange(3)}
+
+    r1 = demo_utils.cache_computed("caida", "layout3d_abc", compute, cache_dir=explicit)
+    r2 = demo_utils.cache_computed("caida", "layout3d_abc", compute, cache_dir=explicit)
+
+    assert calls["n"] == 1  # second call served from the explicit directory
+    np.testing.assert_array_equal(r1["coords"], r2["coords"])
+    assert [p.name for p in explicit.glob("*.pkl")] == ["layout3d_abc_v1.pkl"]
+    # The namespaced default root is not created, let alone written to.
+    assert not (tmp_path / "cache").exists()
+
+
 def test_cache_computed_corrupt_is_quarantined(tmp_path):
     def compute():
         return 42
