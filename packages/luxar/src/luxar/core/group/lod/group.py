@@ -2,8 +2,8 @@
 
 The LOD-kind ``Group`` selects one of N alternative children at runtime based
 on a view-driven metric (currently: the projected bbox diagonal in pixels). It
-is geometry-agnostic — children can be ``points``, ``lines``, ``gsplats``, or
-themselves a specialized group (``kind=lod`` / ``kind=partition``).
+is geometry-agnostic — children can be ``points``, ``lines``, ``gsplats``,
+``mesh``, or themselves a specialized group (``kind=lod`` / ``kind=partition``).
 
 Each child carries its own ``coverage_fraction`` attribute (strictly monotonic
 increasing in coarsest→finest order; coarsest = 0.0, finest = 1.0). This is a
@@ -24,8 +24,11 @@ every level's count equally and cancels), and it makes no absolute-resolution cl
 (a coarse/blocky level is simply mapped onto a smaller apparent size, not a true
 detail estimate).
 
-Everything here is type-agnostic and shared across all leaf geometries
-(Points, Lines, GSplats) and the Partition kind. The geometry-specific
+Almost everything here is type-agnostic and shared across all leaf geometries
+(Points, Lines, GSplats, Mesh) and the Partition kind; the one exception is the
+mesh coarsening-method constants (``MESH_SUBSTITUTIVE_METHODS`` /
+``DEFAULT_MESH_SUBSTITUTIVE_METHOD``), which live here beside the mixture-reducer
+set they are deliberately disjoint from. The geometry-specific
 ``lod_group=`` / ``additive_lod=`` axis resolvers live next to their data
 types (e.g. ``lod.gsplats`` for ``GSplatData``).
 
@@ -428,9 +431,35 @@ DEFAULT_SUBSTITUTIVE_K: int = 4
 DEFAULT_SUBSTITUTIVE_LEVELS: int = 3
 DEFAULT_SUBSTITUTIVE_METHOD: str = "auto"
 #: Accepted substitutive reduction methods (passed to make_substitutive_lod).
+#:
+#: Every one of these is a GAUSSIAN-MIXTURE reducer: it merges elements into
+#: fewer, larger representative Gaussians. Points and Lines admit them only
+#: because both LIFT to gsplats before coarsening — the set is a property of the
+#: reduction, not of the geometry that asked for it.
 SUBSTITUTIVE_METHODS = frozenset(
     {"auto", "kmeans", "kmeans_lloyd", "greedy", "greedy_lloyd"}
 )
+
+#: Mesh coarsening methods. Disjoint from the mixture set above except for
+#: ``auto``, and that is the whole point of keeping the two apart.
+#:
+#: Mesh is the first geometry that does NOT lift to gsplats: a surface is
+#: coarsened by DECIMATION (merge vertices, reindex faces, drop the triangles
+#: that collapsed), which has no mixture to reduce and no ``kmeans`` to run.
+#: Accepting ``method="kmeans"`` on a mesh would be accepting a word that names
+#: nothing the code can do, so it is refused with the reason rather than
+#: silently mapped onto something else.
+#:
+#: ``qem`` — Garland-Heckbert edge collapse — is the tier this set is shaped to
+#: admit next (issue #1348). It is not listed until it exists: a method name
+#: that validates and then raises is worse than one that never validated.
+MESH_SUBSTITUTIVE_METHODS = frozenset({"auto", "cluster"})
+
+#: Default mesh coarsening method. ``auto`` resolves to ``cluster`` today — the
+#: only implemented tier — and becomes a real size-derived choice when ``qem``
+#: lands (#1348). Kept as the default anyway so that upgrade is not a
+#: behaviour change for anyone who wrote ``method="auto"``.
+DEFAULT_MESH_SUBSTITUTIVE_METHOD: str = "auto"
 
 
 def _validate_coarsen_dims_spec(value: Any) -> Any:
@@ -586,7 +615,8 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     method = str(kwargs.pop("method", DEFAULT_SUBSTITUTIVE_METHOD)).replace("-", "_")
     if method not in SUBSTITUTIVE_METHODS:
         raise ValueError(
-            f"method must be one of {sorted(SUBSTITUTIVE_METHODS)}; got {method!r}"
+            f"substitutive_lod for {geometry}: method must be one of "
+            f"{sorted(SUBSTITUTIVE_METHODS)}; got {method!r}"
         )
 
     if "truncation_radius" in kwargs:

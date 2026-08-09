@@ -137,6 +137,15 @@ print(points['metadata']['transform'])  # 4x4 numpy array (if present)
 splats = scene.get_gsplats('splats1')
 print(splats['centers'].shape)           # (N, 3)
 print(splats['cholesky_factors'].shape)  # (N, 6)
+
+# A node whose colormap attr is the sentinel 'custom' carries its palette as a
+# LUT dataset (the writer resolves any non-builtin name or array to that pair)
+print(scene.get_colormap_lut('cloud1'))  # (256, 3) uint8, or None
+
+# Scene-level viewer hints, parsed like Scene.viewer_config (None if unset).
+# A rewriter must carry this across, or the output silently falls back to the
+# viewer's ACES default.
+print(scene.viewer_config)  # ViewerConfig(...) or None
 ```
 
 **Return Types** (dataclasses with dict-compatible access):

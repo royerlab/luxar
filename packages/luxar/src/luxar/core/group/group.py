@@ -359,6 +359,7 @@ class Group(Node):
         extend_to_all: Optional[Union[List[str], str]] = None,
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
+        substitutive_lod: Optional[Union[bool, Dict[str, Any]]] = None,
         **attrs: Any,
     ) -> Union["Mesh", "Group"]:
         """Add a triangle mesh (surface) node to this group.
@@ -368,19 +369,28 @@ class Group(Node):
         a triangle's extent comes from its own vertices — so it also contributes
         no extent padding to the scene's bounds.
 
-        Not supported for meshes (each raises rather than silently degrading):
-        ``additive_lod`` (a prefix of an index buffer is a surface with holes, not
-        a coarser surface), ``substitutive_lod`` (structurally fine — only the
-        producer, mesh decimation, is missing), and adding one under a
-        ``kind=lod`` parent. See ``docs/specs/MESH_NODE_SPEC.md`` §9.
+        ``substitutive_lod`` IS supported: it writes a ``kind=lod`` group whose
+        coarse children are progressively DECIMATED copies of the surface and whose
+        finest child is the original. Its vocabulary is shorter than the sibling
+        adders' — no ``truncation_radius`` / ``max_aspect`` / ``device`` / ``seed``,
+        because those exist only for geometries that coarsen by lifting to gsplats,
+        and ``method`` is ``{'auto', 'cluster'}`` rather than the Gaussian-mixture
+        reducers. See :func:`luxar.core.group.lod.mesh.resolve_substitutive_axis_mesh`.
 
-        ``partition`` IS supported. Returns the ``kind=partition`` wrapper
+        ``partition`` IS supported too. Returns the ``kind=partition`` wrapper
         :class:`Group` instead of a :class:`Mesh` when the split yields more than
         one part (a single part falls through to a plain leaf), matching
         ``add_points`` / ``add_gsplats``. A mesh may also be added directly to a
         ``kind=partition`` group you built yourself, provided that group declares
         ``display_type='mesh'`` — a partition is homogeneous, so a mismatched
-        declaration is refused.
+        declaration is refused. ``partition`` and ``substitutive_lod`` cannot be
+        combined, exactly as for Points / Lines.
+
+        Not supported for meshes (each raises rather than silently degrading):
+        ``additive_lod`` (a prefix of an index buffer is a surface with holes, not
+        a coarser surface) and ``blending_mode='volumetric'`` (a zero-thickness
+        surface has no path length to integrate). See
+        ``docs/specs/MESH_NODE_SPEC.md`` §9.
 
         Args:
             name: Name of the mesh node.
@@ -429,7 +439,9 @@ class Group(Node):
                 opaque surface.
 
         Returns:
-            The created Mesh node.
+            The created Mesh node — or, with ``substitutive_lod``, the ``kind=lod``
+            Group wrapping the ladder, or with ``partition``, the ``kind=partition``
+            Group wrapping the parts (matching ``add_points`` / ``add_lines``).
         """
         from .adders.mesh import add_mesh_impl
 
@@ -451,6 +463,7 @@ class Group(Node):
             extend_to_all=extend_to_all,
             dim_order=dim_order,
             fill=fill,
+            substitutive_lod=substitutive_lod,
             **attrs,
         )
 

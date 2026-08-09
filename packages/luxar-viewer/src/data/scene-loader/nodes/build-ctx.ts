@@ -128,6 +128,18 @@ export interface NodeBuildCtx {
    */
   releaseLazyLines(path: string): void;
 
+  /**
+   * Demotion hygiene for a lazily-loaded mesh level. Peer of the three above in
+   * WHEN it is called and deliberately not in WHAT it does: a mesh is
+   * `pooled: false` (an indexed `BufferGeometry`, not the instanced-quad stack),
+   * so there is no evictable buffer to hand back and no pool adapter to hand it
+   * to. What it does share is the depth-sort release — mesh is `depthSortable`,
+   * so a demoted level would otherwise keep its coordinator state and its
+   * worker-side centroid copy alive for a level that is no longer drawn, which
+   * is precisely the memory a ladder exists to avoid holding.
+   */
+  releaseLazyMesh(path: string): void;
+
   // Per-type `process`/`commit` pairs — each leaf only uses the one for its
   // type. ``loadedViewVersion`` stamps the committed mesh for the LOD freshness
   // check; omit it to default to the live ``_updateVersion`` (correct for the

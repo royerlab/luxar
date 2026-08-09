@@ -313,18 +313,22 @@ def test_mesh_blending_mode_setter_also_rejects_volumetric(tmp_path) -> None:
         assert mesh.blending_mode == "additive"
 
 
-def test_mesh_under_a_lod_group_is_rejected(tmp_path) -> None:
-    """Refused at ADD time, before any array lands on disk.
+def test_mesh_under_a_lod_group_is_accepted(tmp_path) -> None:
+    """A mesh IS a valid substitutive level, now that a producer exists.
 
-    The finalize-time LOD guard would also catch this, but only after the mesh's
-    vertices and faces are already written — so the store would be left with a
-    partial node. Failing here keeps the write fail-fast.
+    This was a refusal until `luxar.mesh.decimate` landed, and the refusal was
+    correct at the time: a `kind=lod` group's levels must each be an independently
+    renderable stand-in for the finer one, and nothing could produce a coarser
+    surface. Hand-assembling the ladder is the same thing `substitutive_lod=` does
+    internally, so it has to work.
+
+    The ADDITIVE flavour is untouched by this and remains impossible — see
+    `test_additive_ladder_is_still_refused_with_its_own_reason`.
     """
     with LuxarZarrCompiler(tmp_path / "lod.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         lod = scene.add_lod_group("ladder")
-        with pytest.raises(ValueError, match="kind=lod"):
-            lod.add_mesh("child_0", _V, _F)
+        lod.add_mesh("child_0", _V, _F, coverage_fraction=0.0)
 
 
 def test_mesh_under_a_mesh_partition_group_is_allowed(tmp_path) -> None:
@@ -377,40 +381,31 @@ def test_non_mesh_under_a_mesh_partition_group_is_rejected(tmp_path) -> None:
             part.add_lines("part_1", pos, np.ones(2, dtype=np.float32))
 
 
-def test_lod_refusal_distinguishes_the_two_ladder_flavours(tmp_path) -> None:
-    """The REASON is pinned, not just the fact of the refusal.
+def test_additive_ladder_is_still_refused_with_its_own_reason(tmp_path) -> None:
+    """The two flavours were never refused for the same reason, and still are not.
 
-    Every other assertion in this file matches a short structural substring
-    (``"kind=lod"``), which is why the justification was free to rot: the message
-    spent months telling users that substitutive LOD reduces independent elements
-    and is therefore impossible for a surface. Only the additive flavour works that
-    way. Substitutive levels are independently-authored ``(vertices, faces)`` pairs
-    chosen by ``coverage_fraction`` — the machinery makes no independence assumption
-    and the only missing piece is a decimator (spec §9).
+    The message spent months telling users that SUBSTITUTIVE LOD reduces
+    independent elements and is therefore impossible for a surface. Only the
+    additive flavour works that way, and the distinction turned out to be the
+    whole story: substitutive levels needed a decimator and now have one, while an
+    additive prefix of an index buffer is a *holed* surface and can never be a
+    coarse one.
 
-    "Impossible" and "not written yet" are different answers to a user asking
-    whether to wait for it, so the distinction is worth a test.
+    So the surviving refusal must keep naming ITS reason, and must not have been
+    widened back into a blanket "mesh has no LOD".
     """
     with LuxarZarrCompiler(tmp_path / "why.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        lod = scene.add_lod_group("ladder")
         with pytest.raises(ValueError) as excinfo:
-            lod.add_mesh("child_0", _V, _F)
+            scene.add_mesh("m", _V, _F, additive_lod=True)
 
     message = str(excinfo.value)
-    assert "ADDITIVE" in message and "SUBSTITUTIVE" in message
-    # The additive arm is excluded on principle: a prefix of an index buffer is a
-    # holed surface, not a coarse one.
+    assert "additive_lod" in message
+    # Excluded on principle: a prefix of an index buffer is a holed surface.
     assert "holes" in message
-    # The substitutive arm is excluded only for want of a producer.
-    assert "no producer" in message
-    # ...and must NOT be blamed on the independence assumption that only the
-    # additive ladder makes. This is the exact sentence that was wrong. Scoped to the
-    # substitutive clause on purpose: "the ADDITIVE ladder reduces independent
-    # elements" is accurate, and the sibling copy of this rationale in
-    # ``typing_utils/geometry_capabilities.py`` says exactly that.
-    _additive_arm, substitutive_arm = message.split("SUBSTITUTIVE", 1)
-    assert "independent elements" not in substitutive_arm
+    # And NOT by appeal to a missing producer — that was the substitutive arm's
+    # reason, and it no longer applies to anything.
+    assert "no producer" not in message
 
 
 def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
@@ -423,10 +418,10 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
     on geometry type — and mesh supports two of those. Brightening a dimmer splat
     prefix is right; brightening a holed surface is not.
 
-    Prophylactic rather than a live-bug fix (mesh cannot be in a ``kind=lod`` group,
-    and the mesh commit never stamps ``committedEnergyFraction``), so this test is
-    what keeps the rule true once substitutive LOD or a reveal ladder removes one of
-    those latches.
+    Prophylactic rather than a live-bug fix: the mesh commit never stamps
+    ``committedEnergyFraction``, so the compensation factor is 1 today. Substitutive
+    LOD has already removed the other latch (a mesh CAN be in a ``kind=lod`` group
+    now), so this test is what keeps the rule true.
     """
     with LuxarZarrCompiler(tmp_path / "stamps.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -450,19 +445,18 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
 def test_mesh_names_the_reason_for_the_lod_parameters(tmp_path) -> None:
     """``add_mesh(additive_lod=…)`` must not answer like a typo.
 
-    ``additive_lod`` / ``substitutive_lod`` are real parameters on the sibling
-    adders, so a caller reaching for one on a mesh spelled a real feature
-    correctly. Without a refusal of its own they fall into ``**attrs`` and come back as
-    "Unknown node attribute … The viewer would silently ignore it. Remove it or use a
-    supported attribute". Right outcome, misleading reason: the same defect the
-    ``kind=lod`` parent message carried, in the arm a user is far more likely to hit.
-
-    ``partition`` is no longer in this set — it is a real ``add_mesh`` parameter
-    now, so it is bound by name and never reaches ``**attrs``.
+    ``additive_lod`` is a real parameter on the sibling adders, so a caller
+    reaching for it on a mesh spelled a real feature correctly. Without a refusal
+    of its own it falls into ``**attrs`` and comes back as "Unknown node attribute
+    … The viewer would silently ignore it. Remove it or use a supported
+    attribute". Right outcome, misleading reason.
     """
+    # `substitutive_lod` left this table when the decimator landed and `partition`
+    # when the splitter did — both are real mesh parameters now, covered by
+    # `test_mesh_substitutive_lod.py` and the partition tests below.
+    # `additive_lod` is the one that can never apply to a surface.
     reasons = {
         "additive_lod": "holes",
-        "substitutive_lod": "no producer",
     }
     with LuxarZarrCompiler(tmp_path / "params.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -489,17 +483,19 @@ def test_partition_group_accepts_mesh_display_type(tmp_path) -> None:
         assert group.attrs["display_type"] == "mesh"
 
 
-def test_lod_group_rejects_explicit_mesh_display_type(tmp_path) -> None:
-    """The explicit-kwarg route is gated too, not only the finalize back-fill.
+def test_lod_group_accepts_explicit_mesh_display_type(tmp_path) -> None:
+    """``display_type='mesh'`` is now a valid kind=lod group, by every route.
 
     ``display_type`` is an accepted node attr, so it rides in through ``**attrs``
-    and reaches zarr without passing the back-fill at all — the back-fill only
-    ever sees groups that supplied nothing.
+    and reaches zarr without passing the finalize back-fill at all. It used to be
+    refused there; the gate still exists and still refuses a LOD-less type, but no
+    contract type is LOD-less any more (see
+    ``typing_utils/tests/test_geometry_capabilities.py``).
     """
     with LuxarZarrCompiler(tmp_path / "ld.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        with pytest.raises(ValueError, match="display_type for a kind=lod group"):
-            scene.add_lod_group("l", display_type="mesh")
+        group = scene.add_lod_group("l", display_type="mesh")
+        group.add_mesh("child_0", _V, _F, coverage_fraction=1.0)
 
 
 # =============================================================================
@@ -846,35 +842,29 @@ def test_face_index_width_escalates_past_uint16(tmp_path) -> None:
     )
 
 
-def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_refused(
+def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_accepted(
     tmp_path,
 ) -> None:
-    """The indirection case that ONLY the finalize back-fill catches.
+    """The indirection case, which the finalize back-fill resolves to `mesh`.
 
-    `add_mesh`'s add-time guard inspects the IMMEDIATE parent, so a mesh whose
-    parent is a plain group that itself sits inside a `kind=lod` group sails past
-    it — and the resolved display type still walks down to `mesh`. This is the case
-    that makes the multi-route guard necessary rather than redundant: with only the
-    add-time check, this store would be written with `display_type="mesh"` and load
-    nowhere.
-
-    Unlike the direct case the failure surfaces at finalize, so it is raised from
-    the compiler's context-manager exit rather than from `add_mesh`.
+    A mesh whose parent is a plain group that itself sits inside a `kind=lod` group
+    is invisible to `add_mesh`'s immediate-parent guard, and the back-fill still
+    walks down to `display_type="mesh"`. That combination used to be the argument
+    for the multi-route guard; now it simply resolves to a display type that is
+    legal, and the store finalizes.
     """
-    with pytest.raises(ValueError, match="display_type"):
-        with LuxarZarrCompiler(tmp_path / "nested.luxar.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            inner = scene.add_lod_group("ladder").add_group("inner")
-            inner.add_mesh("c0", _V, _F)
+    with LuxarZarrCompiler(tmp_path / "nested.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        inner = scene.add_lod_group("ladder").add_group("inner")
+        inner.add_mesh("c0", _V, _F)
 
 
-def test_mesh_under_nested_lod_groups_is_refused(tmp_path) -> None:
-    """A lod-inside-lod ladder is refused at the innermost add, not silently nested."""
+def test_mesh_under_nested_lod_groups_is_accepted(tmp_path) -> None:
+    """A lod-inside-lod ladder of meshes writes, the same as for the other types."""
     with LuxarZarrCompiler(tmp_path / "ll.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         inner = scene.add_lod_group("l1").add_lod_group("l2")
-        with pytest.raises(ValueError, match="kind=lod"):
-            inner.add_mesh("c0", _V, _F)
+        inner.add_mesh("c0", _V, _F, coverage_fraction=1.0)
 
 
 # =============================================================================
@@ -1594,3 +1584,156 @@ def test_partition_validates_per_vertex_lengths_against_the_source(
             scene.add_mesh(
                 "pm", _GRID_V, _GRID_F, partition={"max_elements": 10}, **kwargs
             )
+
+
+@pytest.mark.parametrize(
+    "partition",
+    [{"max_elements": 10}, True, 0],
+    ids=["dict", "true", "zero"],
+)
+def test_partition_with_substitutive_lod_is_refused_before_any_write(
+    tmp_path, partition
+) -> None:
+    """The two structural branches cannot compose, and must not silently pick one.
+
+    The substitutive branch RETURNS before the partition branch is reached, so an
+    accepted combination writes a ladder and drops the split with no diagnostic.
+
+    ``partition=0`` is the case that made the guard and the dispatch disagree: the
+    guard tested ``partition not in (None, False)``, which compares by EQUALITY, so
+    ``0 == False`` read as "no partition requested" — while the dispatch's identity
+    test read the same value as requested. The result was the silent drop this
+    refusal exists to prevent.
+    """
+    with pytest.raises(ValueError, match="cannot be combined") as excinfo:
+        _write_partitioned(tmp_path, partition=partition, substitutive_lod=True)
+
+    # UNWRAPPED, which is what "before any write" means here: the adder's funnel
+    # re-raises everything inside its `try` as "Could not add mesh '<name>': …",
+    # so that prefix appearing would mean the guard had moved into the try — and
+    # `cannot be combined` matches the wrapped form just as happily, so the
+    # message alone cannot tell the two apart.
+    assert "Could not add mesh" not in str(excinfo.value)
+
+    # Raised outside the write funnel, so not one byte of the node exists.
+    root = zarr.open_group(str(tmp_path / "pm.luxar.zarr"), mode="r")
+    assert "pm" not in root
+
+
+def test_partition_with_substitutive_lod_False_still_partitions(tmp_path) -> None:
+    """``substitutive_lod=False`` is "no ladder", not "a ladder was requested".
+
+    ``resolve_substitutive_axis_mesh`` documents and implements ``False`` as an
+    explicit no-op, so a caller who wrote it asked for exactly one feature — the
+    partition — and the combination guard must not refuse them.
+    """
+    store = _write_partitioned(
+        tmp_path, partition={"max_elements": 10}, substitutive_lod=False
+    )
+    root = zarr.open_group(str(store), mode="r")
+    node = root["pm"]
+    assert node.attrs["kind"] == "partition"
+    assert len([k for k in node.keys() if k.startswith("part_")]) > 1
+    # No ladder anywhere: a kind=lod group would have `child_*` members instead.
+    assert not any(k.startswith("child_") for k in node.keys())
+
+
+def test_partition_False_writes_a_plain_leaf(tmp_path) -> None:
+    """The sentinel the per-part recursion passes, exercised on its own.
+
+    Every part is written with ``partition=False`` and no ``substitutive_lod``, so
+    a guard that treated ``False`` as a request would break the recursion from the
+    inside — after the wrapper and the earlier parts were already on disk.
+    """
+    store = _write_partitioned(tmp_path, partition=False)
+    root = zarr.open_group(str(store), mode="r")
+    assert root["pm"].attrs["type"] == "mesh"
+    assert root["pm"].attrs.get("kind") != "partition"
+
+
+def test_partition_stamps_ONE_scalar_data_range_on_every_part(tmp_path) -> None:
+    """An explicit display window must span all parts, not each part's own subset.
+
+    The viewer windows a node's colormap on that node's OWN stamped
+    `scalar_data_range`, and a BSP cut splits the field — so per-part min/max maps
+    the same scalar value to a different colour either side of the cut. The caller's
+    `_scalar_data_range` was validated and then dropped on this path, which is
+    exactly the pop the substitutive ladder's shared window exists to avoid, one
+    topology across.
+
+    A PEAKED field makes it visible: one hot vertex lands in one part, so without
+    the shared window that part alone stamps a range reaching 100.
+    """
+    scalars = np.zeros(36, np.float32)
+    scalars[0] = 100.0
+    store = _write_partitioned(
+        tmp_path,
+        partition={"max_elements": 10},
+        scalars=scalars,
+        colormap="viridis",
+        _scalar_data_range=(0.0, 100.0),
+    )
+    root = zarr.open_group(str(store), mode="r")
+    node = root["pm"]
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    ranges = {tuple(node[p].attrs["scalar_data_range"]) for p in parts}
+    assert ranges == {(0.0, 100.0)}, f"parts window on different ranges: {ranges}"
+    # The private plumbing key is consumed, never stamped.
+    assert all("_scalar_data_range" not in node[p].attrs for p in parts)
+
+
+def test_partition_shares_the_derived_window_without_an_explicit_one(tmp_path) -> None:
+    """The DEFAULT `scalars=` call shares a window too — no explicit one needed.
+
+    Forwarding only the caller's explicit window helps the minority of callers who
+    pass one. Everyone else got each part stamping its own subset min/max, which is
+    the same colour discontinuity at every BSP cut — and worse for a part whose
+    subset happens to be constant: a degenerate `[v, v]`, which the viewer's
+    `computeScalarRangeUniforms` maps to the LUT midpoint. The peaked field makes
+    both failures visible at once (measured before the fix: `part_0 -> [0, 100]`,
+    every other part `[0, 0]`).
+    """
+    scalars = np.zeros(36, np.float32)
+    scalars[0] = 100.0
+    store = _write_partitioned(
+        tmp_path,
+        partition={"max_elements": 10},
+        scalars=scalars,
+        colormap="viridis",
+    )
+    node = zarr.open_group(str(store), mode="r")["pm"]
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    ranges = {tuple(node[p].attrs["scalar_data_range"]) for p in parts}
+    assert ranges == {(0.0, 100.0)}, f"parts window on different ranges: {ranges}"
+    # Restated on purpose: a shared window is the fix, a non-degenerate one is the
+    # property that makes the colormap usable at all.
+    assert all(lo < hi for lo, hi in ranges)
+
+
+def test_partition_shares_a_window_NARROWER_than_the_field(tmp_path) -> None:
+    """An explicit window that does not contain the field is still shared.
+
+    `write_scalars` widens (never narrows) the supplied pair onto each node's own
+    values, because it is also that node's quantization range. So forwarding a
+    too-narrow window verbatim let every part widen it differently — the same
+    per-part discontinuity, reintroduced by the one input that looks like it asks
+    for the opposite. Unioning with the whole field up front makes every part
+    stamp the window a plain leaf over the same field would.
+    """
+    scalars = np.zeros(36, np.float32)
+    scalars[0] = -10.0
+    scalars[-1] = 10.0
+    store = _write_partitioned(
+        tmp_path,
+        partition={"max_elements": 10},
+        scalars=scalars,
+        colormap="viridis",
+        _scalar_data_range=(0.0, 1.0),
+    )
+    node = zarr.open_group(str(store), mode="r")["pm"]
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    ranges = {tuple(node[p].attrs["scalar_data_range"]) for p in parts}
+    assert ranges == {(-10.0, 10.0)}, f"parts window on different ranges: {ranges}"
