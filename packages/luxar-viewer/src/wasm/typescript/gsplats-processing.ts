@@ -307,6 +307,11 @@ let _fusedHiddenCholesky = new Float32Array(MAX_PACKED_CHOLESKY_SIZE);
  * compacts with its splat). Outputs are sized for the `splatCount` worst case;
  * the caller slices each to the returned visible count.
  *
+ * `outSourceIndices` records, per emitted splat, the SOURCE index it came from
+ * (issue #1423) — compaction destroys that mapping, and picking needs it to
+ * translate a storage slot back into an on-disk element index. Pass an EMPTY
+ * array to opt out; the recording is then skipped entirely.
+ *
  * @returns Number of visible splats written.
  */
 export function project_gsplats_nd_to_3d(
@@ -326,7 +331,8 @@ export function project_gsplats_nd_to_3d(
   outCenters3d: Float32Array,
   outCholesky3d: Float32Array,
   outAmplitudes: Float32Array,
-  outColors: Float32Array
+  outColors: Float32Array,
+  outSourceIndices: Uint32Array
 ): number {
   if (colorComponents !== 3 && colorComponents !== 4) {
     throw new Error('project_gsplats_nd_to_3d: colorComponents must be 3 (RGB) or 4 (RGBA)');
@@ -347,6 +353,11 @@ export function project_gsplats_nd_to_3d(
   _fusedHiddenCholesky = ensureCapacity(_fusedHiddenCholesky, continuousPackedSize);
   const diff = _fusedDiff;
   const hiddenCholesky = _fusedHiddenCholesky;
+
+  // Empty array = "don't record the source indices" (the opt-out). Hoisted
+  // out of the splat loop so the non-recording path pays nothing per splat.
+  // Mirrors the Rust twin's `record_source_indices`.
+  const recordSourceIndices = outSourceIndices.length > 0;
 
   let out = 0;
 
@@ -414,6 +425,10 @@ export function project_gsplats_nd_to_3d(
     const colSrc = i * colorComponents;
     for (let c = 0; c < colorComponents; c++) {
       outColors[colOff + c] = colors[colSrc + c];
+    }
+
+    if (recordSourceIndices) {
+      outSourceIndices[out] = i;
     }
 
     out++;

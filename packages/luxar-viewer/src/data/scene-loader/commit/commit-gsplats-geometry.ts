@@ -27,6 +27,7 @@ import {
   getCommittedData,
   hasCommittedData,
   setCommittedData,
+  setElementIdMap,
 } from '../../../types/committed-data';
 import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
@@ -270,6 +271,18 @@ export function commitGSplatsGeometry(
       // SAME reference (memoized progressive concat) can then take the
       // stamp-only no-op path instead of re-projecting + re-uploading.
       setCommittedData(mesh, staged.sourceData);
+      // The slot → on-disk map is only known after projection, so it is a
+      // MESH-level stamp written here rather than a field on the payload:
+      // `staged.sourceData` may be a SliceCache-owned snapshot handed back by
+      // reference on a cache hit, whose byte size was measured at store time —
+      // mutating it would under-count the cache and break its never-mutated
+      // invariant. Written in lockstep with `setCommittedData` above (no early
+      // return between them) so the map always describes the buffers now on
+      // the GPU, and cleared when this commit has none, so a previous commit's
+      // map can never outlive the geometry it described. The stamp-only noop
+      // branch at the top touches neither: its geometry is unchanged, so the
+      // existing pair still describes exactly what the GPU holds.
+      setElementIdMap(mesh, staged.processed.elementIds);
     }
 
     if (splatCount === 0) {
