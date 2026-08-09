@@ -205,7 +205,7 @@ Visualizes the complete ATP Synthase rotary motor structure with F1 catalytic he
 
 **Run**: `luxar demo run atp_synthase`
 
-**Demonstrates**: Molecular machine visualization, multi-subunit protein complex, color-coded structural components (alpha, beta, gamma, c-ring), biological energy production machinery (~600 kDa enzyme), depth-sorted `normal` blending for surface-like atomic structures, `layer=True` for live blending / opacity / display-range control in the Layers panel (press **L**; the absorption slider appears once the layer is switched to `volumetric`).
+**Demonstrates**: Molecular machine visualization, multi-subunit protein complex, color-coded structural components (alpha, beta, gamma, c-ring), biological energy production machinery (~600 kDa enzyme), `volumetric` emission-absorption blending (kappa 2.5) so the packed interior reads as density instead of an opaque shell, with a raised display gain (`intensity=1.62`) as the matching exposure, `layer=True` for live blending / opacity / display-range control in the Layers panel (press **L**; the absorption slider is shown because the layer is `volumetric`).
 
 ---
 
@@ -410,7 +410,9 @@ A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedde
 #### demo_cytoself_protein_landscape.py - CytoSelf Protein Localization 3D UMAP
 ~114k per-image CytoSelf embeddings from the OpenCell dataset as a 3D UMAP point cloud. Each point is a single fluorescence microscopy crop of an endogenously tagged protein, colored by subcellular localization or protein identity.
 
-**Run**: `luxar demo run cytoself_protein_landscape [-- --no-serve] [-- --recompute]`
+**Run**: `luxar demo run cytoself_protein_landscape [-- --no-serve] [-- --recompute] [-- --without-images]`
+
+`--recompute` rebuilds both the 3D UMAP and the hover-thumbnail bundle; `--without-images` skips the image download entirely and the hover tooltip becomes text-only.
 
 **Requires**: Internet access (downloads embeddings from Google Drive), `umap-learn`, `pandas`, `requests`. First run computes 3D UMAP (~10-30 min); subsequent runs load cached results.
 
@@ -652,9 +654,9 @@ Turns the HuRI protein-protein interaction graph into a continuous 3D flow lands
 #### demo_caida_as_topology.py - CAIDA AS Topology (The Internet as a Graph)
 ~80k Autonomous Systems as Points and ~350k BGP relationships as Lines, laid out in 3D from graph structure alone. Auto-fetches the latest CAIDA serial-2 snapshot. Edges are styled by RELATIONSHIP TYPE — warm amber tapered lines for provider-customer (thick at provider, thin at customer, encoding direction), cool cyan uniform lines for peers. Nodes colored by Louvain community or country (CAIDA as2org). Tier-1 ASes (no upstream providers) get a size bump so the backbone pops. Edge hovers narrate the relationship ("Tier-1 transit" / "Tier-1 peering" / "Provider → Customer" / etc.) with both endpoints' org names and countries.
 
-**Run**: `luxar demo run caida_as_topology`
+**Run**: `luxar demo run caida_as_topology [-- --max-edges=80000 --keep-snapshots=4 --refresh-snapshots --recompute-pipeline --recompute-layout]`
 
-**Requires**: Internet access (auto-downloads ~60 MB from CAIDA on first run), `networkx>=3.0`, `umap-learn`, `scipy`, `pandas`, `requests`.
+**Requires**: Internet access on the first run (auto-downloads ~6 MB of compressed snapshots from CAIDA, tens of MB decompressed), `networkx>=3.0`, `umap-learn`, `scipy`, `pandas`, `requests`. Later runs make at most one discovery check a week and none at all while the memo is fresh, so a warm cache runs offline: `~/.cache/luxar/caida/` (or `--cache-dir`) holds which snapshot pair is current, the derived pipeline bundle (parse + LCC + tier-1 + Louvain) and the 3D layout. A new monthly CAIDA release triggers one download and recomputes both derived artifacts (the layout is the slow one, ~2-3 min); superseded snapshots are pruned to the newest `--keep-snapshots N` (default 2).
 
 **Demonstrates**: Large-scale **directed network** visualization (~80k nodes), aesthetic-tuned graph layout pipeline (50-dim spectral embedding → UMAP with n_neighbors=30, metric='cosine', spread=2.0 → PCA realignment for consistent orientation), edges styled by relationship kind (tapered-directional vs symmetric), tier-1 backbone detection from graph topology, per-edge narrative hover labels, auto-discovery of latest upstream dataset snapshots.
 
@@ -1137,6 +1139,10 @@ positions = cache_computed(
     "mydemo", f"umap3d_n{n}_f{len(FEATURES)}", lambda: run_umap(features), version=1
 )
 ```
+
+Pass `cache_dir=` when the demo takes a `--cache-dir` override and the result
+belongs beside the raw downloads it came from (`demo_caida_as_topology` does
+this) — that directory is then used verbatim and `name` is unused.
 
 `cache_computed` writes atomically and quarantines a corrupt cache to `.corrupt`
 instead of crashing. A quarantined file is never reused, so

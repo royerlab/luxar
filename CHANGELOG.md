@@ -50,6 +50,240 @@ conservative stencil is still required; and its additivity means the joint-code 
 cap-suppression subsystem and the screen-space coverage compensations would
 double-count rather than merely be redundant.
 
+#### Mesh gets substitutive LOD
+
+A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
+/ `luxar mesh lod` build the ladder: coarse children are progressively **decimated**
+copies of the surface, the finest child is the original, and the viewer shows exactly
+one at a time by screen coverage. The producer is `luxar.mesh.decimate` — vertex
+clustering, pure NumPy, `method` in `{auto, cluster}`; a `qem` tier is #1348.
+
+The spec called the viewer side "a two-line widening". It was wrong twice, in the same
+way in two places, and both are worth recording.
+
+**Viewer.** Flipping `GEOMETRY_CAPABILITIES.mesh.lod` makes `canDefer` admit mesh
+children, and the defer dispatch then needs a `loadMeshNodeCheap` /
+`loadMeshNodeExpensive` split the mesh loader deliberately did not have (there was no
+second caller until now). Without the split the dispatch throws; with the flip but no
+split, every level loads eagerly at scene open. Measured on a 4-level ladder: **4/4
+levels resident at first paint before, 1/4 after** — and the 8192-triangle original is
+never fetched at all unless the camera asks for it. `countFromUserData` needed a mesh
+arm too, or the empty-level display guard silently no-ops for meshes.
+
+**Python.** Assumed free; it is not. `resolve_substitutive_axis` is shared by Points and
+Lines because both coarsen by LIFTING to gsplats, so its vocabulary carries
+`truncation_radius`, `max_aspect`, `device` and `seed` — four keys that exist only
+because of that lift — plus a `method` set of Gaussian-mixture reducers. A mesh is
+decimated, so it gets its own resolver with each lift-only key refused **by name** and
+`method="kmeans"` refused with the reason. Every one of those is valid on Points and
+Lines, so a caller who tried it made no typo and the generic unknown-key error would
+have misdiagnosed them.
+
+The capability flip is `lod=True` (alongside the `partition=True` of the entry below),
+and the flavour split is why `lod` is its own column: it gates `kind=lod` groups, whose
+levels REPLACE one another, while an additive ladder is `additive_<i>/` subgroups inside
+a leaf. So mesh is LOD-capable and an additive prefix stays impossible. `require_lod_display_type`'s mesh-specific
+paragraph is gone with it — it became dead *and* misleading once every contract type was
+LOD-capable, since the only way to reach that branch now is a future type.
+
+Two bugs that only a real write and a real render could find. The level-monotonicity
+check compared each candidate against the previously kept **coarser** level instead of
+the finer one, so every level after the first was dropped and the ladder came out with
+one coarse level — producing a perfectly valid-looking store. And the viewer capability
+flip silently no-opped in one edit pass, which the render probe initially "passed"
+against, because level SELECTION works without it and only deferral does not.
+
+Ten tests asserting "mesh cannot do LOD" were inverted rather than deleted, and the ladder
+plus its decimator now carry ~40 tests of their own alongside the viewer coverage.
+
+Per-vertex **colours and scalars are both averaged per cluster**, and every level stamps
+the SOURCE field's `scalar_data_range` rather than its own — so a colormapped mesh maps
+the same value to the same colour at every level. Both halves are needed: the colormap
+rides on every child, so a level without scalars renders unmapped, and cluster-averaging
+strictly contracts the range, so per-level windows recolour the surface as you zoom. The
+averaging round-trips the input dtype (uint8, uint16 and float32 colours all survive) but
+deliberately does NOT re-quantize integer scalars, which reach disk as float32 anyway.
+`luxar mesh lod` carries the source node's `transform`, colormap (as its LUT, for a
+non-builtin palette) and compositing attrs across, plus the scene's `viewer_config`,
+instead of forwarding only `shading`/`double_sided` — per-vertex labels stay the one
+thing it cannot carry, because the reader does not surface them. It normalizes
+`--output` to `<stem>.luxar.zarr` before every path guard, and validates the method and
+the attrs before `--overwrite` deletes anything.
+
+A malformed input is refused before the group exists. Every array check the writer's
+fail-fast gate runs now lives in one shared `validate_mesh_arrays`, which the ladder
+calls before it decimates anything and before `add_lod_group`. Without it the refusal
+arrived from inside whichever child first carried the bad array — a non-finite scalar
+field, two-component colours or a typo'd `shading` from `child_0`, leaving a **childless
+`kind=lod`** node; a wrong-length normals array or `labels` list from the FINEST child,
+which is written last, leaving a ladder missing its real surface. Both are stores no
+viewer path can load, where the plain-leaf path writes nothing at all. Sharing the
+function rather than repeating the checks is what keeps the two paths from drifting: the
+ladder gate IS what the child write runs.
+
+#### A warm CAIDA AS-topology run is fully offline and recomputes nothing (#1372)
+
+Every run of the demo used to make two directory-listing GETs just to discover
+which CAIDA snapshot pair is current, then re-parse both snapshots, re-filter to
+the largest connected component and re-run Louvain — ~12 s of deterministic
+recompute, and impossible with networking off. Discovery is now memoized in
+`snapshots.json` (which pair, and when it was checked) and re-checked weekly,
+CAIDA publishing monthly; the two snapshot files were already skipped when
+present, so a warm run makes no network call at all. The whole derived chain
+(parse → LCC + tier-1 detection → Louvain → degrees) is cached as one bundle of
+arrays keyed on the two snapshot FILENAMES, so a new monthly release gets its own
+entry and the previous release's bundle stays valid instead of being clobbered.
+When discovery fails, the newest COMPLETE pair on disk is used — the memo's if
+both its files are there, else whatever pair is cached, which is the state of
+every user who ran this demo before the memo existed.
+
+The layout cache key is now the layout's input identity: the node hash plus the
+edge count and a hash of the edge endpoints. The coordinates come from the
+adjacency, so a release whose LCC keeps the same node set but rewires it — even
+with the same edge count — no longer gets served last month's geometry.
+Superseded snapshots and their derived bundles are pruned to the newest
+`--keep-snapshots N` releases (default 2), which previously grew unbounded at
+~6 MB a month; pruning runs only after the pipeline has loaded successfully, so a
+snapshot the parser rejects cannot delete the release the user goes back to — at
+the cost that a run which never loads reclaims nothing. Layout pickles have no
+release date to key them by and are deliberately not pruned, nor
+is a `layout_3d.npz` that belongs to `demo_huri_interactome`'s live cache in a
+shared `--cache-dir`.
+
+Flags: `--refresh-snapshots` re-discovers immediately, `--recompute-pipeline` and
+`--recompute-layout` rebuild the two derived caches, `--keep-snapshots N` sets the
+prune window, and `--cache-dir` relocates the lot from `~/.cache/luxar/caida/`.
+
+#### The ATP synthase demo now bakes volumetric blending
+
+`atp_synthase` shipped on depth-sorted `normal` blending, chosen when the two PDB
+structure demos moved off `additive` (see "the two PDB structure demos render as
+surfaces, not emissive media" below) on the reasoning that an atomic structure is
+a surface and the nearest atom should win the pixel. That earlier change also made
+the node a `layer`, and driving the Layers panel on the live scene is what turned
+up a better look than the one it bakes: `volumetric` at absorption kappa 2.5, with
+the display range pulled in to [0, 0.616].
+
+Emission-absorption blending is not the emissive wash `additive` gave, because the
+absorption term still occludes — a near atom hides what is behind it — but the
+complex stays translucent, so the packed subunit interior reads as density rather
+than as a closed shell. Self-screening scales the composited colour by roughly
+1/kappa, which is why the display window is pulled in rather than left at identity:
+of the exposure knobs the gain is the one that stays out of the optical depth
+(absorption sets it, and node opacity scales it), so raising the gain just puts the
+brightness back. `intensity=1.62` ≈ 1/0.616 is what that window bakes to (offset 0;
+the panel reads the rounded gain back as 0.617). The `normal` entry below is
+superseded for this demo only — `nuclear_pore_complex` keeps `normal`, where the
+surface reading is what the 8-fold ring wants.
+
+That earlier entry did weigh volumetric and reject it: across kappa 2–20 it scored
+3.9–8.3 on mean CIELAB chroma over the covered pixels, against 13.1 for `normal` on
+the nuclear-pore-complex scene the sweep was run on (it is still written out above
+that demo's `add_points`). Both volumetric variants it names sit at or below gain
+0.5 — kappa 20 at intensity 0.5, and kappa 3 at intensity 0.15 among the
+panel-legal ones — so a gain above unity is not something that sweep covered, and
+that is where the verdict turns over. Measured the same way on the ATP gallery
+capture (mean CIELAB chroma over the lit pixels, averaged over 8 orbit frames),
+`normal` scores 42.8 at L\* 83.7 and this setting 53.5 at L\* 80.0, over the same
+26% frame coverage — the same subject at the same scale (lit-mask IoU 0.98), and
+the gap holds after normalising both captures to a common exposure. The hues come
+out stronger, not washed out. NPC was not re-measured at a gain above unity; it
+keeps `normal` on purpose. Those are gallery-harness numbers with its
+auto-exposure, so they sit on a different scale from the per-demo figures quoted
+in the older entry — only the two here compare directly.
+
+Regenerate the demo dataset to pick up the new look.
+`docs/images/readme/gallery/atp_synthase.{webp,webm}` — the README gallery tile —
+were recaptured through the gallery harness against the new look.
+
+
+#### LOD levels no longer wait for the object to overfill the screen
+
+The viewer picks a substitutive LOD level by comparing each child's
+`coverage_fraction` against a dimensionless coverage metric,
+`projectedBBoxDiagonalPx / (FILL_FACTOR * viewportDiagonalPx)`. `FILL_FACTOR` was
+`1.0`, which put the finest level's threshold of `1.0` at "the object's projected
+diagonal equals the whole viewport diagonal" — i.e. the object had to OVERFILL the
+screen before full detail appeared. Measuring the viewer's own opening framing
+(`calculateCameraDistance`, fitRatio 0.75 + 20% margin, at the default fov 47) puts
+a real scene's raw diagonal fraction at **0.31 – 0.86**, so every default view
+showed a blurry merged level. Twelve demos and all user data with
+`substitutive_lod` were affected.
+
+`FILL_FACTOR` is now `0.25`. That lifts even the worst common shape (an in-plane
+elongated cloud on a portrait viewport, 0.307) to a metric of 1.23, while the other
+shapes span 1.7-3.4 over 16:9 / 9:16 / 1:1. Detail is still dropped well before the
+object is tiny: for the usual K=8 / 3-level ladder a cube on 16:9 leaves the finest
+level at ~2.0x zoomed out from the opening framing and reaches the coarsest at ~14x
+(~2.1x / ~15.7x counting the downgrade hysteresis); on 1:1 it is ~2.8x / ~20x.
+The fix is deliberately in the VIEWER rather than in Python's
+`coverage_fractions()`, so **every whole-object ladder already written to disk is
+fixed on reload** — no regeneration. (Partition-bound ladders are the exception;
+see below.)
+
+**This changes which level renders for every existing dataset.** No store is
+invalidated and a whole-object ladder (`levels`, `stream`, `add_points`/`add_lines`
+`substitutive_lod=`) needs nothing done to it — it simply shows more detail at the
+same camera than it did before, which is the fix. That detail is not free: such a
+layer now commits its finer levels at the opening framing, so expect more resident
+geometry than before (bounded, as always, by the shared VRAM eviction budget).
+
+**Two topologies DO need regenerating: an `adaptive` or `overview` store written
+before this change.** Their ladders are on disk anchored at `1.0`, and the viewer
+honors what it reads, so the ×4 metric makes them select too fine a level: an old
+`overview` store loads its whole fine partition on frame 1, and every tile of an old
+`adaptive` store jumps toward its finest level at whole-object framing (~16× the
+resident geometry for a K=4/L=2 ladder). Both are behavioral, not corrupting —
+nothing is lost — but the recipe's memory contract is gone until the store is
+rebuilt. The cheap fix, since `gsplat lod` will not take an already-tiled store as
+input: run it through any `luxar gsplat transform` that touches geometry — that
+scrubs the thresholds and re-derives them, and the re-derivation is topology-aware,
+so it restamps the partition-bound anchor. Re-running
+`luxar gsplat lod --recipe adaptive|overview` from the original flat fit works too.
+The same applies to a hand-built partition of per-part ladders (the shape
+`examples/partition_of_lod_example.py` builds): scale its authored thresholds by 4.
+
+**If you hand-tuned `coverage_fractions=[...]`, multiply every threshold by 4.**
+The metric is 4x larger at a given framing, so a x4 rescale reproduces the previous
+selection exactly (the hysteresis margin and the cross-fade band are both
+proportional to inter-threshold gaps, so they scale with it). To make that
+expressible, the upper bound on an explicit list widened from `1.0` to
+`MAX_COVERAGE_FRACTION = 4.0` — which is `1 / FILL_FACTOR`, the metric a
+screen-filling object produces, so the bound still means exactly what `1.0` meant
+before. `validate_lod_group` now enforces that range for hand-built ladders too, and
+both it and the explicit-list resolvers reject a non-finite threshold (a `NaN` used
+to satisfy every comparison and silence the ascent check for the rest of the ladder).
+`coverage_fractions()`'s derived output is unchanged and still lands in `[0, 1]`.
+
+Ladders bound to a spatial partition keep the old fills-screen anchor via the new
+`partitioned_coverage_fractions`, because a tile's projected diagonal is
+intrinsically a fraction of the whole object's: the `adaptive` recipe's per-tile
+groups and the `overview` recipe's coarse-cap/fine-partition pair now anchor their
+finest at `4.0`. Without that, `overview` would load its entire fine partition on
+frame 1 (inverting "instant coarse overview, fine tiles on zoom") and every
+`adaptive` tile would jump to its finest level at whole-object framing. The
+standalone writer derives the same anchor from the topology, so
+`luxar gsplat transform`'s scrub-and-re-derive stays a no-op.
+
+A **one-part** partition is excluded from that rule, and the exclusion matters more
+than it sounds: `to_spatial_partition` wraps even a single BSP leaf in a
+`kind=partition`, and the BSP stops as soon as the whole dataset fits
+`--max-elements`, whose default is 1,000,000. So `luxar gsplat lod --recipe adaptive`
+on any ordinary dataset produces one "tile" that IS the whole object — and anchoring
+it at fills-screen would have reintroduced exactly the blur this change removes.
+`build_adaptive` and both tree writers' topology fallbacks now use the whole-object
+anchor for that shape, so a scrub-and-re-derive of such a store still round-trips.
+
+Known limitation, documented on the constant and pinned by tests: the anchor drifts
+with viewport ASPECT. `calculateCameraDistance` fits the vertical fov while the
+metric normalises by the diagonal, so for aspect >= 1 the raw fraction falls as
+`1 / hypot(aspect, 1)`. Each shape has its own crossover (~2.30 for an in-plane rod,
+~3.40 for a flat pancake, ~4.75 for a cube) beyond which the old symptom returns —
+so on a 21:9 or 32:9 canvas the flattest shapes still miss the finest level. Fixing
+that means changing what the two sides normalise by, not lowering `FILL_FACTOR`
+further.
+
+
 #### Tractography tracts identify themselves on hover (#1386)
 
 The HCP-1065 demo drew 87 bundles whose only names were the atlas's own codes —
@@ -119,6 +353,17 @@ bookkeeping rather than correctness.
   count, so a mesh fails identically with and without `partition=` (the gather is
   length-keyed, so an off-length array would otherwise be passed through whole and
   could be accepted by a part whose own vertex count happened to match).
+- **One scalar display window spans the whole partition.** The window is derived
+  from the WHOLE field before the split, unioned with an explicit
+  `_scalar_data_range` when one is given, and stamped on every part, because the
+  viewer windows each node's colormap on that node's own stamped range — per-part
+  min/max recoloured the same value either side of a cut, and a part with a
+  constant subset landed on the LUT midpoint. Same rule the substitutive ladder
+  uses for its levels. The union rather than the explicit pair verbatim because
+  the pair is also each node's quantization range, so `write_scalars` widens
+  (never narrows) it onto that node's own values — a window narrower than the
+  field would otherwise come back out per-part. A field with a single extreme
+  outlier therefore spends its codes on the global span rather than per part.
 - `GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both the Python and
   TypeScript sides; `image_labels` is refused alongside `partition=`.
 - A partition stays **homogeneous in both directions**: every leaf adder now refuses a
@@ -126,7 +371,9 @@ bookkeeping rather than correctness.
   (`reject_mismatched_partition_parent`). Previously only the mesh side checked, and
   `validate_partition_group` — the whole-tree equivalent — has no production caller.
 
-Mesh still has **no LOD ladder** — a separate axis, and unaffected by this.
+Substitutive LOD is a separate axis and unaffected by this (see the entry above); the
+two cannot be combined in one `add_mesh` call, exactly as for Points / Lines. The
+ADDITIVE prefix ladder remains impossible for a surface.
 
 #### Demos: every scene now has something in the Layers panel (#1362)
 
@@ -258,6 +505,48 @@ node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
 
+#### CytoSelf hover no longer strands its tooltip in an empty slot (#1398)
+
+The CytoSelf demo's hover layout is a bespoke pair: an image thumbnail anchored
+top-right at `0.98`, and the text label at `x = 0.82` so it sits immediately to
+the panel's LEFT. Defining any `hover=True` overlay suppresses the compiler's
+auto-injected default, so that pair owns the whole hover experience. But the two
+halves were guarded independently, and the image half is the fragile one — a
+single failed `Image_data*.npy` download, or the count-mismatch guard rejecting a
+stale thumbnail bundle, dropped it while the text label stayed pinned at `0.82`.
+The tooltip then rendered into the gap reserved for a panel that did not exist,
+which read as hovering doing nothing at all.
+
+The two shapes are now both spelled out. With thumbnails, the two-panel layout is
+unchanged. Without them the label moves to the centre-left slot (`(0.02, 0.5)`,
+`center-left`), which nothing else in this scene occupies — the legend is
+center-RIGHT. The parameters are copied from `demo_chromatrace_choir_umap`, whose
+overlay layout is otherwise identical and which is one of seven siblings already
+using that slot for a text-only tooltip; the viewer's control rail is docked at
+that same edge house-wide, and matching the siblings beats diverging from them.
+Falling back to auto-injection would have been the smaller diff and the wrong
+answer: that overlay is the same corner, only 16% of the viewport further into it.
+
+The reporting around the loss got honest too, and it differs per path because the
+remedies do. One silent skip became loud — no thumbnails at all used to say
+nothing — and the terse count-mismatch line gained a remediation: delete the
+cached `.npz` (the message names the file and its default directory), since a
+plain re-run short-circuits on that file before any network call and reproduces
+the mismatch forever. A bundle that cannot be read at all — truncated, or structurally fine
+but holding entries that are not image bytes — is now treated as a cache miss and
+rebuilt, since raising on that path made a plain re-run reproduce the failure
+forever too. `--recompute` now reaches `load_cytoself_images` as well, which is the
+same rebuild from the CLI, but it also discards the cached UMAP for a 10-30 minute
+recompute, so it is offered second and with that caveat attached. A download
+failure names the `Image_data*.npy` file that failed, and says plainly that
+re-running skips whole completed files rather than resuming a partial one. That
+promise now holds under memory pressure as well: only a format/IO failure counts
+as a corrupt file worth deleting and refetching, so a `MemoryError` on a valid
+~1.7 GB array no longer throws the file away and re-downloads it on every run,
+and the same applies to reading the thumbnail bundle — running out of RAM is not
+a cache miss. A
+deliberate `--without-images` run stays quiet, and `main()`'s navigation hint no
+longer promises fluorescence images the scene does not contain.
 
 #### Real join geometry for lines: the miter (#790, #795)
 

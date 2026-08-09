@@ -89,20 +89,24 @@ def test_established_types_support_lod_and_partition(geometry_type: str) -> None
     assert supports_partition(geometry_type)
 
 
-def test_mesh_partitions_but_has_no_lod_ladder() -> None:
-    """Mesh's row is MIXED, and each flag is set for its own reason (spec §9).
+def test_mesh_supports_both_lod_and_partition() -> None:
+    """Mesh's row now says yes twice, and each flag says yes for its own reason.
 
-    Pinned by name because this is the row that keeps the table honest: a sweep
-    that widened the vocabulary must not carry mesh's `lod` along with it, and
-    the `partition` flag must not be read as "mesh is fully capable".
+    Pinned by name because this is the row that keeps the table honest — each flag
+    was earned by a separate producer, and neither implies the other.
 
-    ``partition`` is true because a BSP cut runs between faces and each part
-    re-indexes its own vertices (`luxar.mesh.split`, spec §9.2). ``lod`` is still
-    false: the additive prefix flavour cannot apply to a surface at all, and
-    substitutive levels want only a producer (mesh decimation).
+    ``lod`` is true for the SUBSTITUTIVE mechanism ONLY: a ``kind=lod`` group holds
+    levels that REPLACE one another, and mesh decimation
+    (``luxar.mesh.decimate``) is the producer that was missing. The ADDITIVE prefix
+    ladder is still impossible for a surface — a prefix of an index buffer is a
+    holed surface, not a coarse one — and this flag never gated that flavour; it is
+    refused in ``adders/mesh.py`` instead.
+
+    ``partition`` is true because a BSP cut runs BETWEEN faces and each part
+    re-indexes its own vertices (``luxar.mesh.split``, spec §9.2).
     """
+    assert supports_lod("mesh")
     assert supports_partition("mesh")
-    assert not supports_lod("mesh")
 
 
 @pytest.mark.parametrize(
@@ -135,14 +139,26 @@ def test_capable_type_lists_are_in_contract_order() -> None:
 
 
 def test_require_lod_rejects_incapable_geometry_types() -> None:
-    """The shared gate raises for a geometry type with no ladder."""
-    with pytest.raises(ValueError, match="display_type for a kind=lod group"):
-        require_lod_display_type("mesh", "probe")
+    """The shared gate raises for a geometry type with no ladder.
+
+    Every type in the contract is LOD-capable today, so the only way to exercise
+    the refusal is to simulate a future one. Keeping the test rather than deleting
+    it with the last excluded type is deliberate: the gate is the single chokepoint
+    all three display-type routes call, and an unexercised chokepoint is one that
+    quietly stops working.
+    """
+    from unittest.mock import patch
+
+    with patch(
+        "luxar.typing_utils.geometry_capabilities.supports_lod", return_value=False
+    ):
+        with pytest.raises(ValueError, match="display_type for a kind=lod group"):
+            require_lod_display_type("mesh", "probe")
 
 
 @pytest.mark.parametrize(
     "display_type",
-    ["points", "lines", "gsplats", "custom_marker", "group", None],
+    ["points", "lines", "gsplats", "mesh", "custom_marker", "group", None],
 )
 def test_require_lod_passes_everything_else(display_type: object) -> None:
     """Non-geometry display types keep passing — LOD stays heterogeneity-tolerant.
@@ -160,8 +176,13 @@ def test_require_lod_message_names_the_valid_set_and_the_reason() -> None:
     It names which types ARE allowed (so the caller can pick one) and why this one
     is not (so they do not read it as a bug).
     """
-    with pytest.raises(ValueError) as excinfo:
-        require_lod_display_type("mesh", "some/node")
+    from unittest.mock import patch
+
+    with patch(
+        "luxar.typing_utils.geometry_capabilities.supports_lod", return_value=False
+    ):
+        with pytest.raises(ValueError) as excinfo:
+            require_lod_display_type("mesh", "some/node")
     message = str(excinfo.value)
     assert "some/node" in message
     for capable in lod_capable_types():
@@ -169,16 +190,17 @@ def test_require_lod_message_names_the_valid_set_and_the_reason() -> None:
     assert "LOD ladder" in message
 
 
-def test_a_non_mesh_lodless_type_gets_a_GENERIC_message() -> None:
-    """The mesh explanation must not be attached to every rejection.
+def test_the_lod_refusal_message_stays_GENERIC() -> None:
+    """No type-specific rationale may be attached to this rejection.
 
-    ``require_lod_display_type`` guards any LOD-less geometry type, not just mesh, and
-    its message used to explain the additive-vs-substitutive distinction unconditionally.
-    For a different type that would be a confidently wrong diagnostic — it reads as
-    though it were about the type the caller named.
+    The message once appended a mesh explanation (additive-vs-substitutive, QEM
+    decimation) whenever the refused type was ``mesh``. That became dead when mesh
+    gained its ladder, and it was always the wrong shape: this guard fires for any
+    LOD-less geometry type, and a paragraph about surfaces reads as a confidently
+    wrong diagnostic about whichever type the caller actually named.
 
-    Simulated by making a currently-LOD-capable type look LOD-less, which is the only
-    way to reach the non-mesh branch while mesh is the sole excluded type.
+    Simulated by making a LOD-capable type look LOD-less — which is now the only
+    way to reach the branch at all, since every contract type is capable.
     """
     from unittest.mock import patch
 
@@ -187,12 +209,12 @@ def test_a_non_mesh_lodless_type_gets_a_GENERIC_message() -> None:
     ):
         with pytest.raises(ValueError) as excinfo:
             require_lod_display_type("points", "kind=lod group 'g'")
-    message = str(excinfo.value)
-    assert "kind=lod group must be one of" in message
-    assert "QEM" not in message, "the mesh-specific rationale must not appear here"
-    assert "connected surface" not in message
+        message = str(excinfo.value)
+        assert "kind=lod group must be one of" in message
+        assert "QEM" not in message, "no type-specific rationale belongs here"
+        assert "connected surface" not in message
 
-    # ...while mesh still gets the full explanation.
-    with pytest.raises(ValueError) as mesh_exc:
-        require_lod_display_type("mesh", "kind=lod group 'g'")
-    assert "QEM" in str(mesh_exc.value)
+        # Same generic text for mesh — no special case survives.
+        with pytest.raises(ValueError) as mesh_exc:
+            require_lod_display_type("mesh", "kind=lod group 'g'")
+        assert "QEM" not in str(mesh_exc.value)

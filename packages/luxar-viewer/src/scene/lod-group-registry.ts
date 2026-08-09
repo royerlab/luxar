@@ -13,7 +13,8 @@
  *   3. Project the 8 corners through the camera to NDC and back to
  *      pixel coordinates; the diagonal of the screen-space AABB, divided
  *      by ``FILL_FACTOR × viewportDiagonal``, is the dimensionless
- *      **coverage metric** (fraction of a filled viewport).
+ *      **coverage metric** (1.0 == the object's projected diagonal has
+ *      reached ``FILL_FACTOR`` of the viewport diagonal).
  *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
@@ -97,14 +98,69 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
 
 /**
  * Anchor for the viewport-relative ``coverage_fraction`` thresholds: the finest
- * child (coverage 1.0) activates when the group's projected bbox diagonal reaches
- * ``FILL_FACTOR × viewportDiagonal`` pixels — i.e. when the object roughly fills
- * the screen. Coarser children (smaller fractions) take over as it shrinks. 1.0 =
- * "finest at fills-screen"; lower shows finest a touch sooner, higher a touch
- * later. The selector normalises the projected diagonal by this to a dimensionless
- * coverage metric, so the same thresholds behave identically on any viewport size.
+ * child (coverage 1.0) activates once the group's projected bbox diagonal reaches
+ * ``FILL_FACTOR × viewportDiagonal`` pixels — i.e. about a QUARTER of the viewport
+ * diagonal, which a normal full-frame view already exceeds. Coarser children
+ * (smaller fractions) step in as the object shrinks below that. Lowering the
+ * factor shows the finest level sooner, raising it later.
+ *
+ * Why 0.25 and not 1.0: at 1.0 the finest level only appeared once the object
+ * OVERFILLED the screen, so the default opening framing always showed a blurry
+ * merged level (#1361). Measuring the real opening framing — the distance
+ * ``calculateCameraDistance`` picks (fitRatio 0.75, +20% margin) at the default
+ * fov 47, projected through ``projectBoxDiagonalPx`` — puts
+ * ``diagonalPx / viewportDiagonal`` in **0.31 – 0.86 at aspect ratios near 16:9,
+ * 9:16 and 1:1** (cube 0.51–0.86, "umap-ish" 0.43–0.68, flat pancake 0.43–0.63,
+ * the worst being an in-plane elongated 100×1×1 cloud on a portrait viewport at
+ * 0.307). Dividing by 0.25 lifts even that worst case to a metric of 1.23 — past
+ * the finest threshold of 1.0 with ~23% headroom — while the other three shapes
+ * span 1.7–3.4 over those aspects (umap-ish on 9:16 is the low end at 1.73, a cube
+ * on 1:1 the high end at 3.43). Downgrades still happen well before the object is
+ * tiny: for the usual K=8 / 3-level ladder (thresholds 0, 0.125, 0.354, 1.0) a cube
+ * on 16:9 drops off the finest at **~2.0×** zoomed out from the opening framing and
+ * reaches the coarsest at **~14×** (~2.1× / ~15.7× counting the downgrade
+ * hysteresis); on 1:1 it is ~2.8× / ~20×. Note the metric goes as
+ * ``1/(s·d₀ − halfDepth)``, not ``1/s``, so these do not follow from the opening
+ * metric by simple proportion — they are solved from the projection.
+ *
+ * **The anchor drifts with viewport ASPECT — super-wide canvases are deliberately
+ * not covered.** ``calculateCameraDistance`` fits the object to the VERTICAL fov
+ * for any aspect ≥ 1, while this metric normalises by the viewport DIAGONAL, which
+ * keeps growing with width. So the framing does not widen with the canvas but the
+ * denominator does, and for aspect ≥ 1 the raw fraction falls off exactly as
+ * ``raw(aspect) = raw(1) · √2 / hypot(aspect, 1)`` — measured constant to 5 digits
+ * across 1:1 … 32:9. A shape therefore stops reaching the finest level beyond its
+ * own crossover aspect (where its metric drops under 1.0): ≈ 2.30 for the in-plane
+ * rod, ≈ 3.40 for the flat pancake, ≈ 3.69 for "umap-ish", ≈ 4.75 for a cube.
+ * Concretely the rod already misses the finest on a 21:9 (metric 0.97) and the
+ * pancake misses it on a 32:9 (0.96) — #1361's symptom survives there. Fixing it
+ * means changing what the two sides normalise by (fit the diagonal, or normalise by
+ * the fitted extent) — NOT lowering this constant further, which would break the
+ * partition-bound ladders (see ``partitioned_coverage_fractions``) and still fails
+ * 32:9 even at 0.2.
+ *
+ * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on an
+ * explicitly authored ``coverage_fractions=[...]`` list — see
+ * ``core/group/lod/group.py``) is defined as ``1 / FILL_FACTOR``, i.e. the metric a
+ * screen-filling object produces. Changing this value must change that one; a
+ * Python test (``test_max_coverage_fraction_matches_the_viewer_fill_factor``) reads
+ * this file
+ * and asserts the two stay reciprocal.
+ *
+ * Also deliberately NOT covered: a cloud elongated along the VIEW axis (e.g.
+ * 1×1×100) measures ~0.006, because ``calculateCameraDistance`` sizes the distance
+ * from the largest dimension even when that dimension is pure depth and barely
+ * contributes to the projected AABB. That is a camera-framing quirk, not a
+ * threshold one.
+ *
+ * The selector normalises the projected diagonal by this to a dimensionless
+ * coverage metric, so the same thresholds behave identically at a given aspect
+ * ratio whatever the pixel size of the viewport.
+ *
+ * Exported so tests can pin behaviour against the real constant instead of
+ * hard-coding 0.25.
  */
-const FILL_FACTOR = 1.0;
+export const FILL_FACTOR = 0.25;
 
 /**
  * Frames a lazy level stays in the ``failed`` state before the registry
@@ -124,10 +180,16 @@ export interface LODGroupChild {
    */
   object: THREE.Object3D;
   /**
-   * Viewport-relative LOD-switch threshold in [0, 1], strictly monotonic
-   * increasing in coarsest→finest order (coarsest 0.0, finest 1.0). Multiplied
-   * by ``FILL_FACTOR × viewportDiagonal`` at selection time to compare against the
-   * group's projected bbox diagonal in pixels.
+   * Viewport-relative LOD-switch threshold, strictly monotonic increasing in
+   * coarsest→finest order (coarsest 0.0; the auto-derived ladder anchors its
+   * finest at 1.0). Multiplied by ``FILL_FACTOR × viewportDiagonal`` at
+   * selection time to compare against the group's projected bbox diagonal in
+   * pixels — so 1.0 activates once that diagonal reaches about a quarter of the
+   * viewport diagonal (any normal full-frame view), and coarser levels take over
+   * as it shrinks. An explicitly authored ladder may go up to ``1/FILL_FACTOR``
+   * (4.0, a screen-filling object) to hold a level until later than that — e.g.
+   * a spatially tiled layer whose tiles each project to a fraction of the
+   * viewport. No upper bound is enforced here.
    */
   coverageFraction: number;
   /**
@@ -271,8 +333,9 @@ interface LODGroupEntryCache {
    * Per-child ``coverage_fraction`` thresholds (dimensionless, ascending,
    * coarsest 0.0 → finest 1.0), rebuilt once at registration. The selector
    * compares these against the projected bbox diagonal normalised by
-   * ``FILL_FACTOR × viewportDiagonal`` (a dimensionless coverage metric), so the
-   * list is viewport-independent and needs no per-frame rebuild.
+   * ``FILL_FACTOR × viewportDiagonal`` (a dimensionless coverage metric — the
+   * finest, 1.0, activates at a quarter-viewport diagonal), so the list is
+   * viewport-independent and needs no per-frame rebuild.
    */
   thresholds: number[];
   localBoxScratch: BoundingBox;
@@ -698,9 +761,11 @@ export class LODGroupRegistry {
         // built in evaluatePerFrame) instead of recomputing it per group.
         const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
         // Normalise the projected pixel diagonal to a dimensionless **coverage
-        // metric** (fraction of a filled viewport) so the viewport-relative
-        // coverage_fraction thresholds anchor the finest at fills-screen on any
-        // monitor. diagonalPx == +Infinity (camera inside the box) → Infinity →
+        // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
+        // viewport diagonal) so the viewport-relative
+        // coverage_fraction thresholds anchor the finest at a quarter-viewport
+        // diagonal — any normal full-frame view — on any monitor.
+        // diagonalPx == +Infinity (camera inside the box) → Infinity →
         // finest, unchanged. viewportDiag is > 0 here (evaluatePerFrame guards
         // width/height == 0). ``?lod-finest`` forces Infinity → always finest.
         const viewportDiag = Math.hypot(viewport.width, viewport.height);
