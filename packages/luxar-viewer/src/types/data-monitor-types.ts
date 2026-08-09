@@ -473,8 +473,8 @@ export interface SceneGraphNode {
    * `PartitionGroupMetadata.display_type`, since one field carries both kinds. So
    * do not widen it when a geometry type is added — declare that type's `lod` /
    * `partition` capabilities in `types/geometry-capabilities`, and extend this
-   * union only if one of them comes out `true`. `'mesh'` is here because its
-   * `partition` flag is (its `lod` flag is not).
+   * union only if one of them comes out `true`. `'mesh'` is here on both counts:
+   * its `lod` and `partition` flags are now both true.
    */
   displayType?: 'points' | 'lines' | 'gsplats' | 'mesh';
   /** For `kind=lod` groups: number of substitutive levels (child count). */

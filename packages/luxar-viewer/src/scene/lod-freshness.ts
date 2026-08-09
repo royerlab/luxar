@@ -40,6 +40,8 @@ export interface FreshnessChild {
       visiblePointCount?: number;
       visibleSegmentCount?: number;
       visibleSplatCount?: number;
+      /** Mesh's committed count — TRIANGLES; see `countFromUserData`. */
+      visibleTriangleCount?: number;
       /** Commit-time ladder stamp — see ``stamp-view-version.ts``. */
       committedLadderComplete?: boolean;
       /**
@@ -149,6 +151,14 @@ export function countFromUserData(ud: FreshnessChild['object']['userData']): num
       return ud.visibleSegmentCount ?? null;
     case 'gsplats':
       return ud.visibleSplatCount ?? null;
+    case 'mesh':
+      // TRIANGLES, not vertices — this count answers "did this level commit
+      // anything drawable", and a level with vertices but no surviving triangle
+      // draws nothing. (The ladder's `coverage_fraction` thresholds are derived
+      // from VERTEX counts, which is a different question: how much detail a
+      // level carries, in the currency the decimator's target is expressed in.
+      // Mixing the two would mean asking for one and gating on the other.)
+      return ud.visibleTriangleCount ?? null;
     default:
       return null;
   }

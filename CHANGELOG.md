@@ -42,6 +42,78 @@ while Playwright's timeout path SIGKILLs the process group — so the data serve
 now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
 behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
 
+#### Mesh gets substitutive LOD
+
+A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
+/ `luxar mesh lod` build the ladder: coarse children are progressively **decimated**
+copies of the surface, the finest child is the original, and the viewer shows exactly
+one at a time by screen coverage. The producer is `luxar.mesh.decimate` — vertex
+clustering, pure NumPy, `method` in `{auto, cluster}`; a `qem` tier is #1348.
+
+The spec called the viewer side "a two-line widening". It was wrong twice, in the same
+way in two places, and both are worth recording.
+
+**Viewer.** Flipping `GEOMETRY_CAPABILITIES.mesh.lod` makes `canDefer` admit mesh
+children, and the defer dispatch then needs a `loadMeshNodeCheap` /
+`loadMeshNodeExpensive` split the mesh loader deliberately did not have (there was no
+second caller until now). Without the split the dispatch throws; with the flip but no
+split, every level loads eagerly at scene open. Measured on a 4-level ladder: **4/4
+levels resident at first paint before, 1/4 after** — and the 8192-triangle original is
+never fetched at all unless the camera asks for it. `countFromUserData` needed a mesh
+arm too, or the empty-level display guard silently no-ops for meshes.
+
+**Python.** Assumed free; it is not. `resolve_substitutive_axis` is shared by Points and
+Lines because both coarsen by LIFTING to gsplats, so its vocabulary carries
+`truncation_radius`, `max_aspect`, `device` and `seed` — four keys that exist only
+because of that lift — plus a `method` set of Gaussian-mixture reducers. A mesh is
+decimated, so it gets its own resolver with each lift-only key refused **by name** and
+`method="kmeans"` refused with the reason. Every one of those is valid on Points and
+Lines, so a caller who tried it made no typo and the generic unknown-key error would
+have misdiagnosed them.
+
+The capability flip is `lod=True` (alongside the `partition=True` of the entry below),
+and the flavour split is why `lod` is its own column: it gates `kind=lod` groups, whose
+levels REPLACE one another, while an additive ladder is `additive_<i>/` subgroups inside
+a leaf. So mesh is LOD-capable and an additive prefix stays impossible. `require_lod_display_type`'s mesh-specific
+paragraph is gone with it — it became dead *and* misleading once every contract type was
+LOD-capable, since the only way to reach that branch now is a future type.
+
+Two bugs that only a real write and a real render could find. The level-monotonicity
+check compared each candidate against the previously kept **coarser** level instead of
+the finer one, so every level after the first was dropped and the ladder came out with
+one coarse level — producing a perfectly valid-looking store. And the viewer capability
+flip silently no-opped in one edit pass, which the render probe initially "passed"
+against, because level SELECTION works without it and only deferral does not.
+
+Ten tests asserting "mesh cannot do LOD" were inverted rather than deleted, and the ladder
+plus its decimator now carry ~40 tests of their own alongside the viewer coverage.
+
+Per-vertex **colours and scalars are both averaged per cluster**, and every level stamps
+the SOURCE field's `scalar_data_range` rather than its own — so a colormapped mesh maps
+the same value to the same colour at every level. Both halves are needed: the colormap
+rides on every child, so a level without scalars renders unmapped, and cluster-averaging
+strictly contracts the range, so per-level windows recolour the surface as you zoom. The
+averaging round-trips the input dtype (uint8, uint16 and float32 colours all survive) but
+deliberately does NOT re-quantize integer scalars, which reach disk as float32 anyway.
+`luxar mesh lod` carries the source node's `transform`, colormap (as its LUT, for a
+non-builtin palette) and compositing attrs across, plus the scene's `viewer_config`,
+instead of forwarding only `shading`/`double_sided` — per-vertex labels stay the one
+thing it cannot carry, because the reader does not surface them. It normalizes
+`--output` to `<stem>.luxar.zarr` before every path guard, and validates the method and
+the attrs before `--overwrite` deletes anything.
+
+A malformed input is refused before the group exists. Every array check the writer's
+fail-fast gate runs now lives in one shared `validate_mesh_arrays`, which the ladder
+calls before it decimates anything and before `add_lod_group`. Without it the refusal
+arrived from inside whichever child first carried the bad array — a non-finite scalar
+field, two-component colours or a typo'd `shading` from `child_0`, leaving a **childless
+`kind=lod`** node; a wrong-length normals array or `labels` list from the FINEST child,
+which is written last, leaving a ladder missing its real surface. Both are stores no
+viewer path can load, where the plain-leaf path writes nothing at all. Sharing the
+function rather than repeating the checks is what keeps the two paths from drifting: the
+ladder gate IS what the child write runs.
+
+
 #### A warm CAIDA AS-topology run is fully offline and recomputes nothing (#1372)
 
 Every run of the demo used to make two directory-listing GETs just to discover
@@ -116,6 +188,7 @@ in the older entry — only the two here compare directly.
 Regenerate the demo dataset to pick up the new look.
 `docs/images/readme/gallery/atp_synthase.{webp,webm}` — the README gallery tile —
 were recaptured through the gallery harness against the new look.
+
 
 #### LOD levels no longer wait for the object to overfill the screen
 
@@ -272,6 +345,17 @@ bookkeeping rather than correctness.
   count, so a mesh fails identically with and without `partition=` (the gather is
   length-keyed, so an off-length array would otherwise be passed through whole and
   could be accepted by a part whose own vertex count happened to match).
+- **One scalar display window spans the whole partition.** The window is derived
+  from the WHOLE field before the split, unioned with an explicit
+  `_scalar_data_range` when one is given, and stamped on every part, because the
+  viewer windows each node's colormap on that node's own stamped range — per-part
+  min/max recoloured the same value either side of a cut, and a part with a
+  constant subset landed on the LUT midpoint. Same rule the substitutive ladder
+  uses for its levels. The union rather than the explicit pair verbatim because
+  the pair is also each node's quantization range, so `write_scalars` widens
+  (never narrows) it onto that node's own values — a window narrower than the
+  field would otherwise come back out per-part. A field with a single extreme
+  outlier therefore spends its codes on the global span rather than per part.
 - `GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both the Python and
   TypeScript sides; `image_labels` is refused alongside `partition=`.
 - A partition stays **homogeneous in both directions**: every leaf adder now refuses a
@@ -279,7 +363,9 @@ bookkeeping rather than correctness.
   (`reject_mismatched_partition_parent`). Previously only the mesh side checked, and
   `validate_partition_group` — the whole-tree equivalent — has no production caller.
 
-Mesh still has **no LOD ladder** — a separate axis, and unaffected by this.
+Substitutive LOD is a separate axis and unaffected by this (see the entry above); the
+two cannot be combined in one `add_mesh` call, exactly as for Points / Lines. The
+ADDITIVE prefix ladder remains impossible for a surface.
 
 #### Demos: every scene now has something in the Layers panel (#1362)
 
@@ -411,6 +497,48 @@ node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
 
+#### CytoSelf hover no longer strands its tooltip in an empty slot (#1398)
+
+The CytoSelf demo's hover layout is a bespoke pair: an image thumbnail anchored
+top-right at `0.98`, and the text label at `x = 0.82` so it sits immediately to
+the panel's LEFT. Defining any `hover=True` overlay suppresses the compiler's
+auto-injected default, so that pair owns the whole hover experience. But the two
+halves were guarded independently, and the image half is the fragile one — a
+single failed `Image_data*.npy` download, or the count-mismatch guard rejecting a
+stale thumbnail bundle, dropped it while the text label stayed pinned at `0.82`.
+The tooltip then rendered into the gap reserved for a panel that did not exist,
+which read as hovering doing nothing at all.
+
+The two shapes are now both spelled out. With thumbnails, the two-panel layout is
+unchanged. Without them the label moves to the centre-left slot (`(0.02, 0.5)`,
+`center-left`), which nothing else in this scene occupies — the legend is
+center-RIGHT. The parameters are copied from `demo_chromatrace_choir_umap`, whose
+overlay layout is otherwise identical and which is one of seven siblings already
+using that slot for a text-only tooltip; the viewer's control rail is docked at
+that same edge house-wide, and matching the siblings beats diverging from them.
+Falling back to auto-injection would have been the smaller diff and the wrong
+answer: that overlay is the same corner, only 16% of the viewport further into it.
+
+The reporting around the loss got honest too, and it differs per path because the
+remedies do. One silent skip became loud — no thumbnails at all used to say
+nothing — and the terse count-mismatch line gained a remediation: delete the
+cached `.npz` (the message names the file and its default directory), since a
+plain re-run short-circuits on that file before any network call and reproduces
+the mismatch forever. A bundle that cannot be read at all — truncated, or structurally fine
+but holding entries that are not image bytes — is now treated as a cache miss and
+rebuilt, since raising on that path made a plain re-run reproduce the failure
+forever too. `--recompute` now reaches `load_cytoself_images` as well, which is the
+same rebuild from the CLI, but it also discards the cached UMAP for a 10-30 minute
+recompute, so it is offered second and with that caveat attached. A download
+failure names the `Image_data*.npy` file that failed, and says plainly that
+re-running skips whole completed files rather than resuming a partial one. That
+promise now holds under memory pressure as well: only a format/IO failure counts
+as a corrupt file worth deleting and refetching, so a `MemoryError` on a valid
+~1.7 GB array no longer throws the file away and re-downloads it on every run,
+and the same applies to reading the thumbnail bundle — running out of RAM is not
+a cache miss. A
+deliberate `--without-images` run stays quiet, and `main()`'s navigation hint no
+longer promises fluorescence images the scene does not contain.
 
 #### Real join geometry for lines: the miter (#790, #795)
 
