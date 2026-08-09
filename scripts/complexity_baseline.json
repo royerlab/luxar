@@ -206,10 +206,10 @@
       11
     ],
     "packages/luxar/src/luxar/demos/demo_cytoself_protein_landscape.py::create_cytoself_scene": [
-      12
+      11
     ],
     "packages/luxar/src/luxar/demos/demo_cytoself_protein_landscape.py::load_cytoself_images": [
-      12
+      11
     ],
     "packages/luxar/src/luxar/demos/demo_earthquakes_3d.py::is_land": [
       28

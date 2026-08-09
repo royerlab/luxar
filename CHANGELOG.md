@@ -596,7 +596,82 @@ transfer figure is not the footprint, since the downloads stay cached and the
 encoded thumbnails — per source file, plus the assembled bundle and the staging
 copy it is written through — sit next to them.
 
+#### CytoSelf hover no longer strands its tooltip in an empty slot (#1398)
 
+The CytoSelf demo's hover layout is a bespoke pair: an image thumbnail anchored
+top-right at `0.98`, and the text label at `x = 0.82` so it sits immediately to
+the panel's LEFT. Defining any `hover=True` overlay suppresses the compiler's
+auto-injected default, so that pair owns the whole hover experience. But the two
+halves were guarded independently, and the image half is the fragile one — a
+single failed `Image_data*.npy` download, or the count-mismatch guard rejecting a
+stale thumbnail bundle, dropped it while the text label stayed pinned at `0.82`.
+The tooltip then rendered into the gap reserved for a panel that did not exist,
+which read as hovering doing nothing at all.
+
+The two shapes are now both spelled out. With thumbnails, the two-panel layout is
+unchanged. Without them the label moves to the centre-left slot (`(0.02, 0.5)`,
+`center-left`), which nothing else in this scene occupies — the legend is
+center-RIGHT. The parameters are copied from `demo_chromatrace_choir_umap`, whose
+overlay layout is otherwise identical and which is one of seven siblings already
+using that slot for a text-only tooltip; the viewer's control rail is docked at
+that same edge house-wide, and matching the siblings beats diverging from them.
+Falling back to auto-injection would have been the smaller diff and the wrong
+answer: that overlay is the same corner, only 16% of the viewport further into it.
+
+The reporting around the loss got honest too, and it differs per path because the
+remedies do. One silent skip became loud — no thumbnails at all used to say
+nothing — and the terse count-mismatch line gained a remediation, phrased to
+match what the cache work above made true: a run through `main()` hands the point
+count down and rebuilds a stale bundle by itself, so reaching that message means
+`label.csv` and the embeddings genuinely disagree and no rebuild will help. A
+caller that passed no expected count is told which file to delete (named, with
+its default directory) and that `--recompute` does the same at the cost of the
+cached UMAP. `--recompute` now reaches `load_cytoself_images` as well, and it
+stops at the assembled bundle: the `Image_data` downloads and the per-file part
+caches are kept, so it costs a reassembly rather than a 181 GB re-fetch. It
+skips the READ rather than deleting — the same principle that keeps a
+`MemoryError` from quarantining a healthy 23 GB download says you never discard
+a working artifact before its replacement exists, and on a legacy-only cache an
+interrupted rebuild would otherwise cost a 181 GB re-download to recover exactly
+what was already there. A versioned bundle is never even opened, so it always
+survives to be replaced atomically. Legacy *adoption* still runs on that path,
+for its side
+effect, but only when the versioned name is free — the same precedence the
+normal path uses, and for a stronger reason, since adoption ends in a rename
+that would otherwise overwrite a fresh fingerprinted bundle with an older
+unverifiable one before any replacement existed, erasing the digest that would
+have caught the mismatch. With the name free, renaming leaves exactly one bundle
+for the rebuild to replace atomically, where skipping it would strand that file
+unreachably once a v1 existed. Adoption does *validate* before it renames, and
+that validation quarantines, so a pre-versioning bundle whose count or mapping
+no longer checks out is moved aside in the prelude — the same thing a plain run
+does to it, and one shared implementation of the rename is worth more than a
+quieter second copy for this path. (One case adoption cannot rescue: if the
+rename itself fails — a read-only cache — the rebuild goes on to write a v1 and
+the leftover legacy file does become unreachable. That is disk space on a cache
+directory that could not be renamed in, where the rebuild's own write is just as
+likely to have failed.) When the rebuild then declines to cache its result, the
+run says which bundle it left in place, and that the next run re-checks it and
+rebuilds only if its own count and mapping checks reject it — the match-rate
+tripwire fires when *our* row matching regressed, which makes the older bundle
+the more trustworthy of the two, so destroying it to make the escape hatch feel
+decisive would punish the user for our bug.
+
+A cached entry that is not a WebP image is now refused as firmly as a truncated
+archive. `bytes()` is too weak to be the check — it converts a *numeric* entry
+silently, a float to the eight bytes of its IEEE encoding — so an npz of the
+right length with the wrong dtype used to sail through and feed the viewer
+garbage forever; every entry this cache writes is WebP, so the container
+signature is the honest test. Both readers apply it, the assembled bundle and the
+per-file parts, which is what keeps the rebuild from repeating: a garbage part
+would otherwise reassemble into a garbage bundle on every single run. A download
+or encode failure now names the `Image_data*.npy` file that failed and keeps the
+original exception type in the message (`str(MemoryError())` is empty, which used
+to print as a bare trailing colon), and says plainly that re-running skips whole
+completed files — and now whole completed encodes — rather than resuming a
+partial one. A deliberate `--without-images` run stays quiet, and `main()`'s
+navigation hint no longer promises fluorescence images the scene does not
+contain.
 
 #### Real join geometry for lines: the miter (#790, #795)
 

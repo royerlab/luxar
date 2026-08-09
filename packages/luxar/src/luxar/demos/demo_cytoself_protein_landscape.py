@@ -43,6 +43,11 @@ Usage:
     python -m luxar.demos.demo_cytoself_protein_landscape
     python -m luxar.demos.demo_cytoself_protein_landscape --no-serve
     python -m luxar.demos.demo_cytoself_protein_landscape --recompute
+    python -m luxar.demos.demo_cytoself_protein_landscape --without-images
+
+    --recompute rebuilds BOTH the 3D UMAP and the hover-thumbnail bundle.
+    --without-images skips the (large) image download; hover then shows a
+    text-only tooltip.
 
 Dependencies:
     pip install 'luxar[demos]'   # includes umap-learn, pandas, Pillow
@@ -1004,6 +1009,31 @@ def _thumbnail_part_path(cache_dir: Path, index: int) -> Path:
     return cache_dir / THUMBNAIL_PART_TEMPLATE.format(index=index)
 
 
+def _as_webp_blob(entry: object) -> bytes:
+    """Return one cached thumbnail entry as WebP bytes, or raise if it is not one.
+
+    ``bytes()`` alone is too weak to be the validity check: it converts a
+    NUMERIC entry silently (a float yields the 8 bytes of its IEEE encoding, an
+    int that many NULs), so an archive of the right length but the wrong dtype
+    would sail past the guard and feed the viewer garbage images forever. Every
+    entry this cache ever writes is WebP — the encoder's output or the 1x1
+    placeholder — so the container signature is the honest test.
+
+    Raising is the contract: both readers (:func:`_load_thumbnail_part` and
+    :func:`_read_bundle_blobs`) call this INSIDE their own guard, so a
+    non-WebP entry is quarantined and rebuilt like any other unusable archive.
+    Checking the parts as well as the bundle is what keeps that terminating: a
+    garbage part would otherwise be reassembled into a garbage bundle, which
+    the bundle check then quarantines, on every single run.
+    """
+    if not isinstance(entry, (bytes, bytearray)):
+        raise TypeError(f"blob entry is {type(entry).__name__}, not bytes")
+    blob = bytes(entry)
+    if blob[:4] != b"RIFF" or blob[8:12] != b"WEBP":
+        raise ValueError("blob entry is not a WebP image")
+    return blob
+
+
 def _expected_test_indices(
     global_to_test: dict[int, list[int]], global_offset: int, n_crops: int
 ) -> list[int]:
@@ -1038,7 +1068,7 @@ def _load_thumbnail_part(path: Path) -> tuple[list[bytes], list[int], int] | Non
 
     try:
         with np.load(path, allow_pickle=True) as data:
-            blobs = [bytes(b) for b in data["blobs"]]
+            blobs = [_as_webp_blob(b) for b in data["blobs"]]
             test_indices = [int(i) for i in data["test_indices"]]
             n_crops = int(data["n_crops"])
         if len(blobs) != len(test_indices):
@@ -1091,7 +1121,9 @@ def _read_bundle_blobs(
     rebuilds rather than crashing or degrading forever:
 
     * it does not parse — a truncated npz used to crash every subsequent run
-      until the user deleted it by hand;
+      until the user deleted it by hand. A bundle that opens fine but whose
+      entries are not WebP images is the same dead end, so the decode
+      (:func:`_as_webp_blob`) happens INSIDE this guard rather than after it;
     * it parses but holds the wrong number of blobs. That is the *silent*
       failure, and the one a bundle cannot self-report: the loser of the
       pre-staging rename race is a perfectly valid npz whose blob count belongs
@@ -1116,7 +1148,7 @@ def _read_bundle_blobs(
     """
     try:
         with np.load(path, allow_pickle=True) as data:
-            blobs = [bytes(b) for b in data["blobs"]]
+            blobs = [_as_webp_blob(b) for b in data["blobs"]]
             stored_fingerprint = _stored_mapping_fingerprint(data)
     except Exception as exc:
         if _is_environment_failure(exc):
@@ -1145,45 +1177,75 @@ def _read_bundle_blobs(
     return blobs
 
 
-def _load_cached_thumbnails(
+def _legacy_bundle_is_adoptable() -> bool:
+    """Whether a pre-versioning bundle is still readable under the current name.
+
+    The literal comparison is the enforcement, not a note: bump the encoding to
+    v2 and this goes False by itself, so a stale bundle is rebuilt instead of
+    laundered into the new name. Shared with :func:`_surviving_bundle` so that
+    "can be adopted" and "would be read by a later run" can never drift apart.
+    """
+    return THUMBNAIL_CACHE_NAME == "image_labels_test_webp_v1.npz"
+
+
+def _surviving_bundle(cache_dir: Path) -> Path | None:
+    """The bundle a later run would read, or ``None`` if there is none.
+
+    BOTH names have to be considered. Adoption normally leaves only the
+    versioned one, but its un-renameable branch leaves the legacy file in place
+    and still serving — so a message that looked only at the versioned name
+    would fall silent in exactly the case where something did survive.
+    Precedence matches :func:`_load_cached_thumbnails`: v1 first.
+    """
+    if (cache_dir / THUMBNAIL_CACHE_NAME).exists():
+        return cache_dir / THUMBNAIL_CACHE_NAME
+    legacy = cache_dir / LEGACY_THUMBNAIL_CACHE_NAME
+    if _legacy_bundle_is_adoptable() and legacy.exists():
+        return legacy
+    return None
+
+
+def _adopt_legacy_bundle(
     cache_dir: Path, expected_count: int | None
 ) -> list[bytes] | None:
-    """Return the assembled thumbnails already on disk, or ``None`` to rebuild.
+    """Rename a pre-versioning bundle onto the versioned name; ``None`` if none.
 
-    Looks first for the versioned bundle, then adopts one written before the
-    name carried a version: the v1 contents are byte-identical to the
-    unversioned ones, so renaming is sound and spares an existing user a
-    multi-gigabyte re-download for a pure rename. The literal comparison below
-    is the enforcement, not a note — bump the encoding to v2 and adoption stops
-    by itself, so a stale bundle is rebuilt instead of laundered into the new
-    name.
+    A bundle written before the name carried a version has contents
+    byte-identical to v1, so renaming is sound and spares an existing user a
+    multi-gigabyte re-download for what is only a rename.
 
-    Both bundles are also checked against the row mapping the current label
-    CSVs produce — see :func:`_read_bundle_blobs`. This is the only place that
-    check can happen: the bundle short-circuits the whole per-file pipeline, so
-    without it the mapping-keyed part caches guard nothing on a warm cache.
+    Callers rely on the SIDE EFFECT as much as the return value: after a
+    successful rename only one bundle name exists, so nothing is orphaned under
+    the other one.
+
+    The rename OVERWRITES the versioned name, so it is refused outright while
+    that name is occupied — enforced HERE, not just by the callers. At
+    :func:`_load_cached_thumbnails` the precondition otherwise holds only by a
+    non-local accident: every rejecting branch of :func:`_read_bundle_blobs`
+    happens to quarantine the versioned file first. Add one cheap
+    reject-without-quarantining pre-check there and this would silently become a
+    ``replace()`` over a live bundle, which is the destruction the paragraph
+    above exists to prevent.
+
+    The un-renameable branch leaves the legacy file where it is: on the normal
+    path that is harmless (its blobs are returned, no v1 is written, and the
+    next run retries the rename), but a caller that goes on to write a v1 anyway
+    makes that leftover unreachable for good.
     """
-    fingerprint = _mapping_fingerprint(cache_dir)
-    thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
-    if thumbnails_cache.exists():
-        with asection("Loading cached image thumbnails"):
-            blobs = _read_bundle_blobs(thumbnails_cache, expected_count, fingerprint)
-            if blobs is not None:
-                aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
-                return blobs
-
     legacy_cache = cache_dir / LEGACY_THUMBNAIL_CACHE_NAME
-    if (
-        THUMBNAIL_CACHE_NAME != "image_labels_test_webp_v1.npz"
-        or not legacy_cache.exists()
-    ):
+    if not _legacy_bundle_is_adoptable() or not legacy_cache.exists():
+        return None
+    if (cache_dir / THUMBNAIL_CACHE_NAME).exists():
         return None
 
+    thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
     with asection("Adopting pre-versioning thumbnail cache"):
         # Validated BEFORE the rename: a legacy bundle is exactly the vintage
         # that can carry a raced blob count, and adopting one under the v1 name
         # would make that permanent.
-        blobs = _read_bundle_blobs(legacy_cache, expected_count, fingerprint)
+        blobs = _read_bundle_blobs(
+            legacy_cache, expected_count, _mapping_fingerprint(cache_dir)
+        )
         if blobs is None:
             return None
         try:
@@ -1200,6 +1262,32 @@ def _load_cached_thumbnails(
                 f"{LEGACY_THUMBNAIL_CACHE_NAME} as {THUMBNAIL_CACHE_NAME}"
             )
         return blobs
+
+
+def _load_cached_thumbnails(
+    cache_dir: Path, expected_count: int | None
+) -> list[bytes] | None:
+    """Return the assembled thumbnails already on disk, or ``None`` to rebuild.
+
+    Looks first for the versioned bundle, then falls back to adopting a
+    pre-versioning one (:func:`_adopt_legacy_bundle`).
+
+    Both bundles are checked against the row mapping the current label CSVs
+    produce — see :func:`_read_bundle_blobs`. This is the only place that check
+    can happen: the bundle short-circuits the whole per-file pipeline, so
+    without it the mapping-keyed part caches guard nothing on a warm cache.
+    """
+    thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
+    if thumbnails_cache.exists():
+        with asection("Loading cached image thumbnails"):
+            blobs = _read_bundle_blobs(
+                thumbnails_cache, expected_count, _mapping_fingerprint(cache_dir)
+            )
+            if blobs is not None:
+                aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
+                return blobs
+
+    return _adopt_legacy_bundle(cache_dir, expected_count)
 
 
 def _reusable_thumbnail_part(
@@ -1231,17 +1319,24 @@ def _reusable_thumbnail_part(
 
 def _build_thumbnail_part(
     cache_dir: Path,
-    part_path: Path,
     filename: str,
     file_id: str,
     position: str,
     global_to_test: dict[int, list[int]],
     global_offset: int,
 ) -> tuple[list[bytes], list[int], int]:
-    """Download one ``Image_data`` file, encode its matched crops, checkpoint.
+    """Download one ``Image_data`` file and encode its matched crops.
 
-    The checkpoint is written before returning, so a failure on a later file
-    costs only that file's work rather than the whole multi-hour encode.
+    The result is checkpointed by the caller, immediately — so a failure on a
+    later file costs only that file's work rather than the whole multi-hour
+    encode. The write is the CALLER's because the two steps fail over different
+    artifacts and each has to be able to name its own: an ENOSPC writing
+    ``thumbs_partNN`` must not be reported against the 23 GB download that
+    produced it. See :func:`_thumbnail_part_for`.
+
+    Deliberately not given the checkpoint path: a function that cannot name the
+    file cannot quietly grow a write back into itself, which would put that
+    ENOSPC back under the download's name and undo the split.
     """
     img_path = cache_dir / filename
     _download_from_google_drive(
@@ -1285,20 +1380,181 @@ def _build_thumbnail_part(
         else:
             aprint(f"No matched crops in this file ({n_crops:,} total)")
 
-        _write_npz_atomic(
-            part_path,
-            blobs=np.array(new_blobs, dtype=object),
-            test_indices=np.asarray(new_test_indices, dtype=np.int64),
-            n_crops=np.int64(n_crops),
-        )
         del arr
 
     return new_blobs, new_test_indices, n_crops
 
 
+def _write_thumbnail_part(
+    part_path: Path, part: tuple[list[bytes], list[int], int]
+) -> None:
+    """Checkpoint one file's encoded contribution, crop count included."""
+    new_blobs, new_test_indices, n_crops = part
+    _write_npz_atomic(
+        part_path,
+        blobs=np.array(new_blobs, dtype=object),
+        test_indices=np.asarray(new_test_indices, dtype=np.int64),
+        n_crops=np.int64(n_crops),
+    )
+
+
+def _report_bundle_not_cached(cache_dir: Path, reason: str) -> None:
+    """Print *reason*, then say what declining to cache left on disk.
+
+    A usable bundle can still be on disk here, because ``--recompute``
+    deliberately does not delete one before a replacement exists. Saying so is
+    the whole point: silence read as "the escape hatch worked" when in fact the
+    next run will serve that same bundle again, and the user had no way to tell.
+
+    What it promises is deliberately weak. The survivor is NOT validated here —
+    validating means quarantining, which is the destruction this whole path
+    exists to avoid — so all that can honestly be said is that the next run
+    re-checks it. On the ``wrong_count`` branch that re-check will in fact
+    quarantine it; on the tripwire branch it usually will not. Either way the
+    user is told the file is still there and how to remove it themselves.
+    """
+    aprint(reason)
+    survivor = _surviving_bundle(cache_dir)
+    if survivor is not None:
+        aprint(
+            f"    The bundle already on disk ({survivor.name}) was left in "
+            "place — nothing here throws away a working artifact to make room "
+            "for one that did not pass. The next run re-checks it as usual and "
+            "rebuilds if its own count/mapping checks reject it; delete it by "
+            "hand to force a rebuild from the per-file caches."
+        )
+
+
+def _thumbnail_part_for(
+    cache_dir: Path,
+    part_path: Path,
+    filename: str,
+    file_id: str,
+    position: str,
+    global_to_test: dict[int, list[int]],
+    global_offset: int,
+) -> tuple[list[bytes], list[int], int]:
+    """One ``Image_data`` file's contribution: reused from cache, or rebuilt.
+
+    Failures are relabelled with the artifact that was in hand when they
+    happened. main()'s handler has to stay broad — this can fail with a
+    download error, a ``MemoryError`` from ``np.load`` on an 11-23 GB array, a
+    PIL encode failure, an environment fault reading the small local part cache,
+    or an ENOSPC writing one — and without a name the user cannot tell WHICH
+    file to look at. *stage* tracks that name because the three steps touch
+    different artifacts: blaming a 23 GB ``Image_data`` download for an
+    ``EMFILE`` reading ``thumbs_partNN``, or for an ENOSPC writing it, points at
+    the one file the user has no reason to touch — and main()'s advice on that
+    failure is to re-run and refetch it.
+
+    The relabelling sits OUTSIDE both helpers on purpose: their own
+    quarantine/self-heal logic inspects exception types (see
+    :func:`_is_environment_failure`) and has already run — and been given its
+    chance to recover — by the time anything reaches here.
+    """
+    stage = part_path.name
+    try:
+        part = _reusable_thumbnail_part(
+            part_path, filename, global_to_test, global_offset
+        )
+        if part is not None:
+            aprint(
+                f"Reusing {len(part[0]):,} cached thumbnails for {filename} "
+                f"({position})"
+            )
+            return part
+
+        stage = filename
+        built = _build_thumbnail_part(
+            cache_dir,
+            filename,
+            file_id,
+            position,
+            global_to_test,
+            global_offset,
+        )
+
+        stage = part_path.name
+        _write_thumbnail_part(part_path, built)
+        return built
+    except MissingDependencyError:
+        # Has its own handler (and its own pip/extra hint) in main();
+        # rebranding it as RuntimeError would route it to the download advice
+        # instead.
+        raise
+    except Exception as exc:
+        # Keep the original type in the message: main() prints
+        # `type(e).__name__`, which is now always RuntimeError, and
+        # `str(MemoryError())` is empty — a bare trailing colon.
+        raise RuntimeError(f"{stage}: {type(exc).__name__}: {exc}") from exc
+
+
+def _existing_thumbnail_bundle(
+    cache_dir: Path, expected_count: int | None, recompute: bool
+) -> list[bytes] | None:
+    """The assembled bundle to reuse, or ``None`` once there is none to reuse.
+
+    ``recompute`` skips the READ rather than deleting: this module's whole
+    argument — the one that keeps a `MemoryError` from quarantining a healthy
+    23 GB download — is that a working artifact is never traded for a
+    hypothetical one. A bundle removed before its replacement exists is that
+    same mistake, and on a legacy-only cache with no ``Image_data`` files left
+    on disk an interrupted rebuild would cost a 181 GB re-download to recover
+    exactly what the user already had. A VERSIONED bundle is therefore never
+    even opened here, so it always survives to be replaced atomically.
+
+    A pre-versioning one is not quite so untouched, and the asymmetry is worth
+    stating: adoption VALIDATES before it renames, and every rejecting branch of
+    :func:`_read_bundle_blobs` quarantines. So a legacy bundle that fails the
+    count or mapping check is moved aside in this prelude even though the
+    rebuild has not run yet. That is the same thing a plain run does to it — the
+    validation is one policy with one implementation, and giving the recompute
+    path a quieter second copy of that rename is exactly what produced a
+    clobbering bug once already.
+
+    Legacy ADOPTION still runs, for its side effect, but ONLY when the
+    versioned name is free — the same precedence :func:`_load_cached_thumbnails`
+    applies, and for a stronger reason here. Adoption ends in a ``replace()``,
+    so running it over a live v1 would destroy a fresh, fingerprinted bundle and
+    put an older unverifiable one in its place before any replacement exists —
+    erasing the very fingerprint that would have caught the mismatch, and
+    leaving an interrupted run serving thumbnails pasted onto the wrong points.
+
+    When the versioned name IS free, adopting is what keeps a pre-versioning
+    bundle reachable: the rename leaves exactly one bundle, which the rebuild
+    below replaces atomically, and if the rebuild never finishes those bytes sit
+    under the canonical name where the normal path picks them up. Skipping it
+    would leave the legacy file untouched and unreachable forever, since once a
+    v1 exists no later run looks for it again. The un-renameable branch is the
+    one case this cannot rescue — the rebuild goes on to write a v1 and the
+    leftover legacy file becomes unreachable — but that branch already means a
+    cache directory that cannot be renamed in, where the rebuild's own write is
+    just as likely to fail.
+    """
+    if not recompute:
+        return _load_cached_thumbnails(cache_dir, expected_count)
+
+    if not (cache_dir / THUMBNAIL_CACHE_NAME).exists():
+        _adopt_legacy_bundle(cache_dir, expected_count)
+
+    survivor = _surviving_bundle(cache_dir)
+    if survivor is not None:
+        # Names the WRITE target rather than promising the survivor is replaced:
+        # in the un-renameable branch the survivor is the legacy file and the
+        # rebuild writes the versioned name beside it, so "replaces it" would be
+        # the one message contradicting the caveat above.
+        aprint(
+            f"Rebuilding thumbnails (--recompute): ignoring {survivor.name} — "
+            f"kept, since nothing is deleted before {THUMBNAIL_CACHE_NAME} is "
+            "written"
+        )
+    return None
+
+
 def load_cytoself_images(
     cache_dir: Path | None = None,
     expected_count: int | None = None,
+    recompute: bool = False,
 ) -> list[bytes]:
     """Load and encode CytoSelf image crops as WebP thumbnails.
 
@@ -1316,6 +1572,15 @@ def load_cytoself_images(
             builder cannot align it) and is rebuilt rather than returned, and a
             freshly assembled one is not written to disk. ``None`` disables both
             checks.
+        recompute: If True, ignore the assembled thumbnail bundle and rebuild
+            it. The automatic checks above only catch a bundle that is unusable
+            on its face; this is the escape hatch for one that is merely wrong,
+            which the cache would otherwise short-circuit on forever. It
+            deliberately reaches no further than the bundle: the ``Image_data``
+            downloads and the per-file part caches are the expensive artifacts,
+            they are each keyed to the current row mapping, and a run that asks
+            for a rebuild is promised they are reused — so this costs a
+            reassembly, not a 181 GB re-fetch.
 
     Returns:
         List of WebP-encoded bytes aligned with label.csv / embeddings. If
@@ -1328,7 +1593,7 @@ def load_cytoself_images(
         cache_dir = DEFAULT_CACHE_DIR
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    cached = _load_cached_thumbnails(cache_dir, expected_count)
+    cached = _existing_thumbnail_bundle(cache_dir, expected_count, recompute)
     if cached is not None:
         return cached
 
@@ -1356,29 +1621,15 @@ def load_cytoself_images(
 
     with asection("Downloading and encoding matched image crops"):
         for i, (filename, file_id) in enumerate(GDRIVE_IMAGE_IDS.items()):
-            position = f"{i + 1}/{len(GDRIVE_IMAGE_IDS)}"
-            part_path = _thumbnail_part_path(cache_dir, i)
-
-            part = _reusable_thumbnail_part(
-                part_path, filename, global_to_test, global_offset
+            part_blobs, part_test_indices, n_crops = _thumbnail_part_for(
+                cache_dir,
+                _thumbnail_part_path(cache_dir, i),
+                filename,
+                file_id,
+                f"{i + 1}/{len(GDRIVE_IMAGE_IDS)}",
+                global_to_test,
+                global_offset,
             )
-            if part is not None:
-                aprint(
-                    f"Reusing {len(part[0]):,} cached thumbnails for {filename} "
-                    f"({position})"
-                )
-            else:
-                part = _build_thumbnail_part(
-                    cache_dir,
-                    part_path,
-                    filename,
-                    file_id,
-                    position,
-                    global_to_test,
-                    global_offset,
-                )
-
-            part_blobs, part_test_indices, n_crops = part
             for blob, test_idx in zip(part_blobs, part_test_indices):
                 result_blobs[test_idx] = blob
                 matched_count += 1
@@ -1420,22 +1671,28 @@ def load_cytoself_images(
     # they would be reused unquestioned for good.
     wrong_count = expected_count is not None and len(final_blobs) != expected_count
     if matching_looks_broken:
-        aprint(
+        # This tripwire fires when OUR row matching regressed, which makes an
+        # older bundle — assembled back when it worked — the MORE trustworthy of
+        # the two. So the new assembly is refused and any existing bundle is left
+        # exactly where it is; `_report_bundle_not_cached` says so out loud.
+        _report_bundle_not_cached(
+            cache_dir,
             f"⚠️  Only {matched_unique:,}/{n_test:,} test rows "
             f"({match_fraction:.1%}) matched an image crop, below the "
             f"{MIN_MATCH_FRACTION:.0%} tripwire — the label row matching looks "
             "broken, so the thumbnails were NOT cached. The per-file caches "
-            "were kept, so a retry only redoes the assembly."
+            "were kept, so a retry only redoes the assembly.",
         )
     elif wrong_count:
         # label.csv and the embeddings disagree on how many rows there are, so
         # the scene builder will refuse these thumbnails anyway. Writing the
         # bundle would only hand the next run a cache it has to quarantine —
         # the per-file caches keep the reassembly cheap either way.
-        aprint(
+        _report_bundle_not_cached(
+            cache_dir,
             f"⚠️  Assembled {len(final_blobs):,} thumbnails but the scene needs "
             f"{expected_count:,} — label.csv and the embeddings disagree, so "
-            "the thumbnails were NOT cached."
+            "the thumbnails were NOT cached.",
         )
     else:
         thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
@@ -1459,12 +1716,63 @@ def load_cytoself_images(
 # =============================================================================
 
 
+def _resolve_image_labels(
+    image_labels: list[bytes] | None,
+    *,
+    n_points: int,
+    n_views: int,
+    images_expected: bool,
+) -> list[bytes] | None:
+    """Replicate the hover thumbnails per attribute view, or explain their absence.
+
+    Only used if the count matches the embeddings — the image .npy files may
+    contain more crops than the embedding/label rows. Returns None whenever the
+    scene has to fall back to the text-only hover tooltip.
+    """
+    if image_labels is None:
+        if images_expected:
+            # The caller (main()) has already explained WHY they are missing
+            # and how to get them back — only state the consequence here so
+            # the advice is printed exactly once.
+            aprint("  ⚠ No image labels — hover tooltip will be text-only")
+        else:
+            aprint("  Building without hover thumbnails (--without-images)")
+        return None
+
+    if len(image_labels) == n_points:
+        return image_labels * n_views
+
+    aprint(
+        f"  ⚠ Skipping image labels: count mismatch "
+        f"({len(image_labels):,} images vs {n_points:,} embeddings)"
+    )
+    aprint("    Hover falls back to the text-only tooltip. A run through")
+    aprint("    main() hands the point count to load_cytoself_images, which")
+    aprint("    rebuilds a stale bundle by itself — so reaching here means")
+    aprint("    label.csv and the embeddings themselves disagree, and no")
+    aprint("    rebuild will fix it. A caller that passed no expected_count")
+    aprint("    can force one by deleting the bundle and re-running:")
+    # The thumbnails may have come from a caller-supplied cache_dir, so name
+    # the file and mark the directory as the default rather than asserting a
+    # path this function cannot know. BOTH names are offered: adoption renames
+    # the legacy bundle onto the versioned one, but a rename that fails leaves
+    # the legacy file serving the blobs, so naming only the v1 one would send
+    # that user to delete a file that is not in effect.
+    aprint(f"      {THUMBNAIL_CACHE_NAME} — or {LEGACY_THUMBNAIL_CACHE_NAME},")
+    aprint(f"      whichever is present, in {DEFAULT_CACHE_DIR} by default")
+    aprint("    (--recompute does the same, but also throws away the")
+    aprint("    cached UMAP: a 10-30 min recompute.)")
+    return None
+
+
 def create_cytoself_scene(
     output_path: Path,
     coordinates: np.ndarray,
     attributes: dict,
     category_maps: dict | None = None,
     image_labels: list[bytes] | None = None,
+    *,
+    images_expected: bool = True,
 ) -> int:
     """Create Luxar scene with categorical attribute visualization.
 
@@ -1474,6 +1782,9 @@ def create_cytoself_scene(
         attributes: Dict of attribute arrays
         category_maps: Dict of attribute name -> list of category labels
         image_labels: Optional list of WebP-encoded image blobs (one per point)
+        images_expected: Whether the caller INTENDED to supply thumbnails.
+            False for a deliberate ``--without-images`` run, which then builds
+            quietly instead of warning about an absence the user asked for.
 
     Returns:
         Number of points
@@ -1555,18 +1866,12 @@ def create_cytoself_scene(
                     per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
 
-            # Image labels: replicate per attribute view (same as text labels).
-            # Only use if count matches embeddings — the image .npy files may
-            # contain more crops than the embedding/label rows.
-            all_image_labels = None
-            if image_labels is not None:
-                if len(image_labels) == n_points:
-                    all_image_labels = image_labels * len(available_attrs)
-                else:
-                    aprint(
-                        f"  ⚠ Skipping image labels: count mismatch "
-                        f"({len(image_labels):,} images vs {n_points:,} embeddings)"
-                    )
+            all_image_labels = _resolve_image_labels(
+                image_labels,
+                n_points=n_points,
+                n_views=len(available_attrs),
+                images_expected=images_expected,
+            )
 
             scene.add_points(
                 "Images",
@@ -1620,9 +1925,27 @@ def create_cytoself_scene(
                             transition_duration=0.2,
                         )
 
-            # Custom hover overlays: image top-right, text to its left
-            # (two lines via \n separator in labels). Defining these
-            # suppresses the auto-injected default hover overlay.
+            # Custom hover overlays. Defining ANY hover=True overlay
+            # suppresses the auto-injected default, so this block owns the
+            # whole hover layout and has to cover BOTH shapes:
+            #
+            #  * WITH thumbnails — the bespoke two-panel layout: the image
+            #    panel top-right at 0.98, and the text label at x=0.82 so it
+            #    sits immediately to its LEFT (two lines via the \n separator
+            #    in the labels).
+            #  * WITHOUT thumbnails — x=0.82 would leave the text floating
+            #    beside an image panel that does not exist, and the injected
+            #    default is the same top-right corner, only 16% of the
+            #    viewport further into it. So the label moves to the
+            #    centre-left slot, which no other overlay in this scene uses
+            #    (the legend is center-RIGHT at 0.98/0.5) and which is the
+            #    house convention for a text-only hover tooltip: parameters
+            #    copied from demo_chromatrace_choir_umap.py, whose overlay
+            #    layout is otherwise identical to this one. Note the viewer's
+            #    control rail is docked at the same left-centre edge and
+            #    paints above the overlay layer, so the first glyph or two
+            #    can sit behind it — house-wide, and matching the siblings
+            #    beats diverging from them.
             if all_image_labels is not None:
                 scene.add_html(
                     "{hover_image_label}",
@@ -1634,17 +1957,32 @@ def create_cytoself_scene(
                     hover=True,
                     hover_image_size=(0.15, 0.20),
                 )
-            if labels is not None:
+                if labels is not None:
+                    scene.add_text(
+                        "{hover_label}",
+                        position=(0.82, 0.02),
+                        anchor="top-right",
+                        font_size=0.018,
+                        color="white",
+                        width=0.12,
+                        text_align="right",
+                        background="rgba(0,0,0,0.7)",
+                        padding=0.008,
+                        opacity=1.0,
+                        transition="fade",
+                        transition_duration=0.15,
+                        hover=True,
+                    )
+            elif labels is not None:
                 scene.add_text(
                     "{hover_label}",
-                    position=(0.82, 0.02),
-                    anchor="top-right",
-                    font_size=0.018,
+                    position=(0.02, 0.5),
+                    anchor="center-left",
+                    font_size=0.022,
                     color="white",
-                    width=0.12,
-                    text_align="right",
-                    background="rgba(0,0,0,0.7)",
-                    padding=0.008,
+                    background="rgba(0,0,0,0.72)",
+                    padding=0.01,
+                    text_align="left",
                     opacity=1.0,
                     transition="fade",
                     transition_duration=0.15,
@@ -1714,11 +2052,27 @@ def main() -> None:
             # The point count is what makes a cached bundle usable or not, so
             # pass it in: a bundle with a different blob count is rebuilt rather
             # than silently costing every future run its hover images.
-            image_labels = load_cytoself_images(expected_count=len(coordinates))
+            image_labels = load_cytoself_images(
+                expected_count=len(coordinates),
+                recompute=recompute,
+            )
         except MissingDependencyError as exc:
-            aprint(f"WARNING: skipping image labels — {exc}")
+            # `exc` already names the package and the extra that provides it,
+            # and a re-run without it fails identically — so no other advice.
+            aprint(f"WARNING: hover thumbnails unavailable — {exc}")
         except Exception as e:
-            aprint(f"WARNING: Failed to load images — skipping: {e}")
+            # Broad on purpose: a download/decode failure must not kill the
+            # demo. But it must be honest about WHAT failed and how to fix it.
+            aprint(
+                f"WARNING: failed to load hover thumbnails — {type(e).__name__}: {e}"
+            )
+            aprint("  Re-running SKIPS whole files that already finished")
+            aprint(f"  downloading under {DEFAULT_CACHE_DIR}, so only the")
+            aprint("  missing Image_data*.npy is refetched (a file that died")
+            aprint("  part-way is refetched from the start — there is no")
+            aprint("  byte-level resume). The WebP encodes are checkpointed per")
+            aprint("  source file too, so only the file that failed is redone.")
+            aprint("  Pass --without-images to skip the images deliberately.")
     else:
         aprint("Skipping image labels (--without-images)")
 
@@ -1741,6 +2095,7 @@ def main() -> None:
             attributes,
             category_maps,
             image_labels=image_labels,
+            images_expected=not without_images,
         )
         aprint(f"Dataset generated at {output_path}")
         return
@@ -1754,6 +2109,7 @@ def main() -> None:
             attributes,
             category_maps,
             image_labels=image_labels,
+            images_expected=not without_images,
         )
 
         aprint("")
@@ -1764,7 +2120,12 @@ def main() -> None:
         aprint("")
         aprint("  - Rotate to explore UMAP structure")
         aprint("  - Zoom in to see individual images")
-        aprint("  - Hover over a point to see its fluorescence image")
+        # Mirror create_cytoself_scene's count-mismatch guard: thumbnails only
+        # made it into the scene if they were loaded AND aligned 1:1.
+        if image_labels is not None and len(image_labels) == len(coordinates):
+            aprint("  - Hover over a point to see its fluorescence image")
+        else:
+            aprint("  - Hover over a point to see its localization and protein")
         aprint("")
         aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
         aprint("     0: Localization (subcellular compartment)")
