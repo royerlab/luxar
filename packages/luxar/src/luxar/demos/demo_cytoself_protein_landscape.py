@@ -70,6 +70,7 @@ DEMO_META = {
 }
 
 import errno
+import hashlib
 import json
 import os
 import sys
@@ -194,6 +195,15 @@ MIN_SIZE_IMAGE_DATA = 10_000_000_000
 THUMBNAIL_PART_TEMPLATE = "thumbs_part{index:02d}_v1.npz"
 THUMBNAIL_CACHE_NAME = "image_labels_test_webp_v1.npz"
 LEGACY_THUMBNAIL_CACHE_NAME = "image_labels_test_webp.npz"
+
+# The files the test-row -> image-row mapping is derived from. A digest of them
+# is stored inside the assembled bundle so the bundle is keyed to the mapping it
+# was built under, the way each part cache is keyed by its stored
+# `test_indices`. Without it the bundle short-circuits every mapping check: a
+# `Label_data` CSV repaired or re-ordered without changing label.csv's row count
+# leaves a bundle of the right LENGTH whose every blob sits on the wrong point,
+# and nothing on disk ever repairs it.
+MAPPING_INPUT_NAMES = ("label.csv", *GDRIVE_LABEL_DATA_IDS)
 
 # Regression tripwire, NOT a quality bar: unmatched test rows are normal (they
 # get a placeholder), but a match rate this low means the composite-key row
@@ -1019,10 +1029,41 @@ def _load_thumbnail_part(path: Path) -> tuple[list[bytes], list[int], int] | Non
     return blobs, test_indices, n_crops
 
 
-def _read_bundle_blobs(path: Path, expected_count: int | None) -> list[bytes] | None:
+def _mapping_fingerprint(cache_dir: Path) -> str:
+    """Digest the CSVs the row mapping is derived from, ``""`` when unknowable.
+
+    The empty string is returned as soon as one input is missing, and it means
+    "cannot be checked", never "does not match": a user who pruned the CSVs to
+    reclaim disk must not have a valid 114k-thumbnail bundle thrown away and
+    181 GB of ``Image_data`` re-fetched to rebuild it. Content is hashed rather
+    than size/mtime so that re-downloading an identical file — which the
+    self-heal path does routinely — keeps the same fingerprint.
+    """
+    digest = hashlib.blake2b(digest_size=16)
+    for name in MAPPING_INPUT_NAMES:
+        path = cache_dir / name
+        if not path.is_file():
+            return ""
+        digest.update(name.encode("utf-8"))
+        with open(path, "rb") as handle:
+            while chunk := handle.read(1 << 20):
+                digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stored_mapping_fingerprint(data: Any) -> str:
+    """The fingerprint recorded in a bundle, ``""`` for one written without."""
+    if "mapping_fingerprint" not in data.files:
+        return ""
+    return str(data["mapping_fingerprint"])
+
+
+def _read_bundle_blobs(
+    path: Path, expected_count: int | None, expected_fingerprint: str = ""
+) -> list[bytes] | None:
     """Read an assembled thumbnail bundle, or ``None`` if it cannot be used.
 
-    Two ways a bundle is unusable, and both quarantine it so the caller
+    Three ways a bundle is unusable, and all of them quarantine it so the caller
     rebuilds rather than crashing or degrading forever:
 
     * it does not parse — a truncated npz used to crash every subsequent run
@@ -1034,10 +1075,18 @@ def _read_bundle_blobs(path: Path, expected_count: int | None) -> list[bytes] | 
       (it cannot align the thumbnails to the points), so such a bundle costs
       every future run its hover images with nothing on disk ever repairing it.
       *expected_count* is the caller's point count; ``None`` skips the check.
+    * it holds the right number of blobs but was built under a DIFFERENT row
+      mapping — a repaired ``Label_data`` CSV shifts which image row each test
+      row points at without changing how many there are, so the count check is
+      structurally blind to it and every thumbnail lands on the wrong point.
+      *expected_fingerprint* is :func:`_mapping_fingerprint` for the current
+      cache; an empty one on either side means "cannot be checked" and the
+      bundle is accepted, since a false rebuild costs a 181 GB re-download.
     """
     try:
         with np.load(path, allow_pickle=True) as data:
             blobs = [bytes(b) for b in data["blobs"]]
+            stored_fingerprint = _stored_mapping_fingerprint(data)
     except Exception as exc:
         aprint(f"  ⚠ Cached thumbnail bundle unreadable ({exc}) — rebuilding")
         _quarantine_download(path, reason="unreadable thumbnail bundle")
@@ -1049,6 +1098,15 @@ def _read_bundle_blobs(path: Path, expected_count: int | None) -> list[bytes] | 
             f"{expected_count:,} are needed — rebuilding"
         )
         _quarantine_download(path, reason="thumbnail bundle with a stale blob count")
+        return None
+
+    comparable = expected_fingerprint and stored_fingerprint
+    if comparable and expected_fingerprint != stored_fingerprint:
+        aprint(
+            "  ⚠ Cached thumbnail bundle was built from different label CSVs "
+            "— rebuilding"
+        )
+        _quarantine_download(path, reason="thumbnail bundle from a stale row mapping")
         return None
 
     return blobs
@@ -1066,11 +1124,17 @@ def _load_cached_thumbnails(
     is the enforcement, not a note — bump the encoding to v2 and adoption stops
     by itself, so a stale bundle is rebuilt instead of laundered into the new
     name.
+
+    Both bundles are also checked against the row mapping the current label
+    CSVs produce — see :func:`_read_bundle_blobs`. This is the only place that
+    check can happen: the bundle short-circuits the whole per-file pipeline, so
+    without it the mapping-keyed part caches guard nothing on a warm cache.
     """
+    fingerprint = _mapping_fingerprint(cache_dir)
     thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
     if thumbnails_cache.exists():
         with asection("Loading cached image thumbnails"):
-            blobs = _read_bundle_blobs(thumbnails_cache, expected_count)
+            blobs = _read_bundle_blobs(thumbnails_cache, expected_count, fingerprint)
             if blobs is not None:
                 aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
                 return blobs
@@ -1086,7 +1150,7 @@ def _load_cached_thumbnails(
         # Validated BEFORE the rename: a legacy bundle is exactly the vintage
         # that can carry a raced blob count, and adopting one under the v1 name
         # would make that permanent.
-        blobs = _read_bundle_blobs(legacy_cache, expected_count)
+        blobs = _read_bundle_blobs(legacy_cache, expected_count, fingerprint)
         if blobs is None:
             return None
         try:
@@ -1334,8 +1398,13 @@ def load_cytoself_images(
     else:
         thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
         with asection("Caching test-aligned thumbnails"):
+            # Stamped with the mapping these blobs were assembled under, so a
+            # later run whose label CSVs have changed rebuilds instead of
+            # pasting every thumbnail onto the wrong point.
             _write_npz_atomic(
-                thumbnails_cache, blobs=np.array(final_blobs, dtype=object)
+                thumbnails_cache,
+                blobs=np.array(final_blobs, dtype=object),
+                mapping_fingerprint=np.array(_mapping_fingerprint(cache_dir)),
             )
             aprint(f"Cached {len(final_blobs):,} thumbnails to {thumbnails_cache}")
 

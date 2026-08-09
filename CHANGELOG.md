@@ -399,6 +399,19 @@ its own. The reverse case is not a cache fault and is not treated as one — whe
 thumbnails are returned but not written, so no run has to quarantine the same
 file again for a condition no rebuild can fix.
 
+The count alone is not enough, though, because the bundle short-circuits the
+whole per-file pipeline: on a warm cache the parts are never consulted, so their
+mapping check guards nothing and the same repaired-`Label_data` shift that the
+parts are keyed against sails straight through a bundle of the right length. The
+bundle therefore carries a digest of the label CSVs it was assembled from, and a
+bundle whose digest no longer matches is quarantined and reassembled. Content is
+hashed rather than size or mtime, so re-downloading an identical file — which
+the self-heal path does routinely — is not mistaken for a change. An
+*unverifiable* bundle is used, never rebuilt: if the CSVs have been pruned to
+reclaim disk, or the bundle predates the digest, the check is skipped, because a
+false rebuild costs a 181 GB re-fetch of the `Image_data` files and that is far
+worse than the mismatch being looked for.
+
 One new tripwire: if fewer than half the test rows match an image crop, the
 thumbnails are still returned but are not cached. The row matching is a
 heuristic composite-key join, and its failure mode was to fill the gaps with a

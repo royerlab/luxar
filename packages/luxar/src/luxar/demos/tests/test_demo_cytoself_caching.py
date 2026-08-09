@@ -5,9 +5,9 @@ fake ``requests.Session`` and a fake Google-Drive fetch, so nothing touches the
 network. They cover the download contract (identity encoding, ``.part`` staging,
 HTML-quota-page rejection, content-length verification, the completion sidecar
 and the legacy no-sidecar fallback), the consumer-side self-heal, and the
-thumbnail pipeline (per-source-file part caches keyed to the row mapping, a
-quarantined-and-rebuilt bundle, legacy-bundle adoption, and the match-rate
-tripwire).
+thumbnail pipeline (per-source-file part caches keyed to the row mapping, an
+assembled bundle keyed to the label CSVs it was built from, legacy-bundle
+adoption, and the match-rate tripwire).
 
 The fake response models content NEGOTIATION, not just a body: a client that
 accepts gzip is served a compressed byte count in ``Content-Length`` while
@@ -857,6 +857,17 @@ def _identity_mapping() -> dict[int, int]:
     return {i: i for i in range(_N_GLOBAL)}
 
 
+def _write_mapping_inputs(cache_dir: Path, marker: bytes) -> None:
+    """Write the label CSVs the bundle's mapping fingerprint is taken over.
+
+    The mapping itself is stubbed in these tests, so the contents only have to
+    CHANGE when the stubbed mapping changes — that is exactly the situation the
+    fingerprint has to notice.
+    """
+    for name in demo.MAPPING_INPUT_NAMES:
+        (cache_dir / name).write_bytes(b"ensg,name\n" + marker)
+
+
 def test_thumbnail_parts_make_a_rerun_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1057,6 +1068,65 @@ def test_bundle_with_the_wrong_blob_count_is_rebuilt(
         demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
         == blobs_full
     )
+
+
+def test_bundle_built_under_another_mapping_is_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The bundle short-circuits the whole per-file pipeline, so the part caches'
+    # mapping check never runs on a warm cache. A Label_data CSV repaired
+    # without changing label.csv's row count therefore leaves a bundle of the
+    # RIGHT length whose every blob sits on the wrong point — invisible to the
+    # count check, and nothing on disk ever repairs it.
+    all_blobs = _blobs_in_global_order()
+    _write_mapping_inputs(tmp_path, b"first")
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    assert demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL) == (
+        all_blobs
+    )
+    assert (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists()
+
+    shifted = {t: (t + 7) % _N_GLOBAL for t in range(_N_GLOBAL)}
+    _write_mapping_inputs(tmp_path, b"repaired")
+    _install_mapping(monkeypatch, shifted, _N_GLOBAL)
+    downloaded.clear()
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert blobs == [all_blobs[shifted[t]] for t in range(_N_GLOBAL)]
+    assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+    # And the freshly stamped bundle is trusted on the next run.
+    downloaded.clear()
+    assert demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL) == (
+        blobs
+    )
+    assert downloaded == []
+
+
+def test_bundle_is_kept_when_the_label_csvs_are_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unverifiable bundle must be USED, not rebuilt: pruning the CSVs to
+    # reclaim disk would otherwise cost a 181 GB re-fetch of the Image_data
+    # files, which is far worse than the mismatch the check is looking for.
+    _write_mapping_inputs(tmp_path, b"first")
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    for name in demo.MAPPING_INPUT_NAMES:
+        (tmp_path / name).unlink()
+    for i in range(_N_IMAGE_FILES):
+        demo._thumbnail_part_path(tmp_path, i).unlink()
+    downloaded.clear()
+
+    assert demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL) == (
+        blobs_full
+    )
+    assert downloaded == []
+    assert not list(tmp_path.glob("*.corrupt"))
 
 
 def test_legacy_bundle_with_the_wrong_blob_count_is_not_adopted(
