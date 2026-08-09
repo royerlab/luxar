@@ -402,6 +402,32 @@ class TestThumbnailCacheRecompute:
         reloaded = np.load(bundle, allow_pickle=True)["blobs"]
         assert [bytes(b) for b in reloaded] == blobs
 
+    def test_out_of_memory_reading_the_bundle_is_not_a_cache_miss(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RAM running out says nothing about the bundle being readable.
+
+        Counting it as a miss would throw away a good bundle and re-download
+        ~17 GB of images to rebuild it, on a machine that just failed to hold a
+        few hundred MB.
+        """
+        cache_dir = tmp_path / "cytoself"
+        seeded = self._seed_cache(cache_dir)
+        self._block_rebuild(monkeypatch)
+
+        def _oom(entry: Any) -> bytes:
+            raise MemoryError()
+
+        monkeypatch.setattr(demo, "_as_webp_blob", _oom)
+
+        # _block_rebuild raises _RebuildEntered, so a swallowed MemoryError
+        # would surface here as the wrong exception type.
+        with pytest.raises(MemoryError):
+            load_cytoself_images(cache_dir)
+
+        reloaded = np.load(cache_dir / THUMBNAILS_CACHE_NAME, allow_pickle=True)
+        assert [bytes(b) for b in reloaded["blobs"]] == seeded
+
     def test_interrupted_rebuild_leaves_the_existing_bundle_intact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -425,6 +451,66 @@ class TestThumbnailCacheRecompute:
         reloaded = np.load(cache_dir / THUMBNAILS_CACHE_NAME, allow_pickle=True)
         assert [bytes(b) for b in reloaded["blobs"]] == seeded
         assert list(cache_dir.glob("*.tmp")) == []
+
+
+class TestImageFileLoad:
+    """Only a CORRUPT Image_data file may be deleted and refetched."""
+
+    @staticmethod
+    def _payload() -> np.ndarray:
+        return np.zeros((2, 100, 100, 4), dtype=np.uint8)
+
+    def test_corrupt_file_is_replaced_by_a_fresh_download(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        img_path = tmp_path / _STUB_IMAGE_FILE
+        # What a Google-Drive error page looks like on disk.
+        img_path.write_bytes(b"<html>quota exceeded</html>")
+
+        downloads: list[str] = []
+
+        def _fake_download(
+            file_id: str, output_path: Path, expected_min_size: int = 0
+        ) -> Path:
+            downloads.append(file_id)
+            np.save(output_path, self._payload())
+            return output_path
+
+        monkeypatch.setattr(demo, "_download_from_google_drive", _fake_download)
+
+        arr = demo._load_image_file("stub-id", img_path)
+
+        assert downloads == ["stub-id"]
+        assert arr.shape == self._payload().shape
+
+    def test_out_of_memory_keeps_the_downloaded_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A valid ~1.7 GB file that will not FIT is not a corrupt one.
+
+        Deleting it here re-downloaded 1.7 GB on every run of a memory-tight
+        machine — the opposite of the "already-downloaded files are reused"
+        promise main() prints on exactly this failure.
+        """
+        img_path = tmp_path / _STUB_IMAGE_FILE
+        np.save(img_path, self._payload())
+        before = img_path.read_bytes()
+
+        def _oom(*args: Any, **kwargs: Any) -> np.ndarray:
+            # numpy's own _ArrayMemoryError is a plain MemoryError subclass.
+            raise MemoryError()
+
+        monkeypatch.setattr(demo.np, "load", _oom)
+
+        def _forbidden(*args: Any, **kwargs: Any) -> Path:
+            raise AssertionError("an out-of-memory load must not re-download")
+
+        monkeypatch.setattr(demo, "_download_from_google_drive", _forbidden)
+
+        with pytest.raises(MemoryError):
+            demo._load_image_file("stub-id", img_path)
+
+        assert img_path.read_bytes() == before
 
 
 class TestPerFileFailureReporting:

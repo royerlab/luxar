@@ -56,6 +56,7 @@ import os
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -536,10 +537,18 @@ def _build_test_index_mapping(
 
 
 def _load_image_file(file_id: str, img_path: Path) -> np.ndarray:
-    """``np.load`` one Image_data file, re-downloading it once if it is corrupt."""
+    """``np.load`` one Image_data file, re-downloading it once if it is corrupt.
+
+    Only FORMAT/IO failures count as corruption. A ``MemoryError`` (numpy raises
+    ``_ArrayMemoryError``, a pure MemoryError subclass) means a perfectly good
+    ~1.7 GB file does not FIT in RAM — deleting it would re-download 1.7 GB on
+    every run of a memory-tight machine, the opposite of the reuse this demo
+    promises. Let it propagate: the caller labels it with the filename and
+    main() degrades to the text-only hover.
+    """
     try:
         return np.load(img_path)
-    except Exception:
+    except (ValueError, EOFError, OSError, zipfile.BadZipFile):
         aprint("  ⚠ Corrupt file detected, re-downloading...")
         img_path.unlink(missing_ok=True)
         _download_from_google_drive(file_id, img_path, expected_min_size=400_000_000)
@@ -622,6 +631,12 @@ def _read_thumbnails_cache(thumbnails_cache: Path) -> list[bytes] | None:
         try:
             with np.load(thumbnails_cache, allow_pickle=True) as data:
                 blobs = [_as_webp_blob(b) for b in data["blobs"]]
+        except MemoryError:
+            # Not a cache miss: the bundle is fine, RAM is not. Treating it as
+            # one would discard a good bundle and re-download ~17 GB of images
+            # to rebuild it — on a machine that just failed to hold a few
+            # hundred MB. main() degrades to the text-only hover instead.
+            raise
         except Exception as exc:
             aprint(f"  ⚠ Unreadable cached bundle ({type(exc).__name__})")
             aprint(f"    {thumbnails_cache}")
@@ -800,7 +815,10 @@ def _resolve_image_labels(
     aprint("    Hover falls back to the text-only tooltip. This is")
     aprint("    usually a stale cached bundle, which a plain re-run")
     aprint("    reuses — delete it and re-run to rebuild:")
-    aprint(f"      {DEFAULT_CACHE_DIR / THUMBNAILS_CACHE_NAME}")
+    # The thumbnails may have come from a caller-supplied cache_dir, so name
+    # the file and mark the directory as the default rather than asserting a
+    # path this function cannot know.
+    aprint(f"      {THUMBNAILS_CACHE_NAME} (in {DEFAULT_CACHE_DIR} by default)")
     aprint("    (--recompute does the same, but also throws away the")
     aprint("    cached UMAP: a 10-30 min recompute. If the mismatch")
     aprint("    survives a rebuild, label.csv and the embeddings")

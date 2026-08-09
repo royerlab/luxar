@@ -485,16 +485,21 @@ answer: that overlay is the same corner, only 16% of the viewport further into i
 The reporting around the loss got honest too, and it differs per path because the
 remedies do. One silent skip became loud — no thumbnails at all used to say
 nothing — and the terse count-mismatch line gained a remediation: delete the
-cached `.npz` (the message prints its full path), since a plain re-run
-short-circuits on that file before any network call and reproduces the mismatch
-forever. A bundle that cannot be read at all — truncated, or structurally fine
+cached `.npz` (the message names the file and its default directory), since a
+plain re-run short-circuits on that file before any network call and reproduces
+the mismatch forever. A bundle that cannot be read at all — truncated, or structurally fine
 but holding entries that are not image bytes — is now treated as a cache miss and
 rebuilt, since raising on that path made a plain re-run reproduce the failure
 forever too. `--recompute` now reaches `load_cytoself_images` as well, which is the
 same rebuild from the CLI, but it also discards the cached UMAP for a 10-30 minute
 recompute, so it is offered second and with that caveat attached. A download
 failure names the `Image_data*.npy` file that failed, and says plainly that
-re-running skips whole completed files rather than resuming a partial one. A
+re-running skips whole completed files rather than resuming a partial one. That
+promise now holds under memory pressure as well: only a format/IO failure counts
+as a corrupt file worth deleting and refetching, so a `MemoryError` on a valid
+~1.7 GB array no longer throws the file away and re-downloads it on every run,
+and the same applies to reading the thumbnail bundle — running out of RAM is not
+a cache miss. A
 deliberate `--without-images` run stays quiet, and `main()`'s navigation hint no
 longer promises fluorescence images the scene does not contain.
 
