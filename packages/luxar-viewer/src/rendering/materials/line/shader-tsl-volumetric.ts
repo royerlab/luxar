@@ -282,10 +282,15 @@ export function volumetricLineWebGPUFactory(
         .select(pEnd.sub(pStart).toVar(), pStart.sub(pEnd).toVar())
         .toVar();
       const qLen: TSLNode = length(qRaw).toVar();
-      const qCam: TSLNode = vec3(
-        modelViewMatrix.mul(vec4(qRaw.div(max(qLen, float(1e-30))), 0.0))
-      ).toVar();
-      const valid: TSLNode = interior.and(qLen.greaterThan(1e-20)).toVar();
+      // Normalized in CAMERA space (see the GLSL twin: model scaling would
+      // otherwise skew the bisector normal and tanHalf).
+      const qCamRaw: TSLNode = vec3(modelViewMatrix.mul(vec4(qRaw, 0.0))).toVar();
+      const qCamLen: TSLNode = length(qCamRaw).toVar();
+      const qCam: TSLNode = qCamRaw.div(max(qCamLen, float(1e-30))).toVar();
+      const valid: TSLNode = interior
+        .and(qLen.greaterThan(1e-20))
+        .and(qCamLen.greaterThan(1e-20))
+        .toVar();
       return vec4(qCam, valid.select(float(1.0), float(0.0))).toVar();
     };
     const qA: TSLNode = partnerDir(aStartJointCode);

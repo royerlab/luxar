@@ -15,7 +15,11 @@
  *   ends (the infinite-rod density clipped by the plane between the segment
  *   and its partner): reflection across the plane swaps the two axes, so the
  *   pair partitions the rod exactly at any bend angle — no partner blending,
- *   single-covered, C0. Free ends / hubs / slice-clips keep the erf cap of
+ *   single-covered, C0. (The MATH is exact at any bend; the rasterized
+ *   STENCIL clamps the oblique-cut overhang at min(R·tan(θ/2), R) for fill
+ *   control, so bends past ~90° truncate the outermost wedge tip beyond one
+ *   radius — a measured G0 trade, revisited at the G1 perf/visual gate.)
+ *   Free ends / hubs / slice-clips keep the erf cap of
  *   the exact convolution. Chain-end segments (one of each) use the
  *   inclusion–exclusion closed form.
  * - PEAK-family blending (max, normal, opaque) takes the max along the ray:
@@ -139,8 +143,14 @@ export const VOLUMETRIC_LINE_VERTEX_SHADER = /* glsl */ `
       vec3 q = (code > 0.0) ? (pEnd - pStart) : (pStart - pEnd);
       float qLen = length(q);
       if (qLen < 1e-20) return vec4(0.0);
-      vec3 qCam = mat3(modelViewMatrix) * (q / qLen);
-      return vec4(qCam, 1.0);
+      // Normalize in CAMERA space, not object space: the bisector plane is
+      // built against the camera-space unit axis, and any model scaling
+      // (uniform included) makes the transformed direction non-unit —
+      // skewing the bisector normal and tanHalf (PR #1426 review).
+      vec3 qCam = mat3(modelViewMatrix) * q;
+      float qCamLen = length(qCam);
+      if (qCamLen < 1e-20) return vec4(0.0);
+      return vec4(qCam / qCamLen, 1.0);
     }
 
     void main() {
