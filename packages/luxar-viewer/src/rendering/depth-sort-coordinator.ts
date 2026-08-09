@@ -75,7 +75,7 @@ import {
   writeSortedIndexOrdering,
 } from './element-storage';
 import { needsDepthSort } from './blending-state';
-import { clearCommittedData, hasCommittedData } from '../types/committed-data';
+import { hasCommittedData, invalidateCommittedDataStamp } from '../types/committed-data';
 import type { BlendingMode } from '../types/blending';
 import {
   assignGlobalRenderOrder,
@@ -1319,7 +1319,12 @@ export function noteDepthSortBlendingModeSwitch(
   const wasSorted = prevMode !== undefined && needsDepthSort(prevMode);
   const isSorted = needsDepthSort(newMode);
   if (isSorted && !wasSorted) {
-    clearCommittedData(mesh);
+    // Stamp only — NOT `clearCommittedData`. The geometry stays on the GPU
+    // and pickable throughout the async reprocess, so the picking
+    // `elementIdMap` sibling still describes it exactly; dropping it would
+    // make every hover in that window resolve labels through the raw storage
+    // slot (silently wrong for a range-loaded or compacted labelled node).
+    invalidateCommittedDataStamp(mesh);
     // Clear the per-slice freshness stamp TOO: the reprocess sweep below
     // re-commits only sweep-registered (eager) loaders — a hidden resident
     // LAZY LOD level is structurally outside the sweep, and with only the

@@ -139,7 +139,7 @@ DEMO_META = {
 # Enable MPS→CPU fallback for unsupported PyTorch ops (must be before torch import)
 import os
 
-from luxar.utils.demos import (
+from luxar.demos import (
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,

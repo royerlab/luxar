@@ -33,6 +33,17 @@ implementation; the loader calls it directly with a WASM backend from
 `getPointsBackend(ndim)`. It is always on the main thread (WASM-accelerated)
 — there is no worker round-trip for Points.
 
+It also emits `elementIds` (via the shared `buildElementIdMap` in
+`data/loaders/element-ids.ts`, which GSplats composes with too): the visible-buffer
+slot → on-disk element index map that picking uses for per-element label
+lookups. It is built only for a node declaring `has_labels` /
+`has_image_labels` — the label reader it exists for, and it costs 4 B/point on
+the zero-allocation path — and omitted on the identity path (one range starting
+at 0, no effective-radius compaction). An unlabelled node can still be picked
+(the embedder `selection` event provisions picking on its own), and its
+`elementIndex` keeps reporting the storage slot. `PointsProgressiveLoader`
+strips the map anyway: each additive sub-LOD has its own on-disk index space.
+
 ## Invariants
 
 - **Effective radius is Points-only.** Lines use precomputed segment
@@ -47,7 +58,10 @@ implementation; the loader calls it directly with a WASM backend from
   `radii` / `sharpness` / `scalars` buffers — no per-update
   allocation. The accumulator preserves Uint8/Uint16 dtypes natively
   for colors/radii/sharpness so a Uint8 zarr array round-trips
-  without intermediate Float32 widening.
+  without intermediate Float32 widening. One bounded exception: the
+  `elementIds` map is a fresh `Uint32Array(numPoints)` per update, and
+  only for a labelled node on a non-identity range set — an unlabelled
+  node, a single `[0, N)` range, and every additive sub-LOD all skip it.
 - **Dtype-aware scale propagation.** `radiusScale` lives on
   `geometry.userData` and is propagated to the material's uniforms via
   `syncPointMaterialWithGeometry` (the only one of the three

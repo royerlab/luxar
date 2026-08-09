@@ -86,8 +86,12 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
-from luxar.demos import substitutive_lod_or_flat
-from luxar.utils.demos import is_lfs_pointer, launch_viewer, parse_demo_flags
+from luxar.demos import (
+    is_lfs_pointer,
+    launch_viewer,
+    parse_demo_flags,
+    substitutive_lod_or_flat,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================

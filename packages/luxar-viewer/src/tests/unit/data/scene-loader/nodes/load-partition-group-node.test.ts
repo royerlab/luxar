@@ -17,6 +17,7 @@ const loadSceneNodesMock = vi.fn();
 
 import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/load-partition-group-node';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
+import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 
 beforeEach(() => {
@@ -58,10 +59,10 @@ function makeCtx(): NodeBuildCtx {
   const nodeFactory = {
     applyTransform: vi.fn(),
   } as unknown as NodeBuildCtx['nodeFactory'];
-  return {
-    nodeFactory,
-    lodGroupRegistry: null,
-  } as unknown as NodeBuildCtx;
+  // `lodGroupRegistry` is simply left unset: `loadPartitionGroupNode` never
+  // reads it (a partition group has no per-frame level selection to make), so
+  // there is no registry path here either to exercise or to stub.
+  return makeTestNodeBuildCtx({ nodeFactory });
 }
 
 function makeStubLoc() {

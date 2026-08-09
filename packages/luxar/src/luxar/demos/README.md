@@ -414,7 +414,7 @@ A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedde
 
 `--recompute` rebuilds both the 3D UMAP and the hover-thumbnail bundle; `--without-images` skips the image download entirely and the hover tooltip becomes text-only.
 
-**Requires**: Internet access (downloads embeddings from Google Drive), `umap-learn`, `pandas`, `requests`. First run computes 3D UMAP (~10-30 min); subsequent runs load cached results.
+**Requires**: Internet access (downloads embeddings from Google Drive), `umap-learn`, `pandas`, `requests`. First run computes 3D UMAP (~10-30 min); subsequent runs load cached results. With hover thumbnails on (the default) the download is 185.8 GB — 4.23 GB of embeddings, 71 MB of label CSVs, and ten `Image_data` files of 11.3-23.6 GB each — so budget ~190 GB of free disk, since the downloads stay cached and the encoded thumbnails sit alongside them, and a 32 GB machine, since the thumbnail pass reads one `Image_data` archive whole (the largest is 23.6 GB) with the selected crops, the thumbnails encoded so far and the label tables live on top of it; `--without-images` keeps it to ~4.24 GB and ~16 GB of RAM. Downloads are staged and verified before they take their cache name and thumbnails are cached per source file, so an interrupted run resumes instead of starting over.
 
 **Demonstrates**: Self-supervised image embeddings (CytoSelf VQ-VAE-2, 9,216-dim), subcellular localization landscape, ~1,311 OpenCell proteins, categorical attribute switching (localization vs protein), UMAP dimensionality reduction.
 
@@ -1126,6 +1126,8 @@ from luxar.demos import (
     parse_int_arg,       # --points=N / --sample N integer flags
     parse_path_arg,      # --cache-dir PATH / --data=PATH path flags (expands ~)
     hsv_to_rgb,          # vectorized rainbow / hue-ramp colouring
+    is_lfs_pointer,      # is this LFS-tracked file a pointer stub, not the data?
+    print_data_provenance,  # source/licence notice before a third-party download
     detect_device, warn_if_no_cuda_gpu,          # GPU/MPS/CPU
     load_precomputed_gsplats, load_precomputed_bundle,  # LFS-shipped gsplat data
 )
@@ -1154,6 +1156,18 @@ a demo needs the same information inside its own error message.
 
 Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
+
+`luxar.demos` is the ONLY spelling for these helpers: never import
+`luxar.utils.demos` or `luxar.utils.data_fetch` directly from a demo, even though
+that is where they live. `tests/test_demo_import_spelling.py` fails the build on
+every deep spelling — `from luxar.utils.demos import …`, `import
+luxar.utils.demos`, `from luxar.utils import demos`, and their relative forms —
+in every demo module here and in the three `gsplats/**/demos` trees, and also on a
+name the barrel does not re-export. (Scope is the demo modules; `tests/` is out,
+since a test may legitimately need the module a private lives in.) That second gap
+(two missing symbols, which forced 12 of the 38 files that ended up deep) is what
+grew the spelling, so a helper you cannot reach through `luxar.demos` is a bug in
+`demos/__init__.py`, not a licence to reach past it.
 
 ### 7. Gate optional dependencies at the point of use, never at the entry point
 

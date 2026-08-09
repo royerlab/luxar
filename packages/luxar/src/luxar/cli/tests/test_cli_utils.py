@@ -92,11 +92,131 @@ class TestCheckPortAvailable:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", 0))
+            # listen() matters: the probe binds with SO_REUSEADDR (to match
+            # uvicorn's bind), and a merely-bound socket does not conflict with
+            # such a bind. Only a LISTENING socket does — which is exactly the
+            # case this function exists to detect, a port held by a running
+            # server.
+            sock.listen(1)
             bound_port = sock.getsockname()[1]
             result = check_port_available(bound_port)
             assert result is False
         finally:
             sock.close()
+
+    def test_lingering_closed_connection_is_available(self) -> None:
+        """A port left in TIME_WAIT by a previous run reads as AVAILABLE.
+
+        Regression test for the muted gallery-harness failure (#1380): the probe
+        used a plain ``bind()`` while the real server (uvicorn →
+        ``loop.create_server``) binds with ``reuse_address=True``, so a
+        non-listening leftover socket from the previous run made the probe report
+        "busy" on a port that would have bound fine. ``pick_port`` then shifted
+        to the next port, and Playwright — still waiting on the requested one —
+        burned its full 90 s budget.
+
+        The lingering state is produced by closing the *server* side of a
+        loopback connection first, so the local end of the listener's port (not
+        the client's ephemeral one) is what lingers.
+        """
+        import os
+        import socket
+        import sys
+
+        if os.name != "posix" or sys.platform == "cygwin":
+            # The probe only sets SO_REUSEADDR where asyncio itself does, so
+            # elsewhere there is no lenient bind to assert on.
+            pytest.skip("SO_REUSEADDR probe is POSIX-only, matching asyncio")
+
+        try:
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except PermissionError:
+            pytest.skip("Socket operations not permitted in this environment")
+        with listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            client = socket.create_connection(("127.0.0.1", port), timeout=5)
+            accepted, _ = listener.accept()
+            accepted.close()  # server side closes first → its port lingers
+            client.close()
+        # Nothing is listening on `port` any more, only the leftover socket.
+        # Skip rather than assert vacuously on a platform where the leftover
+        # does not linger (then a plain bind would already succeed and the test
+        # would prove nothing).
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind(("127.0.0.1", port))
+            pytest.skip(
+                "no lingering socket on this platform: a plain bind already "
+                "succeeds, so the probe/server mismatch cannot be exercised"
+            )
+        except OSError:
+            pass  # plain bind refuses — the mismatch is reproducible here
+        finally:
+            probe.close()
+
+        assert check_port_available(port) is True
+
+    def test_reuseaddr_is_posix_only(self) -> None:
+        """The lenient probe is gated on asyncio's own platform condition.
+
+        Off POSIX the option must NOT be set: there ``SO_REUSEADDR`` lets a bind
+        succeed over a *live* listener, so a lenient probe would call an occupied
+        port free and the real bind would then fail hard — trading a warned port
+        shift for a crash. Pinned both ways so the guard can't be "simplified"
+        away.
+        """
+        import socket
+
+        with (
+            patch("luxar.cli.utils.os.name", "posix"),
+            patch("luxar.cli.utils.sys.platform", "linux"),
+            patch("luxar.cli.utils.socket.socket") as mock_socket,
+        ):
+            mock_socket.return_value = MagicMock()
+            assert check_port_available(12345) is True
+            mock_socket.return_value.setsockopt.assert_called_once_with(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+            )
+
+        with (
+            patch("luxar.cli.utils.os.name", "nt"),
+            patch("luxar.cli.utils.socket.socket") as mock_socket,
+        ):
+            mock_socket.return_value = MagicMock()
+            assert check_port_available(12345) is True
+            mock_socket.return_value.setsockopt.assert_not_called()
+
+    def test_ipv6_host_uses_an_ipv6_socket(self) -> None:
+        """An IPv6 host is probed on AF_INET6, not reported permanently busy.
+
+        ``::1`` is a supported bind address (``_warn_if_lan_exposed`` counts it
+        as loopback), but the probe used to hardcode ``AF_INET``, so binding an
+        IPv6 literal raised for *every* port and ``pick_port`` gave up with "No
+        available ports found" on a completely free one.
+        """
+        import socket
+
+        try:
+            listener = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        except OSError:
+            pytest.skip("no IPv6 support in this environment")
+        with listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                listener.bind(("::1", 0))
+            except OSError:
+                pytest.skip("IPv6 loopback is not bindable in this environment")
+            listener.listen(1)
+            busy_port = listener.getsockname()[1]
+            # A live IPv6 listener is still detected...
+            assert check_port_available(busy_port, "::1") is False
+
+        # ...and once it is gone the same port reads as available again, which
+        # the AF_INET probe could never report for an IPv6 host.
+        assert check_port_available(busy_port, "::1") is True
 
     def test_socket_closed_on_error(self) -> None:
         """Test check_port_available closes socket after bind failure."""

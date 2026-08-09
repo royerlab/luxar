@@ -51,8 +51,11 @@ async function mount() {
   app.on('dimensions-changed', (dims) => {
     if (dims.ndim > 0) setStatus(`Dimensions: [${dims.currentStep.join(', ')}]`);
   });
+  // `nodeName` is the layer the user sees; `elementIndex` is local to
+  // `hitNodeName` (the `part_<i>` leaf under a partitioned layer, and the same
+  // node otherwise), so that is the path the index has to be shown against.
   app.on('selection', (sel) => {
-    if (sel) setStatus(`Picked ${sel.nodeName} #${sel.elementIndex}`);
+    if (sel) setStatus(`Picked ${sel.nodeName} — ${sel.hitNodeName} #${sel.elementIndex}`);
   });
 
   await app.init({

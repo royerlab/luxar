@@ -57,7 +57,22 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
   }
 
   if (parts.length === 1) {
-    return parts[0];
+    // GUARD (belt-and-braces): a ladder payload must never publish the picking
+    // index space. `parts[0]` is a SUB-LOD (`additive_0`), so its ranges
+    // (and any map composed from them) are in that level's on-disk index space,
+    // not the parent node's, and `parts.length === 1` is not "unladdered" — this
+    // loader only exists for `n_additive_sublods` nodes, so it is the first-paint
+    // state of EVERY ladder. Passing them through would make hover report an
+    // additive_0 index while only LOD 0 is resident and the raw slot once a
+    // second level lands. `createProgressiveGSplatsLoader` now also clears
+    // `has_labels` / `has_image_labels` on each sub-LOD's attrs, so `ranges` is
+    // normally never published at all; this keeps the invariant true whatever
+    // attrs a sub-LOD carries. (Per-level label resolution is #1422.)
+    const only = parts[0];
+    if (only.ranges === undefined) return only;
+    const stripped: LoadedGSplatsData = { ...only };
+    delete stripped.ranges;
+    return stripped;
   }
 
   const ndim = parts[0].ndim;
@@ -172,6 +187,7 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
     offset += part.splatCount;
   }
 
+  // `ranges` is DELIBERATELY not concatenated — see the single-part branch.
   return {
     positions,
     amplitudes,
