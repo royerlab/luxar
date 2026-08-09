@@ -41,6 +41,49 @@ segment-vs-vertex granularity mismatch on top of it. Mesh was already correct: i
 shader reports `gl_VertexID`, which for an indexed draw IS the on-disk vertex ordinal,
 so the lookup no-ops.
 
+#### The port probe now matches the bind it predicts
+
+`make generate-gallery` failed about one run in two when runs were issued
+back-to-back, always the same way: `Timed out waiting 90000ms from
+config.webServer`, with nothing else to go on. The data server had started fine —
+just not on port 9899, which is the one Playwright was waiting on.
+
+`luxar serve` resolves its port through `check_port_available`, which bound a
+bare socket. The real bind is uvicorn's `loop.create_server`, and asyncio passes
+`reuse_address=True` on POSIX, so the probe was *stricter* than the thing it was
+predicting. A non-listening socket left over from the previous run's teardown
+(TIME_WAIT / FIN_WAIT2 on the same port) is invisible to a `SO_REUSEADDR` bind but
+fatal to a plain one — so the probe said "busy", `pick_port` shifted to 9900 and
+said so, and nothing ever came up on 9899. Hence the coin-flip rate: whether
+anything lingers on the *data* port at all depends on which side closed first — a
+server killed with a keep-alive connection still open leaves its own port in
+FIN_WAIT2 → TIME_WAIT, whereas if the client closed first every TIME_WAIT lands on
+an ephemeral client port and 9899 is clean. Setting `SO_REUSEADDR` on the probe
+closes the gap — under asyncio's own condition, since Windows omits the option
+precisely because there it would let a bind succeed over a live listener. It does
+not make the probe blind to a real server: on Linux a *listening* socket on the
+same address conflicts either way, wildcard binds included. The
+`test_unavailable_port` case was tightened to `listen()` accordingly — bound but
+never listening no longer models an occupied port, which is the point.
+
+The same probe also hardcoded `AF_INET`, so an IPv6 bind address raised for every
+port and `serve --host ::1` exited with "No available ports found near 8000" on a
+completely free one. `::1` is already a first-class loopback host elsewhere in the
+serve path, so the probe now picks its family from the host — for IPv6 *literals*
+only; a name like `localhost` stays on `AF_INET` rather than inheriting whatever
+order the resolver returns.
+
+The muteness was its own bug. Both gallery `webServer` entries discarded stdout and
+stderr, so the port-shift warning had nowhere to go; `GALLERY_DEBUG=1 pnpm
+gallery` now forwards both servers' stdout to the reporter, and stderr is no
+longer suppressed at all — it is where a server that dies at startup says why, and
+muting it left only Playwright's bare exit code (every other
+`playwright.*.config.ts` here already pipes it). Forwarding alone
+wasn't enough: `aprint` doesn't flush and Python block-buffers a piped stdout,
+while Playwright's timeout path SIGKILLs the process group — so the data server
+now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
+behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
+
 #### Mesh gets substitutive LOD
 
 A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
