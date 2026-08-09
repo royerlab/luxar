@@ -47,7 +47,7 @@ let wasmJsUrlOverride: string | undefined;
 /**
  * Failing this check enters the normal TypeScript fallback path, which is
  * correct but slower — `make build-wasm` is the fix. The list itself lives in
- * {@link ./required-exports} because the vitest global setup shares it; see the
+ * `./required-exports.ts` because the vitest global setup shares it; see the
  * comment there for why it is a separate module.
  */
 function assertRequiredWasmExports(module: Record<string, unknown>): void {

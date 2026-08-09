@@ -121,13 +121,30 @@ function isExpectationsStale(fixtureNames: string[]): boolean {
 }
 
 /**
+ * Required exports that `wrapperSource` — the text of a built `luxar_wasm.js` —
+ * does not declare. Empty when the build is current.
+ *
+ * wasm-pack emits one `export function <name>(` per kernel, which is what the
+ * pattern anchors on. Matching the bare name would not do: the wrapper also
+ * contains an internal `wasm.<name>(...)` call for every kernel it forwards, so
+ * a substring scan reports a stale build as current.
+ *
+ * Exported so `wasm-export-scan.test.ts` can pin both directions — a detector
+ * that never detects is worse than none.
+ */
+export function missingExportsIn(wrapperSource: string): readonly string[] {
+  return REQUIRED_WASM_EXPORTS.filter(
+    (name) => !new RegExp(`export function ${name}\\b`).test(wrapperSource)
+  );
+}
+
+/**
  * Required exports that the built `luxar_wasm.js` does not declare — i.e. the
  * evidence that a PRESENT build predates a kernel. Empty when it is current.
  *
  * A text scan of the wrapper, not an import: this runs in plain Node before any
  * browser environment exists, and the wrapper's own `import` would initialise
- * the module. wasm-pack emits one `export function <name>(` per kernel, which is
- * what the pattern anchors on.
+ * the module.
  *
  * Deliberately NOT an mtime comparison against `src/wasm/rust/`. A `git
  * checkout` or a fresh worktree can leave an artifact NEWER than the source it
@@ -146,9 +163,7 @@ function missingWasmExports(): readonly string[] {
     // missing so the caller rebuilds.
     return REQUIRED_WASM_EXPORTS;
   }
-  return REQUIRED_WASM_EXPORTS.filter(
-    (name) => !new RegExp(`export function ${name}\\b`).test(wrapper)
-  );
+  return missingExportsIn(wrapper);
 }
 
 /**
@@ -165,7 +180,9 @@ function missingWasmExports(): readonly string[] {
  *   - if the artifacts are missing OR out of date (see `missingWasmExports`
  *     below) and a Rust/wasm-pack toolchain is present, build them
  *     automatically (mirrors the auto fixture-generation above);
- *   - if no toolchain is available, emit a LOUD warning so the skip is visible;
+ *   - if no toolchain is available, emit a LOUD warning naming what will
+ *     actually happen — a missing build skips the parity harness, a stale one
+ *     runs and fails;
  *   - if `LUXAR_REQUIRE_WASM_TESTS=1` (CI), a missing/stale/unbuildable module
  *     is a hard failure.
  */
@@ -188,16 +205,26 @@ export function ensureWasmBuilt(): void {
   })();
 
   if (!hasToolchain) {
-    const what = stale.length
-      ? `Compiled WASM is STALE (missing ${stale.join(', ')})`
-      : 'Compiled WASM not found';
-    const msg =
-      `[test-setup] ${what} and wasm-pack is not installed.\n` +
-      '             WASM-vs-TypeScript parity tests will be SKIPPED — the compiled\n' +
-      '             backend is NOT being verified. Install Rust + wasm-pack and run\n' +
-      '             `make build-wasm` (or `pnpm build:wasm`) for full coverage.';
+    // The two cases have OPPOSITE consequences, so they must not share a
+    // sentence. `it.skipIf(!wasmFilesExist)` keys on PRESENCE: a missing build
+    // skips the parity harness (silent under-coverage), while a stale one is
+    // loaded and runs — and fails at the first kernel it does not export. Only
+    // deleting the artifact turns the second case into the first.
+    const msg = stale.length
+      ? `[test-setup] Compiled WASM is STALE (missing ${stale.join(', ')}) and wasm-pack\n` +
+        '             is not installed. A stale build is NOT skipped — the WASM-vs-\n' +
+        '             TypeScript parity tests load it and FAIL at first use with\n' +
+        '             "<kernel> is not a function". Install Rust + wasm-pack and run\n' +
+        '             `make build-wasm` (or `pnpm build:wasm`), or delete\n' +
+        '             packages/luxar-viewer/public/wasm/ to skip those tests instead.'
+      : '[test-setup] Compiled WASM not found and wasm-pack is not installed.\n' +
+        '             WASM-vs-TypeScript parity tests will be SKIPPED — the compiled\n' +
+        '             backend is NOT being verified. Install Rust + wasm-pack and run\n' +
+        '             `make build-wasm` (or `pnpm build:wasm`) for full coverage.';
     if (require) {
-      throw new Error(`${msg}\n(LUXAR_REQUIRE_WASM_TESTS=1 — refusing to run without WASM.)`);
+      throw new Error(
+        `${msg}\n(LUXAR_REQUIRE_WASM_TESTS=1 — refusing to run without a current WASM build.)`
+      );
     }
     console.warn(`\n⚠️  ${msg}\n`);
     return;
@@ -213,7 +240,12 @@ export function ensureWasmBuilt(): void {
   } catch (err) {
     const msg = `[test-setup] WASM build failed: ${err instanceof Error ? err.message : String(err)}`;
     if (require) throw new Error(msg, { cause: err });
-    console.warn(`\n⚠️  ${msg}\n   Parity tests will be skipped.\n`);
+    // Same asymmetry as the no-toolchain branch: the stale artifact is still on
+    // disk, so the parity harness runs against it rather than skipping.
+    const consequence = stale.length
+      ? `The stale artifact is still in place, so parity tests will FAIL (missing ${stale.join(', ')}), not skip.`
+      : 'Parity tests will be skipped.';
+    console.warn(`\n⚠️  ${msg}\n   ${consequence}\n`);
     return;
   }
   // Re-check on the SAME terms as the entry condition. A build that ran but did
