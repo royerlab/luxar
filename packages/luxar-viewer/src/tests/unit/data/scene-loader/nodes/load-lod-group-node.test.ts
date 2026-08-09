@@ -218,9 +218,8 @@ function makeLodGroupNode(
 }
 
 function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
-  // Build the minimum NodeBuildCtx surface that loadLodGroupNode
-  // actually reads — the rest is forwarded to the mocked
-  // loadSceneNodes child recursion.
+  // `applyTransform` is the only nodeFactory member loadLodGroupNode reaches —
+  // placeholder construction happens in the mocked loadSceneNodes recursion.
   const nodeFactory = {
     applyTransform: vi.fn(),
   } as unknown as NodeBuildCtx['nodeFactory'];
