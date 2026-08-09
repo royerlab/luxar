@@ -176,6 +176,19 @@ def _never_touch_the_real_cache(
     monkeypatch.setattr(demo, "DEFAULT_CACHE_DIR", tmp_path / "default_cache")
 
 
+def _dead_pid() -> int:
+    """A PID that no live process holds, to stand in for an abandoned run.
+
+    ``pid_max`` is 4,194,304 on a current Linux kernel, so a hardcoded 999999 is
+    a perfectly reachable PID and hardcoding it makes the reclaim tests flaky on
+    a busy machine. Scan down until one is genuinely free instead.
+    """
+    for pid in range(999_999, 900_000, -1):
+        if not demo._pid_is_alive(pid):
+            return pid
+    raise AssertionError("no free PID to stand in for a dead run")
+
+
 def _leftovers(dest: Path) -> set[str]:
     """Everything in the cache dir other than *dest* itself.
 
@@ -276,9 +289,8 @@ def test_dead_runs_npz_staging_files_are_reclaimed(tmp_path: Path) -> None:
     # A killed `np.savez` on the ~114k-blob bundle strands a large `.tmp`, and a
     # PID-private name means nothing would ever look at it again.
     target = tmp_path / demo.THUMBNAIL_CACHE_NAME
-    dead = tmp_path / f"{target.name}.999999{demo.TMP_SUFFIX}"
+    dead = tmp_path / f"{target.name}.{_dead_pid()}{demo.TMP_SUFFIX}"
     dead.write_bytes(b"a half-written bundle from a run that is long gone")
-    assert not demo._pid_is_alive(999999)
 
     demo._write_npz_atomic(target, blobs=np.array([b"ours"], dtype=object))
 
@@ -544,13 +556,13 @@ def test_staging_files_of_dead_runs_are_reclaimed(
     _install_session(monkeypatch, _serve(body))
     dest = tmp_path / "Image_data00.npy"
 
-    dead = tmp_path / f"{dest.name}.999999{demo.PART_SUFFIX}"
+    gone = _dead_pid()
+    dead = tmp_path / f"{dest.name}.{gone}{demo.PART_SUFFIX}"
     dead.write_bytes(b"9 GB of abandoned bytes, in spirit")
     live = tmp_path / f"{dest.name}.{os.getpid()}x{demo.PART_SUFFIX}"
     live.write_bytes(b"not a pid-shaped name; not ours to delete")
-    other_file = tmp_path / f"Image_data01.npy.999999{demo.PART_SUFFIX}"
+    other_file = tmp_path / f"Image_data01.npy.{gone}{demo.PART_SUFFIX}"
     other_file.write_bytes(b"another destination's staging file")
-    assert not demo._pid_is_alive(999999)
 
     demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
 
@@ -1103,6 +1115,44 @@ def test_bundle_built_under_another_mapping_is_rebuilt(
         blobs
     )
     assert downloaded == []
+
+
+def test_a_csv_repaired_mid_run_does_not_certify_the_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The encode pass takes hours on the real dataset. A label CSV repaired while
+    # it runs must not have its digest stamped onto thumbnails that were built
+    # under the OLD mapping — that certifies the exact mismatch the digest exists
+    # to catch, and nothing on disk would ever undo it. So the digest is captured
+    # with the mapping, not re-read at write time.
+    _write_mapping_inputs(tmp_path, b"first")
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    build_part = demo._build_thumbnail_part
+
+    def _repair_the_csvs_mid_pass(*args: object, **kwargs: object):
+        result = build_part(*args, **kwargs)  # type: ignore[arg-type]
+        _write_mapping_inputs(tmp_path, b"repaired")
+        return result
+
+    monkeypatch.setattr(demo, "_build_thumbnail_part", _repair_the_csvs_mid_pass)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert blobs == _blobs_in_global_order()
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    with np.load(bundle, allow_pickle=True) as data:
+        stored = demo._stored_mapping_fingerprint(data)
+    assert stored, "the bundle must still carry a digest"
+    assert stored != demo._mapping_fingerprint(tmp_path)
+
+    # So the next run sees the disagreement and rebuilds rather than trusting it.
+    downloaded.clear()
+    monkeypatch.setattr(demo, "_build_thumbnail_part", build_part)
+    demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
 
 
 def test_bundle_is_kept_when_the_label_csvs_are_gone(

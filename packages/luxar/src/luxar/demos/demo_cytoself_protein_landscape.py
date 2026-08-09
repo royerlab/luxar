@@ -1302,6 +1302,15 @@ def load_cytoself_images(
     # Step 1: Build index mapping (test row -> global image row)
     mapping, n_test = _build_test_index_mapping(cache_dir)
 
+    # Fingerprint the CSVs the mapping was JUST derived from, not whatever is on
+    # disk hours later when the bundle is written. The encode pass below runs for
+    # hours on the real dataset, and a `Label_data` CSV repaired while it runs
+    # would otherwise stamp thumbnails built under the OLD mapping with the NEW
+    # mapping's digest — certifying the exact mismatch the digest exists to
+    # catch, permanently. Stamping the captured value instead means the next run
+    # sees the disagreement and rebuilds.
+    mapping_fingerprint = _mapping_fingerprint(cache_dir)
+
     # Invert: global_index -> list of test_indices (for per-file processing)
     global_to_test: dict[int, list[int]] = {}
     for test_idx, global_idx in mapping.items():
@@ -1398,13 +1407,14 @@ def load_cytoself_images(
     else:
         thumbnails_cache = cache_dir / THUMBNAIL_CACHE_NAME
         with asection("Caching test-aligned thumbnails"):
-            # Stamped with the mapping these blobs were assembled under, so a
+            # Stamped with the mapping these blobs were assembled under — the
+            # digest captured before the encode pass, not a fresh one — so a
             # later run whose label CSVs have changed rebuilds instead of
             # pasting every thumbnail onto the wrong point.
             _write_npz_atomic(
                 thumbnails_cache,
                 blobs=np.array(final_blobs, dtype=object),
-                mapping_fingerprint=np.array(_mapping_fingerprint(cache_dir)),
+                mapping_fingerprint=np.array(mapping_fingerprint),
             )
             aprint(f"Cached {len(final_blobs):,} thumbnails to {thumbnails_cache}")
 
