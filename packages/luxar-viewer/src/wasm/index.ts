@@ -22,6 +22,7 @@
  * The same interface is provided regardless of where it's used.
  */
 
+import { REQUIRED_WASM_EXPORTS } from './required-exports';
 import { TypeScriptFallback } from './typescript';
 import type { WasmModule } from './types';
 import { log, Modules } from '../utils/log';
@@ -44,25 +45,11 @@ export type { WasmModule } from './types';
 let wasmJsUrlOverride: string | undefined;
 
 /**
- * Exports added after the initial kernel set. A stale gitignored `public/wasm/`
- * build can still import and initialise successfully while missing them,
- * otherwise failing later at first use — where the symptom is an opaque
- * "x is not a function" rather than "your WASM build is old".
- *
- * - `compute_joint_codes` — added with the line cap-suppression kernel.
- * - `mesh_vertex_visibility_mask` / `compact_visible_faces` — added with the
- *   mesh culling kernels.
- *
- * Add a name here when you add a kernel, so a stale build is diagnosed rather
- * than silently half-working. Failing this check enters the normal TypeScript
- * fallback path, which is correct but slower — `make build-wasm` is the fix.
+ * Failing this check enters the normal TypeScript fallback path, which is
+ * correct but slower — `make build-wasm` is the fix. The list itself lives in
+ * {@link ./required-exports} because the vitest global setup shares it; see the
+ * comment there for why it is a separate module.
  */
-const REQUIRED_WASM_EXPORTS = [
-  'compute_joint_codes',
-  'mesh_vertex_visibility_mask',
-  'compact_visible_faces',
-] as const satisfies readonly (keyof WasmModule)[];
-
 function assertRequiredWasmExports(module: Record<string, unknown>): void {
   for (const name of REQUIRED_WASM_EXPORTS) {
     if (typeof module[name] !== 'function') {

@@ -9,7 +9,7 @@
  * If any fixtures are missing, runs the generator script automatically.
  */
 
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -17,6 +17,7 @@ import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../tools/fixture-manifest';
+import { REQUIRED_WASM_EXPORTS } from '../wasm/required-exports';
 
 // Use import.meta.url for reliable path resolution in vitest global setup
 const THIS_DIR = resolve(fileURLToPath(import.meta.url), '..');
@@ -133,8 +134,40 @@ function isExpectationsStale(fixtureNames: string[]): boolean {
  *   - if `LUXAR_REQUIRE_WASM_TESTS=1` (CI), a missing/unbuildable module is a
  *     hard failure.
  */
+/**
+ * Required exports that the built `luxar_wasm.js` does not declare — i.e. the
+ * evidence that a PRESENT build predates a kernel. Empty when it is current.
+ *
+ * A text scan of the wrapper, not an import: this runs in plain Node before any
+ * browser environment exists, and the wrapper's own `import` would initialise
+ * the module. wasm-pack emits one `export function <name>(` per kernel, which is
+ * what the pattern anchors on.
+ *
+ * Deliberately NOT an mtime comparison against `src/wasm/rust/`. A `git
+ * checkout` or a fresh worktree can leave an artifact NEWER than the source it
+ * does not match, so mtime reports fresh exactly when it is most wrong. Export
+ * membership is the signal that actually goes stale.
+ */
+function missingWasmExports(): readonly string[] {
+  let wrapper: string;
+  try {
+    wrapper = readFileSync(WASM_JS_PATH, 'utf8');
+  } catch {
+    // Unreadable is the caller's `existsSync` problem, not staleness.
+    return [];
+  }
+  return REQUIRED_WASM_EXPORTS.filter(
+    (name) => !new RegExp(`export function ${name}\\b`).test(wrapper)
+  );
+}
+
 export function ensureWasmBuilt(): void {
-  if (existsSync(WASM_JS_PATH) && existsSync(WASM_BIN_PATH)) return;
+  const present = existsSync(WASM_JS_PATH) && existsSync(WASM_BIN_PATH);
+  // A build missing a kernel is as useless as no build: it imports and
+  // initialises fine, then fails at first use with "x is not a function", which
+  // reads as a code defect rather than an old artifact. Same branch, same fix.
+  const stale = present ? missingWasmExports() : [];
+  if (present && stale.length === 0) return;
 
   const require = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
   const hasToolchain = ((): boolean => {
@@ -147,8 +180,11 @@ export function ensureWasmBuilt(): void {
   })();
 
   if (!hasToolchain) {
+    const what = stale.length
+      ? `Compiled WASM is STALE (missing ${stale.join(', ')})`
+      : 'Compiled WASM not found';
     const msg =
-      '[test-setup] Compiled WASM not found and wasm-pack is not installed.\n' +
+      `[test-setup] ${what} and wasm-pack is not installed.\n` +
       '             WASM-vs-TypeScript parity tests will be SKIPPED — the compiled\n' +
       '             backend is NOT being verified. Install Rust + wasm-pack and run\n' +
       '             `make build-wasm` (or `pnpm build:wasm`) for full coverage.';
@@ -159,7 +195,11 @@ export function ensureWasmBuilt(): void {
     return;
   }
 
-  console.log('[test-setup] Compiled WASM missing — building via `pnpm build:wasm`...');
+  console.log(
+    stale.length
+      ? `[test-setup] Compiled WASM is STALE (missing ${stale.join(', ')}) — rebuilding via \`pnpm build:wasm\`...`
+      : '[test-setup] Compiled WASM missing — building via `pnpm build:wasm`...'
+  );
   try {
     execSync('pnpm run build:wasm', { cwd: VIEWER_ROOT, stdio: 'inherit' });
   } catch (err) {
@@ -168,8 +208,22 @@ export function ensureWasmBuilt(): void {
     console.warn(`\n⚠️  ${msg}\n   Parity tests will be skipped.\n`);
     return;
   }
+  // Re-check on the SAME terms as the entry condition. A build that ran but did
+  // not produce the kernel is the stale case all over again, and reporting only
+  // on absence here would let it through after appearing to fix itself.
   if (!existsSync(WASM_JS_PATH) || !existsSync(WASM_BIN_PATH)) {
     const msg = '[test-setup] WASM build ran but artifacts are still missing.';
+    if (require) throw new Error(msg);
+    console.warn(`\n⚠️  ${msg}\n`);
+    return;
+  }
+  const stillMissing = missingWasmExports();
+  if (stillMissing.length) {
+    const msg =
+      '[test-setup] WASM build ran but the artifacts still do not export ' +
+      `${stillMissing.join(', ')}. Either the Rust source does not define ` +
+      `${stillMissing.length > 1 ? 'these kernels' : 'this kernel'}, or the name in ` +
+      'src/wasm/required-exports.ts is wrong.';
     if (require) throw new Error(msg);
     console.warn(`\n⚠️  ${msg}\n`);
   }
