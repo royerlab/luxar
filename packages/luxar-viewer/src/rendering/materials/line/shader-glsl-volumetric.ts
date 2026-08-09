@@ -18,7 +18,13 @@
  *   single-covered, C0. (The MATH is exact at any bend; the rasterized
  *   STENCIL clamps the oblique-cut overhang at min(R·tan(θ/2), R) for fill
  *   control, so bends past ~90° truncate the outermost wedge tip beyond one
- *   radius — a measured G0 trade, revisited at the G1 perf/visual gate.)
+ *   radius — a measured G0 trade, revisited at the G1 perf/visual gate.
+ *   The C0 guarantee is on COVERAGE: width/sharpness/alpha/colour are still
+ *   read at each segment's OWN clamped closest-approach coordinate, which
+ *   ties on the outer side of the cut — both clamp to the shared vertex —
+ *   but can step by O(3σ·tan(θ/2)/L) of the attribute span on the inner
+ *   side, since the two legs interpolate toward different far endpoints.
+ *   Nil for L ≫ σ; see the line README for the full statement.)
  *   Free ends / hubs / slice-clips keep the erf cap of
  *   the exact convolution. Chain-end segments (one of each) use the
  *   inclusion–exclusion closed form.

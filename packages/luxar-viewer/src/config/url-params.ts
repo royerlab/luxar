@@ -236,8 +236,8 @@ export interface UrlParams {
    * (`?linePrimitive=screen-space|volumetric`, issue #1352).
    *
    * `volumetric` draws each segment as its true 3D density (segment ⊛
-   * isotropic Gaussian) solved per fragment — exact end-on, seam-free
-   * joins — instead of the screen-space quad. Session-wide by design (a
+   * isotropic Gaussian) solved per fragment — exact end-on, bisector-cut
+   * joints — instead of the screen-space quad. Session-wide by design (a
    * renderer implementation choice, not scene content — there is no
    * authored per-node attribute). `null` (missing or unrecognised) means
    * the built-in default. See `types/line-primitive.ts`.

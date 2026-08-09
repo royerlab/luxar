@@ -363,7 +363,7 @@ See `lines.ts` for complete interface definitions including `OrderingMetadata`, 
 
 ## Line Primitive Types
 
-`line-primitive.ts` owns the session-wide line rendering primitive selection (issue #1352): `'screen-space'` is today's flat quad, `'volumetric'` draws each segment as its true 3D density (segment ⊛ isotropic Gaussian — exact end-on, seam-free joints). Unlike `line-join.ts` there is no authored node attribute: the primitive is a renderer implementation choice, set once from `?linePrimitive=` and resolved through `resolveLinePrimitive(explicit?)` (the explicit argument exists for harnesses that never run bootstrap). Same layering rationale as `line-join.ts` below.
+`line-primitive.ts` owns the session-wide line rendering primitive selection (issue #1352): `'screen-space'` is today's flat quad, `'volumetric'` draws each segment as its true 3D density (segment ⊛ isotropic Gaussian — exact end-on, bisector-cut joints; `rendering/materials/line/README.md` states the two measured bounds on that). Unlike `line-join.ts` there is no authored node attribute: the primitive is a renderer implementation choice, set once from `?linePrimitive=` and resolved through `resolveLinePrimitive(explicit?)` (the explicit argument exists for harnesses that never run bootstrap). Same layering rationale as `line-join.ts` below.
 
 ## Line Join Types
 

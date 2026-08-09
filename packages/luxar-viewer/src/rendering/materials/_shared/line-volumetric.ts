@@ -21,7 +21,10 @@
  * plane between the segment and its partner. Reflection across the bisector
  * plane swaps the two rod axes, so the two densities agree pointwise ON the
  * plane and the pair sums to a seamless, single-covered miter at any bend
- * angle.
+ * angle. That statement is about THIS module's model — unit amplitude,
+ * one σ per segment. The shaders additionally read width/sharpness/alpha/
+ * colour per segment and clamp the rasterized overhang, both of which bound
+ * the guarantee in practice; the line README states the two limits.
  *
  * - **soft/soft** — W(s) = ½[erf(s·c) − erf((s−L)·c)], c = 1/(σ√2): the
  *   exact segment ⊛ Gaussian. Ray integral: one erf difference (the

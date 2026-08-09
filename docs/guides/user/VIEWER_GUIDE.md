@@ -62,7 +62,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). For deterministic E2E/visual runs. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session, overriding each node's authored `join` attribute. Unrecognised values mean "no override". |
-| `linePrimitive` | `screen-space` \| `volumetric` | Select the line rendering primitive (#1352). `volumetric` draws each segment as its true 3D density — exact end-on viewing, seam-free joints via bisector cuts; sum modes integrate the density along each view ray. Default `screen-space` (today's quad). |
+| `linePrimitive` | `screen-space` \| `volumetric` | Select the line rendering primitive (#1352). `volumetric` draws each segment as its true 3D density — exact end-on viewing, single-covered joints via bisector cuts (the rasterized miter is truncated past a 90° turn); sum modes integrate the density along each view ray. Default `screen-space` (today's quad). |
 
 Flag parameters do not take a value; their presence activates the feature.
 

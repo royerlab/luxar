@@ -8,7 +8,11 @@
  * the per-fragment camera ray, with bisector-cut interior joints and
  * erf-capped soft ends. The lane math is the quadrature-validated CPU
  * reference in `_shared/line-volumetric.ts` — edit THERE first, prove it,
- * then mirror here and in the GLSL twin. Value-level parity between the two
+ * then mirror here and in the GLSL twin. The GLSL twin's header carries the
+ * two documented bounds on the "exact at any bend" joint claim (the clamped
+ * stencil overhang and the per-segment attribute evaluation); both apply
+ * identically here, since this factory mirrors the same vertex stage.
+ * Value-level parity between the two
  * backends is enforced by the `line-volprim-*` fixtures in the
  * tsl-shader-parity suite (`line-volumetric-*` is the unrelated
  * volumetric-BLENDING fixture family on the screen-space quad).

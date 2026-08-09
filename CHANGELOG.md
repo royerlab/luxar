@@ -24,6 +24,18 @@ sharpness β) with the same cut applied as a ray-domain interval, so a cut
 end is the unbounded rod restricted to its own half-space rather than a
 round cap — face-on, exactly one cell of a joint shades each ray, the
 single coverage `normal`/`opaque` need and `gl.MAX` never did.
+Two measured bounds on that joint claim, both left for the G1 gate: the
+CUT MATH is exact at any bend, but the rasterized STENCIL clamps a cut
+end's oblique overhang at one radius (`min(R·tan(θ/2), R)`), so a turn
+past 90° loses the tip of the outer wedge — for reference the
+screen-space primitive's own miter limit gives up at 120° and falls back
+to a round cap, so the two agree closely over the range either one
+miters; and width/sharpness/alpha/colour are still evaluated per segment
+at that segment's own closest-approach coordinate, so they match exactly
+at the shared vertex and on the outer side of the cut (both clamp to the
+vertex value) but can step by O(3σ·tan(θ/2)/L) of the attribute span on
+the inner side — invisible for L ≫ σ, small but real for a strongly
+tapered short segment.
 Chain-end segments (one cut, one soft cap) use a
 sign-selected inclusion–exclusion closed form — the ray integral is an
 Owen-T-class integral with no elementary form, but the available splits
@@ -245,7 +257,6 @@ wasn't enough: `aprint` doesn't flush and Python block-buffers a piped stdout,
 while Playwright's timeout path SIGKILLs the process group — so the data server
 now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
 behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
-
 
 #### Mesh gets substitutive LOD
 

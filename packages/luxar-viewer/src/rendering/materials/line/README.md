@@ -296,6 +296,33 @@ per end), and the fragment solves against the TRUE camera-space segment:
   split is the `LUXAR_PEAK_PROJECTION` define (GLSL) / a graph variant (TSL),
   managed by `applyBlendingMode` beside the other blending defines.
 
+### What "exact at any bend angle" does and does not cover
+
+The bisector CUT MATH is exact at any bend — reflection across the plane
+swaps the two rod axes, so the pair partitions the rod with no overlap and
+no gap. Two things around it are approximations, both measured, both left
+for the G1 gate:
+
+- **The rasterized stencil, not the math, is what truncates.** A cut end's
+  oblique overhang needs `R·tan(θ/2)` of axial reach at radius `R`, and the
+  vertex stage clamps it at `min(R·tan(θ/2), R)` for fill control, so a turn
+  past 90° drops the tip of the outer wedge and leaves a hard stencil edge
+  there instead of a Gaussian falloff. It is bounded: the dropped material
+  starts at radius `R/tan(θ/2)`, so at a 120° turn the edge carries ~0.2 of
+  peak and less beyond. For scale, `GLSL_LINE_JOIN`'s own miter limit gives
+  up at 120° and reverts to a round cap, so over the range where the
+  screen-space primitive miters at all the two are close; past that the
+  volumetric primitive's truncated miter is still the better of the two.
+- **Shading attributes are per-segment.** `width` (hence σ), `sharpness`,
+  `alpha` and `colour` are evaluated from each segment's OWN clamped
+  closest-approach coordinate. On the outer side of the cut both sides clamp
+  to the shared vertex's value and agree exactly; on the inner side they can
+  step by `O(3σ·tan(θ/2)/L)` of the attribute span, because the two legs
+  interpolate toward different far endpoints. Invisible for `L ≫ σ`, small
+  but real for a strongly tapered short segment. The C0 guarantee is
+  therefore on COVERAGE; attribute continuity holds exactly only for
+  constant-attribute polylines.
+
 End-on viewing is exact (the screen-space quad degenerates there), and the
 sum output is normalized by σ√2π so a long segment's side-on core matches
 the quad's core intensity exactly — the calibration that makes the session
