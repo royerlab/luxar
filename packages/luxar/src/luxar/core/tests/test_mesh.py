@@ -313,70 +313,99 @@ def test_mesh_blending_mode_setter_also_rejects_volumetric(tmp_path) -> None:
         assert mesh.blending_mode == "additive"
 
 
-def test_mesh_under_a_lod_group_is_rejected(tmp_path) -> None:
-    """Refused at ADD time, before any array lands on disk.
+def test_mesh_under_a_lod_group_is_accepted(tmp_path) -> None:
+    """A mesh IS a valid substitutive level, now that a producer exists.
 
-    The finalize-time LOD guard would also catch this, but only after the mesh's
-    vertices and faces are already written — so the store would be left with a
-    partial node. Failing here keeps the write fail-fast.
+    This was a refusal until `luxar.mesh.decimate` landed, and the refusal was
+    correct at the time: a `kind=lod` group's levels must each be an independently
+    renderable stand-in for the finer one, and nothing could produce a coarser
+    surface. Hand-assembling the ladder is the same thing `substitutive_lod=` does
+    internally, so it has to work.
+
+    The ADDITIVE flavour is untouched by this and remains impossible — see
+    `test_additive_ladder_is_still_refused_with_its_own_reason`.
     """
     with LuxarZarrCompiler(tmp_path / "lod.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         lod = scene.add_lod_group("ladder")
-        with pytest.raises(ValueError, match="kind=lod"):
-            lod.add_mesh("child_0", _V, _F)
+        lod.add_mesh("child_0", _V, _F, coverage_fraction=0.0)
 
 
-def test_mesh_under_a_partition_group_is_rejected(tmp_path) -> None:
-    """A partition's declared ``display_type`` must not be made a lie.
+def test_mesh_under_a_mesh_partition_group_is_allowed(tmp_path) -> None:
+    """Mesh is partition-capable, so a mesh child of a mesh partition is legal.
 
-    ``add_partition_group`` rejects ``display_type='mesh'`` directly, but nothing
-    stopped a caller from declaring a ``points`` partition and then adding a mesh
-    child into it.
+    This used to raise. It must not any more, because it is precisely the shape
+    ``add_mesh(partition=...)`` writes — a guard here would refuse the adder's
+    own output.
     """
     with LuxarZarrCompiler(tmp_path / "part.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        part = scene.add_partition_group("parts", display_type="mesh", max_elements=100)
+        assert part.add_mesh("part_0", _V, _F) is not None
+
+
+@pytest.mark.parametrize("declared", ["points", "lines", "gsplats"])
+def test_mesh_under_a_partition_of_another_type_is_rejected(tmp_path, declared) -> None:
+    """A partition's declared ``display_type`` must not be made a lie.
+
+    Lifting the blanket ``kind=partition`` refusal must not lift THIS one: a
+    partition is homogeneous, and nothing re-checks that before the store is
+    finalized, so a mesh dropped into a ``points`` partition would write clean
+    and load as a layer claiming to be points.
+    """
+    with LuxarZarrCompiler(tmp_path / f"part_{declared}.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         part = scene.add_partition_group(
-            "parts", display_type="points", max_elements=100
+            "parts", display_type=declared, max_elements=100
         )
-        with pytest.raises(ValueError, match="kind=partition"):
+        with pytest.raises(ValueError, match="kind=partition group declared"):
             part.add_mesh("part_0", _V, _F)
 
 
-def test_lod_refusal_distinguishes_the_two_ladder_flavours(tmp_path) -> None:
-    """The REASON is pinned, not just the fact of the refusal.
+def test_non_mesh_under_a_mesh_partition_group_is_rejected(tmp_path) -> None:
+    """The homogeneity rule is symmetric — the INVERSE pairing raises too.
 
-    Every other assertion in this file matches a short structural substring
-    (``"kind=lod"``), which is why the justification was free to rot: the message
-    spent months telling users that substitutive LOD reduces independent elements
-    and is therefore impossible for a surface. Only the additive flavour works that
-    way. Substitutive levels are independently-authored ``(vertices, faces)`` pairs
-    chosen by ``coverage_fraction`` — the machinery makes no independence assumption
-    and the only missing piece is a decimator (spec §9).
+    Refusing a mesh under a ``points`` partition while accepting a points leaf
+    under a ``mesh`` partition would enforce homogeneity in one direction only,
+    and the direction left open is the one this feature newly makes reachable: a
+    ``display_type='mesh'`` partition could not even be built before mesh became
+    partition-capable.
+    """
+    pos = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+    with LuxarZarrCompiler(tmp_path / "mesh_part.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        part = scene.add_partition_group("parts", display_type="mesh", max_elements=100)
+        with pytest.raises(ValueError, match="kind=partition group declared"):
+            part.add_points("part_0", pos)
+        with pytest.raises(ValueError, match="kind=partition group declared"):
+            part.add_lines("part_1", pos, np.ones(2, dtype=np.float32))
 
-    "Impossible" and "not written yet" are different answers to a user asking
-    whether to wait for it, so the distinction is worth a test.
+
+def test_additive_ladder_is_still_refused_with_its_own_reason(tmp_path) -> None:
+    """The two flavours were never refused for the same reason, and still are not.
+
+    The message spent months telling users that SUBSTITUTIVE LOD reduces
+    independent elements and is therefore impossible for a surface. Only the
+    additive flavour works that way, and the distinction turned out to be the
+    whole story: substitutive levels needed a decimator and now have one, while an
+    additive prefix of an index buffer is a *holed* surface and can never be a
+    coarse one.
+
+    So the surviving refusal must keep naming ITS reason, and must not have been
+    widened back into a blanket "mesh has no LOD".
     """
     with LuxarZarrCompiler(tmp_path / "why.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        lod = scene.add_lod_group("ladder")
         with pytest.raises(ValueError) as excinfo:
-            lod.add_mesh("child_0", _V, _F)
+            scene.add_mesh("m", _V, _F, additive_lod=True)
 
     message = str(excinfo.value)
-    assert "ADDITIVE" in message and "SUBSTITUTIVE" in message
-    # The additive arm is excluded on principle: a prefix of an index buffer is a
-    # holed surface, not a coarse one.
+    assert "additive_lod" in message
+    # Excluded on principle: a prefix of an index buffer is a holed surface.
     assert "holes" in message
-    # The substitutive arm is excluded only for want of a producer.
-    assert "no producer" in message
-    # ...and must NOT be blamed on the independence assumption that only the
-    # additive ladder makes. This is the exact sentence that was wrong. Scoped to the
-    # substitutive clause on purpose: "the ADDITIVE ladder reduces independent
-    # elements" is accurate, and the sibling copy of this rationale in
-    # ``typing_utils/geometry_capabilities.py`` says exactly that.
-    _additive_arm, substitutive_arm = message.split("SUBSTITUTIVE", 1)
-    assert "independent elements" not in substitutive_arm
+    # And NOT by appeal to a missing producer — that was the substitutive arm's
+    # reason, and it no longer applies to anything.
+    assert "no producer" not in message
 
 
 def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
@@ -389,10 +418,10 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
     on geometry type — and mesh supports two of those. Brightening a dimmer splat
     prefix is right; brightening a holed surface is not.
 
-    Prophylactic rather than a live-bug fix (mesh cannot be in a ``kind=lod`` group,
-    and the mesh commit never stamps ``committedEnergyFraction``), so this test is
-    what keeps the rule true once substitutive LOD or a reveal ladder removes one of
-    those latches.
+    Prophylactic rather than a live-bug fix: the mesh commit never stamps
+    ``committedEnergyFraction``, so the compensation factor is 1 today. Substitutive
+    LOD has already removed the other latch (a mesh CAN be in a ``kind=lod`` group
+    now), so this test is what keeps the rule true.
     """
     with LuxarZarrCompiler(tmp_path / "stamps.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -413,21 +442,21 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
         assert scene.add_mesh("plain", _V, _F, opacity=0.5) is not None
 
 
-def test_mesh_names_the_reason_for_the_lod_and_partition_parameters(tmp_path) -> None:
+def test_mesh_names_the_reason_for_the_lod_parameters(tmp_path) -> None:
     """``add_mesh(additive_lod=…)`` must not answer like a typo.
 
-    ``partition`` / ``additive_lod`` / ``substitutive_lod`` are real parameters on the
-    sibling adders, so a caller reaching for one on a mesh spelled a real feature
-    correctly. Without a refusal of its own they fall into ``**attrs`` and come back as
-    "Unknown node attribute … The viewer would silently ignore it. Remove it or use a
-    supported attribute" — and ``partition`` even draws a "Did you mean 'absorption'?"
-    hint. Right outcome, misleading reason: the same defect the ``kind=lod`` parent
-    message carried, in the arm a user is far more likely to hit.
+    ``additive_lod`` is a real parameter on the sibling adders, so a caller
+    reaching for it on a mesh spelled a real feature correctly. Without a refusal
+    of its own it falls into ``**attrs`` and comes back as "Unknown node attribute
+    … The viewer would silently ignore it. Remove it or use a supported
+    attribute". Right outcome, misleading reason.
     """
+    # `substitutive_lod` left this table when the decimator landed and `partition`
+    # when the splitter did — both are real mesh parameters now, covered by
+    # `test_mesh_substitutive_lod.py` and the partition tests below.
+    # `additive_lod` is the one that can never apply to a surface.
     reasons = {
         "additive_lod": "holes",
-        "substitutive_lod": "no producer",
-        "partition": "boundary vertices",
     }
     with LuxarZarrCompiler(tmp_path / "params.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -441,24 +470,32 @@ def test_mesh_names_the_reason_for_the_lod_and_partition_parameters(tmp_path) ->
             assert "Did you mean" not in message
 
 
-def test_partition_group_rejects_mesh_display_type(tmp_path) -> None:
+def test_partition_group_accepts_mesh_display_type(tmp_path) -> None:
+    """The capability table now says mesh partitions, so this route opens with it.
+
+    Kept as the inverse of the LOD test below: the two guards read identically
+    and are driven by the same table, so pinning both is what shows the table is
+    actually consulted rather than the answer hardcoded.
+    """
     with LuxarZarrCompiler(tmp_path / "pd.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        with pytest.raises(ValueError, match="display_type for a partition group"):
-            scene.add_partition_group("p", display_type="mesh", max_elements=100)
+        group = scene.add_partition_group("p", display_type="mesh", max_elements=100)
+        assert group.attrs["display_type"] == "mesh"
 
 
-def test_lod_group_rejects_explicit_mesh_display_type(tmp_path) -> None:
-    """The explicit-kwarg route is gated too, not only the finalize back-fill.
+def test_lod_group_accepts_explicit_mesh_display_type(tmp_path) -> None:
+    """``display_type='mesh'`` is now a valid kind=lod group, by every route.
 
     ``display_type`` is an accepted node attr, so it rides in through ``**attrs``
-    and reaches zarr without passing the back-fill at all — the back-fill only
-    ever sees groups that supplied nothing.
+    and reaches zarr without passing the finalize back-fill at all. It used to be
+    refused there; the gate still exists and still refuses a LOD-less type, but no
+    contract type is LOD-less any more (see
+    ``typing_utils/tests/test_geometry_capabilities.py``).
     """
     with LuxarZarrCompiler(tmp_path / "ld.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        with pytest.raises(ValueError, match="display_type for a kind=lod group"):
-            scene.add_lod_group("l", display_type="mesh")
+        group = scene.add_lod_group("l", display_type="mesh")
+        group.add_mesh("child_0", _V, _F, coverage_fraction=1.0)
 
 
 # =============================================================================
@@ -805,35 +842,29 @@ def test_face_index_width_escalates_past_uint16(tmp_path) -> None:
     )
 
 
-def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_refused(
+def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_accepted(
     tmp_path,
 ) -> None:
-    """The indirection case that ONLY the finalize back-fill catches.
+    """The indirection case, which the finalize back-fill resolves to `mesh`.
 
-    `add_mesh`'s add-time guard inspects the IMMEDIATE parent, so a mesh whose
-    parent is a plain group that itself sits inside a `kind=lod` group sails past
-    it — and the resolved display type still walks down to `mesh`. This is the case
-    that makes the multi-route guard necessary rather than redundant: with only the
-    add-time check, this store would be written with `display_type="mesh"` and load
-    nowhere.
-
-    Unlike the direct case the failure surfaces at finalize, so it is raised from
-    the compiler's context-manager exit rather than from `add_mesh`.
+    A mesh whose parent is a plain group that itself sits inside a `kind=lod` group
+    is invisible to `add_mesh`'s immediate-parent guard, and the back-fill still
+    walks down to `display_type="mesh"`. That combination used to be the argument
+    for the multi-route guard; now it simply resolves to a display type that is
+    legal, and the store finalizes.
     """
-    with pytest.raises(ValueError, match="display_type"):
-        with LuxarZarrCompiler(tmp_path / "nested.luxar.zarr") as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            inner = scene.add_lod_group("ladder").add_group("inner")
-            inner.add_mesh("c0", _V, _F)
+    with LuxarZarrCompiler(tmp_path / "nested.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        inner = scene.add_lod_group("ladder").add_group("inner")
+        inner.add_mesh("c0", _V, _F)
 
 
-def test_mesh_under_nested_lod_groups_is_refused(tmp_path) -> None:
-    """A lod-inside-lod ladder is refused at the innermost add, not silently nested."""
+def test_mesh_under_nested_lod_groups_is_accepted(tmp_path) -> None:
+    """A lod-inside-lod ladder of meshes writes, the same as for the other types."""
     with LuxarZarrCompiler(tmp_path / "ll.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         inner = scene.add_lod_group("l1").add_lod_group("l2")
-        with pytest.raises(ValueError, match="kind=lod"):
-            inner.add_mesh("c0", _V, _F)
+        inner.add_mesh("c0", _V, _F, coverage_fraction=1.0)
 
 
 # =============================================================================
@@ -1177,3 +1208,532 @@ def test_add_mesh_refuses_one_dimensional_vertices(tmp_path):
         scene = compiler.create_scene(dimensions=dims)
         with pytest.raises(ValueError, match="at least 2 dimensions"):
             scene.add_mesh("line-ish", vertices, faces)
+
+
+# =============================================================================
+# partition= (spec §9's lifted exclusion)
+# =============================================================================
+
+# A 6x6 vertex grid triangulated into 50 faces: fully connected, so ANY interior
+# cut is forced to duplicate boundary vertices. The tetrahedron above is too
+# small to split meaningfully.
+_GX, _GY = np.meshgrid(np.arange(6, dtype=np.float32), np.arange(6), indexing="ij")
+_GRID_V = np.stack([_GX.ravel(), _GY.ravel(), np.zeros(36, np.float32)], axis=1)
+_GRID_F = np.asarray(
+    [
+        tri
+        for i in range(5)
+        for j in range(5)
+        for tri in (
+            [i * 6 + j, i * 6 + j + 1, (i + 1) * 6 + j],
+            [i * 6 + j + 1, (i + 1) * 6 + j + 1, (i + 1) * 6 + j],
+        )
+    ],
+    dtype=np.uint32,
+)
+
+
+def _write_partitioned(tmp_path, name="pm", **kwargs):
+    store = tmp_path / f"{name}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(name, _GRID_V, _GRID_F, **kwargs)
+    return store
+
+
+def test_partitioned_mesh_writes_a_partition_group(tmp_path) -> None:
+    store = _write_partitioned(tmp_path, partition={"max_elements": 10})
+    root = zarr.open_group(str(store), mode="r")
+    node = root["pm"]
+    assert node.attrs["kind"] == "partition"
+    assert node.attrs["display_type"] == "mesh"
+    assert node.attrs["max_elements"] == 10
+    assert "position_bounds" in node.attrs
+    parts = [k for k in node.keys() if k.startswith("part_")]
+    assert len(parts) > 1
+
+
+def test_partition_conserves_every_triangle(tmp_path) -> None:
+    """The parts' faces sum to the input's — no triangle dropped or duplicated.
+
+    Read back through the public reader, so this covers the write and the read,
+    not just the in-memory split.
+    """
+    store = _write_partitioned(tmp_path, partition={"max_elements": 10})
+    scene = LuxarScene.load(str(store))
+    total = 0
+    for path in scene.list_meshes():
+        total += int(np.asarray(scene.get_mesh(path).faces).reshape(-1, 3).shape[0])
+    assert total == _GRID_F.shape[0]
+
+
+def test_partitioned_mesh_round_trips_the_same_surface(tmp_path) -> None:
+    """The union of the parts is the SAME set of triangles, in the same places.
+
+    The invariant that matters end-to-end: compare the multiset of corner-position
+    triples, which is invariant to how the parts renumbered their vertices and to
+    what order the BSP emitted them in.
+    """
+    store = _write_partitioned(tmp_path, partition={"max_elements": 10})
+    scene = LuxarScene.load(str(store))
+
+    got = []
+    for path in scene.list_meshes():
+        mesh = scene.get_mesh(path)
+        verts = np.asarray(mesh.vertices, dtype=np.float32)
+        faces = np.asarray(mesh.faces).reshape(-1, 3)
+        got.append(verts[faces])
+    got_tris = np.concatenate(got, axis=0)
+    want_tris = _GRID_V[_GRID_F]
+
+    def _key(tris):
+        return sorted(tuple(np.round(t, 4).ravel().tolist()) for t in tris)
+
+    assert _key(got_tris) == _key(want_tris)
+
+
+def test_partition_duplicates_boundary_vertices(tmp_path) -> None:
+    """Parts carry MORE vertices in total than the input — the cost of the cut.
+
+    Pinned as a positive fact rather than left implicit: it is the mechanism that
+    makes each part independently drawable, and a "fix" that removed it would
+    silently produce parts with out-of-range indices.
+    """
+    store = _write_partitioned(tmp_path, partition={"max_elements": 10})
+    scene = LuxarScene.load(str(store))
+    total_vertices = sum(
+        int(np.asarray(scene.get_mesh(p).vertices).shape[0])
+        for p in scene.list_meshes()
+    )
+    assert total_vertices > _GRID_V.shape[0]
+
+
+def test_partition_parts_index_their_own_vertices(tmp_path) -> None:
+    """Every part's face indices are in range for that part's own vertex array."""
+    store = _write_partitioned(tmp_path, partition={"max_elements": 10})
+    scene = LuxarScene.load(str(store))
+    for path in scene.list_meshes():
+        mesh = scene.get_mesh(path)
+        n = int(np.asarray(mesh.vertices).shape[0])
+        faces = np.asarray(mesh.faces).reshape(-1, 3)
+        assert faces.max() < n
+        assert faces.min() >= 0
+
+
+def test_partition_gathers_per_vertex_normals_and_colors(tmp_path) -> None:
+    """Per-vertex attributes follow their vertices into each part."""
+    normals = np.tile(np.array([[0.0, 0.0, 1.0]], np.float32), (36, 1))
+    colors = np.zeros((36, 3), np.uint8)
+    colors[:, 0] = np.arange(36, dtype=np.uint8)  # per-vertex, so it must be sliced
+    store = _write_partitioned(
+        tmp_path,
+        partition={"max_elements": 10},
+        normals=normals,
+        normal_dims=[0, 1, 2],
+        colors=colors,
+    )
+    scene = LuxarScene.load(str(store))
+    for path in scene.list_meshes():
+        mesh = scene.get_mesh(path)
+        n = int(np.asarray(mesh.vertices).shape[0])
+        assert np.asarray(mesh.normals).shape == (n, 3)
+        assert np.asarray(mesh.colors).shape[0] == n
+
+
+def test_partition_passes_a_uniform_color_through_unsliced(tmp_path) -> None:
+    """A broadcast RGB triple is whole-node, not per-vertex — do not gather it."""
+    store = _write_partitioned(
+        tmp_path, partition={"max_elements": 10}, colors=(255, 128, 0)
+    )
+    scene = LuxarScene.load(str(store))
+    assert len(scene.list_meshes()) > 1
+
+
+@pytest.mark.parametrize("colors", [[1.0, 0.0, 0.0, 0.5], (1.0, 0.0, 0.0, 0.5)])
+def test_partition_uniform_color_survives_a_vertex_count_collision(
+    tmp_path, colors
+) -> None:
+    """A 4-component color on a 4-vertex mesh is still one color, not four rows.
+
+    The broadcast form has to be recognised by SHAPE, not by length. Classifying
+    it by length is silently wrong exactly here: the tetrahedron has as many
+    vertices as an RGBA color has channels, so every part would be handed a
+    rotated 3-slice of the components — itself a valid uniform RGB, so nothing
+    downstream complains. Mesh is where this is reachable rather than theoretical,
+    because a part always holds at least a triangle's worth of vertices.
+    """
+    store = tmp_path / "tet.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh("tet", _V, _F, colors=colors, partition={"max_elements": 1})
+
+    root = zarr.open_group(str(store), mode="r")
+    node = root["tet"]
+    assert node.attrs["kind"] == "partition"
+    parts = [k for k in node.keys() if k.startswith("part_")]
+    assert len(parts) > 1
+    for part in parts:
+        stored = np.asarray(node[part]["colors"]).reshape(-1)
+        assert stored.tolist() == pytest.approx(list(colors)[: stored.size])
+        assert np.allclose(stored[:3], [1.0, 0.0, 0.0])
+
+
+def test_partition_rejects_a_malformed_uniform_color_before_writing(tmp_path) -> None:
+    """A bad broadcast color fails the same way with and without ``partition=``.
+
+    The refusal itself is not new — a part's own writer would reach it — but only
+    after the wrapper and every earlier part are already on disk. Checking the
+    source value up front is what leaves no partial node behind, which is the same
+    fail-fast gate the other per-vertex channels get here.
+    """
+    with pytest.raises(ValueError, match="3 \\(RGB\\) or 4 \\(RGBA\\)"):
+        _write_partitioned(tmp_path, partition={"max_elements": 10}, colors=(255, 128))
+
+    root = zarr.open_group(str(tmp_path / "pm.luxar.zarr"), mode="r")
+    assert "pm" not in root
+
+
+def test_partition_below_the_cap_falls_through_to_a_single_leaf(tmp_path) -> None:
+    """One part is not worth a wrapper — write the plain leaf instead."""
+    store = _write_partitioned(tmp_path, partition={"max_elements": 10_000})
+    root = zarr.open_group(str(store), mode="r")
+    assert root["pm"].attrs.get("kind") != "partition"
+    assert root["pm"].attrs["type"] == "mesh"
+
+
+def test_partition_true_uses_the_default_cap(tmp_path) -> None:
+    store = _write_partitioned(tmp_path, partition=True)
+    root = zarr.open_group(str(store), mode="r")
+    # 50 faces is far under the default cap, so this is a single leaf.
+    assert root["pm"].attrs["type"] == "mesh"
+
+
+@pytest.mark.parametrize("rule", ["median", "midpoint", "sah"])
+def test_partition_accepts_every_bsp_rule(tmp_path, rule: str) -> None:
+    store = _write_partitioned(
+        tmp_path, name=f"r_{rule}", partition={"max_elements": 10, "rule": rule}
+    )
+    scene = LuxarScene.load(str(store))
+    total = sum(
+        int(np.asarray(scene.get_mesh(p).faces).reshape(-1, 3).shape[0])
+        for p in scene.list_meshes()
+    )
+    assert total == _GRID_F.shape[0]
+
+
+def test_partition_rejects_a_bad_rule(tmp_path) -> None:
+    with pytest.raises(ValueError, match="partition rule must be"):
+        _write_partitioned(tmp_path, partition={"max_elements": 10, "rule": "nope"})
+
+
+def test_partition_rejects_a_bad_max_elements(tmp_path) -> None:
+    with pytest.raises(ValueError, match="max_elements must be >= 1"):
+        _write_partitioned(tmp_path, partition={"max_elements": 0})
+
+
+def test_partition_rejects_a_bad_type(tmp_path) -> None:
+    with pytest.raises((TypeError, ValueError), match="partition must be"):
+        _write_partitioned(tmp_path, partition="yes")
+
+
+def test_partition_rejects_image_labels(tmp_path) -> None:
+    """Splitting a whole-node image-to-label map would change what it indexes."""
+    with pytest.raises(ValueError, match="image_labels is not supported"):
+        _write_partitioned(
+            tmp_path,
+            partition={"max_elements": 10},
+            image_labels=[np.zeros((2, 2, 3), np.uint8)] * 36,
+        )
+
+
+def test_partition_gathers_per_vertex_labels(tmp_path) -> None:
+    """``labels`` is PER-VERTEX (hover tooltips), so it must follow its vertices.
+
+    Regression pin. The first cut of the partition wrapper passed ``labels``
+    whole to every part, on the mistaken reading that it was a whole-node
+    category vocabulary — which would give each part V labels for its own Vi
+    vertices. Nothing else in this file caught it, because every other assertion
+    is about geometry.
+    """
+    labels = [f"v{i}" for i in range(36)]
+    store = _write_partitioned(tmp_path, partition={"max_elements": 10}, labels=labels)
+
+    # MeshData does not surface labels, so read the CSR the writer produced.
+    # `write_labels_csr` raises when len(labels) != n_elements, so the old
+    # pass-labels-whole behaviour failed at WRITE time — this test would not even
+    # reach its assertions.
+    root = zarr.open_group(str(store), mode="r")
+    node = root["pm"]
+    part_names = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(part_names) > 1
+
+    seen: list[str] = []
+    for part_name in part_names:
+        part = node[part_name]
+        offsets = np.asarray(part["label_offsets"])
+        raw = bytes(np.asarray(part["label_bytes"]).tobytes())
+        n_vertices = int(np.asarray(part["vertices"]).shape[0])
+        assert offsets.shape[0] == n_vertices + 1, (
+            f"{part_name}: {offsets.shape[0] - 1} labels for {n_vertices} vertices"
+        )
+        got = [
+            raw[int(offsets[i]) : int(offsets[i + 1])].decode("utf-8")
+            for i in range(n_vertices)
+        ]
+        assert set(got) <= set(labels), f"{part_name} invented a label"
+        seen.extend(got)
+
+    # Every input label survives somewhere (boundary ones appear more than once,
+    # which is the same duplication the vertices undergo).
+    assert set(seen) == set(labels)
+
+
+def test_partition_accepts_extend_to_all(tmp_path) -> None:
+    """``partition=`` and ``extend_to_all=`` must compose.
+
+    They did not: the branch runs AFTER the resolved dimension list is folded
+    into ``**attrs``, so the split was handed ``extend_to_all`` twice — once by
+    name and once through the dict — and every partitioned mesh with a resolved
+    extension died on a duplicate keyword argument before splitting anything.
+    """
+    from luxar.core import Dimension
+
+    dims = Dimensions(
+        [
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+            Dimension("t", display=False, discrete=True, range=(0, 4)),
+        ]
+    )
+    vertices = np.concatenate([_GRID_V, np.zeros((36, 1), np.float32)], axis=1)
+
+    store = tmp_path / "ext.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh(
+            "pm", vertices, _GRID_F, partition={"max_elements": 10}, extend_to_all=["t"]
+        )
+
+    root = zarr.open_group(str(store), mode="r")
+    node = root["pm"]
+    assert node.attrs["kind"] == "partition"
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    # The visibility extension reaches every part, not just the wrapper.
+    for part_name in parts:
+        assert node[part_name].attrs["extend_to_all"] == ["t"]
+
+
+@pytest.mark.parametrize(
+    "mutate, match",
+    [
+        (lambda f: f.astype(np.int64) * 0 - 1, "Face index -1 < 0"),
+        (lambda f: np.where(f == 0, 999, f), "out of range"),
+        (lambda f: f.astype(np.float32), "integer array"),
+    ],
+    ids=["negative", "out-of-range", "float"],
+)
+def test_partition_validates_faces_the_same_way_a_plain_leaf_does(
+    tmp_path, mutate, match
+) -> None:
+    """Bad indices must be refused BEFORE the split gathers anything.
+
+    The split runs ahead of the writer's own gate, and each of these failed
+    differently there: numpy WRAPS a negative index, so ``-1`` silently became
+    the last vertex and wrote a triangle the author never wound, while the other
+    two escaped as a bare ``IndexError`` from inside the centroid gather.
+    """
+    with pytest.raises(ValueError, match=match):
+        with LuxarZarrCompiler(tmp_path / "bad.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "pm", _GRID_V, mutate(_GRID_F), partition={"max_elements": 10}
+            )
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        (
+            {"normals": np.zeros((6, 3), np.float32), "normal_dims": (0, 1, 2)},
+            "Normals count",
+        ),
+        ({"colors": np.zeros((6, 3), np.uint8)}, "colors"),
+        ({"scalars": np.zeros(6, np.float32), "colormap": "viridis"}, "scalars"),
+        ({"labels": ["a"] * 6}, "labels"),
+    ],
+    ids=["normals", "colors", "scalars", "labels"],
+)
+def test_partition_validates_per_vertex_lengths_against_the_source(
+    tmp_path, kwargs, match
+) -> None:
+    """A wrong-length per-vertex input is refused, not quietly broadcast.
+
+    ``slice_optional_array`` gathers only when the leading length matches the
+    vertex count and otherwise passes the value through WHOLE — which is what
+    makes a uniform RGB triple work, and what would hand a 6-entry per-vertex
+    array to every part of this 36-vertex grid. Any part whose own vertex count
+    happened to be 6 would then accept it and pair the values with the wrong
+    vertices. The same input raises without ``partition=``, so it must raise with
+    it.
+    """
+    with pytest.raises(ValueError, match=match):
+        with LuxarZarrCompiler(tmp_path / "badattr.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "pm", _GRID_V, _GRID_F, partition={"max_elements": 10}, **kwargs
+            )
+
+
+@pytest.mark.parametrize(
+    "partition",
+    [{"max_elements": 10}, True, 0],
+    ids=["dict", "true", "zero"],
+)
+def test_partition_with_substitutive_lod_is_refused_before_any_write(
+    tmp_path, partition
+) -> None:
+    """The two structural branches cannot compose, and must not silently pick one.
+
+    The substitutive branch RETURNS before the partition branch is reached, so an
+    accepted combination writes a ladder and drops the split with no diagnostic.
+
+    ``partition=0`` is the case that made the guard and the dispatch disagree: the
+    guard tested ``partition not in (None, False)``, which compares by EQUALITY, so
+    ``0 == False`` read as "no partition requested" — while the dispatch's identity
+    test read the same value as requested. The result was the silent drop this
+    refusal exists to prevent.
+    """
+    with pytest.raises(ValueError, match="cannot be combined") as excinfo:
+        _write_partitioned(tmp_path, partition=partition, substitutive_lod=True)
+
+    # UNWRAPPED, which is what "before any write" means here: the adder's funnel
+    # re-raises everything inside its `try` as "Could not add mesh '<name>': …",
+    # so that prefix appearing would mean the guard had moved into the try — and
+    # `cannot be combined` matches the wrapped form just as happily, so the
+    # message alone cannot tell the two apart.
+    assert "Could not add mesh" not in str(excinfo.value)
+
+    # Raised outside the write funnel, so not one byte of the node exists.
+    root = zarr.open_group(str(tmp_path / "pm.luxar.zarr"), mode="r")
+    assert "pm" not in root
+
+
+def test_partition_with_substitutive_lod_False_still_partitions(tmp_path) -> None:
+    """``substitutive_lod=False`` is "no ladder", not "a ladder was requested".
+
+    ``resolve_substitutive_axis_mesh`` documents and implements ``False`` as an
+    explicit no-op, so a caller who wrote it asked for exactly one feature — the
+    partition — and the combination guard must not refuse them.
+    """
+    store = _write_partitioned(
+        tmp_path, partition={"max_elements": 10}, substitutive_lod=False
+    )
+    root = zarr.open_group(str(store), mode="r")
+    node = root["pm"]
+    assert node.attrs["kind"] == "partition"
+    assert len([k for k in node.keys() if k.startswith("part_")]) > 1
+    # No ladder anywhere: a kind=lod group would have `child_*` members instead.
+    assert not any(k.startswith("child_") for k in node.keys())
+
+
+def test_partition_False_writes_a_plain_leaf(tmp_path) -> None:
+    """The sentinel the per-part recursion passes, exercised on its own.
+
+    Every part is written with ``partition=False`` and no ``substitutive_lod``, so
+    a guard that treated ``False`` as a request would break the recursion from the
+    inside — after the wrapper and the earlier parts were already on disk.
+    """
+    store = _write_partitioned(tmp_path, partition=False)
+    root = zarr.open_group(str(store), mode="r")
+    assert root["pm"].attrs["type"] == "mesh"
+    assert root["pm"].attrs.get("kind") != "partition"
+
+
+def test_partition_stamps_ONE_scalar_data_range_on_every_part(tmp_path) -> None:
+    """An explicit display window must span all parts, not each part's own subset.
+
+    The viewer windows a node's colormap on that node's OWN stamped
+    `scalar_data_range`, and a BSP cut splits the field — so per-part min/max maps
+    the same scalar value to a different colour either side of the cut. The caller's
+    `_scalar_data_range` was validated and then dropped on this path, which is
+    exactly the pop the substitutive ladder's shared window exists to avoid, one
+    topology across.
+
+    A PEAKED field makes it visible: one hot vertex lands in one part, so without
+    the shared window that part alone stamps a range reaching 100.
+    """
+    scalars = np.zeros(36, np.float32)
+    scalars[0] = 100.0
+    store = _write_partitioned(
+        tmp_path,
+        partition={"max_elements": 10},
+        scalars=scalars,
+        colormap="viridis",
+        _scalar_data_range=(0.0, 100.0),
+    )
+    root = zarr.open_group(str(store), mode="r")
+    node = root["pm"]
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    ranges = {tuple(node[p].attrs["scalar_data_range"]) for p in parts}
+    assert ranges == {(0.0, 100.0)}, f"parts window on different ranges: {ranges}"
+    # The private plumbing key is consumed, never stamped.
+    assert all("_scalar_data_range" not in node[p].attrs for p in parts)
+
+
+def test_partition_shares_the_derived_window_without_an_explicit_one(tmp_path) -> None:
+    """The DEFAULT `scalars=` call shares a window too — no explicit one needed.
+
+    Forwarding only the caller's explicit window helps the minority of callers who
+    pass one. Everyone else got each part stamping its own subset min/max, which is
+    the same colour discontinuity at every BSP cut — and worse for a part whose
+    subset happens to be constant: a degenerate `[v, v]`, which the viewer's
+    `computeScalarRangeUniforms` maps to the LUT midpoint. The peaked field makes
+    both failures visible at once (measured before the fix: `part_0 -> [0, 100]`,
+    every other part `[0, 0]`).
+    """
+    scalars = np.zeros(36, np.float32)
+    scalars[0] = 100.0
+    store = _write_partitioned(
+        tmp_path,
+        partition={"max_elements": 10},
+        scalars=scalars,
+        colormap="viridis",
+    )
+    node = zarr.open_group(str(store), mode="r")["pm"]
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    ranges = {tuple(node[p].attrs["scalar_data_range"]) for p in parts}
+    assert ranges == {(0.0, 100.0)}, f"parts window on different ranges: {ranges}"
+    # Restated on purpose: a shared window is the fix, a non-degenerate one is the
+    # property that makes the colormap usable at all.
+    assert all(lo < hi for lo, hi in ranges)
+
+
+def test_partition_shares_a_window_NARROWER_than_the_field(tmp_path) -> None:
+    """An explicit window that does not contain the field is still shared.
+
+    `write_scalars` widens (never narrows) the supplied pair onto each node's own
+    values, because it is also that node's quantization range. So forwarding a
+    too-narrow window verbatim let every part widen it differently — the same
+    per-part discontinuity, reintroduced by the one input that looks like it asks
+    for the opposite. Unioning with the whole field up front makes every part
+    stamp the window a plain leaf over the same field would.
+    """
+    scalars = np.zeros(36, np.float32)
+    scalars[0] = -10.0
+    scalars[-1] = 10.0
+    store = _write_partitioned(
+        tmp_path,
+        partition={"max_elements": 10},
+        scalars=scalars,
+        colormap="viridis",
+        _scalar_data_range=(0.0, 1.0),
+    )
+    node = zarr.open_group(str(store), mode="r")["pm"]
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    ranges = {tuple(node[p].attrs["scalar_data_range"]) for p in parts}
+    assert ranges == {(-10.0, 10.0)}, f"parts window on different ranges: {ranges}"

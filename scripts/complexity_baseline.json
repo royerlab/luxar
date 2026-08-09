@@ -181,10 +181,10 @@
     "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_kaggle.py::generate_paper_landscape": [
       16
     ],
-    "packages/luxar/src/luxar/demos/demo_arxiv_paper_embeddings.py::generate_paper_landscape": [
+    "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_semantic_scholar.py::generate_paper_landscape": [
       11
     ],
-    "packages/luxar/src/luxar/demos/demo_arxiv_paper_embeddings.py::main": [
+    "packages/luxar/src/luxar/demos/demo_arxiv_embeddings_semantic_scholar.py::main": [
       11
     ],
     "packages/luxar/src/luxar/demos/demo_atp_synthase.py::main": [
@@ -539,7 +539,7 @@
       40
     ],
     "packages/luxar/src/luxar/io/_compiler/geometry_writers/mesh.py::write_mesh": [
-      22
+      12
     ],
     "packages/luxar/src/luxar/io/_compiler/geometry_writers/points.py::write_points": [
       31

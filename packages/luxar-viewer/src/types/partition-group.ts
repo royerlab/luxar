@@ -48,13 +48,19 @@ export interface PartitionGroupMetadata {
    * Spelled out rather than `GeometryTypeName`: this is the PARTITION-CAPABLE
    * subset of the vocabulary, so do not widen it when a geometry type is added —
    * declare that type's `partition` capability in `types/geometry-capabilities`
-   * instead, and extend this union only if it comes out `true`.
+   * instead, and extend this union only if it comes out `true`. It happens to
+   * cover the whole vocabulary today (mesh's `partition` flag is now `true`),
+   * which does NOT make it the vocabulary — a future type may answer `false`.
    */
-  display_type: 'points' | 'lines' | 'gsplats';
+  display_type: 'points' | 'lines' | 'gsplats' | 'mesh';
 
   /**
    * Per-part element cap that drove the BSP recursion. Recorded for
    * diagnostics and for future partition-aware tools.
+   *
+   * "Element" is the drawn primitive of `display_type`, so for `'mesh'` this
+   * counts FACES, not vertices — the BSP recurses on face centroids and a part's
+   * vertex count is whatever its faces happen to reference.
    */
   max_elements: number;
 

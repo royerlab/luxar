@@ -364,6 +364,7 @@ def generate_spiral_galaxy(
                 opacity=0.9,
                 blending_mode="additive",
                 intensity=0.278,
+                layer=True,
             )
 
             # Overlay annotations

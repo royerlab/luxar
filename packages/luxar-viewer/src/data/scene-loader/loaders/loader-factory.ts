@@ -246,9 +246,11 @@ export function createMeshLoader(
 /**
  * Refuse to build a progressive (multi-LOD) mesh loader.
  *
- * Mesh has no LOD path at all — no decimation, no additive ladder
- * (`docs/specs/MESH_NODE_SPEC.md` §9) — and the Python side already refuses to
- * write a mesh under a `kind=lod` group. This exists because
+ * Mesh has no ADDITIVE (prefix) ladder: a prefix of an index buffer is a surface with
+ * holes in it, not a coarser one, so that flavour is excluded on principle
+ * (`docs/specs/MESH_NODE_SPEC.md` §9). SUBSTITUTIVE levels are a different shape and DO
+ * work — sibling children of a `kind=lod` group, written by
+ * `add_mesh(substitutive_lod=…)` — and they never route through here. This exists because
  * `GeometryDescriptor` requires the factory for every drawable kind, and the
  * honest implementation of "this kind cannot do that" is a clear throw rather than
  * a silent fallback to the single-LOD loader.
@@ -266,9 +268,11 @@ export function createProgressiveMeshLoader(
 ): Promise<MeshDataLoader> {
   return Promise.reject(
     new Error(
-      `Mesh node ${node.path} declares additive sub-LODs, but mesh has no LOD path ` +
-        '(MESH_NODE_SPEC.md §9): there is no decimation and no additive ladder. ' +
-        'Write the mesh as a plain leaf.'
+      `Mesh node ${node.path} declares additive sub-LODs, but mesh has no additive ` +
+        '(prefix) ladder (MESH_NODE_SPEC.md §9): a prefix of an index buffer is a ' +
+        'surface with holes, not a coarser one. Write the mesh as a plain leaf, or use ' +
+        'substitutive levels — add_mesh(substitutive_lod=...) — which are separate ' +
+        'kind=lod children, not sub-LODs inside this node.'
     )
   );
 }

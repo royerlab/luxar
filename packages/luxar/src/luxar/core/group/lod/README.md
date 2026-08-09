@@ -3,8 +3,8 @@
 Helpers for the **LOD-kind `Group`** — a scene-graph group that selects one of
 N alternative children at runtime based on a view-driven metric (currently: the
 projected bbox diagonal in pixels). The LOD group is geometry-agnostic: its
-children can be `points`, `lines`, `gsplats`, or themselves a specialized group
-(`kind=lod` / `kind=partition`).
+children can be `points`, `lines`, `gsplats`, `mesh`, or themselves a specialized
+group (`kind=lod` / `kind=partition`).
 
 This package splits cleanly into two layers:
 
@@ -12,10 +12,11 @@ This package splits cleanly into two layers:
   `coverage_fraction` monotonicity invariant, the `kind=lod` validator, and the
   shared display-type resolver. Shared by every leaf geometry and by the
   Partition kind.
-- **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`) —
-  one peer per leaf type, interpreting the `additive_lod=` (and, for gsplats,
-  `lod_group=`) convenience kwargs that `add_points` / `add_lines` /
-  `add_gsplats_from_data` accept.
+- **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`,
+  `mesh.py`) — one peer per leaf type, interpreting the `additive_lod=` /
+  `substitutive_lod=` (and, for gsplats, `lod_group=`) convenience kwargs that
+  `add_points` / `add_lines` / `add_gsplats_from_data` / `add_mesh` accept; mesh
+  takes `substitutive_lod=` only.
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are pure-NumPy
 ordering primitives shared by the Points and Lines resolvers.
@@ -28,6 +29,7 @@ lod/
 ├── points.py           # Points additive-LOD ordering + ladder construction + resolver
 ├── lines.py            # Lines additive-LOD (per-polyline) ordering + ladder + resolver
 ├── gsplats.py           # GSplats substitutive + additive axis resolvers
+├── mesh.py             # Mesh substitutive axis resolver (decimation, not lift-to-gsplats)
 ├── spatial_uniform.py  # Stratified-grid sampler (default spatial-uniform ordering)
 └── poisson_disk.py     # Bridson blue-noise sampler (opt-in alternative)
 ```
@@ -56,12 +58,16 @@ See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.3 node-tree grammar
 ## Geometry-agnostic machinery (`group.py`)
 
 Each LOD-group child carries a `coverage_fraction` attribute — a **dimensionless,
-viewport-relative** threshold in `[0, 1]`, strictly monotonic increasing in
-coarsest→finest order (coarsest = `0.0`, finest = `1.0`). At render time the
+viewport-relative** threshold, strictly monotonic increasing in coarsest→finest
+order (coarsest = `0.0`; a WHOLE-OBJECT ladder anchors its finest at `1.0`, while a
+ladder bound to a spatial partition — and any explicitly authored list — may go up
+to `MAX_COVERAGE_FRACTION` = `4.0`). At render time the
 viewer multiplies each child's `coverage_fraction` by the current viewport
-diagonal (in pixels, times a small fill-factor constant) and picks the finest
-child whose resulting pixel threshold is satisfied by the group's on-screen
-size — so the finest level activates when the object fills the screen,
+diagonal (in pixels, times a fill-factor constant of `0.25`) and picks the
+finest child whose resulting pixel threshold is satisfied by the group's
+on-screen size — so the finest level activates once the object's projected
+bbox diagonal reaches about a quarter of the viewport diagonal, i.e. at any
+normal full-frame view, and coarser levels step in as it shrinks below that,
 identically on any monitor/viewport.
 
 | Symbol | Purpose |
@@ -71,18 +77,22 @@ identically on any monitor/viewport.
 | `resolve_display_type(node)` | The geometry type a node appears as to the user. For `kind in (lod, partition)` returns the recorded `display_type`; else the node's own `type`. Shared with the Partition kind's validator. |
 | `compute_lod_display_type(children)` | Derive an LOD group's `display_type` from its finest (last) child, recursing through nested specialized groups. |
 | `_assert_strict_ascending(thresholds, source)` | The shared monotonicity guard, applied by both the explicit-`coverage_fractions=` resolver paths and `coverage_fractions()`. |
-| `_apply_monotonicity_guard(thresholds, source)` | Defensive relative (×1.1) bump so near-equal/degenerate levels still separate strictly, before the trailing `_assert_strict_ascending` check. |
+| `_apply_monotonicity_guard(thresholds, source)` | Defensive relative (×1.1) bump so near-equal/degenerate levels still separate strictly, before the trailing `_assert_strict_ascending` check. Also caps the finest at the `1.0` anchor, so **derived** output always stays in `[0, 1]`. |
+| `partitioned_coverage_fractions(element_counts)` | **The partition-bound anchor.** `coverage_fractions(...)` scaled by `MAX_COVERAGE_FRACTION`, so the finest lands on `4.0` — what `1.0` meant before the viewer's anchor moved. Used wherever a spatial partition is part of the switch: the `adaptive` recipe's per-tile lod groups, and the `overview` recipe's coarse-cap/fine-partition pair. A tile's projected diagonal is intrinsically a fraction of the whole object's, so the whole-object anchor would put every tile on its finest level while the object is merely full-frame. **A ONE-part partition is excluded** — its single part covers the whole object, so `coverage_fractions` applies (`build_adaptive` and both tree writers' topology fallbacks special-case it). |
+| `MAX_COVERAGE_FRACTION` | `4.0` — the upper bound accepted for an **explicit** `coverage_fractions=[...]` list, shared by the points/lines and gsplats resolvers. It is `1 / FILL_FACTOR`: the coverage metric a *screen-filling* object produces, i.e. "a level may be required to fill the screen, at most" — exactly what `1.0` meant before the viewer's anchor moved from screen-filling to quarter-viewport. |
 
 **No tunable anchor.** There is no method selector or per-dataset knob (the
 former `extent`/`count` methods and `base_pixel_size`/`extent_percentile`/
-`extent_anisotropy` are gone) — the viewport anchors the finest level at
-fills-screen automatically, so the switch point self-calibrates to whatever
-monitor/window the viewer runs in.
+`extent_anisotropy` are gone) — the viewport anchors the finest level at a
+quarter of the live viewport diagonal automatically, so the switch point
+self-calibrates to whatever monitor/window the viewer runs in.
 
 ## Per-geometry resolvers
 
-All three resolvers share a `None | bool | dict` value vocabulary for the
-convenience kwargs, but the semantics differ per geometry.
+All four resolvers share a `None | bool | dict` value vocabulary for the
+convenience kwargs, but the semantics differ per geometry. Mesh's differs most —
+it decimates instead of lifting to gsplats, so it rejects the four lift-only keys;
+see the `mesh.py` module docstring.
 
 ### Points (`points.py`)
 
@@ -128,7 +138,8 @@ kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 `method`, `truncation_radius`, `device`, `seed`, `coverage_fractions`
 (explicit per-level viewport-relative thresholds, strict-ascending in
-`[0, 1]`), `coarsen_dims`, `max_aspect` (per-splat anisotropy cap on the
+`[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`
+(per-splat anisotropy cap on the
 coarse levels, default 3.0; `None` disables)).
 `add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
 
@@ -245,11 +256,13 @@ resolvers:
 - `resolve_substitutive_axis_gsplats(data, spec)` — the `lod_group=` axis.
   Returns `(resolved_data, explicit_coverage_fractions_or_None)`.
   `explicit_coverage_fractions` is non-None only when the user passed
-  `dict(coverage_fractions=[...])` (strict-ascending, in `[0, 1]`) —
+  `dict(coverage_fractions=[...])` (strict-ascending, in
+  `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`) —
   otherwise downstream code auto-derives per-level thresholds from splat
   counts via `group.coverage_fractions` (`sqrt(N_i/N_finest)`). There is no
   method selector or per-dataset anchor knob: the viewer anchors the finest
-  level at fills-screen via the live viewport. `None` auto-keeps a
+  level at a quarter of the live viewport diagonal — any normal full-frame
+  view. `None` auto-keeps a
   multi-substitutive pyramid (routes to the `kind=lod` builder, no work
   discarded); `False` collapses to the finest level (index 0); `True`
   requires a stored pyramid; `dict(...)` reuses a stored pyramid or computes

@@ -10,7 +10,9 @@ from `luxar.core.gsplats`.
 
 | Module | Purpose |
 |---|---|
+| [`decimate.py`](decimate.py) | Produce a genuinely coarser SURFACE — the producer a substitutive LOD ladder needs. `cluster` snaps vertices to a grid, collapses each occupied cell to its centroid, reindexes the faces and drops the triangles that collapsed. Vectorized NumPy, no new dependencies. |
 | [`interop/`](interop/README.md) | Import classical mesh files — PLY, OBJ, STL, glTF/GLB — into a `TriangleMesh`, the intermediate the CLI writes into a scene. NumPy + stdlib only, no new dependencies. |
+| `split.py` | Split a mesh into spatially disjoint, independently drawable parts by face. The bookkeeping behind `add_mesh(partition=…)`. |
 
 ## Why this is not `luxar.core.mesh`
 
@@ -43,13 +45,32 @@ scene.add_mesh(
 luxar mesh import bunny.ply bunny.luxar.zarr
 ```
 
+## Splitting a mesh into parts
+
+Unlike Points / Lines / GSplats, a mesh cannot be partitioned by slicing its element
+arrays: a triangle is not an independent row, it is three references into a shared vertex
+table. `split.py` does the re-indexing instead — faces are assigned whole to a part (the
+BSP splits on face centroids, so no triangle is ever cut), each part gathers the vertices
+its own faces use, and those faces are renumbered against the gathered table. A vertex on
+the cut is **duplicated** into both parts, which is what lets each part stand alone as a
+drawable leaf.
+
+It is used through `add_mesh(partition=…)` rather than directly, and it returns index
+bookkeeping only — the caller gathers per-vertex attributes through `MeshPart.vertex_index`,
+which keeps the splitter ignorant of the attribute set.
+
 ## Not here
 
 - **The `Mesh` node class, the writer, and the reader** — `luxar.core.mesh`,
   `luxar.io._compiler.geometry_writers.mesh`, `luxar.io.reader`.
-- **Decimation / LOD.** Mesh has no LOD ladder yet: the additive prefix flavour cannot
-  apply to a surface at all, and substitutive levels are missing only a producer (QEM).
-  See `docs/specs/MESH_NODE_SPEC.md` §9. When that producer lands, `luxar/mesh/simplify/`
-  is where it belongs.
+- **An *additive* (prefix) LOD ladder.** That flavour cannot apply to a surface at all —
+  a prefix of an index buffer is a surface with holes in it, not a coarser one — so it is
+  refused on principle. *Substitutive* levels, which were missing only a producer, now
+  work: `decimate.py` above is that producer (vertex clustering; a Garland-Heckbert
+  `qem` tier is the one this is shaped to admit next, issue #1348), and
+  `add_mesh(substitutive_lod=…)` writes the resulting `kind=lod` group. Partitioning
+  (`split.py`, above) is a *different* axis and also ships — it divides one surface in
+  space rather than approximating it at lower detail, and the two cannot be combined in
+  one `add_mesh` call. See `docs/specs/MESH_NODE_SPEC.md` §9.
 - **Export.** The inverse direction (`.luxar.zarr` → PLY/OBJ/STL) has no consumer yet;
   `gsplats/interop/inria_export.py` is the shape it would take.
