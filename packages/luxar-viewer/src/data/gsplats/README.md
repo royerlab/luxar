@@ -35,6 +35,22 @@ Scene-loader code never imports the concrete class — it goes through
   LOD adds residual detail. `GSplatsProgressiveLoader` concatenates
   loaded LODs in order, so the brightest splats are always present
   first regardless of how many LODs have streamed in.
+- The picking slot → on-disk element index map is composed at
+  **projection** time, not load time (issue #1423). GSplats projection —
+  and with it the hidden-dim visibility compaction that renumbers the
+  slots — runs downstream of the loader, so the loader only publishes
+  its half: `LoadedGSplatsData.ranges`, and only for a node declaring
+  `has_labels` / `has_image_labels`. The fused kernel records the
+  surviving source indices, `data-processor-gsplats.ts` composes the two
+  via `buildElementIdMap`, and `commit-gsplats-geometry.ts` stamps the
+  result onto the MESH (`types/committed-data::setElementIdMap`) — never
+  onto the loaded payload, which can be a SliceCache-owned snapshot whose
+  byte size was measured at store time and which must not be mutated.
+  A ladder payload must never carry the loader's half: a sub-LOD's ranges
+  are in that level's on-disk space, so `concatenateGSplatsData` strips
+  `ranges`, the one such field on `LoadedGSplatsData`. The composed map
+  never passes through the concat at all — it lives one stage later, on
+  `ProcessedGSplatsData` (per-level labels are #1422).
 - Hidden-dim attenuation uses **marginal** Σ, not conditional. The
   marginal path is correct for diagonal hidden-display covariance
   (the typical case for time-stamped / channel-stamped splats). See the

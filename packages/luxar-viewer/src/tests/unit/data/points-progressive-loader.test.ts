@@ -1187,3 +1187,54 @@ describe('buildSliceViewSig extend_to_all membership (shared helper)', () => {
     expect(buildSliceViewSig(view(1e10))).toBe(buildSliceViewSig(view(2e10)));
   });
 });
+
+describe('PointsProgressiveLoader — elementIds are never published (issue #1421)', () => {
+  // A ladder payload must NEVER carry a slot → on-disk map: each part is a
+  // sub-LOD (`additive_<i>`) with its own on-disk index space. The
+  // single-part branch is the FIRST-PAINT state of every ladder, not an
+  // "unladdered node", so passing `parts[0]` through verbatim would make
+  // hover report an additive_0 index until a second level lands and then
+  // silently switch to the raw slot.
+  function labelledLod(pointCount: number, firstOnDisk: number): LoadedPointsData {
+    const data = makeLodData(pointCount, 3, { color: 'uint8' });
+    const ids = new Uint32Array(pointCount);
+    for (let i = 0; i < pointCount; i++) ids[i] = firstOnDisk + i;
+    data.elementIds = ids;
+    return data;
+  }
+
+  it('strips the sub-LOD map on the single-part passthrough', async () => {
+    const lod0 = labelledLod(10, 2048);
+    const a = makeSubLoader(lod0);
+    const loader = new PointsProgressiveLoader(
+      [a] as unknown as PointsSpatialIndexLoader[],
+      1,
+      '/points'
+    );
+    const result = await loader.loadPoints(baseViewState);
+    expect(result.pointCount).toBe(10);
+    expect(result.elementIds).toBeUndefined();
+    // Non-destructive: the strip is a copy, so the sub-LOD's OWN payload must
+    // still carry its intact map (a `delete only.elementIds` refactor would
+    // corrupt the level the accumulator still owns).
+    expect(lod0.elementIds).toBeInstanceOf(Uint32Array);
+    expect(lod0.elementIds!.length).toBe(10);
+    expect(lod0.elementIds![0]).toBe(2048);
+  });
+
+  // FENCE, not evidence of the fix: the multi-part branch always built a fresh
+  // literal that never named `elementIds`, so this passed before the change
+  // too. It exists so a future "helpfully concatenate it" edit breaks a test.
+  it('does not concatenate maps across levels (regression fence)', async () => {
+    const a = makeSubLoader(labelledLod(10, 2048));
+    const b = makeSubLoader(labelledLod(5, 4096));
+    const loader = new PointsProgressiveLoader(
+      [a, b] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points'
+    );
+    const result = await loader.loadPoints(baseViewState);
+    expect(result.pointCount).toBe(15);
+    expect(result.elementIds).toBeUndefined();
+  });
+});

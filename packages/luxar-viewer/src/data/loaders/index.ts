@@ -17,6 +17,8 @@
  * - **color-loader.ts** — color-attribute encode/decode shared by the three
  *   spatial-index loaders and the mesh whole-node loader.
  * - **chunk-bounds-loader.ts** — zarr chunk-bounds probe (layer below spatial-query).
+ * - **element-ids.ts** — slot → on-disk element index map composition, shared
+ *   by the Points and GSplats projections (picking's label lookup).
  * - **loader-metrics.ts**, **monitor-events.ts**, **once-init.ts**,
  *   **extend-to-all-preflight.ts** — small cross-cutting helpers used by every
  *   spatial loader.
@@ -111,6 +113,8 @@ export {
   type FacadeViewState,
   type FacadeMetrics,
 } from './spatial-facade';
+
+export { buildElementIdMap, type ElementIdRange } from './element-ids';
 
 export { LoaderEventEmitter } from './monitor-events';
 

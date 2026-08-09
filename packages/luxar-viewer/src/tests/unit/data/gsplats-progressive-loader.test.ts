@@ -1037,6 +1037,46 @@ describe('GSplatsProgressiveLoader — committedEnergyFraction (quality stamps)'
   });
 });
 
+describe('concatenateGSplatsData — picking index-space fields (issue #1423)', () => {
+  // A ladder payload must never publish `ranges`: they live in the SUB-LOD's
+  // on-disk index space, while the pick path resolves labels against the
+  // PARENT node. `parts.length === 1` is the first-paint state of EVERY
+  // ladder, not an "unladdered" node, so the single-part passthrough is
+  // exactly where a per-level map would leak. (Per-level labels are #1422.)
+  it('strips ranges from a single-part passthrough', () => {
+    const only: LoadedGSplatsData = {
+      ...makeLodData(4),
+      ranges: [{ start: 2048, end: 2052 }],
+    };
+
+    const merged = concatenateGSplatsData([only]);
+
+    expect(merged.ranges).toBeUndefined();
+    // The strip is a shallow copy — the caller's payload is left intact.
+    expect(merged).not.toBe(only);
+    expect(only.ranges).toBeDefined();
+    expect(merged.splatCount).toBe(4);
+    expect(merged.positions).toBe(only.positions);
+  });
+
+  it('returns the single part by REFERENCE when it carries no ranges', () => {
+    // The memoized-concat no-op commit keys on reference identity, so the
+    // common (unlabelled) case must not start minting new objects.
+    const only = makeLodData(4);
+    expect(concatenateGSplatsData([only])).toBe(only);
+  });
+
+  it('does not concatenate ranges across multiple parts', () => {
+    const a: LoadedGSplatsData = { ...makeLodData(3), ranges: [{ start: 0, end: 3 }] };
+    const b: LoadedGSplatsData = { ...makeLodData(2), ranges: [{ start: 10, end: 12 }] };
+
+    const merged = concatenateGSplatsData([a, b]);
+
+    expect(merged.splatCount).toBe(5);
+    expect(merged.ranges).toBeUndefined();
+  });
+});
+
 describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', () => {
   // Regression for a bug found in double-check: the additive-ladder color
   // concat hardcoded a stride of 3, so an RGBA ladder (what imported 3DGS

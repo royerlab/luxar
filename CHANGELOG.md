@@ -40,6 +40,122 @@ byte-compile-smoke only, where `py_compile` never resolves an import. Both
 detectors are exercised against a synthetic tree, not only against the clean one
 they now describe.
 
+#### Hover labels index the right point (#1421)
+
+`PickResult.elementId` was the storage slot in the buffer that reached the GPU, never
+the on-disk element index the per-element label CSR (`label_offsets` / `label_bytes`)
+is keyed by — so a hover tooltip showed a wrong-but-plausible neighbour's label
+whenever the two index spaces diverged. For Points they diverge two independent ways:
+the spatial index concatenates only the visible on-disk ranges, and the
+effective-radius pass compacts zero-radius points out in place. Measured on a 4D scene
+with a hidden categorical axis and `chunk_size=2048`, the first visible point reported
+`elementId = 0` while its on-disk index was 2048 — every label in the scene off by a
+whole chunk.
+
+`projectPointsTo3D` now publishes the slot → on-disk map as
+`LoadedPointsData.elementIds` (a field that had been declared, and documented as
+exactly this hazard, with no producer), and picking resolves through it at the single
+`PickResult` construction site, so the `{hover_index}` overlay template is fixed
+wherever it can fire at all. The map is **omitted** when the identity holds (one range
+starting at 0, nothing compacted), which is the common plain-3D case, so picking
+allocates nothing there — as is a node declaring neither `has_labels` nor
+`has_image_labels`, which has no label reader; picking is still provisioned for such a
+node when an embedder `selection` listener exists, and that payload's `elementIndex`
+keeps reporting the storage slot, unchanged. It is also deliberately stripped across an
+additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
+so no single map is meaningful (the loader factory now also clears the label flags on
+each sub-LOD, so it is never built there); per-level label resolution is #1422. A
+`kind=partition` points layer needs one more fix to hover correctly — the handler still
+resolves labels against the outermost wrapper path rather than the leaf that owns the
+CSR (#1415, in flight separately); the two compose.
+
+Points only. GSplats (#1423) and Lines (#1424) have the same class of bug; gsplats
+needed a Rust WASM kernel change and is fixed in the entry below, while lines carries a
+segment-vs-vertex granularity mismatch on top of it and remains outstanding. Mesh was
+already correct: its pick shader reports `gl_VertexID`, which for an indexed draw IS the
+on-disk vertex ordinal, so the lookup no-ops.
+
+#### Hover labels index the right splat (#1423)
+
+The GSplats half of #1421. The gsplat pick shaders emit `aSortedIndex` — the
+visible-buffer storage slot — as `elementId`, while the per-element label CSR is keyed
+by the on-disk splat index. The two diverge the same two ways Points did, and for the
+same reasons: the spatial index concatenates only the visible on-disk ranges, and the
+fused nD→3D kernel compacts hidden-dim-attenuated splats out in place. Hover a labelled
+gsplat layer on a slice that culls chunks, or with any hidden dimension, and the tooltip
+showed another splat's label.
+
+The composition is now shared with Points (`data/loaders/element-ids.ts`), but GSplats
+has to assemble it one stage later: its projection runs downstream of the loader, in the
+worker (or the in-process dispatcher), so the loader publishes only its half — the
+visible `ranges` — and `project_gsplats_nd_to_3d` gained a trailing
+`out_source_indices` output recording which source splat each emitted slot came from.
+Both twins (Rust kernel and the uncapped TypeScript reference that serves >16D) take an
+empty slice as the opt-out, so every caller that has no map to build pays nothing. The
+data processor composes the two halves and the commit stamps the result onto the mesh —
+in lockstep with `committedData`, and cleared when a commit produces none, so a stale
+map can never outlive the geometry it described. The stamp is deliberately mesh-level
+rather than a field on the loaded payload: that payload can be a SliceCache-owned
+snapshot handed back by reference on a hit, whose byte size was measured once at store
+time. Points now reads through the same stamp.
+
+The same cheapness gates as Points apply: ranges are published only for a node
+declaring `has_labels` / `has_image_labels`, the standard-3D fast path (every splat
+emitted in order) records nothing because slot IS the source index there, and on that
+same fast path the map is omitted entirely when the visible set is one range from 0 (the
+identity). That last saving does not carry over to the general, compacting path: source
+indices are supplied there whenever `ranges` is published, so the composer's identity
+branch is unreachable and even an uncompacted labelled node allocates a full N-element
+map. It is likewise never published across an additive ladder — each sub-LOD is a
+distinct on-disk array, so no single map is meaningful; the loader factory clears the
+label flags on each synthesized `additive_<i>` node and the ladder concat strips the
+field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) remains the
+last outstanding geometry.
+
+#### The port probe now matches the bind it predicts
+
+`make generate-gallery` failed about one run in two when runs were issued
+back-to-back, always the same way: `Timed out waiting 90000ms from
+config.webServer`, with nothing else to go on. The data server had started fine —
+just not on port 9899, which is the one Playwright was waiting on.
+
+`luxar serve` resolves its port through `check_port_available`, which bound a
+bare socket. The real bind is uvicorn's `loop.create_server`, and asyncio passes
+`reuse_address=True` on POSIX, so the probe was *stricter* than the thing it was
+predicting. A non-listening socket left over from the previous run's teardown
+(TIME_WAIT / FIN_WAIT2 on the same port) is invisible to a `SO_REUSEADDR` bind but
+fatal to a plain one — so the probe said "busy", `pick_port` shifted to 9900 and
+said so, and nothing ever came up on 9899. Hence the coin-flip rate: whether
+anything lingers on the *data* port at all depends on which side closed first — a
+server killed with a keep-alive connection still open leaves its own port in
+FIN_WAIT2 → TIME_WAIT, whereas if the client closed first every TIME_WAIT lands on
+an ephemeral client port and 9899 is clean. Setting `SO_REUSEADDR` on the probe
+closes the gap — under asyncio's own condition, since Windows omits the option
+precisely because there it would let a bind succeed over a live listener. It does
+not make the probe blind to a real server: on Linux a *listening* socket on the
+same address conflicts either way, wildcard binds included. The
+`test_unavailable_port` case was tightened to `listen()` accordingly — bound but
+never listening no longer models an occupied port, which is the point.
+
+The same probe also hardcoded `AF_INET`, so an IPv6 bind address raised for every
+port and `serve --host ::1` exited with "No available ports found near 8000" on a
+completely free one. `::1` is already a first-class loopback host elsewhere in the
+serve path, so the probe now picks its family from the host — for IPv6 *literals*
+only; a name like `localhost` stays on `AF_INET` rather than inheriting whatever
+order the resolver returns.
+
+The muteness was its own bug. Both gallery `webServer` entries discarded stdout and
+stderr, so the port-shift warning had nowhere to go; `GALLERY_DEBUG=1 pnpm
+gallery` now forwards both servers' stdout to the reporter, and stderr is no
+longer suppressed at all — it is where a server that dies at startup says why, and
+muting it left only Playwright's bare exit code (every other
+`playwright.*.config.ts` here already pipes it). Forwarding alone
+wasn't enough: `aprint` doesn't flush and Python block-buffers a piped stdout,
+while Playwright's timeout path SIGKILLs the process group — so the data server
+now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
+behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
+
+
 #### Mesh gets substitutive LOD
 
 A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`

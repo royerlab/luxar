@@ -51,7 +51,17 @@ export interface ScreenshotOptions {
 export interface SelectionPayload {
   /** Scene-node (zarr path) of the picked element. */
   nodeName: string;
-  /** Index of the picked element within that node. */
+  /**
+   * Index of the picked element within that node.
+   *
+   * This is the ON-DISK element index (the one the node's arrays and its
+   * label CSR are keyed by) wherever the loader could publish a slot →
+   * on-disk map — today: a Points node declaring `has_labels` /
+   * `has_image_labels`. Otherwise it is the element's slot in the buffer
+   * that reached the GPU, which after spatial range loading or nD
+   * compaction is NOT the on-disk index. See
+   * `rendering/picking/picking-system/element-id-map.ts`.
+   */
   elementIndex: number;
 }
 

@@ -73,6 +73,27 @@ describe('slice-cache-helper — prefix ladders', () => {
     expect(sc.getStats().count).toBe(1);
   });
 
+  it('deep-copies and bills an elementIds map through a store/restore round trip', () => {
+    // `cloneLodSnapshot` / `measureLodBytes` walk own typed-array props
+    // generically, so the points slot → on-disk map (issue #1421) survives a
+    // scrub-back restore for free. Pin it: the restored map must be a DISTINCT
+    // buffer (the source is a view into the reused accumulator) with equal
+    // contents, and its bytes must be billed.
+    const lod = makeLod(4) as FakeLod & { elementIds: Uint32Array };
+    lod.elementIds = new Uint32Array([2048, 2049, 6144, 6145]);
+    storeLadder(sc, PATH, view, [lod]);
+
+    const restored = restoreLadder<typeof lod>(sc, PATH, view, N_LODS);
+    const map = restored![0].elementIds;
+    expect(map).toBeInstanceOf(Uint32Array);
+    expect(map).not.toBe(lod.elementIds); // deep copy, not an alias
+    expect(Array.from(map)).toEqual([2048, 2049, 6144, 6145]);
+
+    // Billed: 4 float32 positions + 4 uint32 ids = 32 bytes.
+    expect(measureLodBytes([lod])).toBe(4 * 4 + 4 * 4);
+    expect(sc.getStats().size).toBe(measureLodBytes([lod]));
+  });
+
   it('never downgrades: a shorter snapshot leaves the longer entry intact', () => {
     storeLadder(sc, PATH, view, [makeLod(10), makeLod(5), makeLod(2)]);
     const key = SliceCache.makeKey(PATH, buildSliceViewSig(view));

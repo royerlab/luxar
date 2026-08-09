@@ -37,6 +37,7 @@ import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
+import { getElementIdMap, setElementIdMap } from '../../../../types/committed-data';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../../config/constants';
 
 function makeProcessed(splatCount = 2) {
@@ -355,6 +356,74 @@ describe('commitGSplatsGeometry — no-op commit skip (committedData)', () => {
     // The sort generation must NOT bump on a stamp-only noop — an
     // in-flight sort stays valid across it (spec §5 generation contract).
     expect(mockNoteDepthSortCommit).not.toHaveBeenCalled();
+  });
+});
+
+describe('commitGSplatsGeometry — elementIdMap stamp (issue #1423)', () => {
+  it('stamps the projection’s slot → on-disk map onto the MESH, not the payload', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+
+    const staged = makeStaged(3);
+    if (staged.noop) throw new Error('expected geometry staged commit');
+    const elementIds = new Uint32Array([2048, 4095, 6144]);
+    staged.processed.elementIds = elementIds;
+
+    commitGSplatsGeometry(staged, root, null, undefined, 3);
+
+    // Written in lockstep with `committedData` — that pair is what
+    // `resolveOnDiskElementId` reads at the pick site.
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBe(staged.sourceData);
+    expect(getElementIdMap(mesh)).toBe(elementIds);
+    // The loaded payload is NOT mutated: it can be a SliceCache-owned snapshot
+    // whose byte size was measured at store time.
+    expect('elementIds' in staged.sourceData).toBe(false);
+  });
+
+  it('CLEARS a stale map when the new projection produced none', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    setElementIdMap(mesh, new Uint32Array([9, 9, 9]));
+
+    const staged = makeStaged(3);
+    if (staged.noop) throw new Error('expected geometry staged commit');
+    expect(staged.processed.elementIds).toBeUndefined();
+
+    commitGSplatsGeometry(staged, root, null, undefined, 4);
+
+    // Left in place, the old map would describe geometry that is no longer on
+    // the GPU — a silently wrong label rather than "no answer".
+    expect(getElementIdMap(mesh)).toBeUndefined();
+    expect('elementIdMap' in mesh.userData).toBe(false);
+  });
+
+  it('leaves both stamps untouched on the stamp-only noop commit', () => {
+    mockUpdateInstancedMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+
+    const staged = makeStaged(3);
+    if (staged.noop) throw new Error('expected geometry staged commit');
+    const elementIds = new Uint32Array([2048, 4095, 6144]);
+    staged.processed.elementIds = elementIds;
+    commitGSplatsGeometry(staged, root, null, undefined, 3);
+
+    // The noop branch uploads nothing, so the existing pair still describes
+    // exactly what the GPU holds.
+    commitGSplatsGeometry(
+      { path: '/g', noop: true, sourceData: staged.sourceData },
+      root,
+      null,
+      undefined,
+      4
+    );
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBe(staged.sourceData);
+    expect(getElementIdMap(mesh)).toBe(elementIds);
   });
 });
 
