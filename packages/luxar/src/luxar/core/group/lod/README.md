@@ -3,8 +3,8 @@
 Helpers for the **LOD-kind `Group`** — a scene-graph group that selects one of
 N alternative children at runtime based on a view-driven metric (currently: the
 projected bbox diagonal in pixels). The LOD group is geometry-agnostic: its
-children can be `points`, `lines`, `gsplats`, or themselves a specialized group
-(`kind=lod` / `kind=partition`).
+children can be `points`, `lines`, `gsplats`, `mesh`, or themselves a specialized
+group (`kind=lod` / `kind=partition`).
 
 This package splits cleanly into two layers:
 
@@ -12,10 +12,11 @@ This package splits cleanly into two layers:
   `coverage_fraction` monotonicity invariant, the `kind=lod` validator, and the
   shared display-type resolver. Shared by every leaf geometry and by the
   Partition kind.
-- **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`) —
-  one peer per leaf type, interpreting the `additive_lod=` (and, for gsplats,
-  `lod_group=`) convenience kwargs that `add_points` / `add_lines` /
-  `add_gsplats_from_data` accept.
+- **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`,
+  `mesh.py`) — one peer per leaf type, interpreting the `additive_lod=` /
+  `substitutive_lod=` (and, for gsplats, `lod_group=`) convenience kwargs that
+  `add_points` / `add_lines` / `add_gsplats_from_data` / `add_mesh` accept; mesh
+  takes `substitutive_lod=` only.
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are pure-NumPy
 ordering primitives shared by the Points and Lines resolvers.
@@ -28,6 +29,7 @@ lod/
 ├── points.py           # Points additive-LOD ordering + ladder construction + resolver
 ├── lines.py            # Lines additive-LOD (per-polyline) ordering + ladder + resolver
 ├── gsplats.py           # GSplats substitutive + additive axis resolvers
+├── mesh.py             # Mesh substitutive axis resolver (decimation, not lift-to-gsplats)
 ├── spatial_uniform.py  # Stratified-grid sampler (default spatial-uniform ordering)
 └── poisson_disk.py     # Bridson blue-noise sampler (opt-in alternative)
 ```
@@ -87,8 +89,10 @@ self-calibrates to whatever monitor/window the viewer runs in.
 
 ## Per-geometry resolvers
 
-All three resolvers share a `None | bool | dict` value vocabulary for the
-convenience kwargs, but the semantics differ per geometry.
+All four resolvers share a `None | bool | dict` value vocabulary for the
+convenience kwargs, but the semantics differ per geometry. Mesh's differs most —
+it decimates instead of lifting to gsplats, so it rejects the four lift-only keys;
+see the `mesh.py` module docstring.
 
 ### Points (`points.py`)
 
