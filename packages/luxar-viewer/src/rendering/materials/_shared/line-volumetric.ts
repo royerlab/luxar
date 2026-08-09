@@ -33,17 +33,20 @@
  * - **mixed** (one hard, one soft — the FIRST and LAST segment of every
  *   polyline) — ρ = rod · one-sided erf cap · half-space. The ray integral
  *   has no elementary closed form (it is an Owen-T-class integral), but
- *   inclusion–exclusion gives a closed form that is exact up to the overlap
- *   of the two end treatments:
+ *   TWO inclusion–exclusion splits exist with COMPLEMENTARY error domains,
+ *   selected per ray by one sign (see the lane body):
  *
- *     ∫_halfspace G·W_cap = ∫_halfspace G − ∫_halfspace G·(1 − W_cap)
- *                         ≈ ∫_halfspace G − ∫_FULL-LINE G·(1 − W_cap)
+ *     J1 = ∫_halfspace G − ∫_FULL-LINE G·(1 − W_cap)   (plane-clip primary)
+ *     J2 = ∫_FULL-LINE G·W_cap                          (cap primary)
  *
- *   Both surviving terms are erf-only (half-line: plain erf; full-line: the
- *   identity). The dropped term — cap-complement mass on the partner's side
- *   of the plane — is O(e^{−(L/2σ)²}): zero for practical segment lengths,
- *   a measured, bounded underestimate for L ≲ 3σ (clamped at 0). See the
- *   unit tests for the quadrature-verified error envelope.
+ *   Every term is erf-only (half-line: plain erf; full-line: the identity).
+ *   J1 drops the cap-COMPLEMENT's mass on the ray's excluded side of the
+ *   plane, J2 the CAP's — for axis-dominant rays exactly one is
+ *   exponentially exact. The residual survives only where the plane sits
+ *   within ~3σ of the cap's support (short chain-end segments; sharp bends,
+ *   where the binding metric is PERPENDICULAR distance to the near-axial
+ *   plane, which longer segments do not grow): a measured, bounded
+ *   UNDERestimate (clamped at 0), pinned in the unit tests.
  *
  * ## The load-bearing identity
  *

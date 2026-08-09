@@ -64,16 +64,29 @@ function quadrature(rayO: Vec3, dRaw: Vec3, seg: VolumetricSegment, steps = 4000
   const tC = -(vdot(bm, dHat) - vdot(bm, axis) * dw) / Math.max(1 - dw * dw, 1e-12);
 
   // Integration window = INTERSECTION of the radial support (±8σ/sin about
-  // the closest approach) and the axial window's support in t (s spanning
-  // [−8σ, L+8σ]); taking a union instead would spread the fixed sample
-  // count over dead space and under-resolve near-axial rays.
+  // the closest approach) and the axial support in t; taking a union instead
+  // would spread the fixed sample count over dead space and under-resolve
+  // near-axial rays. The axial support of a SOFT end stops ~8σ past the
+  // endpoint, but a HARD end's bisector plane can keep material far beyond
+  // it: at bend θ the plane's in-slice offset reaches ρ·|n_⊥|/|n·w| for
+  // radial offsets ρ, so a near-fold-back plane (|n·w| → 0) legitimately
+  // holds a tail tens of σ past the endpoint — the exact partition of two
+  // nearly-parallel rods requires it. An oracle window that cuts at ±8σ
+  // silently zeroes that tail and blames the lane (found by the
+  // double-check fuzz, iter 26).
+  const cutTail = (cut: Vec3 | null | undefined): number => {
+    if (cut == null) return 0;
+    const nDotW = Math.abs(vdot(cut, axis));
+    const nPerp = Math.sqrt(Math.max(1 - nDotW * nDotW, 0));
+    return Math.min((8 * seg.sigma * nPerp) / Math.max(nDotW, 0.02), 500 * seg.sigma);
+  };
   let t0 = tC - (8 * seg.sigma) / sinAngle;
   let t1 = tC + (8 * seg.sigma) / sinAngle;
   if (Math.abs(dw) > 1e-9) {
     const sC = vdot(vsub(vadd(rayO, vscale(dHat, tC)), seg.a), axis);
     const tAtS = (s: number) => tC + (s - sC) / dw;
-    const ta = tAtS(-8 * seg.sigma);
-    const tb = tAtS(L + 8 * seg.sigma);
+    const ta = tAtS(-8 * seg.sigma - cutTail(seg.cutA));
+    const tb = tAtS(L + 8 * seg.sigma + cutTail(seg.cutB));
     t0 = Math.max(t0, Math.min(ta, tb));
     t1 = Math.min(t1, Math.max(ta, tb));
   }

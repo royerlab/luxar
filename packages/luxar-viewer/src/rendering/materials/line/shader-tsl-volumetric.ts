@@ -9,8 +9,9 @@
  * erf-capped soft ends. The lane math is the quadrature-validated CPU
  * reference in `_shared/line-volumetric.ts` — edit THERE first, prove it,
  * then mirror here and in the GLSL twin. Value-level parity between the two
- * backends is enforced by the `line-volumetric-*` fixtures in the
- * tsl-shader-parity suite.
+ * backends is enforced by the `line-volprim-*` fixtures in the
+ * tsl-shader-parity suite (`line-volumetric-*` is the unrelated
+ * volumetric-BLENDING fixture family on the screen-space quad).
  *
  * Structural notes (the TSL house rules, shared with `shader-tsl.ts`):
  * - the whole vertex stage is ONE `Fn()` body of `.toVar()` statements;
@@ -21,9 +22,11 @@
  *   setup), `usesPeakProjection(config.blendingMode)` (peak vs sum body),
  *   `config.useColormap`. Runtime lane selection inside the fragment uses
  *   `If/ElseIf/Else` with lane results `.assign()`ed to a shared var.
- * - dead lanes assign 0 instead of discarding (output-identical under
- *   every blending state; only the early radial reject keeps a real
- *   `Discard`, it culls the bulk of the stencil).
+ * - every GLSL lane discard is mirrored EXACTLY (per-lane `killed` flag,
+ *   one `Discard` after the lane chain, plus the early radial reject):
+ *   under a no-blend target a discarded fragment preserves the pixel while
+ *   a written zero stomps it, so discard-vs-zero is observable wherever
+ *   segments overlap.
  * - `screenCoordinate` is TOP-LEFT-origin on both backends; un-flip with
  *   `screenSize` (NOT uResolution — the bound target may be SSAA-scaled;
  *   see the gsplat TSL fragment for the full note).

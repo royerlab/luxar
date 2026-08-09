@@ -122,6 +122,29 @@ describe('bootstrapStandalone', () => {
     localStorage.clear();
   });
 
+  describe('session overrides', () => {
+    it('installs the ?linePrimitive= and ?lineJoin= overrides before returning', async () => {
+      // These installs are load-bearing (both backends bake at material
+      // construction) and were previously mutation-survivable: deleting the
+      // install call broke nothing at unit level. Assert through the public
+      // resolvers, then restore the no-override state for other tests.
+      const { resolveLinePrimitive, setLinePrimitiveOverride } =
+        await import('../../../types/line-primitive');
+      const { resolveLineJoin, setLineJoinOverride } = await import('../../../types/line-join');
+      try {
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: { ...EMPTY_PARAMS, linePrimitive: 'volumetric', lineJoin: 'none' },
+        });
+        expect(resolveLinePrimitive()).toBe('volumetric');
+        expect(resolveLineJoin()).toBe(0); // 'none'
+      } finally {
+        setLinePrimitiveOverride(null);
+        setLineJoinOverride(null);
+      }
+    });
+  });
+
   describe('opt-in flags', () => {
     it('patches console, validates config, and warms codecs when defaults apply', async () => {
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });

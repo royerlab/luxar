@@ -89,13 +89,13 @@ describe('LineMaterial primitive selection (GLSL)', () => {
 
   it('manages the peak/sum define across blending-mode changes (volumetric only)', () => {
     const m = new LineMaterial({ primitive: 'volumetric', blendingMode: 'additive' });
-    expect('LUXAR_PEAK_PROJECTION' in m.defines).toBe(false);
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(false);
     m.applyBlendingMode('max'); // peak family
-    expect('LUXAR_PEAK_PROJECTION' in m.defines).toBe(true);
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(true);
     m.applyBlendingMode('normal'); // still peak family
-    expect('LUXAR_PEAK_PROJECTION' in m.defines).toBe(true);
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(true);
     m.applyBlendingMode('volumetric'); // sum family
-    expect('LUXAR_PEAK_PROJECTION' in m.defines).toBe(false);
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(false);
     m.dispose();
   });
 
@@ -106,6 +106,25 @@ describe('LineMaterial primitive selection (GLSL)', () => {
     expect(c.userData.linePrimitive).toBe('volumetric');
     m.dispose();
     c.dispose();
+  });
+
+  it('TSL wrapper mirrors the peak/sum define lifecycle and factory selection', async () => {
+    const { LineTSLMaterial } = await import('../../../../rendering/materials/line/material-tsl');
+    const m = new LineTSLMaterial({ primitive: 'volumetric', blendingMode: 'max' });
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(true);
+    m.applyBlendingMode('additive'); // sum family clears the tracker
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(false);
+    m.applyBlendingMode('normal'); // peak family re-stamps it
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(true);
+    const c = m.clone();
+    expect(c.userData.linePrimitive).toBe('volumetric');
+    expect('LUXAR_PEAK_PROJECTION' in (c.defines ?? {})).toBe(true);
+    // Screen-space TSL material never stamps it, even under peak modes.
+    const q = new LineTSLMaterial({ blendingMode: 'max' });
+    expect('LUXAR_PEAK_PROJECTION' in (q.defines ?? {})).toBe(false);
+    m.dispose();
+    c.dispose();
+    q.dispose();
   });
 
   it('volumetric shaders import the SHARED erf implementations', () => {
