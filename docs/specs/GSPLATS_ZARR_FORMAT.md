@@ -132,7 +132,9 @@ a v3.3 store without the filter is byte-identical to v3.2. **v3.2** differs
 from **v3.1** only in the `kind=lod` selector attrs: the group `selector` value
 `pixel_size` and the per-child `min_pixel_size` (absolute pixels) are renamed
 to `coverage` / `coverage_fraction` (viewport-relative `sqrt(N_i/N_finest)` in
-`[0, 1]`, strictly ascending coarsest→finest, finest `1.0`). **v3.1** differs
+`[0, 1]`, strictly ascending coarsest→finest, finest `1.0`; the upper bound later
+widened to `4.0` for partition-bound ladders — see the `kind=lod` section).
+**v3.1** differs
 from **v3.0** only in storing the Cholesky factors as two arrays
 (`cholesky_factors_diag` + `cholesky_factors_offdiag`) instead of a single packed
 `cholesky_factors`. v3.0 / v3.1 files are still read transparently (the web
@@ -223,9 +225,10 @@ fitted.gsplats.zarr/
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── …
 ├── child_1/
-│   ├── .zattrs       # coverage_fraction: <0..1>, …
+│   ├── .zattrs       # coverage_fraction: <0..4>, …
 │   └── …
-└── child_{N-1}/      # Finest child (coverage_fraction: 1.0)
+└── child_{N-1}/      # Finest child (coverage_fraction: 1.0, or 4.0 when the
+    │                 #   ladder is bound to a spatial partition — see below)
     └── …
 ```
 
@@ -237,15 +240,28 @@ viewer's progressive-load hint (render cheap first, then refine). This is a
 distinct concept from the data-model default (the finest level the `.centers`
 accessor returns); they are deliberately decoupled, so the writer stamps
 `default_level: 0` independently. Each child carries `coverage_fraction`, a
-dimensionless value in `[0, 1]` computed as `sqrt(N_i / N_finest)` (`N_i` =
+dimensionless value in `[0, 4]` computed as `sqrt(N_i / N_finest)` (`N_i` =
 level i's total splat count) and strictly ascending coarsest→finest; the
-coarsest child is always `0.0` and the finest is always `1.0`. Being a count
+coarsest child is always `0.0`. Being a count
 ratio, it is immune to non-displayed-dimension multiplicity (e.g. a stacked
 time axis inflates every level's count equally and cancels out). At render
 time the viewer multiplies `coverage_fraction` by the viewport diagonal (times
-a fill-factor constant) to get a pixel threshold, so the finest level activates
-when the object fills the screen and coarser levels step in as it shrinks —
-identically on any monitor/viewport. Any node shape (bare leaf, additive
+a fill-factor constant of `0.25`) to get a pixel threshold, so a
+`coverage_fraction` of `1.0` activates once the object's projected bbox diagonal
+reaches about a quarter of the viewport diagonal — i.e. at any normal full-frame
+view — and coarser levels step in as it shrinks below that, identically on any
+monitor/viewport. (Same contract as
+`docs/guides/user/LUXAR_ZARR_FORMAT.md`.)
+
+**Which anchor the finest child gets.** A **whole-object** ladder (the `levels`
+recipe, and any `kind=lod` group whose levels are alternative renderings of the
+whole node) anchors its finest at `1.0`, so its values stay in `[0, 1]`. A ladder
+bound to a **spatial partition** anchors its finest at `4.0` = `1 / FILL_FACTOR`
+— the metric a screen-filling node produces — because a tile's projected diagonal
+is intrinsically a fraction of the whole object's. That covers the `adaptive`
+recipe (one `kind=lod` group per tile) and the `overview` recipe (whose fine
+child *is* a `kind=partition`, reached by zooming in). See
+`partitioned_coverage_fractions` in `luxar/core/group/lod/group.py`. Any node shape (bare leaf, additive
 ladder) is valid as a child.
 
 ### Shape 4 — spatial partition (`kind=partition` group)
@@ -1205,7 +1221,8 @@ finest level instead). Both paths go through the shared
   - Group `selector: "pixel_size"` → `"coverage"`; per-child `min_pixel_size`
     (absolute pixel threshold) → `coverage_fraction` (viewport-relative
     `sqrt(N_i/N_finest)` in `[0, 1]`, strictly ascending coarsest→finest,
-    finest `1.0`) — device-independent LOD switching.
+    finest `1.0`) — device-independent LOD switching. (The upper bound later
+    widened to `4.0` for partition-bound ladders; see the `kind=lod` section.)
   - v3.0 / v3.1 stores that still carry the legacy attrs remain loadable: the
     Python re-save derives fresh `coverage_fraction` thresholds, and the web
     viewer auto-adapts the legacy ladder (normalizing `min_pixel_size` by its

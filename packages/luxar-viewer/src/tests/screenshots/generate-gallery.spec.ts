@@ -19,6 +19,14 @@
  *     subject is blown white or the background is lifted to grey. The decision
  *     logic is `./exposure-policy` (pure, unit-tested); a per-demo `exposure`
  *     in the manifest overrides the whole thing.
+ *   - **Crop check** — counts LIT pixels on the frame's outermost row/column in
+ *     the still and in orbit poses spread across the whole rock on a ~5° grid
+ *     (plus the last frame of a timelapse, where a developing subject is
+ *     largest). The fill loop's percentile bbox is
+ *     blind to exactly this (what touches the edge IS the outliers it discards),
+ *     so a tile can report a good fit while the subject runs off frame. Warns
+ *     with a suggested knob and never fails — a non-zero count is common and
+ *     often legitimate — see `./crop-policy`.
  *   - **Seamless orbit** — ORBIT_FRAMES explicit per-angle screenshots of a
  *     small-angle SINUSOIDAL ROCK (±ORBIT_AMPLITUDE_DEG about the subject's up
  *     axis, one full period over the frame count, so the loop is continuous),
@@ -45,6 +53,12 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import {
+  COMPARE_SIZE,
+  DISAGREEMENT_THRESHOLD,
+  normalizedCrossCorrelation,
+} from './frame-similarity';
+import { dominantSignedAxis, type SignedUpAxis } from './orbit-axis';
+import {
   computeAutoExposure,
   CLIP_LUMA,
   CLIP_SAT_MAX,
@@ -53,6 +67,13 @@ import {
   type AutoExposureResult,
   type LumaStats,
 } from './exposure-policy';
+import {
+  borderLitPercent,
+  borderSampleFrames,
+  evaluateBorderLit,
+  type BorderSample,
+  type CropFraming,
+} from './crop-policy';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../../../../..');
@@ -74,9 +95,9 @@ const VIEWER_URL = `http://localhost:${process.env.GALLERY_VITE_PORT ?? 5199}`;
 // 360° turn. A full turn at an affordable frame count has a large, jarring
 // inter-frame angle; a ±20° rock covers only ~4·amplitude of travel per cycle,
 // so the SAME frames give a tiny (~1°) inter-frame angle → smooth, and it loops
-// seamlessly (sin returns to start). Each frame is a screenshot, so orbit frames
-// are captured at a reduced viewport (ORBIT_CAPTURE_PX) for speed; the still
-// stays full-res.
+// seamlessly (sin returns to start). Each frame is a plain screenshot of the
+// same square viewport as the still (1080², set in playwright.gallery.config.ts)
+// — there is no separate orbit capture size.
 // Capture ENOUGH real frames for one gentle rock cycle to play smoothly with NO
 // motion interpolation. An earlier version captured 60 frames and used ffmpeg
 // `minterpolate` (mci) to synthesize a 24 fps master — but motion-compensated
@@ -99,7 +120,7 @@ const ORBIT_FPS = 12; // 120 frames ⇒ a 10 s cycle, played 1:1 (no interpolati
 const WEBM_WIDTH = 900; // VP9 master (archival / click-through)
 const WEBM_CRF = 24; // lower = higher quality (was 34, too lossy)
 // Animated WebP for the README (inline on GitHub). Small: downscaled.
-// Inline README preview thumbnail: kept SMALL (26 tiles all load on the GitHub
+// Inline README preview thumbnail: kept SMALL (28 tiles all load on the GitHub
 // page). Dense rotating point clouds compress poorly, so we drop to 340px, 8fps
 // and low quality — the full 900px/12fps detail lives in the WebM the tile links
 // to. (512px/q60/12fps produced 6-9MB previews on star-field scenes.)
@@ -148,9 +169,18 @@ interface DemoEntry {
   // elevation 90 = straight down (+/- along vertical), 0 = equator (side-on).
   viewAngle?: { azimuth?: number; elevation?: number };
   // World axis that is the subject's "up": the orbit rock revolves about it and
-  // the camera up-vector uses it. Default 'y'. Set 'z' (or 'x') for a subject
-  // whose long/vertical axis is world-Z — otherwise a world-Y yaw degenerates
-  // into an in-plane roll (e.g. a supine CT body lying along Z).
+  // the camera up-vector uses it — the orbit loop hard-SETS `cam.up` from this
+  // on every frame. DEFAULT = derived from the camera's own up-vector after
+  // framing (`dominantCameraUpAxis`), so a baked `viewer_config` up is honoured
+  // without being declared here; a demo that bakes nothing gets three.js's
+  // (0,1,0) -> 'y', the historical default.
+  // Set it only to OVERRIDE that — e.g. to rock about something other than the
+  // scene's own up, or to give a subject whose long/vertical axis is world-Z an
+  // upright turntable instead of the in-plane roll a world-Y yaw degenerates
+  // into (a supine CT body lying along Z) — and note that setting it also runs
+  // `positionForOrbitUp`, which re-parks the camera on the axis and discards the
+  // baked framing, so it usually wants a `viewAngle` beside it (that parked pose
+  // can land edge-on).
   orbitUp?: 'x' | 'y' | 'z';
   // Multiplicative zoom applied AFTER fill-to-screen: a final dolly by 1/zoom.
   // zoom > 1 zooms IN (e.g. 3 = 3x closer), zoom < 1 zooms OUT (e.g. 0.8 = 20%
@@ -261,6 +291,26 @@ async function jumpTimeDimToFrac(page: any, frac: number): Promise<void> {
     await sdm.waitForUpdate?.();
   }, frac);
   await page.waitForTimeout(600);
+}
+
+/**
+ * The SIGNED world axis the camera's current up-vector most nearly points along.
+ *
+ * Read AFTER framing, so it reflects whatever pose is actually on screen — the
+ * demo's baked `viewer_config` up when it has one, else three.js's (0,1,0).
+ *
+ * The page does the READ only; the classification (and its degenerate-input
+ * fallback to +Y, the historical default) is `dominantSignedAxis` in
+ * `./orbit-axis`, so it can be unit-tested outside a browser — this is the fix
+ * for #1377 itself, and a sign slip in it ships a rolled animation.
+ */
+async function dominantCameraUpAxis(page: any): Promise<SignedUpAxis> {
+  const up = await page.evaluate(() => {
+    const cam = (window as any).__luxarDebug?.camera;
+    // Return plain numbers, not the Vector3: only x/y/z survive the CDP hop.
+    return cam?.up ? { x: cam.up.x, y: cam.up.y, z: cam.up.z } : null;
+  });
+  return dominantSignedAxis(up);
 }
 
 /**
@@ -621,6 +671,90 @@ async function measureLuminance(page: any): Promise<LumaStats> {
 }
 
 /**
+ * Count the LIT pixels on the outermost row/column of an already-captured frame
+ * — the measurement half of the crop check (the decision is
+ * `./crop-policy::evaluateBorderLit`). Lit content on the frame edge means the
+ * subject is running off frame, which `measureCoverage`'s percentile bbox
+ * structurally cannot see.
+ *
+ * Takes the PNG buffer of a screenshot the harness already had to take (the
+ * still, and the sampled orbit frames), so the check costs no extra screenshot;
+ * it is decoded back inside the page exactly the way `measureLuminance` does
+ * (createImageBitmap → 2D canvas at NATIVE resolution → getImageData).
+ *
+ * PNG, not the JPEG probes the coverage/exposure passes use, and that matters
+ * here: JPEG ringing next to a bright edge spills energy into neighbouring
+ * blocks, which can push a genuinely black border pixel over the 0.04 lit cutoff
+ * and fake a crop. A lossless source makes a non-zero count mean something.
+ *
+ * Each border pixel is counted ONCE: the full top and bottom rows, then the
+ * left/right columns excluding those corners — hence `borderPixels = 2w + 2h − 4`
+ * (which over-counts a degenerate 1-px-wide/tall frame, so that case reports
+ * `w·h` instead and the reported denominator always matches what was counted).
+ *
+ * The pixel loop is INLINE inside `page.evaluate` and cannot be extracted into an
+ * imported helper for unit testing: the callback is serialized to the browser,
+ * where this module's imports do not exist. Only the DECISION half
+ * (`./crop-policy`) is testable, and that is deliberate.
+ */
+async function measureBorderLit(page: any, shot: Buffer, label: string): Promise<BorderSample> {
+  const b64 = shot.toString('base64');
+  const counted = await page.evaluate(
+    async ({ b64img, litThreshold }: { b64img: string; litThreshold: number }) => {
+      const blob = await (await fetch(`data:image/png;base64,${b64img}`)).blob();
+      const bmp = await createImageBitmap(blob);
+      const w = bmp.width;
+      const h = bmp.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(bmp, 0, 0, w, h);
+      const data = ctx.getImageData(0, 0, w, h).data;
+      const lit = (x: number, y: number): boolean => {
+        const i = (y * w + x) * 4;
+        const luma = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+        return luma > litThreshold;
+      };
+      let borderLit = 0;
+      for (let x = 0; x < w; x++) {
+        if (lit(x, 0)) borderLit++;
+        if (h > 1 && lit(x, h - 1)) borderLit++;
+      }
+      // Columns without the corners the rows already counted.
+      for (let y = 1; y < h - 1; y++) {
+        if (lit(0, y)) borderLit++;
+        if (w > 1 && lit(w - 1, y)) borderLit++;
+      }
+      const borderPixels = w > 1 && h > 1 ? 2 * w + 2 * h - 4 : w * h;
+      return { borderLit, borderPixels };
+    },
+    { b64img: b64, litThreshold: LIT_THRESHOLD }
+  );
+  return { label, borderLit: counted.borderLit, borderPixels: counted.borderPixels };
+}
+
+/**
+ * `measureBorderLit` that never throws — a diagnostic must not cost the capture (a
+ * mid-run Vite reload or a page crash rejects the in-page decode, and throwing
+ * would lose the video conversion and the frames-dir cleanup). Says WHY the pose
+ * was dropped, because the alternative is a silently short sample set: the log
+ * line's `poses=<measured>/<attempted>` says one went missing, and this says
+ * whether it was a dead page or a broken decode.
+ */
+async function measureBorderLitOrNull(
+  page: any,
+  shot: Buffer,
+  label: string,
+  demoId: string
+): Promise<BorderSample | null> {
+  return await measureBorderLit(page, shot, label).catch((e: unknown) => {
+    console.warn(`[${demoId}] border-lit pose "${label}" not measured: ${e}`);
+    return null;
+  });
+}
+
+/**
  * Pick an exposure in three phases (the decision itself lives in
  * `./exposure-policy::computeAutoExposure`; this only wires it to the page):
  *   1. Percentile pass — converge so the lit foreground's high percentile hits
@@ -653,9 +787,28 @@ async function autoExpose(page: any): Promise<AutoExposureResult> {
  * though the camera was moving. Instead we FREEZE the render loop + controls
  * (so nothing overrides the camera), then for each azimuth set the camera,
  * render one frame synchronously, and screenshot it — exactly the still-capture
- * path that already works. Returns the number of frames written to `framesDir`.
+ * path that already works.
+ *
+ * Returns the number of frames written to `framesDir` plus border-lit samples for
+ * the poses `borderSampleFrames` picks — a ~5° angular grid across the whole rock
+ * — and, for a timelapse, the final timepoint. The measuring
+ * happens HERE rather than in the caller because the per-frame screenshot buffers
+ * are not retained past the frame loop (and the page is closed on return) — but
+ * AFTER that loop rather than inside it: deferring costs nothing and keeps the
+ * capture loop free of measurement work, so no in-page decode is interleaved with
+ * the frames. (It is not a guarantee of an undisturbed orbit — a timelapse already
+ * awaits a slice load every few frames, which dwarfs a decode.)
+ *
+ * `borderPosesAttempted` is how many poses were RETAINED for measurement, so the
+ * caller can report a short sample set: a measurement that fails is skipped, and
+ * without the attempted count a partial set would print an ordinary-looking
+ * verdict computed from fewer poses than it claims.
  */
-async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry): Promise<number> {
+async function captureOrbitFrames(
+  page: any,
+  framesDir: string,
+  demo?: DemoEntry
+): Promise<{ frames: number; borderSamples: BorderSample[]; borderPosesAttempted: number }> {
   // Timelapse warm-up: for 4D time-series, PLAY the time dim a couple of cycles
   // first so the slice cache is primed (the built-in t+1 prefetch warms the next
   // timepoint), then we step it deterministically during capture. Returns the
@@ -701,45 +854,109 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
     }
   }
 
-  const upAxis = demo?.orbitUp ?? 'y';
-  const ok = await page.evaluate((up: string) => {
-    const debug = (window as any).__luxarDebug;
-    const ac = debug?.animationController;
-    const cam = debug?.camera;
-    const c = debug?.controls;
-    if (!ac || !cam || !c?.getFocusTarget) return false;
-    ac.stopAnimation?.(); // freeze the rAF loop so it can't move/re-render the camera
-    c.setEnabled?.(false); // and stop controls damping from touching it
-    const t = c.getFocusTarget();
-    const off = { x: cam.position.x - t.x, y: cam.position.y - t.y, z: cam.position.z - t.z };
-    // The rock revolves the camera about the world `up` axis (U), in the plane of
-    // the other two axes (A,B). Default 'y' reproduces the original XZ yaw. For a
-    // subject whose long/vertical axis is world-Z (e.g. a supine CT body), 'z'
-    // gives a proper turntable instead of an in-plane roll.
-    const U =
-      up === 'x' ? { x: 1, y: 0, z: 0 } : up === 'z' ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
-    const A = up === 'x' ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
-    const B = up === 'z' ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 };
-    const dot = (p: any, q: any) => p.x * q.x + p.y * q.y + p.z * q.z;
-    const compA = dot(off, A);
-    const compB = dot(off, B);
-    (window as any).__orbit = {
-      phi0: Math.atan2(compA, compB),
-      radius: Math.hypot(compA, compB),
-      compU: dot(off, U),
-      A,
-      B,
-      U,
-      tx: t.x,
-      ty: t.y,
-      tz: t.z,
-    };
-    return true;
-  }, upAxis);
-  if (!ok) return 0;
+  // Rock axis. An explicit `orbitUp` wins; otherwise DERIVE it from the camera's
+  // own up-vector rather than assuming world-Y.
+  //
+  // This used to be a flat `?? 'y'`, and that default was silently wrong for any
+  // demo whose `viewer_config` bakes a non-Y up. The still keeps the baked pose
+  // (`F` restores it) but the loop below hard-sets `cam.up` every frame, so those
+  // demos render an animation ROLLED away from their own poster, with the
+  // turntable degenerating into an in-plane tumble — measured at a 130% swing in
+  // subject aspect over one rock. FIVE manifest demos bake a non-Y up; only two
+  // of them (the CT atlas and the mesh tile) declare `orbitUp`, so THREE were
+  // left on the wrong axis because nothing told them they had to opt in
+  // (#1377). TWO of those three were measurably shipping the roll — the
+  // asteroids/cosmicflows pairs pinned in
+  // `src/tests/unit/gallery-frame-similarity.test.ts`. The third is a 4D
+  // timelapse whose camera was barely orbiting in the first place (#1383).
+  //
+  // Deriving it means a baked up is honoured by default and `orbitUp` becomes a
+  // true override. A demo that bakes nothing gets three.js's default camera up,
+  // (0,1,0) -> +y, so this is a no-op for every previously-correct demo.
+  const derived = demo?.orbitUp ? null : await dominantCameraUpAxis(page);
+  const upAxis: 'x' | 'y' | 'z' = demo?.orbitUp ?? derived?.axis ?? 'y';
+  // An explicit `orbitUp` names a POSITIVE world axis — `positionForOrbitUp` has
+  // already re-parked the camera on it with `up = +U` — so a sign can only come
+  // from the derived case.
+  const upSign: 1 | -1 = derived?.sign ?? 1;
+  console.log(
+    `[${demo?.id ?? 'orbit'}] orbitUp=${upSign < 0 ? '-' : '+'}${upAxis}` +
+      (demo?.orbitUp ? ' (manifest)' : ' (derived from camera up)')
+  );
+  const ok = await page.evaluate(
+    ({ up, sign }: { up: string; sign: number }) => {
+      const debug = (window as any).__luxarDebug;
+      const ac = debug?.animationController;
+      const cam = debug?.camera;
+      const c = debug?.controls;
+      if (!ac || !cam || !c?.getFocusTarget) return false;
+      ac.stopAnimation?.(); // freeze the rAF loop so it can't move/re-render the camera
+      c.setEnabled?.(false); // and stop controls damping from touching it
+      const t = c.getFocusTarget();
+      const off = { x: cam.position.x - t.x, y: cam.position.y - t.y, z: cam.position.z - t.z };
+      // The rock revolves the camera about the world `up` axis (U), in the plane of
+      // the other two axes (A,B). Default 'y' reproduces the original XZ yaw. For a
+      // subject whose long/vertical axis is world-Z (e.g. a supine CT body), 'z'
+      // gives a proper turntable instead of an in-plane roll.
+      //
+      // `sign` is U's direction (-1 for a baked up like (0,0,-1)). It reaches the
+      // pose ONLY through `cam.up`: the out-of-plane offset is stored as
+      // `compU = dot(off, U)` and re-applied as `compU·U`, so negating U leaves
+      // every frame's camera POSITION bit-identical, and phi0/radius come from
+      // A,B alone. It flips the rock's direction of travel, which a symmetric
+      // ±amp sine covers either way.
+      const U =
+        up === 'x'
+          ? { x: sign, y: 0, z: 0 }
+          : up === 'z'
+            ? { x: 0, y: 0, z: sign }
+            : { x: 0, y: sign, z: 0 };
+      const A = up === 'x' ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+      const B = up === 'z' ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 };
+      const dot = (p: any, q: any) => p.x * q.x + p.y * q.y + p.z * q.z;
+      const compA = dot(off, A);
+      const compB = dot(off, B);
+      (window as any).__orbit = {
+        phi0: Math.atan2(compA, compB),
+        radius: Math.hypot(compA, compB),
+        compU: dot(off, U),
+        A,
+        B,
+        U,
+        tx: t.x,
+        ty: t.y,
+        tz: t.z,
+      };
+      return true;
+    },
+    { up: upAxis, sign: upSign }
+  );
+  if (!ok) return { frames: 0, borderSamples: [], borderPosesAttempted: 0 };
 
   fs.mkdirSync(framesDir, { recursive: true });
   const ampRad = (ORBIT_AMPLITUDE_DEG * Math.PI) / 180;
+  // Crop check: sample poses on a ~BORDER_SAMPLE_STEP_DEG grid across the WHOLE
+  // ±ORBIT_AMPLITUDE_DEG rock (`borderSampleFrames`), not just its two endpoints —
+  // the pose of greatest projected extent is often an intermediate angle, and an
+  // endpoints-only check reads zero on exactly those subjects.
+  // When the time dimension was found, also sample the LAST frame — the final
+  // timepoint at (essentially) the BASE pose, since sin(2π·(N−1)/N) ≈ 0. The rock
+  // grid spans the clip's first ~80% of the time range, so for a late-framed still
+  // (`framePoint` 0.87 on gsplats_4d_celegans_tracking) the largest, final
+  // timepoint would otherwise never be measured. Keyed on `tl`, not on
+  // `demo.timelapse`, so a demo whose time dimension was NOT discovered does not
+  // contribute a near-duplicate of the still under a misleading label.
+  // Deduped and range-checked because GALLERY_ORBIT_FRAMES can be tiny in a
+  // smoke run (at N=4 the timelapse last frame IS the −20° extreme; at N=1 the
+  // out-of-range indices are filtered away).
+  const borderMeasureAt = new Set(
+    [
+      ...borderSampleFrames(ORBIT_FRAMES, ORBIT_AMPLITUDE_DEG),
+      ...(tl ? [ORBIT_FRAMES - 1] : []),
+    ].filter((i) => i >= 0 && i < ORBIT_FRAMES)
+  );
+  // Buffers only — every measurement is deferred until after the frame loop.
+  const borderShots: { label: string; shot: Buffer }[] = [];
   let tlLastV = -1;
   for (let i = 0; i < ORBIT_FRAMES; i++) {
     // Timelapse: advance the time dim across the clip on a COARSE grid of
@@ -762,13 +979,45 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
       }
     }
     await page.evaluate(
-      async ({ idx, n, amp }: { idx: number; n: number; amp: number }) => {
+      async ({
+        idx,
+        n,
+        amp,
+        isTimelapse,
+      }: {
+        idx: number;
+        n: number;
+        amp: number;
+        isTimelapse: boolean;
+      }) => {
         const debug = (window as any).__luxarDebug;
         const o = (window as any).__orbit;
         // Guard: a mid-run reload would wipe these; skip the frame rather than
         // throw (the run then just has a duplicate frame, not a crash).
         if (!debug?.camera || !o) return;
         const cam = debug.camera;
+        // TIMELAPSE ONLY: re-freeze the rAF loop every frame.
+        //
+        // Setup froze it once, but a timelapse slice load restarts it (the data
+        // path reaches `startAnimation`), and a live loop runs
+        // `controls.update()`, which re-derives the camera from the controls'
+        // stored spherical state and snaps it back to the pre-orbit pose —
+        // AFTER this evaluate returns, so re-applying the pose inside here does
+        // not help (measured: identical output). Before this, the camera sat at
+        // the baked pose in 6 of 8 frames and a 4D tile barely orbited at all
+        // while its time dimension advanced (#1383).
+        //
+        // Gated on `isTimelapse` deliberately, even though the freeze measured
+        // harmless on the heaviest non-timelapse tile (1.5M asteroids: output
+        // byte-identical either way). The restart it defends against is a
+        // timelapse-specific event, so there is no reason to change behaviour
+        // for captures that were never broken, and one demo is thin evidence
+        // for the rest. Non-timelapse captures are byte-identical to before —
+        // verified against this file's pre-change version run back-to-back.
+        if (isTimelapse) {
+          debug.animationController?.stopAnimation?.();
+          debug.controls?.setEnabled?.(false);
+        }
         // Sinusoidal rock: one seamless period over N frames, ±amp radians, in
         // the A,B plane about the up axis U (position = center + r·(sinθ·A +
         // cosθ·B) + compU·U). up = U keeps the subject upright.
@@ -791,14 +1040,125 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
         await debug.resortDepthOrderingForCapture?.();
         debug.postProcessing?.render?.(); // synchronous render with the new camera
       },
-      { idx: i, n: ORBIT_FRAMES, amp: ampRad }
+      { idx: i, n: ORBIT_FRAMES, amp: ampRad, isTimelapse: tl !== null }
     );
-    await page.screenshot({
+    const shot = await page.screenshot({
       path: path.join(framesDir, `f${String(i).padStart(4, '0')}.png`),
       type: 'png',
     });
+    if (borderMeasureAt.has(i)) {
+      // Retain the buffer and label the pose by its actual rock angle (rounding
+      // for a tiny frame count can land slightly off the ±amplitude extreme),
+      // naming the timelapse end-of-range frame explicitly.
+      const deg = ORBIT_AMPLITUDE_DEG * Math.sin((i / ORBIT_FRAMES) * Math.PI * 2);
+      const pose = `rock ${deg >= 0 ? '+' : ''}${deg.toFixed(0)}°`;
+      borderShots.push({
+        label: tl && i === ORBIT_FRAMES - 1 ? `${pose}, last timepoint` : pose,
+        shot,
+      });
+    }
   }
-  return ORBIT_FRAMES;
+  // Capture loop done — now decode the retained frames. A failed decode skips
+  // that pose (evaluateBorderLit copes with fewer, or zero, samples) and is
+  // reported by measureBorderLitOrNull; the returned attempted count lets the
+  // caller flag the short set.
+  const borderSamples: BorderSample[] = [];
+  for (const { label, shot } of borderShots) {
+    const sample = await measureBorderLitOrNull(page, shot, label, demo?.id ?? 'orbit');
+    if (sample) borderSamples.push(sample);
+  }
+  return { frames: ORBIT_FRAMES, borderSamples, borderPosesAttempted: borderShots.length };
+}
+
+/**
+ * Warn when the still and the FIRST orbit frame disagree.
+ *
+ * They are the same nominal pose — the rock is `phi0 + amp*sin(0)` at frame 0 —
+ * so they should render near-identically. When they do not, the orbit is showing
+ * the subject from somewhere the poster never does, and since the README embeds
+ * the ANIMATION while reviewers usually look at the still, that divergence ships
+ * unnoticed. It already did: five demos bake a non-Y camera up, three of them
+ * did not declare `orbitUp`, and two of those three measurably shipped
+ * animations rolled ~90 deg from their own posters (#1377). Nothing in this
+ * harness compared the two.
+ *
+ * Normalised cross-correlation on a greyscale downscale — deliberately not
+ * SSIM, which is punishing on high-frequency filamentary subjects (a
+ * correctly-matched cosmic-web tile scores 0.57 while correlating at 0.98) and
+ * would cry wolf. The maths, the size and the threshold live in
+ * `frame-similarity.ts`, where they are unit-tested.
+ *
+ * WARNS rather than fails. The still and frame 0 can differ for reasons that are
+ * not a roll — a progressively-streamed scene keeps filling in between the two
+ * captures, and the in-page decode could go missing — and neither should abandon
+ * a 61-tile media run that takes hours. So this is a "look at this" signal, not
+ * a correctness gate.
+ */
+async function warnIfStillDisagreesWithOrbit(
+  page: any,
+  stillPath: string,
+  frameZeroPath: string,
+  demo: DemoEntry
+): Promise<void> {
+  // Timelapse demos are exempt: the still is deliberately framed at
+  // `timelapse.framePoint` of the time range while orbit frame 0 sits at the
+  // clip's start, so the two show DIFFERENT TIMEPOINTS and correlate ~0.14 even
+  // when the camera agrees perfectly. Comparing them would warn on every
+  // timelapse tile, which is how a guard gets ignored.
+  //
+  // Note this tests the DECLARED field, while the per-frame re-freeze in
+  // `captureOrbitFrames` gates on `tl !== null` — whether time stepping is
+  // actually happening. Deliberately not the same question: a demo that declares
+  // `timelapse` but whose scene has no non-displayed dimension steps nothing, so
+  // the freeze correctly stays off while this exemption still (harmlessly) skips
+  // one warning. Do not "align" the two.
+  if (demo.timelapse) return;
+  if (!fs.existsSync(stillPath) || !fs.existsSync(frameZeroPath)) return;
+  try {
+    // Read inside the try: an exists/read race or an unreadable file must warn
+    // like any other failure here, not reject and take the whole capture down.
+    const [a, b] = [stillPath, frameZeroPath].map((f) => fs.readFileSync(f).toString('base64'));
+    // The page does DECODING only — it is the one place with an image decoder —
+    // and hands back plain integer greyscale buffers. The comparison itself runs
+    // in Node against `frame-similarity.ts`, so the arithmetic is unit-tested
+    // rather than trapped inside a `page.evaluate` string.
+    const [ga, gb] = await page.evaluate(
+      async ([s, f, size]: [string, string, number]) => {
+        const grey = async (b64: string) => {
+          const blob = await (await fetch('data:image/png;base64,' + b64)).blob();
+          const img = await createImageBitmap(blob);
+          const c = new OffscreenCanvas(size, size);
+          const ctx = c.getContext('2d')!;
+          ctx.drawImage(img, 0, 0, size, size);
+          const d = ctx.getImageData(0, 0, size, size).data;
+          const out: number[] = new Array(size * size);
+          for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+            // Kept in step with `luma8` in frame-similarity.ts — this side
+            // cannot import it (the body is serialised into the page).
+            out[j] = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+          }
+          return out;
+        };
+        return [await grey(s), await grey(f)];
+      },
+      [a, b, COMPARE_SIZE]
+    );
+    const corr = normalizedCrossCorrelation(ga, gb);
+    if (corr < DISAGREEMENT_THRESHOLD) {
+      console.warn(
+        `[${demo.id}] ⚠️  still and orbit frame 0 disagree (correlation ${corr.toFixed(3)}). ` +
+          'They are the same nominal pose, so the animation is showing a different ' +
+          "orientation than the poster — check 'orbitUp' against the demo's baked " +
+          'viewer_config camera up (see #1377).'
+      );
+    }
+  } catch (e) {
+    // Diagnostic only — never let it break a capture. But say so: a guard that
+    // fails silently is worse than no guard, because the absence of a warning
+    // reads as "checked and fine". If `createImageBitmap`/`OffscreenCanvas` ever
+    // go missing, this line is what stops #1377 regressing unnoticed.
+    console.warn(`[${demo.id}] still-vs-orbit check could not run:`, e);
+  }
 }
 
 /**
@@ -916,14 +1276,70 @@ for (const demo of DEMOS) {
 
     // Still.
     const pngPath = path.join(OUTPUT_DIR, `${demo.id}.png`);
-    await page.screenshot({ path: pngPath, type: 'png' });
+    // Keep the buffer as well as writing the file: the crop check measures this
+    // very frame, so it costs no extra screenshot.
+    const stillShot = await page.screenshot({ path: pngPath, type: 'png' });
     console.log(`[${demo.id}] still → ${path.basename(pngPath)}`);
 
     // Orbit: capture explicit per-angle frames (reliable in headless), then
     // assemble the WebM master + animated WebP.
     const framesDir = path.join(OUTPUT_DIR, `_frames_${demo.id}`);
-    const n = await captureOrbitFrames(page, framesDir, demo);
+    const {
+      frames: n,
+      borderSamples,
+      borderPosesAttempted,
+    } = await captureOrbitFrames(page, framesDir, demo);
+    // Only when this run actually produced frames — framesDir is not cleaned
+    // between runs, so on a failed capture f0000.png can be a stale leftover and
+    // comparing the fresh still against it would warn about nothing. Must happen
+    // before page.close() (the check decodes in the page), hence the guard here
+    // rather than after the n === 0 bail-out below.
+    if (n > 0) {
+      await warnIfStillDisagreesWithOrbit(page, pngPath, path.join(framesDir, 'f0000.png'), demo);
+    }
+    // Measure the still LAST (but while the page is still open): decoding a
+    // retained buffer doesn't care where the camera ended up, and doing it here
+    // keeps the crop check from inserting seconds between the still screenshot
+    // and the orbit's rAF freeze — progressive LOD is still streaming there, so a
+    // diagnostic must not change what the media pipeline captures. Failure-
+    // tolerant for the same reason as the orbit samples.
+    const stillSample = await measureBorderLitOrNull(page, stillShot, 'still', demo.id);
     await page.close();
+
+    // Crop check (before the orbit-failure return — the still sample alone is
+    // worth reporting). ALWAYS log the count: it is a per-tile regression signal
+    // that should not grow between captures, and a non-zero value is common
+    // enough that only the number, not the boolean, is informative. Warn (never
+    // fail) when it clears the floor — see ./crop-policy.
+    const framing: CropFraming = {
+      fillTarget: demo.fillTarget ?? FILL_TARGET,
+      zoom: demo.zoom,
+      distance: demo.distance,
+      autoFrame: demo.autoFrame,
+    };
+    // Still first, so a tie names the pose easiest to reproduce by hand.
+    const samples = [...(stillSample ? [stillSample] : []), ...borderSamples];
+    const verdict = evaluateBorderLit({ demoId: demo.id, samples, framing });
+    // ALWAYS report measured/attempted poses: the verdict is the worst of whatever
+    // could be measured, so a skipped pose (each one warned about above) would
+    // otherwise print an ordinary-looking count that silently misses a crop
+    // confined to the dropped pose.
+    const posesAttempted = 1 + borderPosesAttempted; // the still, plus the orbit poses
+    const poses = `poses=${samples.length}/${posesAttempted}`;
+    if (verdict.worst) {
+      const w = verdict.worst;
+      console.log(
+        `[${demo.id}] border-lit=${w.borderLit}/${w.borderPixels} ` +
+          `(${borderLitPercent(w).toFixed(1)}%) worst=${w.label} ${poses}`
+      );
+    } else {
+      // Say so loudly: with every measurement swallowed, a broken in-page decode
+      // would otherwise just stop printing the count for every demo — silence
+      // indistinguishable from the check not existing.
+      console.log(`[${demo.id}] border-lit=unmeasured (${poses})`);
+    }
+    if (verdict.cropped) console.warn(verdict.message);
+
     if (n === 0) {
       console.error(`[${demo.id}] orbit capture failed (no camera/controls)`);
       return;

@@ -259,6 +259,7 @@ MIN_NODE_MINOR := 22
 | `make test-e2e-smoke` | Run the E2E smoke subset (the interaction-focused specs CI would run) |
 | `make test-perf-e2e` | Run the opt-in Playwright performance suite |
 | `make lint-python` | Run ruff linting on Python |
+| `make check-complexity` | Ratchet cyclomatic complexity (ruff C901) against `scripts/complexity_baseline.json` |
 | `make lint-typescript` | Run ESLint on TypeScript |
 | `make type-check-python` | Run mypy type checking |
 | `make type-check-typescript` | Run TypeScript type checking |

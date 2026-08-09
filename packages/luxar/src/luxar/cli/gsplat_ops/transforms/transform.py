@@ -337,7 +337,11 @@ def run_transform_dataset(
                 # invariant to scale/rotate/translate/center — so this re-derives the
                 # identical value; it is kept as a safety net for transforms that also
                 # re-ladder and change per-level counts. Intensity-only transforms
-                # leave it intact regardless.
+                # leave it intact regardless. The re-derivation is TOPOLOGY-AWARE
+                # (``write_gsplat_node`` picks ``partitioned_coverage_fractions`` for a
+                # partition-bound ladder), so scrubbing an ``adaptive``/``overview``
+                # store restores its fills-screen anchor rather than downgrading it to
+                # the whole-object one.
                 geometry_changed = (
                     scale_matrix is not None
                     or rot_matrix is not None

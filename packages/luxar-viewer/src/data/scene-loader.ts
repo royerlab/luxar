@@ -1367,6 +1367,19 @@ export class SceneLoader {
         const mesh = this.rootGroup?.getObjectByName(path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
+      releaseLazyMesh: (path) => {
+        // Mesh demotion hygiene. NO pool release: a mesh is `pooled: false`, so
+        // unlike the three above there is no evictable buffer to hand back — the
+        // level keeps its geometry until the node is disposed, the same lifetime
+        // a non-LOD mesh already has. The depth-sort release IS shared, and is
+        // why this callback exists at all: mesh became `depthSortable` in #1347,
+        // so without it a demoted level pins its coordinator state and (up to
+        // millions of floats of) worker-side centroids for something no longer
+        // drawn — precisely the memory a ladder exists to avoid holding.
+        this.clearCommittedDataStamp(path);
+        const mesh = this.rootGroup?.getObjectByName(path);
+        if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
+      },
       applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),

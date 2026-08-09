@@ -20,6 +20,14 @@ auto-partition partitions into several spatial parts; under each part the
 example explicitly nests a hand-built ``add_lod_group`` with two LOD
 levels (coarse + fine) so the broadcast + combined badge surface.
 
+The fine level's ``coverage_fraction`` is ``MAX_COVERAGE_FRACTION`` (4.0), not
+1.0, because a partition-bound ladder keeps the fills-screen switch point: each
+part projects to only a fraction of the whole ribbon, so the viewer's
+whole-object anchor (1.0, reached at ~a quarter of the viewport diagonal) would
+put every part on its fine level at the opening framing. See
+``partitioned_coverage_fractions`` — the ``adaptive`` / ``overview`` gsplat
+recipes derive the same anchor automatically.
+
 Educational value:
 - See the ``[N parts × M LODs]`` combined badge in the layers panel.
 - Switch the "Active level" dropdown and observe ALL parts switch
@@ -35,6 +43,7 @@ from _overlay_style import add_explainer
 from arbol import aprint
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.utils.paths import get_examples_output_dir
 
 
@@ -111,7 +120,18 @@ def main() -> None:
             # a kind=partition group — which *drops* the ``coverage_fraction``
             # threshold, leaving both levels at 0 and breaking the
             # view-driven (auto) LOD selector. Keeping them as plain leaves
-            # preserves the coarse(0.0)→fine(1.0) threshold ladder.
+            # preserves the coarse(0.0)→fine(MAX_COVERAGE_FRACTION) ladder.
+            #
+            # The fine level is MAX_COVERAGE_FRACTION (4.0), not 1.0, because this
+            # ladder is PARTITION-BOUND: each lod group's bbox is one part, so its
+            # projected diagonal is intrinsically a fraction of the whole ribbon's.
+            # The viewer's finest anchor of 1.0 is calibrated for a whole-object
+            # ladder and is reached at ~a quarter of the viewport diagonal, so at
+            # 1.0 BOTH parts would sit on their fine level at the opening framing —
+            # defeating the point of this example. 4.0 == 1/FILL_FACTOR keeps the
+            # pre-#1361 fills-screen switch point a tile needs. This is the
+            # hand-built counterpart of ``partitioned_coverage_fractions``, which
+            # the ``adaptive`` / ``overview`` gsplat recipes apply automatically.
             part.add_points(
                 "lod_coarse",
                 half[::8],
@@ -125,7 +145,7 @@ def main() -> None:
                 half,
                 colors=half_colors,
                 radii=0.05,
-                coverage_fraction=1.0,
+                coverage_fraction=MAX_COVERAGE_FRACTION,
                 partition=False,
             )
 

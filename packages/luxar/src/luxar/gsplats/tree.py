@@ -499,6 +499,7 @@ def node_from_substitutive_levels(levels: "List[SubstitutiveLevel]") -> GSplatNo
 
 def tree_from_substitutive_levels(
     levels: "List[SubstitutiveLevel]",
+    coverage: "Optional[Callable[[List[int]], List[float]]]" = None,
 ) -> GSplatNode:
     """Build a node tree from the historical 2-D matrix representation.
 
@@ -513,11 +514,19 @@ def tree_from_substitutive_levels(
 
     Each child of a multi-level lod group is back-filled with a derived
     ``coverage_fraction`` selector threshold (``sqrt(N_i/N_finest)`` — the
-    viewport-relative fraction the viewer multiplies by the viewport diagonal), so
-    a standalone substitutive ``.gsplats.zarr`` selects levels correctly in the
-    viewer rather than being stuck at the finest level. This is the same
+    viewport-relative fraction the viewer multiplies by a quarter of the viewport
+    diagonal), so a standalone substitutive ``.gsplats.zarr`` selects levels
+    correctly in the viewer rather than being stuck at the finest level. This is the same
     single-sourced :func:`~luxar.core.group.lod.group.coverage_fractions`
     derivation the scene path uses.
+
+    ``coverage`` overrides that derivation. It defaults to the whole-object
+    :func:`~luxar.core.group.lod.group.coverage_fractions`; a caller building a
+    ladder that is bound to a spatial partition (the ``adaptive`` recipe's
+    per-tile groups) passes
+    :func:`~luxar.core.group.lod.group.partitioned_coverage_fractions` instead,
+    which keeps the pre-#1361 fills-screen anchor. See that function for the rule
+    and why a per-tile ladder must not take the whole-object anchor.
 
     This is the inverse of :func:`substitutive_levels_from_tree` for any tree
     that is matrix-shaped (a leaf, or a lod group whose children are all leaves).
@@ -532,12 +541,13 @@ def tree_from_substitutive_levels(
     # 1:1 mapping.
     from luxar.core.group.lod.group import coverage_fractions
 
+    derive = coverage if coverage is not None else coverage_fractions
     levels_coarsest_first = list(reversed(levels))
     counts_coarsest_first = [
         sum(sub.n_splats for sub in lvl.additive_sublods)
         for lvl in levels_coarsest_first
     ]
-    fractions_coarsest_first = coverage_fractions(counts_coarsest_first)
+    fractions_coarsest_first = derive(counts_coarsest_first)
     for leaf, fraction in zip(node.children, fractions_coarsest_first):
         leaf.meta.setdefault("coverage_fraction", fraction)
 

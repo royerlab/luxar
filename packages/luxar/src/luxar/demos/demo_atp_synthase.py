@@ -108,7 +108,7 @@ Controls:
     - Top view: See hexagonal F1 head with rotating γ stalk
     - Side view: See membrane portion (F0) and catalytic head (F1)
     - Each chain/subunit has a distinct color
-    - Press L for the Layers panel (blending, opacity, display range)
+    - Press L for the Layers panel (blending, opacity, absorption, display range)
     - Ctrl+C to stop and cleanup
 """
 
@@ -485,19 +485,25 @@ def generate_atp_synthase(
                 # Sharpness for protein atoms (normalized [0, 1] knob; 0.5 = Gaussian)
                 sharpness = np.full(len(positions), 0.5, dtype=np.float32)
 
-                # `normal` (alpha-over, depth-sorted) rather than the default
-                # additive — same reasoning as the nuclear-pore-complex demo:
-                # an atomic structure is a surface, so the nearest atom should
-                # win the pixel instead of every overlapping atom summing into
-                # pastel white. Retires the intensity=0.0625 anti-blowout
-                # workaround additive needed — which here was the dominant
-                # cost: at the opening framing the chain colours go from mean
-                # CIELAB chroma 44.8 at lightness L* 40.2 (additive: dim and
-                # muddy) to 57.8 at L* 76.4, so the subunits read as distinct
-                # hues instead of a dark wash. `layer=True` exposes the node in
-                # the Layers panel (press L) for live blending / opacity /
+                # Emission-absorption `volumetric` blending at kappa 2.5: the
+                # absorption term keeps the depth ordering (a near atom
+                # occludes what is behind it) while the complex stays
+                # translucent, so the packed interior reads as density rather
+                # than as an opaque shell. Self-screening scales the
+                # composited colour by roughly 1/kappa, so the raised gain is
+                # what brings the exposure back — the gain is the one knob
+                # that stays out of the optical depth (absorption sets it,
+                # node opacity scales it).
+                # `intensity=1.62` ≈ 1/0.616, the Layers-panel display window
+                # [0, 0.616] the look was tuned at (offset 0; the panel reads
+                # the rounded gain back as 0.617); it was chosen against this
+                # kappa, so changing either moves the exposure. This supersedes
+                # the earlier `normal` default, which rendered the structure as
+                # a surface and hid that interior; the nuclear-pore-complex
+                # demo keeps `normal`. `layer=True` exposes the node in the
+                # Layers panel (press L) for live blending / opacity /
                 # display-range control — plus absorption, whose slider the
-                # panel only shows once the layer is switched to volumetric.
+                # panel only shows on volumetric.
                 scene.add_points(
                     "atp_synthase",
                     positions=positions,
@@ -505,9 +511,10 @@ def generate_atp_synthase(
                     radii=radii,
                     sharpness=sharpness,
                     layer=True,
-                    blending_mode="normal",
+                    blending_mode="volumetric",
+                    absorption=2.5,
                     opacity=1.0,
-                    intensity=1.0,
+                    intensity=1.62,
                 )
 
                 # Overlay annotations

@@ -19,7 +19,7 @@ vi.mock('zarrita', async () => {
     get: vi.fn(),
   };
 });
-import { open as zarrOpen, get as zarrGet } from 'zarrita';
+import { open as zarrOpen, get as zarrGet, NotFoundError } from 'zarrita';
 const mockOpen = vi.mocked(zarrOpen);
 const mockGet = vi.mocked(zarrGet);
 
@@ -176,18 +176,205 @@ describe('LabelLoader.getLabel — fetch + cache', () => {
 
   it('returns null for any element when the underlying zarr fetch fails', async () => {
     const loader = makeLoader();
-    mockOpen.mockRejectedValueOnce(new Error('not found'));
+    mockOpen.mockRejectedValueOnce(new Error('decode failed'));
 
     // Default warn spy so the failure log doesn't pollute test output.
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       // Returns empty array on error → any index falls through to the
       // out-of-range branch.
-      expect(await loader.getLabel('/Missing', 0)).toBeNull();
+      expect(await loader.getLabel('/Broken', 0)).toBeNull();
       expect(warnSpy).toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('does not warn when the node simply has no label arrays', async () => {
+    // The picker calls getLabel for whatever it hit, and most nodes carry no
+    // labels at all (every coarse LOD level of a labelled ladder, for one).
+    // That is an ordinary miss, not a failure worth a console warning.
+    // The real class zarrita throws for an absent node, so this pins the
+    // `instanceof` branch of the shared isNotFoundError guard.
+    const loader = makeLoader();
+    mockOpen.mockRejectedValueOnce(new NotFoundError('v2 array', { path: '/x/.zarray' }));
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await loader.getLabel('/Unlabelled', 0)).toBeNull();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('still warns when label_bytes is missing but label_offsets is not', async () => {
+    // Offsets present, bytes absent: a corrupt/incomplete labelled store, NOT
+    // an unlabelled node. Only the first open may be innocently absent, so the
+    // info demotion must not swallow this.
+    const loader = makeLoader();
+    mockOpen.mockResolvedValueOnce({ kind: 'offsets-array' } as never);
+    mockOpen.mockRejectedValueOnce(
+      new NotFoundError('v2 array', { path: '/x/label_bytes/.zarray' })
+    );
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await loader.getLabel('/HalfLabelled', 0)).toBeNull();
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('still warns when a label chunk fetch reports the key as missing', async () => {
+    // Both arrays open, then a chunk read fails as not-found. Same reasoning:
+    // the data is there per the metadata, so this is a failure, not an absence.
+    const loader = makeLoader();
+    mockOpen.mockResolvedValueOnce({ kind: 'offsets-array' } as never);
+    mockOpen.mockResolvedValueOnce({ kind: 'bytes-array' } as never);
+    mockGet.mockRejectedValueOnce(new Error('HTTP 404: /x/label_offsets/0'));
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await loader.getLabel('/BrokenChunk', 0)).toBeNull();
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+describe('LabelLoader.getLabel — a consecutive run of equal labels decodes once', () => {
+  beforeEach(() => {
+    mockOpen.mockReset();
+    mockGet.mockReset();
+  });
+
+  it('decodes a 64-element broadcast node exactly once', async () => {
+    const loader = makeLoader();
+    // How a producer tags a whole node: one string repeated per element.
+    const broadcast = 'AF_L — Arcuate fasciculus (left) · association';
+    programOneLoad(new Array(64).fill(broadcast));
+
+    const decodeSpy = vi.spyOn(TextDecoder.prototype, 'decode');
+    try {
+      expect(await loader.getLabel('/Tract', 0)).toBe(broadcast);
+      expect(await loader.getLabel('/Tract', 63)).toBe(broadcast);
+      // The whole node is decoded in one pass on first access; 63 of the 64
+      // elements are served by reusing the previous element's string.
+      expect(decodeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      decodeSpy.mockRestore();
+    }
+  });
+
+  it('still decodes once per element when every label differs', async () => {
+    // The reuse must not cost the all-distinct case anything, and must never
+    // collapse two different labels into one.
+    const loader = makeLoader();
+    const distinct = Array.from({ length: 64 }, (_, i) => `label-${i}`);
+    programOneLoad(distinct);
+
+    const decodeSpy = vi.spyOn(TextDecoder.prototype, 'decode');
+    try {
+      expect(await loader.getLabel('/Distinct', 0)).toBe('label-0');
+      expect(decodeSpy).toHaveBeenCalledTimes(64);
+      expect(await loader.getLabel('/Distinct', 63)).toBe('label-63');
+    } finally {
+      decodeSpy.mockRestore();
+    }
+  });
+
+  it('keeps equal-length labels apart when they differ at only one byte', async () => {
+    // `bytesEqual` probes both END bytes before scanning the interior, so these
+    // three shapes exercise each rejection point on labels the length check
+    // cannot separate: differing at the last byte, at the first, and in the
+    // middle. A wrong probe here would silently serve a neighbour's label.
+    const loader = makeLoader();
+    programOneLoad([
+      'chr1:1000',
+      'chr1:1001', // last byte only
+      'ahr1:1001', // first byte only
+      'ahr9:1001', // interior only
+    ]);
+
+    expect(await loader.getLabel('/Adjacent', 0)).toBe('chr1:1000');
+    expect(await loader.getLabel('/Adjacent', 1)).toBe('chr1:1001');
+    expect(await loader.getLabel('/Adjacent', 2)).toBe('ahr1:1001');
+    expect(await loader.getLabel('/Adjacent', 3)).toBe('ahr9:1001');
+  });
+
+  it('reuses a repeat that differs from its neighbour only in length', async () => {
+    // The mirror case: the length check must not be the only thing standing
+    // between two labels, and must not stop a genuine repeat being reused.
+    const loader = makeLoader();
+    programOneLoad(['ab', 'abc', 'abc']);
+
+    const decodeSpy = vi.spyOn(TextDecoder.prototype, 'decode');
+    try {
+      expect(await loader.getLabel('/Lengths', 0)).toBe('ab');
+      expect(await loader.getLabel('/Lengths', 1)).toBe('abc');
+      expect(await loader.getLabel('/Lengths', 2)).toBe('abc');
+      expect(decodeSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      decodeSpy.mockRestore();
+    }
+  });
+
+  it('reuses single-byte and two-byte repeats', async () => {
+    // Short ranges are where the end probes overlap the interior scan: at
+    // length 1 both probes read the same byte, at length 2 they cover the whole
+    // range and the loop body never runs.
+    const loader = makeLoader();
+    programOneLoad(['a', 'a', 'b', 'xy', 'xy', 'xz']);
+
+    expect(await loader.getLabel('/Short', 0)).toBe('a');
+    expect(await loader.getLabel('/Short', 1)).toBe('a');
+    expect(await loader.getLabel('/Short', 2)).toBe('b');
+    expect(await loader.getLabel('/Short', 3)).toBe('xy');
+    expect(await loader.getLabel('/Short', 4)).toBe('xy');
+    expect(await loader.getLabel('/Short', 5)).toBe('xz');
+  });
+
+  it('keeps distinct labels distinct when repeats and empties are interleaved', async () => {
+    const loader = makeLoader();
+    // No two ADJACENT entries are equal here, so this pins the run boundaries
+    // without ever taking the reuse branch.
+    programOneLoad(['red', 'green', 'red', '', 'green', 'blue', 'red']);
+
+    expect(await loader.getLabel('/Mixed', 0)).toBe('red');
+    expect(await loader.getLabel('/Mixed', 1)).toBe('green');
+    expect(await loader.getLabel('/Mixed', 2)).toBe('red');
+    expect(await loader.getLabel('/Mixed', 3)).toBeNull();
+    expect(await loader.getLabel('/Mixed', 4)).toBe('green');
+    expect(await loader.getLabel('/Mixed', 5)).toBe('blue');
+    expect(await loader.getLabel('/Mixed', 6)).toBe('red');
+  });
+
+  it('does not let an empty label bridge a run across it', async () => {
+    // The empty branch must still advance the previous-range bookkeeping. If
+    // it does not, the element after an empty compares against the element
+    // BEFORE it and wrongly reuses: ['red','',''] instead of ['red','','red'].
+    const loader = makeLoader();
+    programOneLoad(['red', '', 'red']);
+
+    expect(await loader.getLabel('/Gap', 0)).toBe('red');
+    expect(await loader.getLabel('/Gap', 1)).toBeNull();
+    expect(await loader.getLabel('/Gap', 2)).toBe('red');
+  });
+
+  it('resumes a run correctly after an embedded empty label', async () => {
+    // Same defect, with real runs either side: a stale previous range yields
+    // ['red','red','','',''] instead of ['red','red','','red','red'].
+    const loader = makeLoader();
+    programOneLoad(['red', 'red', '', 'red', 'red']);
+
+    expect(await loader.getLabel('/Runs', 0)).toBe('red');
+    expect(await loader.getLabel('/Runs', 1)).toBe('red');
+    expect(await loader.getLabel('/Runs', 2)).toBeNull();
+    expect(await loader.getLabel('/Runs', 3)).toBe('red');
+    expect(await loader.getLabel('/Runs', 4)).toBe('red');
   });
 });
 

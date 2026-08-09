@@ -51,6 +51,17 @@ vi.mock('../../../../../data/scene-loader/nodes/load-lines-node', () => ({
   loadLinesNodeExpensive: loadLinesNodeExpensiveMock,
 }));
 
+// Mesh deferral mirrors the three above — the fourth branch of the defer
+// dispatch, which throws for any type it does not name.
+const { loadMeshNodeCheapMock, loadMeshNodeExpensiveMock } = vi.hoisted(() => ({
+  loadMeshNodeCheapMock: vi.fn(),
+  loadMeshNodeExpensiveMock: vi.fn(),
+}));
+vi.mock('../../../../../data/scene-loader/nodes/load-mesh-node', () => ({
+  loadMeshNodeCheap: loadMeshNodeCheapMock,
+  loadMeshNodeExpensive: loadMeshNodeExpensiveMock,
+}));
+
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
@@ -65,6 +76,8 @@ beforeEach(() => {
   loadPointsNodeExpensiveMock.mockReset();
   loadLinesNodeCheapMock.mockReset();
   loadLinesNodeExpensiveMock.mockReset();
+  loadMeshNodeCheapMock.mockReset();
+  loadMeshNodeExpensiveMock.mockReset();
   // Default cheap-attach: attach a stub mesh named after the node path
   // (so getObjectByName / visibility toggles work) and return a
   // placeholder + dummy loader. Expensive defaults to a no-op resolve.
@@ -80,6 +93,8 @@ beforeEach(() => {
   loadPointsNodeExpensiveMock.mockResolvedValue(undefined);
   loadLinesNodeCheapMock.mockImplementation(cheapImpl);
   loadLinesNodeExpensiveMock.mockResolvedValue(undefined);
+  loadMeshNodeCheapMock.mockImplementation(cheapImpl);
+  loadMeshNodeExpensiveMock.mockResolvedValue(undefined);
 });
 
 function makeChildNode(
@@ -116,6 +131,21 @@ function makePointsChildNode(
       type: 'points',
       coverage_fraction: coverageFraction,
       position_bounds: positionBounds,
+    } as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [],
+  };
+}
+
+/** A mesh lod-group child (the fourth deferrable type). */
+function makeMeshChildNode(path: string, coverageFraction: number): SceneNode {
+  return {
+    path,
+    type: 'mesh',
+    attrs: {
+      type: 'mesh',
+      coverage_fraction: coverageFraction,
+      position_bounds: { min: [0, 0, 0], max: [1, 1, 1] },
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
     children: [],
@@ -212,6 +242,7 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
+    releaseLazyMesh: vi.fn(),
     kickRefinementIfIdle: vi.fn(),
     applyEffectiveAttrs: (n) => n.attrs,
     deriveNodeViewState: vi.fn() as never,
@@ -969,6 +1000,75 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     expect(ln2.hasMoreLODs!()).toBe(true);
     loaderStub.hasMoreLODs = false;
     expect(ln2.hasMoreLODs!()).toBe(false);
+  });
+
+  it('defers a mesh level through the cheap/expensive split (the fourth dispatch branch)', async () => {
+    // The dispatch throws for any deferrable type it does not name, so this is
+    // the positive control the release test below needs — without it, a broken
+    // dispatch and a missing release are indistinguishable.
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeMeshChildNode('/lod/child_1', 0.5)],
+      { default_level: 0, display_type: 'mesh' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    expect(loadMeshNodeCheapMock).toHaveBeenCalledTimes(1);
+    expect(loadMeshNodeExpensiveMock).not.toHaveBeenCalled();
+
+    const ln = reg.get('/lod')!.children[1];
+    ln.ensureLoaded!();
+    await vi.waitFor(() => expect(ln.ready).toBe(true));
+    expect(loadMeshNodeExpensiveMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives a deferred mesh level a release thunk, even though it has no pooled buffer', async () => {
+    // The asymmetry worth pinning: a mesh is `pooled: false`, so this release
+    // hands nothing back to the evictable pool — which is exactly why it was
+    // originally omitted. It is needed anyway because mesh is `depthSortable`
+    // (#1347): `releaseLazyMesh` drops the demoted level's depth-sort state and
+    // its worker-side centroids. Assert the thunk EXISTS and is wired, so the
+    // "no pooled buffer" reasoning cannot re-delete it.
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeMeshChildNode('/lod/child_1', 0.5)],
+      { default_level: 0, display_type: 'mesh' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const ln = reg.get('/lod')!.children[1];
+    ln.ready = true; // simulate a completed load
+    ln.failed = true; // stale failure flag from a prior cycle
+    ln.failedTick = 42;
+    expect(typeof ln.release).toBe('function');
+    ln.release!();
+    expect(vi.mocked(ctx.releaseLazyMesh)).toHaveBeenCalledWith('/lod/child_1');
+    expect(ln.ready).toBe(false);
+    expect(ln.loading).toBe(false);
+    expect(ln.failed).toBe(false);
+    expect(ln.failedTick).toBeUndefined();
+  });
+
+  it('gives a deferred mesh level NO hasMoreLODs (a surface has no additive ladder)', async () => {
+    // The other half of the mesh row's asymmetry: the three emissive types pass
+    // a `hasMoreLODs` probe because their finest level may itself be additively
+    // laddered. A mesh level is whole-node resident in one fetch, so it is
+    // complete the moment it is ready, and an additive prefix of an index buffer
+    // is a holed surface rather than a coarse one.
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeMeshChildNode('/lod/child_1', 0.5)],
+      { default_level: 0, display_type: 'mesh' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    expect(reg.get('/lod')!.children[1].hasMoreLODs).toBeUndefined();
   });
 });
 

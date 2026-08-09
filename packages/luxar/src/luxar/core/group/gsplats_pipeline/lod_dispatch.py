@@ -71,7 +71,8 @@ def add_gsplats_as_lod_group_impl(
     else:
         # Auto-derive (coarsest-first) as viewport-relative coverage fractions
         # ``sqrt(N_i/N_finest)`` — count ratios only, so no per-level radius or
-        # world-extent is needed; the viewer anchors the finest at fills-screen.
+        # world-extent is needed; the viewer anchors the finest at a quarter of the
+        # live viewport diagonal (any normal full-frame view).
         coverage_vals = coverage_fractions(splat_counts)
 
     # Separate compositing attrs (go on the kind=lod Group) from

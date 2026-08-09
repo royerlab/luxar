@@ -107,13 +107,18 @@ colormap-scalars writer:
   Points-specific wrapper over `write_bounded_scalar` (name `"sharpnesses"`,
   bounds `(0.0, SHARPNESS_MAX)`, label `"sharpness"`), passing `per_array_bytes=True`.
 
-- **`write_scalars(group, scalars, spatial_index_data, n_elements, ctx, per_array_bytes=False)`**
+- **`write_scalars(group, scalars, spatial_index_data, n_elements, ctx, per_array_bytes=False, bounds=None)`**
   Writes the `scalars` array used for colormap lookup (encoded as
   `BOUNDED_SCALAR` over the data's `[min, max]`, so legitimately **signed**
   scalars — z-scores, velocities, divergence — are accepted). Requires the
   group to already contain a position array (`positions`, `vertices`, or
   `centers`) and raises `RuntimeError` otherwise. Records
   `group.attrs["scalar_data_range"]` (min/max) for layer controls.
+  `bounds` overrides that window with an explicit `(min, max)` — what a *level*
+  of an LOD ladder stamps so every level shares one colormap window instead of
+  its own contracted one. It is only ever **widened** to cover the data, never
+  narrowed: the same pair is the quantization range, so a datum outside it would
+  be outside its own encoding.
 
 ## Invariants
 
