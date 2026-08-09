@@ -634,7 +634,8 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: intended behaviour: cheap overview, detail on demand.
 #:
 #: Values above 1.0 are legal precisely because a tiled layer needs them: 1.0 is
-#: only the AUTO-DERIVED ladder's finest anchor (a quarter-viewport diagonal),
+#: the finest anchor of a WHOLE-OBJECT ladder (a quarter-viewport diagonal) — a
+#: partition-bound one auto-derives up to 4.0 as well, per the #1411 note above —
 #: and the explicit-list ceiling is `MAX_COVERAGE_FRACTION` = 4.0 == 1/FILL_FACTOR
 #: — the metric a screen-filling object produces. 4.0 here means "this tile's
 #: finest level shows only once the TILE alone fills the viewport".

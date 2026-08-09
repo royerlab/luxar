@@ -20,7 +20,8 @@ the right anchor for one tile of a spatial partition (see
 
 The standalone builder ``add_lod_group()`` lets users assemble these by hand; the
 convenience paths (e.g. ``Scene.add_gsplats_from_data(..., lod_group=...)``,
-``add_points`` / ``add_lines`` ``substitutive_lod=``) auto-derive them via
+``add_points`` / ``add_lines`` / ``add_mesh`` ``substitutive_lod=``) auto-derive
+them via
 ``derive_coverage_fractions``, which picks between ``coverage_fractions`` and
 ``partitioned_coverage_fractions`` from the insertion point's ancestry. Both share
 one shape, ``coverage_i ∝ sqrt(N_i / N_finest)`` where ``N_i`` is level *i*'s
@@ -302,21 +303,29 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     **The assumption.** The rule rests on the partition being a real TILING, i.e.
     >= 2 parts, so that a part genuinely projects to a fraction of the whole. A
     ONE-PART ``kind=partition`` breaks it: the "tile" IS the whole object, and this
-    anchor is then a factor of 4 too coarse. Two ways to land there, and only one
-    of them is undetectable:
+    anchor is then a factor of 4 too coarse. Every producer that can SEE the
+    sibling count excludes that shape; exactly one cannot:
 
-    * The SCENE-ADDER path (``derive_coverage_fractions``) genuinely cannot check
-      it — part 0's ladder is derived before part 1 has been added, so the sibling
-      count does not exist yet. This is a documented caveat, not a coded guard.
-    * ``luxar gsplat lod --recipe adaptive`` CAN: ``build_adaptive`` holds the
-      whole ``partition.children`` list before building any ladder. It does not
-      check today, and ``GSplatData.to_spatial_partition`` wraps even a single BSP
-      leaf in a ``GSplatPartition`` (unlike the scene adders' ``partition=``, which
-      falls through to a plain node), so a dataset smaller than
-      ``--max-elements`` (default ``DEFAULT_MAX_ELEMENTS`` = 1,000,000) yields one
-      part whose finest level is anchored at ``MAX_COVERAGE_FRACTION``. Tracked
-      separately from this function; noted here so the caveat is not mistaken for
-      "unreachable".
+    * ``luxar gsplat lod --recipe adaptive`` (``gsplats/lod/recipes.py::
+      build_adaptive``) holds the whole ``partition.children`` list before building
+      any ladder, so it selects :func:`coverage_fractions` when there is a single
+      part. Both tree writers do the same from their own recursion flag —
+      ``io/_compiler/gsplat_tree.py::write_gsplat_node`` and
+      ``core/group/gsplats_pipeline/from_io.py::graft_gsplat_node`` only mark
+      children as partition-bound when ``len(node.children) > 1``. That matters
+      because ``GSplatData.to_spatial_partition`` wraps even a single BSP leaf in a
+      ``GSplatPartition``, so a dataset smaller than ``--max-elements`` (default
+      ``DEFAULT_MAX_ELEMENTS`` = 1,000,000) reaches these paths as a one-part
+      partition routinely — it is the common case, not an edge one.
+    * The SCENE-ADDER path (:func:`derive_coverage_fractions`) genuinely cannot
+      check it: part 0's ladder is derived before part 1 has been added, so the
+      sibling count does not exist yet. This is a documented caveat, not a coded
+      guard — the only place the ×4 anchor can be applied to a lone part. The
+      compiler's finalize walk, which DOES see the final sibling count, warns
+      about it after the fact (``io/_compiler/finalize/lod_backfill.py::
+      warn_one_part_partition_anchors``); it does not rewrite anything, because an
+      explicit ``coverage_fractions=`` list is indistinguishable from a derived
+      one on disk.
 
     Args:
         element_counts: One entry per child, in coarsest→finest order (same
@@ -377,9 +386,9 @@ def derive_coverage_fractions(
 ) -> list[float]:
     """Pick the right anchor for an auto-derived ladder, from where it is going.
 
-    The single chokepoint the scene adders (``add_points`` / ``add_lines``
-    ``substitutive_lod=``, ``add_gsplats_from_data`` ``lod_group=``) use when the
-    caller did NOT pass an explicit ``coverage_fractions=`` list:
+    The single chokepoint all FOUR scene adders (``add_points`` / ``add_lines`` /
+    ``add_mesh`` ``substitutive_lod=``, ``add_gsplats_from_data`` ``lod_group=``)
+    use when the caller did NOT pass an explicit ``coverage_fractions=`` list:
 
     * insertion point inside a ``kind=partition`` (see
       :func:`is_partition_bound`) → :func:`partitioned_coverage_fractions`, the

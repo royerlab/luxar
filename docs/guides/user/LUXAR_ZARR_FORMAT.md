@@ -363,13 +363,17 @@ default (the finest level the `.centers` accessor returns).
   every tile on its finest level while the object is merely full-frame. Every
   producer emits it automatically once it can see the binding: the `adaptive` /
   `overview` gsplat recipes; the two gsplat writers' topology-aware fallback (a
-  `kind=partition` crossed on the way down); and the scene-side paths
-  (`substitutive_lod=` / `lod_group=` / `add_gsplats_from_file`'s graft fallback),
-  which detect a `kind=partition` ancestor of the insertion point. An
-  **explicitly authored** `coverage_fractions=[...]` list always wins over all of
-  them. The rule assumes >= 2 parts: the scene-side paths cannot check that (part 0's
-  ladder is derived before part 1 exists), and `--recipe adaptive` on a dataset below
-  `--max-elements` does emit a one-part partition whose "tile" is the whole object.
+  `kind=partition` crossed on the way down); and all **four** scene-side adders
+  (`add_points` / `add_lines` / `add_mesh` `substitutive_lod=`, `lod_group=`, and
+  `add_gsplats_from_file`'s graft fallback), which detect a `kind=partition`
+  ancestor of the insertion point. An **explicitly authored**
+  `coverage_fractions=[...]` list always wins over all of them. The rule assumes
+  >= 2 parts. Every producer that can see the final sibling count excludes a
+  **one-part** partition and falls back to the whole-object `1.0` anchor —
+  `--recipe adaptive` and both gsplat writers do, which matters because a dataset
+  below `--max-elements` yields exactly that shape. The scene-side adders are the
+  one path that cannot check it (part 0's ladder is derived before part 1 exists);
+  the compiler's finalize pass warns when it sees the result, without rewriting it.
 - Children themselves are standard nodes — they retain their own
   `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
   own `kind` attr) and full attr set.

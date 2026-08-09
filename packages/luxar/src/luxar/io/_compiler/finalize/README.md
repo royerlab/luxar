@@ -17,7 +17,8 @@ and the bodies live here so `compiler.py` stays a thin orchestration layer.
 finalize/
 ├── __init__.py        (empty — functions imported directly by module)
 ├── hashing.py         compute_content_hashes()
-├── lod_backfill.py    finalize_lod_position_bounds(), finalize_lod_display_types()
+├── lod_backfill.py    finalize_lod_position_bounds(), finalize_lod_display_types(),
+│                      warn_one_part_partition_anchors()
 └── validation.py      validate_discrete_dimension_ranges()
 ```
 
@@ -61,6 +62,29 @@ a mix of leaf types and never set the parent's `display_type`.
 
 - **Never overwrites** an authored `display_type` — fills missing values only.
 
+### `lod_backfill.warn_one_part_partition_anchors(store) -> None`
+
+The one pass here that **reports without writing anything**. A per-TILE
+(fills-screen) LOD ladder — one whose `coverage_fraction` thresholds reach
+`MAX_COVERAGE_FRACTION` = 4.0 — is correct only under a real tiling of **two or
+more** parts, because a tile's projected bbox diagonal is intrinsically a
+fraction of the whole object's. Under a **one-part** `kind=partition` that part's
+bbox _is_ the whole object, so the ladder holds its finest level back until the
+object overfills the viewport.
+
+Every producer that can see the final sibling count already excludes that shape
+(`gsplats/lod/recipes.py::build_adaptive` and both gsplat tree writers). The
+scene adders cannot: `core/group/lod/group.py::derive_coverage_fractions` is
+handed only the insertion point, and part 0's ladder is derived before part 1 has
+been added. Finalize is the first moment the count exists.
+
+- One `aprint` warning per offending `kind=lod` group, attributed to its
+  **nearest** enclosing partition (so a genuine multi-part partition nested
+  inside a one-part wrapper is not blamed).
+- Never raises and never re-anchors: an authored
+  `coverage_fractions=[0, …, 4.0]` list is indistinguishable on disk from a
+  derived one, so a silent rewrite would override a deliberate choice.
+
 ### `validation.validate_discrete_dimension_ranges(store, scene_bounds) -> None`
 
 Emits `UserWarning`s when a discrete, non-displayed dimension's declared
@@ -84,8 +108,9 @@ attr.
 
 `LuxarZarrCompiler.finalize()` calls each pass against the open store. The
 display-type pass runs before the position-bounds pass (LOD-of-LOD constructions
-need a resolved type before bounds aggregation), and `compute_content_hashes`
-runs last so the stamped hashes cover the back-filled attrs.
+need a resolved type before bounds aggregation), the one-part-anchor warning runs
+after both (it only reads), and `compute_content_hashes` runs last so the stamped
+hashes cover the back-filled attrs.
 
 ```python
 # packages/luxar/src/luxar/io/compiler.py (finalize-time)
@@ -93,6 +118,7 @@ from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
     finalize_lod_position_bounds,
+    warn_one_part_partition_anchors,
 )
 from ._compiler.finalize.validation import validate_discrete_dimension_ranges
 ```
@@ -102,6 +128,9 @@ from ._compiler.finalize.validation import validate_discrete_dimension_ranges
 **Internal:**
 - `luxar.core.dimensions.Dimensions` — imported lazily in `validation.py` to
   rebuild dimensions from the store's `scene_dimensions` attr.
+- `luxar.core.group.lod.group.MAX_COVERAGE_FRACTION` — the single definition of
+  the fills-screen anchor, read by `warn_one_part_partition_anchors` so the
+  warning cannot drift from what the producers derive.
 
 **External:**
 - `zarr` — tree traversal and attribute storage

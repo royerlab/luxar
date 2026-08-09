@@ -8,17 +8,18 @@ All notable changes to Luxar are documented in this file.
 
 #### A hand-built partition of per-part ladders now gets the tile anchor itself (#1411)
 
-`add_points` / `add_lines` reject `partition=` together with `substitutive_lod=`, so
-the adders treated every auto-derived ladder as whole-object and anchored its finest
-at `1.0`. But a caller can hand-build the `kind=partition` wrapper and call the adder
-once per part — what `demo_biodiversity_planetary_scale` does — and that ladder
-switches on ONE TILE, whose projected diagonal is intrinsically a fraction of the
-whole object's, so every part sat on its finest level at the opening framing. The
-same hole existed for `add_gsplats_from_data(..., lod_group=...)` — and therefore for
-`add_gsplats_from_file` per part, since an ordinary ladder store is matrix-shaped and
-routes through it.
+`add_points` / `add_lines` / `add_mesh` reject `partition=` together with
+`substitutive_lod=`, so the adders treated every auto-derived ladder as whole-object
+and anchored its finest at `1.0`. But a caller can hand-build the `kind=partition`
+wrapper and call the adder once per part — what `demo_biodiversity_planetary_scale`
+does, and, given that mutual exclusion, the only way to get per-tile ladders at all —
+and that ladder switches on ONE TILE, whose projected diagonal is intrinsically a
+fraction of the whole object's, so every part sat on its finest level at the opening
+framing. The same hole existed for `add_gsplats_from_data(..., lod_group=...)` — and
+therefore for `add_gsplats_from_file` per part, since an ordinary ladder store is
+matrix-shaped and routes through it.
 
-The three scene adders now detect a `kind=partition` ancestor of the insertion point
+The four scene adders now detect a `kind=partition` ancestor of the insertion point
 (a plain `add_group` in between still counts — the ladder is still inside one tile)
 and derive `partitioned_coverage_fractions` instead, logging the switch rather than
 making it silently, so a hand-built partition lands on exactly the thresholds
@@ -46,7 +47,13 @@ rule assumes the partition is a real tiling (>= 2 parts) — a one-part "partiti
 the whole object and keeps the whole-object anchor, which the writers and
 `build_adaptive` already enforce where they can see the whole tree. The scene-adder
 path is the one place that cannot: part 0's ladder is derived before part 1 exists,
-so the sibling count does not exist yet. That stays a documented caveat.
+so the sibling count does not exist yet.
+
+The compiler's finalize pass therefore gained a read-only diagnostic,
+`warn_one_part_partition_anchors`: by then the final sibling count IS visible, so a
+tile-anchored ladder that ended up under a `kind=partition` holding a single part
+prints one warning naming the group and the two ways out (drop the wrapper, or pass
+an explicit `coverage_fractions=`). It rewrites nothing and never raises.
 
 
 #### Mesh gets substitutive LOD
