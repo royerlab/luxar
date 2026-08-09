@@ -194,10 +194,13 @@ _ENVIRONMENT_ERRNOS = frozenset(
 # declared no content-length has no other completeness signal at all, so it is
 # held to the full size — a truncation there is invisible otherwise, and the
 # CSVs make it silent (see :func:`_verify_staged_download`). A stream whose
-# declared length matched, and the legacy sidecar-less cache check, allow 10%
-# under: slack for a re-upload a few bytes different, without the 2x hole a
-# family-wide floor leaves. A file that really did shrink fails loudly, with the
-# manual download URL.
+# declared length matched allows 10% under: slack for a re-upload a few bytes
+# different, without the 2x hole a family-wide floor leaves. The legacy
+# sidecar-less cache check splits the same way, on whether the loader would
+# catch what the size missed — 10% under for the `.npy` files, whose truncation
+# `np.load` raises on, and the full size for the CSVs, whose truncation pandas
+# swallows (see :func:`_cached_file_is_complete`). A file that really did shrink
+# fails loudly, with the manual download URL.
 ARTIFACT_SIZES = {
     "Global_representation.npy": 4_232_208_512,
     "label.csv": 6_553_361,
@@ -367,14 +370,25 @@ def _cached_file_is_complete(path: Path, expected_min_size: int) -> bool:
     when the recorded size still matches the file on disk, so a copy truncated
     behind the sidecar's back is re-fetched instead of trusted.
 
-    Without a sidecar (a cache written before staging existed) we fall back to
-    the ``size > expected_min_size * 0.9`` heuristic. What it reads is now that
-    file's own measured size, but the rule stays a floor rather than an equality:
-    the exact sizes are today's, and pinning a legacy cache to them would re-download
-    gigabytes the moment a file is re-uploaded a byte different. The residual
-    risk — a legacy file truncated by less than 10% — is covered on the consumer
-    side by :func:`_load_downloaded_artifact`, which quarantines an unreadable
-    artifact and re-downloads it once.
+    Without a sidecar (a cache written before staging existed) the file's own
+    measured size is the only signal there is, and how much slack it gets depends
+    on whether the LOADER would catch what the size missed.
+
+    ``np.load`` would: a ``.npy`` header declares the shape, so a short file
+    raises rather than yielding a short array, and
+    :func:`_load_downloaded_artifact` quarantines and re-fetches it. Those are
+    also the 4-23 GB artifacts, so they keep the ``> expected * 0.9`` floor —
+    pinning them to today's exact sizes would re-download gigabytes the moment a
+    file is re-uploaded a byte different.
+
+    ``pd.read_csv`` would NOT: it parses a truncated CSV without complaining. A
+    legacy ``Label_data*.csv`` cut by less than 10% therefore clears the floor,
+    parses, and silently shortens the concatenated label table — which shifts
+    every global image index after it and lands the thumbnails on the wrong
+    points, at a match rate far above the tripwire. Nothing downstream can
+    notice, so the CSVs are held to their full measured size instead, the same
+    rule :func:`_verify_staged_download` applies when nothing else proved
+    wholeness. The re-download that costs is 4-9 MB, not gigabytes.
     """
     if not path.is_file():
         return False
@@ -389,6 +403,8 @@ def _cached_file_is_complete(path: Path, expected_min_size: int) -> bool:
             return False
         return recorded == size
 
+    if path.suffix.lower() == ".csv":
+        return size >= expected_min_size
     return size > expected_min_size * 0.9
 
 

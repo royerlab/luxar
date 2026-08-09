@@ -643,11 +643,19 @@ set on the session so all four Drive confirmation strategies inherit it, and the
 length is parsed leniently (a duplicated header reads as unknown, never as a
 size).
 
-Caches written before this change have no sidecar and still fall back to the old
-size heuristic; tightening it would have forced everyone to re-download
-gigabytes for no evidence of a problem, so the residual risk is handled at the
-consumer instead. Every load of a downloaded artifact (the embeddings, both
-label tables, the image archives) now quarantines the file and re-downloads once
+Caches written before this change have no sidecar and fall back to a size
+heuristic, which splits on whether the loader would catch what the size missed.
+The `.npy` files keep the old 10%-under floor: `np.load` raises on a short array,
+so a truncated one is caught at the consumer, and tightening the floor would have
+forced everyone to re-download gigabytes for no evidence of a problem. The CSVs
+do not get that slack, because pandas parses a truncated CSV without complaining
+— a legacy `Label_data*.csv` a few percent short would be trusted for good,
+shorten the concatenated label table, and shift every image index after it, with
+nothing downstream able to notice. They are held to their full measured size; the
+re-download that costs is 4-9 MB, not gigabytes.
+
+Every load of a downloaded artifact (the embeddings, both label
+tables, the image archives) now quarantines the file and re-downloads once
 if it cannot be parsed — with `MemoryError`, `ImportError` and the environmental
 `OSError` errnos (a descriptor limit, a permission, an allocation) excluded,
 since none of them says anything about the bytes on disk and re-fetching 23 GB to

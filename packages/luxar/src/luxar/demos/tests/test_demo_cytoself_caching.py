@@ -652,6 +652,47 @@ def test_legacy_cache_without_sidecar_is_still_accepted(
     assert not demo._sidecar_path(dest).exists()
 
 
+def test_legacy_csv_truncated_under_ten_percent_is_refetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The CSVs are the one family whose loader cannot catch what a 10% floor
+    # missed: `np.load` raises on a short `.npy` (the test above relies on that
+    # to keep its slack), while pandas parses a truncated CSV without
+    # complaining. A sidecar-less copy a few percent short would therefore be
+    # trusted for good, shorten the concatenated label table, and shift every
+    # global image index after it. Held to its full size instead.
+    dest = tmp_path / "Label_data02.csv"
+    body = b"a,b\n" * 2_500
+    dest.write_bytes(body[:9_500])
+
+    assert demo._cached_file_is_complete(dest, len(body)) is False, (
+        "a 95% CSV must not pass the sidecar-less check"
+    )
+
+    _install_session(monkeypatch, _serve(body, content_type="text/csv"))
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=len(body))
+
+    assert dest.read_bytes() == body, "the short copy must be replaced in full"
+    assert json.loads(demo._sidecar_path(dest).read_text(encoding="utf-8"))[
+        "size"
+    ] == len(body)
+
+
+def test_legacy_csv_at_its_full_size_is_still_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tightening must not turn every sidecar-less CSV into a re-download: a
+    # whole one — and a re-upload a few bytes LONGER — is still trusted as is.
+    dest = tmp_path / "Label_data09.csv"
+    dest.write_bytes(b"a,b\n" * 2_500 + b"tail\n")
+    _forbid_network(monkeypatch)
+
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    assert dest.stat().st_size == 10_005
+    assert not demo._sidecar_path(dest).exists()
+
+
 # =============================================================================
 # Consumer-side self-heal
 # =============================================================================
