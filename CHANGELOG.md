@@ -18,10 +18,15 @@ sites now share one loader (`src/tests/helpers/wasm-artifact.ts`) that calls
 `assertRequiredWasmExports` before the cast, so the failure reads "missing
 required export `<kernel>` — rebuild it with pnpm build:wasm". The check looks
 at the instantiated `.wasm` exports as well as the shim's namespace, so a build
-with only one of the two files overwritten is caught too. A source-level
-tripwire (`direct-import-guard.test.ts`) keeps the next such site on that
-loader: it fails on any other viewer source that both names `luxar_wasm.js` and
-calls `initSync(`.
+with only one of the two files overwritten is caught too. A vitest run mostly
+does not get that far — the global setup scans the built shim for those same
+required exports and REBUILDS a stale artifact before any test loads it — so
+the loader's hard throw is the diagnosis for what that setup structurally cannot
+see: a MIXED build whose shim still declares every name while the binary behind
+it does not, and any caller that runs outside that setup (benchmarks, tools).
+A source-level tripwire (`direct-import-guard.test.ts`) keeps the next such site
+on that loader: it fails on any other viewer source that both names
+`luxar_wasm.js` and calls `initSync(`.
 
 #### `nd_transform` on a group — and on any node's property setter — is checked against the scene dimensions
 
@@ -64,7 +69,6 @@ after every attr is validated and written, so a group refused at construction ti
 leaves no phantom entry (leaf writers have their own post-write attr steps and are
 unchanged here). Attr-agnostic, so it fixes the same trap for a bad `opacity` /
 `transform`. Fixes #1418.
-
 
 #### The hover label lookup finds the CSR again on a partitioned layer (#1415)
 
