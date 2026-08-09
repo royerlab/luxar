@@ -379,6 +379,21 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
       return 0.5 * (exp(-x * x) * ${G.INV_SQRT_PI} - x * (1.0 - luxarErfAS(x)));
     }
 
+    // erf(hi) − erf(lo) through the widened-midpoint Taylor lane when the
+    // interval is narrow (the mixed lane's pref amplification demands the
+    // A&S-precision form); hi <= lo yields 0. Shared by the mixed lane's
+    // plane bracket and its cap-as-plane form.
+    float luxarXiBracketAS(float lo, float hi) {
+      if (hi <= lo) return 0.0;
+      float d = hi - lo;
+      if (d < 0.5) {
+        float m = 0.5 * (hi + lo);
+        float m2 = min(m * m, 80.0);
+        return ${G.TWO_OVER_SQRT_PI} * exp(-m2) * (1.0 + d * d * (4.0 * m2 - 2.0) * (1.0 / 24.0)) * d;
+      }
+      return luxarErfAS(hi) - luxarErfAS(lo);
+    }
+
     uniform int uIsOrtho;
     uniform float uNearCull;
     uniform vec2 uResolution;
@@ -607,10 +622,17 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
             dead = true;
           }
         }
+        // Near-plane ray-domain clip: xi increases with t (kxi > 0), so
+        // material at t > nearCull tightens the LOWER bracket edge.
+        // nearBinding records that the near clip — not a bisector plane —
+        // owns the final lower edge; the mixed lane must then switch to
+        // its cap-as-plane / product forms (the classic splits are invalid
+        // against a clip that removed complement-side mass).
+        bool nearBinding = false;
         if (uIsOrtho == 0) {
-          // Near-plane ray-domain clip: xi increases with t (kxi > 0), so
-          // material at t > nearCull tightens the LOWER bracket edge.
-          xiLo = max(xiLo, clamp((nearCull - tCenter) * kxi, -4.0, 4.0));
+          float xiNear = clamp((nearCull - tCenter) * kxi, -4.0, 4.0);
+          nearBinding = xiNear > xiLo;
+          xiLo = max(xiLo, xiNear);
         }
         if (dead || xiLo >= xiHi) discard;
         float xim = 0.5 * (xiLo + xiHi);
@@ -648,17 +670,27 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
           bool complementOnExcludedSide = hardA ? !excludedTowardMinusS : excludedTowardMinusS;
           float xCapB = (sAtCenter - L) * kk;  // B-edge in identity coords
           float xCapA = sAtCenter * kk;        // A-edge in identity coords
-          float bracketAS = narrow ? bracketTaylor : (luxarErfAS(xiHi) - luxarErfAS(xiLo));
+          float bracketAS = luxarXiBracketAS(xiLo, xiHi);
+          float capOnly = hardA ? (1.0 - luxarErfAS(xCapB)) : (1.0 + luxarErfAS(xCapA));
           // Saturated-cap shortcuts (the J0 split): when the cap's
           // pointwise ramp (s-width 3*sigma*sqrt2, mapped through
           // ds/dxi = dw/kxi) lies wholly outside the bracket on its
           // SATURATED side, the window is ==1 over every unit of bracket
-          // mass and the pure bracket is exact — this is what carries a
-          // biting near-plane clip (camera inside a chain-end segment),
-          // where J1 double-counts the exclusion and J2 keeps the clipped
-          // mass. On the dead side, the integral is 0.
+          // mass and the pure bracket is exact; on the dead side, the
+          // integral is 0. Under a BINDING near clip with the ramp
+          // straddling the bracket, neither classic split survives (J1
+          // double-counts the clipped complement -> BLACK chain ends; J2
+          // keeps the clipped cap mass) — there the cap becomes ONE MORE
+          // PLANE at its own midpoint xiEdge (capAsPlane), tightening
+          // the bracket's dead side: the erf ramp is antisymmetric about
+          // xiEdge (interior error cancels to second order) and its
+          // ξ-width 3√A/|dw| vanishes exactly where pref explodes, so the
+          // step form is asymptotically exact near-axial.
           bool capSaturated = false;
           bool capDead = false;
+          bool capAsPlane = false;
+          float loStep = xiLo;
+          float hiStep = xiHi;
           if (axialDominant) {
             float sEdge = hardA ? L : 0.0;    // the SOFT cap's edge
             float xiEdge = (sEdge - sAtCenter) * kxi / dw;
@@ -666,15 +698,27 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
             bool satHigh = (!hardA) == (dw > 0.0);
             capSaturated = satHigh ? (xiEdge + halfRamp <= xiLo) : (xiEdge - halfRamp >= xiHi);
             capDead = satHigh ? (xiEdge - halfRamp >= xiHi) : (xiEdge + halfRamp <= xiLo);
+            capAsPlane = nearBinding && !capSaturated && !capDead;
+            if (capAsPlane) {
+              if (satHigh) loStep = max(xiLo, min(xiEdge, 4.0));
+              else hiStep = min(xiHi, max(xiEdge, -4.0));
+            }
           }
           if (capSaturated) {
             F = pref * max(bracketAS, 0.0);
           } else if (capDead) {
             discard; // bracket entirely in the cap's dead zone: no mass
+          } else if (capAsPlane) {
+            F = pref * max(luxarXiBracketAS(loStep, hiStep), 0.0);
+          } else if (nearBinding) {
+            // Perpendicular-dominant + binding near clip: s barely varies
+            // along the ray, so the cap is a CONSTANT factor ~ capOnly/2
+            // and the product with the clipped bracket is exact in that
+            // limit.
+            F = pref * max(bracketAS * 0.5 * capOnly, 0.0);
           } else if (axialDominant && complementOnExcludedSide) {
             // Cap-only split, min()ed with the bracket: both are upper
             // bounds of the exact clipped integral.
-            float capOnly = hardA ? (1.0 - luxarErfAS(xCapB)) : (1.0 + luxarErfAS(xCapA));
             F = pref * max(min(capOnly, bracketAS), 0.0);
           } else {
             float capTerm = hardA ? (1.0 + luxarErfAS(xCapB)) : (1.0 - luxarErfAS(xCapA));

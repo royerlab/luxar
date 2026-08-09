@@ -48,15 +48,21 @@
  *
  *   selected when the cap's pointwise ramp lies wholly outside the bracket
  *   on its saturated side — then the window is ≡1 over every unit of
- *   bracket mass and J0 is exact. This is what carries a biting near-plane
- *   clip (camera inside a chain-end segment): J1 would double-count the
- *   exclusion, J2 would keep the clipped mass; J2 is additionally min()ed
- *   with the bracket, both being upper bounds of the exact integral. The
- *   residual survives only where a plane sits within ~3σ of the cap's
- *   support (short chain-end segments; sharp bends, where the binding
- *   metric is PERPENDICULAR distance to the near-axial plane, which longer
- *   segments do not grow): a measured, bounded UNDERestimate (clamped at
- *   0), pinned in the unit tests.
+ *   bracket mass and J0 is exact. J2 is additionally min()ed with the
+ *   bracket, both being upper bounds of the exact integral. Under a
+ *   BINDING near-plane clip (the clip owns the bracket's lower edge —
+ *   camera inside a chain-end segment) neither classic split survives: J1
+ *   double-counts the clipped complement (BLACK chain ends) and J2 keeps
+ *   the clipped cap mass; there the cap becomes ONE MORE PLANE at its own
+ *   midpoint (`cap-as-plane`, tightening the bracket's dead side — the
+ *   erf ramp is antisymmetric about its midpoint so the interior error
+ *   cancels to second order, and its ξ-width 3√A/|dw| vanishes exactly
+ *   where the 1/sin prefactor explodes), with a constant-cap PRODUCT form
+ *   for perpendicular-dominant rays. The residual survives only where a
+ *   plane sits within ~3σ of the cap's support (short chain-end segments;
+ *   sharp bends, where the binding metric is PERPENDICULAR distance to
+ *   the near-axial plane, which longer segments do not grow): a measured,
+ *   bounded UNDERestimate (clamped at 0), pinned in the unit tests.
  *
  * ## Near plane (review finding 2, PR #1426)
  *
@@ -409,8 +415,15 @@ export function lineVolumetricSumIntegral(
     if (hardB && !applyGeneral(seg.cutB as Vec3, seg.b)) return 0;
     // Near-plane ray-domain bound: ξ increases with t (kxi > 0), so
     // material at t > tMin tightens the LOWER edge of the bracket.
+    // `nearBinding` records that the near clip — not a bisector plane —
+    // owns the final lower edge: the mixed lane's J1 split is invalid
+    // there (its full-line complement subtraction double-counts the mass
+    // the clip already removed, clamping chain-end fragments to BLACK).
+    let nearBinding = false;
     if (tMin !== undefined) {
-      xiLo = Math.max(xiLo, fr(Math.min(Math.max((tMin - tCenter) * kxi, -4), 4)));
+      const xiNear = fr(Math.min(Math.max((tMin - tCenter) * kxi, -4), 4));
+      nearBinding = xiNear > xiLo;
+      xiLo = Math.max(xiLo, xiNear);
     }
     if (xiLo >= xiHi) return 0;
 
@@ -469,17 +482,30 @@ export function lineVolumetricSumIntegral(
       // Re-evaluate the plane bracket with the precise erf too (the poly
       // bracket is fine for hard/hard where the Taylor lane covers narrow
       // intervals, but here pref amplification demands the exact form).
-      const preciseBracket = dxi < 0.5 ? bracket : fr(erfMixed(xiHi) - erfMixed(xiLo));
+      // erf(hi) − erf(lo) through the widened-midpoint Taylor lane when
+      // the interval is narrow (pref amplification demands the precise
+      // form in this lane); hi ≤ lo ⇒ 0. Shared by the plane bracket and
+      // the cap-as-plane form below.
+      const brkAS = (lo: number, hi: number): number => {
+        if (hi <= lo) return 0;
+        const d = fr(hi - lo);
+        if (d < 0.5) {
+          const m = fr(0.5 * (hi + lo));
+          const m2 = Math.min(m * m, 80);
+          return fr(2 * INV_SQRT_PI * Math.exp(-m2) * (1 + (d * d * (4 * m2 - 2)) / 24)) * d;
+        }
+        return fr(erfMixed(hi) - erfMixed(lo));
+      };
+      const preciseBracket = brkAS(xiLo, xiHi);
+      const capOnly = hardA
+        ? fr(1 - erfMixed((sAtCenter - L) * kk))
+        : fr(1 + erfMixed(sAtCenter * kk));
       // SATURATED-CAP SHORTCUTS (the J0 split): when the cap's pointwise
       // ramp (s-width 3σ√2, mapped to ξ through ds/dξ = dw/kxi) lies
       // entirely outside the bracket on its SATURATED side, the window is
       // ≡1 across every unit of bracket mass and the pure plane bracket is
       // the exact form; entirely outside on the dead side, the integral is
-      // 0. This is what carries a near-plane clip whose crossing has moved
-      // past the cap (camera inside a chain-end segment): J1 would
-      // subtract the full-line cap complement even though the bracket
-      // already excludes it — double-counting the exclusion — and J2 would
-      // keep the behind-camera cap mass the clip removed.
+      // 0.
       if (axialDominant) {
         const capAtA = hardB; // soft cap at the A end (hard cut at B)
         const sEdge = capAtA ? 0 : L;
@@ -492,19 +518,36 @@ export function lineVolumetricSumIntegral(
         if (satHigh ? xiEdge - halfRamp >= xiHi : xiEdge + halfRamp <= xiLo) {
           return 0;
         }
+        if (nearBinding) {
+          // CAP-AS-PLANE (binding near clip, cap ramp straddling the
+          // bracket): NEITHER classic split survives here — J1 subtracts
+          // the full-line complement the clip already removed, clamping
+          // chain-end fragments to BLACK (a straight chain end at 5° tilt
+          // read 0 where quadrature says ~2.9), and J2/capOnly keeps the
+          // clipped below-edge cap mass (its hardA mirror read 4.5 where
+          // truth is 0.56). Instead, treat the erf cap as ONE MORE PLANE
+          // at its own midpoint xiEdge, tightening the bracket's dead
+          // side. The erf ramp is antisymmetric about xiEdge, so the
+          // interior error cancels to second order — and the ramp's
+          // ξ-width 3√A/|dw| vanishes exactly where pref = rn/2√A
+          // explodes, so the step form is asymptotically exact
+          // near-axial. Both defects were found by this campaign's
+          // differential fuzz.
+          const lo = satHigh ? Math.max(xiLo, Math.min(xiEdge, 4)) : xiLo;
+          const hi = satHigh ? xiHi : Math.min(xiHi, Math.max(xiEdge, -4));
+          return radial * pref * Math.max(brkAS(lo, hi), 0);
+        }
+      } else if (nearBinding) {
+        // Perpendicular-dominant + binding near clip: s barely varies
+        // along the ray, so the cap is a CONSTANT factor ≈ capOnly/2 and
+        // the product with the clipped bracket is exact in that limit.
+        return radial * pref * Math.max(preciseBracket * 0.5 * capOnly, 0);
       }
       if (axialDominant && complementOnExcludedSide) {
         // Cap-only split: the bisector's clip removes only cap-tail mass.
         // Both capOnly (full-line cap integral) and the bracket (interval
         // integral, cap ignored) are UPPER BOUNDS of the exact clipped
-        // integral, so min() is at least as good as either — and it is
-        // what carries a biting near-plane clip: once the near crossing
-        // moves past the cap's ramp the bracket becomes the exact form,
-        // while capOnly (which ignores plane clips) would keep the full
-        // behind-camera cap mass.
-        const capOnly = hardA
-          ? fr(1 - erfMixed((sAtCenter - L) * kk))
-          : fr(1 + erfMixed(sAtCenter * kk));
+        // integral, so min() is at least as good as either.
         return radial * pref * Math.max(Math.min(capOnly, preciseBracket), 0);
       }
       const capTerm = hardA

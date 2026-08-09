@@ -665,6 +665,50 @@ function buildNearPlaneJoinTexelSource(): LineTexelSource {
   };
 }
 
+/**
+ * A 2-segment chain STRADDLING the perspective near plane (nearCull 0.35,
+ * camera at world z = 1 looking −z): segment 0 runs end-on from camera-space
+ * z = +0.6 (behind the eye) through the near plane to the shared vertex at
+ * z = −0.6, where segment 1 branches off side-on. Segment 0 is therefore a
+ * MIXED chain-end segment (soft cap behind the camera, bisector cut at the
+ * joint) whose general-lane fragments have the near clip as their BINDING
+ * lower bracket edge — the cap-as-plane / product code path that no other
+ * fixture reaches (`line-volprim-nearclip` pins the structural-parallel
+ * lane instead).
+ */
+function buildStraddlingJoinTexelSource(): LineTexelSource {
+  // A FAT chain (width 1.2 → σ ≈ 0.79) whose soft start sits well BEHIND
+  // the eye (camera-space z = +0.9) and whose cut end lies deep in front
+  // (z = −1.8): geometry chosen by a CPU-reference sweep to maximize the
+  // pixel population where the near clip changes the true integral AND
+  // the near fade has released (their overlap is a design property, which
+  // made every thinner/closer variant of this fixture mutation-blind).
+  // Mutation-calibrated on this build: disabling the ξ-near tightening on
+  // one backend reads mean 12.2 / max 96; disabling the nearBinding
+  // selection reads max 119 and blanks the straddler outright (the
+  // black-hole class the cap-as-plane form exists to fix).
+  // INSTANCE ORDER is load-bearing under the harness's NoBlending: the
+  // straddling segment must be SLOT 1 (drawn last) or the side branch's
+  // fat, never-discarding footprint stomps the discriminating fragments
+  // (measured: with the order swapped, every mutation was invisible).
+  return {
+    startPositions: new Float32Array([0.15, 0.15, -0.8, 0.15, -0.1, 1.9]),
+    endPositions: new Float32Array([0.6, 0.29, -0.9, 0.15, 0.15, -0.8]),
+    startColors: new Float32Array([1, 0.5, 0.25, 1, 0.5, 0.25]),
+    endColors: new Float32Array([1, 0.5, 0.25, 1, 0.5, 0.25]),
+    startWidths: new Float32Array([0.8, 1.2]),
+    endWidths: new Float32Array([0.8, 1.2]),
+    startSharpness: new Float32Array([0.5, 0.5]),
+    endSharpness: new Float32Array([0.5, 0.5]),
+    segmentLengths: new Float32Array([0.4712, 2.7115]),
+    // slot 0 = the side branch: its START joins slot 1's END (code −4);
+    // slot 1 = the straddler: soft start, its END joins slot 0's START
+    // (code +1).
+    startJointCode: new Float32Array([-4, 0]),
+    endJointCode: new Float32Array([0, 1]),
+  };
+}
+
 function buildJoinDataTexture(src: LineTexelSource): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Float32Array(48), 6, 2, THREE.RGBAFormat, THREE.FloatType);
   tex.magFilter = THREE.NearestFilter;
@@ -1658,6 +1702,38 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
         startWidth: 0.002,
         endWidth: 0.002,
       }),
+    buildCamera: buildBehindCamera,
+  },
+  // NEAR-PLANE STRADDLING JOINT: the GENERAL-lane sibling of the fixture
+  // above (see buildStraddlingJoinTexelSource). Exercises the mixed lane's
+  // binding-near-clip forms (cap-as-plane + constant-cap product) plus the
+  // ξ-near bracket tightening, in perspective, on both backends. uOpacity
+  // keeps the alpha-channel integral inside the 8-bit linear range so the
+  // clip's effect survives the readback (same trap as the sibling).
+  'line-volprim-nearclip-joint': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () => ({
+      ...buildVisualLineUniforms(
+        buildJoinDataTexture(buildStraddlingJoinTexelSource()),
+        false,
+        0.35
+      ),
+      // The near-clipped start projects to ~220 raw px — the default
+      // 32 px extent clamp would coverageFade-cull the whole segment.
+      uMaxLinePixelWidth: { value: 512.0 },
+      // Keeps the discriminating band's alpha ~0.4 (linear range).
+      uOpacity: { value: 0.6 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildJoinMesh(buildStraddlingJoinTexelSource(), m),
     buildCamera: buildBehindCamera,
   },
 };

@@ -473,6 +473,92 @@ describe('lineVolumetricSumIntegral vs quadrature', () => {
       }
     });
 
+    it('cap-as-plane: chain ends with a BINDING near clip never black-hole (both mirrors)', () => {
+      // Regression for the second double-check campaign's fuzz finding: a
+      // straight chain end viewed at 5° tilt through a biting near clip
+      // read 0 (J1 double-counted the clipped complement) and its hardA
+      // mirror read ~8× truth (capOnly kept the clipped cap mass). The
+      // cap-as-plane form must track quadrature within the transition
+      // envelope across both mirrors, all bends, and clip depths.
+      let worstAbs = 0;
+      let worstAt = '';
+      for (const hardEnd of ['A', 'B'] as const) {
+        for (const bend of [0, 30, 90]) {
+          const seg =
+            hardEnd === 'B'
+              ? jointAtB(10, bend, 10).main
+              : {
+                  a: [0, 0, 0] as Vec3,
+                  b: [10, 0, 0] as Vec3,
+                  sigma: SIGMA,
+                  cutA: bisectorNormal([1, 0, 0], [
+                    -Math.cos((bend * Math.PI) / 180),
+                    Math.sin((bend * Math.PI) / 180),
+                    0,
+                  ] as Vec3),
+                  cutB: null,
+                };
+          for (const tilt of [15, 5, 2]) {
+            for (const along of [0.05, 0.5, 0.95]) {
+              for (const tMin of [49, 50, 50.7]) {
+                const { o, d } = obliqueRay([10 * along, 0.4, 0], tilt);
+                const lane = lineVolumetricSumIntegral(o, d, seg, { tMin });
+                const ref = quadrature(o, d, seg, 20001, tMin);
+                const abs = Math.abs(lane - ref);
+                if (abs > worstAbs) {
+                  worstAbs = abs;
+                  worstAt = `hard${hardEnd} bend=${bend} tilt=${tilt} along=${along} tMin=${tMin} lane=${lane.toFixed(4)} ref=${ref.toFixed(4)}`;
+                }
+                // The black-hole class specifically: a BRIGHT fragment
+                // (core units) must never zero out — the old J1 path
+                // returned 0 where truth was ~2.9. The 0.1 absolute slack
+                // exempts dim ramp tails the step form may truncate
+                // (bounded by the envelope assertion below).
+                expect(
+                  lane,
+                  `floor hard${hardEnd} bend=${bend} tilt=${tilt} along=${along} tMin=${tMin} ref=${ref.toFixed(4)}`
+                ).toBeGreaterThan(0.5 * ref - 0.1);
+              }
+            }
+          }
+        }
+      }
+      console.log(`cap-as-plane worstAbs=${worstAbs.toFixed(4)} at ${worstAt}`);
+      expect(worstAbs, worstAt).toBeLessThan(0.2);
+      expect(worstAbs).toBeGreaterThan(1e-4); // sensitivity control
+    });
+
+    it('cap-as-plane: no jump as the near clip sweeps through the cap ramp', () => {
+      // Branch-switch continuity (J1/J2 regimes → cap-as-plane → J0): a
+      // visible pop while flying into a chain end would be a selection
+      // discontinuity. Sweep the clip finely through the transition.
+      for (const hardEnd of ['A', 'B'] as const) {
+        const seg =
+          hardEnd === 'B'
+            ? jointAtB(10, 30, 10).main
+            : {
+                a: [0, 0, 0] as Vec3,
+                b: [10, 0, 0] as Vec3,
+                sigma: SIGMA,
+                cutA: bisectorNormal([1, 0, 0], [
+                  -Math.cos(Math.PI / 6),
+                  Math.sin(Math.PI / 6),
+                  0,
+                ] as Vec3),
+                cutB: null,
+              };
+        const { o, d } = obliqueRay([5, 0.4, 0], 15);
+        let prev: number | null = null;
+        let maxJump = 0;
+        for (let tMin = 46; tMin <= 54; tMin += 0.05) {
+          const lane = lineVolumetricSumIntegral(o, d, seg, { tMin });
+          if (prev !== null) maxJump = Math.max(maxJump, Math.abs(lane - prev));
+          prev = lane;
+        }
+        expect(maxJump, `hard${hardEnd}`).toBeLessThan(0.08);
+      }
+    });
+
     it('soft/soft GENERAL lane deliberately ignores tMin (documented residual leak)', () => {
       // The accepted design: oblique soft/soft rays keep the full-line
       // closed form (+ near fade in the shader). Pin both halves: the lane

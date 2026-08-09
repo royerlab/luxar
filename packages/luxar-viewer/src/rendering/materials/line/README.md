@@ -272,8 +272,9 @@ per end), and the fragment solves against the TRUE camera-space segment:
   plane between the segment and its partner (fetched via the joint-code
   partner slot), which partitions exactly at any bend angle. Free ends keep
   the erf cap; chain-end segments (one cut, one cap) use a sign-selected
-  inclusion–exclusion closed form (three splits: bracket-primary,
-  cap-primary, and a saturated-cap bracket-only shortcut). The perspective
+  inclusion–exclusion closed-form family (bracket-primary, cap-primary, a
+  saturated-cap bracket-only shortcut, and — under a binding near clip —
+  cap-as-plane / constant-cap product forms). The perspective
   **near plane is one more plane clip** where it stays closed-form — an
   s-bound in the structural-parallel lane, a ξ-bound in the general plane
   lane — so a segment straddling the eye no longer contributes light from

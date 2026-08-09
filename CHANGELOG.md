@@ -23,8 +23,9 @@ modes take the ray maximum (a Gaussian-shoulder capsule, exact for any
 sharpness β). Chain-end segments (one cut, one soft cap) use a
 sign-selected inclusion–exclusion closed form — the ray integral is an
 Owen-T-class integral with no elementary form, but the available splits
-(bracket-primary, cap-primary, and a saturated-cap bracket-only shortcut)
-have complementary error domains and the residual is a measured, bounded
+(bracket-primary, cap-primary, a saturated-cap bracket-only shortcut, and
+cap-as-plane / constant-cap product forms for a binding near clip) have
+complementary error domains and the residual is a measured, bounded
 underestimate confined to sharp bends at short end segments. The
 perspective near plane is folded in as one more plane clip where it stays
 closed-form (an s-bound in the structural-parallel lane, a ξ-bound in the
@@ -37,11 +38,13 @@ reference validated against brute numerical quadrature
 (`line-volumetric-integral.test.ts`: exact lanes < 0.6%, error envelopes
 pinned with sensitivity controls), and both shader backends mirror it —
 GLSL as a second source pair (the codebase's first genuine shader-source
-selection) and TSL as a twin factory, with eight `line-volprim-*` parity
+selection) and TSL as a twin factory, with nine `line-volprim-*` parity
 fixtures pinning pixel-level backend agreement, including the partner
 fetch, the mixed-lane splits, the peak capsule, the fragment-stage
-colormap LUT, and a near-plane-straddling telephoto disc
-(mutation-verified: disabling the clip on one backend fails parity). The mixed-end lane uses the A&S exponential erf
+colormap LUT, a near-plane-straddling telephoto disc, and a straddling
+fat chain end that carries a dedicated MAX-divergence gate (all
+mutation-calibrated: disabling the clip or its branch selection on one
+backend fails parity). The mixed-end lane uses the A&S exponential erf
 (`GLSL_ERF_AS_FUNCTIONS` / `erfAsTSL`, new in `_shared/erf.ts`) because its
 terms are amplified by 1/sin(ray, axis); the hot lanes keep the cheap
 polynomial. With the flag off, the screen-space pipeline is byte-identical

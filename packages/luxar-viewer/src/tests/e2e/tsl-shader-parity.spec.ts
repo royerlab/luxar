@@ -2243,6 +2243,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-volprim-taper',
     'line-volprim-colormap',
     'line-volprim-nearclip',
+    'line-volprim-nearclip-joint',
   ] as const) {
     test(`${variant}: volumetric line primitive parity across backends`, async ({ page }) => {
       await bootHarness(page);
@@ -2257,6 +2258,26 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       ).toBeLessThan(2.0);
     });
   }
+
+  test('line-volprim-nearclip-joint: MAX cross-backend divergence stays at noise level', async ({
+    page,
+  }) => {
+    // Belt-and-suspenders beside the mean-based loop: the general-lane
+    // near-binding forms (cap-as-plane / constant-cap product) light up a
+    // limited pixel population — the near clip and the near fade overlap
+    // by design — and a MAX gate stays sensitive even if a future geometry
+    // tweak shrinks that population below what a mean can see.
+    // Mutation-calibrated: a disabled ξ-near tightening reads 96 and a
+    // disabled nearBinding selection reads 119, against backend noise ≤ 8.
+    await bootHarness(page);
+    const glsl = await runGLSL(page, 'line-volprim-nearclip-joint');
+    const tsl = await runTSL(page, 'line-volprim-nearclip-joint');
+    let maxDiff = 0;
+    for (let i = 0; i < glsl.length; i++) {
+      maxDiff = Math.max(maxDiff, Math.abs(glsl[i] - tsl.pixels[i]));
+    }
+    expect(maxDiff, 'max per-channel |GLSL − TSL|').toBeLessThanOrEqual(8);
+  });
 
   test('line-volprim-endon-ortho: the end-on segment renders a finite bright disc', async ({
     page,
