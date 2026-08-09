@@ -260,6 +260,146 @@ describe('processGSplatsData', () => {
     // An extend-to-all dim is NOT also treated as a discrete slice dim.
     expect(params.discreteDims).not.toContain(3);
   });
+
+  // -----------------------------------------------------------------------
+  // Slot → on-disk element-ID map (issue #1423).
+  //
+  // The gsplats pick shader reports the visible-buffer slot, but the label CSR
+  // is keyed by the on-disk splat index. The loader publishes its visible
+  // `ranges` (labelled nodes only) and the kernel records which source splat
+  // each slot came from; `toProcessed` composes the two.
+  // -----------------------------------------------------------------------
+
+  it('composes elementIds from the loader ranges + the kernel source indices', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+
+    // Two visible chunks — concat [0, 2048) ↦ on-disk [2048, 4096) and concat
+    // [2048, 4096) ↦ on-disk [6144, 8192) — with the projection keeping three
+    // splats straddling the boundary.
+    mockProcessGSplats.mockImplementation(() => ({
+      ...makeDispatcherResult(3),
+      sourceIndices: new Uint32Array([0, 2047, 2048]),
+    }));
+
+    // Under the 1000-splat worker threshold so the in-process mock runs.
+    const data: LoadedGSplatsData = {
+      ...makeData(500),
+      ranges: [
+        { start: 2048, end: 4096 },
+        { start: 6144, end: 8192 },
+      ],
+    };
+
+    const result = await processGSplatsData('/g', data, makeViewState(), root, 1);
+    if (!result || result.noop) throw new Error('expected a geometry staged commit');
+
+    // Without the fix `elementIds` doesn't exist and hover reads the raw slot,
+    // which for slot 0 would report on-disk splat 0 instead of 2048.
+    expect(result.processed.elementIds).toBeInstanceOf(Uint32Array);
+    expect(Array.from(result.processed.elementIds!)).toEqual([2048, 4095, 6144]);
+  });
+
+  it('asks the kernel to record source indices only for a ranges-publishing nD node', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+
+    const data: LoadedGSplatsData = {
+      ...makeData(50),
+      ranges: [{ start: 0, end: 50 }],
+    };
+    await processGSplatsData('/g', data, makeViewState(), root, 1);
+
+    const params = mockProcessGSplats.mock.calls[0][0] as { emitSourceIndices?: boolean };
+    expect(params.emitSourceIndices).toBe(true);
+  });
+
+  it('does not ask for source indices for a node that publishes no ranges', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+
+    // No label CSR ⇒ the loader publishes no `ranges` ⇒ no map can be composed
+    // from the recorded indices, so recording them would be 4 B/splat spent on
+    // an array nothing reads. The nD/compacting half of the gate is satisfied
+    // here (makeViewState is the nD path), so this pins the `ranges` half.
+    await processGSplatsData('/g', makeData(50), makeViewState(), root, 1);
+
+    const params = mockProcessGSplats.mock.calls[0][0] as { emitSourceIndices?: boolean };
+    expect(params.emitSourceIndices).toBe(false);
+  });
+
+  it('does not ask for source indices on the standard-3D fast path', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+
+    // ndim 3 with displayDims [0,1,2]: every splat is emitted in order, so the
+    // dispatcher's fast path returns none and the composer's range-offset path
+    // is exactly right. Asking would allocate 4 B/splat for nothing.
+    const data: LoadedGSplatsData = {
+      ...makeData(50, 3),
+      choleskyFactors: new Float32Array(50 * 6),
+      ranges: [{ start: 2048, end: 2098 }],
+    };
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [1, 1, 1],
+    };
+    await processGSplatsData('/g', data, viewState, root, 1);
+
+    const params = mockProcessGSplats.mock.calls[0][0] as { emitSourceIndices?: boolean };
+    expect(params.emitSourceIndices).toBe(false);
+  });
+
+  it('composes elementIds as pure range offsets on the standard-3D fast path', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+
+    // The most common labelled-gsplats hover case: a plain 3D node whose
+    // `ranges` were chunk-culled, so nothing is compacted (the fast path emits
+    // every splat in order and records no source indices) but the slots are
+    // still offset — and shifted again across the gap between the two ranges.
+    mockProcessGSplats.mockImplementation(() => makeDispatcherResult(5));
+
+    const data: LoadedGSplatsData = {
+      ...makeData(5, 3),
+      choleskyFactors: new Float32Array(5 * 6),
+      ranges: [
+        { start: 2048, end: 2051 },
+        { start: 6144, end: 6146 },
+      ],
+    };
+    const viewState: GSplatsViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [1, 1, 1],
+    };
+
+    const result = await processGSplatsData('/g', data, viewState, root, 1);
+    if (!result || result.noop) throw new Error('expected a geometry staged commit');
+
+    // `null` source indices ⇒ the composer's range-offset path: slot 0 is the
+    // first range's start, and slot 3 lands in the second range, skipping the
+    // 3093-splat gap rather than reading a wrong-but-plausible neighbour.
+    expect(result.processed.elementIds).toBeInstanceOf(Uint32Array);
+    expect(Array.from(result.processed.elementIds!)).toEqual([2048, 2049, 2050, 6144, 6145]);
+  });
+
+  it('leaves elementIds undefined for a node that publishes no ranges', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    mockProcessGSplats.mockImplementation(() => ({
+      ...makeDispatcherResult(2),
+      sourceIndices: new Uint32Array([0, 5]),
+    }));
+
+    const result = await processGSplatsData('/g', makeData(50), makeViewState(), root, 1);
+    if (!result || result.noop) throw new Error('expected a geometry staged commit');
+
+    // No label CSR on the node ⇒ no ranges ⇒ no map, even though the kernel
+    // result happens to carry source indices.
+    expect(result.processed.elementIds).toBeUndefined();
+  });
 });
 
 describe('projectGSplatsTo3DUsingWorker', () => {

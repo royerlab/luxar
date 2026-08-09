@@ -288,6 +288,15 @@ narrowly-scoped helpers each spatial-index loader composes:
   reads are delegated to `RangeLoader.loadDirectTyped` — the single
   dtype-preserving reader — so `color-loader.ts` keeps only the color-specific
   concerns (RGB layout, `original_dtype` restoration).
+- **`element-ids.ts`** — `buildElementIdMap(ranges, keptConcatIndices, count, logModule)`:
+  composes the visible-buffer slot → ON-DISK element index map that picking
+  resolves per-element labels through (`label_offsets` / `label_bytes` are keyed
+  by the on-disk index, while a pick shader can only report a storage slot).
+  Shared by the Points projection (`data/points/projection.ts`) and the GSplats
+  projection commit (`data/scene-loader/process/data-processor-gsplats.ts`) —
+  both diverge from the on-disk index the same two ways (range loading +
+  visibility compaction). Returns `undefined` on the identity case and
+  fail-closed on inconsistent inputs, so callers fall back to the raw slot.
 - **`spatial-query/prefetch-ranges.ts`** — `prefetchRangesIntoCache(arrays, ranges)`:
   shared cache-warming read for the three loaders' `prefetchChunks`.
   Fires a `get()` per (array × range) and discards the result. Deliberately
@@ -374,6 +383,7 @@ src/data/loaders/
 ├── abort-error.ts                # isAbortError — realm-proof "superseded, not failed" classifier
 ├── chunk-bounds-loader.ts        # Shared chunk_bounds zarr probe (Points/Lines/GSplats)
 ├── color-loader.ts               # Shared color-range loader with native-dtype preservation
+├── element-ids.ts                # Slot → on-disk element index map (picking label lookups)
 ├── loader-metrics.ts             # Pure helpers for load/query metric bookkeeping
 ├── spatial-facade.ts             # Shared loadX/updateView/metrics facade orchestration
 ├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation

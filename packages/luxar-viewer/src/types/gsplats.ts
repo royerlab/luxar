@@ -196,6 +196,17 @@ export interface LoadedGSplatsData {
 
   /** Dimensionality for interpreting centers and cholesky arrays */
   ndim: number;
+
+  /**
+   * The visible ON-DISK ranges this payload was concatenated from, ascending
+   * and disjoint — the first half of the slot → on-disk element index map
+   * picking needs (`data/loaders/element-ids.ts`). Published by
+   * `GSplatsSpatialIndexLoader` ONLY when the node declares a per-element
+   * label CSR (`has_labels` / `has_image_labels`): nothing else reads the map,
+   * and the field otherwise rides along in every SliceCache snapshot for free.
+   * Absent ⇒ no map is composed and picking falls back to the raw slot.
+   */
+  ranges?: readonly SplatRange[];
 }
 
 /**
@@ -259,6 +270,18 @@ export interface ProcessedGSplatsData {
    * falls back to its own O(N) scans.
    */
   bounds?: GSplatsProjectionBounds;
+
+  /**
+   * Slot → ON-DISK element index map for per-element label lookups, composed
+   * at projection time from the loader's `ranges` plus the kernel's recorded
+   * source indices (`data/loaders/element-ids.ts`). Absent on the identity
+   * path (one range from 0, nothing compacted), for a node that publishes no
+   * ranges, or when the inputs were inconsistent — picking then falls back to
+   * the raw slot. The commit stamps it onto the MESH
+   * (`types/committed-data::setElementIdMap`), never onto the loaded payload —
+   * that payload may be a SliceCache-owned snapshot.
+   */
+  elementIds?: Uint32Array;
 }
 
 // ============================================================================
