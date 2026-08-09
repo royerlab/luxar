@@ -109,6 +109,10 @@ def validate_ladder_labels(
     - **Per-level length**: each level's label count must equal that level's own
       element count. The flat writers check this themselves; a laddered write
       hands them ``labels=None``, so the check has to happen here instead.
+      Skipped when any level's element array is not ``(N, D)``: that is a
+      geometry fault, and the per-level writer's positions validator names it
+      properly. Diagnosing it here would both report the wrong fault and index
+      ``shape[0]`` on a scalar.
 
     Args:
         levels: The per-level dicts handed to a multi-LOD writer.
@@ -134,10 +138,16 @@ def validate_ladder_labels(
             f"labels must be provided for every additive LOD level or for none; "
             f"level {missing} (additive_{missing}) has no labels"
         )
-    for lvl in levels:
-        validate_labels_for_writing(
-            lvl["labels"], int(np.asarray(lvl[positions_key]).shape[0])
-        )
+    level_shapes = [np.shape(lvl[positions_key]) for lvl in levels]
+    if any(len(shape) != 2 for shape in level_shapes):
+        # A level whose element array is not (N, D) has no well-defined element
+        # count, so leave the whole per-level label check to the writers: the
+        # first level write raises the positions validator's guided message
+        # ("Got 1D array with N elements ..."), which is the real fault and the
+        # same error the caller would see with no labels at all.
+        return True
+    for lvl, shape in zip(levels, level_shapes):
+        validate_labels_for_writing(lvl["labels"], int(shape[0]))
     return True
 
 

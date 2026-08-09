@@ -62,7 +62,9 @@ Pre-write gate for a ladder's labels, returning whether the ladder is labelled a
 all. **Pure** (reads only `levels`), so the multi-LOD writers call it BEFORE
 `require_group` — a rejected ladder must not leave an empty node behind. Enforces
 all-or-nothing presence across levels (the error names the first unlabelled level)
-and each level's label count against that level's own element count.
+and each level's label count against that level's own element count. The length
+check is skipped when any level's element array is not `(N, D)` — that fault
+belongs to the per-level writer's positions validator, which names it properly.
 `positions_key` is `"positions"` for Points and `"vertices"` for Lines.
 
 ### `image_labels.write_image_labels_csr(group, image_labels, n_elements, compressor, sort_order=None)`

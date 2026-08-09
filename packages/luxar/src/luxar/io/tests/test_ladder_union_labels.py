@@ -14,6 +14,7 @@ Tests cover:
 - No spatial index → the union is the plain level concatenation
 - Mixed label presence across levels is rejected (the error names the level)
 - A per-level label/element count mismatch is rejected
+- A malformed level array still reports the GEOMETRY fault, not a label one
 - A rejected ladder leaves no partial node behind (fail-fast gate)
 - A wrong-length ``labels`` raises instead of silently mislabelling every level
 """
@@ -193,6 +194,29 @@ class TestPointsLadderUnionLabels:
                         # Only 5 labels for 20 points.
                         "labels": [f"b{i}" for i in range(5)],
                     },
+                ],
+            )
+
+    def test_malformed_level_geometry_reports_the_geometry_fault(self, tmp_path):
+        """A bad element array must not be reported as a label-count problem.
+
+        The label gate now runs before the per-level writes, so it must not
+        diagnose geometry: a 1-D level array has no well-defined element count,
+        and the caller's real fault is the shape. Same error, labels or not.
+        """
+        path = str(tmp_path / "badgeom.luxar.zarr")
+        compiler = LuxarZarrCompiler(path)
+        compiler.create_scene(dimensions=_make_3d_dims())
+
+        with pytest.raises(ValueError, match="1D array"):
+            compiler.write_points_multi_lod(
+                "ladder",
+                levels=[
+                    {
+                        # 1-D, so neither 10 nor any other count is meaningful.
+                        "positions": np.arange(10, dtype=np.float32),
+                        "labels": [f"a{i}" for i in range(3)],
+                    }
                 ],
             )
 

@@ -71,7 +71,6 @@ byte-compile-smoke only, where `py_compile` never resolves an import. Both
 detectors are exercised against a synthetic tree, not only against the clean one
 they now describe.
 
-
 #### Hover labels index the right point (#1421)
 
 `PickResult.elementId` was the storage slot in the buffer that reached the GPU, never
@@ -143,7 +142,6 @@ distinct on-disk array, so no single map is meaningful; the loader factory clear
 label flags on each synthesized `additive_<i>` node and the ladder concat strips the
 field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) remains the
 last outstanding geometry.
-
 
 #### The port probe now matches the bind it predicts
 
