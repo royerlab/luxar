@@ -1225,9 +1225,14 @@ class TestPostFinalizeAttrDeletion:
             zarr_path = Path(tmpdir) / "test.luxar.zarr"
 
             compiler = LuxarZarrCompiler(zarr_path)
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            pts = scene.add_points("pts", np.random.randn(5, 3).astype(np.float32))
-            pts.nd_transform = {"dim0": {"scale": 1.0, "offset": 0.0}}
+            # A (t, x, y, z) scene: the setter validates the key against the
+            # scene dimensions (issue #1418), so it must name a real
+            # non-displayed dimension.
+            scene = compiler.create_scene(dimensions=Dimensions.default_timeseries())
+            positions = np.random.randn(5, 4).astype(np.float32)
+            positions[:, 0] = np.arange(5, dtype=np.float32)
+            pts = scene.add_points("pts", positions)
+            pts.nd_transform = {"t": {"scale": 1.0, "offset": 0.0}}
             compiler.finalize()
 
             with pytest.warns(UserWarning, match="finalized") as record:
