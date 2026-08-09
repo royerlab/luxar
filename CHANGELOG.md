@@ -283,7 +283,6 @@ so on a 21:9 or 32:9 canvas the flattest shapes still miss the finest level. Fix
 that means changing what the two sides normalise by, not lowering `FILL_FACTOR`
 further.
 
-
 #### Tractography tracts identify themselves on hover (#1386)
 
 The HCP-1065 demo drew 87 bundles whose only names were the atlas's own codes —
