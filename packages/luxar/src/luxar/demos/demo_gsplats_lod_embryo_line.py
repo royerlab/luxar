@@ -116,14 +116,14 @@ from luxar.core import transforms
 # level_colors, COMPRESSION_FACTOR) as a normal sibling import rather than
 # duplicating the LOD logic.
 from luxar.demos import demo_gsplats_lod_tribolium as _LOD
-from luxar.encoding import EncodingMode
-from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import (
+from luxar.demos import (
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
+from luxar.encoding import EncodingMode
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================

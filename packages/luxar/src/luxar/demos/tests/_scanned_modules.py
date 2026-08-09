@@ -1,15 +1,18 @@
 """The set of demo-package modules the demo guards must scan.
 
-Seven guards read this set: four in ``test_demos_dependencies.py``, one in
+Eight guards read this set: four in ``test_demos_dependencies.py``, one in
 ``test_no_entrypoint_dependency_preflight.py``, one in
-``test_substitutive_lod_gated.py``, and one in ``test_demo_layers.py`` (the
-Layers-panel lint — the one consumer that is not about optional dependencies;
+``test_substitutive_lod_gated.py``, one in ``test_demo_layers.py`` (the
+Layers-panel lint — the first consumer that is not about optional dependencies;
 it reuses the set for the same reason, that a shared helper authors scene nodes
-too). The dependency guards all used to enumerate ``demo_*.py``
-only, which left the package's SHARED helper modules unscanned. That became a
-real blind spot when ``_roundtrip_common.py`` moved a
-``require_module("matplotlib.pyplot")`` gate out of five ``demo_*.py`` files
-into one shared module: the invariants those guards advertise — every gated
+too), and one in ``test_demo_import_spelling.py`` (the import-spelling lint —
+two invariants, the single ``luxar.demos`` spelling and the barrel actually
+re-exporting what the demos ask of it; it widens the set with the three
+``luxar/gsplats/**/demos`` trees). The dependency guards all
+used to enumerate ``demo_*.py`` only, which left the package's SHARED helper
+modules unscanned. That became a real blind spot when ``_roundtrip_common.py``
+moved a ``require_module("matplotlib.pyplot")`` gate out of five ``demo_*.py``
+files into one shared module: the invariants those guards advertise — every gated
 module is in ``INSTALL_SPECS``, no runtime ``pip install``, no unbounded install
 hint, no entry-point preflight, no ungated ``substitutive_lod`` — silently
 stopped covering it. Shared helpers build scene nodes as well as gate imports
@@ -24,7 +27,7 @@ module-level ``def``s for such modules; the two changes only work together.
 
 The set is a DENYLIST on purpose: every ``*.py`` directly under ``demos/``
 *except* :data:`EXCLUDED`. An allowlist keyed on a filename pattern would be
-opt-in, so a future ``demos/_plot_helpers.py`` would escape all seven guards and
+opt-in, so a future ``demos/_plot_helpers.py`` would escape all eight guards and
 reopen the very blind spot this module exists to close.
 
 The flip side of a denylist: ANY ``*.py`` dropped into ``demos/`` joins the
@@ -46,7 +49,7 @@ demo code, and one of them would produce a *false* positive:
 ``__init__.py``
     A pure re-export barrel; it holds no demo code and no gates.
 
-``registry.py`` is deliberately NOT excluded — it passes all seven guards, so
+``registry.py`` is deliberately NOT excluded — it passes all eight guards, so
 there is no reason to carve it out.
 
 Not a test module and not a demo (no ``test_`` / ``demo_`` prefix), so neither
