@@ -4091,7 +4091,7 @@ def generate_labelled_partitioned_points_test() -> None:
       index and the label the loader returns is the one the marker was authored
       with (a hidden dimension would make the id a visible-buffer slot instead).
 
-    The marker is appended LAST, so its global index (``2 * CLUSTER_N``) differs
+    The marker is appended LAST, so its global index (``2 * cluster_n``) differs
     from the part-local index the loader must use — a lookup that reached the
     right node with the wrong index space would still return the wrong label.
     """
