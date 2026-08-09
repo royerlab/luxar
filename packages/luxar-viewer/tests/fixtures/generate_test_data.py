@@ -81,6 +81,7 @@ FIXTURE_NAMES: list[str] = [
     "test_hdr_colors.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
+    "test_labelled_partitioned_points.luxar.zarr",
     "test_labelled_points.luxar.zarr",
     "test_line_joins.luxar.zarr",
     "test_lines.luxar.zarr",
@@ -4061,6 +4062,106 @@ def generate_labelled_points_test() -> None:
         aprint(f"  {n} labelled points; default hover overlay auto-injected")
 
 
+# Label of the single hover target in test_labelled_partitioned_points. Kept as
+# a named constant because hover-tooltip.spec.ts asserts this exact string.
+MARKER_LABEL = "Origin marker"
+
+
+def generate_labelled_partitioned_points_test() -> None:
+    """Labelled POINTS behind a ``kind=partition`` wrapper, for hover-tooltip E2E.
+
+    The partitioned sibling of ``generate_labelled_points_test``. That fixture
+    is a flat leaf, so the pick-result handler's reported path and its lookup
+    path are the same string and the #1415 regression is invisible to it. Here
+    ``add_points(partition=...)`` splits the node into ``part_<i>`` children and
+    slices ``labels`` per part, so the label CSR (``label_offsets`` /
+    ``label_bytes``) lives on the LEAVES while the layer the viewer reports is
+    the wrapper. Looking the label up on the wrapper — the pre-fix behaviour —
+    finds no array at all and yields a silently empty tooltip.
+
+    Layout is built for a *predictable* hover assertion:
+
+    * One isolated marker point at the world origin, with a large radius, whose
+      label is unique. Every other point sits at ``|x| >= 6``, so the marker is
+      the only element anywhere near the centre of the framed scene.
+    * Two well-separated clusters either side of it, which is what forces the
+      median BSP to actually split (a single part would fall through to the
+      plain-leaf write and defeat the point of the fixture).
+    * All three dimensions displayed, so the pick's element id is the on-disk
+      index and the label the loader returns is the one the marker was authored
+      with (a hidden dimension would make the id a visible-buffer slot instead).
+
+    The marker is appended LAST, so its global index (``2 * cluster_n``) differs
+    from the part-local index the loader must use — a lookup that reached the
+    right node with the wrong index space would still return the wrong label.
+    """
+    with asection("Generating Labelled Partitioned Points Test (E2E hover-tooltip)"):
+        output = FIXTURES_DIR / "test_labelled_partitioned_points.luxar.zarr"
+
+        cluster_n = 150
+        rng = np.random.default_rng(1415)
+        left = np.stack(
+            [
+                rng.uniform(-12.0, -6.0, cluster_n),
+                rng.uniform(-4.0, 4.0, cluster_n),
+                rng.uniform(-4.0, 4.0, cluster_n),
+            ],
+            axis=1,
+        )
+        right = np.stack(
+            [
+                rng.uniform(6.0, 12.0, cluster_n),
+                rng.uniform(-4.0, 4.0, cluster_n),
+                rng.uniform(-4.0, 4.0, cluster_n),
+            ],
+            axis=1,
+        )
+        marker = np.array([[0.0, 0.0, 0.0]])
+        positions = np.concatenate([left, right, marker], axis=0).astype(np.float32)
+        n = positions.shape[0]
+
+        # The marker is the hover target: big enough to dominate the picking
+        # system's 5x5 readback window, and a distinct colour so a failure is
+        # legible in a screenshot.
+        radii = np.full(n, 0.35, dtype=np.float32)
+        radii[-1] = 1.2
+        colors = np.tile(np.array([[0.25, 0.45, 1.0]], dtype=np.float32), (n, 1))
+        colors[-1] = (1.0, 0.5, 0.25)
+
+        labels = [f"Cluster point {i}" for i in range(n - 1)]
+        labels.append(MARKER_LABEL)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "labelled_parts",
+                positions=positions,
+                colors=colors,
+                radii=radii,
+                labels=labels,
+                # Well below n, so the median BSP is guaranteed to produce
+                # more than one part and take the wrapper path.
+                partition={"max_elements": 100},
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  {n} labelled points behind a kind=partition wrapper")
+        aprint(f"  hover target at the origin, labelled {MARKER_LABEL!r}")
+
+
 def main() -> None:
     """Generate all test datasets."""
     aprint("=" * 70)
@@ -4175,6 +4276,7 @@ def main() -> None:
         aprint("")
 
         generate_labelled_points_test()
+        generate_labelled_partitioned_points_test()
         aprint("")
 
         generate_mesh_test()

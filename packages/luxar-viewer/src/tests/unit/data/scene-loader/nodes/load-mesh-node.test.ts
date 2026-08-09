@@ -26,7 +26,7 @@ import {
   loadMeshNodeCheap,
   loadMeshNodeExpensive,
 } from '../../../../../data/scene-loader/nodes/load-mesh-node';
-import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
+import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode, ViewState } from '../../../../../data/data-loader-types';
 import type { LoadedMeshData, MeshDataLoader } from '../../../../../types/mesh';
@@ -61,33 +61,17 @@ function makeCtx(): NodeBuildCtx {
     markPickingDirty: vi.fn(),
   } as unknown as NodeBuildCtx['nodeFactory'];
 
-  return {
-    registry: new LoaderRegistry(),
+  // Only the members this file's assertions actually read are named here; the
+  // rest come from the shared factory (see make-test-node-build-ctx.ts).
+  // `deriveNodeViewState` defaults to resolving to THIS `viewState`.
+  return makeTestNodeBuildCtx({
     nodeFactory,
     viewState,
-    factoryDeps: {} as never,
-    isDatasetLive: () => true,
-    getViewVersion: () => 1,
-    releaseLazyGSplats: vi.fn(),
-    releaseLazyPoints: vi.fn(),
-    releaseLazyLines: vi.fn(),
-    releaseLazyMesh: vi.fn(),
-    kickRefinementIfIdle: vi.fn(),
-    applyEffectiveAttrs: (n: SceneNode) => n.attrs,
-    deriveNodeViewState: vi.fn(() => ({ skip: false as const, viewState })) as never,
-    connectLoaderToMonitor: vi.fn(),
-    processLinesData: vi.fn() as never,
-    commitLinesGeometry: vi.fn(),
-    processGSplatsData: vi.fn() as never,
-    processPointsData: vi.fn() as never,
-    commitPointsGeometry: vi.fn(),
-    commitGSplatsGeometry: vi.fn(),
     processMeshData: vi.fn().mockResolvedValue({
       path: '/scene/m',
       projected: { visibleFaceCount: 1 },
     }) as never,
-    commitMeshGeometry: vi.fn(),
-  };
+  });
 }
 
 beforeEach(() => {

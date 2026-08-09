@@ -1,0 +1,1982 @@
+"""Tests for the CytoSelf demo's download staging and thumbnail resumability.
+
+These exercise the real code paths in ``demo_cytoself_protein_landscape`` with a
+fake ``requests.Session`` and a fake Google-Drive fetch, so nothing touches the
+network. They cover the download contract (identity encoding, ``.part`` staging,
+HTML-quota-page rejection, content-length verification, the completion sidecar
+and the legacy no-sidecar fallback), the consumer-side self-heal, and the
+thumbnail pipeline (per-source-file part caches keyed to the row mapping, an
+assembled bundle keyed to the label CSVs it was built from, legacy-bundle
+adoption, the WebP container check both readers apply, the ``recompute``
+bypass, per-file failure reporting, and the match-rate tripwire).
+
+The fake response models content NEGOTIATION, not just a body: a client that
+accepts gzip is served a compressed byte count in ``Content-Length`` while
+``iter_content`` hands back the decoded bytes, exactly as ``requests`` behaves.
+That is the only way a test can see the difference the identity header makes.
+"""
+
+from __future__ import annotations
+
+import errno
+import gzip
+import io
+import json
+import os
+import types
+from collections.abc import Callable, Mapping
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+# The demo imports ``luxar.utils._umap_utils`` at module scope, which imports
+# Pillow; Pillow ships in the ``demos`` extra, not core.
+pytest.importorskip("PIL")
+
+import requests  # noqa: E402
+
+from luxar.demos import MissingDependencyError  # noqa: E402
+from luxar.demos import demo_cytoself_protein_landscape as demo  # noqa: E402
+
+# =============================================================================
+# Fake HTTP plumbing
+# =============================================================================
+
+
+class _FakeResponse:
+    """Minimal stand-in for a streamed ``requests`` response.
+
+    ``iter_content`` deliberately ignores the caller's ``chunk_size`` and yields
+    small chunks so a mid-stream failure can be simulated on a small body. It
+    also yields the DECODED body: ``content_length`` is set independently so a
+    gzipped response (compressed length, inflated body) can be modelled.
+    """
+
+    def __init__(
+        self,
+        body: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        content_length: int | None = -1,
+        content_encoding: str | None = None,
+        fail_after_chunks: int | None = None,
+        on_fail: Callable[[], None] | None = None,
+        chunk: int = 4096,
+    ) -> None:
+        self._body = body
+        self._chunk = chunk
+        self._fail_after_chunks = fail_after_chunks
+        self._on_fail = on_fail
+        self.headers: dict[str, str] = {"content-type": content_type}
+        declared = len(body) if content_length == -1 else content_length
+        if declared is not None:
+            self.headers["content-length"] = str(declared)
+        if content_encoding is not None:
+            self.headers["content-encoding"] = content_encoding
+        self.cookies: dict[str, str] = {}
+
+    def raise_for_status(self) -> None:
+        return None
+
+    @property
+    def text(self) -> str:
+        return self._body.decode("utf-8", errors="replace")
+
+    def iter_content(self, chunk_size: int = 1 << 20):
+        for n, start in enumerate(range(0, len(self._body), self._chunk)):
+            if self._fail_after_chunks is not None and n >= self._fail_after_chunks:
+                if self._on_fail is not None:
+                    # Inspect the filesystem AT the moment of failure, which is
+                    # the only way to see where the bytes were being written.
+                    self._on_fail()
+                raise ConnectionError("connection reset mid-stream")
+            yield self._body[start : start + self._chunk]
+
+
+class _SessionRecorder:
+    """What the production code configured on, and asked of, its session."""
+
+    def __init__(self) -> None:
+        # Seeded with the header a real ``requests.Session`` carries by default,
+        # so a test can tell an override from an absence.
+        self.headers: dict[str, str] = {"Accept-Encoding": "gzip, deflate"}
+        self.urls: list[str] = []
+
+
+_Factory = Callable[[str, Mapping[str, str]], _FakeResponse]
+
+
+def _install_session(
+    monkeypatch: pytest.MonkeyPatch, factory: _Factory
+) -> _SessionRecorder:
+    """Patch ``requests.Session``; return a recorder of headers and URLs."""
+    recorder = _SessionRecorder()
+
+    class _Session:
+        def __init__(self) -> None:
+            self.headers = recorder.headers
+
+        def get(
+            self,
+            url: str,
+            params: dict | None = None,
+            stream: bool = False,
+            timeout: int | None = None,
+        ) -> _FakeResponse:
+            recorder.urls.append(url)
+            return factory(url, recorder.headers)
+
+    monkeypatch.setattr(requests, "Session", _Session)
+    return recorder
+
+
+def _serve(body: bytes, **kwargs: object) -> _Factory:
+    """A factory serving one fixed body, ignoring the request headers."""
+    return lambda url, headers: _FakeResponse(body, **kwargs)  # type: ignore[arg-type]
+
+
+def _serve_negotiated(body: bytes) -> _Factory:
+    """Serve *body* the way a real server and ``requests`` pair up.
+
+    A client that accepts gzip gets a COMPRESSED ``Content-Length`` while
+    ``requests`` transparently inflates the stream; a client that asks for
+    identity gets bytes and length that agree.
+    """
+
+    def factory(url: str, headers: Mapping[str, str]) -> _FakeResponse:
+        if "gzip" in headers.get("Accept-Encoding", ""):
+            return _FakeResponse(
+                body,
+                content_type="text/csv",
+                content_length=len(gzip.compress(body)),
+                content_encoding="gzip",
+            )
+        return _FakeResponse(body, content_type="text/csv")
+
+    return factory
+
+
+def _forbid_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any attempt to open an HTTP session fail loudly."""
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("network access attempted")
+
+    monkeypatch.setattr(requests, "Session", _boom)
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the module's default cache dir at ``tmp_path`` for every test.
+
+    A complete cytoself cache is ~186 GB of real data. One forgotten
+    ``cache_dir=`` kwarg would have the suite reading — or quarantining — it.
+    """
+    monkeypatch.setattr(demo, "DEFAULT_CACHE_DIR", tmp_path / "default_cache")
+
+
+# Reclaiming a dead run's staging file needs a PID probe, and `os.kill(pid, 0)`
+# TERMINATES rather than probes on Windows — so `_pid_is_alive` answers "alive"
+# for everything there and nothing is ever swept. That is deliberate in the
+# production code; here it means `_dead_pid()` has no answer to give.
+_posix_only = pytest.mark.skipif(
+    os.name != "posix", reason="staging reclaim needs a PID probe (POSIX only)"
+)
+
+
+def _dead_pid() -> int:
+    """A PID that no live process holds, to stand in for an abandoned run.
+
+    ``pid_max`` is 4,194,304 on a current Linux kernel, so a hardcoded 999999 is
+    a perfectly reachable PID and hardcoding it makes the reclaim tests flaky on
+    a busy machine. Scan down until one is genuinely free instead.
+    """
+    for pid in range(999_999, 900_000, -1):
+        if not demo._pid_is_alive(pid):
+            return pid
+    raise AssertionError("no free PID to stand in for a dead run")
+
+
+def _leftovers(dest: Path) -> set[str]:
+    """Everything in the cache dir other than *dest* itself.
+
+    Scans the directory rather than probing fixed temp names, so staging files
+    stay covered whatever they are called.
+    """
+    return {p.name for p in dest.parent.iterdir()} - {dest.name}
+
+
+# =============================================================================
+# Download staging, verification and the completion sidecar
+# =============================================================================
+
+
+def test_gzipped_response_is_not_mistaken_for_a_truncated_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A gzipped text/csv: Content-Length counts the compressed bytes while the
+    # stream delivers the inflated ones. Only an identity request makes the two
+    # comparable — without it a complete download looks short and is destroyed.
+    body = b"ensg,name\nENSG00000141510,TP53\n" * 15_000
+    assert len(gzip.compress(body)) < len(body) // 10
+    recorder = _install_session(monkeypatch, _serve_negotiated(body))
+    dest = tmp_path / "label.csv"
+
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=100_000)
+
+    assert recorder.headers["Accept-Encoding"] == "identity"
+    assert dest.read_bytes() == body
+    assert json.loads(demo._sidecar_path(dest).read_text(encoding="utf-8"))[
+        "size"
+    ] == len(body)
+
+
+# The size of the whole download, from the HTTP Range probes of the Drive files
+# quoted in the module docstring and screened against by DEMO_META. Asserting
+# the SUM keeps the per-file table honest without copying all 22 numbers out a
+# second time: any single mistyped digit breaks it.
+TOTAL_DOWNLOAD_BYTES = 185_838_193_451
+
+
+def test_every_downloaded_artifact_has_a_measured_size() -> None:
+    """The size table covers exactly the files the demo fetches.
+
+    A missing entry is not a soft failure — the call sites index the table, so
+    adding a source file without its size raises ``KeyError`` on the first run.
+    A stale entry is the quieter half: it means the table and the download list
+    have drifted, which is how a floor ends up calibrated for another file.
+    """
+    downloaded = {
+        "Global_representation.npy",
+        "label.csv",
+        *demo.GDRIVE_LABEL_DATA_IDS,
+        *demo.GDRIVE_IMAGE_IDS,
+    }
+
+    assert set(demo.ARTIFACT_SIZES) == downloaded
+    assert sum(demo.ARTIFACT_SIZES.values()) == TOTAL_DOWNLOAD_BYTES
+    # `--max-download-mb` screens against DEMO_META, so it has to describe the
+    # same set of files — rounded up, never under.
+    declared_mb = demo.DEMO_META["requirements"]["download_mb"]
+    assert (
+        TOTAL_DOWNLOAD_BYTES / 1e6 <= declared_mb <= TOTAL_DOWNLOAD_BYTES / 1e6 * 1.01
+    )
+
+
+def test_a_fragment_that_cleared_the_old_shared_floor_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate is per file, so a big file's fragment cannot pass a small one's bar.
+
+    One floor shared by the ten ``Label_data`` CSVs has to sit under the
+    smallest (3.95 MB) or it rejects a genuine download, which left a 3 MB
+    prefix of the largest (8.74 MB) looking complete. That is the worst artifact
+    to get wrong: pandas parses a truncated CSV without complaining, so the
+    concatenated label table silently loses rows, every global image index after
+    the short file shifts, and the thumbnails land on the wrong points with a
+    match rate too high for the tripwire to notice. The same hole was 13 GB wide
+    on the ``Image_data`` archives.
+    """
+    body = b"a,b,c\n" * 500_000
+    assert 2_700_000 < len(body) < 3_950_974, "must clear the old shared bar"
+    _install_session(monkeypatch, _serve(body, content_length=None))
+    dest = tmp_path / "Label_data02.csv"
+
+    with pytest.raises(RuntimeError, match="too short"):
+        demo._download_from_google_drive(
+            "ABC123", dest, expected_min_size=demo.ARTIFACT_SIZES[dest.name]
+        )
+
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
+
+
+def test_atomic_writes_do_not_disturb_another_runs_staging_file(
+    tmp_path: Path,
+) -> None:
+    # Two runs assembling the same bundle must not rename each other's bytes
+    # into place: the loser's result is a perfectly VALID npz with the wrong
+    # blob count, which nothing downstream can detect.
+    target = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    foreign_bundle = tmp_path / (target.name + ".tmp")
+    foreign_bundle.write_bytes(b"another run's half-written bundle")
+
+    demo._write_npz_atomic(target, blobs=np.array([b"ours"], dtype=object))
+
+    assert foreign_bundle.read_bytes() == b"another run's half-written bundle"
+    with np.load(target, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == [b"ours"]
+
+    # Same shape, same treatment, for the completion sidecar.
+    dest = tmp_path / "Image_data00.npy"
+    dest.write_bytes(b"x" * 16)
+    foreign_sidecar = tmp_path / (demo._sidecar_path(dest).name + ".tmp")
+    foreign_sidecar.write_bytes(b"another run's sidecar")
+
+    demo._write_completion_sidecar(dest, 16)
+
+    assert foreign_sidecar.read_bytes() == b"another run's sidecar"
+    assert (
+        json.loads(demo._sidecar_path(dest).read_text(encoding="utf-8"))["size"] == 16
+    )
+
+
+@_posix_only
+def test_dead_runs_npz_staging_files_are_reclaimed(tmp_path: Path) -> None:
+    # A killed `np.savez` on the ~114k-blob bundle strands a large `.tmp`, and a
+    # PID-private name means nothing would ever look at it again.
+    target = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    dead = tmp_path / f"{target.name}.{_dead_pid()}{demo.TMP_SUFFIX}"
+    dead.write_bytes(b"a half-written bundle from a run that is long gone")
+
+    demo._write_npz_atomic(target, blobs=np.array([b"ours"], dtype=object))
+
+    assert not dead.exists()
+    assert target.exists()
+
+
+def test_interrupted_stream_leaves_nothing_at_the_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = b"\x93NUMPY" + b"\x11" * 40_000
+    dest = tmp_path / "Image_data00.npy"
+
+    def _check_mid_stream() -> None:
+        # The criterion is about a SIGKILL, which runs no cleanup handler, so
+        # asserting only on the post-hoc state would also pass an implementation
+        # that writes to the destination and unlinks it on the way out.
+        assert not dest.exists(), "partial bytes must never sit at the destination"
+        assert demo._part_path(dest).exists(), "bytes must be going to the .part"
+
+    _install_session(
+        monkeypatch, _serve(body, fail_after_chunks=2, on_fail=_check_mid_stream)
+    )
+
+    with pytest.raises(ConnectionError):
+        demo._download_from_google_drive("FILEID", dest, expected_min_size=10_000)
+
+    assert not dest.exists()
+    assert not demo._sidecar_path(dest).exists()
+
+    # A healthy retry must succeed despite whatever the failed attempt staged.
+    _install_session(monkeypatch, _serve(body))
+    demo._download_from_google_drive("FILEID", dest, expected_min_size=10_000)
+
+    assert dest.read_bytes() == body
+    assert _leftovers(dest) == {dest.name + demo.COMPLETE_SUFFIX}
+
+
+def test_google_drive_quota_html_page_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A real quota page is 2-3 KB of HTML: it clears the old ``< 1_000`` floor.
+    page = (
+        b"<!DOCTYPE html><html><head><title>Google Drive - Quota exceeded"
+        b"</title></head><body>" + b"sorry. " * 350 + b"</body></html>"
+    )
+    assert 1_000 < len(page) < 5_000
+    recorder = _install_session(
+        monkeypatch, _serve(page, content_type="text/html; charset=utf-8")
+    )
+    dest = tmp_path / "Global_representation.npy"
+
+    with pytest.raises(RuntimeError) as excinfo:
+        demo._download_from_google_drive("ABC123", dest, expected_min_size=1_000_000)
+
+    message = str(excinfo.value)
+    assert "https://drive.google.com/file/d/ABC123/view?usp=sharing" in message
+    assert str(dest) in message
+    # The confirmation dance ran (and still ended in a rejection).
+    assert any("drive.usercontent.google.com" in url for url in recorder.urls)
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
+
+
+def test_small_non_html_body_hits_the_absolute_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pins the branch ordering: this body is binary, so the HTML sniff must miss
+    # it and the size floor must be what rejects it.
+    _install_session(monkeypatch, _serve(b"\x00\x01\x02" * 166))
+    dest = tmp_path / "label.csv"
+
+    with pytest.raises(RuntimeError, match="too small"):
+        demo._download_from_google_drive("ABC123", dest, expected_min_size=1_000_000)
+
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
+
+
+def test_content_length_mismatch_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = b"\x93NUMPY" + b"\x00" * 8_000
+    _install_session(monkeypatch, _serve(body, content_length=len(body) + 4_096))
+    dest = tmp_path / "label.csv"
+
+    with pytest.raises(RuntimeError, match="incomplete"):
+        demo._download_from_google_drive("ABC123", dest, expected_min_size=1_000)
+
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
+
+
+def test_short_body_without_content_length_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No declared length means the equality check cannot run. Promoting the file
+    # anyway would stamp a sidecar certifying the truncation as complete, which
+    # is worse than the heuristic it replaced — so the floor has to catch it.
+    # The margin mirrors production: a stream cut at half the expected size.
+    body = b"\x93NUMPY" + b"\x00" * 5_000_000
+    _install_session(monkeypatch, _serve(body, content_length=None))
+    dest = tmp_path / "Global_representation.npy"
+
+    with pytest.raises(RuntimeError, match="too short"):
+        demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000_000)
+
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
+
+
+def test_a_nearly_complete_stream_without_a_declared_length_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No declared length means the size table is the ONLY completeness signal.
+
+    The narrow miss is the dangerous one, and the CSVs are where it hurts: 8 MiB
+    of the 8.74 MB ``Label_data02.csv`` clears a 90% bar, pandas parses that
+    truncation without complaining, and every global image index after the short
+    file shifts — so the thumbnails land on the wrong points at a match rate far
+    above the tripwire. With nothing proving the body arrived whole, the full
+    measured size is required.
+    """
+    body = b"a,b,c\n" * 1_398_101
+    expected = demo.ARTIFACT_SIZES["Label_data02.csv"]
+    assert expected * 0.9 < len(body) < expected, "must clear a 90% bar"
+    _install_session(monkeypatch, _serve(body, content_length=None))
+    dest = tmp_path / "Label_data02.csv"
+
+    with pytest.raises(RuntimeError, match="too short"):
+        demo._download_from_google_drive("ABC123", dest, expected_min_size=expected)
+
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
+
+
+def test_short_body_with_an_honest_content_length_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Drive also serves small non-HTML "cannot access this file" bodies. They
+    # agree with their own Content-Length and clear the 1 KB absolute floor, so
+    # only the expected-size floor stands between them and a sidecar certifying
+    # 2 KB as a complete 11 GB artifact.
+    body = b"Sorry, you cannot access this file at this time.\n" * 43
+    assert demo.MIN_DOWNLOAD_BYTES < len(body) < 4_000
+    assert not demo._looks_like_html(body[:512])
+    _install_session(monkeypatch, _serve(body, content_type="text/plain"))
+    dest = tmp_path / "Image_data00.npy"
+
+    with pytest.raises(RuntimeError, match="too short"):
+        demo._download_from_google_drive(
+            "ABC123", dest, expected_min_size=demo.ARTIFACT_SIZES["Image_data00.npy"]
+        )
+
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
+
+
+def test_body_without_content_length_above_the_floor_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The companion of the test above: a chunked host that declares nothing is
+    # still a legitimate source when the bytes clear the expected floor.
+    body = b"\x93NUMPY" + b"\x00" * 40_000
+    _install_session(monkeypatch, _serve(body, content_length=None))
+    dest = tmp_path / "Global_representation.npy"
+
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    assert dest.read_bytes() == body
+    assert _leftovers(dest) == {dest.name + demo.COMPLETE_SUFFIX}
+
+
+def test_happy_path_writes_sidecar_and_short_circuits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = b"ensg,name\n" + b"ENSG,PROT\n" * 500
+    _install_session(monkeypatch, _serve(body))
+    dest = tmp_path / "label.csv"
+
+    returned = demo._download_from_google_drive("ABC123", dest, expected_min_size=1_000)
+
+    assert returned == dest
+    assert dest.read_bytes() == body
+    assert _leftovers(dest) == {dest.name + demo.COMPLETE_SUFFIX}
+    sidecar = demo._sidecar_path(dest)
+    assert json.loads(sidecar.read_text(encoding="utf-8"))["size"] == len(body)
+
+    _forbid_network(monkeypatch)
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=1_000)
+    assert dest.read_bytes() == body
+
+
+def test_truncation_behind_the_sidecar_forces_a_refetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = b"\x93NUMPY" + b"\xab" * 20_000
+    _install_session(monkeypatch, _serve(body))
+    dest = tmp_path / "Image_data00.npy"
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    # Truncate by well under 10%: the legacy size heuristic would wave it
+    # through, but the sidecar no longer agrees with the file.
+    dest.write_bytes(body[: len(body) - 500])
+    assert dest.stat().st_size > 10_000 * 0.9
+
+    fresh = b"\x93NUMPY" + b"\xcd" * 20_000
+    _install_session(monkeypatch, _serve(fresh))
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    assert dest.read_bytes() == fresh
+    assert json.loads(demo._sidecar_path(dest).read_text(encoding="utf-8"))[
+        "size"
+    ] == len(fresh)
+
+
+def test_a_failed_refetch_does_not_launder_the_truncated_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The sidecar is the only evidence the cached file is bad. If it were
+    # cleared before the replacement existed, an offline retry would leave a
+    # truncated file with no sidecar — which the legacy heuristic then trusts.
+    body = b"\x93NUMPY" + b"\xab" * 20_000
+    _install_session(monkeypatch, _serve(body))
+    dest = tmp_path / "label.csv"
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+    dest.write_bytes(body[: len(body) - 500])
+
+    def _offline(url: str, headers: Mapping[str, str]) -> _FakeResponse:
+        raise ConnectionError("offline")
+
+    _install_session(monkeypatch, _offline)
+    with pytest.raises(ConnectionError):
+        demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    assert demo._sidecar_path(dest).exists()
+    assert demo._cached_file_is_complete(dest, 10_000) is False
+
+    fresh = b"\x93NUMPY" + b"\xcd" * 20_000
+    _install_session(monkeypatch, _serve(fresh))
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+    assert dest.read_bytes() == fresh
+
+
+def test_unreadable_sidecar_forces_a_refetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = b"\x93NUMPY" + b"\xab" * 20_000
+    _install_session(monkeypatch, _serve(body))
+    dest = tmp_path / "Image_data00.npy"
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    demo._sidecar_path(dest).write_text("not json", encoding="utf-8")
+
+    fresh = b"\x93NUMPY" + b"\xcd" * 20_000
+    _install_session(monkeypatch, _serve(fresh))
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    assert dest.read_bytes() == fresh
+
+
+def test_staging_does_not_touch_another_runs_in_flight_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cache dir is shared between runs, so the staging name is keyed on the
+    # PID and each run deletes only its own. The foreign file is placed at the
+    # name a FIXED-name implementation would stage into, which is exactly the
+    # file such an implementation unlinks on the way in.
+    body = b"\x93NUMPY" + b"\xab" * 20_000
+    _install_session(monkeypatch, _serve(body))
+    dest = tmp_path / "Image_data00.npy"
+    foreign = tmp_path / (dest.name + demo.PART_SUFFIX)
+    foreign.write_bytes(b"another run's in-flight bytes")
+
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    assert dest.read_bytes() == body
+    assert foreign.read_bytes() == b"another run's in-flight bytes"
+    assert _leftovers(dest) == {foreign.name, dest.name + demo.COMPLETE_SUFFIX}
+
+
+@_posix_only
+def test_staging_files_of_dead_runs_are_reclaimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Process-private names would otherwise strand a multi-gigabyte fragment on
+    # every Ctrl-C, since nothing else ever looks at them again.
+    body = b"\x93NUMPY" + b"\xab" * 20_000
+    _install_session(monkeypatch, _serve(body))
+    dest = tmp_path / "Image_data00.npy"
+
+    gone = _dead_pid()
+    dead = tmp_path / f"{dest.name}.{gone}{demo.PART_SUFFIX}"
+    dead.write_bytes(b"9 GB of abandoned bytes, in spirit")
+    live = tmp_path / f"{dest.name}.{os.getpid()}x{demo.PART_SUFFIX}"
+    live.write_bytes(b"not a pid-shaped name; not ours to delete")
+    other_file = tmp_path / f"Image_data01.npy.{gone}{demo.PART_SUFFIX}"
+    other_file.write_bytes(b"another destination's staging file")
+
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    assert not dead.exists()
+    assert live.exists()
+    assert other_file.exists()
+
+
+def test_legacy_cache_without_sidecar_is_still_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A cache written before staging existed has no sidecar; it must not force a
+    # multi-gigabyte re-download.
+    dest = tmp_path / "Global_representation.npy"
+    dest.write_bytes(b"x" * 2_000)
+    _forbid_network(monkeypatch)
+
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=1_000)
+
+    assert dest.read_bytes() == b"x" * 2_000
+    assert not demo._sidecar_path(dest).exists()
+
+
+def test_legacy_csv_truncated_under_ten_percent_is_refetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The CSVs are the one family whose loader cannot catch what a 10% floor
+    # missed: `np.load` raises on a short `.npy` (the test above relies on that
+    # to keep its slack), while pandas parses a truncated CSV without
+    # complaining. A sidecar-less copy a few percent short would therefore be
+    # trusted for good, shorten the concatenated label table, and shift every
+    # global image index after it. Held to its full size instead.
+    dest = tmp_path / "Label_data02.csv"
+    body = b"a,b\n" * 2_500
+    dest.write_bytes(body[:9_500])
+
+    assert demo._cached_file_is_complete(dest, len(body)) is False, (
+        "a 95% CSV must not pass the sidecar-less check"
+    )
+
+    _install_session(monkeypatch, _serve(body, content_type="text/csv"))
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=len(body))
+
+    assert dest.read_bytes() == body, "the short copy must be replaced in full"
+    assert json.loads(demo._sidecar_path(dest).read_text(encoding="utf-8"))[
+        "size"
+    ] == len(body)
+
+
+def test_legacy_csv_at_its_full_size_is_still_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tightening must not turn every sidecar-less CSV into a re-download: a
+    # whole one — and a re-upload a few bytes LONGER — is still trusted as is.
+    dest = tmp_path / "Label_data09.csv"
+    dest.write_bytes(b"a,b\n" * 2_500 + b"tail\n")
+    _forbid_network(monkeypatch)
+
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+
+    assert dest.stat().st_size == 10_005
+    assert not demo._sidecar_path(dest).exists()
+
+
+# =============================================================================
+# Consumer-side self-heal
+# =============================================================================
+
+
+def test_unreadable_artifact_is_quarantined_and_refetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "Global_representation.npy"
+    path.write_bytes(b"truncated garbage")
+    good = np.arange(12, dtype=np.float32)
+    fetched: list[str] = []
+
+    def fake_download(
+        file_id: str, output_path: Path, expected_min_size: int = 0
+    ) -> Path:
+        fetched.append(file_id)
+        np.save(output_path, good)
+        return output_path
+
+    monkeypatch.setattr(demo, "_download_from_google_drive", fake_download)
+
+    loaded = demo._load_downloaded_artifact(
+        path, np.load, demo.GDRIVE_EMBEDDINGS_ID, expected_min_size=4_000_000_000
+    )
+
+    assert np.array_equal(loaded, good)
+    assert fetched == [demo.GDRIVE_EMBEDDINGS_ID]
+    assert (tmp_path / "Global_representation.npy.corrupt").exists()
+
+
+def test_memory_error_is_not_treated_as_corruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The embeddings need ~16 GB of RAM. Quarantining a healthy 3.9 GB cache and
+    # re-downloading it would fail identically, at the cost of the bytes twice.
+    path = tmp_path / "Global_representation.npy"
+    path.write_bytes(b"a perfectly good file we simply cannot fit in RAM")
+
+    def _oom(_path: Path) -> np.ndarray:
+        raise MemoryError("Unable to allocate 3.94 GiB")
+
+    monkeypatch.setattr(
+        demo,
+        "_download_from_google_drive",
+        lambda *a, **k: pytest.fail("must not re-download on MemoryError"),
+    )
+
+    with pytest.raises(MemoryError):
+        demo._load_downloaded_artifact(path, _oom, demo.GDRIVE_EMBEDDINGS_ID)
+
+    assert path.exists()
+    assert not (tmp_path / "Global_representation.npy.corrupt").exists()
+
+
+def test_descriptor_exhaustion_is_not_treated_as_corruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An EMFILE says the process is out of file descriptors, not that a 23 GB
+    # Image_data file is bad. Quarantining on it would throw the file away and
+    # re-download it straight into the same wall.
+    path = tmp_path / "Image_data00.npy"
+    path.write_bytes(b"a perfectly good file we simply cannot open right now")
+
+    def _no_descriptors(_path: Path) -> object:
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    monkeypatch.setattr(
+        demo,
+        "_download_from_google_drive",
+        lambda *a, **k: pytest.fail("must not re-download on EMFILE"),
+    )
+
+    with pytest.raises(OSError):
+        demo._load_downloaded_artifact(path, _no_descriptors, "IMGID0")
+
+    assert path.exists()
+    assert not (tmp_path / "Image_data00.npy.corrupt").exists()
+
+
+def test_a_failed_quarantine_keeps_the_truncation_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # While the bad file still sits at the canonical name, its sidecar is the
+    # only thing marking it bad. So the rename comes first: if it fails, the
+    # sidecar must survive, or the next run sees a sidecar-less "legacy" cache
+    # and the size heuristic waves the truncation through.
+    body = b"\x93NUMPY" + b"\xab" * 20_000
+    _install_session(monkeypatch, _serve(body))
+    dest = tmp_path / "Image_data00.npy"
+    demo._download_from_google_drive("ABC123", dest, expected_min_size=10_000)
+    dest.write_bytes(body[: len(body) - 500])
+
+    def _cannot_rename(path: Path, **kwargs: object) -> Path:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(demo, "quarantine_file", _cannot_rename)
+
+    with pytest.raises(OSError):
+        demo._quarantine_download(dest, reason="unreadable cached download")
+
+    assert demo._sidecar_path(dest).exists()
+    assert demo._cached_file_is_complete(dest, 10_000) is False
+
+
+def test_quarantine_drops_the_sidecar_once_the_file_is_moved(tmp_path: Path) -> None:
+    # The success case: nothing may be left describing the canonical name, or a
+    # stale sidecar could shadow the replacement written after a re-fetch.
+    dest = tmp_path / "Image_data00.npy"
+    dest.write_bytes(b"\x93NUMPY" + b"\x00" * 4_000)
+    demo._write_completion_sidecar(dest, dest.stat().st_size)
+
+    demo._quarantine_download(dest, reason="unreadable cached download")
+
+    assert not dest.exists()
+    assert not demo._sidecar_path(dest).exists()
+    assert (tmp_path / "Image_data00.npy.corrupt").exists()
+
+
+def test_import_error_is_not_treated_as_corruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A reader reaching for an engine that is not installed (pandas does this)
+    # says nothing about the bytes on disk.
+    path = tmp_path / "label.csv"
+    path.write_bytes(b"ensg,name\nENSG,PROT\n")
+
+    def _no_engine(_path: Path) -> object:
+        raise ImportError("Missing optional dependency 'pyarrow'")
+
+    monkeypatch.setattr(
+        demo,
+        "_download_from_google_drive",
+        lambda *a, **k: pytest.fail("must not re-download on ImportError"),
+    )
+
+    with pytest.raises(ImportError):
+        demo._load_downloaded_artifact(path, _no_engine, demo.GDRIVE_LABELS_ID)
+
+    assert path.exists()
+    assert not (tmp_path / "label.csv.corrupt").exists()
+
+
+def test_load_cytoself_data_self_heals_a_corrupt_embeddings_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The embeddings load is wired to the self-heal.
+
+    ``_download_from_google_drive``, ``cache_computed`` and the umap import are
+    stubbed; everything between them is the real function.
+    """
+    pd = pytest.importorskip("pandas")
+
+    n_rows = 6
+    labels = pd.DataFrame(
+        {
+            "ensg": [f"ENSG{i:05d}" for i in range(n_rows)],
+            "name": [f"PROT{i}" for i in range(n_rows)],
+            "loc_grade1": ["nucleus;speckle"] * n_rows,
+        }
+    )
+    embeddings = np.arange(n_rows * 4, dtype=np.float32).reshape(n_rows, 4)
+    fetched: list[str] = []
+
+    def fake_download(
+        file_id: str, output_path: Path, expected_min_size: int = 0
+    ) -> Path:
+        fetched.append(file_id)
+        if file_id == demo.GDRIVE_LABELS_ID:
+            labels.to_csv(output_path, index=False)
+        elif fetched.count(file_id) == 1:
+            # First fetch lands a file that passes every size check and still
+            # cannot be parsed — the shape of a legacy truncated cache.
+            output_path.write_bytes(b"\x93NUMPY truncated")
+        else:
+            np.save(output_path, embeddings)
+        return output_path
+
+    monkeypatch.setattr(demo, "_download_from_google_drive", fake_download)
+
+    class _FakeUMAP:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def fit_transform(self, data: np.ndarray) -> np.ndarray:
+            return np.tile(np.arange(len(data), dtype=np.float32)[:, None], (1, 3))
+
+    real_require = demo.require_module
+
+    def fake_require(name: str) -> object:
+        # umap-learn is an external optional dep and is not needed to test the
+        # cache wiring; everything else resolves for real.
+        if name == "umap":
+            return types.SimpleNamespace(UMAP=_FakeUMAP)
+        return real_require(name)
+
+    monkeypatch.setattr(demo, "require_module", fake_require)
+    # cache_computed would write into the real ~/.cache/luxar; run the closure.
+    monkeypatch.setattr(
+        demo,
+        "cache_computed",
+        lambda namespace, key, fn, version=1, recompute=False: fn(),
+    )
+
+    coordinates, attributes, category_maps = demo.load_cytoself_data(cache_dir=tmp_path)
+
+    assert coordinates.shape == (n_rows, 3)
+    assert "localization" in attributes and "protein_name" in category_maps
+    assert fetched.count(demo.GDRIVE_EMBEDDINGS_ID) == 2
+    assert (tmp_path / "Global_representation.npy.corrupt").exists()
+
+
+# =============================================================================
+# Thumbnail pipeline: per-source-file part caches
+# =============================================================================
+
+_CROPS_PER_FILE = 3
+_N_IMAGE_FILES = len(demo.GDRIVE_IMAGE_IDS)
+_N_GLOBAL = _CROPS_PER_FILE * _N_IMAGE_FILES
+
+
+def _webp(size: int = 2) -> bytes:
+    """A real (tiny) WebP blob, distinct per *size*.
+
+    Both cache readers validate the RIFF/WEBP container signature, so a
+    stand-in cannot be an arbitrary byte string: ``b"webp"`` reads as garbage
+    and sends the test down the rebuild path it is not testing.
+    """
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (size, size), (size * 8, 0, 0)).save(buf, format="webp")
+    return buf.getvalue()
+
+
+def _synthetic_crops(seed: int) -> np.ndarray:
+    """A tiny stand-in for one ``Image_data`` file: (N, 100, 100, 4) uint8."""
+    rng = np.random.default_rng(seed)
+    return rng.integers(0, 256, size=(_CROPS_PER_FILE, 100, 100, 4), dtype=np.uint8)
+
+
+def _blobs_in_global_order() -> list[bytes]:
+    """Ground truth: every crop of every file, encoded, in global row order.
+
+    ``_encode_crops_to_webp`` normalizes per image, so encoding the whole stack
+    gives byte-identical results to encoding it in per-file subsets.
+    """
+    stack = np.concatenate([_synthetic_crops(i) for i in range(_N_IMAGE_FILES)])
+    return demo._encode_crops_to_webp(stack)
+
+
+def _install_fake_image_downloads(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    corrupt_first: str | None = None,
+) -> list[str]:
+    """Patch the Drive fetch to write synthetic ``Image_data`` files locally.
+
+    Returns the (mutable) list of downloaded file names. ``corrupt_first`` names
+    a file whose FIRST fetch writes unreadable bytes, to exercise the
+    quarantine-and-refetch self-heal.
+    """
+    names = list(demo.GDRIVE_IMAGE_IDS)
+    id_to_index = {fid: i for i, fid in enumerate(demo.GDRIVE_IMAGE_IDS.values())}
+    downloaded: list[str] = []
+
+    def fake_download(
+        file_id: str, output_path: Path, expected_min_size: int = 0
+    ) -> Path:
+        downloaded.append(output_path.name)
+        index = id_to_index[file_id]
+        assert output_path.name == names[index]
+        if corrupt_first is not None and output_path.name == corrupt_first:
+            if downloaded.count(output_path.name) == 1:
+                output_path.write_bytes(b"not a numpy file at all")
+                return output_path
+        np.save(output_path, _synthetic_crops(index))
+        return output_path
+
+    monkeypatch.setattr(demo, "_download_from_google_drive", fake_download)
+    return downloaded
+
+
+def _install_mapping(
+    monkeypatch: pytest.MonkeyPatch, mapping: dict[int, int], n_test: int
+) -> None:
+    monkeypatch.setattr(
+        demo,
+        "_build_test_index_mapping",
+        lambda cache_dir: (dict(mapping), n_test),
+    )
+
+
+def _identity_mapping() -> dict[int, int]:
+    return {i: i for i in range(_N_GLOBAL)}
+
+
+def _write_mapping_inputs(cache_dir: Path, marker: bytes) -> None:
+    """Write the label CSVs the bundle's mapping fingerprint is taken over.
+
+    The mapping itself is stubbed in these tests, so the contents only have to
+    CHANGE when the stubbed mapping changes — that is exactly the situation the
+    fingerprint has to notice.
+    """
+    for name in demo.MAPPING_INPUT_NAMES:
+        (cache_dir / name).write_bytes(b"ensg,name\n" + marker)
+
+
+def test_thumbnail_parts_make_a_rerun_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert blobs_full == _blobs_in_global_order()
+    assert len(downloaded) == _N_IMAGE_FILES
+    for i in range(_N_IMAGE_FILES):
+        assert demo._thumbnail_part_path(tmp_path, i).exists()
+    assert (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists()
+
+    # Drop the assembled bundle and exactly one part cache.
+    (tmp_path / demo.THUMBNAIL_CACHE_NAME).unlink()
+    demo._thumbnail_part_path(tmp_path, 3).unlink()
+    downloaded.clear()
+
+    blobs_resumed = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert downloaded == ["Image_data03.npy"]
+    assert blobs_resumed == blobs_full
+
+    # And the assembled bundle short-circuits everything on the next run.
+    downloaded.clear()
+    assert demo.load_cytoself_images(cache_dir=tmp_path) == blobs_full
+    assert downloaded == []
+
+
+def test_parts_built_under_another_mapping_are_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The dangerous case: a repaired Label_data CSV shifts the row mapping
+    # without changing its length, so a range check cannot see the difference.
+    # Reusing the parts would paste every blob onto the wrong row.
+    all_blobs = _blobs_in_global_order()
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    demo.load_cytoself_images(cache_dir=tmp_path)
+
+    shifted = {t: (t + 7) % _N_GLOBAL for t in range(_N_GLOBAL)}
+    (tmp_path / demo.THUMBNAIL_CACHE_NAME).unlink()
+    _install_mapping(monkeypatch, shifted, _N_GLOBAL)
+    downloaded.clear()
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert blobs == [all_blobs[shifted[t]] for t in range(_N_GLOBAL)]
+    assert len(downloaded) == _N_IMAGE_FILES
+
+
+def test_part_cache_from_a_smaller_test_table_is_discarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    demo.load_cytoself_images(cache_dir=tmp_path)
+
+    (tmp_path / demo.THUMBNAIL_CACHE_NAME).unlink()
+    _install_mapping(monkeypatch, {i: i for i in range(5)}, 5)
+    downloaded.clear()
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert blobs == _blobs_in_global_order()[:5]
+    # Part 0 only ever held rows 0-2, which the new mapping still asks for in
+    # the same order, so it is reused; every later part disagrees and is rebuilt.
+    assert downloaded == list(demo.GDRIVE_IMAGE_IDS)[1:]
+    part1 = demo._thumbnail_part_path(tmp_path, 1)
+    assert part1.with_name(part1.name + ".corrupt").exists()
+
+
+def test_garbage_part_cache_is_quarantined_and_only_that_file_refetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    (tmp_path / demo.THUMBNAIL_CACHE_NAME).unlink()
+    part5 = demo._thumbnail_part_path(tmp_path, 5)
+    part5.write_bytes(b"PK\x03\x04 truncated npz")
+    downloaded.clear()
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert blobs == blobs_full
+    assert downloaded == ["Image_data05.npy"]
+    assert part5.with_name(part5.name + ".corrupt").exists()
+
+
+def test_part_cache_with_mismatched_column_lengths_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    part = demo._thumbnail_part_path(tmp_path, 0)
+    # Real WebP entries, so the LENGTH disagreement is what rejects the part
+    # rather than the container-signature check.
+    demo._write_npz_atomic(
+        part,
+        blobs=np.array([_webp(2), _webp(3)], dtype=object),
+        test_indices=np.asarray([0], dtype=np.int64),
+        n_crops=np.int64(3),
+    )
+
+    assert demo._load_thumbnail_part(part) is None
+    assert not part.exists()
+    assert part.with_name(part.name + ".corrupt").exists()
+
+
+def test_failed_npz_write_leaves_no_stray_tmp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The realistic trigger is ENOSPC part-way through the ~114k-blob bundle,
+    # where a full-size stray is exactly what the disk cannot afford.
+    def _no_space(handle: object, **arrays: object) -> None:
+        handle.write(b"partial")  # type: ignore[attr-defined]
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(demo.np, "savez", _no_space)
+    target = tmp_path / demo.THUMBNAIL_CACHE_NAME
+
+    with pytest.raises(OSError):
+        demo._write_npz_atomic(target, blobs=np.array([b"a"], dtype=object))
+
+    assert not target.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_corrupt_thumbnail_bundle_is_quarantined_and_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    bundle.write_bytes(b"PK\x03\x04 truncated npz")
+    downloaded.clear()
+
+    rebuilt = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert rebuilt == blobs_full
+    assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+    # Rebuilt entirely from the surviving part caches — no re-download.
+    assert downloaded == []
+
+
+def test_descriptor_exhaustion_does_not_discard_a_thumbnail_part(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Rebuilding a part means re-reading an 11-23 GB Image_data file. An EMFILE
+    # says the process is out of descriptors, not that the part is bad, so
+    # quarantining on it trades a good cache for a job about to fail harder.
+    part_path = demo._thumbnail_part_path(tmp_path, 0)
+    demo._write_npz_atomic(
+        part_path,
+        blobs=np.array([_webp()], dtype=object),
+        test_indices=np.asarray([0], dtype=np.int64),
+        n_crops=np.int64(1),
+    )
+
+    def _no_descriptors(*args: object, **kwargs: object) -> object:
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    monkeypatch.setattr(np, "load", _no_descriptors)
+
+    with pytest.raises(OSError):
+        demo._load_thumbnail_part(part_path)
+
+    assert part_path.exists()
+    assert not part_path.with_name(part_path.name + ".corrupt").exists()
+
+
+@pytest.mark.parametrize("through", ["_read_bundle_blobs", "_load_cached_thumbnails"])
+@pytest.mark.parametrize("where", ["np.load", "_as_webp_blob"])
+def test_memory_pressure_does_not_discard_the_thumbnail_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str, through: str
+) -> None:
+    # ~114k blobs is precisely the read a loaded machine fails on, and the
+    # rebuild it would buy is the most expensive one in the demo. BOTH halves of
+    # that read can be the one that runs out — the archive load and the
+    # per-entry container check — and the guard wraps both, so neither may be
+    # mistaken for a corrupt bundle.
+    #
+    # The CALLER is driven as well as the reader: the exists-check and the read
+    # live in two functions here, so a `except Exception: blobs = None` added
+    # around the call in `_load_cached_thumbnails` would turn the OOM back into
+    # a silent cache miss with the reader-level assertions still green.
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(bundle, blobs=np.array([_webp()], dtype=object))
+
+    def _oom(*args: object, **kwargs: object) -> object:
+        raise MemoryError("Unable to allocate 1.2 GiB")
+
+    if where == "np.load":
+        monkeypatch.setattr(np, "load", _oom)
+    else:
+        monkeypatch.setattr(demo, "_as_webp_blob", _oom)
+
+    with pytest.raises(MemoryError):
+        if through == "_read_bundle_blobs":
+            demo._read_bundle_blobs(bundle, 1)
+        else:
+            demo._load_cached_thumbnails(tmp_path, 1)
+
+    assert bundle.exists()
+    assert not bundle.with_name(bundle.name + ".corrupt").exists()
+
+
+def test_legacy_bundle_is_adopted_instead_of_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The v1 rename must not cost an existing user a multi-gigabyte rebuild:
+    # the contents are byte-identical, so the file is simply adopted.
+    blobs = [_webp(2), _webp(3), _webp(4)]
+    demo._write_npz_atomic(
+        tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME,
+        blobs=np.array(blobs, dtype=object),
+    )
+    monkeypatch.setattr(
+        demo,
+        "_build_test_index_mapping",
+        lambda cache_dir: pytest.fail("must not rebuild an adoptable cache"),
+    )
+    monkeypatch.setattr(
+        demo,
+        "_download_from_google_drive",
+        lambda *a, **k: pytest.fail("must not download an adoptable cache"),
+    )
+
+    adopted = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert adopted == blobs
+    assert (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists()
+    assert not (tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME).exists()
+
+
+def test_bundle_with_the_wrong_blob_count_is_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The silent failure a bundle cannot self-report: the loser of the
+    # pre-staging rename race is a perfectly VALID npz whose blob count belongs
+    # to another run. The scene builder refuses a mismatched count, so left
+    # alone this costs every future run its hover images, forever.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    # Genuine WebP entries, so only the COUNT can reject this bundle.
+    demo._write_npz_atomic(bundle, blobs=np.array([_webp(2), _webp(3)], dtype=object))
+    downloaded.clear()
+
+    rebuilt = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert rebuilt == blobs_full
+    assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+    # Reassembled from the surviving part caches — no re-download.
+    assert downloaded == []
+    # And the repaired bundle is accepted on the next run.
+    assert (
+        demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+        == blobs_full
+    )
+
+
+def test_bundle_built_under_another_mapping_is_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The bundle short-circuits the whole per-file pipeline, so the part caches'
+    # mapping check never runs on a warm cache. A Label_data CSV repaired
+    # without changing label.csv's row count therefore leaves a bundle of the
+    # RIGHT length whose every blob sits on the wrong point — invisible to the
+    # count check, and nothing on disk ever repairs it.
+    all_blobs = _blobs_in_global_order()
+    _write_mapping_inputs(tmp_path, b"first")
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    assert demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL) == (
+        all_blobs
+    )
+    assert (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists()
+
+    shifted = {t: (t + 7) % _N_GLOBAL for t in range(_N_GLOBAL)}
+    _write_mapping_inputs(tmp_path, b"repaired")
+    _install_mapping(monkeypatch, shifted, _N_GLOBAL)
+    downloaded.clear()
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert blobs == [all_blobs[shifted[t]] for t in range(_N_GLOBAL)]
+    assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+    # And the freshly stamped bundle is trusted on the next run.
+    downloaded.clear()
+    assert demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL) == (
+        blobs
+    )
+    assert downloaded == []
+
+
+def test_a_csv_repaired_mid_run_does_not_certify_the_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The encode pass takes hours on the real dataset. A label CSV repaired while
+    # it runs must not have its digest stamped onto thumbnails that were built
+    # under the OLD mapping — that certifies the exact mismatch the digest exists
+    # to catch, and nothing on disk would ever undo it. So the digest is captured
+    # with the mapping, not re-read at write time.
+    _write_mapping_inputs(tmp_path, b"first")
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    build_part = demo._build_thumbnail_part
+
+    def _repair_the_csvs_mid_pass(*args: object, **kwargs: object):
+        result = build_part(*args, **kwargs)  # type: ignore[arg-type]
+        _write_mapping_inputs(tmp_path, b"repaired")
+        return result
+
+    monkeypatch.setattr(demo, "_build_thumbnail_part", _repair_the_csvs_mid_pass)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert blobs == _blobs_in_global_order()
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    with np.load(bundle, allow_pickle=True) as data:
+        stored = demo._stored_mapping_fingerprint(data)
+    assert stored, "the bundle must still carry a digest"
+    assert stored != demo._mapping_fingerprint(tmp_path)
+
+    # So the next run sees the disagreement and rebuilds rather than trusting it.
+    downloaded.clear()
+    monkeypatch.setattr(demo, "_build_thumbnail_part", build_part)
+    demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+
+
+def test_bundle_is_kept_when_the_label_csvs_are_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unverifiable bundle must be USED, not rebuilt: pruning the CSVs to
+    # reclaim disk would otherwise cost a 181 GB re-fetch of the Image_data
+    # files, which is far worse than the mismatch the check is looking for.
+    _write_mapping_inputs(tmp_path, b"first")
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    for name in demo.MAPPING_INPUT_NAMES:
+        (tmp_path / name).unlink()
+    for i in range(_N_IMAGE_FILES):
+        demo._thumbnail_part_path(tmp_path, i).unlink()
+    downloaded.clear()
+
+    assert demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL) == (
+        blobs_full
+    )
+    assert downloaded == []
+    assert not list(tmp_path.glob("*.corrupt"))
+
+
+def test_legacy_bundle_with_the_wrong_blob_count_is_not_adopted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pre-versioning bundle is exactly the vintage that can carry a raced blob
+    # count, so the count is checked BEFORE the rename — adopting one under the
+    # v1 name would launder it into the new world permanently.
+    demo._write_npz_atomic(
+        tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME,
+        # Genuine WebP entries, so only the COUNT can refuse the adoption.
+        blobs=np.array([_webp(2), _webp(3)], dtype=object),
+    )
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL)
+
+    assert blobs == _blobs_in_global_order()
+    assert len(downloaded) == _N_IMAGE_FILES
+    assert (tmp_path / (demo.LEGACY_THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+
+
+def test_an_intrinsically_short_assembly_is_returned_but_not_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # label.csv and the embeddings disagreeing is not a cache fault, so writing
+    # the bundle would only hand the next run a file it has to quarantine —
+    # a re-quarantine on every run for a condition no rebuild can fix.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL + 1)
+
+    assert blobs == _blobs_in_global_order()
+    assert not (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists()
+    # The per-file work is kept, so the next run costs a reassembly, not a fetch.
+    downloaded.clear()
+    assert (
+        demo.load_cytoself_images(cache_dir=tmp_path, expected_count=_N_GLOBAL + 1)
+        == blobs
+    )
+    assert downloaded == []
+    assert not list(tmp_path.glob("*.corrupt"))
+
+
+def test_a_future_version_does_not_adopt_the_legacy_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Adoption is only sound while the encoding is unchanged. A version bump has
+    # to disable it by itself — a comment saying "do not adopt" cannot.
+    monkeypatch.setattr(demo, "THUMBNAIL_CACHE_NAME", "image_labels_test_webp_v2.npz")
+    legacy = tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME
+    # A perfectly VALID legacy bundle — only the version bump may refuse it.
+    demo._write_npz_atomic(legacy, blobs=np.array([_webp()], dtype=object))
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert blobs == _blobs_in_global_order()
+    assert len(downloaded) == _N_IMAGE_FILES
+    assert legacy.exists(), "an un-adoptable bundle is left alone, not laundered"
+
+
+def test_corrupt_image_file_is_quarantined_and_refetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(
+        monkeypatch, corrupt_first="Image_data00.npy"
+    )
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert blobs == _blobs_in_global_order()
+    assert downloaded.count("Image_data00.npy") == 2
+    assert (tmp_path / "Image_data00.npy.corrupt").exists()
+
+
+def test_image_loop_uses_the_real_download_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loop's cache check, staging and sidecar are the real ones.
+
+    Every other thumbnail test stubs ``_download_from_google_drive`` wholesale,
+    so this is the one that exercises the seam between the sidecar and the loop:
+    a verified file on disk must skip the network entirely while its neighbour
+    is fetched through the full staging path.
+    """
+    two_files = {
+        "Image_data00.npy": "IMGID0",
+        "Image_data01.npy": "IMGID1",
+    }
+    monkeypatch.setattr(demo, "GDRIVE_IMAGE_IDS", two_files)
+    # The real files are 21 and 18 GB; these synthetic ones are ~120 KB.
+    for name in two_files:
+        monkeypatch.setitem(demo.ARTIFACT_SIZES, name, 10_000)
+    n_global = 2 * _CROPS_PER_FILE
+    _install_mapping(monkeypatch, {i: i for i in range(n_global)}, n_global)
+
+    def _npy_bytes(index: int) -> bytes:
+        buf = io.BytesIO()
+        np.save(buf, _synthetic_crops(index))
+        return buf.getvalue()
+
+    # File 0 is already cached AND certified; file 1 is absent.
+    cached = tmp_path / "Image_data00.npy"
+    cached.write_bytes(_npy_bytes(0))
+    demo._write_completion_sidecar(cached, cached.stat().st_size)
+
+    recorder = _install_session(monkeypatch, _serve(_npy_bytes(1)))
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert blobs == demo._encode_crops_to_webp(
+        np.concatenate([_synthetic_crops(0), _synthetic_crops(1)])
+    )
+    assert recorder.urls, "file 1 should have been fetched"
+    assert all("IMGID1" in url for url in recorder.urls)
+    assert not any("IMGID0" in url for url in recorder.urls)
+    # File 1 went through staging and came out certified.
+    fetched = tmp_path / "Image_data01.npy"
+    assert json.loads(demo._sidecar_path(fetched).read_text(encoding="utf-8"))[
+        "size"
+    ] == len(_npy_bytes(1))
+    assert not demo._part_path(fetched).exists()
+
+
+def test_low_match_rate_returns_blobs_but_does_not_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only 4 of 30 test rows match — far below MIN_MATCH_FRACTION. That reads as
+    # a regression, so the bundle must not be frozen; but a partly-working
+    # tooltip still beats none, so the blobs are returned and nothing raises.
+    _install_mapping(monkeypatch, {i: i for i in range(4)}, _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert len(blobs) == _N_GLOBAL
+    assert blobs[:4] == _blobs_in_global_order()[:4]
+    assert not (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists()
+    # The expensive per-file work is kept, so a retry is cheap.
+    assert demo._thumbnail_part_path(tmp_path, 0).exists()
+
+
+@pytest.mark.parametrize(
+    ("n_matched", "expect_cached"),
+    [(15, True), (14, False)],
+)
+def test_match_fraction_boundary_is_inclusive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    n_matched: int,
+    expect_cached: bool,
+) -> None:
+    # Pins `<` rather than `<=`: exactly MIN_MATCH_FRACTION (15/30 = 0.5) is
+    # acceptable, one row fewer is not.
+    assert demo.MIN_MATCH_FRACTION == 0.5
+    _install_mapping(monkeypatch, {i: i for i in range(n_matched)}, _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+
+    demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists() is expect_cached
+
+
+# =============================================================================
+# Thumbnail pipeline: the --recompute bypass, and what a non-WebP entry means
+# =============================================================================
+
+
+class _RebuildEntered(Exception):
+    """Raised by a stubbed rebuild path to prove it was reached."""
+
+
+def test_recompute_bypasses_the_cached_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The automatic checks only catch a bundle that is unusable on its face.
+    # `--recompute` is the escape hatch for one that is merely WRONG, which the
+    # cache would otherwise short-circuit on before any network call, forever.
+    blobs = [_webp(2), _webp(3)]
+    demo._write_npz_atomic(
+        tmp_path / demo.THUMBNAIL_CACHE_NAME,
+        blobs=np.array(blobs, dtype=object),
+    )
+
+    def _boom(cache_dir: Path) -> tuple[dict[int, int], int]:
+        raise _RebuildEntered("the rebuild path was entered")
+
+    monkeypatch.setattr(demo, "_build_test_index_mapping", _boom)
+
+    # Default: the bundle is reused and the rebuild is never reached.
+    assert demo.load_cytoself_images(cache_dir=tmp_path) == blobs
+
+    # With --recompute: reaching the rebuild proves the cache was SKIPPED, not
+    # merely re-read and re-validated.
+    with pytest.raises(_RebuildEntered):
+        demo.load_cytoself_images(cache_dir=tmp_path, recompute=True)
+
+
+def test_recompute_reassembles_from_the_part_caches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `--recompute` deliberately reaches no further than the assembled bundle:
+    # main() promises already-downloaded work is reused, and the per-file part
+    # caches are that work. So this costs a reassembly, not a 181 GB re-fetch.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    stale = [_webp(2)]
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(bundle, blobs=np.array(stale, dtype=object))
+    downloaded.clear()
+
+    rebuilt = demo.load_cytoself_images(cache_dir=tmp_path, recompute=True)
+
+    assert rebuilt == blobs_full
+    assert rebuilt != stale, "the stale bundle should have been replaced"
+    assert downloaded == []
+    with np.load(bundle, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == rebuilt
+    # The staging copy must not survive a successful rename.
+    assert not [p.name for p in tmp_path.glob(f"*{demo.TMP_SUFFIX}")]
+
+
+def test_an_interrupted_recompute_leaves_the_existing_bundle_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `--recompute` deletes nothing up front, so a killed rebuild must leave the
+    # PREVIOUS bundle exactly as it was — this module never trades a working
+    # artifact for a hypothetical one. np.savez truncates on open, so writing in
+    # place would have replaced it with a BadZipFile every later run trips over;
+    # the staging rename is what keeps the old bytes whole.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    demo.load_cytoself_images(cache_dir=tmp_path)
+
+    seeded = [_webp(2)]
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(bundle, blobs=np.array(seeded, dtype=object))
+
+    real_savez = demo.np.savez
+    armed = {"kill": True}
+
+    def _die_mid_write(handle: object, **arrays: object) -> None:
+        # The Ctrl-C / OOM shape: some bytes land, then the write dies. Only the
+        # bundle write is reached — every part cache is already on disk. Armed
+        # once: the recovery run below must write for real, and `monkeypatch.undo()`
+        # is NOT the way to get there — it would also restore the live Drive
+        # downloader and this test would reach the network.
+        if not armed["kill"]:
+            real_savez(handle, **arrays)
+            return
+        armed["kill"] = False
+        handle.write(b"PK\x03\x04partial")  # type: ignore[attr-defined]
+        raise KeyboardInterrupt("interrupted while writing the bundle")
+
+    monkeypatch.setattr(demo.np, "savez", _die_mid_write)
+
+    with pytest.raises(KeyboardInterrupt):
+        demo.load_cytoself_images(cache_dir=tmp_path, recompute=True)
+
+    with np.load(bundle, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == seeded
+    assert not [p.name for p in tmp_path.glob(f"*{demo.TMP_SUFFIX}")]
+
+    # And the next plain run serves those bytes — no rebuild, no re-download.
+    downloaded.clear()
+    assert demo.load_cytoself_images(cache_dir=tmp_path) == seeded
+    assert downloaded == []
+
+
+def test_recompute_adopts_rather_than_strands_a_pre_versioning_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Adoption is the ONLY thing that ever removes the legacy name, so a
+    # `--recompute` that skipped it would leave that file unreachable forever
+    # once the v1 name exists — a few hundred MB orphaned, in a module that
+    # sweeps dead runs' staging files precisely to avoid stranding anything.
+    # Renaming instead of deleting also means an interrupted rebuild leaves the
+    # legacy bytes safe under the canonical name.
+    legacy = tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(legacy, blobs=np.array([_webp()], dtype=object))
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, recompute=True)
+
+    assert blobs == _blobs_in_global_order()
+    assert (tmp_path / demo.THUMBNAIL_CACHE_NAME).exists()
+    assert not legacy.exists()
+    # Renamed, not quarantined and not deleted: the bytes were good.
+    assert not list(tmp_path.glob("*.corrupt"))
+
+
+def test_adoption_refuses_to_overwrite_an_existing_versioned_bundle(
+    tmp_path: Path,
+) -> None:
+    # Enforced inside the rename's own function, not only by its callers. At
+    # `_load_cached_thumbnails` the precondition holds by a non-local accident —
+    # every rejecting branch of `_read_bundle_blobs` happens to quarantine the
+    # versioned file first — so one cheap reject-without-quarantining pre-check
+    # added there later would silently turn adoption into a replace() over a
+    # live bundle. This pins the guard where it cannot be reasoned away.
+    v1 = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    fresh = [_webp(2)]
+    demo._write_npz_atomic(v1, blobs=np.array(fresh, dtype=object))
+    legacy = tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(legacy, blobs=np.array([_webp(3)], dtype=object))
+
+    assert demo._adopt_legacy_bundle(tmp_path, None) is None
+
+    with np.load(v1, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == fresh
+    assert legacy.exists(), "the legacy file is left for a later adoption"
+
+
+def test_adoption_does_not_clobber_a_bundle_published_while_it_validates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The existence check above is only a check: validating the legacy bundle
+    # takes long enough (200 MB, ~114k blobs) for a concurrent run to finish its
+    # rebuild and publish a fresh, FINGERPRINTED v1 into the gap. A `replace()`
+    # would then overwrite it with the unverifiable legacy one — erasing the very
+    # digest that catches a mapping mismatch. Taking the name has to be atomic.
+    _write_mapping_inputs(tmp_path, b"current")
+    legacy = tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(legacy, blobs=np.array([_webp(3)], dtype=object))
+
+    v1 = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    fresh = [_webp(2)]
+    real_read = demo._read_bundle_blobs
+
+    def _publish_mid_validation(*args: object, **kwargs: object) -> object:
+        result = real_read(*args, **kwargs)  # type: ignore[arg-type]
+        if not v1.exists():
+            demo._write_npz_atomic(
+                v1,
+                blobs=np.array(fresh, dtype=object),
+                mapping_fingerprint=np.array(demo._mapping_fingerprint(tmp_path)),
+            )
+        return result
+
+    monkeypatch.setattr(demo, "_read_bundle_blobs", _publish_mid_validation)
+
+    adopted = demo._adopt_legacy_bundle(tmp_path, None)
+
+    # The legacy blobs are fine to return — it is the DISK that must not change.
+    assert adopted == [_webp(3)]
+    with np.load(v1, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == fresh
+        assert demo._stored_mapping_fingerprint(data), "the digest must survive"
+    assert legacy.exists(), "the legacy file is left for a later adoption"
+
+
+def test_recompute_does_not_let_adoption_clobber_a_live_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Adoption ends in `legacy.replace(v1)`. Run unconditionally on the recompute
+    # path it destroys a fresh, FINGERPRINTED bundle and puts an older
+    # unverifiable one in its place before any replacement exists — and erases
+    # the fingerprint that would have caught the mismatch, so an interrupted run
+    # then serves thumbnails pasted onto the wrong points, forever. v1 wins here
+    # exactly as it does on the normal path.
+    _write_mapping_inputs(tmp_path, b"current")
+    v1 = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    fresh = [_webp(2)]
+    demo._write_npz_atomic(
+        v1,
+        blobs=np.array(fresh, dtype=object),
+        mapping_fingerprint=np.array(demo._mapping_fingerprint(tmp_path)),
+    )
+    legacy = tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(legacy, blobs=np.array([_webp(3)], dtype=object))
+
+    def _boom(cache_dir: Path) -> tuple[dict[int, int], int]:
+        raise _RebuildEntered("the rebuild path was entered")
+
+    # Stop right after the prelude, so what is on disk is exactly what it left.
+    monkeypatch.setattr(demo, "_build_test_index_mapping", _boom)
+
+    with pytest.raises(_RebuildEntered):
+        demo.load_cytoself_images(cache_dir=tmp_path, recompute=True)
+
+    with np.load(v1, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == fresh
+        assert demo._stored_mapping_fingerprint(data), "the digest must survive"
+    assert legacy.exists(), "the legacy file is left for a later adoption"
+
+
+def test_an_unrenameable_legacy_bundle_is_still_named_as_the_survivor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    # Adoption's un-renameable branch reads the blobs, fails the rename and uses
+    # the legacy file in place. There is then no v1, but the legacy bundle IS
+    # what a later run serves — so a report that looked only at the versioned
+    # name would fall silent in precisely the case where something survived.
+    legacy = tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME
+    seeded = [_webp(2)]
+    demo._write_npz_atomic(legacy, blobs=np.array(seeded, dtype=object))
+
+    # A cache directory on a filesystem with no hard links behaves this way for
+    # every adoption; the part-cache writes go through `Path.replace` and are
+    # deliberately left working.
+    def _cannot_link(src: object, dst: object, **kwargs: object) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, "link", _cannot_link)
+    # 4 of 30 test rows match — the assembly is refused by the tripwire.
+    _install_mapping(monkeypatch, {i: i for i in range(4)}, _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+
+    demo.load_cytoself_images(cache_dir=tmp_path, recompute=True)
+
+    assert legacy.exists()
+    with np.load(legacy, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == seeded
+    out = capfd.readouterr().out
+    assert f"({demo.LEGACY_THUMBNAIL_CACHE_NAME}) was left" in out
+
+
+def test_a_failed_checkpoint_write_names_the_part_not_the_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The realistic trigger is ENOSPC part-way through a checkpoint. Reporting
+    # it against the Image_data file makes main() advise re-running to refetch a
+    # 23 GB download that is already on disk and perfectly fine — with the disk
+    # that just filled up as the place to put it.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+
+    def _no_space(handle: object, **arrays: object) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(demo.np, "savez", _no_space)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        demo.load_cytoself_images(cache_dir=tmp_path)
+
+    message = str(excinfo.value)
+    assert demo._thumbnail_part_path(tmp_path, 0).name in message
+    assert "Image_data00.npy" not in message
+
+
+def test_a_tripwire_declined_recompute_keeps_and_names_the_existing_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    # MIN_MATCH_FRACTION is a REGRESSION tripwire, not a quality bar: it fires
+    # when our own row matching has broken. In exactly that situation the older
+    # bundle — assembled back when matching worked — is the more trustworthy of
+    # the two, so a failed reassembly must not be allowed to destroy it. What
+    # `--recompute` owes the user instead is honesty: the bundle it could not
+    # replace is named, so "the escape hatch silently did nothing" is not a
+    # state they can end up in without being told.
+    seeded = [_webp(2)]
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(bundle, blobs=np.array(seeded, dtype=object))
+    # 4 of 30 test rows match — far below MIN_MATCH_FRACTION.
+    _install_mapping(monkeypatch, {i: i for i in range(4)}, _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path, recompute=True)
+
+    assert len(blobs) == _N_GLOBAL
+    with np.load(bundle, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == seeded
+
+    # Co-located on purpose: the bare filename also appears in the prelude's
+    # "ignoring …" line, so asserting on it alone stays green even if
+    # `_report_bundle_not_cached` stops naming anything at all.
+    out = capfd.readouterr().out
+    assert f"({demo.THUMBNAIL_CACHE_NAME}) was left" in out
+
+
+# The shapes an archive entry can take that are NOT a usable thumbnail.
+# `bytes()` rejects only the first two: a NUMERIC entry converts silently (a
+# float to the 8 bytes of its IEEE encoding, an int to that many NULs), and any
+# byte string at all is bytes-like. All of them would be handed to the viewer as
+# images, forever, since the cache short-circuits before any download.
+_BAD_BLOBS = pytest.mark.parametrize(
+    "bad_blobs",
+    [
+        pytest.param(np.array(["not", "bytes"]), id="strings"),
+        pytest.param(np.array([None, None], dtype=object), id="none"),
+        pytest.param(np.array([1.5, 2.5]), id="floats"),
+        pytest.param(np.arange(2), id="ints"),
+        pytest.param(
+            np.array([b"\x89PNG\r\n\x1a\n", b"\x89PNG\r\n\x1a\n"], dtype=object),
+            id="not-webp",
+        ),
+    ],
+)
+
+
+@_BAD_BLOBS
+def test_bundle_whose_entries_are_not_webp_is_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_blobs: np.ndarray
+) -> None:
+    # An unusable bundle is more shapes than a truncated zip: one that OPENS
+    # fine but whose entries are not images is the same dead end, so the decode
+    # belongs inside the guard — and it has to be a real check, not `bytes()`.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(bundle, blobs=bad_blobs)
+
+    blobs = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert blobs == _blobs_in_global_order()
+    # Garbage of the right shape is the trap: a count check alone would read as
+    # a rebuild even when the garbage came back verbatim. Only real WebP proves
+    # the encoder actually ran.
+    assert all(b[:4] == b"RIFF" and b[8:12] == b"WEBP" for b in blobs)
+    assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
+
+
+def test_part_cache_whose_entries_are_not_webp_is_rebuilt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Checking the PARTS as well as the bundle is what keeps the rebuild
+    # terminating: a garbage part reassembles into a garbage bundle, which the
+    # bundle check then quarantines — on every single run, forever.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    downloaded = _install_fake_image_downloads(monkeypatch)
+    blobs_full = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    (tmp_path / demo.THUMBNAIL_CACHE_NAME).unlink()
+    part2 = demo._thumbnail_part_path(tmp_path, 2)
+    # The row mapping this part claims is exactly the right one, so the
+    # test_indices check waves it through — only the entries are garbage.
+    demo._write_npz_atomic(
+        part2,
+        blobs=np.array([b"\x89PNG\r\n\x1a\n"] * _CROPS_PER_FILE, dtype=object),
+        test_indices=np.asarray([6, 7, 8], dtype=np.int64),
+        n_crops=np.int64(_CROPS_PER_FILE),
+    )
+    downloaded.clear()
+
+    rebuilt = demo.load_cytoself_images(cache_dir=tmp_path)
+
+    assert rebuilt == blobs_full
+    assert downloaded == ["Image_data02.npy"]
+    assert part2.with_name(part2.name + ".corrupt").exists()
+
+
+# =============================================================================
+# Thumbnail pipeline: how a per-file failure is reported
+# =============================================================================
+
+
+def test_a_failure_in_the_image_loop_names_the_file_and_its_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # main()'s handler has to stay broad, and it prints `type(e).__name__`.
+    # `str(MemoryError())` is empty, so without the wrapper the user got a bare
+    # trailing colon and no clue which of the ten files broke.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+
+    def _oom(file_id: str, output_path: Path, expected_min_size: int = 0) -> Path:
+        raise MemoryError()
+
+    monkeypatch.setattr(demo, "_download_from_google_drive", _oom)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        demo.load_cytoself_images(cache_dir=tmp_path)
+
+    message = str(excinfo.value)
+    assert "Image_data00.npy" in message
+    assert "MemoryError" in message
+
+
+def test_a_part_cache_failure_names_the_part_not_the_image_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The two stages of the loop touch different artifacts, and
+    # `_load_thumbnail_part` re-raises environment failures rather than
+    # quarantining on them — so an EMFILE reading a small local
+    # `thumbs_partNN_v1.npz` reaches the relabelling. Blaming the 23 GB
+    # Image_data download for it would point the user at the one file they have
+    # no reason to touch, and invite them to delete it.
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+    demo.load_cytoself_images(cache_dir=tmp_path)
+    (tmp_path / demo.THUMBNAIL_CACHE_NAME).unlink()
+
+    def _no_descriptors(*args: object, **kwargs: object) -> object:
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    monkeypatch.setattr(np, "load", _no_descriptors)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        demo.load_cytoself_images(cache_dir=tmp_path)
+
+    message = str(excinfo.value)
+    assert demo._thumbnail_part_path(tmp_path, 0).name in message
+    assert "Image_data00.npy" not in message
+    assert "OSError" in message
+
+
+def test_missing_dependency_in_the_image_loop_is_not_rebranded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It has its own handler (and its own pip/extra hint) in ``main()``."""
+    _install_mapping(monkeypatch, _identity_mapping(), _N_GLOBAL)
+    _install_fake_image_downloads(monkeypatch)
+
+    def _no_pillow(*args: object, **kwargs: object) -> list[bytes]:
+        raise MissingDependencyError("Pillow is not installed")
+
+    monkeypatch.setattr(demo, "_encode_crops_to_webp", _no_pillow)
+
+    with pytest.raises(MissingDependencyError):
+        demo.load_cytoself_images(cache_dir=tmp_path)

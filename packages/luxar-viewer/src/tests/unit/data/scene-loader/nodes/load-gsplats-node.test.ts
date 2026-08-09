@@ -17,7 +17,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 
 const createGSplatsLoaderMock = vi.fn();
@@ -30,7 +29,7 @@ vi.mock('../../../../../data/scene-loader/loaders/loader-factory', () => ({
 
 import { loadGSplatsNode } from '../../../../../data/scene-loader/nodes/load-gsplats-node';
 import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
-import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
+import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode, ViewState } from '../../../../../data/data-loader-types';
 import type {
@@ -102,31 +101,18 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     markPickingDirty: vi.fn(),
   } as unknown as NodeBuildCtx['nodeFactory'];
 
-  const ctx: NodeBuildCtx = {
-    registry: new LoaderRegistry(),
+  // Only the members this file's assertions actually read are named here; the
+  // rest come from the shared factory (see make-test-node-build-ctx.ts).
+  const ctx: NodeBuildCtx = makeTestNodeBuildCtx({
     nodeFactory,
     viewState,
-    factoryDeps: {} as never,
-    isDatasetLive: () => true,
-    getViewVersion: () => 1,
-    releaseLazyGSplats: vi.fn(),
-    releaseLazyPoints: vi.fn(),
-    releaseLazyLines: vi.fn(),
-    releaseLazyMesh: vi.fn(),
-    kickRefinementIfIdle: vi.fn(),
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,
-    processLinesData: vi.fn(),
-    commitLinesGeometry: vi.fn(),
     processGSplatsData,
-    processPointsData,
-    commitPointsGeometry: vi.fn(),
     commitGSplatsGeometry,
-    processMeshData: vi.fn(),
-    commitMeshGeometry: vi.fn(),
     ...overrides,
-  };
+  });
   return Object.assign(ctx, {
     spies: {
       applyEffectiveAttrs,
