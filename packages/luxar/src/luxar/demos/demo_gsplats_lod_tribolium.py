@@ -103,19 +103,19 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import (
+    detect_device,
+    launch_viewer,
+    load_precomputed_gsplats,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
 from luxar.encoding import EncodingMode
 from luxar.gsplats import make_substitutive_lod
 from luxar.gsplats.gsplat_data import (
     AdditiveSubLOD,
     GSplatData,
     SubstitutiveLevel,
-)
-from luxar.utils.demos import (
-    detect_device,
-    launch_viewer,
-    load_precomputed_gsplats,
-    parse_demo_flags,
-    warn_if_no_cuda_gpu,
 )
 from luxar.utils.paths import get_demos_output_dir
 

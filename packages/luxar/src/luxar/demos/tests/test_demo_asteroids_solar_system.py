@@ -1,8 +1,10 @@
 """Smoke tests for the pure orbital-mechanics helpers in demo_asteroids_solar_system.
 
 These cover deterministic numerical helpers only — no network, no cache, no
-scene I/O. The demo is loaded by file path (see test_demo_ppi_flow_field for the
-rationale: ``luxar.demos`` is aliased to ``luxar.utils.demos``).
+scene I/O. The demo is loaded by file path — a leftover from when a
+``sys.modules`` alias shadowed the ``luxar.demos`` package. That alias is gone
+(see test_demo_ppi_flow_field), so ``from luxar.demos.demo_asteroids_solar_system
+import …`` would work just as well.
 """
 
 from __future__ import annotations

@@ -12,6 +12,7 @@ kept there would be missing for exactly the installed users this module serves.
 
 Resolution order for a ``zenodo`` dataset (per file). The manifest sha256 is the
 authority at every step — a copy that fails it is quarantined, never returned:
+
     1. Local cache ``~/.cache/luxar/<dataset>/<file>``, if it verifies.
     2. In-repo git-LFS copy ``demos/data/<dir>/<file>``, where ``<dir>`` is the
        manifest ``dir`` field (EMPTY for top-level datasets — the file then lives
