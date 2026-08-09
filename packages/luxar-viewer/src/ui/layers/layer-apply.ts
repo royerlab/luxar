@@ -264,9 +264,10 @@ export class LayerApplyEngine {
       // would keep naming vertices of an invisible mesh. A no-op for the other three
       // types, whose pick materials derive coverage from their own element data.
       //
-      // Written OUTSIDE the LOD-fade branch above on purpose: a mesh cannot be inside
-      // a LOD group (§9 refuses it), so that branch is unreachable here — but keeping
-      // the sync unconditional means it stays correct if that ever changes.
+      // Written OUTSIDE the LOD-fade branch above on purpose: a mesh CAN be a
+      // substitutive LOD level now (§9), so the sync has to run whichever branch the
+      // node took — an unconditional sync is what keeps a faded mesh level pickable
+      // at the coverage it actually renders with.
       //
       // When the sync actually touched a mesh pick material, invalidate the cached
       // pick buffer: a stationary-camera layers-panel edit invalidates nothing else,

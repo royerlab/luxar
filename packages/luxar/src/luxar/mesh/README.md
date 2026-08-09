@@ -10,6 +10,7 @@ from `luxar.core.gsplats`.
 
 | Module | Purpose |
 |---|---|
+| [`decimate.py`](decimate.py) | Produce a genuinely coarser SURFACE — the producer a substitutive LOD ladder needs. `cluster` snaps vertices to a grid, collapses each occupied cell to its centroid, reindexes the faces and drops the triangles that collapsed. Vectorized NumPy, no new dependencies. |
 | [`interop/`](interop/README.md) | Import classical mesh files — PLY, OBJ, STL, glTF/GLB — into a `TriangleMesh`, the intermediate the CLI writes into a scene. NumPy + stdlib only, no new dependencies. |
 | `split.py` | Split a mesh into spatially disjoint, independently drawable parts by face. The bookkeeping behind `add_mesh(partition=…)`. |
 
@@ -62,10 +63,14 @@ which keeps the splitter ignorant of the attribute set.
 
 - **The `Mesh` node class, the writer, and the reader** — `luxar.core.mesh`,
   `luxar.io._compiler.geometry_writers.mesh`, `luxar.io.reader`.
-- **Decimation / LOD.** Mesh has no LOD ladder yet: the additive prefix flavour cannot
-  apply to a surface at all, and substitutive levels are missing only a producer (QEM).
-  See `docs/specs/MESH_NODE_SPEC.md` §9. When that producer lands, `luxar/mesh/simplify/`
-  is where it belongs. Note that partitioning is a *different* axis and already ships —
-  it divides one surface in space, rather than approximating it at lower detail.
+- **An *additive* (prefix) LOD ladder.** That flavour cannot apply to a surface at all —
+  a prefix of an index buffer is a surface with holes in it, not a coarser one — so it is
+  refused on principle. *Substitutive* levels, which were missing only a producer, now
+  work: `decimate.py` above is that producer (vertex clustering; a Garland-Heckbert
+  `qem` tier is the one this is shaped to admit next, issue #1348), and
+  `add_mesh(substitutive_lod=…)` writes the resulting `kind=lod` group. Partitioning
+  (`split.py`, above) is a *different* axis and also ships — it divides one surface in
+  space rather than approximating it at lower detail, and the two cannot be combined in
+  one `add_mesh` call. See `docs/specs/MESH_NODE_SPEC.md` §9.
 - **Export.** The inverse direction (`.luxar.zarr` → PLY/OBJ/STL) has no consumer yet;
   `gsplats/interop/inria_export.py` is the shape it would take.

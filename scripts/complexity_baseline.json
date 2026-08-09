@@ -536,7 +536,7 @@
       40
     ],
     "packages/luxar/src/luxar/io/_compiler/geometry_writers/mesh.py::write_mesh": [
-      22
+      12
     ],
     "packages/luxar/src/luxar/io/_compiler/geometry_writers/points.py::write_points": [
       31
