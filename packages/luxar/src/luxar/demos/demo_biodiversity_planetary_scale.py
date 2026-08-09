@@ -330,16 +330,17 @@ from luxar.core.viewer_config import (
     DimensionsConfig,
     ViewerConfig,
 )
-from luxar.demos import require_module, substitutive_lod_or_flat
-from luxar.encoding import EncodingMode
-from luxar.utils.demos import (
+from luxar.demos import (
     cache_computed,
     cached_download,
     launch_viewer,
     parse_demo_flags,
     parse_int_arg,
     print_data_provenance,
+    require_module,
+    substitutive_lod_or_flat,
 )
+from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================

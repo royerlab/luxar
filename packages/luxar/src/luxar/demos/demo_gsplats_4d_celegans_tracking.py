@@ -109,17 +109,18 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import MissingDependencyError, require_module
+from luxar.demos import (
+    MissingDependencyError,
+    launch_viewer,
+    load_precomputed_bundle,
+    parse_demo_flags,
+    require_module,
+    warn_if_no_cuda_gpu,
+)
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.clahe import apply_clahe
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import (
-    launch_viewer,
-    load_precomputed_bundle,
-    parse_demo_flags,
-    warn_if_no_cuda_gpu,
-)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -884,7 +885,7 @@ def fit_timepoint(
 
     global DEVICE
     if DEVICE is None:
-        from luxar.utils.demos import detect_device
+        from luxar.demos import detect_device
 
         DEVICE = detect_device()
 

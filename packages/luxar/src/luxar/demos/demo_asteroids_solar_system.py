@@ -92,8 +92,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import launch_viewer, parse_int_arg
-from luxar.utils.demos import parse_demo_flags
+from luxar.demos import launch_viewer, parse_demo_flags, parse_int_arg
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
