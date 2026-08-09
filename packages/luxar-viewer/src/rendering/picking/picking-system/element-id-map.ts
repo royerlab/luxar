@@ -62,19 +62,20 @@
  *    is null either way today). #1415/#1420 moves the lookup to the leaf, and
  *    the two then compose.
  *
- * **Identity fallback is not always a safe answer.**
- * `rendering/depth-sort-coordinator.ts::noteDepthSortBlendingModeSwitch`
- * calls `clearCommittedData` — which now drops this map too — on any sortable
- * node switched from a commutative mode TO `normal` / `volumetric` (the
- * LayersPanel compose chain). Both map-publishing geometries are exposed:
- * POINTS (drawn as instanced quads on a `THREE.Mesh`) and GSPLATS, the
- * geometry most likely to be switched to `normal` / `volumetric` in the first
- * place. The object stays drawn and pickable; the stamp is cleared purely to
- * defeat the commit no-op gate, and the `requestReprocess?.()` that re-stamps
- * it is async. Absence therefore does not mean the GPU buffers were released —
- * in that window a pick still resolves, this helper returns the raw slot, and
- * for a range-loaded (or compacted) labelled node that is a silently WRONG
- * label rather than "no answer". Not fixed here.
+ * **Identity fallback is not always a safe answer**, so the map's lifetime is
+ * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::
+ * noteDepthSortBlendingModeSwitch` drops `committedData` on any sortable node
+ * switched from a commutative mode TO `normal` / `volumetric` (the LayersPanel
+ * compose chain) — and both map-publishing geometries are exposed: POINTS
+ * (drawn as instanced quads on a `THREE.Mesh`) and GSPLATS, the geometry most
+ * likely to be switched to `normal` / `volumetric` in the first place. There
+ * the object stays drawn and pickable: the stamp is cleared purely to defeat
+ * the commit no-op gate, and the `requestReprocess?.()` that re-stamps it is
+ * async, so a pick in that window would resolve through the raw slot — a
+ * silently WRONG label rather than "no answer". It therefore calls
+ * `invalidateCommittedDataStamp`, which leaves this map in place (the buffers
+ * it describes are untouched); only `clearCommittedData`, used where the
+ * geometry is genuinely released (LOD demotion, dataset teardown), drops both.
  *
  * @module rendering/picking/picking-system/element-id-map
  */

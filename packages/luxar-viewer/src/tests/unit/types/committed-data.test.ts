@@ -16,6 +16,7 @@ import {
   getCommittedData,
   setCommittedData,
   clearCommittedData,
+  invalidateCommittedDataStamp,
   getElementIdMap,
   setElementIdMap,
 } from '../../../types/committed-data';
@@ -106,5 +107,23 @@ describe('elementIdMap sibling stamp (issue #1423)', () => {
     expect(getElementIdMap(mesh)).toBeUndefined();
     expect('elementIdMap' in mesh.userData).toBe(false);
     expect(hasCommittedData(mesh)).toBe(false);
+  });
+
+  it('invalidateCommittedDataStamp KEEPS the map (geometry stays resident)', () => {
+    // The blending-mode switch clears the no-op stamp purely to defeat the
+    // memoized-concat fast path; the buffers stay on the GPU and pickable
+    // until the async reprocess commits, so the map still describes them.
+    // Dropping it there would resolve every hover in that window through the
+    // raw slot — the wrong label this map exists to prevent.
+    const mesh = new THREE.Mesh();
+    const map = new Uint32Array([2048, 2049]);
+    setCommittedData(mesh, { id: 'a' });
+    setElementIdMap(mesh, map);
+
+    invalidateCommittedDataStamp(mesh);
+
+    expect(hasCommittedData(mesh)).toBe(false);
+    expect('committedData' in mesh.userData).toBe(false);
+    expect(getElementIdMap(mesh)).toBe(map);
   });
 });

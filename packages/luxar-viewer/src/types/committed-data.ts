@@ -32,7 +32,9 @@
  * Contract:
  * - indexed by STORAGE slot; the value is the on-disk element index,
  * - written in LOCKSTEP with `committedData` so it always describes the
- *   buffers currently on the GPU (and cleared with it),
+ *   buffers currently on the GPU (and cleared with it whenever those buffers
+ *   are actually released — see `clearCommittedData` vs
+ *   `invalidateCommittedDataStamp`),
  * - OPTIONAL: absent ⇒ the identity holds, the slot IS the on-disk index.
  *
  * Lives in `types/` (the bottom layer) so both `rendering/` (depth-sort
@@ -113,11 +115,31 @@ export function getElementIdMap(obj: THREE.Object3D): Uint32Array | undefined {
  * property's absence is the demotion signal, and deleting also drops the
  * only reference pinning the (potentially huge) source arrays in memory.
  *
- * Drops the `elementIdMap` sibling too: the map describes the very buffers
- * whose stamp is being dropped, so keeping it would leave picking resolving
- * slots through a map for geometry that is no longer vouched for.
+ * For use when the geometry itself is GONE (LOD demotion returned it to the
+ * evictable pool, or the whole scene is being torn down). Drops the
+ * `elementIdMap` sibling too: the map describes the very buffers whose stamp
+ * is being dropped, so keeping it would leave picking resolving slots through
+ * a map for geometry that is no longer vouched for. To merely defeat the
+ * no-op gate on geometry that STAYS on the GPU, use
+ * {@link invalidateCommittedDataStamp} instead.
  */
 export function clearCommittedData(obj: THREE.Object3D): void {
   delete (obj.userData as CommittedDataUserData).committedData;
   delete (obj.userData as CommittedDataUserData).elementIdMap;
+}
+
+/**
+ * Drop ONLY the no-op memoization stamp, keeping the `elementIdMap` sibling.
+ *
+ * For the caller that is forcing a re-process of geometry which REMAINS on
+ * the GPU and pickable — `rendering/depth-sort-coordinator.ts`'s blending-mode
+ * switch, which clears the stamp purely so the memoized-concat fast path
+ * cannot skip re-projection. The buffers are untouched, so the map still
+ * describes them exactly; dropping it would make every hover in the (async)
+ * window before the reprocess commits fall back to the raw slot — the
+ * silently-wrong label this map exists to prevent. The next real commit
+ * rewrites both in lockstep.
+ */
+export function invalidateCommittedDataStamp(obj: THREE.Object3D): void {
+  delete (obj.userData as CommittedDataUserData).committedData;
 }

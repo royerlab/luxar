@@ -383,7 +383,11 @@ pub fn project_gsplats_nd_to_3d(
     // caller that has no picking map to build passes). Hoisted out of the
     // splat loop so the non-recording path pays nothing per splat.
     let record_source_indices = !out_source_indices.is_empty();
-    debug_assert!(
+    // `assert!`, not `debug_assert!`, matching the four output-buffer checks
+    // above: wasm-pack builds release, where a debug assertion is compiled out
+    // and a short buffer would instead surface as an anonymous slice-index
+    // panic partway through the loop.
+    assert!(
         !record_source_indices || out_source_indices.len() >= splat_count,
         "out_source_indices too small"
     );
