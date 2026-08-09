@@ -2294,7 +2294,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // so nothing of it may light the far side. `-uncut` is the same
     // geometry with free-end codes: its soft cap DOES reach across, which
     // is what makes the black assertion below non-vacuous (without the
-    // cut, `-cut` renders `-uncut`).
+    // cut, `-cut` renders `-uncut`). Mutation-calibrated: forcing the cut
+    // off reads 123 on the far side, against the bound of 2 below.
     await bootHarness(page);
     const cut = await runGLSL(page, 'line-volprim-peak-cut');
     const uncut = await runGLSL(page, 'line-volprim-peak-uncut');
