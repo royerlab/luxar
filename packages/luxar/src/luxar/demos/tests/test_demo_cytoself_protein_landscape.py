@@ -356,6 +356,28 @@ class TestThumbnailCacheRecompute:
         reloaded = np.load(bundle, allow_pickle=True)["blobs"]
         assert [bytes(b) for b in reloaded] == blobs
 
+    def test_structurally_valid_bundle_with_bad_blobs_is_rebuilt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unreadable bundle is more shapes than a truncated zip.
+
+        A bundle that opens fine but whose ``blobs`` are not bytes-like reaches
+        the same dead end: the decode raises, the cache short-circuits before
+        any download, and every later run reproduces it. So the decode belongs
+        inside the guard, not after it.
+        """
+        cache_dir = tmp_path / "cytoself"
+        cache_dir.mkdir(parents=True)
+        bundle = cache_dir / THUMBNAILS_CACHE_NAME
+        np.savez(bundle, blobs=np.array(["not", "bytes"]))
+        _stub_rebuild(monkeypatch)
+
+        blobs = load_cytoself_images(cache_dir)
+
+        assert len(blobs) == _STUB_N_TEST
+        reloaded = np.load(bundle, allow_pickle=True)["blobs"]
+        assert [bytes(b) for b in reloaded] == blobs
+
     def test_interrupted_rebuild_leaves_the_existing_bundle_intact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

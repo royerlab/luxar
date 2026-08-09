@@ -591,22 +591,26 @@ def _read_thumbnails_cache(thumbnails_cache: Path) -> list[bytes] | None:
 
     An UNREADABLE bundle counts as a miss rather than an error: this cache
     short-circuits before any download, so raising here left a plain re-run
-    reproducing the same failure forever.
+    reproducing the same failure forever. The decode to ``bytes`` is therefore
+    INSIDE the guard too — a structurally valid npz whose ``blobs`` entries are
+    not bytes-like is just as much a dead end as a truncated zip. ``np.load``
+    keeps the zip open, so the handle is closed before the rebuild renames a
+    new bundle over it.
     """
     if not thumbnails_cache.exists():
         return None
 
     with asection("Loading cached image thumbnails"):
         try:
-            data = np.load(thumbnails_cache, allow_pickle=True)
-            blobs = list(data["blobs"])
+            with np.load(thumbnails_cache, allow_pickle=True) as data:
+                blobs = [bytes(b) for b in data["blobs"]]
         except Exception as exc:
             aprint(f"  ⚠ Unreadable cached bundle ({type(exc).__name__})")
             aprint(f"    {thumbnails_cache}")
             aprint("    Rebuilding it — already-downloaded files are reused.")
             return None
         aprint(f"Loaded {len(blobs):,} cached thumbnails (test-aligned)")
-        return [bytes(b) for b in blobs]
+        return blobs
 
 
 def _write_thumbnails_cache(thumbnails_cache: Path, blobs: list[bytes]) -> None:

@@ -327,7 +327,10 @@ remedies do. One silent skip became loud — no thumbnails at all used to say
 nothing — and the terse count-mismatch line gained a remediation: delete the
 cached `.npz` (the message prints its full path), since a plain re-run
 short-circuits on that file before any network call and reproduces the mismatch
-forever. `--recompute` now reaches `load_cytoself_images` as well, which is the
+forever. A bundle that cannot be read at all — truncated, or structurally fine
+but holding entries that are not image bytes — is now treated as a cache miss and
+rebuilt, since raising on that path made a plain re-run reproduce the failure
+forever too. `--recompute` now reaches `load_cytoself_images` as well, which is the
 same rebuild from the CLI, but it also discards the cached UMAP for a 10-30 minute
 recompute, so it is offered second and with that caveat attached. A download
 failure names the `Image_data*.npy` file that failed, and says plainly that
