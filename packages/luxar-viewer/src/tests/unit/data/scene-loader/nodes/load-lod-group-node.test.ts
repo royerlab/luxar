@@ -66,6 +66,7 @@ import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lo
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
+import { nodeBuildCtxDefaults } from '../../../../helpers/node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 
 beforeEach(() => {
@@ -225,7 +226,12 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     applyTransform: vi.fn(),
   } as unknown as NodeBuildCtx['nodeFactory'];
 
+  const viewState = { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] };
+
   return {
+    ...nodeBuildCtxDefaults(viewState),
+    // A spy registry, not a real one: these tests assert on WHICH register /
+    // unregister call a level makes, so every method must be observable.
     registry: {
       registerGSplatsLoader: vi.fn(),
       registerPointsLoader: vi.fn(),
@@ -235,26 +241,11 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     } as never,
     lodGroupRegistry: registry,
     nodeFactory,
-    viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
-    getViewVersion: () => 1,
-    factoryDeps: {} as never,
-    isDatasetLive: () => true,
-    releaseLazyGSplats: vi.fn(),
-    releaseLazyPoints: vi.fn(),
-    releaseLazyLines: vi.fn(),
-    releaseLazyMesh: vi.fn(),
-    kickRefinementIfIdle: vi.fn(),
-    applyEffectiveAttrs: (n) => n.attrs,
+    // Deliberately inert, NOT the shared `skip: false` default — this suite
+    // drives level activation directly and must not have a view state derived
+    // underneath it.
     deriveNodeViewState: vi.fn() as never,
-    connectLoaderToMonitor: vi.fn(),
-    processLinesData: vi.fn() as never,
-    commitLinesGeometry: vi.fn(),
-    processGSplatsData: vi.fn() as never,
     processPointsData,
-    commitPointsGeometry: vi.fn(),
-    commitGSplatsGeometry: vi.fn(),
-    processMeshData: vi.fn(),
-    commitMeshGeometry: vi.fn(),
   };
 }
 

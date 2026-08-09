@@ -32,8 +32,8 @@ vi.mock('../../../../../data/scene-loader/loaders/loader-factory', () => ({
 
 import { loadPointsNode } from '../../../../../data/scene-loader/nodes/load-points-node';
 import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
-import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
+import { nodeBuildCtxDefaults } from '../../../../helpers/node-build-ctx';
 import type {
   SceneNode,
   DataLoader,
@@ -104,28 +104,16 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
   const factoryDeps = {} as unknown as NodeBuildCtx['factoryDeps'];
 
   const ctx: NodeBuildCtx = {
-    registry: new LoaderRegistry(),
+    ...nodeBuildCtxDefaults(viewState),
     nodeFactory,
-    viewState,
     factoryDeps,
-    isDatasetLive: () => true,
-    getViewVersion: () => 1,
-    releaseLazyGSplats: vi.fn(),
-    releaseLazyPoints: vi.fn(),
-    releaseLazyLines: vi.fn(),
-    releaseLazyMesh: vi.fn(),
-    kickRefinementIfIdle: vi.fn(),
+    // Named locals, because these are the ones the spies object exposes and the
+    // tests assert against.
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,
-    processLinesData: vi.fn(),
-    commitLinesGeometry: vi.fn(),
-    processGSplatsData: vi.fn(),
     processPointsData,
     commitPointsGeometry,
-    commitGSplatsGeometry: vi.fn(),
-    processMeshData: vi.fn(),
-    commitMeshGeometry: vi.fn(),
     ...overrides,
   };
   return Object.assign(ctx, {
