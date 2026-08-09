@@ -260,8 +260,16 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
         # brightest stars cluster near the Sun, not the galactic centre). Robust
         # 2–98th percentile bounds ignore sparse-halo outliers that would
         # otherwise make the auto-fit zoom way out and leave the galaxy a tiny
-        # dot. Closer start = galaxy fills the view AND the coverage-fraction LOD
-        # immediately shows a finer level.
+        # dot.
+        #
+        # The second half of the original rationale — "closer start = the
+        # coverage-fraction LOD immediately shows a finer level" — was a
+        # workaround for #1361, where the finest level only engaged once the
+        # object OVERFILLED the screen. The viewer's anchor now sits at a quarter
+        # of the viewport diagonal, so a plain fit already selects the finest
+        # level and that part is redundant. The tighter framing is KEPT purely as
+        # a composition choice (the galaxy fills the view); revisiting it is a
+        # visual change, out of scope for the anchor fix.
         lo, hi = np.percentile(positions, [2, 98], axis=0)
         center = (lo + hi) / 2.0
         extent = float(np.max(hi - lo))
@@ -353,7 +361,9 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # factor, so the old 1.3 would now absorb ~3.5x harder
             # (1 / (0.35 x 0.826)). Preserving
             # the authored look is exactly kappa * radius * chord.
-            MARKER_ABSORPTION = 1.3 * marker_radius * float(np.sqrt(np.pi / np.log(100.0)))
+            MARKER_ABSORPTION = (
+                1.3 * marker_radius * float(np.sqrt(np.pi / np.log(100.0)))
+            )
 
             # Sun marker at the Sun's Galactocentric position
             r0_kpc = 8.122  # Sun-GC distance
