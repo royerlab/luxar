@@ -6,6 +6,39 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A warm CAIDA AS-topology run is fully offline and recomputes nothing (#1372)
+
+Every run of the demo used to make two directory-listing GETs just to discover
+which CAIDA snapshot pair is current, then re-parse both snapshots, re-filter to
+the largest connected component and re-run Louvain — ~12 s of deterministic
+recompute, and impossible with networking off. Discovery is now memoized in
+`snapshots.json` (which pair, and when it was checked) and re-checked weekly,
+CAIDA publishing monthly; the two snapshot files were already skipped when
+present, so a warm run makes no network call at all. The whole derived chain
+(parse → LCC + tier-1 detection → Louvain → degrees) is cached as one bundle of
+arrays keyed on the two snapshot FILENAMES, so a new monthly release gets its own
+entry and the previous release's bundle stays valid instead of being clobbered.
+When discovery fails, the newest COMPLETE pair on disk is used — the memo's if
+both its files are there, else whatever pair is cached, which is the state of
+every user who ran this demo before the memo existed.
+
+The layout cache key is now the layout's input identity: the node hash plus the
+edge count and a hash of the edge endpoints. The coordinates come from the
+adjacency, so a release whose LCC keeps the same node set but rewires it — even
+with the same edge count — no longer gets served last month's geometry.
+Superseded snapshots and their derived bundles are pruned to the newest
+`--keep-snapshots N` releases (default 2), which previously grew unbounded at
+~6 MB a month; pruning runs only after the pipeline has loaded successfully, so a
+snapshot the parser rejects cannot delete the release the user goes back to — at
+the cost that a run which never loads reclaims nothing. Layout pickles have no
+release date to key them by and are deliberately not pruned, nor
+is a `layout_3d.npz` that belongs to `demo_huri_interactome`'s live cache in a
+shared `--cache-dir`.
+
+Flags: `--refresh-snapshots` re-discovers immediately, `--recompute-pipeline` and
+`--recompute-layout` rebuild the two derived caches, `--keep-snapshots N` sets the
+prune window, and `--cache-dir` relocates the lot from `~/.cache/luxar/caida/`.
+
 #### The ATP synthase demo now bakes volumetric blending
 
 `atp_synthase` shipped on depth-sorted `normal` blending, chosen when the two PDB
