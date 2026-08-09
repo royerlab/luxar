@@ -303,8 +303,10 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     **The assumption.** The rule rests on the partition being a real TILING, i.e.
     >= 2 parts, so that a part genuinely projects to a fraction of the whole. A
     ONE-PART ``kind=partition`` breaks it: the "tile" IS the whole object, and this
-    anchor is then a factor of 4 too coarse. Every producer that can SEE the
-    sibling count excludes that shape; exactly one cannot:
+    anchor is then a factor of 4 too coarse. The two entries below are the ones
+    that have been audited — the tree-building producers that CAN see the sibling
+    count (they exclude the shape), and the scene-adder path (which cannot). Read
+    the list as illustrative, not exhaustive:
 
     * ``luxar gsplat lod --recipe adaptive`` (``gsplats/lod/recipes.py::
       build_adaptive``) holds the whole ``partition.children`` list before building
@@ -326,6 +328,15 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
       warn_one_part_partition_anchors``); it does not rewrite anything, because an
       explicit ``coverage_fractions=`` list is indistinguishable from a derived
       one on disk.
+
+    Two further producers reach this anchor for a lone part and are known,
+    pre-existing, and out of scope here: ``GSplatData.partition_from_regions``
+    (``gsplats/_data/composition.py``) returns the bare ``build_part_lod(...)``
+    node — a 4.0-anchored ``kind=lod`` with no partition wrapper at all — when
+    exactly one region is non-empty, and the tiled batch merge
+    (``gsplats/batch/merge_orchestrator.py::_finalize_part_node``) hands the same
+    ``build_part_lod`` node to the streaming writer for a single-tile run, which
+    still emits a one-part ``kind=partition`` around it.
 
     Args:
         element_counts: One entry per child, in coarsest→finest order (same

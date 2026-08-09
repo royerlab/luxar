@@ -959,15 +959,33 @@ class TestPartitionBoundAnchorMesh:
             assert self.coverage(nodes, f"part_{i}")[-1] == pytest.approx(1.0)
 
     def test_explicit_coverage_fractions_still_win_under_a_partition(self, tmp_path):
-        """CONTROL: an explicit list is used verbatim, partition or not.
-
-        The values stay inside `[0, 1]` because the MESH resolver
-        (`lod/mesh.py::_validate_coverage_fractions_spec`) still bounds an explicit
-        list there, unlike the Points/Lines resolver's
-        `[0, MAX_COVERAGE_FRACTION]` — so the tile anchor is reachable on a mesh
-        only by derivation, never by hand.
-        """
+        """CONTROL: an explicit list is used verbatim, partition or not."""
         explicit = [0.0, 0.6, 1.0]
         nodes = read_nodes(self.write(tmp_path, coverage_fractions=explicit))
         for i in range(2):
             assert self.coverage(nodes, f"tiled/part_{i}") == pytest.approx(explicit)
+
+    def test_an_explicit_list_may_reach_the_partition_anchor(self, tmp_path):
+        """An explicit mesh ladder may END at `MAX_COVERAGE_FRACTION`, verbatim.
+
+        The mesh resolver (`lod/mesh.py::_validate_coverage_fractions_spec`) bounds
+        an explicit list at `[0, MAX_COVERAGE_FRACTION]`, exactly like the
+        Points/Lines/GSplats resolvers. It has to: under a `kind=partition` the
+        SAME ladder DERIVES a finest of exactly `MAX_COVERAGE_FRACTION`, so a bound
+        of `1.0` would have made the tile anchor reachable by derivation but not by
+        hand. Anything above the ceiling still raises.
+        """
+        from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+
+        explicit = [0.0, 2.0, MAX_COVERAGE_FRACTION]
+        nodes = read_nodes(self.write(tmp_path, coverage_fractions=explicit))
+        for i in range(2):
+            assert self.coverage(nodes, f"tiled/part_{i}") == pytest.approx(explicit)
+
+        over = tmp_path / "over"
+        over.mkdir()
+        with pytest.raises(ValueError) as exc:
+            self.write(
+                over, coverage_fractions=[0.0, 2.0, MAX_COVERAGE_FRACTION + 0.5]
+            )
+        assert f"[0, {MAX_COVERAGE_FRACTION:g}]" in str(exc.value)

@@ -805,6 +805,53 @@ class TestPartitionBoundAnchorPoints:
         for i in range(n_parts):
             assert _child_coverage(wrapper[f"part_{i}"]) == pytest.approx(explicit)
 
+    def test_one_part_partition_also_gets_the_tile_anchor_documented_blind_spot(
+        self, tmp_path
+    ) -> None:
+        """CHARACTERIZATION of the documented blind spot, not an endorsement.
+
+        A hand-built ``kind=partition`` holding exactly ONE part is not a tiling —
+        that part IS the whole object — so the fills-screen anchor is a factor of 4
+        too coarse for it. ``derive_coverage_fractions`` gives it 4.0 anyway, and
+        cannot do otherwise: part 0's ladder is derived at ``add_points`` time, when
+        the sibling count does not exist yet (part 1 may never be added). That is
+        the caveat spelled out in ``partitioned_coverage_fractions``, and it is a
+        behaviour change from the previous whole-object 1.0 for this shape.
+
+        Nothing rewrites it — an explicit ``coverage_fractions=`` list is
+        indistinguishable from a derived one on disk — but the compiler's finalize
+        pass DOES see the final sibling count and warns
+        (``io/_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors``).
+        This test exists so the code and that documented caveat cannot drift apart.
+        """
+        out = tmp_path / "one_part.luxar.zarr"
+        rng = np.random.RandomState(0)
+        n = 1000
+        pos = rng.normal(0, 20, (n, 3)).astype(np.float32)
+        radii = rng.uniform(0.5, 1.5, n).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            wrapper = scene.add_partition_group(
+                "tiled", display_type="points", max_elements=n
+            )
+            wrapper.add_points(
+                "part_0",
+                pos,
+                radii=radii,
+                substitutive_lod=dict(
+                    compression_factor=4,
+                    levels=2,
+                    method="kmeans_lloyd",
+                    device="cpu",
+                    seed=0,
+                ),
+            )
+        tiled = zarr.open(str(out), mode="r")["tiled"]
+        assert len([k for k in tiled.keys() if k.startswith("part_")]) == 1
+        assert _child_coverage(tiled["part_0"])[-1] == pytest.approx(
+            MAX_COVERAGE_FRACTION
+        ), "the lone part still takes the tile anchor — the documented blind spot"
+
 
 class TestSubstitutiveLodGuards:
     def test_partition_and_substitutive_raises(self, tmp_path) -> None:

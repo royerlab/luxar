@@ -55,6 +55,15 @@ tile-anchored ladder that ended up under a `kind=partition` holding a single par
 prints one warning naming the group and the two ways out (drop the wrapper, or pass
 an explicit `coverage_fractions=`). It rewrites nothing and never raises.
 
+Two smaller things fell out of the same rule. Mesh substitutive LOD now accepts an
+explicit `coverage_fractions=` list up to `MAX_COVERAGE_FRACTION` like the other three
+geometries, so the anchor a mesh ladder can now *derive* is also one an author can
+*write* — it was bounded at `1.0`, which would have made the tile anchor
+derivation-only. And `gsplat_tree.write_gsplat_node`'s partition branch now ORs an
+incoming binding in rather than overwriting it, so a one-part partition nested inside
+a genuine tiling no longer drops the outer tile anchor — the standalone writer and
+the scene graft agree again on that shape.
+
 
 #### Mesh gets substitutive LOD
 

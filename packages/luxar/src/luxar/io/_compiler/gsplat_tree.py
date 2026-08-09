@@ -625,8 +625,11 @@ def write_gsplat_node(
         # rather than the fills-screen one (same rule as ``build_adaptive``, which
         # produces exactly this shape whenever the dataset fits ``max_elements``).
         # Getting it wrong here would make ``gsplat transform``'s scrub-and-
-        # re-derive silently re-coarsen such a store.
-        parts_are_tiles = len(node.children) > 1
+        # re-derive silently re-coarsen such a store. The exclusion only ever ADDS
+        # a binding, never drops an outer one: a one-part partition nested inside a
+        # real tiling is still inside that one tile, so OR the incoming binding in
+        # rather than overwriting it.
+        child_under_partition = under_partition or len(node.children) > 1
         for i, child in enumerate(node.children):
             child_group = group.require_group(f"part_{i}")
             cmeta = write_gsplat_node(
@@ -642,7 +645,7 @@ def write_gsplat_node(
                 # from enumerating part_10 before part_2.
                 attrs={"child_index": i},
                 barrier_dims=barrier_dims,
-                under_partition=parts_are_tiles,
+                under_partition=child_under_partition,
             )
             if "position_bounds" in cmeta:
                 child_bounds.append(cmeta["position_bounds"])

@@ -247,15 +247,20 @@ def _write_pyramid(tmp_path, name, *, partitioned, wrap_in_group=False, **lod_gr
     documents as 4x too coarse (its "tile" IS the whole object), so it must not be
     the fixture the rule is argued from.
 
-    Returns ``[(coverage, counts), ...]``, one entry per part. The two parts get
-    different seeds, so this also shows each ladder is derived from its OWN counts
-    rather than the wrapper's.
+    Returns ``[(coverage, counts), ...]``, one entry per part. The two part sizes
+    are deliberately NON-proportional: 256 reduces to 16/64/256 (exact powers of
+    ``K``), while 102 reduces to 7/26/102 — the ``ceil`` in the reduction breaks the
+    ratio — so the two derived ladders differ numerically. A proportional pair (say
+    256 and 128) would derive to the *identical* list, and the fixture could not
+    then tell per-part derivation from wrapper-level derivation. See
+    ``test_every_partition_bound_ladder_is_fills_screen_anchored``, which asserts
+    the two lists differ.
     """
     parts = [
         make_substitutive_lod(
             _make_random_gsplat(n=n, seed=seed), levels=2, device="cpu"
         )
-        for n, seed in ((256, 3), (128, 4))
+        for n, seed in ((256, 3), (102, 4))
     ]
     out = tmp_path / name
     with LuxarZarrCompiler(out) as compiler:
@@ -321,6 +326,13 @@ class TestPartitionBoundAnchorGsplats:
                 f"part_{i}"
             )
             assert cov[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
+        # Each ladder is derived from its OWN counts, not the wrapper's: the two
+        # parts are non-proportional (see _write_pyramid), so a wrapper-level
+        # derivation would give both the identical list.
+        assert parts[0][0] != pytest.approx(parts[1][0]), (
+            "the two parts derived identical thresholds, so this fixture cannot "
+            f"distinguish per-part from wrapper-level derivation: {parts}"
+        )
 
     def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path) -> None:
         """CONTROL (passes pre-fix): the over-trigger guard."""
@@ -390,11 +402,15 @@ def test_hand_built_partition_matches_the_adaptive_recipe(tmp_path) -> None:
     """A hand-built ``kind=partition`` of scene-adder ladders must land on the
     SAME per-tile thresholds the ``adaptive`` recipe derives.
 
-    This is the acceptance criterion of #1411. The two paths are independent
-    implementations of one rule — ``recipes._substitutive_for_part`` calls
-    ``partitioned_coverage_fractions`` explicitly because it *knows* it is
-    building a per-tile ladder, while the scene adder has to *detect* it from the
-    insertion point — so they can only agree if the detection works.
+    This is the acceptance criterion of #1411. What it pins is the DISPATCH, not
+    the formula: both paths ultimately call the same
+    ``partitioned_coverage_fractions`` (and path B re-runs path A's
+    ``to_spatial_partition`` / ``make_substitutive_lod``), so this is not two
+    independent implementations agreeing. The difference is how each one *chooses*
+    that function — ``recipes._substitutive_for_part`` names it outright because it
+    *knows* it is building a per-tile ladder, while the scene adder has to *detect*
+    the partition from the insertion point. They can only agree if that detection
+    works.
 
     The comparison is count-for-count, not merely shape-for-shape: both sides
     partition the SAME flattened data with the same ``max_elements``/rule and then
