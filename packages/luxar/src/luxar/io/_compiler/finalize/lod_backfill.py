@@ -6,7 +6,7 @@ the one anchor mistake no *producer* can catch — see its docstring.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import zarr
 from arbol import aprint
@@ -217,26 +217,37 @@ def warn_one_part_partition_anchors(store: zarr.Group) -> None:
     **Reports, never rewrites.** An authored ``coverage_fractions=[0, …, 4.0]``
     list and a derived one are indistinguishable on disk, so silently
     re-anchoring would override a deliberate choice. One warning per offending
-    ``kind=lod`` group, attributed to its NEAREST enclosing partition — so a
-    genuine multi-part partition nested inside a one-part wrapper is not blamed
-    for its children's (correct) anchors.
+    ``kind=lod`` group.
+
+    The test mirrors the producers' rule exactly: a ladder is legitimately
+    tile-anchored when ANY enclosing partition is a real tiling, because that is
+    what both gsplat writers thread down (``under_partition or len(children) >
+    1`` — an inner one-part wrapper ORs the outer binding in rather than clearing
+    it). So a warning needs BOTH a one-part partition above the ladder AND no
+    genuine tiling further up: ``partition(2 parts) → partition(1 part) → lod``
+    is still inside one tile and is correct, while a genuine multi-part partition
+    nested inside a one-part wrapper is likewise not blamed for its children's
+    (correct) anchors. When it does fire, the offender named is the NEAREST
+    enclosing partition.
     """
 
-    def walk(group: "zarr.Group", partition: Optional[Tuple[str, int]]) -> None:
+    def walk(
+        group: "zarr.Group", lone_partition: Optional[str], under_tiling: bool
+    ) -> None:
         attrs = dict(group.attrs)
         kind = attrs.get("kind")
         child_names = list(group.group_keys())
         if (
             kind == "lod"
-            and partition is not None
-            and partition[1] == 1
+            and lone_partition is not None
+            and not under_tiling
             and _is_tile_anchored(group)
         ):
             aprint(
                 f"  ⚠️  kind=lod group '{group.path or '/'}' is anchored at "
                 f"coverage_fraction={MAX_COVERAGE_FRACTION:g} — the per-TILE, "
                 f"fills-screen anchor — but its enclosing kind=partition group "
-                f"'{partition[0]}' holds only ONE part. A one-part partition is "
+                f"'{lone_partition}' holds only ONE part. A one-part partition is "
                 "not a tiling: that part's bbox IS the whole object, so this "
                 "ladder will hold its finest level back until the object "
                 "OVERFILLS the viewport instead of showing it at a normal "
@@ -244,8 +255,11 @@ def warn_one_part_partition_anchors(store: zarr.Group) -> None:
                 "explicit coverage_fractions=[...] ending at 1.0."
             )
         if kind == "partition":
-            partition = (group.path or "/", len(child_names))
+            if len(child_names) > 1:
+                under_tiling = True
+            else:
+                lone_partition = group.path or "/"
         for child_name in child_names:
-            walk(group[child_name], partition)
+            walk(group[child_name], lone_partition, under_tiling)
 
-    walk(store, None)
+    walk(store, None, False)

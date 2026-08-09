@@ -507,6 +507,28 @@ def test_blames_the_nearest_partition_not_an_outer_one_part_wrapper(capsys) -> N
     assert capsys.readouterr().out == ""
 
 
+def test_does_not_warn_for_a_one_part_partition_inside_a_real_tiling(capsys) -> None:
+    """The inverse nesting: a lone part sitting INSIDE a genuine tiling.
+
+    Both gsplat writers OR an incoming binding in rather than overwriting it
+    (``under_partition or len(children) > 1``), so the ladder here really is
+    inside one of the outer partition's two tiles and 4.0 is the anchor they
+    derive for it. Blaming the nearest wrapper alone would report that as a
+    mistake.
+    """
+    root = zarr.group()
+    outer = root.create_group("tiled")
+    outer.attrs["kind"] = "partition"
+    _anchored_ladder(outer, "part_0", MAX_COVERAGE_FRACTION)
+    inner = outer.create_group("part_1")
+    inner.attrs["kind"] = "partition"
+    _anchored_ladder(inner, "only_part", MAX_COVERAGE_FRACTION)
+
+    warn_one_part_partition_anchors(root)
+
+    assert capsys.readouterr().out == ""
+
+
 def test_warns_once_per_offending_group(capsys) -> None:
     root = zarr.group()
     part = root.create_group("tiled")

@@ -78,9 +78,12 @@ scene adders cannot: `core/group/lod/group.py::derive_coverage_fractions` is
 handed only the insertion point, and part 0's ladder is derived before part 1 has
 been added. Finalize is the first moment the count exists.
 
-- One `aprint` warning per offending `kind=lod` group, attributed to its
-  **nearest** enclosing partition (so a genuine multi-part partition nested
-  inside a one-part wrapper is not blamed).
+- One `aprint` warning per offending `kind=lod` group. A ladder is only
+  reported when a one-part partition encloses it **and no partition further up
+  is a real tiling** — the same rule the writers thread down (`under_partition
+  or len(children) > 1`), so neither `partition(2) → partition(1) → lod` nor a
+  genuine multi-part partition nested inside a one-part wrapper is blamed. When
+  it does fire, the offender named is the **nearest** enclosing partition.
 - Never raises and never re-anchors: an authored
   `coverage_fractions=[0, …, 4.0]` list is indistinguishable on disk from a
   derived one, so a silent rewrite would override a deliberate choice.

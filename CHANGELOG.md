@@ -64,7 +64,6 @@ incoming binding in rather than overwriting it, so a one-part partition nested i
 a genuine tiling no longer drops the outer tile anchor — the standalone writer and
 the scene graft agree again on that shape.
 
-
 #### Mesh gets substitutive LOD
 
 A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
@@ -210,6 +209,7 @@ in the older entry — only the two here compare directly.
 Regenerate the demo dataset to pick up the new look.
 `docs/images/readme/gallery/atp_synthase.{webp,webm}` — the README gallery tile —
 were recaptured through the gallery harness against the new look.
+
 
 #### LOD levels no longer wait for the object to overfill the screen
 
