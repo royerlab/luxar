@@ -16,15 +16,15 @@ picking/
 
 ## `init-picking.ts`
 
-`initPicking({ sceneManager, pickingEvents, previous, getOverlayManager })` returns `{ pickingSystem, labelLoader, imageLabelLoader }` (all `undefined` when picking is intentionally inactive). The flow:
+`initPicking({ sceneManager, pickingEvents, previous, getOverlayManager, onSelection?, hasSelectionConsumer? })` returns `{ pickingSystem, labelLoader, imageLabelLoader }` (all `undefined` when picking is intentionally inactive). The flow:
 
 1. **Teardown** — `pickingEvents.dispose()` plus `dispose()` on the previous `PickingSystem` / `LabelLoader` / `ImageLabelLoader`, so a dataset switch never leaks state.
 2. **Label detection** — walks the `LuxarScene` group looking for `userData.attrs.has_labels` / `has_image_labels`. No labels **and** no embedder `selection` listener (`hasSelectionConsumer()`) → return three `undefined`s, picking stays off for this session. A selection listener alone still provisions picking; the loaders below are built only for the flags that were actually found.
 3. **Loaders** — pulls the active scene loader from `getSceneLoader('default')` and constructs `LabelLoader` / `ImageLabelLoader` against its `zarrStore` + `zarr.root(store)`.
-4. **System** — `new PickingSystem(renderer, capabilities, camera, buildPickResultHandler({ labelLoader, imageLabelLoader, overlayManager: getOverlayManager() }))`.
+4. **System** — `new PickingSystem(renderer, capabilities, camera, buildPickResultHandler({ labelLoader, imageLabelLoader, overlayManager: getOverlayManager(), onSelection }))` — the `onSelection` port is the sink for the public `selection` embedder event.
 5. **NodeFactory hookup** — `sceneLoader.nodeFactory.setPickingSystem(pickingSystem)` so future node loads get pick materials; `registerExistingSceneNodes(root)` retroactively registers the already-loaded nodes (scene loads before picking init).
 6. **Post-processing hookup** — `pickingSystem.setPostProcessing(...)` so the lens-distortion port stays in sync with the visible frame.
-7. **Pick gating** — `pickingSystem.setShouldPick(() => getOverlayManager()?.hasVisibleHoverOverlay() ?? false)` — no consumer, no work.
+7. **Pick gating** — `pickingSystem.setShouldPick(() => (getOverlayManager()?.hasVisibleHoverOverlay() ?? false) || (hasSelectionConsumer?.() ?? false))` — a disjunction: picks run while there is a visible hover overlay (tooltips) **or** a live embedder `selection` listener, so a label-less scene (which auto-injects no hover overlay) still picks for selection. Both sides are read LIVE, so unsubscribing stops the pick renders without re-initialising the pipeline. No consumer, no work.
 8. **Event wiring** — all listeners are registered through the shared `EventGroup` so a single `pickingEvents.dispose()` removes them:
 
 | Source                                    | Event                       | Action                                                                                                                                                                    |
