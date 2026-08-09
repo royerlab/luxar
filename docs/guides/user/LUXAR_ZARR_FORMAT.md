@@ -1181,10 +1181,16 @@ Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `t
 | Variable | Description |
 |----------|-------------|
 | `{hover_label}` | The label string for the picked element |
-| `{hover_node}` | Zarr path of the picked node (e.g., "/cells") |
-| `{hover_index}` | Element index within the node |
+| `{hover_node}` | Zarr path of the picked layer (e.g., "/cells") |
+| `{hover_index}` | Element index within the node that was hit |
 
 When labels exist on any node but no hover overlay is explicitly defined, a default hover overlay is auto-injected at scene finalization time.
+
+Under a `kind=partition` layer, `{hover_node}` and `{hover_index}` are reported
+against different nodes and are not directly joinable: `{hover_node}` is the
+outermost partition wrapper (the layer the user sees, matching the layers panel),
+while `{hover_index}` is local to the `part_<i>` leaf that was hit. For a
+non-partitioned node both refer to the same node.
 
 ### Compound Ordering
 

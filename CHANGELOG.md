@@ -6,6 +6,42 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### The hover label lookup finds the CSR again on a partitioned layer (#1415)
+
+Authoring a layer with `partition=` and `labels=` produced a silently empty
+tooltip on every hover, for all four geometry types. The pick-result handler
+resolved the hit's outermost `kind=partition` ancestor and then used that wrapper
+path for everything — including the two label lookups. A wrapper is a bare group:
+`add_points` / `add_lines` / `add_gsplats` / `add_mesh` slice `labels` per part
+and write the CSR (`label_offsets` / `label_bytes`) onto each `part_<i>` leaf, so
+the loader opened a path that does not exist, cached an empty label array for the
+session, and returned `null` forever after. Nothing raised — the miss is demoted
+to an info log, because an unlabelled node is the ordinary case.
+
+The wrapper path was not wrong, only overloaded. It is the right answer for the
+two things it was picked for — the selection event's `nodeName` and the overlay's
+title, mirroring how the layers panel treats a partition wrapper as the layer the
+user sees — so the handler now resolves two paths instead of one: the wrapper is
+what gets *reported*, the hit leaf is what gets *queried*. The lookup therefore
+lands on the node that actually owns the CSR. Of the two queries only the text
+label is reachable today — all four adders refuse `image_labels` alongside
+`partition=`, so no `part_<i>` ever owns an image CSR — and the image lookup
+moves with it for consistency, so the split is one rule rather than two if that
+combination is ever allowed. On a fully-displayed (3D) node that is the whole
+fix, because the pick's element id is then the on-disk index and the label is the
+right one. Where a dimension is hidden the id is a visible-buffer storage slot
+rather than an on-disk index — chunk culling and effective-radius compaction both
+shift it — so the label can still come out wrong; that half is pre-existing on
+every node, partitioned or not, and is tracked separately. The partitioned-layer
+miss was itself pre-existing too, and independent of the mesh partition work that
+surfaced it.
+
+The public `selection` embedder event grew a third field, `hitNodeName`, carrying
+that hit leaf. `nodeName` and `elementIndex` keep their meanings — the layer and
+an index local to the leaf — which under a partition are not joinable; embedders
+that need to resolve the element index against the store should index against
+`hitNodeName`, which equals `nodeName` whenever there is no partition wrapper.
+
 #### A warm CAIDA AS-topology run is fully offline and recomputes nothing (#1372)
 
 Every run of the demo used to make two directory-listing GETs just to discover

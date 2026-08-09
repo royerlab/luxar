@@ -47,12 +47,36 @@ export interface ScreenshotOptions {
   includeOverlays?: boolean;
 }
 
-/** A picked element, or `null` when the hover/selection is cleared. */
+/**
+ * A picked element, or `null` when the hover/selection is cleared.
+ *
+ * Under a `kind=partition` layer `nodeName` and `elementIndex` are reported
+ * against different nodes and are NOT directly joinable: `nodeName` is the
+ * outermost partition wrapper (the user-facing layer), while `elementIndex` is
+ * local to the `part_<i>` leaf that was actually hit. Use `hitNodeName` — the
+ * leaf the index belongs to — to resolve the element; it equals `nodeName`
+ * whenever there is no partition wrapper.
+ */
 export interface SelectionPayload {
-  /** Scene-node (zarr path) of the picked element. */
+  /**
+   * Scene-node (zarr path) of the picked layer — the outermost
+   * `kind=partition` wrapper when the hit sits under one, otherwise the hit
+   * node itself.
+   */
   nodeName: string;
-  /** Index of the picked element within that node. */
+  /**
+   * Index of the picked element within the *hit leaf* — under a partition
+   * that is the `part_<i>` leaf, not `nodeName`. Index it against
+   * `hitNodeName`.
+   */
   elementIndex: number;
+  /**
+   * Scene node (zarr path) `elementIndex` is local to — the `part_<i>` leaf
+   * actually hit under a `kind=partition` layer, and the node itself
+   * otherwise. This is the path an embedder should index against; `nodeName`
+   * is for display.
+   */
+  hitNodeName: string;
 }
 
 /**

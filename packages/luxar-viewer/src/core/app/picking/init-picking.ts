@@ -26,7 +26,9 @@ export interface InitPickingPorts {
   previous: InitPickingResult;
   getOverlayManager: () => OverlayManager | undefined;
   /** Optional sink for the public `selection` embedder event. */
-  onSelection?: (sel: { nodeName: string; elementIndex: number } | null) => void;
+  onSelection?: (
+    sel: { nodeName: string; elementIndex: number; hitNodeName: string } | null
+  ) => void;
   /**
    * Whether an embedder `selection` listener currently exists. Read at
    * init time to provision the picking pipeline even for label-less

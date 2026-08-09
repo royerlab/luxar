@@ -45,10 +45,24 @@ Three.js EventDispatcher sources are registered via `pickingEvents.add(() => …
 `buildPickResultHandler({ labelLoader, imageLabelLoader, overlayManager })` returns the `(result: PickResult | null) => Promise<void>` callback handed to `PickingSystem`. Branch contract:
 
 - `null` result → `overlayManager.updateHoverContent(null)`; no loader calls.
-- Non-null → resolve `nodePath`, then `Promise.all` on `labelLoader.getLabel(nodePath, elementId)` and `imageLabelLoader.getImageUrl(nodePath, elementId)`. Emit `{ label, imageUrl, nodeName, elementIndex }` only when at least one is truthy; otherwise clear hover.
+- Non-null → `Promise.all` on `labelLoader.getLabel(lookupPath, elementId)` and `imageLabelLoader.getImageUrl(lookupPath, elementId)`. Emit `{ label, imageUrl, nodeName: reportPath, elementIndex }` only when at least one is truthy; otherwise clear hover.
 - Either fetch rejects → `log.warning` and clear hover. Errors must not kill the hover loop.
 
-**Partition-aware node path.** `findOutermostPartitionWrapperName(result.mainNode)` walks the hit leaf's parent chain and returns the `name` of the **outermost** ancestor whose `userData.kind === 'partition'`. When present that wrapper name (= zarr path) is used as `nodePath`; otherwise the handler falls back to `result.mainNode.name`. This matches the layers-panel's outermost-as-layer convention, so a hit inside a nested `kind=partition` group reports the topmost wrapper rather than the inner `part_<i>`.
+**Partition-aware node path — reported vs queried.** The handler resolves two paths, and they differ under a partition:
+
+| Path         | Value                                             | Used for                                            |
+| ------------ | ------------------------------------------------- | --------------------------------------------------- |
+| `reportPath` | outermost `kind=partition` wrapper, else the leaf | selection `nodeName`, overlay title                 |
+| `lookupPath` | the hit leaf scene node, `result.mainNode.name`   | `getLabel` / `getImageUrl`, selection `hitNodeName` |
+
+`findOutermostPartitionWrapperName(result.mainNode)` walks the hit leaf's parent chain and returns the `name` of the **outermost** ancestor whose `userData.kind === 'partition'`. Reporting that wrapper mirrors how the layers panel treats a `kind=partition` wrapper — the wrapper is the layer the user sees — so a hit inside a nested `kind=partition` group names the topmost wrapper rather than the inner `part_<i>`. It is not a general outermost-ancestor rule: `ui/layers/layer-state.ts` also admits `kind=lod` wrappers as layers, and those are deliberately not matched, so a substitutive-LOD layer still reports its internal level path.
+
+The **lookup** must not follow it (#1415). `lookupPath` is the hit leaf _scene node_, which is the CSR owner both for a flat node and for a `part_<i>` of a partition. A partition wrapper is a bare group: `add_points` / `add_lines` / `add_gsplats` / `add_mesh` slice `labels` per part and write the CSR (`label_offsets` / `label_bytes`) on each `part_<i>` leaf. And `result.elementId` is that leaf's own `aSortedIndex` / `gl_VertexID`, so it only indexes the part's array anyway. Querying the wrapper missed on both counts and left every hover on a partitioned layer with an empty tooltip — silently, since `LabelLoader` demotes the absent array to an info log and caches `[]`. Of the two lookups only `getLabel` is reachable under a partition today — all four adders refuse `image_labels` alongside `partition=`, so no `part_<i>` ever owns an image CSR — and `getImageUrl` moves to `lookupPath` for consistency (and so it is already right if that combination is ever allowed), not because it is broken today.
+
+Two known limits survive this fix, neither fixable by the path choice:
+
+- **Additive ladders.** A progressive (additive) node writes its CSR per `additive_<i>` sub-group, which is not a scene-graph node, while `points-progressive-loader.ts` concatenates every loaded level into one committed buffer. No single path can index that buffer, so labels on a laddered node are unusable regardless of `lookupPath` — a producer-side gap.
+- **Element id vs on-disk index.** `result.elementId` is a _visible-buffer storage slot_ (`aSortedIndex`), not the on-disk element index the CSR is keyed by. The two coincide only while no dimension is hidden: a hidden dimension can cull chunks (so the loaded ranges no longer start at 0) and triggers effective-radius compaction (`data/points/projection.ts`), either of which shifts the slot. Plumbing the real ids through loader → commit → texel is pre-existing work tracked separately.
 
 **Stale-drop ordering.** A label/image fetch is async, so a slow fetch from an older cursor position could resolve after a newer one and re-show a stale tooltip. A monotonic `latest` token, captured per call as `seq`, gates the post-`await` emit: a superseded invocation (`seq !== latest`) drops its result — both on the success path and in the `catch`. A `null` (hide) call applies immediately and bumps the token, so it also cancels any in-flight content fetch.
 
