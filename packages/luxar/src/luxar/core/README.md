@@ -470,6 +470,10 @@ becomes drawable; today both sets include `mesh`.
 - Optional per-vertex `normals`, with a **required** `normal_dims` companion
 - Per-vertex colors (RGB or RGBA) and scalars for colormap lookup
 - `shading` (`"smooth"` / `"flat"`) and `double_sided`
+- `add_mesh(partition=True | {"max_elements": N, "rule": …})` → a `kind=partition`
+  wrapper; the BSP cuts face centroids (`max_elements` counts faces, no triangle
+  split), and each part re-indexes its own vertices — cut ones duplicated,
+  per-vertex attributes gathered. See `docs/specs/MESH_NODE_SPEC.md` §9.2.
 - Progressive writing (data written immediately to Zarr)
 
 **What a mesh does NOT have**, and why the absences are structural rather than
@@ -488,16 +492,17 @@ gaps:
   decimated surfaces. Its vocabulary is shorter than the sibling adders'
   (`core/group/lod/mesh.py`): no `truncation_radius` / `max_aspect` / `device` /
   `seed`, because those exist only for geometries that coarsen by lifting to
-  gsplats.
-- **No `kind=partition`.** A BSP cut runs through faces, so each part needs its
-  boundary vertices duplicated and the per-vertex label CSR split to match.
-  Bookkeeping rather than a structural obstacle.
+  gsplats. `partition=` and `substitutive_lod=` cannot be combined, exactly as for
+  Points / Lines.
 - **No spatial index** (`ordering` is always `"none"`; the viewer loads a mesh
   whole, so a chunk index has nothing to skip).
 
-Each of those is refused with an explanation — including adding a mesh under a
-`kind=partition` parent — rather than silently degrading. A `kind=lod` parent is
-*accepted*: that is exactly the shape `substitutive_lod=` builds.
+Each remaining absence is refused with an explanation — including
+`additive_lod=`, `blending_mode='volumetric'`, and adding a mesh under a
+`kind=partition` group that declares some other `display_type` — rather than
+silently degrading. A `kind=lod` parent and a `display_type='mesh'`
+`kind=partition` parent are both *accepted*: those are exactly the shapes
+`substitutive_lod=` and `partition=` build.
 
 **Usage Example:**
 ```python
@@ -852,7 +857,7 @@ Tests are located in `core/tests/`:
 - `test_gsplats_extend_to_all.py` - extend_to_all functionality in Scene.add_gsplats()
 - `test_hdr_colors.py` - Edge case tests for HDR color support
 - `test_lines_extend_to_all.py` - extend_to_all functionality in Scene.add_lines()
-- `test_mesh.py` - Mesh DataNode: add_mesh round-trips (topology, normals/normal_dims, colors, labels), shading/double_sided resolution, and the volumetric-blending / LOD / partition refusals
+- `test_mesh.py` - Mesh DataNode: add_mesh round-trips (topology, normals/normal_dims, colors, labels), shading/double_sided resolution, the `partition=` split (face conservation, vertex duplication, per-vertex attribute gathering), and the volumetric-blending / LOD refusals
 - `test_node_properties.py` - Node properties and method chaining
 - `test_node_rendering.py` - Rendering attributes for Node class
 - `test_overlays.py` - Screen-space overlays (add_text / add_image / add_html)

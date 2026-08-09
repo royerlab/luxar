@@ -7,15 +7,18 @@ leaf?"* — a **vocabulary**. Several writer-side questions are narrower than th
 * may it back a ``kind=partition`` group's ``display_type``?
 
 Those are **capabilities**, and a type can be a perfectly valid geometry leaf
-without having them: ``mesh`` has no partition path — see
-``docs/specs/MESH_NODE_SPEC.md`` §9. Its LOD story is the reason this table
-distinguishes the two flavours at all. The ADDITIVE prefix ladder assumes
-independent elements and cannot apply to a surface (a prefix of an index buffer
-is a *holed* surface, not a coarse one); SUBSTITUTIVE levels make no such
-assumption and were missing only a producer. That producer now exists
+without having them. All four contract types answer yes to both today, but each
+capability was earned separately and ``mesh`` earned both last — see
+``docs/specs/MESH_NODE_SPEC.md`` §9 for what it still excludes. Its LOD story is
+the reason this table distinguishes the two flavours at all. The ADDITIVE prefix
+ladder assumes independent elements and cannot apply to a surface (a prefix of an
+index buffer is a *holed* surface, not a coarse one); SUBSTITUTIVE levels make no
+such assumption and were missing only a producer. That producer now exists
 (``luxar.mesh.decimate``), so ``mesh`` is ``lod=True`` — and the ``lod`` flag
 gates the substitutive mechanism ONLY, which is what lets one flag say yes to
-one flavour and leave the other impossible.
+one flavour and leave the other impossible. Partition needed neither assumption,
+only the bookkeeping to re-index vertices across a cut, which
+``luxar.mesh.split`` now does.
 
 Answering a capability question with the vocabulary is how a type gets admitted
 to a code path that cannot represent it. Answering it with a hand-written tuple
@@ -63,16 +66,17 @@ GEOMETRY_CAPABILITIES: Final[dict[GeometryTypeName, GeometryCapabilities]] = {
     "points": GeometryCapabilities(lod=True, partition=True),
     "lines": GeometryCapabilities(lod=True, partition=True),
     "gsplats": GeometryCapabilities(lod=True, partition=True),
-    # Mesh: substitutive LOD landed (the producer is `luxar.mesh.decimate`);
-    # partition still has no path (spec §9). Flip a flag here when the
-    # corresponding path lands — not at the call sites.
+    # Mesh: both paths landed — substitutive LOD via `luxar.mesh.decimate`,
+    # partition via `luxar.mesh.split` (spec §9). Flip a flag here when a path
+    # lands — not at the call sites.
     #   lod        TRUE, and it means SUBSTITUTIVE only — see the field doc.
     #              The ADDITIVE prefix ladder remains impossible for a surface
     #              (a prefix of an index buffer is holed, not coarse) and is
     #              refused elsewhere; this flag never gated it.
-    #   partition  a BSP cut runs through faces, so each part needs its boundary
-    #              vertices duplicated and the per-vertex label CSR split.
-    "mesh": GeometryCapabilities(lod=True, partition=False),
+    #   partition  TRUE: a BSP cut runs BETWEEN faces, and each part re-indexes
+    #              its own vertices (boundary vertices duplicated, per-vertex
+    #              label CSR split).
+    "mesh": GeometryCapabilities(lod=True, partition=True),
 }
 
 

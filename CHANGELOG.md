@@ -35,10 +35,10 @@ decimated, so it gets its own resolver with each lift-only key refused **by name
 Lines, so a caller who tried it made no typo and the generic unknown-key error would
 have misdiagnosed them.
 
-The capability flip is `lod=True`, `partition=False`, and the asymmetry is why those are
-separate columns: `lod` gates `kind=lod` groups, whose levels REPLACE one another, while
-an additive ladder is `additive_<i>/` subgroups inside a leaf. So mesh is LOD-capable
-and an additive prefix stays impossible. `require_lod_display_type`'s mesh-specific
+The capability flip is `lod=True` (alongside the `partition=True` of the entry below),
+and the flavour split is why `lod` is its own column: it gates `kind=lod` groups, whose
+levels REPLACE one another, while an additive ladder is `additive_<i>/` subgroups inside
+a leaf. So mesh is LOD-capable and an additive prefix stays impossible. `require_lod_display_type`'s mesh-specific
 paragraph is gone with it — it became dead *and* misleading once every contract type was
 LOD-capable, since the only way to reach that branch now is a future type.
 
@@ -77,6 +77,237 @@ viewer path can load, where the plain-leaf path writes nothing at all. Sharing t
 function rather than repeating the checks is what keeps the two paths from drifting: the
 ladder gate IS what the child write runs.
 
+#### LOD levels no longer wait for the object to overfill the screen
+
+The viewer picks a substitutive LOD level by comparing each child's
+`coverage_fraction` against a dimensionless coverage metric,
+`projectedBBoxDiagonalPx / (FILL_FACTOR * viewportDiagonalPx)`. `FILL_FACTOR` was
+`1.0`, which put the finest level's threshold of `1.0` at "the object's projected
+diagonal equals the whole viewport diagonal" — i.e. the object had to OVERFILL the
+screen before full detail appeared. Measuring the viewer's own opening framing
+(`calculateCameraDistance`, fitRatio 0.75 + 20% margin, at the default fov 47) puts
+a real scene's raw diagonal fraction at **0.31 – 0.86**, so every default view
+showed a blurry merged level. Twelve demos and all user data with
+`substitutive_lod` were affected.
+
+`FILL_FACTOR` is now `0.25`. That lifts even the worst common shape (an in-plane
+elongated cloud on a portrait viewport, 0.307) to a metric of 1.23, while the other
+shapes span 1.7-3.4 over 16:9 / 9:16 / 1:1. Detail is still dropped well before the
+object is tiny: for the usual K=8 / 3-level ladder a cube on 16:9 leaves the finest
+level at ~2.0x zoomed out from the opening framing and reaches the coarsest at ~14x
+(~2.1x / ~15.7x counting the downgrade hysteresis); on 1:1 it is ~2.8x / ~20x.
+The fix is deliberately in the VIEWER rather than in Python's
+`coverage_fractions()`, so **every whole-object ladder already written to disk is
+fixed on reload** — no regeneration. (Partition-bound ladders are the exception;
+see below.)
+
+**This changes which level renders for every existing dataset.** No store is
+invalidated and a whole-object ladder (`levels`, `stream`, `add_points`/`add_lines`
+`substitutive_lod=`) needs nothing done to it — it simply shows more detail at the
+same camera than it did before, which is the fix. That detail is not free: such a
+layer now commits its finer levels at the opening framing, so expect more resident
+geometry than before (bounded, as always, by the shared VRAM eviction budget).
+
+**Two topologies DO need regenerating: an `adaptive` or `overview` store written
+before this change.** Their ladders are on disk anchored at `1.0`, and the viewer
+honors what it reads, so the ×4 metric makes them select too fine a level: an old
+`overview` store loads its whole fine partition on frame 1, and every tile of an old
+`adaptive` store jumps toward its finest level at whole-object framing (~16× the
+resident geometry for a K=4/L=2 ladder). Both are behavioral, not corrupting —
+nothing is lost — but the recipe's memory contract is gone until the store is
+rebuilt. The cheap fix, since `gsplat lod` will not take an already-tiled store as
+input: run it through any `luxar gsplat transform` that touches geometry — that
+scrubs the thresholds and re-derives them, and the re-derivation is topology-aware,
+so it restamps the partition-bound anchor. Re-running
+`luxar gsplat lod --recipe adaptive|overview` from the original flat fit works too.
+The same applies to a hand-built partition of per-part ladders (the shape
+`examples/partition_of_lod_example.py` builds): scale its authored thresholds by 4.
+
+**If you hand-tuned `coverage_fractions=[...]`, multiply every threshold by 4.**
+The metric is 4x larger at a given framing, so a x4 rescale reproduces the previous
+selection exactly (the hysteresis margin and the cross-fade band are both
+proportional to inter-threshold gaps, so they scale with it). To make that
+expressible, the upper bound on an explicit list widened from `1.0` to
+`MAX_COVERAGE_FRACTION = 4.0` — which is `1 / FILL_FACTOR`, the metric a
+screen-filling object produces, so the bound still means exactly what `1.0` meant
+before. `validate_lod_group` now enforces that range for hand-built ladders too, and
+both it and the explicit-list resolvers reject a non-finite threshold (a `NaN` used
+to satisfy every comparison and silence the ascent check for the rest of the ladder).
+`coverage_fractions()`'s derived output is unchanged and still lands in `[0, 1]`.
+
+Ladders bound to a spatial partition keep the old fills-screen anchor via the new
+`partitioned_coverage_fractions`, because a tile's projected diagonal is
+intrinsically a fraction of the whole object's: the `adaptive` recipe's per-tile
+groups and the `overview` recipe's coarse-cap/fine-partition pair now anchor their
+finest at `4.0`. Without that, `overview` would load its entire fine partition on
+frame 1 (inverting "instant coarse overview, fine tiles on zoom") and every
+`adaptive` tile would jump to its finest level at whole-object framing. The
+standalone writer derives the same anchor from the topology, so
+`luxar gsplat transform`'s scrub-and-re-derive stays a no-op.
+
+A **one-part** partition is excluded from that rule, and the exclusion matters more
+than it sounds: `to_spatial_partition` wraps even a single BSP leaf in a
+`kind=partition`, and the BSP stops as soon as the whole dataset fits
+`--max-elements`, whose default is 1,000,000. So `luxar gsplat lod --recipe adaptive`
+on any ordinary dataset produces one "tile" that IS the whole object — and anchoring
+it at fills-screen would have reintroduced exactly the blur this change removes.
+`build_adaptive` and both tree writers' topology fallbacks now use the whole-object
+anchor for that shape, so a scrub-and-re-derive of such a store still round-trips.
+
+Known limitation, documented on the constant and pinned by tests: the anchor drifts
+with viewport ASPECT. `calculateCameraDistance` fits the vertical fov while the
+metric normalises by the diagonal, so for aspect >= 1 the raw fraction falls as
+`1 / hypot(aspect, 1)`. Each shape has its own crossover (~2.30 for an in-plane rod,
+~3.40 for a flat pancake, ~4.75 for a cube) beyond which the old symptom returns —
+so on a 21:9 or 32:9 canvas the flattest shapes still miss the finest level. Fixing
+that means changing what the two sides normalise by, not lowering `FILL_FACTOR`
+further.
+
+#### Tractography tracts identify themselves on hover (#1386)
+
+The HCP-1065 demo drew 87 bundles whose only names were the atlas's own codes —
+`AF_L`, `IFOF_R`, `DRTT_L` — and hovering one showed nothing at all. Each tract
+now carries a label expanding the code into its full anatomical name plus a
+one-line gloss of what it does: `AF_L — Arcuate fasciculus (left) · association
+· frontal (Broca) and temporal (Wernicke) language areas`. A 46-entry table
+keyed on the hemisphere-stripped base code covers all 87 bundles; the split is
+lookup-guarded because six base codes (`CPT_F`, `CPT_O`, `CS_S`, ...) end in a
+single-letter underscore group of their own, and `CPT_F_L` must resolve to
+`CPT_F` rather than to `CPT`.
+
+Lines labels are per-vertex, so the one tract string is broadcast across the
+node — which is also what makes the lookup safe, since the line picker reports a
+segment slot that is fed unremapped into a vertex-sorted array. Every entry
+being identical, the index does not have to be right.
+
+The honest limitation is that labels ride the ladder's finest level only, and
+nothing selects that level from the opening pose. Flying the camera into the
+tractogram is the route that works: `projectBoxDiagonalPx` saturates to the
+finest child when the camera is inside a group's box, so proximity — not
+magnification — is what makes a cranial nerve hoverable. The scene says so in a
+bottom-left hint rather than leaving it in a docstring.
+
+Two changes are the viewer's, not the demo's:
+
+- **A consecutive run of equal labels is decoded once.** `LabelLoader` decoded
+  and retained one string per element, so a broadcast label cost ~39 MB for a
+  168k-vertex node. It now compares each element's bytes to the previous one's
+  and reuses the string on a match. An intern `Map` was tried first and rejected:
+  it pays a hash and a full compare on every element, and the all-distinct case
+  that every other labelled demo has (a 4M-label embedding node) got 2x slower.
+  What the run check buys is retained memory rather than time — a full byte
+  compare costs about what the decode it replaces does — so it rejects on length
+  and on both *end* bytes before scanning the interior. Distinct labels
+  overwhelmingly differ at one end, which keeps that case at parity; without the
+  end probes, equal-length labels sharing a prefix measured ~1.7x the old loop.
+- **An unlabelled node no longer logs a warning.** The pick handler asks any
+  node it hits for a label, and most have no `label_offsets` array; that is an
+  ordinary miss, now logged at info via the house `isNotFoundError` guard. The
+  demotion is scoped to that one open: a missing `label_bytes` beside present
+  offsets, a missing chunk, a decode failure or bad metadata all still warn.
+
+#### Mesh — `kind=partition` (spec §9.2)
+
+`add_mesh(partition=True | {"max_elements": N, "rule": "median"|"midpoint"|"sah"})`
+splits a surface into independently drawable, frustum-cullable parts under a
+`kind=partition` wrapper — the fourth geometry type joining Points / Lines /
+GSplats, and the last of the mesh spec's structural exclusions that was
+bookkeeping rather than correctness.
+
+- **Faces are never cut.** The BSP splits on face centroids, so a triangle is the
+  indivisible unit and `max_elements` counts FACES.
+- **Parts are re-indexed, not sliced** (`luxar/mesh/split.py`). A triangle is three
+  references into a shared vertex table, so each part gathers the vertices its own
+  faces use and renumbers those faces against the gathered table. A vertex on the
+  cut is duplicated into both parts — the cost that makes each part stand alone.
+  The writer reports the measured duplication factor.
+- **Every per-vertex attribute follows its vertices**, including the per-vertex
+  label CSR (`normals`, `colors`, `scalars`, `labels`); a uniform RGB triple or a
+  colormap name is passed through untouched.
+- **No seams.** Duplicated boundary vertices carry identical position *and*
+  identical stored normal, and the derivative shading variant is per-fragment.
+  Revisit if shading ever gains a per-part recomputation (area-averaged normals,
+  tangent frames, UVs, baked AO).
+- **Wrong-length per-vertex inputs are refused up front**, against the SOURCE vertex
+  count, so a mesh fails identically with and without `partition=` (the gather is
+  length-keyed, so an off-length array would otherwise be passed through whole and
+  could be accepted by a part whose own vertex count happened to match).
+- **One scalar display window spans the whole partition.** The window is derived
+  from the WHOLE field before the split (or taken from an explicit
+  `_scalar_data_range`) and stamped on every part, because the viewer windows each
+  node's colormap on that node's own stamped range — per-part min/max recoloured
+  the same value either side of a cut, and a part with a constant subset landed on
+  the LUT midpoint. Same rule the substitutive ladder uses for its levels. The pair
+  is also each part's quantization range, so a field with a single extreme outlier
+  now spends its codes on the global span rather than per part.
+- `GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both the Python and
+  TypeScript sides; `image_labels` is refused alongside `partition=`.
+- A partition stays **homogeneous in both directions**: every leaf adder now refuses a
+  leaf whose type contradicts a hand-built wrapper's declared `display_type`
+  (`reject_mismatched_partition_parent`). Previously only the mesh side checked, and
+  `validate_partition_group` — the whole-tree equivalent — has no production caller.
+
+Substitutive LOD is a separate axis and unaffected by this (see the entry above); the
+two cannot be combined in one `add_mesh` call, exactly as for Points / Lines. The
+ADDITIVE prefix ladder remains impossible for a surface.
+
+#### Demos: every scene now has something in the Layers panel (#1362)
+
+The panel lists only nodes whose zarr attrs carry `layer: true`, and `Node.layer`
+defaults to `False`. Twenty-eight demos never passed it, so nothing in them — in
+most cases their one and only geometry node — could be toggled, re-ranged,
+gamma'd or re-blended at view time. They pass it now.
+
+Two of those demos emit many sibling nodes (one per L-system tree — 663 at the
+default sampling — and 100 embryo copies), where a row each would be worse than
+none, so the siblings sit under one
+`layer=True` container group that the panel treats as a composite and fans its
+controls down from. `demo_nd_transforms` gets the same treatment for a different
+reason: its rulers, cursors, rails, ghosts and markers — 66 nodes from twelve
+call sites — are the two halves of one measuring instrument, so they now hang off
+`Frame_Section` and `Channel_Section`, and the bench goes from no panel rows to
+two. A new AST lint, `demos/tests/test_demo_layers.py`, pins both the weak
+invariant (a demo that authors geometry exposes at least one layer) and the
+per-call one, with an exemption list for the composite-group cases that is itself
+checked against the group each exemption names.
+
+#### Demos — the CELLxGENE Census UMAP no longer opens dark (#1375)
+
+The 1M-cell cloud was barely visible on first paint, and most of that was the
+baked display window. The Layers panel stores a range as
+`intensity = 1/(max - min)`, so the authored `[0, 2.361]` was a gain of 0.4235:
+a window max above 1 ATTENUATES the authored direct colours rather than
+brightening them, and on a direct-colour node the shader applies that as a plain
+colour gain. That cut is only part of the shortfall, though — undoing it is worth
+2.36x, and at the identity window the cloud was still around 4.5x under. The
+window is now `[0, 0.221]`, a 4.52x gain — 10.7x the previous gain. Two gallery
+stills captured at identical neutral exposure put the lit p50 luma at 0.120
+before and 0.744 after, with nothing clipped at either setting.
+
+Absorption drops 10.0 -> 6.5 alongside it, but not as a counterweight. The
+independence runs one way: on Points `tau = kappa * alpha` never sees the display
+gain, so intensity is free of kappa — but kappa still moves brightness, through
+the self-screening below. What did change under kappa was the 2026-08 ray-mass
+unification, which removed a point's world-thickness factor from tau — 0.0413 at
+this demo's radius, so it multiplied this node's tau ~24x and left the stored 10
+meaning something quite different. Kappa 10 was far past opaque: on the finest
+Points level, at peak falloff with the sprite at or above the 1.5 px floor, a cell
+absorbed 0.98 and its own self-screening factor `(1 - e^-tau)/tau` of 0.25 ate
+three quarters of the emission. At 6.5 a cell absorbs 0.92 instead and the
+factor rises to 0.36 — ~1.45x more emission per cell at peak, and more than that
+once composited, since the light from cells behind now survives too. 6.5 is a
+re-tune by eye, not that 24x compensation — the spec's scale-down by
+`1/(thickness * 0.826)`, i.e. kappa x 0.0413, would land near 0.4, and this node
+stays deliberately heavy because the screening is what gives the lobes their
+depth. Coarse levels are lifted gsplats carrying the merged ray mass, so they run
+at higher tau than these figures.
+
+The tuning session also pinned the layer to its finest level; that is deliberately
+NOT baked, because it is a workaround for the substitutive-LOD selector tracked in
+#1361. As with every baked-appearance change, the look lives in the compiled
+scene: an existing `datasets/demos/cellxgene_census_umap.luxar.zarr` keeps the old
+one until the demo is regenerated.
+
 #### Tooling — the complexity limit is now enforced as a ratchet (#1379)
 
 `pyproject.toml` has carried `[tool.ruff.lint.mccabe] max-complexity = 10` since
@@ -114,6 +345,32 @@ what the gate enforces for new code. The checker runs in
 that actually gates PRs — from the Python test suite. Regenerate with
 `hatch run check-complexity --update-baseline`.
 
+#### Changed (breaking) — the Semantic Scholar arXiv demo is renamed `arxiv_papers_semantic_scholar`
+
+Two arXiv embedding demos read as variants of one dataset and were not: one pulls
+the Semantic Scholar API and embeds abstracts with Sentence-BERT, the other reads
+the Kaggle dump's pre-computed OpenAI text-embedding-3-large vectors. The first
+owned the bare name. **RENAME (breaking, no alias):** key `arxiv_papers` →
+`arxiv_papers_semantic_scholar` (the old key errors out with close-match
+suggestions), script `demo_arxiv_paper_embeddings.py` →
+`demo_arxiv_embeddings_semantic_scholar.py`, cache `arxiv_paper` →
+`arxiv_semantic_scholar`, output `arxiv_papers_semantic_scholar.luxar.zarr`. A warm
+cache is not migrated:
+`mv ~/.cache/luxar/arxiv_paper ~/.cache/luxar/arxiv_semantic_scholar` keeps it,
+`luxar demo cache clear --orphans` reclaims it, doing neither recomputes it once; a
+built `arxiv_papers.luxar.zarr` is claimed by no demo now and can be deleted. KEY
+disambiguates the `luxar demo` table, the titles reach `demo info` and the run
+banner, and each scene's own overlay title now names its source too.
+
+The overlap was in metadata and one-directional, not on disk: the Kaggle demo
+declared `arxiv_papers` on top of its own output, and `_status` existence-checks a
+demo's declared outputs, so a Semantic Scholar build made the Kaggle row read
+`output ✓`. Never the reverse: that demo only wrote `arxiv_papers_kaggle.luxar.zarr`
+and its serve-path scene lives in a `TemporaryDirectory`. It now claims only
+`arxiv_papers_kaggle`; that temp scene and its Points node — the zarr group path,
+visible in debug/monitor output — lose the retired name too. A new registry test
+fails if two demos ever resolve an output to the same scene path again (#1363).
+
 #### CAIDA country coloring parses current organization snapshots (#1373)
 
 The CAIDA AS-topology demo expected a space in the upstream
@@ -123,6 +380,7 @@ accepts either whitespace form, so organization names and country codes reach
 node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
+
 
 #### Real join geometry for lines: the miter (#790, #795)
 

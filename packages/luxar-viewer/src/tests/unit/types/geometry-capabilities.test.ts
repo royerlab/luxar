@@ -61,8 +61,9 @@ describe('geometry capabilities', () => {
     // of these — it is in the vocabulary, so its answers come from its row and
     // are asserted below, not here. (This case used to assert `mesh` alongside
     // the outsiders, which read as "mesh is unclassified" when what was true
-    // was only that its row happened to be all-false at the time — and it has
-    // since stopped being true twice over.)
+    // was only that its row happened to be all-false at the time — it broke the
+    // moment mesh gained `lod` and again when it gained `partition`, which is the
+    // right outcome for a mesh-capability test and the wrong one for this test.)
     for (const predicate of [supportsLod, supportsPartition, isPooledGeometry, isDepthSortable]) {
       for (const outsider of ['volume', 'group', 'scene', '', undefined, null, 3]) {
         expect(predicate(outsider), String(outsider)).toBe(false);
@@ -71,10 +72,10 @@ describe('geometry capabilities', () => {
   });
 
   it('classifies mesh per capability, not uniformly', () => {
-    // The row the table exists for: mesh answers two of these yes and two no,
+    // The row the table exists for: mesh answers three of these yes and one no,
     // and each answer is a distinct architectural fact (see the comment on the
     // row itself). Pinned explicitly so a widened literal or a reflexive "flip
-    // them all" cannot pass unnoticed.
+    // them all" cannot pass unnoticed — `pooled` must stay false.
     expect(GEOMETRY_CAPABILITIES.mesh).toEqual({
       // True, and SUBSTITUTIVE only: a kind=lod group holds levels that replace
       // one another, and `luxar.mesh.decimate` is the producer. The ADDITIVE
@@ -82,9 +83,10 @@ describe('geometry capabilities', () => {
       // surface, not a coarser one) and is refused in `loader-factory.ts`, not
       // by this flag.
       lod: true,
-      // False only for now: a BSP part is a re-indexing, not a slice, because a
-      // triangle references a shared vertex table.
-      partition: false,
+      // TRUE: a BSP cut runs between faces, never through one, and each part
+      // renumbers the vertices its own faces use. Cut vertices are duplicated
+      // with identical position AND normal, so the seam stays invisible.
+      partition: true,
       // Permanently false: `pooled` names the instanced-quad element-texture
       // stack, which an indexed triangle surface is not drawn from.
       pooled: false,

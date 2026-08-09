@@ -65,7 +65,8 @@ export interface GeometryCapabilities {
   /**
    * May appear as a `kind=partition` group's `display_type`, i.e. can be split
    * into spatially-culled parts. Mirrors the Python-side allowlist in
-   * `core/node/specialized_groups.py`.
+   * `luxar/typing_utils/geometry_capabilities.py` (which
+   * `core/node/specialized_groups.py` calls to gate the wrapper).
    */
   readonly partition: boolean;
 
@@ -104,17 +105,17 @@ export interface GeometryCapabilities {
  *
  * Points / Lines / GSplats are uniformly capable — they are all soft, emissive,
  * per-element primitives drawn as instanced quads. `mesh` is the row that proves
- * the table earns its keep: its four flags have four different answers, for four
- * unrelated reasons. `lod` and `depthSortable` are TRUE — the first because a
- * `kind=lod` group's levels REPLACE one another and `luxar.mesh.decimate` is the
- * producer that was missing, the second because a triangle's center is its vertex
- * centroid, so registration, worker and kernel are all shared. `pooled` is FALSE
- * architecturally — a mesh is an indexed `BufferGeometry`, so there is nothing to
- * pool, and that column can never become true. `partition` is FALSE only for now:
- * a BSP cut is a re-indexing rather than a slice, because a triangle references a
- * shared vertex table, so each part must gather and renumber its own vertices.
- * The row comment below gives each flag its own reason; do not read "impossible"
- * into a column that means "not yet".
+ * the table earns its keep: three of its flags are TRUE and one is FALSE, each
+ * for its own unrelated reason. `lod` is TRUE because a `kind=lod` group's levels
+ * REPLACE one another and `luxar.mesh.decimate` is the producer that was missing.
+ * `partition` is TRUE because a BSP cut runs between faces and each part gathers +
+ * renumbers its own vertices (`luxar.mesh.split`) — it was false only for want of
+ * that bookkeeping. `depthSortable` is TRUE because a triangle's center is its
+ * vertex centroid, so centers, worker and kernel are all shared and only the apply
+ * differs. `pooled` is FALSE architecturally — a mesh is an indexed
+ * `BufferGeometry`, so there is nothing to pool, and that column can never become
+ * true. The row comment below gives each flag its own reason; do not read
+ * "impossible" into a column that means "not yet".
  *
  * Readonly + frozen: every predicate reads this object live, so a mutation
  * would globally flip a capability for the whole session. (The record is
@@ -134,9 +135,12 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     //                 impossible (a prefix of an index buffer is a HOLED surface,
     //                 not a coarser one) and this flag never gated it — that
     //                 refusal lives in `loader-factory.ts`.
-    //   partition     a BSP cut needs vertex duplication at part boundaries: a
-    //                 triangle references a shared vertex table, so a part is a
-    //                 re-indexing, not a slice of element rows.
+    //   partition     TRUE. A BSP cut runs between faces, never through one,
+    //                 and each part gathers + renumbers the vertices its own
+    //                 faces use (luxar.mesh.split on the writer side). Vertices
+    //                 on the cut are duplicated, which is what makes each part
+    //                 independently drawable; the seam stays invisible because
+    //                 both copies carry identical position AND normal.
     //   pooled        mesh renders as an indexed BufferGeometry, NOT through the
     //                 instanced-quad element-texture stack. Permanently false.
     //   depthSortable TRUE: a triangle's center is its vertex centroid, so the
@@ -145,7 +149,7 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     //                 instead of an `aSortedIndex` indirection (§9,
     //                 `rendering/depth-sort-coordinator/triangle-ordering.ts`).
     // Flip a flag here when the corresponding path lands — never at a call site.
-    mesh: { lod: true, partition: false, pooled: false, depthSortable: true },
+    mesh: { lod: true, partition: true, pooled: false, depthSortable: true },
   });
 
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */

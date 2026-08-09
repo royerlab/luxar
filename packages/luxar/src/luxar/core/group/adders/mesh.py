@@ -4,12 +4,20 @@ Pure function taking a ``group: Group`` parameter as the first arg. Called by
 ``Group.add_mesh`` (a thin signature + docstring + delegate) in
 ``core/group/group.py``.
 
-Shorter than its siblings, and structurally so. Mesh has a ``substitutive_lod``
-branch like the other three, but no ``additive_lod`` and no ``partition``, for two
-different reasons spelled out in the rejections below and in MESH_NODE_SPEC.md §9.
-Its substitutive branch is also much smaller than the Points/Lines one, because
-those coarsen by LIFTING to gsplats (scalar baking, amplitude conservation, an
+Still shorter than its siblings, and structurally so: mesh has ``partition`` and
+``substitutive_lod`` branches like the other three, but no ``additive_lod`` — a
+prefix of an index buffer is a *holed* surface, not a coarse one (MESH_NODE_SPEC.md
+§9, and the rejections below).
+
+Its substitutive branch is much smaller than the Points/Lines one, because those
+coarsen by LIFTING to gsplats (scalar baking, amplitude conservation, an
 anisotropy cap) while a mesh is simply decimated.
+
+The partition branch differs from the sibling adders' in the one way that
+matters: theirs hand each part a SLICE of the element arrays, because their
+elements are independent rows. A triangle is not a row — it is three references
+into a shared vertex table — so a mesh part is a re-indexing, not a slice, and
+the split lives in :mod:`luxar.mesh.split`.
 """
 
 from __future__ import annotations
@@ -31,73 +39,72 @@ from arbol import aprint
 from ...mesh import Mesh
 from ..compositing import (
     COMPOSITING_ATTRS,
+    position_bounds_from_array,
     reject_lines_only_join,
+    slice_optional_array,
     sync_custom_colormap_attr,
 )
 from ..dim_order import apply_dim_order_positions
+from ..partition import reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
     from ..group import Group
 
 
-def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
-    """Refuse to write a mesh leaf under a ``kind=partition`` group.
-
-    ``kind=lod`` used to be refused here too and no longer is: a mesh IS a valid
-    substitutive level now that a producer exists (``luxar.mesh.decimate``), and
-    ``substitutive_lod=`` builds exactly this shape — a ``kind=lod`` group whose
-    children are progressively decimated meshes. The additive prefix ladder stays
-    impossible for a surface, but that was never what this guard covered:
-    ``kind=lod`` holds levels that REPLACE one another, while an additive ladder
-    is ``additive_<i>/`` subgroups inside a leaf. See
-    :data:`_UNSUPPORTED_STRUCTURE_PARAMS` for the flavour that is still refused.
-
-    ``kind=partition`` remains refused. ``add_partition_group`` already rejects
-    ``display_type='mesh'``, but nothing stops a caller from creating a ``points``
-    partition and then adding a mesh child into it, which would make the group's
-    declared display type a lie. It is a caller mistake with no valid
-    interpretation, so it raises rather than warns.
-    """
-    kind = parent_node.attrs.get("kind")
-    if kind == "partition":
-        raise ValueError(
-            f"Cannot add mesh '{name}' to a kind=partition group. Mesh has no "
-            "spatial-partition path yet: a BSP cut runs through faces, so each "
-            "part needs its boundary vertices duplicated and the per-vertex label "
-            "CSR split to match. Add the mesh to a plain group instead."
-        )
+# NOTE on specialized-group parents. Mesh used to carry its OWN pre-write guard
+# (`_reject_specialized_parent`) refusing a `kind=lod` or `kind=partition` parent
+# outright. Neither refusal survives, for two different reasons:
+#
+# * ``kind=lod`` — a mesh IS a valid substitutive level now that a producer
+#   exists (``luxar.mesh.decimate``), and ``substitutive_lod=`` builds exactly
+#   this shape: a ``kind=lod`` group whose children are progressively decimated
+#   meshes. The ADDITIVE prefix ladder stays impossible for a surface, but that
+#   was never what the guard covered — ``kind=lod`` holds levels that REPLACE one
+#   another, while an additive ladder is ``additive_<i>/`` subgroups inside a
+#   leaf. See :data:`_UNSUPPORTED_STRUCTURE_PARAMS` for the flavour still refused.
+# * ``kind=partition`` — mesh is partition-capable now, and a mesh leaf under a
+#   ``display_type='mesh'`` partition is exactly what ``add_mesh(partition=...)``
+#   writes. A partition declaring some OTHER geometry type is still refused, by
+#   the shared ``reject_mismatched_partition_parent`` every leaf adder calls; the
+#   rule is symmetric (a points leaf under a ``display_type='mesh'`` partition is
+#   refused the same way), so it does not belong to mesh. That is why the adder
+#   below calls the shared helper directly, exactly like its three siblings.
 
 
 # Reason per structural parameter the sibling adders take and mesh does not.
-# ``substitutive_lod`` left this table when the decimator landed — mesh now takes
-# it as a real parameter. Worded for a caller who passed the knob; insertion order
-# decides which one a multi-parameter call is told about.
+# ``substitutive_lod`` left this table when the decimator landed and ``partition``
+# when the splitter did — mesh now takes both as real parameters. Worded for a
+# caller who passed the knob; insertion order decides which one a multi-parameter
+# call is told about.
 _UNSUPPORTED_STRUCTURE_PARAMS: Dict[str, str] = {
     "additive_lod": (
         "an ADDITIVE prefix ladder cannot apply at all — a prefix of an index "
         "buffer is a surface with holes in it, not a coarser surface"
     ),
-    "partition": (
-        "a BSP cut runs through faces, so each part needs its boundary vertices "
-        "duplicated and the per-vertex label CSR split to match"
-    ),
+    # NOTE: ``substitutive_lod`` and ``partition`` are both deliberately absent —
+    # each is a real ``add_mesh`` parameter now, bound by name, so neither ever
+    # reaches ``**attrs``.
 }
 
 
 def _reject_structure_params(name: str, attrs: Dict[str, Any]) -> None:
-    """Refuse the sibling adders' ``additive_lod`` / ``substitutive_lod`` / ``partition``.
+    """Refuse the sibling adders' ``additive_lod``.
 
-    ``add_mesh`` has no such parameters, so a caller who passes one lands in
+    ``add_mesh`` has no such parameter, so a caller who passes it lands in
     ``**attrs`` and gets the generic UNKNOWN-attribute rejection from
     ``validate_render_attrs`` — "The viewer would silently ignore it… Remove it or
-    use a supported attribute", plus a "Did you mean 'absorption'?" hint for
-    ``partition``. That is a typo diagnostic, and this caller made no typo: they
-    asked for a real feature the other three geometry types have, by its real name.
+    use a supported attribute". That is a typo diagnostic, and this caller made no
+    typo: they asked for a real feature the other three geometry types have, by
+    its real name.
 
-    The refusal is correct either way; only its stated reason was wrong, which is the
-    same defect the parent-group message above carried. Answering with the per-flavour
-    reason (spec §9) is what tells a user whether to wait for the feature.
+    The refusal is correct either way; only its stated reason was wrong. Answering
+    with the per-flavour reason (spec §9) is what tells a user whether to wait for
+    the feature — and for the additive prefix ladder the answer is "never on a
+    surface", not "not yet".
+
+    ``substitutive_lod`` and ``partition`` are no longer in this table — both are
+    real ``add_mesh`` parameters, bound by name, so neither reaches ``**attrs``.
     """
     for key, reason in _UNSUPPORTED_STRUCTURE_PARAMS.items():
         if key in attrs:
@@ -111,10 +118,11 @@ def _reject_structure_params(name: str, attrs: Dict[str, Any]) -> None:
 def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
     """Refuse ``blending_mode='volumetric'`` on a mesh (spec §9).
 
-    The other §9 exclusions are refused already — LOD and partition by
-    :func:`_reject_specialized_parent`, the additive ladder by the viewer's
-    progressive-loader factory — but this one was documented and never enforced, so
-    a volumetric mesh wrote and loaded cleanly.
+    The other §9 exclusions are refused already — the additive ladder by
+    :func:`_reject_structure_params` and by the viewer's progressive-loader
+    factory, a mismatched partition parent by the shared
+    ``reject_mismatched_partition_parent`` — but this one was documented and never
+    enforced, so a volumetric mesh wrote and loaded cleanly.
 
     It cannot mean anything. Volumetric blending is emission-absorption integration
     through a participating medium: the shader scales each element's contribution by
@@ -122,8 +130,9 @@ def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
     that path length. A triangle is a zero-thickness surface, so its path length is
     identically zero and there is no medium to absorb anything — the mode has no
     per-element quantity to integrate. That makes it a caller mistake with no valid
-    interpretation, which is the same bar the LOD/partition refusals are held to, so
-    it raises rather than warns.
+    interpretation, which is the same bar the surviving structural refusals are held to
+    (``additive_lod``, and a partition parent declaring a non-mesh ``display_type``),
+    so it raises rather than warns.
 
     Refused at the ADDER rather than in ``validate_blending_mode``, which is
     deliberately geometry-agnostic and shared by all four types.
@@ -156,12 +165,13 @@ def _reject_energy_stamps(name: str, attrs: Dict[str, Any]) -> None:
     is a *holed* picture at full brightness. Mesh's ``opaque`` default escapes it
     today by luck, not design.
 
-    This is deliberately prophylactic rather than a fix for a live bug: mesh cannot
-    currently be in a ``kind=lod`` group (so the fade pass never visits it) and the
-    mesh commit never stamps ``committedEnergyFraction`` (so the compensation
-    factor is 1). Substitutive LOD would remove the first latch and a reveal ladder
-    the second. Refusing now means §9.1's "must NOT carry energy stamps" rule is
-    enforced before either lands, rather than being a note someone has to remember.
+    This is deliberately prophylactic rather than a fix for a live bug: the mesh
+    commit never stamps ``committedEnergyFraction``, so the compensation factor is 1.
+    Substitutive LOD has already removed the OTHER latch — a mesh can be a
+    ``kind=lod`` level now, so the fade pass does visit it — and a reveal ladder
+    would remove this one. Refusing now means §9.1's "must NOT carry energy stamps"
+    rule is enforced before that lands, rather than being a note someone has to
+    remember.
 
     A reveal ladder (§9.1) is expected to arrive as a face ORDER plus a reveal
     fraction on a single leaf, which needs neither key — so this refusal does not
@@ -229,6 +239,32 @@ def validate_scalar_data_range(name: str, value: Any) -> Optional[tuple[float, f
     return (lo, hi)
 
 
+def _shared_scalar_window(
+    explicit: Optional[tuple[float, float]], scalars: Any, n_vertices: int
+) -> Optional[tuple[float, float]]:
+    """The ONE display window every child of a structural wrapper stamps.
+
+    Shared by both wrappers because both split a single scalar field across
+    several nodes, and the viewer windows a node's colormap on that node's OWN
+    stamped ``scalar_data_range``: a level or a part that stamps its own subset
+    min/max renders the same value as a different colour, and a subset that is
+    constant stamps a degenerate ``[v, v]`` the viewer maps to the LUT midpoint.
+
+    The caller's explicit window wins (already validated). Otherwise it is
+    derived from the WHOLE field, before any split or decimation. Only a
+    per-VERTEX array needs one — the same discriminator the levels use for
+    forwarding, since a broadcast value is identical on every child already and
+    needs nothing shared. Callers must run their fail-fast scalars gate first;
+    that is what rules out a non-finite field here (an explicit window is
+    refused non-finite, a derived one would not be).
+    """
+    if explicit is not None:
+        return explicit
+    if not (isinstance(scalars, np.ndarray) and scalars.shape[:1] == (n_vertices,)):
+        return None
+    return (float(np.min(scalars)), float(np.max(scalars)))
+
+
 def _resolve_mesh_vertices(vertices: Any) -> np.ndarray:
     """Coerce ``vertices`` to an array and refuse a shape a mesh cannot render.
 
@@ -263,6 +299,121 @@ def _resolve_mesh_vertices(vertices: Any) -> np.ndarray:
     return vert_arr
 
 
+def _reject_partition_with_substitutive_lod(
+    partition: Any, substitutive_lod: Any
+) -> None:
+    """Refuse ``partition=`` together with ``substitutive_lod=``.
+
+    The same refusal ``add_points`` / ``add_lines`` carry, with the same message: a
+    ``kind=partition`` of per-part LOD ladders is a topology nothing writes yet.
+    Mesh needs it for one extra reason — the substitutive branch RETURNS before the
+    partition branch is reached, so accepting both would silently drop the split.
+
+    ``False`` is an explicit no-op sentinel on BOTH sides, so neither trips this:
+    ``partition=False`` is what :func:`_add_mesh_partition` hands each part (a part
+    must never recurse into another partition), and ``substitutive_lod=False`` is
+    ``resolve_substitutive_axis_mesh``'s documented "no ladder" spelling. Refusing
+    either would refuse a call that asked for exactly one of the two features.
+
+    Tested with ``is`` rather than ``in (None, False)``, because the latter compares
+    by EQUALITY: ``0 == False``, so ``partition=0`` read as "not requested" here
+    while the real dispatch (``partition is not None and partition is not False``)
+    read it as requested and silently dropped the split behind a ladder. The guard
+    and the dispatch must agree by construction.
+
+    Its own function rather than an inline ``if`` because ``add_mesh_impl`` sits at
+    the C901 limit the complexity ratchet enforces — the same reason
+    :func:`_resolve_mesh_vertices` and :func:`_validate_partition_sources` were
+    hoisted out of it.
+    """
+    wants_partition = partition is not None and partition is not False
+    wants_ladder = substitutive_lod is not None and substitutive_lod is not False
+    if wants_partition and wants_ladder:
+        raise ValueError(
+            "partition= and substitutive_lod= cannot be combined yet "
+            "(partition-of-substitutive is not implemented). Use one or the other."
+        )
+
+
+def _maybe_add_mesh_substitutive_lod(
+    group: "Group",
+    *,
+    name: str,
+    vert_arr: np.ndarray,
+    faces_arr: np.ndarray,
+    normals: Any,
+    normal_dims: Optional[Sequence[int]],
+    colors: Any,
+    scalars: Any,
+    shading: Optional[str],
+    double_sided: bool,
+    labels: Any,
+    image_labels: Any,
+    parent: Optional["Node"],
+    extend_to_all: Optional[Union[List[str], str]],
+    scalar_data_range: Optional[tuple[float, float]],
+    substitutive_lod: Any,
+    scene: Any,
+    **attrs: Any,
+) -> Optional[Union[Mesh, "Group"]]:
+    """Dispatch the substitutive-LOD branch, or return ``None`` to fall through.
+
+    Extracted whole from ``add_mesh_impl`` — the child-gate preflight and the
+    wrapper hand-off are one step, and hoisting them keeps that function under the
+    C901 limit the complexity ratchet enforces (mesh now dispatches BOTH structural
+    branches, so the adder body would otherwise sit over it).
+
+    Runs the CHILD's gates and throws the results away, purely to keep the
+    fail-fast pre-write gate intact. Every one of them runs again inside
+    ``child_0`` — but by then every level has been decimated and ``add_lod_group``
+    has created the zarr group, so a bad ``extend_to_all``, ``colormap`` or
+    ``blending_mode`` surfaced as a childless kind=lod group in an incomplete store
+    rather than as a clean refusal that wrote nothing. Same validators the children
+    run, so the two cannot disagree about what is accepted.
+
+    ``extend_to_all`` is guarded on ``is not None`` because that branch is the one
+    that emits the advisory candidate warning, which must fire exactly once. The
+    attr gate gets a COPY, since it is the child write's job to consume the real
+    dict.
+    """
+    if substitutive_lod is None:
+        return None
+
+    from ....io._compiler.node_common import (
+        MESH_RESERVED_ATTRS,
+        validate_render_attrs,
+    )
+    from ..lod.mesh import resolve_substitutive_axis_mesh
+
+    if extend_to_all is not None:
+        scene._resolve_extend_to_all(extend_to_all, vert_arr, "mesh")
+    validate_render_attrs(dict(attrs), reserved_attrs=MESH_RESERVED_ATTRS)
+
+    substitutive_spec = resolve_substitutive_axis_mesh(substitutive_lod)
+    if substitutive_spec is None:
+        return None
+    return add_mesh_substitutive_lod_wrapper_impl(
+        group,
+        name=name,
+        vert_arr=vert_arr,
+        faces_arr=faces_arr,
+        normals=normals,
+        normal_dims=normal_dims,
+        colors=colors,
+        scalars=scalars,
+        shading=shading,
+        double_sided=double_sided,
+        labels=labels,
+        image_labels=image_labels,
+        parent=parent,
+        extend_to_all=extend_to_all,
+        scalar_data_range=scalar_data_range,
+        spec=substitutive_spec,
+        scene=scene,
+        **attrs,
+    )
+
+
 def add_mesh_impl(
     group: "Group",
     *,
@@ -277,6 +428,7 @@ def add_mesh_impl(
     double_sided: bool = True,
     labels: Optional[Union[List[str], Sequence[str]]] = None,
     image_labels: Optional[Any] = None,
+    partition: Any = None,
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
     dim_order: Optional[List[str]] = None,
@@ -284,6 +436,10 @@ def add_mesh_impl(
     substitutive_lod: Any = None,
     **attrs: Any,
 ) -> Union[Mesh, "Group"]:
+    # Outside the ``try`` for the same reason the siblings raise it there: an
+    # argument error, not a write failure, so it must not be re-wrapped as
+    # "Could not add mesh '<name>': …".
+    _reject_partition_with_substitutive_lod(partition, substitutive_lod)
     try:
         # Fail-fast pre-write gate: reject invalid names (empty/'/'/dot-prefixed —
         # an empty name resolves to the zarr ROOT group and would clobber the
@@ -293,7 +449,7 @@ def add_mesh_impl(
 
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
-        _reject_specialized_parent(parent or group, name)
+        reject_mismatched_partition_parent(parent or group, "mesh", name)
         _reject_structure_params(name, attrs)
         _reject_volumetric_blending(name, attrs)
         _reject_energy_stamps(name, attrs)
@@ -361,52 +517,28 @@ def add_mesh_impl(
         #
         # `vert_arr` is already dim_order-transformed, so children are written
         # with dim_order=None/fill=None to avoid double application.
-        if substitutive_lod is not None:
-            # Run the CHILD's gates here and throw the results away, purely to
-            # keep the fail-fast pre-write gate intact. Every one of them runs
-            # again inside `child_0` — but by then every level has been decimated
-            # and `add_lod_group` has created the zarr group, so a bad
-            # `extend_to_all`, `colormap` or `blending_mode` surfaced as a
-            # childless kind=lod group in an incomplete store rather than as a
-            # clean refusal that wrote nothing. Same validators the children run,
-            # so the two cannot disagree about what is accepted.
-            #
-            # `extend_to_all` is guarded on `is not None` because that branch is
-            # the one that emits the advisory candidate warning, which must fire
-            # exactly once. The attr gate gets a COPY, since it is the child
-            # write's job to consume the real dict.
-            from ....io._compiler.node_common import (
-                MESH_RESERVED_ATTRS,
-                validate_render_attrs,
-            )
-            from ..lod.mesh import resolve_substitutive_axis_mesh
-
-            if extend_to_all is not None:
-                scene._resolve_extend_to_all(extend_to_all, vert_arr, "mesh")
-            validate_render_attrs(dict(attrs), reserved_attrs=MESH_RESERVED_ATTRS)
-
-            substitutive_spec = resolve_substitutive_axis_mesh(substitutive_lod)
-            if substitutive_spec is not None:
-                return add_mesh_substitutive_lod_wrapper_impl(
-                    group,
-                    name=name,
-                    vert_arr=vert_arr,
-                    faces_arr=faces_arr,
-                    normals=normals,
-                    normal_dims=normal_dims,
-                    colors=colors,
-                    scalars=scalars,
-                    shading=shading,
-                    double_sided=double_sided,
-                    labels=labels,
-                    image_labels=image_labels,
-                    parent=parent,
-                    extend_to_all=extend_to_all,
-                    scalar_data_range=scalar_data_range,
-                    spec=substitutive_spec,
-                    scene=scene,
-                    **attrs,
-                )
+        laddered = _maybe_add_mesh_substitutive_lod(
+            group,
+            name=name,
+            vert_arr=vert_arr,
+            faces_arr=faces_arr,
+            normals=normals,
+            normal_dims=normal_dims,
+            colors=colors,
+            scalars=scalars,
+            shading=shading,
+            double_sided=double_sided,
+            labels=labels,
+            image_labels=image_labels,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            scalar_data_range=scalar_data_range,
+            substitutive_lod=substitutive_lod,
+            scene=scene,
+            **attrs,
+        )
+        if laddered is not None:
+            return laddered
 
         final_extend_dims = scene._resolve_extend_to_all(
             extend_to_all, vert_arr, "mesh"
@@ -416,6 +548,42 @@ def add_mesh_impl(
             aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
         parent_node = parent or group
+
+        # Spatial partition — split the surface into independently drawable
+        # parts under a kind=partition wrapper, so the viewer can frustum-cull
+        # per part. Placed here, after dim_order/extend_to_all resolution, so
+        # every part inherits coordinates and visibility already in final form
+        # and the per-part recursion must not re-apply them.
+        if partition is not None and partition is not False:
+            # ``extend_to_all`` was just RESOLVED into ``attrs`` above, and this
+            # call also passes it by name — so hand the split a copy of attrs
+            # without the key, or the two collide as a duplicate keyword argument
+            # and every partitioned+extended mesh fails. The parts get the
+            # resolved dimension names (re-resolving a name list is a no-op).
+            partition_attrs = {k: v for k, v in attrs.items() if k != "extend_to_all"}
+            wrapper = _add_mesh_partition(
+                group,
+                name=name,
+                vert_arr=vert_arr,
+                faces_arr=faces_arr,
+                partition=partition,
+                normals=normals,
+                normal_dims=normal_dims,
+                colors=colors,
+                scalars=scalars,
+                shading=shading,
+                double_sided=double_sided,
+                labels=labels,
+                image_labels=image_labels,
+                parent_node=parent_node,
+                extend_to_all=final_extend_dims or extend_to_all,
+                scalar_data_range=scalar_data_range,
+                **partition_attrs,
+            )
+            if wrapper is not None:
+                return wrapper
+            # 1 part → fall through to the plain single-leaf write, exactly as
+            # the sibling adders do. A wrapper around one part is pure overhead.
 
         writer = group._require_scene_writer(scene)
         path = f"{parent_node.path}/{name}" if parent_node.path else name
@@ -668,15 +836,11 @@ def add_mesh_substitutive_lod_wrapper_impl(
     # different colour at every level and the surface would recolour as you
     # zoom. That is the pop this ladder exists to avoid, one layer down. Same
     # rule the gsplat lift states for its beads ("share the finest node's
-    # scalar_data_range, not a per-segment one"). An explicit caller value
-    # (already validated by the adder) wins. A UNIFORM scalar needs none: every
-    # level carries the same single value already.
-    field_range = scalar_data_range
-    if field_range is None and per_vertex_scalars is not None:
-        field_range = (
-            float(np.min(per_vertex_scalars)),
-            float(np.max(per_vertex_scalars)),
-        )
+    # scalar_data_range, not a per-segment one"). Same helper the partition
+    # wrapper uses, so the two topologies cannot disagree about what the shared
+    # window is; `validate_mesh_arrays` above is this path's fail-fast scalars
+    # gate, which the helper's docstring requires.
+    field_range = _shared_scalar_window(scalar_data_range, scalars, n_vertices)
 
     parent_node = parent or group
     aprint(
@@ -739,3 +903,295 @@ def add_mesh_substitutive_lod_wrapper_impl(
     )
 
     return lod_group_node
+
+
+def _resolve_mesh_partition(partition: Any) -> tuple[int, str]:
+    """Validate ``partition=`` and return ``(max_elements, rule)``.
+
+    Same vocabulary as the sibling adders (``True`` / ``{max_elements, rule}``)
+    so a caller who knows ``add_points(partition=...)`` already knows this one.
+
+    ``max_elements`` counts **faces**, not vertices. The BSP recurses on face
+    centroids — one triangle is one indivisible unit of the split — so faces are
+    the quantity the cap can actually bound. A part's vertex count is whatever
+    its faces reference (at most ``3 * max_elements``, in practice far less).
+    """
+    from ..partition import DEFAULT_MAX_ELEMENTS
+
+    if partition is True:
+        return DEFAULT_MAX_ELEMENTS, "median"
+    if isinstance(partition, dict):
+        max_elements = int(partition.get("max_elements", DEFAULT_MAX_ELEMENTS))
+        if max_elements < 1:
+            raise ValueError(f"partition max_elements must be >= 1, got {max_elements}")
+        rule = str(partition.get("rule", "median"))
+        if rule not in ("median", "midpoint", "sah"):
+            raise ValueError(
+                f"partition rule must be 'median', 'midpoint', or 'sah'; got {rule!r}"
+            )
+        return max_elements, rule
+    raise TypeError(
+        f"partition must be None, True, or dict; got {type(partition).__name__}"
+    )
+
+
+def _is_broadcast_color(colors: Any) -> bool:
+    """Whether ``colors`` is a uniform RGB(A) sequence rather than per-vertex data.
+
+    Classifies on SHAPE only — a list/tuple of 3 or 4 numeric components — which is
+    the admission test
+    :func:`~luxar.io._compiler.node_common.validate_broadcast_color` applies at the
+    writer. Values (finite, non-negative, alpha in range) are deliberately left to
+    that validator, so a bad uniform color fails with the same message it gets
+    without ``partition=``.
+
+    A per-vertex list of triples fails the component test (its entries are
+    sequences, not numbers) and is gathered normally, as are numpy colors of any
+    shape — the writer refuses a 1-D numpy color outright, so only a list/tuple can
+    be the broadcast form.
+    """
+    if not isinstance(colors, (list, tuple)) or len(colors) not in (3, 4):
+        return False
+    return all(isinstance(c, (int, float, np.integer, np.floating)) for c in colors)
+
+
+def _validate_partition_sources(
+    faces_arr: np.ndarray,
+    n_vertices: int,
+    *,
+    normals: Any,
+    colors: Any,
+    scalars: Any,
+    labels: Any,
+    image_labels: Any,
+) -> None:
+    """Run the plain-leaf write gates against the SOURCE arrays, before the split.
+
+    Extracted whole from :func:`_add_mesh_partition` — the rejections are one
+    cohesive step (everything that must fail before a single index is used to
+    gather), and hoisting them keeps that function under the C901 limit the
+    complexity ratchet enforces. Order is load-bearing and preserved exactly:
+    ``image_labels`` first, then faces, then the per-vertex channels in
+    ``normals``, ``colors``, ``scalars``, ``labels`` order — a call that trips
+    several is told about the same one it was told about before.
+    """
+    from ....io._compiler.node_common import (
+        validate_broadcast_color,
+        validate_scalars_preflight,
+    )
+    from ....validation.base import (
+        validate_colors_for_writing,
+        validate_faces_for_writing,
+        validate_labels_for_writing,
+        validate_normals_for_writing,
+    )
+
+    if image_labels is not None:
+        raise ValueError(
+            "image_labels is not supported alongside partition=. It is a "
+            "whole-node image-to-label mapping with no per-part meaning, and "
+            "splitting it would silently change what each part's labels index. "
+            "Decompose manually or omit image_labels."
+        )
+
+    # Validate the ORIGINAL indices before they are used to gather anything. On
+    # the plain-leaf path the writer does this, but the split runs first and
+    # every one of these failures is silent or unrecognisable here: numpy WRAPS a
+    # negative index while gathering, so `-1` would quietly become the last
+    # vertex and write a triangle the author never wound, and an out-of-range or
+    # float index surfaces as a bare IndexError from inside the centroid gather
+    # instead of the guided message the same input gets without partition=.
+    validate_faces_for_writing(faces_arr, n_vertices)
+
+    # Same argument for the per-VERTEX channels, and the failure here is worse
+    # than a bad message: `slice_optional_array` gathers only when the leading
+    # length matches the vertex count and otherwise passes the value through
+    # WHOLE, which is exactly what makes a uniform RGB triple or a colormap name
+    # work. A wrong-length per-vertex array takes the same pass-through branch —
+    # and if its length happens to equal a part's OWN vertex count, that part's
+    # writer accepts it and silently pairs the values with the wrong vertices.
+    # (Two disconnected triangles: six source vertices, two three-vertex parts,
+    # three normals — rejected outright without `partition=`, accepted by both
+    # parts with it.) So run the plain-leaf gate against the SOURCE count first;
+    # a given input then fails identically whether or not it is partitioned.
+    if normals is not None:
+        validate_normals_for_writing(normals, n_vertices)
+    if isinstance(colors, np.ndarray):
+        validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
+    elif isinstance(colors, (list, tuple)):
+        validate_broadcast_color(colors, "colors")
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_vertices)
+    if labels is not None:
+        validate_labels_for_writing(labels, n_vertices)
+
+
+def _add_mesh_partition(
+    group: "Group",
+    *,
+    name: str,
+    vert_arr: np.ndarray,
+    faces_arr: np.ndarray,
+    partition: Any,
+    normals: Any,
+    normal_dims: Optional[Sequence[int]],
+    colors: Any,
+    scalars: Any,
+    shading: Optional[str],
+    double_sided: bool,
+    labels: Any,
+    image_labels: Any,
+    parent_node: "Node",
+    extend_to_all: Optional[Union[List[str], str]],
+    scalar_data_range: Optional[tuple[float, float]] = None,
+    **attrs: Any,
+) -> Optional["Group"]:
+    """Write a kind=partition wrapper with one independent Mesh child per part.
+
+    Returns ``None`` when the BSP could not split into more than one part, so the
+    caller falls through to a plain single-leaf write.
+
+    Unlike the sibling wrappers this cannot slice its inputs: a part's faces
+    reference a shared vertex table, so each part gathers and renumbers its own
+    vertices (see :mod:`luxar.mesh.split`). Boundary vertices are therefore
+    duplicated across parts — that is what makes each part independently
+    drawable, and it is invisible in the render because both copies carry
+    identical position and identical stored normal.
+
+    Per-VERTEX attributes (``normals`` / ``colors`` / ``scalars`` / ``labels``)
+    are gathered through the part's ``vertex_index``; per-face data has no
+    attribute today.
+
+    Every part is handed ONE display window as ``_scalar_data_range=`` — the
+    caller's explicit one, or else :func:`_shared_scalar_window`'s window over the
+    whole field — because the viewer windows a node's colormap on that node's OWN
+    stamped ``scalar_data_range``, so a per-part subset min/max renders the same
+    scalar value as a different colour either side of a BSP cut. The window is
+    shared VERBATIM only when it contains the field's range: ``write_scalars``
+    widens (never narrows) the pair onto each node's own data, since it is also
+    that node's quantization range, so a deliberately narrower window still comes
+    out per-part.
+    """
+    from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
+    from ..partition import (
+        median_bsp_partition,
+        midpoint_bsp_partition,
+        sah_bsp_partition,
+        warn_if_oversized_single_part,
+    )
+
+    max_elements, rule = _resolve_mesh_partition(partition)
+
+    # No `warn_if_partition_needs_more_dims` call: it guards against <2 spatial
+    # dims, and add_mesh_impl has already refused those outright with a
+    # mesh-specific message (a 1D triangle encloses no area). Unreachable here.
+
+    n_vertices = int(vert_arr.shape[0])
+    _validate_partition_sources(
+        faces_arr,
+        n_vertices,
+        normals=normals,
+        colors=colors,
+        scalars=scalars,
+        labels=labels,
+        image_labels=image_labels,
+    )
+
+    # Derived here, AFTER that gate (it is the fail-fast scalars check the helper
+    # requires), and before the split: an explicit window is only the minority
+    # case, and without a derived one the DEFAULT `scalars=` call has every part
+    # stamping its own subset min/max — a colour discontinuity at every cut, plus
+    # a degenerate `[v, v]` (viewer: LUT midpoint) for any part whose subset is
+    # constant.
+    part_range = _shared_scalar_window(scalar_data_range, scalars, n_vertices)
+
+    # A uniform RGB(A) list/tuple is the one leaf parameter whose OWN length can
+    # collide with the vertex count, and mesh is the geometry where that collision
+    # is reachable: every part holds at least three vertices (a triangle's worth),
+    # so a 4-vertex source with an RGBA color satisfies `slice_optional_array`'s
+    # length test and is gathered as if its four channels were four vertex rows.
+    # Each part then receives a different rotated 3-slice of the components —
+    # SILENTLY, because a 3-element result is itself a valid uniform RGB. Classify
+    # the broadcast form up front so every part gets the color the caller wrote.
+    uniform_color = _is_broadcast_color(colors)
+
+    faces2d = faces_arr.reshape(-1, 3)
+    centroids = face_centroids(vert_arr, faces2d)
+    if rule == "sah":
+        face_parts = sah_bsp_partition(centroids, max_elements)
+    elif rule == "midpoint":
+        face_parts = midpoint_bsp_partition(centroids, max_elements)
+    else:
+        face_parts = median_bsp_partition(centroids, max_elements)
+
+    warn_if_oversized_single_part(
+        len(face_parts),
+        int(face_parts[0].size) if face_parts else 0,
+        max_elements,
+        name,
+    )
+    if len(face_parts) <= 1:
+        return None
+
+    parts = split_mesh_by_faces(faces2d, face_parts)
+
+    wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
+    leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+
+    wrapper = parent_node.add_partition_group(
+        name=name,
+        display_type="mesh",
+        max_elements=max_elements,
+        **wrapper_attrs,
+    )
+
+    aprint(
+        f"  ✂️  Partitioned mesh '{name}' into {len(parts)} parts via BSP "
+        f"(max_elements={max_elements:,} faces, "
+        f"face counts={[int(p.faces.shape[0]) for p in parts]}, "
+        f"vertex duplication x{duplication_factor(parts):.3f})"
+    )
+
+    for i, part in enumerate(parts):
+        # `slice_optional_array` is the same helper the sibling wrappers use, and
+        # it is the right one here for the same reason: it gathers ONLY when the
+        # value's leading length matches the element count, so a per-vertex array
+        # follows its vertices while a uniform RGB triple or a colormap name is
+        # handed to every part untouched. `labels` is per-VERTEX (hover tooltips),
+        # so it is gathered too — passing it whole would give every part V labels
+        # for its own Vi vertices. `colors` is the one exception: a broadcast
+        # RGB(A) sequence is classified by SHAPE above rather than by length, since
+        # its length can coincide with the vertex count (see `uniform_color`).
+        take = part.vertex_index
+        wrapper.add_mesh(
+            name=f"part_{i}",
+            vertices=vert_arr[take],
+            faces=part.faces,
+            normals=slice_optional_array(normals, take, n_vertices),
+            normal_dims=normal_dims,
+            colors=(
+                colors
+                if uniform_color
+                else slice_optional_array(colors, take, n_vertices)
+            ),
+            scalars=slice_optional_array(scalars, take, n_vertices),
+            _scalar_data_range=part_range,
+            shading=shading,
+            double_sided=double_sided,
+            labels=slice_optional_array(labels, take, n_vertices),
+            image_labels=None,
+            extend_to_all=extend_to_all,
+            # dim_order / fill were applied to vert_arr upstream — re-applying
+            # per part would permute already-permuted coordinates.
+            dim_order=None,
+            fill=None,
+            # Explicit no-partition, so a part can never recurse into another
+            # partition (mirrors the `False` sentinel the sibling wrappers use).
+            partition=False,
+            **leaf_attrs,
+        )
+
+    # Union of the parts' bounds == the whole input's bounds, computed straight
+    # from the source rather than round-tripped through the children's attrs.
+    wrapper._persist_attr("position_bounds", position_bounds_from_array(vert_arr))
+    return wrapper

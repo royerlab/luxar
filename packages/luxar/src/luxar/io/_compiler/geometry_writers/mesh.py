@@ -4,7 +4,12 @@ Structurally the simplest of the four geometry writers, and deliberately so.
 Mesh has no spatial ordering (``ordering`` is always ``"none"`` in v1 — the
 loader is whole-node, so there is nothing for a chunk index to skip), no primary
 size scalar (a triangle's extent comes from its own vertices, not a per-element
-radius/width/covariance), and no LOD or partition path. What remains is: encode
+radius/width/covariance), and neither an LOD nor a partition path *of its own*:
+``add_mesh(substitutive_lod=...)`` decimates and ``add_mesh(partition=...)``
+splits the surface upstream, and this writer just sees one independent leaf per
+level or per part. (There is no ADDITIVE ladder for any writer to serve — a
+prefix of an index buffer is a holed surface, not a coarse one; see
+``MESH_NODE_SPEC.md`` §9.) What remains is: encode
 ``vertices`` + ``faces``, encode the optional per-vertex channels, stamp the
 attrs.
 
@@ -77,9 +82,9 @@ def _is_unwelded(faces: NDArray[np.integer], n_vertices: int) -> bool:
 def _mesh_authoring_warning_key(ctx: GeometryWriteCtx, path: str) -> str:
     """Collapse partition leaves to their logical parent warning key.
 
-    Mesh cannot be partitioned in v1, so this cannot fire today; it mirrors the
-    lines writer so the two stay diffable, and so the behaviour is already right
-    if a partition path lands later.
+    A partitioned mesh writes one leaf per part, so the lint must warn once for
+    the whole object rather than once per leaf. Mirrors the lines writer so the
+    two stay diffable.
     """
     parent_path, separator, _leaf = path.rpartition("/")
     if separator and parent_path in ctx.store:

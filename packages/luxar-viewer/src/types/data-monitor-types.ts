@@ -465,15 +465,16 @@ export interface SceneGraphNode {
   kind?: NodeKind;
   /**
    * Resolved geometry `display_type` for a specialized group — the type the user
-   * logically sees the group as. Absent for plain groups and leaves (use `type`).
+   * logically sees the group as. Absent for plain groups and leaves (use `type`
+   * there).
    *
-   * Spelled out rather than `GeometryTypeName`: this is the union of the
-   * LOD-capable and partition-capable subsets (it mirrors
-   * `LODGroupMetadata.display_type` and `PartitionGroupMetadata.display_type`).
-   * `mesh` is here because it is LOD-capable — it is NOT partition-capable, and
-   * `PartitionGroupMetadata.display_type` deliberately still excludes it. Widen
-   * this only after declaring the capability in `types/geometry-capabilities`,
-   * never the other way round.
+   * Spelled out rather than `GeometryTypeName`: this is the LOD/partition-CAPABLE
+   * subset of the vocabulary — the UNION of `LODGroupMetadata.display_type` and
+   * `PartitionGroupMetadata.display_type`, since one field carries both kinds. So
+   * do not widen it when a geometry type is added — declare that type's `lod` /
+   * `partition` capabilities in `types/geometry-capabilities`, and extend this
+   * union only if one of them comes out `true`. `'mesh'` is here on both counts:
+   * its `lod` and `partition` flags are now both true.
    */
   displayType?: 'points' | 'lines' | 'gsplats' | 'mesh';
   /** For `kind=lod` groups: number of substitutive levels (child count). */

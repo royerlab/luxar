@@ -418,8 +418,15 @@ class TestAddPartitionGroup:
             grp.add_gsplats("part_1", centers=c, amplitudes=a, cholesky_factors=ch)
             validate_partition_group(grp)  # no raise
 
-    def test_validate_mixed_children_raises(self, tmp_path) -> None:
-        """A child whose resolved display_type differs from the parent must fail."""
+    def test_mixed_children_are_refused_at_add_time(self, tmp_path) -> None:
+        """The adders enforce homogeneity themselves, before anything is written.
+
+        ``validate_partition_group`` has no production caller, so this is the
+        check that actually runs: a leaf whose geometry type contradicts the
+        parent's declared ``display_type`` never reaches disk. Nothing downstream
+        would catch it — the finalize pass only back-fills a MISSING
+        ``display_type``, so a mismatched declaration survives to the viewer.
+        """
         c, a, ch = TestAddGSplatsPartition._make_gsplats(n=10)
         pos = np.zeros((5, 3), dtype=np.float32)
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
@@ -428,7 +435,25 @@ class TestAddPartitionGroup:
                 "bad", display_type="gsplats", max_elements=100
             )
             grp.add_gsplats("part_0", centers=c, amplitudes=a, cholesky_factors=ch)
-            grp.add_points("part_1", pos)
+            with pytest.raises(ValueError, match="kind=partition group declared"):
+                grp.add_points("part_1", pos)
+
+    def test_validate_mixed_children_raises(self, tmp_path) -> None:
+        """A child whose resolved display_type differs from the parent must fail.
+
+        The mismatch is introduced by re-declaring the PARENT after the children
+        are written, because the adders now refuse the mismatched child outright
+        (see above) — so an already-written store is the only way this tree still
+        occurs, and it is exactly the case a whole-tree validator is for.
+        """
+        c, a, ch = TestAddGSplatsPartition._make_gsplats(n=10)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            grp = scene.add_partition_group(
+                "bad", display_type="gsplats", max_elements=100
+            )
+            grp.add_gsplats("part_0", centers=c, amplitudes=a, cholesky_factors=ch)
+            grp._persist_attr("display_type", "points")
             with pytest.raises(ValueError, match="non-homogeneous"):
                 validate_partition_group(grp)
 

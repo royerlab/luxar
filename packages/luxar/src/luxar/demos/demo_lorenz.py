@@ -165,6 +165,7 @@ def generate_lorenz_attractor(
                 opacity=0.9,
                 blending_mode="additive",
                 intensity=0.0625,
+                layer=True,
             )
 
             # Overlay annotations

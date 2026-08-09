@@ -22,6 +22,7 @@ from ..compositing import (
     sync_custom_colormap_attr,
 )
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
+from ..partition import reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -55,6 +56,7 @@ def add_gsplats_impl(
 
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
+        reject_mismatched_partition_parent(parent or group, "gsplats", name)
         reject_lines_only_join("gsplats", name, attrs)
 
         scene = group._find_scene()

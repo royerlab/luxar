@@ -89,18 +89,24 @@ def test_established_types_support_lod_and_partition(geometry_type: str) -> None
     assert supports_partition(geometry_type)
 
 
-def test_mesh_supports_lod_but_not_partition() -> None:
-    """Mesh gained a substitutive ladder; the spatial split is still missing.
+def test_mesh_supports_both_lod_and_partition() -> None:
+    """Mesh's row now says yes twice, and each flag says yes for its own reason.
 
-    The asymmetry is the point, and it is why the two flags are separate columns:
-    the ADDITIVE prefix ladder remains impossible for a surface, but ``lod`` never
-    gated that flavour — it gates ``kind=lod`` groups, whose levels REPLACE one
-    another, and mesh decimation (``luxar.mesh.decimate``) is the producer that
-    was missing. ``partition`` is untouched: a BSP cut still needs boundary
-    vertices duplicated per part (MESH_NODE_SPEC.md §9).
+    Pinned by name because this is the row that keeps the table honest — each flag
+    was earned by a separate producer, and neither implies the other.
+
+    ``lod`` is true for the SUBSTITUTIVE mechanism ONLY: a ``kind=lod`` group holds
+    levels that REPLACE one another, and mesh decimation
+    (``luxar.mesh.decimate``) is the producer that was missing. The ADDITIVE prefix
+    ladder is still impossible for a surface — a prefix of an index buffer is a
+    holed surface, not a coarse one — and this flag never gated that flavour; it is
+    refused in ``adders/mesh.py`` instead.
+
+    ``partition`` is true because a BSP cut runs BETWEEN faces and each part
+    re-indexes its own vertices (``luxar.mesh.split``, spec §9.2).
     """
     assert supports_lod("mesh")
-    assert not supports_partition("mesh")
+    assert supports_partition("mesh")
 
 
 @pytest.mark.parametrize(

@@ -169,8 +169,9 @@ coupling — they take a `Scene` reference and return pure NumPy arrays):
 
 - **[`adders/`](adders/README.md)** — per-leaf `add_<type>_impl` bodies for
   Points, Lines, GSplats, and Mesh, plus their partition- and multi-LOD-wrapper
-  helpers (mesh has neither — it refuses both). `group.py`'s public methods are
-  thin delegates over these.
+  helpers (mesh has a partition wrapper and a substitutive-LOD one, but no
+  multi-LOD/additive wrapper — it still refuses the additive prefix ladder).
+  `group.py`'s public methods are thin delegates over these.
 - **[`gsplats_pipeline/`](gsplats_pipeline/README.md)** — the high-level gsplats
   write path backing `add_gsplats_from_data` / `_from_file` / `_from_volume`;
   resolves the substitutive and additive LOD axes and routes to a flat node, a
