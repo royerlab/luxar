@@ -26,7 +26,8 @@ import { TypeScriptFallback } from '../../../wasm/typescript';
 /**
  * A module stub that answers EVERY property with a function, minus the
  * explicitly withheld/overridden ones. Built as a Proxy so the required-export
- * list stays single-sourced in `wasm/index.ts` instead of being copied here.
+ * list stays single-sourced in `wasm/required-exports.ts` instead of being
+ * copied here.
  */
 function stubModule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return new Proxy(overrides, {

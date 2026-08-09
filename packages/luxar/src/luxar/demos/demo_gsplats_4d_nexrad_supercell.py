@@ -175,11 +175,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import require_module
-from luxar.encoding import EncodingMode
-from luxar.gsplats.gsplat_data import GSplatData
-from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
-from luxar.utils.demos import (
+from luxar.demos import (
     cached_download,
     detect_device,
     launch_viewer,
@@ -187,8 +183,12 @@ from luxar.utils.demos import (
     parse_demo_flags,
     parse_int_arg,
     print_data_provenance,
+    require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.encoding import EncodingMode
+from luxar.gsplats.gsplat_data import GSplatData
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================

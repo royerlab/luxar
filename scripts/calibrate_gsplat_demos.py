@@ -2,8 +2,8 @@
 """Run ``luxar gsplat cal`` on every gsplat demo's preprocessed volume(s).
 
 Pipeline per demo:
-  1. Import the demo module by file path (the ``luxar`` package overrides
-     ``luxar.demos`` so we go around it) with a sanitized sys.argv.
+  1. Import the demo module by file path under a private module name, with a
+     sanitized sys.argv (see ``_import_demo``).
   2. Call the demo's own data loader to get the same preprocessed volume(s)
      the demo would fit.
   3. Persist each preprocessed sample as a ``.npy`` so the CLI can load it.
@@ -89,12 +89,17 @@ def _clean_argv() -> AbstractContextManager[None]:
 
 
 def _import_demo(file_stem: str) -> ModuleType:
-    """Import a demo module by loading its file directly.
+    """Import a demo module by loading its file directly, under a private name.
 
-    ``luxar/__init__.py`` overrides ``sys.modules['luxar.demos']`` to point at
-    ``luxar/utils/demos.py``, which shadows the actual demos package.  To get
-    at the demo files we have to bypass the regular import machinery and load
-    them by absolute path with a fresh, namespaced module name.
+    Historical note: ``luxar/__init__.py`` used to override
+    ``sys.modules['luxar.demos']`` to point at ``luxar/utils/demos.py``, which
+    shadowed the real demos package, so a normal import could not reach the demo
+    files at all. That alias is long gone — ``import luxar.demos.demo_x`` works
+    — but the by-path load is kept because it binds each demo to a private
+    ``_luxar_demo_*`` module name: several demos parse flags at module scope, so
+    they are executed here under a sanitized ``sys.argv`` (see
+    ``_clean_argv``), and that must never be what a later real
+    ``luxar.demos.*`` import finds cached in ``sys.modules``.
     """
     file_path = DEMOS_DIR / f"{file_stem}.py"
     if not file_path.exists():

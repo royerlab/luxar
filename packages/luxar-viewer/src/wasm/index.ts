@@ -22,6 +22,7 @@
  * The same interface is provided regardless of where it's used.
  */
 
+import { REQUIRED_WASM_EXPORTS } from './required-exports';
 import { TypeScriptFallback } from './typescript';
 import type { WasmModule } from './types';
 import { log, Modules } from '../utils/log';
@@ -44,22 +45,10 @@ export type { WasmModule } from './types';
 let wasmJsUrlOverride: string | undefined;
 
 /**
- * Exports added after the initial kernel set. A stale gitignored `public/wasm/`
- * build can still import and initialise successfully while missing them,
- * otherwise failing later at first use — where the symptom is an opaque
- * "x is not a function" rather than "your WASM build is old".
- *
- * - `compute_joint_codes` — added with the line cap-suppression kernel.
- * - `mesh_vertex_visibility_mask` / `compact_visible_faces` — added with the
- *   mesh culling kernels.
- *
- * Add a name here when you add a kernel, so a stale build is diagnosed rather
- * than silently half-working — and REMOVE it when you rename or delete that
- * kernel, or every site below reports a freshly built artifact as "stale" and
- * sends the reader to rebuild it in a loop. Only free functions belong here:
- * the names are matched against the raw `.wasm` exports as well as the shim's,
- * and wasm-bindgen mangles anything else (a struct method exports as
- * `<struct>_<method>`).
+ * Reject a module that imported and initialised fine but predates one of the
+ * `REQUIRED_WASM_EXPORTS` kernels. The list itself lives in
+ * `./required-exports.ts` because the vitest global setup shares it; see the
+ * comment there for why it is a separate module.
  *
  * `make build-wasm` is the fix for a genuinely stale build, but the two caller
  * classes react to a failed check very differently:
@@ -68,16 +57,6 @@ let wasmJsUrlOverride: string | undefined;
  * - the test/benchmark loader (`src/tests/helpers/wasm-artifact.ts`) lets it
  *   throw — there is no fallback there, and failing loudly by name is the whole
  *   point.
- */
-const REQUIRED_WASM_EXPORTS = [
-  'compute_joint_codes',
-  'mesh_vertex_visibility_mask',
-  'compact_visible_faces',
-] as const satisfies readonly (keyof WasmModule)[];
-
-/**
- * Reject a module that imported and initialised fine but predates one of the
- * `REQUIRED_WASM_EXPORTS` kernels.
  *
  * {@link initWasm} calls this before handing the module out, so the runtime
  * path is covered. Tests, benchmarks and tools that want the compiled kernels

@@ -13,8 +13,13 @@
  * ## Why the staleness assertion is never inside the load `catch`
  *
  * `public/wasm/` is gitignored build output, so a checkout can hold a build that
- * imports and initialises fine while predating a newer kernel.
- * {@link assertRequiredWasmExports} names that case; it must be able to THROW.
+ * imports and initialises fine while predating a newer kernel. A vitest run
+ * mostly does not get that far — `global-setup.ts` scans the built shim for the
+ * same required exports and REBUILDS a stale artifact before any test loads it —
+ * so this check is the diagnosis for what setup cannot see: a MIXED build whose
+ * shim declares every name while the `.wasm` behind it does not, and any caller
+ * that runs outside that setup (benchmarks, tools).
+ * {@link assertRequiredWasmExports} names those cases; it must be able to THROW.
  * Inside the catch that downgrades a load failure to a soft skip, its "missing
  * required export" message would be flattened into the generic "failed to load"
  * console line, the module would stay `null`, and every case below would then

@@ -390,6 +390,14 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       );
     }
 
+    // Publish the visible ranges only for a node that declares a per-element
+    // label CSR — they are the loader's half of the slot → on-disk element-ID
+    // map picking resolves labels through (issue #1423), and nothing else
+    // reads them. Ungated, every gsplats node would drag the array through
+    // each SliceCache snapshot for no reader. `LabelLoader.hasLabels()` keys
+    // on the same two attrs; the Points twin gates identically.
+    const wantsElementIds = attrs.has_labels === true || attrs.has_image_labels === true;
+
     // Load directly into the accumulator buffers (zero allocations).
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
       // Capture locally: dispose() (dataset switch) can null + dispose
@@ -483,7 +491,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
       // Return from accumulator (subarrays, zero copy!)
       // NO fill() needed - data already in buffers!
-      return accumulator.getData(totalSplats);
+      // `getData` mints a FRESH object literal every call, so stamping the
+      // visible ranges onto it cannot mutate a previously returned payload.
+      const data = accumulator.getData(totalSplats);
+      if (wantsElementIds) data.ranges = splatRanges;
+      return data;
     }
 
     // Fallback: Load to separate arrays (allocations when accumulator disabled)
@@ -514,6 +526,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       colorComponents: this.colorComponents,
       splatCount: totalSplats,
       ndim: attrs.ndim,
+      ...(wantsElementIds ? { ranges: splatRanges } : {}),
     };
   }
 

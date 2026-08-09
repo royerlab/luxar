@@ -1027,7 +1027,10 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
             tsOut.centers,
             tsOut.cholesky,
             tsOut.amplitudes,
-            tsOut.colors
+            tsOut.colors,
+            // Empty = the source-index recording opt-out (the benchmark
+            // measures the production non-picking path).
+            new Uint32Array(0)
           );
         },
         CONFIG.iterations,
@@ -1053,7 +1056,8 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
             wasmOut.centers,
             wasmOut.cholesky,
             wasmOut.amplitudes,
-            wasmOut.colors
+            wasmOut.colors,
+            new Uint32Array(0)
           );
         },
         CONFIG.iterations,

@@ -120,7 +120,7 @@ const blob = await app.screenshot({ format: 'png' }); // 'png' | 'webp' | 'jpeg'
 const off = app.on('dataset-loaded', ({ src }) => console.log('loaded', src));
 app.on('dataset-error', ({ src, error }) => console.error(src, error));
 app.on('dimensions-changed', (dims) => updateMyUI(dims));
-app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex } | null
+app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hitNodeName } | null
 // off();
 ```
 
@@ -129,7 +129,10 @@ app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex } | 
 > (i.e. before `init()` / `switchDataset()`) — the GPU picking pipeline is
 > provisioned at load time only when a listener exists, so picking stays
 > zero-cost for pages that never consume it. Hover-driven; click-to-select is
-> a planned follow-up.
+> a planned follow-up. `nodeName` is the user-facing layer (the outermost
+> `kind=partition` wrapper when there is one), while `elementIndex` is local to
+> the leaf actually hit — index it against `hitNodeName`, which equals
+> `nodeName` when the node is not partitioned.
 
 ### What's NOT supported in v1
 

@@ -793,6 +793,8 @@ describe('WASM vs TypeScript Comparison', () => {
         ndim: number;
         splatCount: number;
         colorComponents?: number;
+        /** Ask both backends to record the surviving source indices (#1423). */
+        recordSourceIndices?: boolean;
       }
     ): {
       count: number;
@@ -800,6 +802,7 @@ describe('WASM vs TypeScript Comparison', () => {
       chol: Float32Array;
       amps: Float32Array;
       cols: Float32Array;
+      src: Uint32Array;
     } => {
       const n = args.splatCount;
       const k = args.colorComponents ?? 3;
@@ -807,6 +810,8 @@ describe('WASM vs TypeScript Comparison', () => {
       const chol = new Float32Array(n * 6);
       const amps = new Float32Array(n);
       const cols = new Float32Array(n * k);
+      // Empty = the recording opt-out; a real n-long array turns it on.
+      const src = new Uint32Array(args.recordSourceIndices ? n : 0);
       const count = mod.project_gsplats_nd_to_3d(
         args.positions,
         args.cholesky,
@@ -824,9 +829,10 @@ describe('WASM vs TypeScript Comparison', () => {
         centers,
         chol,
         amps,
-        cols
+        cols,
+        src
       );
-      return { count, centers, chol, amps, cols };
+      return { count, centers, chol, amps, cols, src };
     };
 
     it.skipIf(!wasmFilesExist)(
@@ -867,6 +873,50 @@ describe('WASM vs TypeScript Comparison', () => {
         expect(
           arraysEqual(w.cols.subarray(0, w.count * 3), ts.cols.subarray(0, ts.count * 3))
         ).toBe(true);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d matches TS (recorded source indices under compaction)',
+      () => {
+        // The map picking resolves on-disk element indices through (#1423) is
+        // built from these, so the two backends must agree exactly — an
+        // off-by-one on either side reports a neighbour's label.
+        const ndim = 4;
+        const splatCount = 6;
+        const one = [2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0];
+        const args = {
+          // Splats 1 and 4 sit far off-slice in the hidden dim (attenuated
+          // out); splat 3 is discrete-gated. Survivors: 0, 2, 5 — a
+          // NON-CONTIGUOUS set, the only shape where slot ≠ source index.
+          // prettier-ignore
+          positions: new Float32Array([
+            0, 0, 0, 0,
+            1, 1, 1, 50,
+            2, 2, 2, 0.2,
+            3, 3, 3, 0,
+            4, 4, 4, 50,
+            5, 5, 5, 0.1,
+          ]),
+          cholesky: new Float32Array(Array.from({ length: splatCount }, () => one).flat()),
+          amplitudes: new Float32Array([1.0, 1.0, 0.9, 1.0, 1.0, 0.7]),
+          colors: new Float32Array(splatCount * 3).fill(0.5),
+          discreteVisibility: new Uint8Array([1, 1, 1, 0, 1, 1]),
+          slicePosition: new Float32Array([0, 0, 0, 0]),
+          continuousHiddenDims: new Uint32Array([3]),
+          displayDims: new Uint32Array([0, 1, 2]),
+          ndim,
+          splatCount,
+          recordSourceIndices: true,
+        };
+        const ts = runFused(tsModule, args);
+        const w = runFused(wasmModule!, args);
+        expect(w.count).toBe(ts.count);
+        expect(w.count).toBe(3);
+        expect(Array.from(w.src.subarray(0, w.count))).toEqual([0, 2, 5]);
+        expect(Array.from(w.src.subarray(0, w.count))).toEqual(
+          Array.from(ts.src.subarray(0, ts.count))
+        );
       }
     );
 
@@ -1904,7 +1954,8 @@ describe('WASM vs TypeScript Comparison', () => {
           centers,
           chol,
           amps,
-          cols
+          cols,
+          new Uint32Array(0)
         );
         return { count, centers, chol };
       };
