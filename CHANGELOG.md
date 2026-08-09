@@ -6,6 +6,45 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### The hover label lookup finds the CSR again on a partitioned layer (#1415)
+
+Authoring a layer with `partition=` and `labels=` produced a silently empty
+tooltip on every hover, for all four geometry types. The pick-result handler
+resolved the hit's outermost `kind=partition` ancestor and then used that wrapper
+path for everything — including the two label lookups. A wrapper is a bare group:
+`add_points` / `add_lines` / `add_gsplats` / `add_mesh` slice `labels` per part
+and write the CSR (`label_offsets` / `label_bytes`) onto each `part_<i>` leaf, so
+the loader opened a path that does not exist, cached an empty label array for the
+session, and returned `null` forever after. Nothing raised — the miss is demoted
+to an info log, because an unlabelled node is the ordinary case.
+
+The wrapper path was not wrong, only overloaded. It is the right answer for the
+two things it was picked for — the selection event's `nodeName` and the overlay's
+title, mirroring how the layers panel treats a partition wrapper as the layer the
+user sees — so the handler now resolves two paths instead of one: the wrapper is
+what gets *reported*, the hit leaf is what gets *queried*. The lookup therefore
+lands on the node that actually owns the CSR. Of the two queries only the text
+label is reachable today — all four adders refuse `image_labels` alongside
+`partition=`, so no `part_<i>` ever owns an image CSR — and the image lookup
+moves with it for consistency, so the split is one rule rather than two if that
+combination is ever allowed. That is the whole fix wherever the pick's element id
+already is the on-disk index the CSR is keyed by — which it now is for Points and
+GSplats, both of which resolve a labelled node's slot through a published slot →
+on-disk map (or trivially, where the identity holds and none is published), and
+for Mesh, which never needed one because its `gl_VertexID` is the on-disk vertex
+ordinal. Lines resolves nothing yet, so there the id remains a visible-buffer
+storage slot — a per-*segment* one, while the lines CSR is per *vertex*, so the
+wrong text lands in the tooltip already on a plain 3D layer with nothing hidden,
+on a partitioned layer and a flat one alike; chunk culling and compaction only
+shift it further. The partitioned-layer miss was itself pre-existing too, and
+independent of the mesh partition work that surfaced it.
+
+The public `selection` embedder event grew a third field, `hitNodeName`, carrying
+that hit leaf. `nodeName` and `elementIndex` keep their meanings — the layer and
+an index local to the leaf — which under a partition are not joinable; embedders
+that need to resolve the element index against the store should index against
+`hitNodeName`, which equals `nodeName` whenever there is no partition wrapper.
+
 #### Tooling — the demos converge on one import spelling (#1304)
 
 The shared demo plumbing (`launch_viewer`, `parse_demo_flags`, `cached_download`,
@@ -65,9 +104,9 @@ keeps reporting the storage slot, unchanged. It is also deliberately stripped ac
 additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
 so no single map is meaningful (the loader factory now also clears the label flags on
 each sub-LOD, so it is never built there); per-level label resolution is #1422. A
-`kind=partition` points layer needs one more fix to hover correctly — the handler still
-resolves labels against the outermost wrapper path rather than the leaf that owns the
-CSR (#1415, in flight separately); the two compose.
+`kind=partition` points layer composes with the fix above (#1415): the handler now
+resolves labels against the hit `part_<i>` leaf rather than the outermost wrapper, and
+that leaf is both the node whose sliced CSR is read and the node this map is stamped on.
 
 Points only. GSplats (#1423) and Lines (#1424) have the same class of bug; gsplats
 needed a Rust WASM kernel change and is fixed in the entry below, while lines carries a

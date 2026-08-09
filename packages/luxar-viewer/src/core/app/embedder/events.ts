@@ -47,22 +47,48 @@ export interface ScreenshotOptions {
   includeOverlays?: boolean;
 }
 
-/** A picked element, or `null` when the hover/selection is cleared. */
+/**
+ * A picked element, or `null` when the hover/selection is cleared.
+ *
+ * Under a `kind=partition` layer `nodeName` and `elementIndex` are reported
+ * against different nodes and are NOT directly joinable: `nodeName` is the
+ * outermost partition wrapper (the user-facing layer), while `elementIndex` is
+ * local to the `part_<i>` leaf that was actually hit. Use `hitNodeName` — the
+ * leaf the index belongs to — to resolve the element; it equals `nodeName`
+ * whenever there is no partition wrapper.
+ */
 export interface SelectionPayload {
-  /** Scene-node (zarr path) of the picked element. */
+  /**
+   * Scene-node (zarr path) of the picked layer — the outermost
+   * `kind=partition` wrapper when the hit sits under one, otherwise the hit
+   * node itself.
+   */
   nodeName: string;
   /**
-   * Index of the picked element within that node.
+   * Index of the picked element within the *hit leaf* — under a partition
+   * that is the `part_<i>` leaf, not `nodeName`. Index it against
+   * `hitNodeName`.
    *
-   * This is the ON-DISK element index (the one the node's arrays and its
-   * label CSR are keyed by) wherever the loader could publish a slot →
-   * on-disk map — today: a Points node declaring `has_labels` /
-   * `has_image_labels`. Otherwise it is the element's slot in the buffer
-   * that reached the GPU, which after spatial range loading or nD
-   * compaction is NOT the on-disk index. See
+   * This is the ON-DISK element index (the one the leaf's arrays and its
+   * label CSR are keyed by) wherever the node can resolve one — through a
+   * published slot → on-disk map, or trivially where the identity already
+   * holds and no map is published. Today: a Points or GSplats node
+   * declaring `has_labels` / `has_image_labels`, and Mesh, whose
+   * `gl_VertexID` already is the on-disk ordinal. Otherwise it is the
+   * element's slot in the buffer that reached the GPU, which after
+   * spatial range loading or nD compaction is NOT the on-disk index — and
+   * on Lines it is a per-segment slot against a per-vertex CSR whatever
+   * the slicing. See
    * `rendering/picking/picking-system/element-id-map.ts`.
    */
   elementIndex: number;
+  /**
+   * Scene node (zarr path) `elementIndex` is local to — the `part_<i>` leaf
+   * actually hit under a `kind=partition` layer, and the node itself
+   * otherwise. This is the path an embedder should index against; `nodeName`
+   * is for display.
+   */
+  hitNodeName: string;
 }
 
 /**
