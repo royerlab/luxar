@@ -862,6 +862,34 @@ class TestPruneSupersededSnapshots:
         assert "20250201.as-rel2.txt.bz2" not in names
         assert "20250301.as-rel2.txt.bz2" not in names
 
+    def test_an_empty_snapshot_does_not_occupy_a_keep_slot(
+        self, tmp_path: Path
+    ) -> None:
+        # A zero-byte snapshot is not something any run could fall back on:
+        # ``_snapshot_present`` and ``download_file`` both refuse it. Letting its
+        # date hold a slot in the keep window would spend the window on junk and
+        # delete the newest release the user can actually roll back to.
+        cache = tmp_path / "caida"
+        self._populate(cache)
+        for name in ("20250401.as-rel2.txt.bz2", "20250401.as-org2info.txt.gz"):
+            (cache / name).write_bytes(b"")
+
+        demo._prune_superseded_snapshots(
+            cache,
+            keep=2,
+            current=("20250301.as-rel2.txt.bz2", "20250301.as-org2info.txt.gz"),
+        )
+
+        names = {p.name for p in cache.iterdir()}
+        # 20250301 (current) and 20250201 are the two newest USABLE releases...
+        assert "20250301.as-rel2.txt.bz2" in names
+        assert "20250201.as-rel2.txt.bz2" in names
+        # ...the empty pair is superseded and swept with everything else,
+        assert "20250401.as-rel2.txt.bz2" not in names
+        assert "20250401.as-org2info.txt.gz" not in names
+        # ...and only the release below the window goes.
+        assert "20250101.as-rel2.txt.bz2" not in names
+
     def test_keep_below_one_is_clamped_to_one(self, tmp_path: Path) -> None:
         # ``current`` is deliberately an OLDER pair, so keep=0 (clamped to 1 →
         # newest date + current) and keep=2 give different answers: without the

@@ -497,7 +497,13 @@ def _collect_superseded_victims(
     an interrupted sweep (raw files unlink first) or a bundle unlink that failed
     is retried on the next run instead of orphaning a bundle forever — the keep
     WINDOW is still ranked on the raw snapshot dates alone, so a stray bundle can
-    never shorten how many releases are retained. Nothing else is collected: not
+    never shorten how many releases are retained. It is ranked on the USABLE ones
+    at that: a date whose only snapshot files are empty (a truncated copy, a
+    restored cache) is not something the run could ever fall back on —
+    :func:`_snapshot_present` and :func:`download_file` both refuse it — so
+    letting it hold a keep slot would spend the window on junk and delete the
+    last release that still works. Such a file is collected as a victim once its
+    date is superseded. Nothing else is collected: not
     the memo, not an unrecognised file, and deliberately not a ``layout3d_*``
     cache. Those are small (~1 MB each) and keyed on their input identity (node
     set + edge list) rather than on the release, so there is no date to prune
@@ -509,6 +515,7 @@ def _collect_superseded_victims(
         return [], 0
 
     by_date: dict[str, list[Path]] = {}
+    usable_dates: set[str] = set()
     bundles_by_date: dict[str, list[Path]] = {}
     for path in sorted(cache_dir.iterdir()):
         if not path.is_file():
@@ -517,6 +524,8 @@ def _collect_superseded_victims(
             path.name
         ):
             by_date.setdefault(path.name[:8], []).append(path)
+            if _snapshot_present(path):
+                usable_dates.add(path.name[:8])
             continue
         bundle = PIPELINE_BUNDLE_PATTERN.fullmatch(path.name)
         if bundle is not None:
@@ -528,9 +537,13 @@ def _collect_superseded_victims(
     if not by_date and not bundles_by_date:
         return [], 0
 
-    # The window is ranked on the RAW dates only: a bundle that outlived its
-    # snapshots must not be able to shorten how many releases are kept.
-    keep_dates = set(sorted(by_date, reverse=True)[:keep]) | {n[:8] for n in current}
+    # The window is ranked on the RAW dates only, and only the ones with a file
+    # that is actually usable: a bundle that outlived its snapshots must not be
+    # able to shorten how many releases are kept, and neither must an empty
+    # snapshot file nobody could load.
+    keep_dates = set(sorted(usable_dates, reverse=True)[:keep]) | {
+        n[:8] for n in current
+    }
     # ...but a date known only from a bundle is still superseded, and is the one
     # case a raw-only date set would never revisit: the sweep unlinks raw files
     # first, so an interrupted run (or a bundle unlink that failed) leaves exactly
@@ -560,10 +573,22 @@ def _prune_superseded_snapshots(
     when there is nothing to prune.
 
     Deletions are best-effort: a file that vanishes underfoot is skipped rather
-    than allowed to abort a run that has already paid for its download. There is
-    a residual race left unaddressed (no locking): a run pinned to an older pair
-    by the offline fallback can have its raw snapshot pruned by a concurrent run
-    on the newest pair, in which case it simply re-downloads.
+    than allowed to abort a run that has already paid for its download.
+
+    There is a residual race left unaddressed (no locking), and it is worth being
+    precise about the cost: two concurrent runs sharing a cache directory can
+    disagree about which release is current — one pinned to an older pair by the
+    offline fallback, say — and the run on the newer pair then prunes files the
+    other is about to read, or the ``.pkl.tmp`` it is in the middle of writing.
+    The affected run FAILS (a missing snapshot, or a failed atomic replace); it
+    does not recover in place, since nothing re-runs discovery once
+    :func:`ensure_data` has returned. Re-running it fixes it — the next run
+    re-downloads and recomputes what went missing. Closing the window properly
+    would mean holding a lock across the whole read span (discovery → pipeline →
+    layout), which would serialise concurrent launches of the demo for minutes;
+    that is a worse trade than a rare "run it again" on a cache of derived data.
+    The default ``--keep-snapshots 2`` keeps the previous release, so the window
+    only opens for a run pinned more than one release back.
     """
     victims, n_superseded = _collect_superseded_victims(
         cache_dir, keep=keep, current=current
