@@ -24,7 +24,7 @@ import {
   type PickResult,
 } from '../../../../rendering/picking/picking-system';
 import { MAX_PICK_NODE_ID } from '../../../../rendering/picking/picking-system/pick-render';
-import { setCommittedData } from '../../../../types/committed-data';
+import { setElementIdMap } from '../../../../types/committed-data';
 
 /** A promise plus its external `resolve` — lets a test gate when the readback completes. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -1287,19 +1287,19 @@ describe('PickingSystem — element-ID remap (issue #1421)', () => {
     const pickNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
     nodeId = system.allocatePickId();
     system.registerNode(mainNode, pickNode, nodeId);
-    if (elementIds) setCommittedData(mainNode, { elementIds });
+    if (elementIds) setElementIdMap(mainNode, elementIds);
 
     return (
       system as unknown as { readbackAndVote: () => Promise<PickResult | null> }
     ).readbackAndVote();
   }
 
-  it('reports the raw slot when the node published no elementIds map', async () => {
+  it('reports the raw slot when the node published no element-ID map', async () => {
     const result = await pickSlot(3);
     expect(result?.elementId).toBe(3);
   });
 
-  it('reports the ON-DISK index when the node published an elementIds map', async () => {
+  it('reports the ON-DISK index when the node published an element-ID map', async () => {
     // Slot 1 of a node whose visible buffer starts at on-disk 2048.
     const result = await pickSlot(1, new Uint32Array([2048, 2049, 4096]));
     expect(result?.elementId).toBe(2049);

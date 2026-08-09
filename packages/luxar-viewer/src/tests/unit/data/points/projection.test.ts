@@ -15,7 +15,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  buildPointElementIds,
   createEmptyPointsData,
   projectPointsTo3D,
   type ProjectionContext,
@@ -26,7 +25,7 @@ import type { PointsMetadata, EffectiveRadiusConfig } from '../../../../types/po
 import type { PointsChunkIndex } from '../../../../data/points/chunk-index-loader';
 import { LoadedPointsDataAccumulator } from '../../../../data/accumulators/points';
 import { TypeScriptFallback } from '../../../../wasm/typescript';
-import { setCommittedData } from '../../../../types/committed-data';
+import { setCommittedData, setElementIdMap } from '../../../../types/committed-data';
 import { resolveOnDiskElementId } from '../../../../rendering/picking/picking-system/element-id-map';
 
 // projectPointsTo3D is WASM-accelerated; drive it with the TS-reference
@@ -1350,85 +1349,6 @@ describe('projectPointsTo3D — effective radii on the uint8 accumulator path (i
   });
 });
 
-// ---------------------------------------------------------------------------
-// Slot → on-disk element-ID map (issue #1421)
-//
-// `PickResult.elementId` used to be the storage slot in the VISIBLE buffer,
-// which diverges from the on-disk index two independent ways: spatial range
-// loading (only visible ranges are concatenated) and effective-radius
-// compaction. The map below is what lets picking key the per-element label
-// CSR by the on-disk index instead.
-// ---------------------------------------------------------------------------
-
-describe('buildPointElementIds', () => {
-  it('returns undefined for the identity case (one range from 0, no compaction)', () => {
-    expect(buildPointElementIds([{ start: 0, end: 5 }] as PointRange[], null, 5)).toBeUndefined();
-  });
-
-  it('returns undefined for an empty visible set', () => {
-    expect(buildPointElementIds([] as PointRange[], null, 0)).toBeUndefined();
-  });
-
-  it('maps the multi-range shape from the issue (chunks 1–2 of a 6000-point node)', () => {
-    // The issue's figure, [(2048, 4096), (4096, 6000)] → 3952 visible points.
-    // Adjacent, so a real query coalesces these into one `[2048, 6000)` — kept
-    // here to exercise the cursor's range-boundary step.
-    const ids = buildPointElementIds(
-      [
-        { start: 2048, end: 4096 },
-        { start: 4096, end: 6000 },
-      ] as PointRange[],
-      null,
-      3952
-    );
-    expect(ids).toBeInstanceOf(Uint32Array);
-    expect(ids!.length).toBe(3952);
-    expect(ids![0]).toBe(2048);
-    expect(ids![2047]).toBe(4095);
-    expect(ids![2048]).toBe(4096);
-    expect(ids![3951]).toBe(5999);
-  });
-
-  it('offsets a single range that does not start at 0', () => {
-    const ids = buildPointElementIds([{ start: 100, end: 103 }] as PointRange[], null, 3);
-    expect(Array.from(ids!)).toEqual([100, 101, 102]);
-  });
-
-  it('maps kept concat indices across a range boundary (compaction + range loading)', () => {
-    // Kept concat index 0 → on-disk 2048; kept 2049 falls in the SECOND range
-    // (first range covers concat [0, 2048)) → 4096 + (2049 - 2048) = 4097.
-    const ids = buildPointElementIds(
-      [
-        { start: 2048, end: 4096 },
-        { start: 4096, end: 6000 },
-      ] as PointRange[],
-      [0, 2049],
-      2
-    );
-    expect(Array.from(ids!)).toEqual([2048, 4097]);
-  });
-
-  it('emits a map even for a single range from 0 once compaction removed points', () => {
-    // The identity fast path is gated on "nothing was compacted out" too.
-    const ids = buildPointElementIds([{ start: 0, end: 4 }] as PointRange[], [1, 3], 2);
-    expect(Array.from(ids!)).toEqual([1, 3]);
-  });
-
-  it('returns undefined (no throw) when the ranges are too short for numPoints', () => {
-    expect(() =>
-      buildPointElementIds([{ start: 0, end: 2 }] as PointRange[], null, 5)
-    ).not.toThrow();
-    expect(buildPointElementIds([{ start: 0, end: 2 }] as PointRange[], null, 5)).toBeUndefined();
-  });
-
-  it('returns undefined (no throw) when a kept index runs past the end of the ranges', () => {
-    expect(() =>
-      buildPointElementIds([{ start: 0, end: 2 }] as PointRange[], [0, 5], 2)
-    ).not.toThrow();
-    expect(buildPointElementIds([{ start: 0, end: 2 }] as PointRange[], [0, 5], 2)).toBeUndefined();
-  });
-});
-
 describe('projectPointsTo3D — elementIds map', () => {
   /**
    * The map is gated on the node declaring a per-element label CSR — nothing
@@ -1444,7 +1364,9 @@ describe('projectPointsTo3D — elementIds map', () => {
   // shape is kept because it exercises the multi-range cursor, not because a
   // query emits it. The reported symptom (first visible point reports slot 0
   // while its on-disk index is 2048) is reproduced by the
-  // single-range-not-at-0 case in the `buildPointElementIds` block above.
+  // single-range-not-at-0 case in `tests/unit/data/loaders/element-ids.test.ts`
+  // (where the composer's own cases moved when it was extracted from
+  // `buildPointElementIds`).
   const issueRanges = [
     { start: 2048, end: 4096 },
     { start: 4096, end: 6000 },
@@ -1663,7 +1585,10 @@ describe('projectPointsTo3D — elementIds map', () => {
       labelledCtx()
     );
     const obj = new THREE.Object3D();
+    // The commit forwards the payload's map to the MESH-level stamp the
+    // picker reads (issue #1423 moved it off the payload).
     setCommittedData(obj, data);
+    setElementIdMap(obj, data.elementIds);
     expect(resolveOnDiskElementId(obj, 0)).toBe(2048);
     expect(resolveOnDiskElementId(obj, 2048)).toBe(4096);
   });
