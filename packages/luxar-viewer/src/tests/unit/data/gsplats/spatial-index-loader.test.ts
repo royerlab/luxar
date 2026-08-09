@@ -574,6 +574,93 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(result.choleskyFactors.length).toBe(4 * 6); // packed 3D = 6
       });
 
+      // Slot → on-disk element-ID map, loader half (issue #1423). The pick
+      // shader reports a visible-buffer slot; the label CSR is keyed by the
+      // on-disk splat index. Publishing the visible ranges is what lets the
+      // projection compose the two — but only for a node that declares labels,
+      // since nothing else reads the map and the field otherwise rides along
+      // in every SliceCache snapshot.
+      describe('visible ranges for picking', () => {
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+
+        it('publishes the visible ranges when the node declares labels', async () => {
+          const labelledLoader = new GSplatsSpatialIndexLoader(
+            mockZarrLocation as unknown as ConstructorParameters<
+              typeof GSplatsSpatialIndexLoader
+            >[0],
+            { ...mockNode, attrs: { ...mockNode.attrs, has_labels: true } } as SceneNode
+          );
+          try {
+            mockExecute.mockResolvedValueOnce([
+              { start: 2048, end: 4096 },
+              { start: 6144, end: 8192 },
+            ]);
+            const result = await labelledLoader.loadGSplats(viewState);
+            expect(result.ranges).toEqual([
+              { start: 2048, end: 4096 },
+              { start: 6144, end: 8192 },
+            ]);
+          } finally {
+            labelledLoader.dispose();
+          }
+        });
+
+        it('publishes them for an image-labelled node too (has_image_labels alone)', async () => {
+          const labelledLoader = new GSplatsSpatialIndexLoader(
+            mockZarrLocation as unknown as ConstructorParameters<
+              typeof GSplatsSpatialIndexLoader
+            >[0],
+            { ...mockNode, attrs: { ...mockNode.attrs, has_image_labels: true } } as SceneNode
+          );
+          try {
+            mockExecute.mockResolvedValueOnce([{ start: 100, end: 104 }]);
+            const result = await labelledLoader.loadGSplats(viewState);
+            expect(result.ranges).toEqual([{ start: 100, end: 104 }]);
+          } finally {
+            labelledLoader.dispose();
+          }
+        });
+
+        it('omits them for a node with no label CSR (the cheapness gate)', async () => {
+          mockExecute.mockResolvedValueOnce([{ start: 2048, end: 4096 }]);
+          const result = await bodyLoader.loadGSplats(viewState);
+          expect(result.ranges).toBeUndefined();
+        });
+
+        it('publishes them on the NON-accumulator fallback path too', async () => {
+          // The loader has two structurally distinct return sites: the pooled
+          // accumulator path (covered above) and the separate-arrays fallback
+          // taken when accumulators are off. Both must stamp `ranges`, or
+          // hover silently reports raw slots with `useAccumulators: false`.
+          const labelledLoader = new GSplatsSpatialIndexLoader(
+            mockZarrLocation as unknown as ConstructorParameters<
+              typeof GSplatsSpatialIndexLoader
+            >[0],
+            { ...mockNode, attrs: { ...mockNode.attrs, has_labels: true } } as SceneNode
+          );
+          try {
+            // First load runs the lazy initialize (which builds the accumulator).
+            mockExecute.mockResolvedValueOnce([{ start: 0, end: 4 }]);
+            await labelledLoader.loadGSplats(viewState);
+            // Drop it so the next load takes the fallback branch.
+            (labelledLoader as unknown as { _accumulator: unknown })._accumulator = null;
+
+            mockExecute.mockResolvedValueOnce([{ start: 2048, end: 4096 }]);
+            const result = await labelledLoader.loadGSplats({
+              ...viewState,
+              slicePosition: [1, 1, 1],
+            });
+            expect(result.ranges).toEqual([{ start: 2048, end: 4096 }]);
+          } finally {
+            labelledLoader.dispose();
+          }
+        });
+      });
+
       it('should preserve original ndim in result metadata', async () => {
         const viewState: ViewState = {
           displayDims: [0, 1, 2],

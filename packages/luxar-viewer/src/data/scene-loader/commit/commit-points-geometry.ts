@@ -37,6 +37,7 @@ import {
   getCommittedData,
   hasCommittedData,
   setCommittedData,
+  setElementIdMap,
 } from '../../../types/committed-data';
 import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import { clampPointCapacity } from '../../../rendering/element-texture-layout';
@@ -326,6 +327,13 @@ export function commitPointsGeometry(
     // SAME reference (memoized progressive concat) takes the stamp-only
     // no-op path above instead of re-uploading.
     setCommittedData(points, data);
+    // Slot → on-disk element index map for picking, in lockstep with the
+    // stamp above so it always describes the buffers just uploaded. Points'
+    // loader legitimately produces the map (its projection is folded into
+    // `loadPoints`, upstream of the SliceCache measure), but the PICKER reads
+    // it off the mesh — same mechanism as gsplats. A payload without a map
+    // clears any previous commit's.
+    setElementIdMap(points, data.elementIds);
 
     if (pointCount === 0) {
       log.info(

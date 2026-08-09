@@ -23,6 +23,7 @@
 
 import * as THREE from 'three';
 import { assertColorLayout } from '../loaders/color-loader';
+import { buildElementIdMap } from '../loaders/element-ids';
 import { log, Modules } from '../../utils/log';
 import {
   shouldApplyEffectiveRadius,
@@ -273,6 +274,10 @@ export function projectPointsTo3D(
 
   let numPoints = totalPoints;
 
+  // Ascending concat-set indices that survived the zero-radius compaction,
+  // or null when no compaction actually ran. Feeds `buildElementIdMap`.
+  let keptConcatIndices: number[] | null = null;
+
   // Use target buffers if provided (zero allocations).
   const { displayDims } = viewState;
 
@@ -477,6 +482,10 @@ export function projectPointsTo3D(
         `Filtering out ${numPoints - filteredCount} zero-radius points (keeping ${filteredCount})`
       );
 
+      // Compaction is really happening: record the survivors so the
+      // slot → on-disk element-ID map below is compacted in lock-step.
+      keptConcatIndices = validIndices;
+
       if (targetBuffers) {
         // In-place compaction into the target buffers (zero
         // allocations). Compact valid points to the buffer start.
@@ -661,6 +670,23 @@ export function projectPointsTo3D(
     }
   }
 
+  // Slot → on-disk element index map for per-element label lookups
+  // (`undefined` on the identity path — see `buildElementIdMap`).
+  //
+  // Gated on the node declaring a per-element label CSR: that is the reader
+  // the map exists for, and it costs 4 B/point on the zero-allocation
+  // accumulator path. `LabelLoader.hasLabels()` keys on the same attrs.
+  // NOT "no possible reader": picking is also provisioned for a label-less
+  // scene when an embedder `selection` listener exists at load time
+  // (`core/app/picking/init-picking.ts`), and that payload's `elementIndex`
+  // keeps reporting the storage slot — exactly what it reported before this
+  // change, but still a slot, not an on-disk index.
+  const wantsElementIds =
+    ctx.nodeAttrs.has_labels === true || ctx.nodeAttrs.has_image_labels === true;
+  const elementIds = wantsElementIds
+    ? buildElementIdMap(ranges, keptConcatIndices, numPoints, Modules.SPATIAL_INDEX_LOADER)
+    : undefined;
+
   // Return from accumulator when using target buffers (zero
   // allocations).
   if (targetBuffers && ctx.accumulator) {
@@ -673,8 +699,14 @@ export function projectPointsTo3D(
       usedSpatialIndex: true,
     });
 
-    // Return from accumulator (subarrays are views into accumulator buffers)
-    return ctx.accumulator.getData(numPoints);
+    // Return from accumulator (subarrays are views into accumulator buffers).
+    // `getData` mints a FRESH object literal every call, so stamping the
+    // element-ID map onto it does not mutate any previously returned payload.
+    // The map itself is deliberately NOT an accumulator-owned buffer: it only
+    // exists on the non-identity path and is a small Uint32Array.
+    const result = ctx.accumulator.getData(numPoints);
+    if (elementIds) result.elementIds = elementIds;
+    return result;
   }
 
   // Fallback: Create new LoadedPointsData object (when accumulator disabled)
@@ -687,6 +719,7 @@ export function projectPointsTo3D(
     // pass scalars through. They are already type-compacted above
     // (or unchanged when no filtering occurred).
     scalars: (scalars as PointScalarArray | null | undefined) ?? undefined,
+    elementIds,
     pointCount: numPoints,
     ndim,
     metadata: {
