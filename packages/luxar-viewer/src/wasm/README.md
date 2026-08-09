@@ -143,6 +143,8 @@ wasm/
 ├── index.ts              — Loader (initWasm, isWasmSupported, getFallback,
 │                           setWasmJsUrl, isWasmFallback)
 ├── types.ts              — WasmModule interface (unified API)
+├── required-exports.ts   — Kernels a stale build may lack; shared by the
+│                           loader's staleness check and the vitest global setup
 ├── typescript/           — Pure TypeScript fallback
 │   ├── index.ts          — TypeScriptFallback class
 │   ├── decode.ts         — Array decoding
