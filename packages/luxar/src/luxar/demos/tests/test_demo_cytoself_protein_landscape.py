@@ -356,25 +356,49 @@ class TestThumbnailCacheRecompute:
         reloaded = np.load(bundle, allow_pickle=True)["blobs"]
         assert [bytes(b) for b in reloaded] == blobs
 
+    # The shapes a bundle can take that are NOT a usable set of thumbnails.
+    # `bytes()` rejects only the first two: a numeric entry converts silently
+    # (a float to the 8 bytes of its IEEE encoding, an int to that many NULs),
+    # and any byte string at all is bytes-like. Both would otherwise be handed
+    # to the viewer as images.
+    _BAD_BUNDLES = pytest.mark.parametrize(
+        "bad_blobs",
+        [
+            pytest.param(np.array(["not", "bytes"]), id="strings"),
+            pytest.param(np.array([None, None], dtype=object), id="none"),
+            pytest.param(np.array([1.5, 2.5]), id="floats"),
+            pytest.param(np.arange(2), id="ints"),
+            pytest.param(
+                np.array([b"\x89PNG\r\n\x1a\n", b"\x89PNG\r\n\x1a\n"], dtype=object),
+                id="not-webp",
+            ),
+        ],
+    )
+
+    @_BAD_BUNDLES
     def test_structurally_valid_bundle_with_bad_blobs_is_rebuilt(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_blobs: np.ndarray
     ) -> None:
         """An unreadable bundle is more shapes than a truncated zip.
 
-        A bundle that opens fine but whose ``blobs`` are not bytes-like reaches
-        the same dead end: the decode raises, the cache short-circuits before
-        any download, and every later run reproduces it. So the decode belongs
-        inside the guard, not after it.
+        A bundle that opens fine but whose ``blobs`` are not WebP images reaches
+        the same dead end: the cache short-circuits before any download, and
+        every later run reproduces it. So the decode belongs inside the guard,
+        not after it — and it has to be a real check, not just ``bytes()``.
         """
         cache_dir = tmp_path / "cytoself"
         cache_dir.mkdir(parents=True)
         bundle = cache_dir / THUMBNAILS_CACHE_NAME
-        np.savez(bundle, blobs=np.array(["not", "bytes"]))
+        np.savez(bundle, blobs=bad_blobs)
         _stub_rebuild(monkeypatch)
 
         blobs = load_cytoself_images(cache_dir)
 
         assert len(blobs) == _STUB_N_TEST
+        # A bad bundle of the right LENGTH is the trap here: a count check
+        # alone would read as a rebuild even when the garbage was returned
+        # verbatim. Only real WebP proves the encoder actually ran.
+        assert all(b[:4] == b"RIFF" and b[8:12] == b"WEBP" for b in blobs)
         reloaded = np.load(bundle, allow_pickle=True)["blobs"]
         assert [bytes(b) for b in reloaded] == blobs
 

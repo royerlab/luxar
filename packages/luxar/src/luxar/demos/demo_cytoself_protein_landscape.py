@@ -586,16 +586,34 @@ def _encode_matched_crops(
     return len(local_to_test_map)
 
 
+def _as_webp_blob(entry: object) -> bytes:
+    """Return one cached bundle entry as WebP bytes, or raise if it is not one.
+
+    ``bytes()`` alone is too weak to be the validity check: it converts a
+    NUMERIC entry silently (a float yields the 8 bytes of its IEEE encoding, an
+    int that many NULs), so a bundle of the right length but the wrong dtype
+    would sail past the guard and feed the viewer garbage images forever. Every
+    entry this cache ever writes is WebP — the encoder's output or the 1x1
+    placeholder — so the container signature is the honest test.
+    """
+    if not isinstance(entry, (bytes, bytearray)):
+        raise TypeError(f"blob entry is {type(entry).__name__}, not bytes")
+    blob = bytes(entry)
+    if blob[:4] != b"RIFF" or blob[8:12] != b"WEBP":
+        raise ValueError("blob entry is not a WebP image")
+    return blob
+
+
 def _read_thumbnails_cache(thumbnails_cache: Path) -> list[bytes] | None:
     """Return the cached test-aligned thumbnails, or None on a cache miss.
 
     An UNREADABLE bundle counts as a miss rather than an error: this cache
     short-circuits before any download, so raising here left a plain re-run
-    reproducing the same failure forever. The decode to ``bytes`` is therefore
-    INSIDE the guard too — a structurally valid npz whose ``blobs`` entries are
-    not bytes-like is just as much a dead end as a truncated zip. ``np.load``
-    keeps the zip open, so the handle is closed before the rebuild renames a
-    new bundle over it.
+    reproducing the same failure forever. The decode is therefore INSIDE the
+    guard too — a structurally valid npz whose ``blobs`` entries are not WebP
+    images is just as much a dead end as a truncated zip. ``np.load`` keeps the
+    zip open, so the handle is closed before the rebuild renames a new bundle
+    over it.
     """
     if not thumbnails_cache.exists():
         return None
@@ -603,7 +621,7 @@ def _read_thumbnails_cache(thumbnails_cache: Path) -> list[bytes] | None:
     with asection("Loading cached image thumbnails"):
         try:
             with np.load(thumbnails_cache, allow_pickle=True) as data:
-                blobs = [bytes(b) for b in data["blobs"]]
+                blobs = [_as_webp_blob(b) for b in data["blobs"]]
         except Exception as exc:
             aprint(f"  ⚠ Unreadable cached bundle ({type(exc).__name__})")
             aprint(f"    {thumbnails_cache}")
