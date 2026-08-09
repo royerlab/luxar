@@ -433,6 +433,56 @@ describe('ORIENTATION FREEDOM — sweeping through the end-on singularity', () =
     expect(s5000 / s500).toBeGreaterThan(8);
     expect(s5000).toBeGreaterThan(10000);
   });
+
+  it('pins the RAY_SEGMENT_PARALLEL_EPS seam from BOTH sides', () => {
+    // The eps switches the DERIVATION, not a math lane: below it the
+    // helper uses the plain perpendicular of w0 instead of the mutual
+    // perpendicular m-hat, whose relative accuracy decays like eps/|u|.
+    // Both D and s* jump across that switch, but their contributions
+    // cancel in the product the integral actually consumes
+    // (D^2 + (s*|u|)^2 -> |w0_perp|^2 either way), so the seam is only
+    // the O(|u|) remainder — and that remainder scales with the same
+    // lever * offset * k^2 as the slope above.
+    //
+    // Every other test here steps theta by >= 2.5e-4 and so straddles
+    // the guard band without ever landing inside it; these samples sit
+    // one part in 1000 either side of it.
+    const eps = RAY_SEGMENT_PARALLEL_EPS;
+    const relStep = (lever: number, s: number) => {
+      const o: Vec3 = [-lever, 0.3 * s, 0];
+      const f = (t: number) =>
+        lineRayIntegralRef({ sigma: s, ...raySegmentGeometry(o, dirAt(t), start, end) });
+      const below = f(eps * 0.999); // parallel derivation
+      const above = f(eps * 1.001); // oblique derivation
+      return Math.abs(above - below) / below;
+    };
+
+    // At any framing a renderer will actually produce, the two
+    // derivations are indistinguishable. Two-sided, because a zero step
+    // would mean the guard band had stopped being reachable at all.
+    const modest = relStep(50, 1);
+    expect(modest).toBeGreaterThan(1e-6); // measured 1.80e-6
+    expect(modest).toBeLessThan(3e-6);
+    const long = relStep(1e4, 1);
+    expect(long).toBeGreaterThan(2e-4); // measured 3.01e-4
+    expect(long).toBeLessThan(4e-4);
+
+    // The documented worst case is NOT small, and is pinned rather than
+    // papered over: a long axial lever arm against a thin segment
+    // amplifies the remainder without bound. Neither branch is the
+    // better one here — the oblique formula's own cross-product accuracy
+    // decays as |u| shrinks, so no choice of eps removes this; a
+    // consumer with a lever arm this long has to widen its own guard.
+    // (float32 cannot even represent this regime — see
+    // RAY_SEGMENT_PARALLEL_EPS_F32.) The band is tight on BOTH sides so
+    // that "simplifying" the parallel branch's s* to zero — the reading
+    // its own docblock warns against, which would return the exactly-
+    // parallel answer across the whole guard band — fails here (0.93)
+    // instead of passing quietly.
+    const worst = relStep(1e6, 0.05);
+    expect(worst).toBeGreaterThan(0.4); // measured 4.56e-1
+    expect(worst).toBeLessThan(0.5);
+  });
 });
 
 /**

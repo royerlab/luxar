@@ -148,7 +148,6 @@ invariant (a demo that authors geometry exposes at least one layer) and the
 per-call one, with an exemption list for the composite-group cases that is itself
 checked against the group each exemption names.
 
-
 #### Demos — the CELLxGENE Census UMAP no longer opens dark (#1375)
 
 The 1M-cell cloud was barely visible on first paint, and most of that was the
