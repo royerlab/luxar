@@ -51,6 +51,7 @@ polynomial. With the flag off, the screen-space pipeline is byte-identical
 (unit-asserted) and codegen snapshots are unchanged. Picking and the
 sum-mode sharpness LUT follow in later #1352 parts; the flip to
 volumetric-by-default is gated on the full perf + visual A/B (G1).
+
 #### Mesh gets substitutive LOD
 
 A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
@@ -196,7 +197,6 @@ in the older entry — only the two here compare directly.
 Regenerate the demo dataset to pick up the new look.
 `docs/images/readme/gallery/atp_synthase.{webp,webm}` — the README gallery tile —
 were recaptured through the gallery harness against the new look.
-
 
 #### LOD levels no longer wait for the object to overfill the screen
 
@@ -345,7 +345,7 @@ bookkeeping rather than correctness.
 - **Every per-vertex attribute follows its vertices**, including the per-vertex
   label CSR (`normals`, `colors`, `scalars`, `labels`); a uniform RGB triple or a
   colormap name is passed through untouched.
-- **No seams.** Duplicated boundary vertices carry identical position *and*
+- **No seams.** Duplicated boundary vertices carry identical position _and_
   identical stored normal, and the derivative shading variant is per-fragment.
   Revisit if shading ever gains a per-part recomputation (area-averaged normals,
   tangent frames, UVs, baked AO).
