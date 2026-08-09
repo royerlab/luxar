@@ -25,6 +25,8 @@ import type { PointsMetadata, EffectiveRadiusConfig } from '../../../../types/po
 import type { PointsChunkIndex } from '../../../../data/points/chunk-index-loader';
 import { LoadedPointsDataAccumulator } from '../../../../data/accumulators/points';
 import { TypeScriptFallback } from '../../../../wasm/typescript';
+import { setCommittedData, setElementIdMap } from '../../../../types/committed-data';
+import { resolveOnDiskElementId } from '../../../../rendering/picking/picking-system/element-id-map';
 
 // projectPointsTo3D is WASM-accelerated; drive it with the TS-reference
 // backend (always available without a compiled build). The extraction +
@@ -1344,5 +1346,250 @@ describe('projectPointsTo3D — effective radii on the uint8 accumulator path (i
     expect(result.radii).toBeInstanceOf(Uint8Array);
     expect(Array.from(result.radii!)).toEqual([102]);
     expect(Array.from(result.positions)).toEqual([1, 1, 1]);
+  });
+});
+
+describe('projectPointsTo3D — elementIds map', () => {
+  /**
+   * The map is gated on the node declaring a per-element label CSR — nothing
+   * else can read it, and it costs 4 B/point on the zero-allocation path.
+   */
+  function labelledCtx(overrides: Partial<ProjectionContext> = {}): ProjectionContext {
+    return makeCtx({ nodeAttrs: makeAttrs({ has_labels: true }), ...overrides });
+  }
+
+  // The issue's own figure — chunks 1–2 of a 6000-point node, written as two
+  // ranges. In production `mergeRanges` coalesces ADJACENT ranges, so two
+  // adjacent visible chunks actually arrive as a single `[2048, 6000)`; this
+  // shape is kept because it exercises the multi-range cursor, not because a
+  // query emits it. The reported symptom (first visible point reports slot 0
+  // while its on-disk index is 2048) is reproduced by the
+  // single-range-not-at-0 case in `tests/unit/data/loaders/element-ids.test.ts`
+  // (where the composer's own cases moved when it was extracted from
+  // `buildPointElementIds`).
+  const issueRanges = [
+    { start: 2048, end: 4096 },
+    { start: 4096, end: 6000 },
+  ] as PointRange[];
+  const issueCount = 3952;
+
+  // Genuinely reachable multi-range shape: chunks 1 and 3 of a chunk_size=2048
+  // node, with chunk 2 culled — non-adjacent, so `mergeRanges` leaves both.
+  const gappedRanges = [
+    { start: 2048, end: 4096 },
+    { start: 6144, end: 8192 },
+  ] as PointRange[];
+
+  it('omits elementIds for a plain single-range 3D load (identity)', () => {
+    const result = projectPointsTo3D(
+      wasm,
+      new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 3 }] as PointRange[],
+      labelledCtx()
+    );
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('omits elementIds entirely for a node with no labels (the gate)', () => {
+    // Same non-identity input as the issue case below, but the node declares
+    // neither has_labels nor has_image_labels — nothing could read the map.
+    const result = projectPointsTo3D(
+      wasm,
+      new Float32Array(issueCount * 3),
+      null,
+      null,
+      null,
+      makeViewState(),
+      issueRanges,
+      makeCtx()
+    );
+    expect(result.pointCount).toBe(issueCount);
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('emits elementIds for an image-labelled node (has_image_labels only)', () => {
+    const result = projectPointsTo3D(
+      wasm,
+      new Float32Array(issueCount * 3),
+      null,
+      null,
+      null,
+      makeViewState(),
+      issueRanges,
+      makeCtx({ nodeAttrs: makeAttrs({ has_image_labels: true }) })
+    );
+    expect(result.elementIds?.[0]).toBe(2048);
+  });
+
+  it('emits on-disk indices for the multi-range shape from the issue', () => {
+    // Ranges [(2048, 4096), (4096, 6000)] → 3952 visible points, so slot 0 is
+    // on-disk 2048. Pre-fix `elementIds` was never populated at all.
+    const result = projectPointsTo3D(
+      wasm,
+      new Float32Array(issueCount * 3),
+      null,
+      null,
+      null,
+      makeViewState(),
+      issueRanges,
+      labelledCtx()
+    );
+    expect(result.pointCount).toBe(issueCount);
+    expect(result.elementIds?.length).toBe(issueCount);
+    expect(result.elementIds?.[0]).toBe(2048);
+    expect(result.elementIds?.[2048]).toBe(4096);
+  });
+
+  it('jumps the gap between NON-adjacent visible chunks', () => {
+    // Chunks 1 and 3 (chunk 2 culled) → 4096 visible points. Slot 2047 is the
+    // last of chunk 1 (on-disk 4095) and slot 2048 the first of chunk 3
+    // (on-disk 6144) — the cursor must skip the 2048-element hole, not walk it.
+    const result = projectPointsTo3D(
+      wasm,
+      new Float32Array(4096 * 3),
+      null,
+      null,
+      null,
+      makeViewState(),
+      gappedRanges,
+      labelledCtx()
+    );
+    expect(result.elementIds?.length).toBe(4096);
+    expect(result.elementIds?.[0]).toBe(2048);
+    expect(result.elementIds?.[2047]).toBe(4095);
+    expect(result.elementIds?.[2048]).toBe(6144);
+    expect(result.elementIds?.[4095]).toBe(8191);
+  });
+
+  it('compacts elementIds in lock-step with positions under the zero-radius filter', () => {
+    // 3 points × 4 dims drawn from ranges [(10, 11), (20, 22)] → on-disk
+    // indices [10, 20, 21]. Point 1 (on-disk 20) sits far in the hidden dim
+    // (dim3 = 100 ≫ R = 1) → effective radius 0 → filtered. Survivors are the
+    // on-disk pair [10, 21], NOT the slots [0, 1].
+    const positions = new Float32Array([0, 0, 0, 0, 1, 1, 1, 100, 2, 2, 2, 0]);
+    const erConfig: EffectiveRadiusConfig = {
+      spatialExtendDims: [true, true, true, true],
+      maxRadius: 1.0,
+    };
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      new Float32Array([1, 1, 1]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [
+        { start: 10, end: 11 },
+        { start: 20, end: 22 },
+      ] as PointRange[],
+      labelledCtx({ effectiveRadiusConfig: erConfig })
+    );
+
+    expect(result.pointCount).toBe(2);
+    expect(result.elementIds?.length).toBe(result.pointCount);
+    expect(Array.from(result.elementIds!)).toEqual([10, 21]);
+  });
+
+  it('emits elementIds on the accumulator path too', () => {
+    const accumulator = new LoadedPointsDataAccumulator(8, 3, 3);
+    accumulator.fill(0, { positions: new Float32Array([0, 0, 0, 1, 1, 1]) });
+    const result = projectPointsTo3D(
+      wasm,
+      new Float32Array([0, 0, 0, 1, 1, 1]),
+      null,
+      null,
+      null,
+      makeViewState(),
+      [
+        { start: 5, end: 6 },
+        { start: 9, end: 10 },
+      ] as PointRange[],
+      labelledCtx({ accumulator }),
+      {
+        positions3D: accumulator.getPositionBuffer(),
+        colors: accumulator.getColorBuffer(),
+        radii: accumulator.getRadiiBuffer(),
+        sharpness: accumulator.getSharpnessBuffer(),
+      }
+    );
+    expect(Array.from(result.elementIds!)).toEqual([5, 9]);
+  });
+
+  it('does not leak a stale map into the next load on a REUSED accumulator', () => {
+    // `getData()` mints a fresh object literal per call, so the identity-path
+    // load must come back with NO map even though the previous load through
+    // the same accumulator/target buffers published one. (An accumulator-owned
+    // elementIds buffer, or a stamp that never deletes, would leak it.)
+    const accumulator = new LoadedPointsDataAccumulator(8, 3, 3);
+    accumulator.fill(0, { positions: new Float32Array([0, 0, 0, 1, 1, 1]) });
+    const targetBuffers = {
+      positions3D: accumulator.getPositionBuffer(),
+      colors: accumulator.getColorBuffer(),
+      radii: accumulator.getRadiiBuffer(),
+      sharpness: accumulator.getSharpnessBuffer(),
+    };
+    const ctx = labelledCtx({ accumulator });
+    const positions = new Float32Array([0, 0, 0, 1, 1, 1]);
+
+    const first = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      null,
+      null,
+      makeViewState(),
+      [
+        { start: 5, end: 6 },
+        { start: 9, end: 10 },
+      ] as PointRange[],
+      ctx,
+      targetBuffers
+    );
+    expect(Array.from(first.elementIds!)).toEqual([5, 9]);
+
+    const second = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 2 }] as PointRange[], // identity → no map
+      ctx,
+      targetBuffers
+    );
+    expect(second.elementIds).toBeUndefined();
+    // The first payload keeps its own map (getData() returns a fresh literal).
+    expect(Array.from(first.elementIds!)).toEqual([5, 9]);
+  });
+
+  it('feeds resolveOnDiskElementId end to end (producer ↔ consumer seam)', () => {
+    // The real producer output, stamped exactly as the commit pipeline stamps
+    // it, read back by the real picking consumer.
+    const data = projectPointsTo3D(
+      wasm,
+      new Float32Array(issueCount * 3),
+      null,
+      null,
+      null,
+      makeViewState(),
+      issueRanges,
+      labelledCtx()
+    );
+    const obj = new THREE.Object3D();
+    // The commit forwards the payload's map to the MESH-level stamp the
+    // picker reads (issue #1423 moved it off the payload).
+    setCommittedData(obj, data);
+    setElementIdMap(obj, data.elementIds);
+    expect(resolveOnDiskElementId(obj, 0)).toBe(2048);
+    expect(resolveOnDiskElementId(obj, 2048)).toBe(4096);
   });
 });

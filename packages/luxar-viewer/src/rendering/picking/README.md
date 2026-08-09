@@ -20,7 +20,8 @@ picking/
 │
 ├── picking-system/              # Pure helpers split out of picking-system.ts —
 │                                #   ray-AABB cache, vote, settle decision +
-│                                #   scheduler, registration, lens-distortion.
+│                                #   scheduler, registration, element-id-map,
+│                                #   lens-distortion.
 │                                #   See child README.
 │
 ├── point/                       # Per-geometry picking sources for points
@@ -71,6 +72,14 @@ All four fragment shaders write `vec4(vNodeId, vElementId.x, brightness, vElemen
 
 **Mixed-mode limitation.** All effectively visible registered nodes (hidden/demoted LOD levels are skipped) render into ONE shared pick depth buffer (pre-existing single-buffer design). A scene mixing `normal`-mode gsplats with additive/max/luminous nodes therefore mixes two depth conventions in that buffer: where footprints from both conventions overlap, the depth comparison is between a real projected depth and a `1 - brightness` pseudo-depth, so cross-mode boundary pixels resolve arbitrarily. Within a single convention (all-normal or all-commutative overlap) picking stays well-defined.
 
+### Element IDs: storage slot vs on-disk index
+
+What a pick shader can report is a **storage slot** — where the element sits in the buffer that was uploaded to the GPU. That is not always the element's **on-disk index**, which is what the per-element label CSR (`label_offsets` / `label_bytes`) is keyed by. For Points the two diverge whenever the spatial index concatenates only the visible on-disk ranges, or the effective-radius pass compacts zero-radius points out; using the raw slot then shows a wrong-but-plausible neighbour's label (issue #1421). GSplats diverges the same two ways — range concatenation, plus the hidden-dim visibility compaction inside the fused projection kernel (issue #1423).
+
+The translation happens **once**, in `readbackAndVote` — the single place a `PickResult` is constructed — via `resolveOnDiskElementId` (`picking-system/element-id-map.ts`), which reads the slot → on-disk map the commit pipeline stamped onto the node (`types/committed-data::setElementIdMap`, written in lockstep with `committedData` and cleared with it whenever the geometry is actually released — a mesh-level stamp, never a field on the loaded payload, which can be a SliceCache-owned snapshot that must not be mutated; a caller that merely invalidates the no-op gate on geometry that stays resident, like the depth-sort blending-mode switch, uses `invalidateCommittedDataStamp` and leaves the map in place). Nodes that publish no map, and slots outside a map, resolve to identity — never a throw, never a sentinel. Points and GSplats publish the map today, but only for a node declaring `has_labels` / `has_image_labels` and **never across an additive LOD ladder** (each sub-LOD is a distinct on-disk array, so no single map is meaningful — that case is #1422). Points composes it in its loader (projection is folded in there); GSplats composes it at projection time — the loader publishes its visible `ranges` and the fused kernel records the surviving source indices. Either way the commit stamps the result onto the mesh. Mesh needs no map (its `gl_VertexID` already IS the on-disk vertex ordinal); lines is a separate follow-up (segment-vs-vertex granularity on top).
+
+Identity is a fallback, not a guarantee that the two spaces coincide: picking is also provisioned for a label-less scene when an embedder `selection` listener exists at load time (`core/app/picking/init-picking.ts`), and such a node publishes no map, so its `SelectionPayload.elementIndex` is a storage slot. `PickResult.elementId` is the on-disk index wherever a map was published, and the slot otherwise.
+
 ## Cached pick buffer + two-axis settle
 
 `PickingSystem` keeps one `WebGLRenderTarget(RGBA32F, NearestFilter)` sized at `min(drawBuf / 2, MAX_PICK_BUFFER_DIM=1024)` per axis. `_dirty` gates re-rendering — only a `markDirty()` (camera move, geometry commit, resize, context restore) or a setSize triggers a fresh `renderPickBuffer()`. Hover motion alone just rereads the cached target.
@@ -101,7 +110,7 @@ WebGPU device loss is currently treated as unrecoverable — see `scene-manager.
 
 ## Subpackages
 
-- [`picking-system/`](./picking-system/README.md) — Pure helpers split from the orchestrator: `registration.ts`, `ray-aabb.ts`, `pick-render.ts` (vote), `settle-loop.ts` (pure decision), `settle-scheduler.ts` (rAF lifecycle), `lens-distortion.ts`. Each is independently unit-testable without a renderer.
+- [`picking-system/`](./picking-system/README.md) — Pure helpers split from the orchestrator: `registration.ts`, `ray-aabb.ts`, `pick-render.ts` (vote), `settle-loop.ts` (pure decision), `settle-scheduler.ts` (rAF lifecycle), `element-id-map.ts` (slot → on-disk element index), `lens-distortion.ts`. Each is independently unit-testable without a renderer.
 - [`point/`](./point/README.md), [`line/`](./line/README.md), [`gsplat/`](./gsplat/README.md), [`mesh/`](./mesh/README.md) — Per-geometry picking sources. Each folder ships the same four files: `material.ts` (GLSL3), `material-tsl.ts` (WebGPU), `pick.tsl.ts` (TSL factory), `shaders.ts` (GLSL3 source + `ShaderSource`). `mesh/` adds two: `pick-mode.ts` and `provoking-vertex.ts`.
 
 ## See Also

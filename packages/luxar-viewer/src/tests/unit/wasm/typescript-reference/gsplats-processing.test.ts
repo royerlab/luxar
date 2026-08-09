@@ -15,6 +15,9 @@ import {
   project_gsplats_nd_to_3d,
 } from '../../../../wasm/typescript';
 
+/** The kernel's source-index recording opt-out (an empty array means "off"). */
+const NO_SOURCE_INDICES = new Uint32Array(0);
+
 // ============================================================================
 // GSPLATS PROCESSING TESTS (Mahalanobis distance, Cholesky extraction)
 // ============================================================================
@@ -140,7 +143,8 @@ describe('gsplats_processing: fused visibility gate', () => {
       new Float32Array(3),
       new Float32Array(6),
       outAmplitudes,
-      new Float32Array(3)
+      new Float32Array(3),
+      NO_SOURCE_INDICES
     );
     return [count, outAmplitudes[0]];
   };
@@ -238,7 +242,8 @@ describe('gsplats_processing: dense compaction stride (TS reference)', () => {
       centers,
       chol,
       amps,
-      outColors
+      outColors,
+      NO_SOURCE_INDICES
     );
     return { count, centers, chol, amps, outColors };
   };
@@ -294,6 +299,62 @@ describe('gsplats_processing: dense compaction stride (TS reference)', () => {
     expect(rgba.amps[0]).toBe(1.0);
     expect(rgba.amps[1]).toBeCloseTo(SPLAT3_AMPLITUDE, 5);
   });
+
+  /**
+   * Recorded source indices (issue #1423). Compaction destroys the slot →
+   * source mapping, which is exactly what picking needs to reach an on-disk
+   * element index. Hand-computed against the fixture above: splat1 attenuates
+   * out and splat2 is discrete-gated, so the survivors are sources 0 and 3
+   * landing in slots 0 and 1.
+   */
+  it('records the surviving SOURCE indices, not the output slots', () => {
+    const centers = new Float32Array(splatCount * 3);
+    const chol = new Float32Array(splatCount * 6);
+    const amps = new Float32Array(splatCount);
+    const outColors = new Float32Array(splatCount * 3);
+    // Sentinel-filled so the untouched tail is distinguishable from a
+    // legitimately-recorded 0.
+    const sourceIndices = new Uint32Array(splatCount).fill(0xffffffff);
+
+    const count = project_gsplats_nd_to_3d(
+      positions,
+      cholesky,
+      amplitudes,
+      new Float32Array(splatCount * 3).fill(1),
+      discreteVisibility,
+      new Float32Array(ndim),
+      new Uint32Array([3]),
+      new Uint32Array([0, 1, 2]),
+      ndim,
+      splatCount,
+      3,
+      0.001,
+      3.0,
+      centers,
+      chol,
+      amps,
+      outColors,
+      sourceIndices
+    );
+
+    expect(count).toBe(2);
+    expect(Array.from(sourceIndices.subarray(0, count))).toEqual([0, 3]);
+    // Slot 1 holds splat3's center, so the recorded 3 really indexes the
+    // SOURCE arrays rather than the dense output.
+    expect(Array.from(centers.subarray(3, 6))).toEqual([3, 1, 2]);
+    // Nothing past the visible count is written.
+    expect(Array.from(sourceIndices.subarray(count))).toEqual([0xffffffff, 0xffffffff]);
+  });
+
+  /**
+   * The empty-array opt-out must be accepted and change nothing — it is what
+   * every caller with no picking map to build passes.
+   */
+  it('accepts an empty source-index array as the recording opt-out', () => {
+    const withoutRecording = project(3, new Array(splatCount * 3).fill(1));
+    expect(withoutRecording.count).toBe(2);
+    expect(Array.from(withoutRecording.centers.subarray(0, 6))).toEqual([0, 0, 0, 3, 1, 2]);
+  });
 });
 
 /**
@@ -342,7 +403,8 @@ describe('gsplats_processing: fewer than 3 display dims (TS reference)', () => {
       new Float32Array(3),
       chol,
       new Float32Array(1),
-      new Float32Array(3)
+      new Float32Array(3),
+      NO_SOURCE_INDICES
     );
     return chol;
   };
@@ -372,7 +434,8 @@ describe('gsplats_processing: fewer than 3 display dims (TS reference)', () => {
       centers,
       chol,
       amps,
-      cols
+      cols,
+      NO_SOURCE_INDICES
     );
 
     expect(count).toBe(2);
@@ -493,7 +556,8 @@ describe('gsplats_processing: >16 continuous hidden dims (issue #725)', () => {
       outCenters3d,
       outCholesky3d,
       outAmplitudes,
-      outColors
+      outColors,
+      NO_SOURCE_INDICES
     );
 
     // On the buggy code the workspaces overflow, mahalDist is NaN, attenuation is
@@ -559,7 +623,8 @@ describe('gsplats_processing: >16 continuous hidden dims (issue #725)', () => {
       outCenters3d,
       outCholesky3d,
       outAmplitudes,
-      outColors
+      outColors,
+      NO_SOURCE_INDICES
     );
 
     // Only the two on-slice splats survive. If the >16-D distance were silently
@@ -648,7 +713,8 @@ describe('gsplats_processing: >16 continuous hidden dims (issue #725)', () => {
       outCenters3d,
       outCholesky3d,
       outAmplitudes,
-      outColors
+      outColors,
+      NO_SOURCE_INDICES
     );
 
     expect(count).toBe(1);

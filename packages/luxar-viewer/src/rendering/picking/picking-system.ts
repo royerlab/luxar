@@ -51,6 +51,7 @@ import {
 import { rayHitsAnyNode, invalidateBoxCache } from './picking-system/ray-aabb';
 import { MAX_PICK_NODE_ID, voteWinner, type VoteEntry } from './picking-system/pick-render';
 import { SettleScheduler } from './picking-system/settle-scheduler';
+import { resolveOnDiskElementId } from './picking-system/element-id-map';
 import { applyLensDistortion } from './picking-system/lens-distortion';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr/pixel-utils';
@@ -67,7 +68,16 @@ import { clamp } from '../../utils/clamp';
 export interface PickResult {
   /** Assigned pick ID of the node */
   nodeId: number;
-  /** Element index within the node (point index, segment instance, splat instance) */
+  /**
+   * The ON-DISK element index within the node (point index, segment
+   * instance, splat instance) — i.e. the index the per-element label CSR is
+   * keyed by, resolved through the node's published slot → on-disk map (see
+   * `picking-system/element-id-map.ts`). Falls back to the raw
+   * visible-buffer storage slot when the node published no map — which is
+   * NOT a guarantee that the two index spaces coincide: an unlabelled
+   * range-loaded points node publishes no map yet still diverges, and reports
+   * the slot (as it did before the map existed).
+   */
   elementId: number;
   /** Brightness weight of the winning vote */
   brightness: number;
@@ -787,7 +797,10 @@ export class PickingSystem {
     if (!nodeEntry) return null;
     return {
       nodeId: winner.nodeId,
-      elementId: winner.elementId,
+      // The vote reports a visible-buffer STORAGE SLOT; remap it here — the
+      // single PickResult construction site — so every downstream consumer
+      // (label overlay, embedder `selection` event) sees the on-disk index.
+      elementId: resolveOnDiskElementId(nodeEntry.main, winner.elementId),
       brightness: winner.weight,
       mainNode: nodeEntry.main,
     };

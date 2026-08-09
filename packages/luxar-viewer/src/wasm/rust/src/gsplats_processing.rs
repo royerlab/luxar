@@ -323,6 +323,11 @@ fn mahalanobis_distance_internal(diff: &[f32], packed_l: &[f32], ndim: usize) ->
 /// * `ndim`, `splat_count`, `min_amplitude`, `truncate`
 /// * `out_centers3d` [splat_count * 3], `out_cholesky3d` [splat_count * 6],
 ///   `out_amplitudes` [splat_count], `out_colors` [splat_count * color_components]
+/// * `out_source_indices` - Per emitted splat, the SOURCE index `i` it came
+///   from [splat_count]. Compaction destroys that mapping, and picking needs it
+///   to translate a storage slot back into an on-disk element index (issue
+///   #1423). Pass an EMPTY slice to opt out — the recording is then skipped
+///   entirely and costs nothing.
 ///
 /// # Returns
 /// Number of visible splats written (dense prefix length / stride).
@@ -349,6 +354,7 @@ pub fn project_gsplats_nd_to_3d(
     out_cholesky3d: &mut [f32],
     out_amplitudes: &mut [f32],
     out_colors: &mut [f32],
+    out_source_indices: &mut [u32],
 ) -> u32 {
     validate_ndim(ndim, "project_gsplats_nd_to_3d");
     assert!(
@@ -371,6 +377,19 @@ pub fn project_gsplats_nd_to_3d(
     debug_assert!(
         out_colors.len() >= splat_count * color_components,
         "out_colors too small"
+    );
+
+    // Empty slice = "don't record the source indices" (the opt-out every
+    // caller that has no picking map to build passes). Hoisted out of the
+    // splat loop so the non-recording path pays nothing per splat.
+    let record_source_indices = !out_source_indices.is_empty();
+    // `assert!`, not `debug_assert!`, matching the four output-buffer checks
+    // above: wasm-pack builds release, where a debug assertion is compiled out
+    // and a short buffer would instead surface as an anonymous slice-index
+    // panic partway through the loop.
+    assert!(
+        !record_source_indices || out_source_indices.len() >= splat_count,
+        "out_source_indices too small"
     );
 
     let num_continuous = continuous_hidden_dims.len();
@@ -457,6 +476,10 @@ pub fn project_gsplats_nd_to_3d(
         let col_src = i * color_components;
         out_colors[col_off..col_off + color_components]
             .copy_from_slice(&colors[col_src..col_src + color_components]);
+
+        if record_source_indices {
+            out_source_indices[out] = i as u32;
+        }
 
         out += 1;
     }
@@ -654,6 +677,7 @@ mod tests {
             &mut l3,
             &mut a3,
             &mut col3,
+            &mut [],
         ) as usize;
 
         assert_eq!(count, 2, "visible set is splat0 + splat3");
@@ -722,6 +746,7 @@ mod tests {
             &mut l4,
             &mut a4,
             &mut col4,
+            &mut [],
         ) as usize;
 
         assert_eq!(count4, 2);
@@ -733,6 +758,107 @@ mod tests {
         // Alpha of the first visible splat is its own alpha, not a shifted /
         // dropped channel (the stride-bug guard).
         assert_eq!(col4[3], 0.9, "alpha of first visible splat preserved");
+    }
+
+    /// The recorded source indices are exactly the SURVIVING source indices,
+    /// in emission order (issue #1423). Compaction destroys the slot → source
+    /// mapping, so picking cannot translate a storage slot into an on-disk
+    /// element index without this. Same fixture as
+    /// `test_fused_compaction_stride`: splat1 is attenuated out and splat2 is
+    /// discrete-gated, so the visible set is [0, 3].
+    #[test]
+    fn test_fused_records_source_indices() {
+        let ndim = 4usize;
+        let n = 4usize;
+        let one: Vec<f32> = vec![2.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0];
+        let cholesky: Vec<f32> = (0..n).flat_map(|_| one.clone()).collect();
+        let positions: Vec<f32> = vec![
+            0.0, 0.0, 0.0, 0.0, // splat0 (on slice)
+            1.0, 1.0, 1.0, 50.0, // splat1 (far in dim3 → attenuated out)
+            2.0, 2.0, 2.0, 0.0, // splat2 (discrete-gated)
+            3.0, 1.0, 2.0, 0.3, // splat3 (near slice → visible)
+        ];
+        let amplitudes: Vec<f32> = vec![1.0, 0.5, 1.0, 0.8];
+        let colors: Vec<f32> = vec![1.0; n * 3];
+        let slice = vec![0.0f32, 0.0, 0.0, 0.0];
+        let discrete_visibility = [1u8, 1, 0, 1];
+
+        let mut c3 = vec![0.0f32; n * 3];
+        let mut l3 = vec![0.0f32; n * 6];
+        let mut a3 = vec![0.0f32; n];
+        let mut col3 = vec![0.0f32; n * 3];
+        // Pre-fill with a sentinel so the untouched tail is distinguishable
+        // from a legitimately-recorded 0.
+        let mut src = vec![u32::MAX; n];
+
+        let count = project_gsplats_nd_to_3d(
+            &positions,
+            &cholesky,
+            &amplitudes,
+            &colors,
+            &discrete_visibility,
+            &slice,
+            &[3u32],
+            &[0u32, 1, 2],
+            ndim,
+            n,
+            3,
+            0.001,
+            3.0,
+            &mut c3,
+            &mut l3,
+            &mut a3,
+            &mut col3,
+            &mut src,
+        ) as usize;
+
+        assert_eq!(count, 2, "visible set is splat0 + splat3");
+        assert_eq!(&src[..count], &[0u32, 3], "recorded source indices");
+        // Slot 0's center is splat0's and slot 1's is splat3's — the recorded
+        // indices really index the SOURCE arrays, not the output slots.
+        assert_eq!(&c3[..6], &[0.0, 0.0, 0.0, 3.0, 1.0, 2.0]);
+        // The tail past the visible count is never written.
+        assert_eq!(&src[count..], &[u32::MAX, u32::MAX]);
+    }
+
+    /// An EMPTY `out_source_indices` slice is the documented opt-out: the
+    /// kernel must accept it and behave exactly as it did before the parameter
+    /// existed (no recording, no panic, no OOB write).
+    #[test]
+    fn test_fused_empty_source_indices_opts_out() {
+        let ndim = 3usize;
+        let n = 2usize;
+        let cholesky = [1.0f32, 0.0, 1.0, 0.0, 0.0, 1.0].repeat(n);
+        let positions = vec![0.0f32, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let amplitudes = vec![1.0f32, 1.0];
+        let colors = vec![1.0f32; n * 3];
+        let mut c3 = vec![0.0f32; n * 3];
+        let mut l3 = vec![0.0f32; n * 6];
+        let mut a3 = vec![0.0f32; n];
+        let mut col3 = vec![0.0f32; n * 3];
+
+        let count = project_gsplats_nd_to_3d(
+            &positions,
+            &cholesky,
+            &amplitudes,
+            &colors,
+            &[1u8, 1],
+            &vec![0.0f32; ndim],
+            &[],
+            &[0u32, 1, 2],
+            ndim,
+            n,
+            3,
+            1e-6,
+            3.0,
+            &mut c3,
+            &mut l3,
+            &mut a3,
+            &mut col3,
+            &mut [],
+        );
+
+        assert_eq!(count, 2, "the opt-out must not change visibility");
     }
 
     /// Visibility-gate boundaries of the fused kernel, migrated from the
@@ -768,6 +894,7 @@ mod tests {
                 &mut [0.0f32; 6],
                 &mut out_amps,
                 &mut [0.0f32; 3],
+                &mut [],
             );
             (count, out_amps[0])
         };
@@ -836,6 +963,7 @@ mod tests {
             &mut out_l,
             &mut out_a,
             &mut out_col,
+            &mut [],
         );
 
         assert_eq!(count, 2);
@@ -1050,6 +1178,7 @@ mod tests {
                 &mut out_l,
                 &mut out_a,
                 &mut out_col,
+                &mut [],
             ) as usize;
 
             assert_eq!(
