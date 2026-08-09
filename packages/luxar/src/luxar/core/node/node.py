@@ -11,6 +11,7 @@ from ...typing_utils.aliases import GroupAttrs, SceneHierarchy, TransformMatrix
 
 if TYPE_CHECKING:
     from ...io.writer import ZarrWriterProtocol
+    from ..dimensions import Dimensions
     from ..group import Group
 
 
@@ -66,7 +67,6 @@ class Node:
             # the loader sorts siblings by it. This keeps the layers panel in
             # napari-style addition order rather than alphabetical.
             child_index = len(parent.children)
-            parent.children.append(self)
             parent_path = getattr(parent, "path", None)
             self.path = f"{parent_path}/{name}" if parent_path else name
             # ``setdefault`` so an explicit caller-supplied value wins (and a
@@ -87,12 +87,19 @@ class Node:
                 except Exception as e:
                     raise ValueError(f"Invalid transform for node '{name}': {e}") from e
 
-            # Validate nd_transform if present
+            # Validate nd_transform if present. The scene dimensions are
+            # resolved from the parent chain (or the writer's store) so a GROUP
+            # gets the same store-aware check the geometry writers run on a leaf
+            # (issue #1418): a key naming a dimension that does not exist — or
+            # one that is displayed — is refused here rather than written clean
+            # and then ignored by the viewer.
             if "nd_transform" in attrs:
                 try:
                     from ...validation.nd_transforms import validate_nd_transform
 
-                    attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"])
+                    attrs["nd_transform"] = validate_nd_transform(
+                        attrs["nd_transform"], self._resolve_scene_dimensions()
+                    )
                 except Exception as e:
                     raise ValueError(
                         f"Invalid nd_transform for node '{name}': {e}"
@@ -156,11 +163,92 @@ class Node:
                 # hold the column-major form for the ``transform`` getter), so
                 # flag the write to keep write_group from transposing them a
                 # second time (prepare_transform_attrs is not idempotent).
+                # Skipping that pass stays sound because the block above ran the
+                # SAME dimension-aware ``nd_transform`` check, against the
+                # Dimensions resolved from the parent chain or the writer's own
+                # store.
                 self._writer.write_group(self.path, _transform_normalized=True, **attrs)
                 self._attrs_cache.update(attrs)
             else:
                 # Metadata-only mode (no writer available)
                 self._attrs_cache.update(attrs)
+
+        # Register as a sibling LAST, so a REFUSED node does not linger. Every
+        # raise above happens before this line, so a rejected construction
+        # leaves no phantom entry in ``parent.children`` and the obvious retry
+        # (fix the bad attr, call the same adder again) succeeds instead of
+        # failing with "Duplicate child name". ``child_index`` was captured
+        # above and nothing in the attrs block appends siblings, so the recorded
+        # add order is unchanged. Attr-agnostic: a bad ``opacity`` /
+        # ``transform`` stranded a node the same way.
+        self._register_with_parent()
+
+    def _register_with_parent(self) -> None:
+        """Append this node to ``self.parent``'s child list; no-op when detached.
+
+        Reads ``self.parent`` rather than taking it as an argument, so it cannot
+        register a node under a list that is not its own parent's. Split out of
+        :meth:`__init__` so the deferred registration costs the constructor no
+        extra branch (it is over the C901 ratchet already).
+        """
+        if self.parent is not None:
+            self.parent.children.append(self)
+
+    # ------------------------------------------------------------- dimensions
+    def _resolve_scene_dimensions(self) -> Optional["Dimensions"]:
+        """Resolve the scene ``Dimensions`` this node's attrs are checked against.
+
+        Two sources, in order:
+
+        1. The root ``Scene`` found by walking the parent chain. The non-raising
+           counterpart of ``Group._find_scene`` — being unattached is a legitimate
+           state here, not an error. ``Scene.__init__`` calls ``super().__init__``
+           BEFORE assigning ``self._dimensions``, so the attribute can be missing
+           while the root is still being constructed; hence ``getattr``.
+        2. The writer's store. A node can be writer-attached but Scene-DETACHED —
+           the ``parent=`` kwarg on the geometry adders is the supported route,
+           and a bare ``Group("name", writer=compiler)`` reaches the same state
+           (though that one is a footgun: its ``path`` is ``""``, so its children
+           land at the zarr root). Either way there IS an authoritative
+           ``scene_dimensions`` in the store even though the parent chain is
+           empty. What makes structure-only validation sound is having no store
+           to check against, not having no Scene — so consult the store before
+           giving up, exactly as ``io/_compiler/node_common.prepare_transform_attrs``
+           does for the leaf path. Duck-typed via ``getattr``:
+           ``ZarrWriterProtocol`` exposes ``store_path``, not ``store``, and
+           widening the protocol is a bigger change than this needs.
+
+        Returns:
+            The scene ``Dimensions``, or None when there is genuinely no Scene
+            and no store — in which case the caller validates structure only.
+        """
+        from ..scene import Scene
+
+        node: Optional[Node] = self
+        while node is not None:
+            if isinstance(node, Scene):
+                dims: Optional["Dimensions"] = getattr(node, "_dimensions", None)
+                if dims is not None:
+                    return dims
+                break
+            node = node.parent
+
+        # A store that is not zarr-Group-shaped (a stub/mock writer) degrades to
+        # structure-only validation rather than surfacing its own TypeError as
+        # "your nd_transform is invalid". No zarr import here on purpose: this
+        # module has no zarr dependency, so the shape is probed by use.
+        store = getattr(self._writer, "store", None)
+        if store is not None:
+            try:
+                has_dims = "scene_dimensions" in store.attrs
+                raw = store.attrs["scene_dimensions"] if has_dims else None
+            except (TypeError, AttributeError, KeyError):
+                return None
+            if raw is not None:
+                from ..dimensions import Dimensions
+
+                return Dimensions.from_dict(raw)
+        return None
 
     # --------------------------------------------------------------------- attrs
     @property
@@ -515,6 +603,13 @@ class Node:
     def nd_transform(self, value: Optional[Dict[str, Any]]) -> None:
         """Set the nD transform for non-displayed dimensions.
 
+        Validated against the scene dimensions — resolved from the parent chain
+        or, failing that, the writer's store — on EVERY node type, leaves
+        included (issue #1418): an unknown or displayed dimension name is
+        refused rather than persisted and then ignored by the viewer. Only a
+        node with neither a Scene nor a store falls back to structure-only
+        validation.
+
         Args:
             value: Dict mapping dim names to transform entries, or None to remove.
 
@@ -526,7 +621,10 @@ class Node:
         else:
             from ...validation.nd_transforms import validate_nd_transform
 
-            self._persist_attr("nd_transform", validate_nd_transform(value))
+            self._persist_attr(
+                "nd_transform",
+                validate_nd_transform(value, self._resolve_scene_dimensions()),
+            )
 
     @property
     def world_nd_transform(self) -> Dict[str, Any]:
