@@ -442,6 +442,31 @@ def test_short_body_without_content_length_is_rejected(
     assert _leftovers(dest) == set()
 
 
+def test_a_nearly_complete_stream_without_a_declared_length_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No declared length means the size table is the ONLY completeness signal.
+
+    The narrow miss is the dangerous one, and the CSVs are where it hurts: 8 MiB
+    of the 8.74 MB ``Label_data02.csv`` clears a 90% bar, pandas parses that
+    truncation without complaining, and every global image index after the short
+    file shifts — so the thumbnails land on the wrong points at a match rate far
+    above the tripwire. With nothing proving the body arrived whole, the full
+    measured size is required.
+    """
+    body = b"a,b,c\n" * 1_398_101
+    expected = demo.ARTIFACT_SIZES["Label_data02.csv"]
+    assert expected * 0.9 < len(body) < expected, "must clear a 90% bar"
+    _install_session(monkeypatch, _serve(body, content_length=None))
+    dest = tmp_path / "Label_data02.csv"
+
+    with pytest.raises(RuntimeError, match="too short"):
+        demo._download_from_google_drive("ABC123", dest, expected_min_size=expected)
+
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
+
+
 def test_short_body_with_an_honest_content_length_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

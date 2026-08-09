@@ -549,10 +549,17 @@ looked complete. The CSVs are the worse half of that — pandas parses a truncat
 CSV without complaining, so the concatenated label table silently loses rows,
 every image index after the short file shifts, and the thumbnails land on the
 wrong points at a match rate too high for the tripwire to see. With a per-file
-size the bar is a flat 10% under the real thing, which is slack for a re-upload
-a few bytes different and nothing more. The tests pin the table against the
-download list and against the total the demo advertises, so a mistyped digit or
-a new source file cannot slip through.
+size the bar depends on what else is known about the stream. When a
+content-length was declared and matched, the body is provably whole, so a size
+that disagrees with the table means a different file rather than a truncated
+one and 10% of slack is right — enough for a re-upload a few bytes different,
+still tight enough for Drive's error bodies. When nothing was declared — the
+usual case for the multi-gigabyte archives, where a cut stream simply ends —
+the table is the only completeness signal there is and the full size is
+required: a nearly-complete CSV is exactly the failure that stays silent all the
+way to the wrong thumbnails. The tests pin the table against the download list
+and against the total the demo advertises, so a mistyped digit or a new source
+file cannot slip through.
 
 Verifying a length means insisting on an identity byte stream, which cost a
 round of debugging to appreciate: `requests` advertises gzip by default and

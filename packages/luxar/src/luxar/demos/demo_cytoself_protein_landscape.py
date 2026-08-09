@@ -26,9 +26,10 @@ Download size (exact, from Range probes of the Drive files; decimal GB/MB):
   Budget ~190 GB of free disk rather than 186: the downloads stay cached, and
   the encoded thumbnails — one archive per source file, the assembled bundle,
   and the staging copy the bundle is written through — sit alongside them.
-  Budget ~25 GB of RAM too: the thumbnail pass reads one Image_data archive
-  whole and the largest is 23.6 GB. --without-images peaks at ~16 GB, for the
-  UMAP over the embeddings.
+  Plan on a 32 GB machine: the thumbnail pass reads one Image_data archive
+  whole and the largest is 23.6 GB, with the selected crops, the thumbnails
+  encoded so far and the label tables all live on top of it. --without-images
+  peaks at ~16 GB, for the UMAP over the embeddings.
 
 Data source: OpenCell / CytoSelf (CC BY 4.0)
   - Embeddings: Global VQ-VAE-2 representations (9,216-dim per image)
@@ -189,11 +190,14 @@ _ENVIRONMENT_ERRNOS = frozenset(
 # quietly shifts and every thumbnail after the short file lands on the wrong
 # point, with nothing downstream able to notice.
 #
-# Both users compare against `size * 0.9` — the legacy sidecar-less cache check,
-# and the promotion gate for a stream that declared no content-length — so the
-# effective bar is 10% under the real file: slack for a re-upload a few bytes
-# different, without the 2x hole a family-wide floor leaves. A file that really
-# did shrink further fails loudly, with the manual download URL.
+# How much slack each user allows depends on what else it knows. A stream that
+# declared no content-length has no other completeness signal at all, so it is
+# held to the full size — a truncation there is invisible otherwise, and the
+# CSVs make it silent (see :func:`_verify_staged_download`). A stream whose
+# declared length matched, and the legacy sidecar-less cache check, allow 10%
+# under: slack for a re-upload a few bytes different, without the 2x hole a
+# family-wide floor leaves. A file that really did shrink fails loudly, with the
+# manual download URL.
 ARTIFACT_SIZES = {
     "Global_representation.npy": 4_232_208_512,
     "label.csv": 6_553_361,
@@ -621,16 +625,33 @@ def _verify_staged_download(
             output_path,
         )
 
-    # The expected-size floor is checked whether or not a length was declared.
-    # An honest content-length only proves the body arrived whole, not that it
-    # is the body we asked for: Drive also serves small non-HTML "cannot access
-    # this file" responses, which agree with their own length and would
-    # otherwise be promoted AND certified by a sidecar — where the old heuristic
-    # at least re-fetched them every run.
-    if final_size <= expected_min_size * 0.9:
+    # The expected-size gate runs whether or not a length was declared, but how
+    # tight it is depends on what the declared length already proved.
+    #
+    # NO declared length — Drive's chunked/connection-close path, and the usual
+    # one for the multi-gigabyte archives — means nothing so far says the body
+    # arrived WHOLE: a stream cut short simply ends. The measured size is then
+    # the only completeness signal there is, so it is required in full. Slack
+    # here is the dangerous window and buys almost nothing: 8 MB of the 8.74 MB
+    # `Label_data02.csv` clears a 90% bar, pandas parses that truncation without
+    # complaining, and every image index after the short file shifts.
+    #
+    # WITH a declared length the body is provably whole (checked just above), so
+    # a size that disagrees with the table means a DIFFERENT file rather than a
+    # truncated one — a re-upload, or one of Drive's small non-HTML "cannot
+    # access this file" bodies, which agree with their own length and would
+    # otherwise be promoted AND certified by a sidecar. A 10% floor is the right
+    # shape there: it waves a re-upload a few bytes different through and still
+    # rejects the error bodies.
+    too_short = (
+        final_size < expected_min_size
+        if total_size is None
+        else final_size <= expected_min_size * 0.9
+    )
+    if too_short:
         raise _reject_staged_download(
             part_path,
-            f"Download is too short: got {final_size} bytes, well under the "
+            f"Download is too short: got {final_size} bytes, under the "
             f"{expected_min_size} bytes expected for this file.",
             file_id,
             output_path,
@@ -2082,8 +2103,9 @@ def main() -> None:
     aprint("      (~10-30 min). Needs ~190 GB of free disk — the downloads stay")
     aprint("      cached, and the encoded thumbnails (per source file, plus the")
     aprint("      assembled bundle and its staging copy) sit alongside them —")
-    aprint("      and ~25 GB of RAM, since the thumbnail pass reads one whole")
-    aprint("      Image_data archive at a time and the largest is 23.6 GB.")
+    aprint("      and a 32 GB machine, since the thumbnail pass reads one whole")
+    aprint("      Image_data archive at a time (the largest is 23.6 GB) and the")
+    aprint("      crops, encoded thumbnails and label tables sit on top of it.")
     aprint("      --without-images needs ~16 GB, for the UMAP.")
     aprint("      Subsequent runs load from cache; an interrupted run resumes")
     aprint("      per file. Use --without-images for the ~4.24 GB run.")
