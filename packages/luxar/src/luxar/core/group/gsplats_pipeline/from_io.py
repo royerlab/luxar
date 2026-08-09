@@ -100,7 +100,7 @@ def graft_gsplat_node(
     node: Any,  # luxar.gsplats.tree.GSplatNode
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
-    _under_partition: bool = False,
+    _under_partition: Optional[bool] = None,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     """Graft a pre-built ``GSplatNode`` subtree into the scene, node-for-node.
@@ -113,11 +113,16 @@ def graft_gsplat_node(
     ``meta`` (so a nested lod combo stays selectable). Compositing attrs land on
     a wrapper Group; the rest fall through to children.
 
-    ``_under_partition`` is set by the recursion once a ``kind=partition`` ancestor
-    with **more than one part** has been crossed (a one-part partition is not a
-    tiling — see the partition branch); it selects which anchor the FALLBACK
-    ``coverage_fraction`` derivation uses (see the lod branch). Callers leave it
-    at the default.
+    ``_under_partition`` carries the partition binding of this node's surroundings
+    and is TRI-STATE. ``None`` — the caller default — means "entry call: read the
+    binding off the SCENE" by walking ``parent`` links up from the insertion point
+    (:func:`~luxar.core.group.lod.group.is_partition_bound`), which is resolved
+    once near the top of this function; the recursion then threads a concrete bool
+    down. It is ``True`` once a ``kind=partition`` with **more than one part** has
+    been crossed (a one-part partition is not a tiling — see the partition branch),
+    and an outer ``True`` is never lost on the way down. It selects which anchor the
+    FALLBACK ``coverage_fraction`` derivation uses (see the lod branch). Callers
+    leave it at the default.
 
     Note what does NOT come here: only a **non-matrix-shaped** subtree is grafted
     at all. ``add_gsplats_from_file_impl`` sends every matrix-shaped tree — a bare
@@ -147,6 +152,19 @@ def graft_gsplat_node(
         )
 
     parent_node = parent or group
+    # The SCENE side of the binding is read exactly ONCE, here at the entry call
+    # (``_under_partition is None``), and then threaded down by the recursion.
+    # Below the entry it must NOT be re-asked: ``parent_node`` is then a wrapper
+    # this graft itself just created, so the walk would answer about our own
+    # freshly-written ``kind=partition`` and override the recursion's decision —
+    # in particular the one-part exclusion in the partition branch.
+    under_partition: bool
+    if _under_partition is None:
+        from ..lod.group import is_partition_bound
+
+        under_partition = is_partition_bound(parent_node)
+    else:
+        under_partition = _under_partition
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
     # `blending_mode` stays on the WRAPPER ONLY, like every other compositing
@@ -173,11 +191,7 @@ def graft_gsplat_node(
     if isinstance(node, GSplatLodGroup):
         from luxar.gsplats.tree import total_splats
 
-        from ..lod.group import (
-            coverage_fractions,
-            is_partition_bound,
-            partitioned_coverage_fractions,
-        )
+        from ..lod.group import coverage_fractions, partitioned_coverage_fractions
 
         wrapper_attrs.setdefault("display_type", "gsplats")
         # In-memory children are coarsest→finest, the same order add_lod_group
@@ -197,28 +211,28 @@ def graft_gsplat_node(
         # live trigger is a legacy pre-v3.2 store, whose ``min_pixel_size`` is not
         # lifted into ``meta``, so nothing authored wins over this fallback.
         #
-        # THREE ways to be bound. Scope each one honestly:
-        #   * ``_under_partition`` — a ``kind=partition`` crossed higher up THIS
-        #     grafted subtree (the recursion's own flag).
+        # TWO ways to be bound, and the first one already folds in the scene side:
+        #   * ``under_partition`` — a partition crossed on the way here. Either one
+        #     higher up THIS grafted subtree (the recursion's own flag, which
+        #     excludes a one-part partition — see the partition branch), or, at the
+        #     entry call, a ``kind=partition`` already in the SCENE above the
+        #     insertion point (the ``is_partition_bound`` walk at the top of this
+        #     function).
         #   * a child that IS a ``GSplatPartition`` — the ``overview`` recipe's
         #     cap↔fine pair, the common reachable case here.
-        #   * ``is_partition_bound(parent_node)`` — the SCENE side, for a subtree
-        #     grafted INTO a hand-built ``kind=partition`` wrapper.
-        # The third term is DEFENSIVE, not the fix for the everyday per-part
+        # The scene-side half is DEFENSIVE, not the fix for the everyday per-part
         # graft: only a non-matrix-shaped subtree reaches this function at all
-        # (see the docstring), so with ``_under_partition=False`` the shape that
-        # gets here and needs it is a nested lod-of-lods — which no library
-        # producer writes today (``levels`` → lod of leaves, ``overview`` → lod of
-        # [leaf, partition], ``adaptive``/``tiles`` → partition of …). A per-part
+        # (see the docstring), so with no binding from above the shape that gets
+        # here and needs it is a nested lod-of-lods — which no library producer
+        # writes today (``levels`` → lod of leaves, ``overview`` → lod of [leaf,
+        # partition], ``adaptive``/``tiles`` → partition of …). A per-part
         # ``add_gsplats_from_file`` of an ordinary ladder file is matrix-shaped and
-        # is anchored by ``add_gsplats_as_lod_group_impl`` instead. The term is
-        # kept because it costs one cheap parent walk, is idempotent (the
-        # recursion's insertion point is this wrapper, itself inside the same
-        # chain), and closes the asymmetry for a hand-built / future nested tree.
-        partition_bound = (
-            _under_partition
-            or is_partition_bound(parent_node)
-            or any(isinstance(c, GSplatPartition) for c in on_disk)
+        # is anchored by ``add_gsplats_as_lod_group_impl`` instead. It is kept
+        # because it costs one cheap parent walk and closes the asymmetry for a
+        # hand-built / future nested tree — but ONLY as the entry call's seed, so
+        # it can never contradict the recursion's own one-part exclusion.
+        partition_bound = under_partition or any(
+            isinstance(c, GSplatPartition) for c in on_disk
         )
         derive_cov = (
             partitioned_coverage_fractions if partition_bound else coverage_fractions
@@ -261,15 +275,18 @@ def graft_gsplat_node(
         # partition holds a single part, which is not a tiling: that part covers
         # the whole object, so a ladder underneath it keeps the whole-object
         # anchor. Mirrors the standalone writer (``gsplat_tree.write_gsplat_node``)
-        # and the shape ``build_adaptive`` emits below ``max_elements``.
-        parts_are_tiles = len(node.children) > 1
+        # and the shape ``build_adaptive`` emits below ``max_elements``. The
+        # exclusion only ever ADDS a binding, never drops an outer one: a one-part
+        # partition nested inside a real tiling is still inside that one tile, so
+        # OR the incoming binding in rather than overwriting it.
+        child_under_partition = under_partition or len(node.children) > 1
         for i, child in enumerate(node.children):
             graft_gsplat_node(
                 wrapper,
                 name=f"part_{i}",
                 node=child,
                 extend_to_all=extend_to_all,
-                _under_partition=parts_are_tiles,
+                _under_partition=child_under_partition,
                 **child_attrs,
             )
         return wrapper

@@ -6,6 +6,49 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A hand-built partition of per-part ladders now gets the tile anchor itself (#1411)
+
+`add_points` / `add_lines` reject `partition=` together with `substitutive_lod=`, so
+the adders treated every auto-derived ladder as whole-object and anchored its finest
+at `1.0`. But a caller can hand-build the `kind=partition` wrapper and call the adder
+once per part — what `demo_biodiversity_planetary_scale` does — and that ladder
+switches on ONE TILE, whose projected diagonal is intrinsically a fraction of the
+whole object's, so every part sat on its finest level at the opening framing. The
+same hole existed for `add_gsplats_from_data(..., lod_group=...)` — and therefore for
+`add_gsplats_from_file` per part, since an ordinary ladder store is matrix-shaped and
+routes through it.
+
+The three scene adders now detect a `kind=partition` ancestor of the insertion point
+(a plain `add_group` in between still counts — the ladder is still inside one tile)
+and derive `partitioned_coverage_fractions` instead, logging the switch rather than
+making it silently, so a hand-built partition lands on exactly the thresholds
+`luxar gsplat lod --recipe adaptive` derives for the same tree. An explicit
+`substitutive_lod=dict(coverage_fractions=[...])` / `lod_group=dict(...)` list still
+wins verbatim, so the biodiversity demo's hand-tuned ladder is untouched. A
+hand-authored per-child `coverage_fraction=` on `add_lod_group` (the shape
+`examples/partition_of_lod_example.py` builds) is also unaffected — nothing is
+derived there, so those thresholds remain the author's to set.
+
+`graft_gsplat_node`'s own fallback (for a *non*-matrix-shaped grafted subtree) gained
+the same scene-side check as a silent defensive term, but it is consulted ONCE, to
+seed the recursion at the entry call. Asking it again deeper would be
+self-referential — by then the nearest `kind=partition` ancestor is a wrapper the
+graft itself just created — and it would overrule the recursion's own one-part
+exclusion, putting a one-part grafted partition back on the tile anchor. For the same
+reason a nested one-part partition no longer drops an outer binding: it is OR-ed in,
+not overwritten.
+
+New helpers `is_partition_bound(node)` and
+`derive_coverage_fractions(counts, insertion_point, name=...)` in
+`core/group/lod/group.py`; they are the scene-graph mirror of the `under_partition`
+recursion flag the two gsplat writers already thread through a detached tree. The
+rule assumes the partition is a real tiling (>= 2 parts) — a one-part "partition" is
+the whole object and keeps the whole-object anchor, which the writers and
+`build_adaptive` already enforce where they can see the whole tree. The scene-adder
+path is the one place that cannot: part 0's ladder is derived before part 1 exists,
+so the sibling count does not exist yet. That stays a documented caveat.
+
+
 #### Mesh gets substitutive LOD
 
 A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
@@ -151,44 +194,6 @@ in the older entry — only the two here compare directly.
 Regenerate the demo dataset to pick up the new look.
 `docs/images/readme/gallery/atp_synthase.{webp,webm}` — the README gallery tile —
 were recaptured through the gallery harness against the new look.
-
-#### A hand-built partition of per-part ladders now gets the tile anchor itself (#1411)
-
-`add_points` / `add_lines` reject `partition=` together with `substitutive_lod=`, so
-the adders treated every auto-derived ladder as whole-object and anchored its finest
-at `1.0`. But a caller can hand-build the `kind=partition` wrapper and call the adder
-once per part — what `demo_biodiversity_planetary_scale` does — and that ladder
-switches on ONE TILE, whose projected diagonal is intrinsically a fraction of the
-whole object's, so every part sat on its finest level at the opening framing. The
-same hole existed for `add_gsplats_from_data(..., lod_group=...)` — and therefore for
-`add_gsplats_from_file` per part, since an ordinary ladder store is matrix-shaped and
-routes through it.
-
-The three scene adders now detect a `kind=partition` ancestor of the insertion point
-(a plain `add_group` in between still counts — the ladder is still inside one tile)
-and derive `partitioned_coverage_fractions` instead, logging the switch rather than
-making it silently, so a hand-built partition lands on exactly the thresholds
-`luxar gsplat lod --recipe adaptive` derives for the same tree. An explicit
-`substitutive_lod=dict(coverage_fractions=[...])` / `lod_group=dict(...)` list still
-wins verbatim, so the biodiversity demo's hand-tuned ladder is untouched. A
-hand-authored per-child `coverage_fraction=` on `add_lod_group` (the shape
-`examples/partition_of_lod_example.py` builds) is also unaffected — nothing is
-derived there, so those thresholds remain the author's to set.
-
-`graft_gsplat_node`'s own fallback (for a *non*-matrix-shaped grafted subtree) gained
-the same scene-side check as a silent defensive term. It changes nothing for any
-tree a library producer writes today — only a nested lod-of-lods reaches it
-unflagged — and it closes the asymmetry for a hand-built one.
-
-New helpers `is_partition_bound(node)` and
-`derive_coverage_fractions(counts, insertion_point, name=...)` in
-`core/group/lod/group.py`; they are the scene-graph mirror of the `under_partition`
-recursion flag the two gsplat writers already thread through a detached tree. The
-rule assumes the partition is a real tiling (>= 2 parts). The scene-adder path cannot
-check that — part 0's ladder is derived before part 1 exists — so it is a documented
-caveat; note also that `--recipe adaptive` on a dataset below `--max-elements` already
-produces a one-part partition whose "tile" is the whole object.
-
 
 #### LOD levels no longer wait for the object to overfill the screen
 

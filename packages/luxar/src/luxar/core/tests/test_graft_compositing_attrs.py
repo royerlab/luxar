@@ -185,6 +185,45 @@ def test_grafted_one_part_partition_uses_the_whole_object_anchor() -> None:
         assert covs[-1] == 1.0, f"expected the whole-object anchor; got {covs}"
 
 
+def test_graft_into_a_multi_part_partition_keeps_the_tile_anchor() -> None:
+    """The mirror case: the SCENE insertion point is a REAL tiling (>= 2 parts),
+    so the ladder is per-tile and keeps the fills-screen anchor (finest 4.0).
+
+    Note what the grafted subtree itself is: the same ONE-part
+    ``kind=partition`` as the test above, whose own part count says "not a
+    tiling". An outer binding must survive that — a one-part partition nested
+    inside a tile is still inside that tile — so the two rules compose rather
+    than the inner one cancelling the outer.
+    """
+    from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+
+    with tempfile.TemporaryDirectory() as tmp:
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(
+            scene_path, encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            tiled = scene.add_partition_group(
+                "tiled", display_type="gsplats", max_elements=120
+            )
+            # A sibling tile FIRST, so the insertion point is a genuine tiling
+            # and not the degenerate one-part shape at graft time.
+            tiled.add_gsplats_from_data("part_0", _two_clusters(30))
+            graft_gsplat_node(tiled, name="part_1", node=_one_part_adaptive())
+
+        root = zarr.open_group(str(scene_path), mode="r")
+        lod = root["tiled"]["part_1"]["part_0"]
+        covs = [
+            float(lod[k].attrs["coverage_fraction"])
+            for k in sorted(lod.group_keys(), key=lambda s: int(s.split("_")[1]))
+        ]
+        assert covs[0] == 0.0
+        assert covs[-1] == MAX_COVERAGE_FRACTION, (
+            f"expected the per-tile anchor; got {covs}"
+        )
+
+
 # ────────────────────────────────────────────────────────────────────────
 # coverage_fraction anchor for a ladder added INTO a hand-built partition
 # ────────────────────────────────────────────────────────────────────────
@@ -270,8 +309,9 @@ def test_graft_fallback_sees_a_scene_side_partition() -> None:
     """The graft's fallback anchor also consults the SCENE-graph insertion point.
 
     ``_under_partition`` is threaded down the ``GSplatNode`` tree being walked, so
-    a hand-built ``kind=partition`` wrapper in the SCENE is invisible to it. The
-    lod branch therefore ORs in `is_partition_bound(parent or group)`.
+    a hand-built ``kind=partition`` wrapper in the SCENE would be invisible to it.
+    The entry call therefore SEEDS the flag from `is_partition_bound(parent or
+    group)` — once, before any wrapper of its own exists.
 
     SCOPE: this is a DEFENSIVE term, and this test reaches it only by calling
     ``graft_gsplat_node`` directly. The everyday

@@ -356,6 +356,13 @@ def is_partition_bound(node: "Node") -> bool:
     ``core/group/gsplats_pipeline/from_io.py::graft_gsplat_node``). Those walk a
     detached ``GSplatNode`` tree top-down and so can carry the flag; a scene adder
     is handed only its insertion point, so it walks ``parent`` links up instead.
+    The two meet in ``graft_gsplat_node``, which SEEDS its recursion flag from this
+    walk — once, at the entry call, where the insertion point is still a node the
+    graft did not create. Deeper down it must keep using the threaded flag: this
+    walk would then only rediscover the graft's own freshly-written
+    ``kind=partition`` wrapper and would overrule that recursion's one-part
+    exclusion (a single part is not a tiling — see
+    :func:`partitioned_coverage_fractions`).
     """
     current: Optional["Node"] = node
     while current is not None:
