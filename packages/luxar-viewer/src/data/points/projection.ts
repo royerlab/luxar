@@ -87,6 +87,92 @@ function dtypesFromAttrs(nodeAttrs: PointsMetadata): {
 }
 
 /**
+ * Map visible-buffer slots back to the ON-DISK element indices the
+ * per-element label CSR (`label_offsets` / `label_bytes`) is keyed by.
+ *
+ * Two independent things make the visible buffer's index space diverge from
+ * the on-disk one:
+ *
+ *  1. **Range loading** — the spatial index yields only the visible
+ *     `PointRange[]` (ascending, disjoint, half-open `[start, end)`) and the
+ *     loader concatenates just those, so output slot `i` is a position in the
+ *     CONCATENATED visible set, not an on-disk index.
+ *  2. **Effective-radius compaction** — zero-effective-radius points are
+ *     compacted out, renumbering everything after the first removal.
+ *
+ * @param ranges - The visible on-disk ranges, in ascending order, exactly as
+ *                 handed to `projectPointsTo3D`.
+ * @param keptConcatIndices - Ascending concatenated-set indices that survived
+ *                            the zero-radius compaction, or `null` when no
+ *                            compaction ran.
+ * @param numPoints - Final visible point count; the returned map's length.
+ * @returns A `numPoints`-long slot → on-disk map, or `undefined` when the
+ *          identity holds (slot IS the on-disk index) or the inputs are
+ *          inconsistent — in both cases callers fall back to the slot.
+ */
+export function buildPointElementIds(
+  ranges: readonly PointRange[],
+  keptConcatIndices: readonly number[] | null,
+  numPoints: number
+): Uint32Array | undefined {
+  if (numPoints <= 0) return undefined;
+
+  // Identity fast path: one range anchored at 0 and nothing compacted out ⇒
+  // slot === on-disk index. This is the common plain-3D case, and it must not
+  // pay for a redundant N-element array.
+  if (keptConcatIndices === null && ranges.length === 1 && ranges[0].start === 0) {
+    return undefined;
+  }
+
+  const concatTotal = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+  const expected = keptConcatIndices === null ? concatTotal : keptConcatIndices.length;
+  if (expected !== numPoints) {
+    log.warning(
+      Modules.SPATIAL_INDEX_LOADER,
+      `Element-ID map skipped: ${expected} source indices for ${numPoints} visible points. ` +
+        'Picking labels fall back to the visible-buffer slot.'
+    );
+    return undefined;
+  }
+
+  const out = new Uint32Array(numPoints);
+
+  if (keptConcatIndices === null) {
+    let w = 0;
+    for (const r of ranges) {
+      for (let g = r.start; g < r.end; g++) out[w++] = g;
+    }
+    return out;
+  }
+
+  // Both the kept list and the ranges are ascending, so one forward cursor
+  // over the ranges' prefix sums resolves every kept index in O(n) total —
+  // no per-element binary search.
+  let k = 0;
+  let prefix = 0; // concat index at which ranges[k] begins
+  for (let i = 0; i < keptConcatIndices.length; i++) {
+    const c = keptConcatIndices[i];
+    while (k < ranges.length && c >= prefix + (ranges[k].end - ranges[k].start)) {
+      prefix += ranges[k].end - ranges[k].start;
+      k++;
+    }
+    if (k >= ranges.length) {
+      // Malformed input (kept index past the end of the ranges). Bail out
+      // rather than writing garbage into the map.
+      log.warning(
+        Modules.SPATIAL_INDEX_LOADER,
+        `Element-ID map skipped: kept index ${c} lies past the end of the visible ranges. ` +
+          'Picking labels fall back to the visible-buffer slot.'
+      );
+      return undefined;
+    }
+    out[i] = ranges[k].start + (c - prefix);
+  }
+
+  return out;
+}
+
+/**
  * Build the "no visible points" `LoadedPointsData` payload. The empty
  * payload still carries the dataset's `ndim` (from the chunk index when
  * present, else 3) and `totalPoints` (from `node.attrs.n_points`) so
@@ -272,6 +358,10 @@ export function projectPointsTo3D(
   }
 
   let numPoints = totalPoints;
+
+  // Ascending concat-set indices that survived the zero-radius compaction,
+  // or null when no compaction actually ran. Feeds `buildPointElementIds`.
+  let keptConcatIndices: number[] | null = null;
 
   // Use target buffers if provided (zero allocations).
   const { displayDims } = viewState;
@@ -477,6 +567,10 @@ export function projectPointsTo3D(
         `Filtering out ${numPoints - filteredCount} zero-radius points (keeping ${filteredCount})`
       );
 
+      // Compaction is really happening: record the survivors so the
+      // slot → on-disk element-ID map below is compacted in lock-step.
+      keptConcatIndices = validIndices;
+
       if (targetBuffers) {
         // In-place compaction into the target buffers (zero
         // allocations). Compact valid points to the buffer start.
@@ -661,6 +755,23 @@ export function projectPointsTo3D(
     }
   }
 
+  // Slot → on-disk element index map for per-element label lookups
+  // (`undefined` on the identity path — see `buildPointElementIds`).
+  //
+  // Gated on the node declaring a per-element label CSR: that is the reader
+  // the map exists for, and it costs 4 B/point on the zero-allocation
+  // accumulator path. `LabelLoader.hasLabels()` keys on the same attrs.
+  // NOT "no possible reader": picking is also provisioned for a label-less
+  // scene when an embedder `selection` listener exists at load time
+  // (`core/app/picking/init-picking.ts`), and that payload's `elementIndex`
+  // keeps reporting the storage slot — exactly what it reported before this
+  // change, but still a slot, not an on-disk index.
+  const wantsElementIds =
+    ctx.nodeAttrs.has_labels === true || ctx.nodeAttrs.has_image_labels === true;
+  const elementIds = wantsElementIds
+    ? buildPointElementIds(ranges, keptConcatIndices, numPoints)
+    : undefined;
+
   // Return from accumulator when using target buffers (zero
   // allocations).
   if (targetBuffers && ctx.accumulator) {
@@ -673,8 +784,14 @@ export function projectPointsTo3D(
       usedSpatialIndex: true,
     });
 
-    // Return from accumulator (subarrays are views into accumulator buffers)
-    return ctx.accumulator.getData(numPoints);
+    // Return from accumulator (subarrays are views into accumulator buffers).
+    // `getData` mints a FRESH object literal every call, so stamping the
+    // element-ID map onto it does not mutate any previously returned payload.
+    // The map itself is deliberately NOT an accumulator-owned buffer: it only
+    // exists on the non-identity path and is a small Uint32Array.
+    const result = ctx.accumulator.getData(numPoints);
+    if (elementIds) result.elementIds = elementIds;
+    return result;
   }
 
   // Fallback: Create new LoadedPointsData object (when accumulator disabled)
@@ -687,6 +804,7 @@ export function projectPointsTo3D(
     // pass scalars through. They are already type-compacted above
     // (or unchanged when no filtering occurred).
     scalars: (scalars as PointScalarArray | null | undefined) ?? undefined,
+    elementIds,
     pointCount: numPoints,
     ndim,
     metadata: {

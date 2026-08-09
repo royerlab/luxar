@@ -6,6 +6,41 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Hover labels index the right point (#1421)
+
+`PickResult.elementId` was the storage slot in the buffer that reached the GPU, never
+the on-disk element index the per-element label CSR (`label_offsets` / `label_bytes`)
+is keyed by — so a hover tooltip showed a wrong-but-plausible neighbour's label
+whenever the two index spaces diverged. For Points they diverge two independent ways:
+the spatial index concatenates only the visible on-disk ranges, and the
+effective-radius pass compacts zero-radius points out in place. Measured on a 4D scene
+with a hidden categorical axis and `chunk_size=2048`, the first visible point reported
+`elementId = 0` while its on-disk index was 2048 — every label in the scene off by a
+whole chunk.
+
+`projectPointsTo3D` now publishes the slot → on-disk map as
+`LoadedPointsData.elementIds` (a field that had been declared, and documented as
+exactly this hazard, with no producer), and picking resolves through it at the single
+`PickResult` construction site, so the `{hover_index}` overlay template is fixed
+wherever it can fire at all. The map is **omitted** when the identity holds (one range
+starting at 0, nothing compacted), which is the common plain-3D case, so picking
+allocates nothing there — as is a node declaring neither `has_labels` nor
+`has_image_labels`, which has no label reader; picking is still provisioned for such a
+node when an embedder `selection` listener exists, and that payload's `elementIndex`
+keeps reporting the storage slot, unchanged. It is also deliberately stripped across an
+additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
+so no single map is meaningful (the loader factory now also clears the label flags on
+each sub-LOD, so it is never built there); per-level label resolution is #1422. A
+`kind=partition` points layer needs one more fix to hover correctly — the handler still
+resolves labels against the outermost wrapper path rather than the leaf that owns the
+CSR (#1415, in flight separately); the two compose.
+
+Points only. GSplats (#1423) and Lines (#1424) have the same class of bug and are
+separate follow-ups — gsplats needs a Rust WASM kernel change, and lines carries a
+segment-vs-vertex granularity mismatch on top of it. Mesh was already correct: its pick
+shader reports `gl_VertexID`, which for an indexed draw IS the on-disk vertex ordinal,
+so the lookup no-ops.
+
 #### Mesh gets substitutive LOD
 
 A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`

@@ -319,6 +319,17 @@ export async function createProgressivePointsLoader(
         offset: parentEffectiveAttrs.offset,
         blending_mode: parentEffectiveAttrs.blending_mode,
         extend_to_all: node.attrs.extend_to_all,
+        // A sub-LOD's label CSR lives on `additive_<i>` but the pick path only
+        // ever resolves labels against the PARENT node's path, so no reader
+        // can key by a sub-LOD's on-disk index. Clearing the flags here keeps
+        // `projectPointsTo3D` from building a slot → on-disk map per level
+        // that the ladder concat then discards. (The parent's own missing
+        // `has_labels` is #1422.) These two keys therefore CONTRADICT the
+        // store: whoever implements per-level labels must decide whether a
+        // level has a CSR from the real `lodGroup.attrs` / the `additive_<i>`
+        // group itself, never from this synthesized node.
+        has_labels: false,
+        has_image_labels: false,
       },
       hasSpatialIndex: false,
       children: [],

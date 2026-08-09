@@ -25,7 +25,9 @@
  * Stored in a module-owned {@link WeakMap} keyed on the concat-result object,
  * NOT as a field on the data:
  * - The data object is sometimes SHARED (the single-LOD concat returns the raw
- *   LOD object directly) or DEEP-CLONED (slice-cache ladder restore), so a
+ *   LOD object directly — for Points only when that object carries no
+ *   `elementIds` map, which the concat must strip) or DEEP-CLONED
+ *   (slice-cache ladder restore), so a
  *   mutable field would alias or be lost; identity-keyed WeakMap entries are
  *   immune. A restored-from-cache clone simply has no entry → no append on the
  *   first post-restore commit, which is safe.

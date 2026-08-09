@@ -24,6 +24,7 @@ import {
   type PickResult,
 } from '../../../../rendering/picking/picking-system';
 import { MAX_PICK_NODE_ID } from '../../../../rendering/picking/picking-system/pick-render';
+import { setCommittedData } from '../../../../types/committed-data';
 
 /** A promise plus its external `resolve` — lets a test gate when the readback completes. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -1244,5 +1245,63 @@ describe('PickingSystem — stale readback ordering', () => {
     await pending;
 
     expect(onPickResult).toHaveBeenCalledExactlyOnceWith(fakeResult);
+  });
+});
+
+describe('PickingSystem — element-ID remap (issue #1421)', () => {
+  /**
+   * Drive the REAL `readbackAndVote` without a GL context: the WebGL2
+   * readback path just calls `renderer.readRenderTargetPixelsAsync(target, x,
+   * y, w, h, dst)` and fills `dst`, so a stub that writes a uniform
+   * `(nodeId, elementId-low, brightness, elementId-high)` texel is enough to
+   * reach the PickResult construction site.
+   */
+  async function pickSlot(slot: number, elementIds?: Uint32Array): Promise<PickResult | null> {
+    let nodeId = 0;
+    const renderer = {
+      domElement: document.createElement('canvas'),
+      getDrawingBufferSize: vi.fn((t: THREE.Vector2) => t.set(800, 600)),
+      readRenderTargetPixels: vi.fn(),
+      readRenderTargetPixelsAsync: vi.fn(
+        async (
+          _target: unknown,
+          _x: number,
+          _y: number,
+          width: number,
+          height: number,
+          dst: Float32Array
+        ) => {
+          for (let i = 0; i < width * height; i++) {
+            dst[i * 4] = nodeId;
+            dst[i * 4 + 1] = slot & 0xffff;
+            dst[i * 4 + 2] = 1; // brightness
+            dst[i * 4 + 3] = slot >>> 16;
+          }
+        }
+      ),
+    } as unknown as THREE.WebGLRenderer;
+
+    const system = new PickingSystem(renderer, makeStubCapabilities(), makeCamera(), vi.fn());
+    const geom = new THREE.BoxGeometry(1, 1, 1);
+    const mainNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+    const pickNode = new THREE.Mesh(geom, new THREE.MeshBasicMaterial());
+    nodeId = system.allocatePickId();
+    system.registerNode(mainNode, pickNode, nodeId);
+    if (elementIds) setCommittedData(mainNode, { elementIds });
+
+    return (
+      system as unknown as { readbackAndVote: () => Promise<PickResult | null> }
+    ).readbackAndVote();
+  }
+
+  it('reports the raw slot when the node published no elementIds map', async () => {
+    const result = await pickSlot(3);
+    expect(result?.elementId).toBe(3);
+  });
+
+  it('reports the ON-DISK index when the node published an elementIds map', async () => {
+    // Slot 1 of a node whose visible buffer starts at on-disk 2048.
+    const result = await pickSlot(1, new Uint32Array([2048, 2049, 4096]));
+    expect(result?.elementId).toBe(2049);
   });
 });

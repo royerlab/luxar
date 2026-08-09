@@ -22,6 +22,7 @@ import {
 import { createPointsGeometry } from '../../../../rendering/node-factory/create-points-node';
 import { getPointTexture } from '../../../../rendering/point-geometry';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
+import { getCommittedData } from '../../../../types/committed-data';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
@@ -500,8 +501,14 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
     const points = makePoints('/p');
     root.add(points);
     const data = makeData(3);
+    // `resolveOnDiskElementId` reads the slot → on-disk map off this stamp
+    // (issue #1421), so pin the field alongside the reference identity — a
+    // future field-by-field stamp would satisfy `toBe(data)`'s successor
+    // checks but drop the map.
+    data.elementIds = new Uint32Array([2048, 2049, 4096]);
     commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 4);
     expect((points.userData as { committedData?: unknown }).committedData).toBe(data);
+    expect((getCommittedData(points) as LoadedPointsData).elementIds).toBe(data.elementIds);
   });
 
   it('skips geometry work when the SAME data reference is committed again, but refreshes the freshness stamp', () => {

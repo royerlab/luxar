@@ -16,6 +16,7 @@ without spinning up a renderer.
 | `pick-render.ts`      | `voteWinner(pixels, pickSize, votesScratch)` — brightness-weighted majority vote across the 5×5 pixel readback. Returns the `(nodeId, elementId, accumulated brightness)` triple or `null`                                                                                                           |
 | `settle-loop.ts`      | `HOVER_SETTLE_MS = 120` plus `evaluateSettle({ now, lastMouseMoveTime, lastDirtyTime, lastPickFiredTime })` returning `{ action: 'fire' \| 'wait' \| 'idle' }`                                                                                                                                       |
 | `settle-scheduler.ts` | `SettleScheduler` — owns the rAF lifecycle and the mouse/dirty timestamps. Forwards each tick's decision to `evaluateSettle` and invokes `ctx.firePick` when both axes settle. The orchestrator hands it a narrow `SettleSchedulerCtx` (no `this` back-pointer)                                      |
+| `element-id-map.ts`   | `resolveOnDiskElementId(mainNode, slot)` — translates the visible-buffer storage slot the vote reports into the on-disk element index the label CSR is keyed by, using the `elementIds` map the loader published via `committedData`. Identity when no map applies (see the parent README)           |
 | `lens-distortion.ts`  | `applyLensDistortion(u, v, params, out)` — TypeScript port of the green-channel Brown–Conrady distortion from `post-processing/mega/shader.glsl.ts::applyDistortion`. Lets the picking system map mouse coords into the undistorted pick buffer when the mega-shader is distorting the visible frame |
 
 ## Why this split exists
@@ -99,7 +100,8 @@ function takes an explicit `UVScratch` so the hot path is allocation-free.
 
 ## See Also
 
-- `../picking-system.ts` — orchestrator that imports these five modules
+- `../picking-system.ts` — orchestrator that imports these seven modules (six
+  directly; `settle-loop.ts` through the scheduler)
 - `../../material-manager/lifecycle.ts` — `SOFT_DISPOSE_FLAG` symbol that
   `unregisterAllPickMaterials` cooperates with on context-loss rebuild
 - `../../post-processing/mega/shader.glsl.ts` — GLSL `applyDistortion`
