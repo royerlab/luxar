@@ -156,7 +156,10 @@ const maybe = await tryLoadWasmArtifact(); // soft: null on a load failure, stil
 ```
 
 It reads the `.wasm` bytes, `initSync`s the shim, and calls `assertRequiredWasmExports` on the
-namespace **before** the `as unknown as WasmModule` cast and **outside** the catch that downgrades a
+namespace **and** on the instantiated exports `initSync` returns (a mixed build — only one of
+`luxar_wasm.js` / `luxar_wasm_bg.wasm` overwritten — still instantiates, and the shim's statically
+declared wrappers hide the gap), **before** the `as unknown as WasmModule` cast and **outside** the
+catch that downgrades a
 load failure to a skip. The cast promises the whole `WasmModule` interface while a stale gitignored
 build may be missing newer kernels, so without the check a stale build fails as an opaque
 `x is not a function` deep in an unrelated kernel test instead of naming the missing export and

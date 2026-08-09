@@ -103,6 +103,25 @@ describe('assertRequiredWasmExports', () => {
   it('rejects an empty module', () => {
     expect(() => assertRequiredWasmExports({})).toThrow(/missing required export/);
   });
+
+  it('rejects a current shim whose instantiated binary predates a kernel', () => {
+    // The MIXED artifact: the JS shim was overwritten but the `.wasm` binary
+    // beside it was not. The shim declares a static wrapper per kernel, so its
+    // namespace looks complete, and instantiation succeeds regardless
+    // (WebAssembly links imports, not exports) — only the exports object the
+    // init call hands back shows the gap.
+    expect(() =>
+      assertRequiredWasmExports(stubModule(), stubModule({ compute_joint_codes: undefined }))
+    ).toThrow(/missing required export "compute_joint_codes"/);
+  });
+
+  it('checks the namespace alone when no instance exports are supplied', () => {
+    // A shim shape that hands back nothing usable must not be read as stale —
+    // that would send every embedder down the TypeScript fallback.
+    expect(() => assertRequiredWasmExports(stubModule())).not.toThrow();
+    expect(() => assertRequiredWasmExports(stubModule(), undefined)).not.toThrow();
+    expect(() => assertRequiredWasmExports(stubModule(), null)).not.toThrow();
+  });
 });
 
 describe('setWasmJsUrl', () => {

@@ -56,18 +56,26 @@ export function wasmArtifactExists(): boolean {
   return existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
 }
 
+/** The shim's namespace plus the instantiated `.wasm` exports behind it. */
+interface LoadedArtifact {
+  namespace: Record<string, unknown>;
+  /** What `initSync` returned — see {@link assertRequiredWasmExports}. */
+  instanceExports: unknown;
+}
+
 /**
  * Read the binary, import the shim and initialise it — the step that fails when
  * the artifact is absent or incompatible with this runtime. `initSync` (rather
  * than the async default export) works in Node without `fetch`, and passing the
  * bytes explicitly bypasses any bundler path resolution vitest/jsdom would
- * mangle.
+ * mangle. Its return value is kept because the two halves of the build can be
+ * mismatched independently.
  */
-async function importWasmArtifact(): Promise<Record<string, unknown>> {
+async function importWasmArtifact(): Promise<LoadedArtifact> {
   const wasmBinary = readFileSync(wasmBinaryPath);
   const namespace = await import(wasmJsPath);
-  namespace.initSync({ module: wasmBinary });
-  return namespace as Record<string, unknown>;
+  const instanceExports = namespace.initSync({ module: wasmBinary });
+  return { namespace: namespace as Record<string, unknown>, instanceExports };
 }
 
 /**
@@ -78,8 +86,8 @@ async function importWasmArtifact(): Promise<Record<string, unknown>> {
  * having measured or compared nothing.
  */
 export async function loadWasmArtifact(): Promise<WasmModule> {
-  const namespace = await importWasmArtifact();
-  assertRequiredWasmExports(namespace);
+  const { namespace, instanceExports } = await importWasmArtifact();
+  assertRequiredWasmExports(namespace, instanceExports);
   return namespace as unknown as WasmModule;
 }
 
@@ -102,13 +110,13 @@ function reportLoadFailure(error: unknown): void {
 export async function tryLoadWasmArtifact(
   onLoadFailure: (error: unknown) => void = reportLoadFailure
 ): Promise<WasmModule | null> {
-  let namespace: Record<string, unknown>;
+  let loaded: LoadedArtifact;
   try {
-    namespace = await importWasmArtifact();
+    loaded = await importWasmArtifact();
   } catch (error) {
     onLoadFailure(error);
     return null;
   }
-  assertRequiredWasmExports(namespace);
-  return namespace as unknown as WasmModule;
+  assertRequiredWasmExports(loaded.namespace, loaded.instanceExports);
+  return loaded.namespace as unknown as WasmModule;
 }

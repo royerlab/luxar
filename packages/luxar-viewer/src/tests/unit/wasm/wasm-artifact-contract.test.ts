@@ -34,21 +34,33 @@ const LOAD_MESSAGE = 'simulated unloadable WASM artifact';
  * whether the import/`initSync` step succeeds: the mocked shim's `initSync`
  * throws, which stands in for the whole step (an incompatible build, or a shim
  * that won't import, both surface here). The real bytes are read and handed to
- * that mock, which ignores them.
+ * that mock, which ignores them. `initResult` is what the mocked `initSync`
+ * hands back — the instantiated exports the helper must forward to the check.
+ *
+ * Returns the helper's exports plus the mocked check itself, so a case can
+ * assert on what it received.
  */
-async function loadHelperWith({ stale, loadable }: { stale: boolean; loadable: boolean }) {
+async function loadHelperWith({
+  stale,
+  loadable,
+  initResult,
+}: {
+  stale: boolean;
+  loadable: boolean;
+  initResult?: unknown;
+}) {
   vi.resetModules();
-  vi.doMock('../../../wasm', () => ({
-    assertRequiredWasmExports: () => {
-      if (stale) throw new Error(STALE_MESSAGE);
-    },
-  }));
+  const assertRequiredWasmExports = vi.fn(() => {
+    if (stale) throw new Error(STALE_MESSAGE);
+  });
+  vi.doMock('../../../wasm', () => ({ assertRequiredWasmExports }));
   vi.doMock(wasmJsPath, () => ({
     initSync: () => {
       if (!loadable) throw new Error(LOAD_MESSAGE);
+      return initResult;
     },
   }));
-  return import('../../helpers/wasm-artifact');
+  return { ...(await import('../../helpers/wasm-artifact')), assertRequiredWasmExports };
 }
 
 afterEach(() => {
@@ -93,5 +105,20 @@ describe.skipIf(!artifactPresent)('loadWasmArtifact', () => {
   it('throws when the artifact will not load (catches nothing)', async () => {
     const { loadWasmArtifact } = await loadHelperWith({ stale: false, loadable: false });
     await expect(loadWasmArtifact()).rejects.toThrow(LOAD_MESSAGE);
+  });
+
+  it('forwards the instantiated exports to the staleness check', async () => {
+    // The shim's namespace alone cannot see a MIXED build (new JS shim, old
+    // `.wasm` binary): its wrappers are declared statically. Only the exports
+    // object the init call returns shows the gap, so the helper must pass it
+    // along rather than drop it.
+    const initResult = { marker: 'instance exports' };
+    const { loadWasmArtifact, assertRequiredWasmExports } = await loadHelperWith({
+      stale: false,
+      loadable: true,
+      initResult,
+    });
+    await loadWasmArtifact();
+    expect(assertRequiredWasmExports).toHaveBeenCalledWith(expect.anything(), initResult);
   });
 });

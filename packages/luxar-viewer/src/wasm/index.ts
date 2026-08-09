@@ -56,7 +56,10 @@ let wasmJsUrlOverride: string | undefined;
  * Add a name here when you add a kernel, so a stale build is diagnosed rather
  * than silently half-working — and REMOVE it when you rename or delete that
  * kernel, or every site below reports a freshly built artifact as "stale" and
- * sends the reader to rebuild it in a loop.
+ * sends the reader to rebuild it in a loop. Only free functions belong here:
+ * the names are matched against the raw `.wasm` exports as well as the shim's,
+ * and wasm-bindgen mangles anything else (a struct method exports as
+ * `<struct>_<method>`).
  *
  * `make build-wasm` is the fix for a genuinely stale build, but the two caller
  * classes react to a failed check very differently:
@@ -95,10 +98,27 @@ const REQUIRED_WASM_EXPORTS = [
  * calls this INSIDE the try whose catch returns a {@link TypeScriptFallback},
  * because entering the documented fallback is the right response to a stale
  * build on the runtime path. The guard test exempts this module for that reason.
+ *
+ * @param module The wasm-bindgen JS shim's namespace.
+ * @param instanceExports What `initSync()` / the shim's `default()` returned —
+ *   the instantiated `.wasm` exports. Checking the namespace alone is not
+ *   enough for a MIXED artifact (only one of `luxar_wasm.js` /
+ *   `luxar_wasm_bg.wasm` overwritten): the shim declares a static wrapper per
+ *   kernel, so its namespace reads as complete while the binary behind it
+ *   predates the kernel, and instantiation still succeeds because WebAssembly
+ *   only links imports. Omit it (or pass a non-object) to check the namespace
+ *   alone.
  */
-export function assertRequiredWasmExports(module: Record<string, unknown>): void {
+export function assertRequiredWasmExports(
+  module: Record<string, unknown>,
+  instanceExports?: unknown
+): void {
+  const compiled =
+    typeof instanceExports === 'object' && instanceExports !== null
+      ? (instanceExports as Record<string, unknown>)
+      : undefined;
   for (const name of REQUIRED_WASM_EXPORTS) {
-    if (typeof module[name] !== 'function') {
+    if (typeof module[name] !== 'function' || (compiled && typeof compiled[name] !== 'function')) {
       // The remediation rides IN the message: on the hard direct-import path
       // this throw is all the reader gets (no logger, no fallback warning), and
       // a vitest failure line that names the missing kernel without saying how
@@ -183,8 +203,8 @@ export async function initWasm(): Promise<WasmModule> {
     // fallback path, which is the documented runtime behaviour for a missing or
     // stale build. Do not "fix" it by moving the call out of the try; that
     // would make every embedder crash instead.
-    await wasmModule.default();
-    assertRequiredWasmExports(wasmModule as Record<string, unknown>);
+    const instanceExports = await wasmModule.default();
+    assertRequiredWasmExports(wasmModule as Record<string, unknown>, instanceExports);
 
     log.info(Modules.WASM, 'Loaded compiled WASM module');
 

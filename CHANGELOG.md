@@ -16,7 +16,9 @@ regardless of what was loaded — failed instead as an opaque
 `x is not a function` deep inside an unrelated kernel test. All six of those
 sites now share one loader (`src/tests/helpers/wasm-artifact.ts`) that calls
 `assertRequiredWasmExports` before the cast, so the failure reads "missing
-required export `<kernel>` — rebuild it with pnpm build:wasm". A source-level
+required export `<kernel>` — rebuild it with pnpm build:wasm". The check looks
+at the instantiated `.wasm` exports as well as the shim's namespace, so a build
+with only one of the two files overwritten is caught too. A source-level
 tripwire (`direct-import-guard.test.ts`) keeps the next such site on that
 loader: it fails on any other viewer source that both names `luxar_wasm.js` and
 calls `initSync(`.
@@ -401,7 +403,6 @@ NOT baked, because it is a workaround for the substitutive-LOD selector tracked 
 #1361. As with every baked-appearance change, the look lives in the compiled
 scene: an existing `datasets/demos/cellxgene_census_umap.luxar.zarr` keeps the old
 one until the demo is regenerated.
-
 
 #### Tooling — the complexity limit is now enforced as a ratchet (#1379)
 
