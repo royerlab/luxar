@@ -51,7 +51,18 @@ export interface ScreenshotOptions {
 export interface SelectionPayload {
   /** Scene-node (zarr path) of the picked element. */
   nodeName: string;
-  /** Index of the picked element within that node. */
+  /**
+   * Index of the picked element within that node.
+   *
+   * On-disk index wherever the node published a slot → on-disk map — which it
+   * does only when it carries per-element labels (`has_labels` /
+   * `has_image_labels`); otherwise this is the visible-buffer storage slot. For
+   * a LINES node with labels that on-disk index is the picked segment's START
+   * vertex, not a segment index: line labels are per-vertex, and a segment
+   * carries a single pick id, so its start endpoint is the one reported. An
+   * unlabelled lines node (a plain trajectory) still reports the visible-segment
+   * slot.
+   */
   elementIndex: number;
 }
 

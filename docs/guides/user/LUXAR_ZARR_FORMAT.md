@@ -740,7 +740,13 @@ per-vertex arrays are reordered by the vertex sort):
 
 Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
 (`image_label_offsets`/`image_label_bytes`) are supported with the same
-CSR-style layout as Points (see *Per-Element Labels*).
+CSR-style layout as Points (see *Per-Element Labels*). Because the labels are
+per-vertex while the viewer picks whole *segments*, hover and selection on a
+lines node report the picked segment's **start** vertex. Two consequences follow
+from that convention: on a segment that the current slice clips only partially
+the reported start vertex may lie entirely outside the visible slab (what is
+drawn starts at the clipped position, not at the stored vertex), and the final
+vertex of a polyline is never reported at all, since no segment starts there.
 
 ### 5. Mesh Nodes
 
@@ -1133,7 +1139,7 @@ consumers must treat missing and `"none"` identically.
 
 #### Per-Element Labels (CSR-style)
 
-Optional per-element string labels for hover tooltips (GPU picking). Available on all four geometry node types (points, lines, gsplats, mesh — per-vertex for lines and mesh). When present, `.zattrs` includes `"has_labels": true`.
+Optional per-element string labels for hover tooltips (GPU picking). Available on all four geometry node types (points, lines, gsplats, mesh — per-vertex for lines and mesh). When present, `.zattrs` includes `"has_labels": true`. For lines the picked unit is a *segment*, so hover/selection reports the label of that segment's **start** vertex.
 
 **label_offsets/** Array:
 - **Shape:** `(N+1,)` where N = number of elements
@@ -1185,7 +1191,7 @@ Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `t
 |----------|-------------|
 | `{hover_label}` | The label string for the picked element |
 | `{hover_node}` | Zarr path of the picked node (e.g., "/cells") |
-| `{hover_index}` | Element index within the node |
+| `{hover_index}` | Element index within the node. For a **lines** node carrying per-vertex labels this is the picked segment's start-vertex row in the stored (spatially ordered) vertex arrays — line labels are per-vertex and a segment carries a single pick id, so its start endpoint is the one reported; a lines node without labels reports the visible-buffer slot instead. |
 
 When labels exist on any node but no hover overlay is explicitly defined, a default hover overlay is auto-injected at scene finalization time.
 

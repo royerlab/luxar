@@ -51,30 +51,47 @@
  *    wasm-bindgen, which copies it into linear memory and back out — so a
  *    transient allocation plus ~8 B/splat of memcpy on top, none of which
  *    Points pays. All of it is gated on `has_labels` / `has_image_labels`.
- *  - **Lines** — same class of divergence, still outstanding: on top of range
- *    loading it has a segment-vs-vertex granularity mismatch.
- *  - **Partitioned points and gsplats** — a known gap for BOTH.
- *    `core/group/adders/points.py` and `core/group/adders/gsplats.py` slice the
- *    CSR onto each `part_<i>` leaf, so a partitioned labelled node publishes a
- *    map in the PART's local on-disk space while
- *    `core/app/picking/pick-result-handler.ts` still resolves labels against
- *    the outermost `kind=partition` wrapper (which has no CSR, so the tooltip
- *    is null either way today). #1415/#1420 moves the lookup to the leaf, and
- *    the two then compose.
+ *  - **Lines** — the longest chain, because on top of range loading it has a
+ *    GRANULARITY mismatch: the pick shader reports a visible SEGMENT slot while
+ *    line labels are per-VERTEX. Four spaces, composed in
+ *    `data/scene-loader/process/data-processor-lines.ts` and stamped by
+ *    `commit-lines-geometry.ts` (issue #1424): **E** visible segment slot → **D**
+ *    loaded segment row (the projection's `sourceSegmentIndices`, derived from
+ *    the same `visibility` mask every clipping kernel compacts against) → **C**
+ *    loaded-local vertex index (`LoadedLinesData.segments[2·D]`) → **A** on-disk
+ *    sorted vertex row (the loader's flat `vertexRangeBounds` pairs through
+ *    `buildElementIdMap`).
+ *    A segment has TWO endpoints and the pick id is a `flat` vertex-stage
+ *    varying, so exactly one can be reported: by convention it is the **START**
+ *    vertex. Gated on `has_labels` / `has_image_labels` like the others, and it
+ *    fails closed to the raw slot on any inconsistency.
+ *  - **Partitioned points, gsplats and lines** — a known gap for ALL THREE.
+ *    `core/group/adders/points.py`, `core/group/adders/gsplats.py` and
+ *    `core/group/adders/lines.py` each slice the CSR onto every `part_<i>` leaf,
+ *    so a partitioned labelled node publishes a map in the PART's local on-disk
+ *    space while `core/app/picking/pick-result-handler.ts` still resolves labels
+ *    against the outermost `kind=partition` wrapper (which has no CSR, so the
+ *    tooltip is null either way today). #1415/#1420 moves the lookup to the
+ *    leaf, and the two then compose.
  *
  * **Identity fallback is not always a safe answer.**
  * `rendering/depth-sort-coordinator.ts::noteDepthSortBlendingModeSwitch`
  * calls `clearCommittedData` — which now drops this map too — on any sortable
  * node switched from a commutative mode TO `normal` / `volumetric` (the
- * LayersPanel compose chain). Both map-publishing geometries are exposed:
- * POINTS (drawn as instanced quads on a `THREE.Mesh`) and GSPLATS, the
- * geometry most likely to be switched to `normal` / `volumetric` in the first
- * place. The object stays drawn and pickable; the stamp is cleared purely to
- * defeat the commit no-op gate, and the `requestReprocess?.()` that re-stamps
- * it is async. Absence therefore does not mean the GPU buffers were released —
- * in that window a pick still resolves, this helper returns the raw slot, and
- * for a range-loaded (or compacted) labelled node that is a silently WRONG
- * label rather than "no answer". Not fixed here.
+ * LayersPanel compose chain). All three map-publishing geometries are exposed:
+ * POINTS (drawn as instanced quads on a `THREE.Mesh`), GSPLATS — the geometry
+ * most likely to be switched to `normal` / `volumetric` in the first place — and
+ * LINES, which is depth-sortable too (`types/geometry-capabilities.ts`) and
+ * whose commit calls `noteDepthSortCommit` (`commit-lines-geometry.ts`). The
+ * object stays drawn and pickable; the stamp is cleared purely to defeat the
+ * commit no-op gate, and the `requestReprocess?.()` that re-stamps it is async.
+ * Absence therefore does not mean the GPU buffers were released — in that window
+ * a pick still resolves, this helper returns the raw slot, and for a
+ * range-loaded (or compacted) labelled node that is a silently WRONG label
+ * rather than "no answer". For LINES the fallback is strictly worse than for the
+ * other two: the raw slot is a SEGMENT number handed to a per-VERTEX label
+ * array, so it is a GRANULARITY error, not merely an offset error. Not fixed
+ * here.
  *
  * @module rendering/picking/picking-system/element-id-map
  */
