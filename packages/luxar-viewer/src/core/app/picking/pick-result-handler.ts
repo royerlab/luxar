@@ -101,7 +101,7 @@ export interface PickResultHandlerPorts {
  *   for a `part_<i>` of a partition. Using the wrapper for the lookup
  *   fails twice over: it is a bare group with no `label_offsets` /
  *   `label_bytes` (the CSR is written per `part_<i>`), and
- *   `result.elementId` is the leaf's own `aSortedIndex` / `gl_VertexID`,
+ *   `result.elementId` is an index in the leaf's own element space,
  *   meaningless against a whole-node array. Before the split, every
  *   hover on a partitioned layer resolved to an empty tooltip, silently
  *   — `LabelLoader` demotes the missing array to an info log and caches
@@ -121,12 +121,22 @@ export interface PickResultHandlerPorts {
  *   `additive_<i>` sub-group (which is not a scene node) while the
  *   committed buffer concatenates every loaded level, so no single path
  *   can index it — labels there are unusable regardless of the path
- *   chosen (producer-side gap); and (ii) `result.elementId` is a
- *   visible-buffer storage slot, so it equals the on-disk CSR index only
- *   while no dimension is hidden — a hidden dimension can cull chunks
- *   and triggers effective-radius compaction, either of which shifts the
- *   slot away from the element's on-disk index. Both are pre-existing and
- *   tracked separately.
+ *   chosen (producer-side gap, tracked separately as #1422); and
+ *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
+ *   arrives already resolved wherever the node can resolve one — Points
+ *   and GSplats both do, for a node declaring `has_labels` /
+ *   `has_image_labels`, through a published slot → on-disk map or
+ *   trivially where the identity already holds and no map is published,
+ *   and Mesh needs none because its `gl_VertexID` already IS the on-disk
+ *   vertex ordinal (see
+ *   `rendering/picking/picking-system/element-id-map.ts`, which does the
+ *   translation at the single `PickResult` construction site). Lines
+ *   never resolves: it reports a per-*segment* slot while its label CSR
+ *   is per *vertex*, so the id misses its row even on a fully loaded,
+ *   unsliced layer, and chunk culling or compaction shifts it further
+ *   (#1424). A Points or GSplats node declaring no labels likewise keeps
+ *   the raw storage slot — no CSR to miss, but an embedder reading
+ *   `SelectionPayload.elementIndex` there is reading a slot.
  * - `null` result → clear hover (`updateHoverContent(null)`); no loader calls.
  * - Non-null result → fetch label + image URL in parallel; emit a
  *   payload only when at least one is truthy. An empty-string label

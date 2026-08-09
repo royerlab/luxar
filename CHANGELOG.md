@@ -27,20 +27,138 @@ lands on the node that actually owns the CSR. Of the two queries only the text
 label is reachable today — all four adders refuse `image_labels` alongside
 `partition=`, so no `part_<i>` ever owns an image CSR — and the image lookup
 moves with it for consistency, so the split is one rule rather than two if that
-combination is ever allowed. On a fully-displayed (3D) node that is the whole
-fix, because the pick's element id is then the on-disk index and the label is the
-right one. Where a dimension is hidden the id is a visible-buffer storage slot
-rather than an on-disk index — chunk culling and effective-radius compaction both
-shift it — so the label can still come out wrong; that half is pre-existing on
-every node, partitioned or not, and is tracked separately. The partitioned-layer
-miss was itself pre-existing too, and independent of the mesh partition work that
-surfaced it.
+combination is ever allowed. That is the whole fix wherever the pick's element id
+already is the on-disk index the CSR is keyed by — which it now is for Points and
+GSplats, both of which resolve a labelled node's slot through a published slot →
+on-disk map (or trivially, where the identity holds and none is published), and
+for Mesh, which never needed one because its `gl_VertexID` is the on-disk vertex
+ordinal. Lines resolves nothing yet, so there the id remains a visible-buffer
+storage slot — a per-*segment* one, while the lines CSR is per *vertex*, so the
+wrong text lands in the tooltip already on a plain 3D layer with nothing hidden,
+on a partitioned layer and a flat one alike; chunk culling and compaction only
+shift it further. The partitioned-layer miss was itself pre-existing too, and
+independent of the mesh partition work that surfaced it.
 
 The public `selection` embedder event grew a third field, `hitNodeName`, carrying
 that hit leaf. `nodeName` and `elementIndex` keep their meanings — the layer and
 an index local to the leaf — which under a partition are not joinable; embedders
 that need to resolve the element index against the store should index against
 `hitNodeName`, which equals `nodeName` whenever there is no partition wrapper.
+
+#### Hover labels index the right point (#1421)
+
+`PickResult.elementId` was the storage slot in the buffer that reached the GPU, never
+the on-disk element index the per-element label CSR (`label_offsets` / `label_bytes`)
+is keyed by — so a hover tooltip showed a wrong-but-plausible neighbour's label
+whenever the two index spaces diverged. For Points they diverge two independent ways:
+the spatial index concatenates only the visible on-disk ranges, and the
+effective-radius pass compacts zero-radius points out in place. Measured on a 4D scene
+with a hidden categorical axis and `chunk_size=2048`, the first visible point reported
+`elementId = 0` while its on-disk index was 2048 — every label in the scene off by a
+whole chunk.
+
+`projectPointsTo3D` now publishes the slot → on-disk map as
+`LoadedPointsData.elementIds` (a field that had been declared, and documented as
+exactly this hazard, with no producer), and picking resolves through it at the single
+`PickResult` construction site, so the `{hover_index}` overlay template is fixed
+wherever it can fire at all. The map is **omitted** when the identity holds (one range
+starting at 0, nothing compacted), which is the common plain-3D case, so picking
+allocates nothing there — as is a node declaring neither `has_labels` nor
+`has_image_labels`, which has no label reader; picking is still provisioned for such a
+node when an embedder `selection` listener exists, and that payload's `elementIndex`
+keeps reporting the storage slot, unchanged. It is also deliberately stripped across an
+additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
+so no single map is meaningful (the loader factory now also clears the label flags on
+each sub-LOD, so it is never built there); per-level label resolution is #1422. A
+`kind=partition` points layer composes with the fix above (#1415): the handler now
+resolves labels against the hit `part_<i>` leaf rather than the outermost wrapper, and
+that leaf is both the node whose sliced CSR is read and the node this map is stamped on.
+
+Points only. GSplats (#1423) and Lines (#1424) have the same class of bug; gsplats
+needed a Rust WASM kernel change and is fixed in the entry below, while lines carries a
+segment-vs-vertex granularity mismatch on top of it and remains outstanding. Mesh was
+already correct: its pick shader reports `gl_VertexID`, which for an indexed draw IS the
+on-disk vertex ordinal, so the lookup no-ops.
+
+#### Hover labels index the right splat (#1423)
+
+The GSplats half of #1421. The gsplat pick shaders emit `aSortedIndex` — the
+visible-buffer storage slot — as `elementId`, while the per-element label CSR is keyed
+by the on-disk splat index. The two diverge the same two ways Points did, and for the
+same reasons: the spatial index concatenates only the visible on-disk ranges, and the
+fused nD→3D kernel compacts hidden-dim-attenuated splats out in place. Hover a labelled
+gsplat layer on a slice that culls chunks, or with any hidden dimension, and the tooltip
+showed another splat's label.
+
+The composition is now shared with Points (`data/loaders/element-ids.ts`), but GSplats
+has to assemble it one stage later: its projection runs downstream of the loader, in the
+worker (or the in-process dispatcher), so the loader publishes only its half — the
+visible `ranges` — and `project_gsplats_nd_to_3d` gained a trailing
+`out_source_indices` output recording which source splat each emitted slot came from.
+Both twins (Rust kernel and the uncapped TypeScript reference that serves >16D) take an
+empty slice as the opt-out, so every caller that has no map to build pays nothing. The
+data processor composes the two halves and the commit stamps the result onto the mesh —
+in lockstep with `committedData`, and cleared when a commit produces none, so a stale
+map can never outlive the geometry it described. The stamp is deliberately mesh-level
+rather than a field on the loaded payload: that payload can be a SliceCache-owned
+snapshot handed back by reference on a hit, whose byte size was measured once at store
+time. Points now reads through the same stamp.
+
+The same cheapness gates as Points apply: ranges are published only for a node
+declaring `has_labels` / `has_image_labels`, the standard-3D fast path (every splat
+emitted in order) records nothing because slot IS the source index there, and on that
+same fast path the map is omitted entirely when the visible set is one range from 0 (the
+identity). That last saving does not carry over to the general, compacting path: source
+indices are supplied there whenever `ranges` is published, so the composer's identity
+branch is unreachable and even an uncompacted labelled node allocates a full N-element
+map. It is likewise never published across an additive ladder — each sub-LOD is a
+distinct on-disk array, so no single map is meaningful; the loader factory clears the
+label flags on each synthesized `additive_<i>` node and the ladder concat strips the
+field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) remains the
+last outstanding geometry.
+
+#### The port probe now matches the bind it predicts
+
+`make generate-gallery` failed about one run in two when runs were issued
+back-to-back, always the same way: `Timed out waiting 90000ms from
+config.webServer`, with nothing else to go on. The data server had started fine —
+just not on port 9899, which is the one Playwright was waiting on.
+
+`luxar serve` resolves its port through `check_port_available`, which bound a
+bare socket. The real bind is uvicorn's `loop.create_server`, and asyncio passes
+`reuse_address=True` on POSIX, so the probe was *stricter* than the thing it was
+predicting. A non-listening socket left over from the previous run's teardown
+(TIME_WAIT / FIN_WAIT2 on the same port) is invisible to a `SO_REUSEADDR` bind but
+fatal to a plain one — so the probe said "busy", `pick_port` shifted to 9900 and
+said so, and nothing ever came up on 9899. Hence the coin-flip rate: whether
+anything lingers on the *data* port at all depends on which side closed first — a
+server killed with a keep-alive connection still open leaves its own port in
+FIN_WAIT2 → TIME_WAIT, whereas if the client closed first every TIME_WAIT lands on
+an ephemeral client port and 9899 is clean. Setting `SO_REUSEADDR` on the probe
+closes the gap — under asyncio's own condition, since Windows omits the option
+precisely because there it would let a bind succeed over a live listener. It does
+not make the probe blind to a real server: on Linux a *listening* socket on the
+same address conflicts either way, wildcard binds included. The
+`test_unavailable_port` case was tightened to `listen()` accordingly — bound but
+never listening no longer models an occupied port, which is the point.
+
+The same probe also hardcoded `AF_INET`, so an IPv6 bind address raised for every
+port and `serve --host ::1` exited with "No available ports found near 8000" on a
+completely free one. `::1` is already a first-class loopback host elsewhere in the
+serve path, so the probe now picks its family from the host — for IPv6 *literals*
+only; a name like `localhost` stays on `AF_INET` rather than inheriting whatever
+order the resolver returns.
+
+The muteness was its own bug. Both gallery `webServer` entries discarded stdout and
+stderr, so the port-shift warning had nowhere to go; `GALLERY_DEBUG=1 pnpm
+gallery` now forwards both servers' stdout to the reporter, and stderr is no
+longer suppressed at all — it is where a server that dies at startup says why, and
+muting it left only Playwright's bare exit code (every other
+`playwright.*.config.ts` here already pipes it). Forwarding alone
+wasn't enough: `aprint` doesn't flush and Python block-buffers a piped stdout,
+while Playwright's timeout path SIGKILLs the process group — so the data server
+now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
+behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
 
 #### Mesh gets substitutive LOD
 
@@ -496,6 +614,171 @@ node colors and hover labels again. A snapshot missing either required section
 now raises an actionable error instead of silently producing an all-unknown
 country view.
 
+#### The CytoSelf demo's cache survives an interrupted run
+
+The demo downloads a 4.23 GB embedding file and ten `Image_data` archives of
+11.3-23.6 GB apiece, and until now it trusted whatever it found on disk. The stream
+wrote straight to the destination name, so killing the run left a truncated file
+at the canonical path; the cache check accepted anything within 10% of an
+expected size, so that truncated file was then trusted forever and `np.load`
+failed with an opaque numpy error on every subsequent run. Worse, the only
+integrity guard was a 1 KB floor, and a Google Drive quota page is 2-3 KB of
+HTML — it sailed through and got cached under a `.npy` name.
+
+Downloads now stage into a process-private `.part` file (each run reclaims the
+staging files of runs whose process is gone, so private names do not become a
+private leak) and are verified before they take the destination name: the head
+must not be an HTML document, a small absolute floor applies, the bytes written
+must match a declared content-length, and — whether or not a length was
+declared — the total must clear the size expected for that artifact. That last
+gate is not redundant with the first: Drive also serves small non-HTML "cannot
+access this file" bodies that agree with their own length, and an honest length
+only proves a body arrived whole, not that it is the body we asked for. A
+rejection deletes the staging file and raises with the manual drive.google.com
+URL, so nothing bad is ever cached. On success the rename is atomic and a
+`.complete` sidecar records the verified size, which is what the next run's
+cache check reads — a file truncated behind the sidecar's back is re-fetched
+rather than trusted. A sidecar is only ever removed together with the file it
+describes, and in that order: the rename goes first and the sidecar goes only
+once the canonical name is clear, because until then the sidecar is the only
+evidence that the file sitting there is bad — a rename that fails would
+otherwise leave a truncated file looking like a sidecar-less legacy cache, which
+the size heuristic trusts. The reverse leftover costs nothing: a sidecar with no
+file fails the cache check on the missing file.
+
+The expected sizes are now measured rather than guessed, and measured per
+FILE. Range probes of the Drive files — corroborated to the byte by `stat` on a
+fully warmed cache — give 4,232,208,512 B for the embeddings, 6,553,361 B for
+`label.csv`, 3.95-8.74 MB per `Label_data` and 11.28-23.60 GB per `Image_data`,
+and all 22 numbers now sit in one table the download sites index by filename.
+The previous 400 MB placeholder for a 23.6 GB file meant the gate only ever
+caught a stream cut inside the first 3%. One floor per FAMILY, which came next,
+closed most of that but not all of it: a shared floor has to sit under the
+smallest member or it rejects a genuine download, so a 10 GB fragment of the
+largest `Image_data` and a 3 MB fragment of the largest `Label_data` still
+looked complete. The CSVs are the worse half of that — pandas parses a truncated
+CSV without complaining, so the concatenated label table silently loses rows,
+every image index after the short file shifts, and the thumbnails land on the
+wrong points at a match rate too high for the tripwire to see. With a per-file
+size the bar depends on what else is known about the stream. When a
+content-length was declared and matched, the body is provably whole, so a size
+that disagrees with the table means a different file rather than a truncated
+one and 10% of slack is right — enough for a re-upload a few bytes different,
+still tight enough for Drive's error bodies. When nothing was declared — the
+usual case for the multi-gigabyte archives, where a cut stream simply ends —
+the table is the only completeness signal there is and the full size is
+required: a nearly-complete CSV is exactly the failure that stays silent all the
+way to the wrong thumbnails. The tests pin the table against the download list
+and against the total the demo advertises, so a mistyped digit or a new source
+file cannot slip through.
+
+Verifying a length means insisting on an identity byte stream, which cost a
+round of debugging to appreciate: `requests` advertises gzip by default and
+inflates the body for you, while `Content-Length` counts the *compressed* bytes,
+so a gzipped `label.csv` looked 99% truncated and was destroyed on arrival —
+every run, forever. `luxar.utils.download` had already codified this
+precondition; only the verification half had been borrowed. The header is now
+set on the session so all four Drive confirmation strategies inherit it, and the
+length is parsed leniently (a duplicated header reads as unknown, never as a
+size).
+
+Caches written before this change have no sidecar and fall back to a size
+heuristic, which splits on whether the loader would catch what the size missed.
+The `.npy` files keep the old 10%-under floor: `np.load` raises on a short array,
+so a truncated one is caught at the consumer, and tightening the floor would have
+forced everyone to re-download gigabytes for no evidence of a problem. The CSVs
+do not get that slack, because pandas parses a truncated CSV without complaining
+— a legacy `Label_data*.csv` a few percent short would be trusted for good,
+shorten the concatenated label table, and shift every image index after it, with
+nothing downstream able to notice. They are held to their full measured size; the
+re-download that costs is 4-9 MB, not gigabytes.
+
+Every load of a downloaded artifact (the embeddings, both label
+tables, the image archives) now quarantines the file and re-downloads once
+if it cannot be parsed — with `MemoryError`, `ImportError` and the environmental
+`OSError` errnos (a descriptor limit, a permission, an allocation) excluded,
+since none of them says anything about the bytes on disk and re-fetching 23 GB to
+meet the same wall twice is the worst possible response. Nothing is masked by
+that exclusion: numpy and pandas report a truncated or garbage artifact as
+`ValueError` / `BadZipFile` / `ParserError`, carrying no errno at all. The same
+rule guards the thumbnail caches below, which answer a bad read the same way and
+whose rebuilds are the expensive ones — a part cache costs re-reading an
+11-23 GB archive, the assembled bundle costs all ten — and the ~114k-blob bundle
+is exactly the read a loaded machine runs out of memory on.
+
+The thumbnail pipeline had a separate and more annoying failure: it processed
+all ten `Image_data` files and wrote its npz at the very end, so a failure on
+file ten discarded the multi-hour WebP encode of files one through nine. Each
+file's encoded blobs are now checkpointed to `thumbs_partNN_v1.npz` as soon as
+it is done, alongside that file's crop count — which is the piece that makes
+skipping safe, since the loop advances a running global offset and a skipped
+file that did not move it would silently mis-match every later file. When the
+assembled bundle is missing — the state a resumed run is in, and the only one
+in which the parts are consulted at all — a part is reused only if the test rows
+it stores are exactly the ones the freshly built row mapping asks of that file,
+in order. A repaired `Label_data` CSV shifts that mapping without changing its
+length, and reusing a part across the shift would paste every thumbnail onto
+the wrong cell and then freeze it into the bundle. The assembled
+bundle is versioned, written atomically through a process-private staging name
+(a shared one lets two runs rename each other's bytes into place, and the loser
+of that race is a perfectly valid npz — nothing about the file itself says its
+blob count belongs to somebody else's mapping), and quarantined and rebuilt
+rather than crashing when it is unreadable. A bundle written before the name
+carried a version is adopted under the new name rather than rebuilt, since the
+contents are byte-identical; the adoption is gated on the versioned name
+literally being the v1 one, so a future encoding change disables it by itself
+instead of relying on a comment. Taking that name is a hard link followed by an
+unlink rather than a rename, because a rename overwrites and the "is the name
+free?" check is only a check: validating a 200 MB bundle takes long enough for a
+concurrent run to publish a fresh, fingerprinted v1 into the gap, and the
+adoption would have destroyed it in favour of an unverifiable older one. A link
+refuses an occupied name atomically, so the loser of that race leaves the disk
+alone and just uses the bytes it read.
+
+The blob count is what makes a bundle usable, so it is checked against the
+number of points the scene needs — before a legacy bundle is adopted, which is
+the vintage most likely to be carrying a raced count. A bundle that does not
+match is quarantined and reassembled from the surviving per-file caches rather
+than returned: the scene builder cannot align a mismatched bundle to its points
+and drops the hover images, and nothing on disk was ever going to repair that on
+its own. The reverse case is not a cache fault and is not treated as one — when
+`label.csv` and the embeddings genuinely disagree on their row count, the
+thumbnails are returned but not written, so no run has to quarantine the same
+file again for a condition no rebuild can fix.
+
+The count alone is not enough, though, because the bundle short-circuits the
+whole per-file pipeline: on a warm cache the parts are never consulted, so their
+mapping check guards nothing and the same repaired-`Label_data` shift that the
+parts are keyed against sails straight through a bundle of the right length. The
+bundle therefore carries a digest of the label CSVs it was assembled from, and a
+bundle whose digest no longer matches is quarantined and reassembled. Content is
+hashed rather than size or mtime, so re-downloading an identical file — which
+the self-heal path does routinely — is not mistaken for a change. An
+*unverifiable* bundle is used, never rebuilt: if the CSVs have been pruned to
+reclaim disk, or the bundle predates the digest, the check is skipped, because a
+false rebuild costs a 181 GB re-fetch of the `Image_data` files and that is far
+worse than the mismatch being looked for.
+
+One new tripwire: if fewer than half the test rows match an image crop, the
+thumbnails are still returned but are not cached. The row matching is a
+heuristic composite-key join, and its failure mode was to fill the gaps with a
+1×1 black placeholder and cache the result permanently. Refusing to write is
+enough to stop that; refusing to *run* would turn a partly-working tooltip into
+no tooltip. Half is the right place for it: on the real dataset the bundle is
+114,806 blobs with exactly zero placeholders — a match fraction of 1.000 — so
+the tripwire has 2x headroom and only fires on a genuine regression. The
+per-file caches survive either way, so a retry is cheap.
+
+The declared download size finally matches reality: 186000 MB, not the 3900 MB
+it claimed. The artifacts sum to 185,838,193,451 B, and the figure matters
+operationally — `luxar demo run --all --max-download-mb 20000` used to wave this
+demo through and then fill a 100 GB disk. `--without-images` is ~4240 MB, which
+is the embeddings plus `label.csv`; the `Label_data` CSVs are fetched only to
+place the thumbnails. The free-space advice is ~190 GB rather than 186: the
+transfer figure is not the footprint, since the downloads stay cached and the
+encoded thumbnails — per source file, plus the assembled bundle and the staging
+copy it is written through — sit next to them.
+
 #### CytoSelf hover no longer strands its tooltip in an empty slot (#1398)
 
 The CytoSelf demo's hover layout is a bespoke pair: an image thumbnail anchored
@@ -520,24 +803,58 @@ answer: that overlay is the same corner, only 16% of the viewport further into i
 
 The reporting around the loss got honest too, and it differs per path because the
 remedies do. One silent skip became loud — no thumbnails at all used to say
-nothing — and the terse count-mismatch line gained a remediation: delete the
-cached `.npz` (the message names the file and its default directory), since a
-plain re-run short-circuits on that file before any network call and reproduces
-the mismatch forever. A bundle that cannot be read at all — truncated, or structurally fine
-but holding entries that are not image bytes — is now treated as a cache miss and
-rebuilt, since raising on that path made a plain re-run reproduce the failure
-forever too. `--recompute` now reaches `load_cytoself_images` as well, which is the
-same rebuild from the CLI, but it also discards the cached UMAP for a 10-30 minute
-recompute, so it is offered second and with that caveat attached. A download
-failure names the `Image_data*.npy` file that failed, and says plainly that
-re-running skips whole completed files rather than resuming a partial one. That
-promise now holds under memory pressure as well: only a format/IO failure counts
-as a corrupt file worth deleting and refetching, so a `MemoryError` on a valid
-~1.7 GB array no longer throws the file away and re-downloads it on every run,
-and the same applies to reading the thumbnail bundle — running out of RAM is not
-a cache miss. A
-deliberate `--without-images` run stays quiet, and `main()`'s navigation hint no
-longer promises fluorescence images the scene does not contain.
+nothing — and the terse count-mismatch line gained a remediation, phrased to
+match what the cache work above made true: a run through `main()` hands the point
+count down and rebuilds a stale bundle by itself, so reaching that message means
+`label.csv` and the embeddings genuinely disagree and no rebuild will help. A
+caller that passed no expected count is told which file to delete (named, with
+its default directory) and that `--recompute` does the same at the cost of the
+cached UMAP. `--recompute` now reaches `load_cytoself_images` as well, and it
+stops at the assembled bundle: the `Image_data` downloads and the per-file part
+caches are kept, so it costs a reassembly rather than a 181 GB re-fetch. It
+skips the READ rather than deleting — the same principle that keeps a
+`MemoryError` from quarantining a healthy 23 GB download says you never discard
+a working artifact before its replacement exists, and on a legacy-only cache an
+interrupted rebuild would otherwise cost a 181 GB re-download to recover exactly
+what was already there. A versioned bundle is never even opened, so it always
+survives to be replaced atomically. Legacy *adoption* still runs on that path,
+for its side
+effect, but only when the versioned name is free — the same precedence the
+normal path uses, and for a stronger reason, since adoption ends in a rename
+that would otherwise overwrite a fresh fingerprinted bundle with an older
+unverifiable one before any replacement existed, erasing the digest that would
+have caught the mismatch. With the name free, renaming leaves exactly one bundle
+for the rebuild to replace atomically, where skipping it would strand that file
+unreachably once a v1 existed. Adoption does *validate* before it renames, and
+that validation quarantines, so a pre-versioning bundle whose count or mapping
+no longer checks out is moved aside in the prelude — the same thing a plain run
+does to it, and one shared implementation of the rename is worth more than a
+quieter second copy for this path. (One case adoption cannot rescue: if taking
+the name fails — a read-only cache, or one with no hard links — the rebuild goes on to write a v1 and
+the leftover legacy file does become unreachable. That is disk space on a cache
+directory that could not be renamed in, where the rebuild's own write is just as
+likely to have failed.) When the rebuild then declines to cache its result, the
+run says which bundle it left in place, and that the next run re-checks it and
+rebuilds only if its own count and mapping checks reject it — the match-rate
+tripwire fires when *our* row matching regressed, which makes the older bundle
+the more trustworthy of the two, so destroying it to make the escape hatch feel
+decisive would punish the user for our bug.
+
+A cached entry that is not a WebP image is now refused as firmly as a truncated
+archive. `bytes()` is too weak to be the check — it converts a *numeric* entry
+silently, a float to the eight bytes of its IEEE encoding — so an npz of the
+right length with the wrong dtype used to sail through and feed the viewer
+garbage forever; every entry this cache writes is WebP, so the container
+signature is the honest test. Both readers apply it, the assembled bundle and the
+per-file parts, which is what keeps the rebuild from repeating: a garbage part
+would otherwise reassemble into a garbage bundle on every single run. A download
+or encode failure now names the `Image_data*.npy` file that failed and keeps the
+original exception type in the message (`str(MemoryError())` is empty, which used
+to print as a bare trailing colon), and says plainly that re-running skips whole
+completed files — and now whole completed encodes — rather than resuming a
+partial one. A deliberate `--without-images` run stays quiet, and `main()`'s
+navigation hint no longer promises fluorescence images the scene does not
+contain.
 
 #### Real join geometry for lines: the miter (#790, #795)
 

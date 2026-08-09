@@ -68,6 +68,18 @@ export interface SelectionPayload {
    * Index of the picked element within the *hit leaf* — under a partition
    * that is the `part_<i>` leaf, not `nodeName`. Index it against
    * `hitNodeName`.
+   *
+   * This is the ON-DISK element index (the one the leaf's arrays and its
+   * label CSR are keyed by) wherever the node can resolve one — through a
+   * published slot → on-disk map, or trivially where the identity already
+   * holds and no map is published. Today: a Points or GSplats node
+   * declaring `has_labels` / `has_image_labels`, and Mesh, whose
+   * `gl_VertexID` already is the on-disk ordinal. Otherwise it is the
+   * element's slot in the buffer that reached the GPU, which after
+   * spatial range loading or nD compaction is NOT the on-disk index — and
+   * on Lines it is a per-segment slot against a per-vertex CSR whatever
+   * the slicing. See
+   * `rendering/picking/picking-system/element-id-map.ts`.
    */
   elementIndex: number;
   /**
