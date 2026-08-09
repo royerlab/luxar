@@ -250,19 +250,29 @@ def _shared_scalar_window(
     min/max renders the same value as a different colour, and a subset that is
     constant stamps a degenerate ``[v, v]`` the viewer maps to the LUT midpoint.
 
-    The caller's explicit window wins (already validated). Otherwise it is
-    derived from the WHOLE field, before any split or decimation. Only a
-    per-VERTEX array needs one — the same discriminator the levels use for
-    forwarding, since a broadcast value is identical on every child already and
-    needs nothing shared. Callers must run their fail-fast scalars gate first;
-    that is what rules out a non-finite field here (an explicit window is
+    Derived from the WHOLE field, before any split or decimation, and UNIONED
+    with the caller's explicit window (already validated) when there is one.
+    The union rather than the explicit pair verbatim, because ``write_scalars``
+    widens (never narrows) the window onto each node's own values — the pair is
+    also that node's quantization range, so a datum outside it would come back
+    clipped. A deliberately narrower window therefore came out different on
+    every child: an explicit ``(0, 1)`` over parts holding ``[-10, -5]`` and
+    ``[5, 10]`` stamped ``[-10, 1]`` and ``[0, 10]``, which is exactly the
+    discontinuity this helper exists to prevent. Unioning up front makes every
+    child stamp the one window a plain leaf over the same field would.
+
+    Only a per-VERTEX array needs one — the same discriminator the levels use
+    for forwarding, since a broadcast value is identical on every child already
+    and needs nothing shared. Callers must run their fail-fast scalars gate
+    first; that is what rules out a non-finite field here (an explicit window is
     refused non-finite, a derived one would not be).
     """
-    if explicit is not None:
-        return explicit
     if not (isinstance(scalars, np.ndarray) and scalars.shape[:1] == (n_vertices,)):
-        return None
-    return (float(np.min(scalars)), float(np.max(scalars)))
+        return explicit
+    field = (float(np.min(scalars)), float(np.max(scalars)))
+    if explicit is None:
+        return field
+    return (min(explicit[0], field[0]), max(explicit[1], field[1]))
 
 
 def _resolve_mesh_vertices(vertices: Any) -> np.ndarray:
@@ -1062,15 +1072,14 @@ def _add_mesh_partition(
     are gathered through the part's ``vertex_index``; per-face data has no
     attribute today.
 
-    Every part is handed ONE display window as ``_scalar_data_range=`` — the
-    caller's explicit one, or else :func:`_shared_scalar_window`'s window over the
-    whole field — because the viewer windows a node's colormap on that node's OWN
+    Every part is handed ONE display window as ``_scalar_data_range=`` —
+    :func:`_shared_scalar_window` over the whole field, unioned with the caller's
+    explicit one — because the viewer windows a node's colormap on that node's OWN
     stamped ``scalar_data_range``, so a per-part subset min/max renders the same
-    scalar value as a different colour either side of a BSP cut. The window is
-    shared VERBATIM only when it contains the field's range: ``write_scalars``
-    widens (never narrows) the pair onto each node's own data, since it is also
-    that node's quantization range, so a deliberately narrower window still comes
-    out per-part.
+    scalar value as a different colour either side of a BSP cut. The union is what
+    makes the window survive verbatim: ``write_scalars`` widens (never narrows)
+    the pair onto each node's own data, so a window narrower than the field would
+    otherwise come back out per-part.
     """
     from ....mesh.split import duplication_factor, face_centroids, split_mesh_by_faces
     from ..partition import (

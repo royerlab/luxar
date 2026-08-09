@@ -1599,8 +1599,9 @@ gave: it was **bookkeeping, not correctness**. What the bookkeeping had to do:
   (via the shared `slice_optional_array`, which gathers on length and so leaves a uniform
   RGB triple or a colormap name alone).
 * **Stamp ONE scalar display window on every part.** Derived from the whole field before
-  the split (or taken from an explicit `_scalar_data_range`), because the viewer windows
-  each node's colormap on that node's own stamped range: per-part min/max recoloured the
+  the split, unioned with an explicit `_scalar_data_range` when one is given, because the
+  viewer windows each node's colormap on that node's own stamped range: per-part min/max
+  recoloured the
   same value either side of a cut, and a part whose subset is constant landed on the LUT
   midpoint. Same rule §9's substitutive ladder applies to its levels, via the same helper.
   The pair is also each part's quantization range, so a field with one extreme outlier now

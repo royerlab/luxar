@@ -1710,3 +1710,30 @@ def test_partition_shares_the_derived_window_without_an_explicit_one(tmp_path) -
     # Restated on purpose: a shared window is the fix, a non-degenerate one is the
     # property that makes the colormap usable at all.
     assert all(lo < hi for lo, hi in ranges)
+
+
+def test_partition_shares_a_window_NARROWER_than_the_field(tmp_path) -> None:
+    """An explicit window that does not contain the field is still shared.
+
+    `write_scalars` widens (never narrows) the supplied pair onto each node's own
+    values, because it is also that node's quantization range. So forwarding a
+    too-narrow window verbatim let every part widen it differently — the same
+    per-part discontinuity, reintroduced by the one input that looks like it asks
+    for the opposite. Unioning with the whole field up front makes every part
+    stamp the window a plain leaf over the same field would.
+    """
+    scalars = np.zeros(36, np.float32)
+    scalars[0] = -10.0
+    scalars[-1] = 10.0
+    store = _write_partitioned(
+        tmp_path,
+        partition={"max_elements": 10},
+        scalars=scalars,
+        colormap="viridis",
+        _scalar_data_range=(0.0, 1.0),
+    )
+    node = zarr.open_group(str(store), mode="r")["pm"]
+    parts = sorted(k for k in node.keys() if k.startswith("part_"))
+    assert len(parts) > 1
+    ranges = {tuple(node[p].attrs["scalar_data_range"]) for p in parts}
+    assert ranges == {(-10.0, 10.0)}, f"parts window on different ranges: {ranges}"

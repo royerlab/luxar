@@ -268,6 +268,37 @@ class TestLadderShape:
         assert float(coarse.max()) < 100.0, "the peak must average away"
         assert float(coarse.max()) > 0.0, "…without taking the field with it"
 
+    def test_a_window_NARROWER_than_the_field_is_still_shared(
+        self, tmp_path: Path
+    ) -> None:
+        """An explicit window that does not contain the field must not split.
+
+        `write_scalars` widens (never narrows) the supplied pair onto each node's
+        own values, because it is also that node's quantization range. Forwarding
+        a too-narrow window verbatim therefore let each level widen it against its
+        OWN cluster means — different ranges again, from the one input that looks
+        like it asks for the opposite. Unioning with the whole field up front
+        makes every level stamp what a plain leaf over the same field would.
+        """
+        verts, faces = octasphere(4)
+        scalars = np.zeros(len(verts), np.float32)
+        scalars[0] = 100.0
+        scalars[1] = -20.0
+        nodes = write_ladder(
+            tmp_path,
+            verts,
+            faces,
+            scalars=scalars,
+            colormap="viridis",
+            substitutive_lod={"levels": 3},
+            _scalar_data_range=(0.0, 1.0),
+        )
+        children = ladder_children(nodes)
+        assert len(children) >= 3
+        ranges = [tuple(c["scalar_data_range"]) for c in children]
+        assert len(set(ranges)) == 1, f"levels window on different ranges: {ranges}"
+        assert ranges[0] == pytest.approx((-20.0, 100.0))
+
     def test_the_private_range_key_never_reaches_disk(self, tmp_path: Path) -> None:
         # `_scalar_data_range` is plumbing for the scalars writer, not an
         # attribute; a private key on a node is something every reader and the

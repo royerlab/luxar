@@ -309,13 +309,16 @@ bookkeeping rather than correctness.
   length-keyed, so an off-length array would otherwise be passed through whole and
   could be accepted by a part whose own vertex count happened to match).
 - **One scalar display window spans the whole partition.** The window is derived
-  from the WHOLE field before the split (or taken from an explicit
-  `_scalar_data_range`) and stamped on every part, because the viewer windows each
-  node's colormap on that node's own stamped range — per-part min/max recoloured
-  the same value either side of a cut, and a part with a constant subset landed on
-  the LUT midpoint. Same rule the substitutive ladder uses for its levels. The pair
-  is also each part's quantization range, so a field with a single extreme outlier
-  now spends its codes on the global span rather than per part.
+  from the WHOLE field before the split, unioned with an explicit
+  `_scalar_data_range` when one is given, and stamped on every part, because the
+  viewer windows each node's colormap on that node's own stamped range — per-part
+  min/max recoloured the same value either side of a cut, and a part with a
+  constant subset landed on the LUT midpoint. Same rule the substitutive ladder
+  uses for its levels. The union rather than the explicit pair verbatim because
+  the pair is also each node's quantization range, so `write_scalars` widens
+  (never narrows) it onto that node's own values — a window narrower than the
+  field would otherwise come back out per-part. A field with a single extreme
+  outlier therefore spends its codes on the global span rather than per part.
 - `GEOMETRY_CAPABILITIES.mesh.partition` is `true` on both the Python and
   TypeScript sides; `image_labels` is refused alongside `partition=`.
 - A partition stays **homogeneous in both directions**: every leaf adder now refuses a
