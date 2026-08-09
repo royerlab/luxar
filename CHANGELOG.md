@@ -6,6 +6,81 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A warm CAIDA AS-topology run is fully offline and recomputes nothing (#1372)
+
+Every run of the demo used to make two directory-listing GETs just to discover
+which CAIDA snapshot pair is current, then re-parse both snapshots, re-filter to
+the largest connected component and re-run Louvain — ~12 s of deterministic
+recompute, and impossible with networking off. Discovery is now memoized in
+`snapshots.json` (which pair, and when it was checked) and re-checked weekly,
+CAIDA publishing monthly; the two snapshot files were already skipped when
+present, so a warm run makes no network call at all. The whole derived chain
+(parse → LCC + tier-1 detection → Louvain → degrees) is cached as one bundle of
+arrays keyed on the two snapshot FILENAMES, so a new monthly release gets its own
+entry and the previous release's bundle stays valid instead of being clobbered.
+When discovery fails, the newest COMPLETE pair on disk is used — the memo's if
+both its files are there, else whatever pair is cached, which is the state of
+every user who ran this demo before the memo existed.
+
+The layout cache key is now the layout's input identity: the node hash plus the
+edge count and a hash of the edge endpoints. The coordinates come from the
+adjacency, so a release whose LCC keeps the same node set but rewires it — even
+with the same edge count — no longer gets served last month's geometry.
+Superseded snapshots and their derived bundles are pruned to the newest
+`--keep-snapshots N` releases (default 2), which previously grew unbounded at
+~6 MB a month; pruning runs only after the pipeline has loaded successfully, so a
+snapshot the parser rejects cannot delete the release the user goes back to — at
+the cost that a run which never loads reclaims nothing. Layout pickles have no
+release date to key them by and are deliberately not pruned, nor
+is a `layout_3d.npz` that belongs to `demo_huri_interactome`'s live cache in a
+shared `--cache-dir`.
+
+Flags: `--refresh-snapshots` re-discovers immediately, `--recompute-pipeline` and
+`--recompute-layout` rebuild the two derived caches, `--keep-snapshots N` sets the
+prune window, and `--cache-dir` relocates the lot from `~/.cache/luxar/caida/`.
+
+#### The ATP synthase demo now bakes volumetric blending
+
+`atp_synthase` shipped on depth-sorted `normal` blending, chosen when the two PDB
+structure demos moved off `additive` (see "the two PDB structure demos render as
+surfaces, not emissive media" below) on the reasoning that an atomic structure is
+a surface and the nearest atom should win the pixel. That earlier change also made
+the node a `layer`, and driving the Layers panel on the live scene is what turned
+up a better look than the one it bakes: `volumetric` at absorption kappa 2.5, with
+the display range pulled in to [0, 0.616].
+
+Emission-absorption blending is not the emissive wash `additive` gave, because the
+absorption term still occludes — a near atom hides what is behind it — but the
+complex stays translucent, so the packed subunit interior reads as density rather
+than as a closed shell. Self-screening scales the composited colour by roughly
+1/kappa, which is why the display window is pulled in rather than left at identity:
+of the exposure knobs the gain is the one that stays out of the optical depth
+(absorption sets it, and node opacity scales it), so raising the gain just puts the
+brightness back. `intensity=1.62` ≈ 1/0.616 is what that window bakes to (offset 0;
+the panel reads the rounded gain back as 0.617). The `normal` entry below is
+superseded for this demo only — `nuclear_pore_complex` keeps `normal`, where the
+surface reading is what the 8-fold ring wants.
+
+That earlier entry did weigh volumetric and reject it: across kappa 2–20 it scored
+3.9–8.3 on mean CIELAB chroma over the covered pixels, against 13.1 for `normal` on
+the nuclear-pore-complex scene the sweep was run on (it is still written out above
+that demo's `add_points`). Both volumetric variants it names sit at or below gain
+0.5 — kappa 20 at intensity 0.5, and kappa 3 at intensity 0.15 among the
+panel-legal ones — so a gain above unity is not something that sweep covered, and
+that is where the verdict turns over. Measured the same way on the ATP gallery
+capture (mean CIELAB chroma over the lit pixels, averaged over 8 orbit frames),
+`normal` scores 42.8 at L\* 83.7 and this setting 53.5 at L\* 80.0, over the same
+26% frame coverage — the same subject at the same scale (lit-mask IoU 0.98), and
+the gap holds after normalising both captures to a common exposure. The hues come
+out stronger, not washed out. NPC was not re-measured at a gain above unity; it
+keeps `normal` on purpose. Those are gallery-harness numbers with its
+auto-exposure, so they sit on a different scale from the per-demo figures quoted
+in the older entry — only the two here compare directly.
+
+Regenerate the demo dataset to pick up the new look.
+`docs/images/readme/gallery/atp_synthase.{webp,webm}` — the README gallery tile —
+were recaptured through the gallery harness against the new look.
+
 #### LOD levels no longer wait for the object to overfill the screen
 
 The viewer picks a substitutive LOD level by comparing each child's
