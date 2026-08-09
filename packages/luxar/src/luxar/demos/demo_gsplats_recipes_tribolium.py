@@ -145,10 +145,13 @@ MAX_ELEMENTS = 50_000
 # Coarse-cap compression for overview / levels (one substitutive level ≈ N/FACTOR splats).
 FACTOR = 8
 # NB: the overview coarse↔fine switch uses viewport-relative coverage_fraction
-# thresholds (sqrt(N_i/N_finest)) — the finest branch shows when the embryo fills
-# the screen and the coarse cap (fewer-but-larger splats) engages as you zoom *out*.
-# The viewer anchors the finest at fills-screen via the live viewport, so there is
-# no per-dataset threshold knob to tune.
+# thresholds. Unlike a whole-object `levels` ladder, overview's pair is stamped by
+# `partitioned_coverage_fractions`, so the coarse cap (fewer-but-larger splats) is
+# what you see at the opening framing and the fine branch engages only once you
+# zoom the embryo up to filling the viewport. That is the recipe's contract —
+# "instant coarse overview, fine tiles on zoom" — and it is why overview does NOT
+# take the quarter-viewport anchor the other recipes got in #1361. No per-dataset
+# threshold knob to tune either way.
 # Additive-ladder depth for the stream recipe and the tiles / overview per-part
 # (and per-level) streaming ladders.
 N_LODS = 4

@@ -25,8 +25,9 @@ microscopy dataset, which is where adaptive detail actually earns its keep:
   ``make_substitutive_lod``).  This is genuine geometry/memory compression, not
   just a streaming order.  The viewer auto-picks a level by viewport-relative
   ``coverage_fraction`` (``sqrt(N_i/N_finest)``, derived from per-level splat
-  counts) — the finest level shows when the embryo fills the screen and coarser
-  levels step in as it shrinks: zoom out → coarse, zoom in → fine.
+  counts) — the finest level shows at any normal full-frame view (once the
+  embryo's projected size reaches ~a quarter of the viewport diagonal) and
+  coarser levels step in as it shrinks: zoom out → coarse, zoom in → fine.
 - **Debug colors** make the level-switching obvious: each level is painted a
   distinct color on a green → amber → red ramp (finest → coarsest).  As you
   zoom, the embryo changes color when the active level changes.
