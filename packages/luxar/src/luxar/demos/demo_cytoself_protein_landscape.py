@@ -163,7 +163,7 @@ HTML_MARKERS = (b"<!doctype html", b"<html", b"<head")
 # surfaces from numpy/pandas as ValueError / BadZipFile / ParserError with no
 # errno at all, so nothing here can mask a real corruption — while treating an
 # EMFILE as one would quarantine a healthy 23 GB file and re-download it into
-# the same wall. Consumed by :func:`_load_downloaded_artifact`.
+# the same wall. Consumed by :func:`_is_environment_failure`.
 _ENVIRONMENT_ERRNOS = frozenset(
     {errno.EACCES, errno.EPERM, errno.EMFILE, errno.ENFILE, errno.ENOMEM}
 )
@@ -399,6 +399,28 @@ def _quarantine_download(path: Path, reason: str) -> None:
     _sidecar_path(path).unlink(missing_ok=True)
 
 
+def _is_environment_failure(exc: BaseException) -> bool:
+    """Whether *exc* describes the environment rather than the bytes on disk.
+
+    Every cache reader in this module reacts to a read failure by throwing the
+    artifact away, and the artifacts are expensive: 4-23 GB per download, and a
+    thumbnail bundle whose rebuild walks all ten ``Image_data`` files. So the
+    faults that say nothing about the file have to be told apart from the ones
+    that do, and they are the same set everywhere:
+    :class:`MemoryError` (the crops and the assembled bundle are large enough to
+    hit it on a loaded machine), :class:`ImportError` (a reader reaching for an
+    engine that is not installed is a broken environment, not a broken file) and
+    an :class:`OSError` carrying one of :data:`_ENVIRONMENT_ERRNOS` — a
+    descriptor limit, a permission, an allocation.
+
+    Real corruption arrives as ValueError / BadZipFile / ParserError with no
+    errno at all, so nothing here can mask it.
+    """
+    if isinstance(exc, (MemoryError, ImportError)):
+        return True
+    return isinstance(exc, OSError) and exc.errno in _ENVIRONMENT_ERRNOS
+
+
 def _load_downloaded_artifact(
     path: Path,
     loader: Callable[[Path], _T],
@@ -413,21 +435,16 @@ def _load_downloaded_artifact(
     quarantined, re-downloaded once, and re-read; a second failure propagates.
 
     ONLY parse/integrity failures count as corruption. Faults that say nothing
-    about the bytes on disk are re-raised untouched: ``MemoryError`` (the
-    embeddings need ~16 GB of RAM, so re-downloading 4.23 GB would fail
-    identically), ``ImportError`` (a reader reaching for an engine that is not
-    installed — ``pd.read_csv`` does this — is a broken environment, not a broken
-    file) and an :class:`OSError` carrying one of
-    :data:`_ENVIRONMENT_ERRNOS` (a descriptor limit, a permission, an
-    allocation), which would otherwise throw away a healthy 23 GB file and
-    re-fetch it straight into the same wall.
+    about the bytes on disk are re-raised untouched — see
+    :func:`_is_environment_failure`; here that spares a healthy 23 GB file from
+    being thrown away and re-fetched straight into the same wall (and the 4.23 GB
+    embeddings, which need ~16 GB of RAM to load, from a re-download that would
+    fail identically).
     """
     try:
         return loader(path)
-    except (MemoryError, ImportError):
-        raise
     except Exception as exc:
-        if isinstance(exc, OSError) and exc.errno in _ENVIRONMENT_ERRNOS:
+        if _is_environment_failure(exc):
             raise
         aprint(f"  ⚠ Cached file {path.name} could not be read ({exc})")
         _quarantine_download(path, reason="unreadable cached download")
@@ -1010,6 +1027,11 @@ def _load_thumbnail_part(path: Path) -> tuple[list[bytes], list[int], int] | Non
     Returns ``(blobs, test_indices, n_crops)``, or ``None`` when the part has
     not been built yet or could not be read (in which case it is quarantined so
     the caller rebuilds it).
+
+    An environment failure (:func:`_is_environment_failure`) propagates instead:
+    rebuilding a part means re-reading an 11-23 GB ``Image_data`` file into RAM,
+    so discarding a healthy part cache because the machine is out of memory or
+    descriptors trades a good cache for a job that is about to fail harder.
     """
     if not path.exists():
         return None
@@ -1022,6 +1044,8 @@ def _load_thumbnail_part(path: Path) -> tuple[list[bytes], list[int], int] | Non
         if len(blobs) != len(test_indices):
             raise ValueError("blobs and test_indices have different lengths")
     except Exception as exc:
+        if _is_environment_failure(exc):
+            raise
         aprint(f"  ⚠ Thumbnail part cache unreadable ({exc}) — rebuilding")
         _quarantine_download(path, reason="unreadable thumbnail part cache")
         return None
@@ -1082,12 +1106,21 @@ def _read_bundle_blobs(
       *expected_fingerprint* is :func:`_mapping_fingerprint` for the current
       cache; an empty one on either side means "cannot be checked" and the
       bundle is accepted, since a false rebuild costs a 181 GB re-download.
+
+    None of that applies to an environment failure
+    (:func:`_is_environment_failure`), which propagates: the bundle holds ~114k
+    blobs, so it is precisely the read that a memory- or descriptor-starved
+    machine fails on, and quarantining it there would trade a good cache for the
+    most expensive rebuild in the demo on the strength of a fault that says
+    nothing about its bytes.
     """
     try:
         with np.load(path, allow_pickle=True) as data:
             blobs = [bytes(b) for b in data["blobs"]]
             stored_fingerprint = _stored_mapping_fingerprint(data)
     except Exception as exc:
+        if _is_environment_failure(exc):
+            raise
         aprint(f"  ⚠ Cached thumbnail bundle unreadable ({exc}) — rebuilding")
         _quarantine_download(path, reason="unreadable thumbnail bundle")
         return None

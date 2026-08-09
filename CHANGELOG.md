@@ -523,7 +523,11 @@ if it cannot be parsed — with `MemoryError`, `ImportError` and the environment
 since none of them says anything about the bytes on disk and re-fetching 23 GB to
 meet the same wall twice is the worst possible response. Nothing is masked by
 that exclusion: numpy and pandas report a truncated or garbage artifact as
-`ValueError` / `BadZipFile` / `ParserError`, carrying no errno at all.
+`ValueError` / `BadZipFile` / `ParserError`, carrying no errno at all. The same
+rule guards the thumbnail caches below, which answer a bad read the same way and
+whose rebuilds are the expensive ones — a part cache costs re-reading an
+11-23 GB archive, the assembled bundle costs all ten — and the ~114k-blob bundle
+is exactly the read a loaded machine runs out of memory on.
 
 The thumbnail pipeline had a separate and more annoying failure: it processed
 all ten `Image_data` files and wrote its npz at the very end, so a failure on

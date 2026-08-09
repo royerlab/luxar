@@ -176,6 +176,15 @@ def _never_touch_the_real_cache(
     monkeypatch.setattr(demo, "DEFAULT_CACHE_DIR", tmp_path / "default_cache")
 
 
+# Reclaiming a dead run's staging file needs a PID probe, and `os.kill(pid, 0)`
+# TERMINATES rather than probes on Windows — so `_pid_is_alive` answers "alive"
+# for everything there and nothing is ever swept. That is deliberate in the
+# production code; here it means `_dead_pid()` has no answer to give.
+_posix_only = pytest.mark.skipif(
+    os.name != "posix", reason="staging reclaim needs a PID probe (POSIX only)"
+)
+
+
 def _dead_pid() -> int:
     """A PID that no live process holds, to stand in for an abandoned run.
 
@@ -285,6 +294,7 @@ def test_atomic_writes_do_not_disturb_another_runs_staging_file(
     )
 
 
+@_posix_only
 def test_dead_runs_npz_staging_files_are_reclaimed(tmp_path: Path) -> None:
     # A killed `np.savez` on the ~114k-blob bundle strands a large `.tmp`, and a
     # PID-private name means nothing would ever look at it again.
@@ -547,6 +557,7 @@ def test_staging_does_not_touch_another_runs_in_flight_file(
     assert _leftovers(dest) == {foreign.name, dest.name + demo.COMPLETE_SUFFIX}
 
 
+@_posix_only
 def test_staging_files_of_dead_runs_are_reclaimed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1024,6 +1035,52 @@ def test_corrupt_thumbnail_bundle_is_quarantined_and_rebuilt(
     assert (tmp_path / (demo.THUMBNAIL_CACHE_NAME + ".corrupt")).exists()
     # Rebuilt entirely from the surviving part caches — no re-download.
     assert downloaded == []
+
+
+def test_descriptor_exhaustion_does_not_discard_a_thumbnail_part(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Rebuilding a part means re-reading an 11-23 GB Image_data file. An EMFILE
+    # says the process is out of descriptors, not that the part is bad, so
+    # quarantining on it trades a good cache for a job about to fail harder.
+    part_path = demo._thumbnail_part_path(tmp_path, 0)
+    demo._write_npz_atomic(
+        part_path,
+        blobs=np.array([b"webp"], dtype=object),
+        test_indices=np.asarray([0], dtype=np.int64),
+        n_crops=np.int64(1),
+    )
+
+    def _no_descriptors(*args: object, **kwargs: object) -> object:
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    monkeypatch.setattr(np, "load", _no_descriptors)
+
+    with pytest.raises(OSError):
+        demo._load_thumbnail_part(part_path)
+
+    assert part_path.exists()
+    assert not part_path.with_name(part_path.name + ".corrupt").exists()
+
+
+def test_memory_pressure_does_not_discard_the_thumbnail_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ~114k blobs is precisely the read a loaded machine fails on, and the
+    # rebuild it would buy is the most expensive one in the demo.
+    bundle = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(bundle, blobs=np.array([b"webp"], dtype=object))
+
+    def _oom(*args: object, **kwargs: object) -> object:
+        raise MemoryError("Unable to allocate 1.2 GiB")
+
+    monkeypatch.setattr(np, "load", _oom)
+
+    with pytest.raises(MemoryError):
+        demo._read_bundle_blobs(bundle, 1)
+
+    assert bundle.exists()
+    assert not bundle.with_name(bundle.name + ".corrupt").exists()
 
 
 def test_legacy_bundle_is_adopted_instead_of_rebuilt(
