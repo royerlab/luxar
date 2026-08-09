@@ -139,8 +139,12 @@ function missingWasmExports(): readonly string[] {
   try {
     wrapper = readFileSync(WASM_JS_PATH, 'utf8');
   } catch {
-    // Unreadable is the caller's `existsSync` problem, not staleness.
-    return [];
+    // Unreadable but PRESENT — `existsSync` has already passed, so this is not
+    // the absence check firing. It is a real artifact we cannot vouch for, and
+    // returning "nothing missing" here would trust it and skip the rebuild:
+    // the exact fail-open this function exists to close. Report everything
+    // missing so the caller rebuilds.
+    return REQUIRED_WASM_EXPORTS;
   }
   return REQUIRED_WASM_EXPORTS.filter(
     (name) => !new RegExp(`export function ${name}\\b`).test(wrapper)
