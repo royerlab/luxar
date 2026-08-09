@@ -108,12 +108,27 @@ export interface LoadedPointsData {
   scalars?: PointScalarArray;
 
   /**
-   * Per-point original (node-global) element IDs (size: numPoints, optional).
+   * Visible-buffer slot → ON-DISK element index map (size: numPoints, optional).
    *
-   * when picking labels are enabled, this carries the node-global
-   * element index that label/image-label loaders expect. Without this,
-   * `gl_VertexID` is used — but that's a visible-buffer-local index
-   * after spatial range loading or nD compaction, not a global index.
+   * Produced by `data/points/projection.ts::projectPointsTo3D` and consumed at
+   * commit by `data/scene-loader/commit/commit-points-geometry.ts`, which
+   * forwards it to `types/committed-data::setElementIdMap`. Picking reads that
+   * MESH-level stamp — not this field — via
+   * `rendering/picking/picking-system/element-id-map.ts`, so hover labels index
+   * the per-element label CSR (`label_offsets` / `label_bytes`) by the on-disk
+   * index rather than by the storage slot the pick shader reports.
+   * The two diverge after spatial range loading (only the visible ranges are
+   * concatenated) or effective-radius compaction (zero-radius points are
+   * dropped in place).
+   *
+   * OMITTED in three cases, in all of which consumers use the slot directly:
+   * when the node declares neither `has_labels` nor `has_image_labels` (the
+   * map costs 4 B/point on the zero-allocation accumulator path and no LABEL
+   * reader exists — the embedder `selection` event can still fire on such a
+   * node and keeps reporting the slot); when the identity holds — a single
+   * range starting at 0 with no compaction, i.e. the common plain-3D case;
+   * and on an additive LOD ladder, where each sub-LOD has its own on-disk
+   * index space (`points-progressive-loader.ts::concatenatePointsData`).
    */
   elementIds?: Uint32Array;
 

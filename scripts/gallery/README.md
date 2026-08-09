@@ -165,3 +165,23 @@ capture code never reads it).
 
 - Datasets: run the generator first (heavy demos download data / fit splats).
 - `ffmpeg` on `PATH` for the WebP/WebM conversion.
+
+## Troubleshooting
+
+Both `webServer` entries keep their **stdout** quiet by default (a sweep is long
+and vite logs every request), so a server that starts but never becomes reachable
+at the port Playwright is watching shows up as nothing more than
+`Timed out waiting 90000ms from config.webServer`. Re-run with
+`GALLERY_DEBUG=1 pnpm gallery` (or `GALLERY_DEBUG=1 make generate-gallery`) to
+forward vite's and `luxar serve`'s stdout to the reporter. (The data server
+always runs with `PYTHONUNBUFFERED=1`; without it a piped, block-buffered stdout
+loses its last lines when Playwright kills the process on timeout.) **stderr is
+never suppressed** — a server that dies outright still reports why without the
+flag.
+
+The usual cause is the data server binding a *different* port than the one
+Playwright waits on: `luxar serve` shifts to the next free port when its probe
+says the requested one is busy, and prints
+`⚠️  Data port 9899 busy, using 9900 instead` — which `GALLERY_DEBUG=1` makes
+visible. If something really is on the port, free it or point the run elsewhere
+with `GALLERY_DATA_PORT`.

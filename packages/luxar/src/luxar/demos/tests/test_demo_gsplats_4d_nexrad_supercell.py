@@ -336,7 +336,7 @@ class TestPinnedScanList:
         """
         import zipfile
 
-        from luxar.utils.demos import is_lfs_pointer
+        from luxar.demos import is_lfs_pointer
 
         bundle = (
             Path(_demo.__file__).parent

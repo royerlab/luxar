@@ -17,17 +17,20 @@ rather than falling back to the auto-injected default, which is the same
 top-right corner only further into it.
 
 The reporting is covered too: which of the two absence messages is printed
-(``images_expected``), and the ``recompute`` pass-through that is the only way
-to rebuild the cached thumbnail bundle from the CLI.
+(``images_expected``), and — one level up — the ``main()`` wiring that decides
+what those two functions are even called with.
 
 These tests drive the REAL ``create_cytoself_scene`` on a tiny synthetic input
-and read the built zarr store back. Nothing here touches the network.
+and read the built zarr store back. Nothing here touches the network. The
+thumbnail CACHE — the bundle, the per-file part caches and the ``recompute``
+bypass — is covered next door in ``test_demo_cytoself_caching.py``.
 """
 
 from __future__ import annotations
 
 import io
 import socket
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +42,9 @@ import zarr
 # module scope, which imports PIL. Pillow also encodes the fixture thumbnails.
 pytest.importorskip("PIL")
 
-from luxar.demos import MissingDependencyError  # noqa: E402
 from luxar.demos import demo_cytoself_protein_landscape as demo  # noqa: E402
 from luxar.demos.demo_cytoself_protein_landscape import (  # noqa: E402
-    THUMBNAILS_CACHE_NAME,
     create_cytoself_scene,
-    load_cytoself_images,
 )
 
 N_POINTS = 4
@@ -234,320 +234,80 @@ class TestMissingThumbnailReporting:
         assert "No image labels" not in out
 
 
-class _RebuildEntered(Exception):
-    """Raised by the monkeypatched rebuild path to prove it was reached."""
+class TestMainWiring:
+    """``main()`` is the only caller, and reverting any of its kwargs is silent.
 
+    Everything above drives ``create_cytoself_scene`` directly, which pins the
+    CALLEE and leaves the caller unguarded: dropping ``recompute=`` from either
+    of the two calls that take it, dropping ``expected_count=`` or
+    ``images_expected=``, or making the navigation hint unconditional again,
+    each left the whole suite green.
 
-_STUB_IMAGE_FILE = "Image_data00.npy"
-_STUB_N_TEST = 2
-
-
-def _stub_rebuild(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Let the REAL rebuild path run, with the network replaced by local data.
-
-    One Image_data file with two crops, so the loop, the WebP encode and the
-    bundle write all execute for real without touching Google Drive.
-    """
-    monkeypatch.setattr(demo, "GDRIVE_IMAGE_IDS", {_STUB_IMAGE_FILE: "stub-id"})
-    monkeypatch.setattr(
-        demo,
-        "_build_test_index_mapping",
-        lambda cache_dir: ({0: 0, 1: 1}, _STUB_N_TEST),
-    )
-
-    def _fake_download(
-        file_id: str, output_path: Path, expected_min_size: int = 0
-    ) -> Path:
-        crops = np.zeros((_STUB_N_TEST, 100, 100, 4), dtype=np.uint8)
-        crops[0, :, :, 0] = 200  # distinct content per crop
-        crops[1, :, :, 1] = 90
-        np.save(output_path, crops)
-        return output_path
-
-    monkeypatch.setattr(demo, "_download_from_google_drive", _fake_download)
-
-
-class TestThumbnailCacheRecompute:
-    """``recompute`` must BYPASS the cached bundle, not merely re-read it.
-
-    Without it a stale ``image_labels_test_webp.npz`` short-circuits before any
-    network call, so the count mismatch it causes reproduces forever.
+    Both ``recompute=`` call sites are asserted. ``--recompute`` discards the
+    cached UMAP as well as the thumbnail bundle — a 10-30 minute recompute, and
+    the cost ``_resolve_image_labels`` warns about — so a stub that merely
+    swallowed the kwarg would leave half the flag unpinned.
     """
 
     @staticmethod
-    def _seed_cache(cache_dir: Path) -> list[bytes]:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        blobs = [_make_webp((1, 2, 3)), _make_webp((4, 5, 6))]
-        np.savez(
-            cache_dir / THUMBNAILS_CACHE_NAME,
-            blobs=np.array(blobs, dtype=object),
-        )
-        return blobs
+    def _stub(monkeypatch: pytest.MonkeyPatch, *flags: str) -> dict[str, Any]:
+        """Run the real ``main()`` with every expensive edge replaced.
 
-    @staticmethod
-    def _block_rebuild(monkeypatch: pytest.MonkeyPatch) -> None:
-        def _boom(*args: Any, **kwargs: Any) -> None:
-            raise _RebuildEntered("the rebuild path was entered")
-
-        monkeypatch.setattr(demo, "_build_test_index_mapping", _boom)
-
-    def test_cached_bundle_is_reused_by_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        cache_dir = tmp_path / "cytoself"
-        blobs = self._seed_cache(cache_dir)
-        self._block_rebuild(monkeypatch)
-
-        assert load_cytoself_images(cache_dir) == blobs
-
-    def test_recompute_bypasses_the_cached_bundle(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        cache_dir = tmp_path / "cytoself"
-        self._seed_cache(cache_dir)
-        self._block_rebuild(monkeypatch)
-
-        # Reaching the rebuild proves the cache was skipped, not just re-read.
-        with pytest.raises(_RebuildEntered):
-            load_cytoself_images(cache_dir, recompute=True)
-
-    def test_recompute_replaces_the_bundle_atomically(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """``--recompute`` is the first path that OVERWRITES a valid bundle.
-
-        ``np.savez`` truncates on open, so writing in place would turn an
-        interrupted rebuild into a permanently unreadable cache.
+        Returns the kwargs each stub was called with. The viewer path (not
+        ``--no-serve``) is the one exercised, because the navigation hint only
+        prints there.
         """
-        cache_dir = tmp_path / "cytoself"
-        seeded = self._seed_cache(cache_dir)
-        _stub_rebuild(monkeypatch)
+        coordinates, attributes, category_maps = _inputs()
+        calls: dict[str, Any] = {}
 
-        blobs = load_cytoself_images(cache_dir, recompute=True)
+        monkeypatch.setattr(sys, "argv", ["demo_cytoself_protein_landscape", *flags])
 
-        assert len(blobs) == _STUB_N_TEST
-        assert blobs != seeded, "the stale bundle should have been replaced"
+        def _fake_data(**kwargs: Any) -> tuple[Any, Any, Any]:
+            calls["data"] = kwargs
+            return coordinates, attributes, category_maps
 
-        bundle = cache_dir / THUMBNAILS_CACHE_NAME
-        reloaded = np.load(bundle, allow_pickle=True)["blobs"]
-        assert [bytes(b) for b in reloaded] == blobs
+        def _fake_images(**kwargs: Any) -> list[bytes]:
+            calls["images"] = kwargs
+            return [_make_webp((7, 8, 9))] * N_POINTS
 
-        # The temp artefact must not survive a successful rename.
-        assert list(cache_dir.glob("*.tmp")) == []
+        def _fake_scene(*args: Any, **kwargs: Any) -> int:
+            calls["scene"] = kwargs
+            return N_POINTS
 
-    def test_unreadable_bundle_is_rebuilt_rather_than_raised(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        monkeypatch.setattr(demo, "load_cytoself_data", _fake_data)
+        monkeypatch.setattr(demo, "load_cytoself_images", _fake_images)
+        monkeypatch.setattr(demo, "create_cytoself_scene", _fake_scene)
+        monkeypatch.setattr(demo, "generate_all_legends", lambda *a, **k: None)
+        monkeypatch.setattr(demo, "launch_viewer", lambda *a, **k: None)
+        return calls
+
+    def test_recompute_and_the_point_count_reach_the_loader(
+        self, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
     ) -> None:
-        """A corrupt bundle must not be a permanent dead end.
+        calls = self._stub(monkeypatch, "--recompute")
 
-        This branch short-circuits before any download, so raising here left a
-        plain re-run reproducing the failure forever, with ``main()`` advising
-        a re-run that could never help.
-        """
-        cache_dir = tmp_path / "cytoself"
-        cache_dir.mkdir(parents=True)
-        bundle = cache_dir / THUMBNAILS_CACHE_NAME
-        bundle.write_bytes(b"PK\x03\x04truncated")
-        _stub_rebuild(monkeypatch)
+        demo.main()
 
-        blobs = load_cytoself_images(cache_dir)
+        # --recompute has to reach BOTH caches: the UMAP (the 10-30 min half)
+        # and the thumbnail bundle. The point count is what lets a stale bundle
+        # be detected at all.
+        assert calls["data"] == {"recompute": True}
+        assert calls["images"] == {"expected_count": N_POINTS, "recompute": True}
+        assert calls["scene"]["images_expected"] is True
+        assert "fluorescence image" in capfd.readouterr().out
 
-        assert len(blobs) == _STUB_N_TEST
-        reloaded = np.load(bundle, allow_pickle=True)["blobs"]
-        assert [bytes(b) for b in reloaded] == blobs
-
-    # The shapes a bundle can take that are NOT a usable set of thumbnails.
-    # `bytes()` rejects only the first two: a numeric entry converts silently
-    # (a float to the 8 bytes of its IEEE encoding, an int to that many NULs),
-    # and any byte string at all is bytes-like. Both would otherwise be handed
-    # to the viewer as images.
-    _BAD_BUNDLES = pytest.mark.parametrize(
-        "bad_blobs",
-        [
-            pytest.param(np.array(["not", "bytes"]), id="strings"),
-            pytest.param(np.array([None, None], dtype=object), id="none"),
-            pytest.param(np.array([1.5, 2.5]), id="floats"),
-            pytest.param(np.arange(2), id="ints"),
-            pytest.param(
-                np.array([b"\x89PNG\r\n\x1a\n", b"\x89PNG\r\n\x1a\n"], dtype=object),
-                id="not-webp",
-            ),
-        ],
-    )
-
-    @_BAD_BUNDLES
-    def test_structurally_valid_bundle_with_bad_blobs_is_rebuilt(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_blobs: np.ndarray
+    def test_without_images_skips_the_loader_and_says_so(
+        self, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
     ) -> None:
-        """An unreadable bundle is more shapes than a truncated zip.
+        calls = self._stub(monkeypatch, "--without-images")
 
-        A bundle that opens fine but whose ``blobs`` are not WebP images reaches
-        the same dead end: the cache short-circuits before any download, and
-        every later run reproduces it. So the decode belongs inside the guard,
-        not after it — and it has to be a real check, not just ``bytes()``.
-        """
-        cache_dir = tmp_path / "cytoself"
-        cache_dir.mkdir(parents=True)
-        bundle = cache_dir / THUMBNAILS_CACHE_NAME
-        np.savez(bundle, blobs=bad_blobs)
-        _stub_rebuild(monkeypatch)
+        demo.main()
 
-        blobs = load_cytoself_images(cache_dir)
-
-        assert len(blobs) == _STUB_N_TEST
-        # A bad bundle of the right LENGTH is the trap here: a count check
-        # alone would read as a rebuild even when the garbage was returned
-        # verbatim. Only real WebP proves the encoder actually ran.
-        assert all(b[:4] == b"RIFF" and b[8:12] == b"WEBP" for b in blobs)
-        reloaded = np.load(bundle, allow_pickle=True)["blobs"]
-        assert [bytes(b) for b in reloaded] == blobs
-
-    def test_out_of_memory_reading_the_bundle_is_not_a_cache_miss(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """RAM running out says nothing about the bundle being readable.
-
-        Counting it as a miss would throw away a good bundle and re-download
-        ~17 GB of images to rebuild it, on a machine that just failed to hold a
-        few hundred MB.
-        """
-        cache_dir = tmp_path / "cytoself"
-        seeded = self._seed_cache(cache_dir)
-        self._block_rebuild(monkeypatch)
-
-        def _oom(entry: Any) -> bytes:
-            raise MemoryError()
-
-        monkeypatch.setattr(demo, "_as_webp_blob", _oom)
-
-        # _block_rebuild raises _RebuildEntered, so a swallowed MemoryError
-        # would surface here as the wrong exception type.
-        with pytest.raises(MemoryError):
-            load_cytoself_images(cache_dir)
-
-        reloaded = np.load(cache_dir / THUMBNAILS_CACHE_NAME, allow_pickle=True)
-        assert [bytes(b) for b in reloaded["blobs"]] == seeded
-
-    def test_interrupted_rebuild_leaves_the_existing_bundle_intact(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The whole point of the rename: a half-written bundle is discarded."""
-        cache_dir = tmp_path / "cytoself"
-        seeded = self._seed_cache(cache_dir)
-        _stub_rebuild(monkeypatch)
-
-        def _die_mid_write(file: Any, **kwargs: Any) -> None:
-            # The Ctrl-C / OOM shape: some bytes land, then the write dies.
-            file.write(b"PK\x03\x04partial")
-            raise KeyboardInterrupt("interrupted while writing the bundle")
-
-        monkeypatch.setattr(demo.np, "savez", _die_mid_write)
-
-        with pytest.raises(KeyboardInterrupt):
-            load_cytoself_images(cache_dir, recompute=True)
-
-        # Pre-fix this wrote straight to the bundle, so the good one was gone
-        # and every later run hit BadZipFile.
-        reloaded = np.load(cache_dir / THUMBNAILS_CACHE_NAME, allow_pickle=True)
-        assert [bytes(b) for b in reloaded["blobs"]] == seeded
-        assert list(cache_dir.glob("*.tmp")) == []
-
-
-class TestImageFileLoad:
-    """Only a CORRUPT Image_data file may be deleted and refetched."""
-
-    @staticmethod
-    def _payload() -> np.ndarray:
-        return np.zeros((2, 100, 100, 4), dtype=np.uint8)
-
-    def test_corrupt_file_is_replaced_by_a_fresh_download(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        img_path = tmp_path / _STUB_IMAGE_FILE
-        # What a Google-Drive error page looks like on disk.
-        img_path.write_bytes(b"<html>quota exceeded</html>")
-
-        downloads: list[str] = []
-
-        def _fake_download(
-            file_id: str, output_path: Path, expected_min_size: int = 0
-        ) -> Path:
-            downloads.append(file_id)
-            np.save(output_path, self._payload())
-            return output_path
-
-        monkeypatch.setattr(demo, "_download_from_google_drive", _fake_download)
-
-        arr = demo._load_image_file("stub-id", img_path)
-
-        assert downloads == ["stub-id"]
-        assert arr.shape == self._payload().shape
-
-    def test_out_of_memory_keeps_the_downloaded_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A valid ~1.7 GB file that will not FIT is not a corrupt one.
-
-        Deleting it here re-downloaded 1.7 GB on every run of a memory-tight
-        machine — the opposite of the "already-downloaded files are reused"
-        promise main() prints on exactly this failure.
-        """
-        img_path = tmp_path / _STUB_IMAGE_FILE
-        np.save(img_path, self._payload())
-        before = img_path.read_bytes()
-
-        def _oom(*args: Any, **kwargs: Any) -> np.ndarray:
-            # numpy's own _ArrayMemoryError is a plain MemoryError subclass.
-            raise MemoryError()
-
-        monkeypatch.setattr(demo.np, "load", _oom)
-
-        def _forbidden(*args: Any, **kwargs: Any) -> Path:
-            raise AssertionError("an out-of-memory load must not re-download")
-
-        monkeypatch.setattr(demo, "_download_from_google_drive", _forbidden)
-
-        with pytest.raises(MemoryError):
-            demo._load_image_file("stub-id", img_path)
-
-        assert img_path.read_bytes() == before
-
-
-class TestPerFileFailureReporting:
-    """A failure inside the per-file loop must name the file AND its type."""
-
-    def test_failure_names_the_file_and_the_original_type(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        cache_dir = tmp_path / "cytoself"
-        cache_dir.mkdir(parents=True)
-        _stub_rebuild(monkeypatch)
-
-        def _oom(*args: Any, **kwargs: Any) -> None:
-            # str(MemoryError()) is "" — the type name is the only signal.
-            raise MemoryError()
-
-        monkeypatch.setattr(demo, "_download_from_google_drive", _oom)
-
-        with pytest.raises(RuntimeError) as excinfo:
-            load_cytoself_images(cache_dir, recompute=True)
-
-        message = str(excinfo.value)
-        assert _STUB_IMAGE_FILE in message
-        assert "MemoryError" in message
-
-    def test_missing_dependency_is_not_rebranded(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """It has its own handler (and hint) in ``main()`` — keep the type."""
-        cache_dir = tmp_path / "cytoself"
-        cache_dir.mkdir(parents=True)
-        _stub_rebuild(monkeypatch)
-
-        def _no_pillow(*args: Any, **kwargs: Any) -> None:
-            raise MissingDependencyError("Pillow is not installed")
-
-        monkeypatch.setattr(demo, "_encode_crops_to_webp", _no_pillow)
-
-        with pytest.raises(MissingDependencyError):
-            load_cytoself_images(cache_dir, recompute=True)
+        assert calls["data"] == {"recompute": False}
+        assert "images" not in calls, "--without-images must not fetch thumbnails"
+        # A deliberate opt-out builds quietly rather than warning about an
+        # absence the user asked for.
+        assert calls["scene"]["images_expected"] is False
+        out = capfd.readouterr().out
+        assert "localization and protein" in out
+        assert "fluorescence image" not in out

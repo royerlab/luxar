@@ -69,8 +69,8 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import launch_viewer, parse_demo_flags
 from luxar.encoding import EncodingMode
-from luxar.utils.demos import launch_viewer, parse_demo_flags
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================

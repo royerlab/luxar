@@ -24,7 +24,7 @@ matching one before writing code:
 ```python
 import numpy as np
 from luxar import LuxarZarrCompiler, Dimensions
-from luxar.utils.demos import launch_viewer   # convenience: shells to `luxar serve --viewer`
+from luxar.demos import launch_viewer   # convenience: shells to `luxar serve --viewer`
 
 output_path = "my_scene.luxar.zarr"
 
@@ -103,7 +103,8 @@ scene.add_text("Embryo, t=0", position=(0.02, 0.02), font_size=0.05, anchor="top
 
 ## Demo helpers (for scripts that fit/serve)
 
-From `luxar.utils.demos`:
+From `luxar.demos` (the barrel that re-exports these — the single spelling; never
+import `luxar.utils.demos` / `luxar.utils.data_fetch` directly from a demo):
 - `launch_viewer(output_path, open_browser=True)` — serve via the CLI viewer.
 - `parse_demo_flags()` — standard `--recompute` / `--no-serve` / `--serve-only` flags.
 - `load_precomputed_gsplats(demo_name, file_names, recompute=...)` — load cached

@@ -120,16 +120,16 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos._roundtrip_common import show_roundtrip_comparison
-from luxar.encoding import EncodingMode
-from luxar.gsplats import fit_gaussian_splats
-from luxar.gsplats.models.gsplats.metal import is_metal_available
-from luxar.utils.demos import (
+from luxar.demos import (
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._roundtrip_common import show_roundtrip_comparison
+from luxar.encoding import EncodingMode
+from luxar.gsplats import fit_gaussian_splats
+from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================

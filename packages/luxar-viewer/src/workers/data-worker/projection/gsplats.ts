@@ -40,6 +40,37 @@ function coerceColorsOrWhite(
 }
 
 /**
+ * Shared opt-out for the kernel's source-index recording (an empty array means
+ * "don't record"). Module-level so the common non-recording call allocates
+ * nothing. MUST NEVER be added to a Comlink transfer list — transferring it
+ * would detach the buffer every subsequent call reuses.
+ */
+const NO_SOURCE_INDICES = new Uint32Array(0);
+
+/**
+ * True when the projection takes the standard-3D fast path: `ndim === 3` with
+ * `displayDims === [0, 1, 2]` has no hidden dimensions, so nothing is
+ * attenuated or compacted and every splat is emitted in storage order.
+ *
+ * Exported because `data-processor-gsplats.ts` must decide whether to ask for
+ * `sourceIndices` BEFORE calling the dispatcher: the fast path never produces
+ * them (the mapping is the identity within the concat space), so the two sites
+ * have to agree on exactly which inputs take it.
+ *
+ * @param ndim - Dataset dimensionality.
+ * @param displayDims - Display dims in requested order.
+ */
+export function isStandardGSplats3D(ndim: number, displayDims: readonly number[]): boolean {
+  return (
+    ndim === 3 &&
+    displayDims.length === 3 &&
+    displayDims[0] === 0 &&
+    displayDims[1] === 1 &&
+    displayDims[2] === 2
+  );
+}
+
+/**
  * Fused output scan: AABB of `centers3D` + max Cholesky row norm, in
  * ONE pass over the projected arrays — computed here, where the data is
  * already hot (and, for the nD worker path, OFF the main thread), so
@@ -123,6 +154,14 @@ export async function projectGSplatsTo3D(
     truncate?: number;
     /** Components per color item: 3 (RGB, default) or 4 (RGBA — alpha = per-splat opacity) */
     colorComponents?: 3 | 4;
+    /**
+     * Ask the fused kernel to record which SOURCE splat each emitted slot came
+     * from (issue #1423). Only the general fused path compacts, so only it can
+     * answer; the caller sets this when the node publishes visible ranges and
+     * the inputs do NOT take the standard-3D fast path
+     * ({@link isStandardGSplats3D}). Costs 4 B/splat, so it is off by default.
+     */
+    emitSourceIndices?: boolean;
   }
 ): Promise<{
   centers3D: Float32Array;
@@ -135,6 +174,13 @@ export async function projectGSplatsTo3D(
    * whenever `visibleCount > 0`. Plain scalars, structured-clone safe.
    */
   bounds?: GSplatsProjectionBounds;
+  /**
+   * Per visible slot, the index of the SOURCE splat it was compacted from —
+   * present only when `emitSourceIndices` was requested AND the general fused
+   * path ran with a non-zero visible count. Absent on the standard-3D fast
+   * path (slot IS the source index there) and on the empty result.
+   */
+  sourceIndices?: Uint32Array;
 }> {
   const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
 
@@ -192,13 +238,13 @@ export async function projectGSplatsTo3D(
   // amplitude filtering (the general fused path below culls amplitude <
   // MIN_AMPLITUDE; the standard-3D copy intentionally does not). centers
   // and Cholesky are already in 3D layout (3 and 6 elements per splat).
-  if (
-    ndim === 3 &&
-    displayDims.length === 3 &&
-    displayDims[0] === 0 &&
-    displayDims[1] === 1 &&
-    displayDims[2] === 2
-  ) {
+  //
+  // No `sourceIndices` here even when `emitSourceIndices` is set: every splat
+  // is emitted, in order, so slot === source index within the concatenated
+  // visible set. Returning nothing (rather than an identity array) keeps the
+  // composer on its own identity path — `buildElementIdMap(ranges, null, n)`
+  // — and this path allocation-free.
+  if (isStandardGSplats3D(ndim, displayDims)) {
     if (splatCount === 0) {
       const emptyF32 = new Float32Array(0);
       return transfer(
@@ -296,6 +342,14 @@ export async function projectGSplatsTo3D(
   const outCholBuf = new Float32Array(splatCount * 6);
   const outAmpsBuf = new Float32Array(splatCount);
   const outColorsBuf = new Float32Array(splatCount * colorComponents);
+  // Slot → source-splat map for the picking element-ID composition (#1423).
+  // The shared empty array is the kernel's documented opt-out and is never
+  // transferred, so it stays reusable across calls.
+  // NOTE the sentinel collision: with `emitSourceIndices` and `splatCount === 0`
+  // this allocates a length-0 array indistinguishable from the opt-out. Harmless
+  // — the kernel has nothing to record either way, and the `visibleCount === 0`
+  // early return below discards the buffer before any caller sees it.
+  const outSrcBuf = params.emitSourceIndices ? new Uint32Array(splatCount) : NO_SOURCE_INDICES;
 
   const visibleCount = wasmModule.project_gsplats_nd_to_3d(
     positions,
@@ -314,10 +368,12 @@ export async function projectGSplatsTo3D(
     outCentersBuf,
     outCholBuf,
     outAmpsBuf,
-    outColorsBuf
+    outColorsBuf,
+    outSrcBuf
   );
 
-  // Early exit if no visible splats
+  // Early exit if no visible splats (no `sourceIndices`: an empty map has
+  // nothing to say, and the composer's count guard rejects it anyway).
   if (visibleCount === 0) {
     const emptyF32 = new Float32Array(0);
     return transfer(
@@ -339,6 +395,7 @@ export async function projectGSplatsTo3D(
   const choleskyFactors3D = outCholBuf.subarray(0, visibleCount * 6);
   const outAmplitudes = outAmpsBuf.subarray(0, visibleCount);
   const outColors = outColorsBuf.subarray(0, visibleCount * colorComponents);
+  const sourceIndices = params.emitSourceIndices ? outSrcBuf.subarray(0, visibleCount) : undefined;
 
   return transfer(
     {
@@ -348,12 +405,16 @@ export async function projectGSplatsTo3D(
       colors: outColors,
       visibleCount,
       bounds: computeGSplatsProjectionBounds(centers3D, choleskyFactors3D, visibleCount),
+      sourceIndices,
     },
     [
       outCentersBuf.buffer as ArrayBuffer,
       outCholBuf.buffer as ArrayBuffer,
       outAmpsBuf.buffer as ArrayBuffer,
       outColorsBuf.buffer as ArrayBuffer,
+      // Only the freshly-allocated recording buffer is transferable; the
+      // shared `NO_SOURCE_INDICES` opt-out must never be detached.
+      ...(sourceIndices ? [outSrcBuf.buffer as ArrayBuffer] : []),
     ]
   );
 }

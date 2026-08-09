@@ -148,16 +148,16 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import require_module
-from luxar.demos._roundtrip_common import show_roundtrip_comparison
-from luxar.encoding import EncodingMode
-from luxar.gsplats.gsplat_data import GSplatData
-from luxar.utils.demos import (
+from luxar.demos import (
     launch_viewer,
     load_precomputed_gsplats,
     parse_demo_flags,
+    require_module,
     warn_if_no_cuda_gpu,
 )
+from luxar.demos._roundtrip_common import show_roundtrip_comparison
+from luxar.encoding import EncodingMode
+from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -301,7 +301,7 @@ def fit_channel(volume, channel_name, cache_file):
     # Auto-detect device
     global DEVICE
     if DEVICE is None:
-        from luxar.utils.demos import detect_device
+        from luxar.demos import detect_device
 
         DEVICE = detect_device()
 

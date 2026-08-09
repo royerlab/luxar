@@ -76,7 +76,22 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
     };
   }
   if (parts.length === 1) {
-    return parts[0];
+    // GUARD (belt-and-braces): a ladder payload must never publish a slot →
+    // on-disk map. `parts[0]` is a SUB-LOD (`additive_0`), so its map is in
+    // that level's index space, not the parent node's, and `parts.length === 1`
+    // is not "unladdered" — this loader only exists for `n_additive_sublods`
+    // nodes, so it is the first-paint state of EVERY ladder. Passing the map
+    // through would make hover report an additive_0 index while only LOD 0 is
+    // resident and the raw slot once a second level lands.
+    // `createProgressivePointsLoader` now also clears `has_labels` /
+    // `has_image_labels` on each sub-LOD's attrs, so the map is normally never
+    // built at all; this keeps the invariant true whatever attrs a sub-LOD
+    // carries. (Per-level label resolution is #1422.)
+    const only = parts[0];
+    if (only.elementIds === undefined) return only;
+    const stripped: LoadedPointsData = { ...only };
+    delete stripped.elementIds;
+    return stripped;
   }
 
   const ndim = parts[0].ndim;
@@ -143,6 +158,8 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   if (sharpness) result.sharpness = sharpness;
   const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count, 1, 'scalars');
   if (scalars) result.scalars = scalars;
+
+  // `elementIds` is DELIBERATELY not concatenated — see the single-part branch.
 
   return result;
 }
