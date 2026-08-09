@@ -205,7 +205,7 @@ Visualizes the complete ATP Synthase rotary motor structure with F1 catalytic he
 
 **Run**: `luxar demo run atp_synthase`
 
-**Demonstrates**: Molecular machine visualization, multi-subunit protein complex, color-coded structural components (alpha, beta, gamma, c-ring), biological energy production machinery (~600 kDa enzyme), depth-sorted `normal` blending for surface-like atomic structures, `layer=True` for live blending / opacity / display-range control in the Layers panel (press **L**; the absorption slider appears once the layer is switched to `volumetric`).
+**Demonstrates**: Molecular machine visualization, multi-subunit protein complex, color-coded structural components (alpha, beta, gamma, c-ring), biological energy production machinery (~600 kDa enzyme), `volumetric` emission-absorption blending (kappa 2.5) so the packed interior reads as density instead of an opaque shell, with a raised display gain (`intensity=1.62`) as the matching exposure, `layer=True` for live blending / opacity / display-range control in the Layers panel (press **L**; the absorption slider is shown because the layer is `volumetric`).
 
 ---
 
