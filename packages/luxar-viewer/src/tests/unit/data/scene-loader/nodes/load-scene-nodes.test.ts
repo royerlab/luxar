@@ -12,9 +12,12 @@ import * as THREE from 'three';
 import { loadSceneNodes } from '../../../../../data/scene-loader/nodes/load-scene-nodes';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
+import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 
 function makeCtx(): NodeBuildCtx {
-  return { nodeFactory: { applyTransform: vi.fn() } } as unknown as NodeBuildCtx;
+  return makeTestNodeBuildCtx({
+    nodeFactory: { applyTransform: vi.fn() } as unknown as NodeBuildCtx['nodeFactory'],
+  });
 }
 
 describe('loadSceneNodes — unrecognized node.type', () => {
