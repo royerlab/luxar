@@ -456,3 +456,214 @@ class TestNodeNdTransformIntegration:
         pts_node = next(n for n in nodes if n["name"] == "pts")
         assert "nd_transform" in pts_node
         assert pts_node["nd_transform"] == {"Time": {"offset": 25.0}}
+
+
+def _scene_dims() -> Dimensions:
+    """A 5D scene: three displayed axes, an ordinal Time, a categorical Channel."""
+    return Dimensions(
+        [
+            Dimension("X", display=True),
+            Dimension("Y", display=True),
+            Dimension("Z", display=True),
+            Dimension("Time", display=False, range=(0, 100)),
+            Dimension("Channel", display=False, categories=["DAPI", "GFP", "mCherry"]),
+        ]
+    )
+
+
+class TestGroupNdTransformAgainstSceneDimensions:
+    """A GROUP's ``nd_transform`` is checked against the scene dimensions.
+
+    Issue #1418: ``Node.__init__`` used to run the structure-only validation
+    and then flag the write ``_transform_normalized=True``, which is exactly
+    what tells ``write_group`` to skip its own store-aware pass. A group could
+    therefore name a dimension that does not exist — most visibly on a
+    substitutive-LOD ladder, where ``nd_transform`` is a compositing attr
+    hoisted onto the ``kind=lod`` wrapper — and the viewer would silently
+    ignore the transform the author asked for.
+    """
+
+    def test_add_group_unknown_dimension_raises(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                scene.add_group("g", nd_transform={"nope": {"scale": 1.0}})
+
+    def test_nested_group_unknown_dimension_raises(self, tmp_path) -> None:
+        """The parent-chain walk reaches the Scene from more than one level down."""
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            outer = scene.add_group("outer")
+            inner = outer.add_group("inner")
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                inner.add_group("deep", nd_transform={"nope": {"scale": 1.0}})
+
+    def test_add_lod_group_unknown_dimension_raises(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                scene.add_lod_group(
+                    "ladder",
+                    display_type="mesh",
+                    nd_transform={"nope": {"offset": 1.0}},
+                )
+
+    def test_add_partition_group_unknown_dimension_raises(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                scene.add_partition_group(
+                    "parts",
+                    display_type="points",
+                    max_elements=1000,
+                    nd_transform={"nope": {"offset": 1.0}},
+                )
+
+    def test_add_group_displayed_dimension_raises(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="displayed dimension"):
+                scene.add_group("g", nd_transform={"X": {"scale": 2.0}})
+
+    def test_add_group_affine_on_categorical_raises(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="requires 'permutation'"):
+                scene.add_group("g", nd_transform={"Channel": {"scale": 2.0}})
+
+    def test_valid_group_nd_transform_still_writes(self, tmp_path) -> None:
+        """No regression: a legitimate transform on non-displayed dims persists."""
+        store_path = tmp_path / "t.luxar.zarr"
+        nd_t = {
+            "Time": {"offset": 50.0},
+            "Channel": {"permutation": [2, 1, 0]},
+        }
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            group = scene.add_group("g", nd_transform=nd_t)
+            assert group.nd_transform == nd_t
+
+        assert LuxarScene.load(store_path).get_group("g")["nd_transform"] == nd_t
+
+    def test_setter_unknown_dimension_raises(self, tmp_path) -> None:
+        """The second door into the attr — the property setter — is closed too."""
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            group = scene.add_group("g")
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                group.nd_transform = {"nope": {"scale": 1.0}}
+            assert group.nd_transform is None
+
+    def test_writer_attached_but_scene_detached_group_is_checked(
+        self, tmp_path
+    ) -> None:
+        """A Scene-DETACHED but writer-attached group is checked against the store.
+
+        ``Group("orphan", writer=compiler)`` has no Scene in its parent chain, so
+        the chain walk comes up empty — but the store's ``scene_dimensions`` is
+        authoritative and right there, and ``_transform_normalized=True``
+        suppresses ``write_group``'s own pass, so nothing else would look. Same
+        hole is reachable through the documented ``parent=`` kwarg on the
+        geometry adders.
+        """
+        from luxar.core.group import Group
+
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            compiler.create_scene(dimensions=_scene_dims())
+            orphan = Group("orphan", writer=compiler)
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                orphan.add_group("sneaky", nd_transform={"nope": {"scale": 3.0}})
+
+            # ACCEPT direction too. This branch rebuilds the dimensions with
+            # ``Dimensions.from_dict`` instead of using the live object, so it
+            # only matches the parent-chain branch while the to_dict/from_dict
+            # round trip preserves ``categories`` — the field a categorical
+            # permutation is checked against, and the one most at risk.
+            perm = {"Channel": {"permutation": [2, 1, 0]}}
+            ok = orphan.add_group("fine", nd_transform=perm)
+            assert ok.nd_transform == perm
+
+    def test_detached_node_validates_structure_only(self) -> None:
+        """A node with neither a Scene nor a store keeps the structure-only contract.
+
+        The writer-less control for the test above: there are genuinely no
+        dimensions to check against, so an unrecognized key is accepted
+        (metadata-only usage keeps working) while a structurally broken entry
+        still raises.
+        """
+        from luxar.core.node import Node
+
+        node = Node("detached", nd_transform={"whatever": {"scale": 2.0}})
+        assert node.nd_transform == {"whatever": {"scale": 2.0}}
+
+        with pytest.raises(ValueError, match="must have"):
+            Node("bad", nd_transform={"whatever": {}})
+
+    def test_rejected_add_group_can_be_retried_with_the_same_name(
+        self, tmp_path
+    ) -> None:
+        """A refused node must not linger as a phantom sibling.
+
+        Fixing the typo'd dimension name and re-running is the workflow this
+        check creates, so the refusal has to be recoverable — the constructor
+        used to append the child to ``parent.children`` before validating any
+        attr and never unwound it, so the retry died on "Duplicate child name".
+        """
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                scene.add_group("g", nd_transform={"nope": {"scale": 2.0}})
+            assert [c.name for c in scene.children] == []
+
+            group = scene.add_group("g", nd_transform={"Time": {"offset": 5.0}})
+            assert group.nd_transform == {"Time": {"offset": 5.0}}
+
+            # Attr-agnostic, as the README and CHANGELOG both claim: the same
+            # recovery holds for any attr the constructor validates.
+            with pytest.raises(ValueError):
+                scene.add_group("h", opacity=5.0)
+            assert [c.name for c in scene.children] == ["g"]
+            assert scene.add_group("h").opacity == 1.0
+
+    def test_points_partition_wrapper_rejects_unknown_dimension(self, tmp_path) -> None:
+        """Through the real adder: ``partition=`` hoists onto the wrapper Group.
+
+        ``nd_transform`` is a compositing attr, so the user-facing
+        ``add_points(..., partition=…, nd_transform=<typo>)`` routes it to the
+        ``kind=partition`` wrapper — the node that used to accept anything.
+        """
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+            dtype=np.float32,
+        )
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                scene.add_points(
+                    "p",
+                    positions,
+                    partition={"max_elements": 1},
+                    nd_transform={"nope": {"scale": 1.0}},
+                )
+
+    def test_points_substitutive_lod_wrapper_rejects_unknown_dimension(
+        self, tmp_path
+    ) -> None:
+        """Through the real adder: ``substitutive_lod=`` hoists onto the wrapper.
+
+        The motivating symptom in issue #1418 — the ladder's compositing attrs
+        are deliberately lifted onto the ``kind=lod`` wrapper, so a typo'd
+        dimension name landed on the one node with no store-aware check.
+        """
+        rng = np.random.default_rng(0)
+        positions = rng.uniform(0, 10, (200, 3)).astype(np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="not found in scene dimensions"):
+                scene.add_points(
+                    "p",
+                    positions,
+                    radii=1.0,
+                    substitutive_lod=dict(levels=1, device="cpu", seed=0),
+                    nd_transform={"nope": {"scale": 1.0}},
+                )
