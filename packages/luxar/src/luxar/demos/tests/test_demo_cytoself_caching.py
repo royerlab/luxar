@@ -234,36 +234,64 @@ def test_gzipped_response_is_not_mistaken_for_a_truncated_one(
     ] == len(body)
 
 
-# Exact byte counts obtained by HTTP Range probes of the actual Google Drive
-# files, so these are the sizes to calibrate against — not `du` on a cache that
-# may itself be incomplete. For the two families the SMALLEST member is what
-# matters: a floor above it rejects a genuine file and bricks the demo.
-MEASURED_MIN_BYTES = {
-    "MIN_SIZE_EMBEDDINGS": 4_232_208_512,  # Global_representation.npy
-    "MIN_SIZE_LABELS_CSV": 6_553_361,  # label.csv
-    "MIN_SIZE_LABEL_DATA_CSV": 3_950_974,  # smallest of Label_data00..09
-    "MIN_SIZE_IMAGE_DATA": 11_282_720_128,  # smallest of Image_data00..09
-}
+# The size of the whole download, from the HTTP Range probes of the Drive files
+# quoted in the module docstring and screened against by DEMO_META. Asserting
+# the SUM keeps the per-file table honest without copying all 22 numbers out a
+# second time: any single mistyped digit breaks it.
+TOTAL_DOWNLOAD_BYTES = 185_838_193_451
 
 
-@pytest.mark.parametrize("name", sorted(MEASURED_MIN_BYTES))
-def test_size_floors_match_the_measured_artifacts(name: str) -> None:
-    """Each floor is calibrated against the real smallest file of its kind.
+def test_every_downloaded_artifact_has_a_measured_size() -> None:
+    """The size table covers exactly the files the demo fetches.
 
-    Two bars at once, because both directions are harmful. After the ``* 0.9``
-    slack the bar must sit BELOW the smallest real file — a floor above it would
-    reject the genuine artifact forever — and it must sit high enough that a
-    large fragment is still refused. The original 400 MB guess for the
-    Image_data files failed the second bar by ~40x; a 4 MB floor for the
-    Label_data CSVs failed the first, with only the 0.9 slack in between.
+    A missing entry is not a soft failure — the call sites index the table, so
+    adding a source file without its size raises ``KeyError`` on the first run.
+    A stale entry is the quieter half: it means the table and the download list
+    have drifted, which is how a floor ends up calibrated for another file.
     """
-    measured = MEASURED_MIN_BYTES[name]
-    bar = getattr(demo, name) * 0.9
+    downloaded = {
+        "Global_representation.npy",
+        "label.csv",
+        *demo.GDRIVE_LABEL_DATA_IDS,
+        *demo.GDRIVE_IMAGE_IDS,
+    }
 
-    assert bar < measured, f"{name} would reject the real {measured:,}-byte file"
-    margin = 1.0 - bar / measured
-    assert margin >= 0.10, f"{name} leaves only {margin:.1%} headroom"
-    assert bar >= 0.5 * measured, f"{name} accepts under half a real file"
+    assert set(demo.ARTIFACT_SIZES) == downloaded
+    assert sum(demo.ARTIFACT_SIZES.values()) == TOTAL_DOWNLOAD_BYTES
+    # `--max-download-mb` screens against DEMO_META, so it has to describe the
+    # same set of files — rounded up, never under.
+    declared_mb = demo.DEMO_META["requirements"]["download_mb"]
+    assert (
+        TOTAL_DOWNLOAD_BYTES / 1e6 <= declared_mb <= TOTAL_DOWNLOAD_BYTES / 1e6 * 1.01
+    )
+
+
+def test_a_fragment_that_cleared_the_old_shared_floor_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate is per file, so a big file's fragment cannot pass a small one's bar.
+
+    One floor shared by the ten ``Label_data`` CSVs has to sit under the
+    smallest (3.95 MB) or it rejects a genuine download, which left a 3 MB
+    prefix of the largest (8.74 MB) looking complete. That is the worst artifact
+    to get wrong: pandas parses a truncated CSV without complaining, so the
+    concatenated label table silently loses rows, every global image index after
+    the short file shifts, and the thumbnails land on the wrong points with a
+    match rate too high for the tripwire to notice. The same hole was 13 GB wide
+    on the ``Image_data`` archives.
+    """
+    body = b"a,b,c\n" * 500_000
+    assert 2_700_000 < len(body) < 3_950_974, "must clear the old shared bar"
+    _install_session(monkeypatch, _serve(body, content_length=None))
+    dest = tmp_path / "Label_data02.csv"
+
+    with pytest.raises(RuntimeError, match="too short"):
+        demo._download_from_google_drive(
+            "ABC123", dest, expected_min_size=demo.ARTIFACT_SIZES[dest.name]
+        )
+
+    assert not dest.exists()
+    assert _leftovers(dest) == set()
 
 
 def test_atomic_writes_do_not_disturb_another_runs_staging_file(
@@ -429,7 +457,7 @@ def test_short_body_with_an_honest_content_length_is_rejected(
 
     with pytest.raises(RuntimeError, match="too short"):
         demo._download_from_google_drive(
-            "ABC123", dest, expected_min_size=demo.MIN_SIZE_IMAGE_DATA
+            "ABC123", dest, expected_min_size=demo.ARTIFACT_SIZES["Image_data00.npy"]
         )
 
     assert not dest.exists()
@@ -1364,8 +1392,9 @@ def test_image_loop_uses_the_real_download_gate(
         "Image_data01.npy": "IMGID1",
     }
     monkeypatch.setattr(demo, "GDRIVE_IMAGE_IDS", two_files)
-    # The real floor is 10 GB; these synthetic files are ~120 KB.
-    monkeypatch.setattr(demo, "MIN_SIZE_IMAGE_DATA", 10_000)
+    # The real files are 21 and 18 GB; these synthetic ones are ~120 KB.
+    for name in two_files:
+        monkeypatch.setitem(demo.ARTIFACT_SIZES, name, 10_000)
     n_global = 2 * _CROPS_PER_FILE
     _install_mapping(monkeypatch, {i: i for i in range(n_global)}, n_global)
 
@@ -1589,6 +1618,44 @@ def test_adoption_refuses_to_overwrite_an_existing_versioned_bundle(
     assert legacy.exists(), "the legacy file is left for a later adoption"
 
 
+def test_adoption_does_not_clobber_a_bundle_published_while_it_validates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The existence check above is only a check: validating the legacy bundle
+    # takes long enough (200 MB, ~114k blobs) for a concurrent run to finish its
+    # rebuild and publish a fresh, FINGERPRINTED v1 into the gap. A `replace()`
+    # would then overwrite it with the unverifiable legacy one — erasing the very
+    # digest that catches a mapping mismatch. Taking the name has to be atomic.
+    _write_mapping_inputs(tmp_path, b"current")
+    legacy = tmp_path / demo.LEGACY_THUMBNAIL_CACHE_NAME
+    demo._write_npz_atomic(legacy, blobs=np.array([_webp(3)], dtype=object))
+
+    v1 = tmp_path / demo.THUMBNAIL_CACHE_NAME
+    fresh = [_webp(2)]
+    real_read = demo._read_bundle_blobs
+
+    def _publish_mid_validation(*args: object, **kwargs: object) -> object:
+        result = real_read(*args, **kwargs)  # type: ignore[arg-type]
+        if not v1.exists():
+            demo._write_npz_atomic(
+                v1,
+                blobs=np.array(fresh, dtype=object),
+                mapping_fingerprint=np.array(demo._mapping_fingerprint(tmp_path)),
+            )
+        return result
+
+    monkeypatch.setattr(demo, "_read_bundle_blobs", _publish_mid_validation)
+
+    adopted = demo._adopt_legacy_bundle(tmp_path, None)
+
+    # The legacy blobs are fine to return — it is the DISK that must not change.
+    assert adopted == [_webp(3)]
+    with np.load(v1, allow_pickle=True) as data:
+        assert [bytes(b) for b in data["blobs"]] == fresh
+        assert demo._stored_mapping_fingerprint(data), "the digest must survive"
+    assert legacy.exists(), "the legacy file is left for a later adoption"
+
+
 def test_recompute_does_not_let_adoption_clobber_a_live_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1635,17 +1702,13 @@ def test_an_unrenameable_legacy_bundle_is_still_named_as_the_survivor(
     seeded = [_webp(2)]
     demo._write_npz_atomic(legacy, blobs=np.array(seeded, dtype=object))
 
-    # Only the adoption rename may fail: `_write_npz_atomic` renames its
-    # staging file the same way, and blanket-patching `Path.replace` would
-    # break every part-cache write instead of the one call under test.
-    real_replace = Path.replace
+    # A cache directory on a filesystem with no hard links behaves this way for
+    # every adoption; the part-cache writes go through `Path.replace` and are
+    # deliberately left working.
+    def _cannot_link(src: object, dst: object, **kwargs: object) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
 
-    def _cannot_rename(self: Path, target: Path) -> Path:
-        if self.name == demo.LEGACY_THUMBNAIL_CACHE_NAME:
-            raise OSError(errno.EACCES, "Read-only file system")
-        return real_replace(self, target)
-
-    monkeypatch.setattr(Path, "replace", _cannot_rename)
+    monkeypatch.setattr(os, "link", _cannot_link)
     # 4 of 30 test rows match — the assembly is refused by the tripwire.
     _install_mapping(monkeypatch, {i: i for i in range(4)}, _N_GLOBAL)
     _install_fake_image_downloads(monkeypatch)

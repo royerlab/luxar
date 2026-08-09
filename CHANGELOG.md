@@ -492,16 +492,24 @@ otherwise leave a truncated file looking like a sidecar-less legacy cache, which
 the size heuristic trusts. The reverse leftover costs nothing: a sidecar with no
 file fails the cache check on the missing file.
 
-The expected sizes are now measured rather than guessed. Range probes of the
-Drive files give 4,232,208,512 B for the embeddings, 6,553,361 B for
+The expected sizes are now measured rather than guessed, and measured per
+FILE. Range probes of the Drive files — corroborated to the byte by `stat` on a
+fully warmed cache — give 4,232,208,512 B for the embeddings, 6,553,361 B for
 `label.csv`, 3.95-8.74 MB per `Label_data` and 11.28-23.60 GB per `Image_data`,
-and those numbers sit next to the floor constants. The previous 400 MB
-placeholder for a 23.6 GB file meant the floor only ever caught a stream cut
-inside the first 3%. The calibration cuts both ways and the tests now say so:
-each floor must reject a large fragment *and* still accept the smallest real
-file of its kind, which a first pass at the `Label_data` floor did not — it was
-set above the smallest of the ten, with only the 0.9 slack keeping the demo
-alive.
+and all 22 numbers now sit in one table the download sites index by filename.
+The previous 400 MB placeholder for a 23.6 GB file meant the gate only ever
+caught a stream cut inside the first 3%. One floor per FAMILY, which came next,
+closed most of that but not all of it: a shared floor has to sit under the
+smallest member or it rejects a genuine download, so a 10 GB fragment of the
+largest `Image_data` and a 3 MB fragment of the largest `Label_data` still
+looked complete. The CSVs are the worse half of that — pandas parses a truncated
+CSV without complaining, so the concatenated label table silently loses rows,
+every image index after the short file shifts, and the thumbnails land on the
+wrong points at a match rate too high for the tripwire to see. With a per-file
+size the bar is a flat 10% under the real thing, which is slack for a re-upload
+a few bytes different and nothing more. The tests pin the table against the
+download list and against the total the demo advertises, so a mistyped digit or
+a new source file cannot slip through.
 
 Verifying a length means insisting on an identity byte stream, which cost a
 round of debugging to appreciate: `requests` advertises gzip by default and
@@ -550,7 +558,13 @@ rather than crashing when it is unreadable. A bundle written before the name
 carried a version is adopted under the new name rather than rebuilt, since the
 contents are byte-identical; the adoption is gated on the versioned name
 literally being the v1 one, so a future encoding change disables it by itself
-instead of relying on a comment.
+instead of relying on a comment. Taking that name is a hard link followed by an
+unlink rather than a rename, because a rename overwrites and the "is the name
+free?" check is only a check: validating a 200 MB bundle takes long enough for a
+concurrent run to publish a fresh, fingerprinted v1 into the gap, and the
+adoption would have destroyed it in favour of an unverifiable older one. A link
+refuses an occupied name atomically, so the loser of that race leaves the disk
+alone and just uses the bytes it read.
 
 The blob count is what makes a bundle usable, so it is checked against the
 number of points the scene needs — before a legacy bundle is adopted, which is
@@ -646,8 +660,8 @@ unreachably once a v1 existed. Adoption does *validate* before it renames, and
 that validation quarantines, so a pre-versioning bundle whose count or mapping
 no longer checks out is moved aside in the prelude — the same thing a plain run
 does to it, and one shared implementation of the rename is worth more than a
-quieter second copy for this path. (One case adoption cannot rescue: if the
-rename itself fails — a read-only cache — the rebuild goes on to write a v1 and
+quieter second copy for this path. (One case adoption cannot rescue: if taking
+the name fails — a read-only cache, or one with no hard links — the rebuild goes on to write a v1 and
 the leftover legacy file does become unreachable. That is disk space on a cache
 directory that could not be renamed in, where the rebuild's own write is just as
 likely to have failed.) When the rebuild then declines to cache its result, the

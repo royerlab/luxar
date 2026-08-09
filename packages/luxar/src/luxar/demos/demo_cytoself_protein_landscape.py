@@ -26,6 +26,9 @@ Download size (exact, from Range probes of the Drive files; decimal GB/MB):
   Budget ~190 GB of free disk rather than 186: the downloads stay cached, and
   the encoded thumbnails — one archive per source file, the assembled bundle,
   and the staging copy the bundle is written through — sit alongside them.
+  Budget ~25 GB of RAM too: the thumbnail pass reads one Image_data archive
+  whole and the largest is 23.6 GB. --without-images peaks at ~16 GB, for the
+  UMAP over the embeddings.
 
 Data source: OpenCell / CytoSelf (CC BY 4.0)
   - Embeddings: Global VQ-VAE-2 representations (9,216-dim per image)
@@ -173,24 +176,48 @@ _ENVIRONMENT_ERRNOS = frozenset(
     {errno.EACCES, errno.EPERM, errno.EMFILE, errno.ENFILE, errno.ENOMEM}
 )
 
-# Per-artifact size floors. Exact sizes, from HTTP Range probes of the Drive
-# files themselves (185,838,193,451 B for the whole set):
-#   Global_representation.npy  4,232,208,512 B                       (4.23 GB)
-#   label.csv                      6,553,361 B                       (6.55 MB)
-#   Label_data*.csv            3,950,974 - 8,742,330 B each   (64.7 MB total)
-#   Image_data*.npy      11,282,720,128 - 23,603,040,128 each (181.5 GB total)
-# Both users of these floors compare against `floor * 0.9` (the legacy
-# sidecar-less cache check, and the promotion gate for a stream that declared no
-# content-length), so each floor is chosen with that factor in mind: the 0.9 bar
-# must land BELOW the smallest real file of its kind — with margin, since these
-# are the sizes today and a re-upload could shrink them slightly — while still
-# being high enough to refuse a large fragment. Guessing low is what let a
-# 500 MB fragment of a 23.6 GB file pass; guessing high would reject the real
-# thing and brick the demo, so the smallest file in each family is what matters.
-MIN_SIZE_EMBEDDINGS = 4_000_000_000
-MIN_SIZE_LABELS_CSV = 5_000_000
-MIN_SIZE_LABEL_DATA_CSV = 3_000_000
-MIN_SIZE_IMAGE_DATA = 10_000_000_000
+# Exact size of every artifact, in bytes, measured two independent ways that
+# agree to the byte: HTTP Range probes of the Drive files, and `stat` on a fully
+# warmed cache. They sum to the 185,838,193,451 B quoted at the top of the file.
+#
+# PER FILE, not per family. One floor shared by ten `Image_data` files has to
+# sit under the smallest of them (11.28 GB) or it rejects a genuine download —
+# which leaves a 10 GB fragment of the largest (23.60 GB) looking complete, and
+# a fragment is exactly what a stream cut with no declared content-length
+# produces. The `Label_data` CSVs are the same hole and the worse one to fall
+# into: pandas parses a truncated CSV without complaining, so the row mapping
+# quietly shifts and every thumbnail after the short file lands on the wrong
+# point, with nothing downstream able to notice.
+#
+# Both users compare against `size * 0.9` — the legacy sidecar-less cache check,
+# and the promotion gate for a stream that declared no content-length — so the
+# effective bar is 10% under the real file: slack for a re-upload a few bytes
+# different, without the 2x hole a family-wide floor leaves. A file that really
+# did shrink further fails loudly, with the manual download URL.
+ARTIFACT_SIZES = {
+    "Global_representation.npy": 4_232_208_512,
+    "label.csv": 6_553_361,
+    "Label_data00.csv": 7_677_236,
+    "Label_data01.csv": 6_046_321,
+    "Label_data02.csv": 8_742_330,
+    "Label_data03.csv": 6_786_224,
+    "Label_data04.csv": 5_997_384,
+    "Label_data05.csv": 7_414_652,
+    "Label_data06.csv": 6_534_876,
+    "Label_data07.csv": 5_831_517,
+    "Label_data08.csv": 5_728_784,
+    "Label_data09.csv": 3_950_974,
+    "Image_data00.npy": 21_488_640_128,
+    "Image_data01.npy": 18_204_800_128,
+    "Image_data02.npy": 23_603_040_128,
+    "Image_data03.npy": 18_694_080_128,
+    "Image_data04.npy": 17_121_760_128,
+    "Image_data05.npy": 20_590_560_128,
+    "Image_data06.npy": 18_229_760_128,
+    "Image_data07.npy": 15_774_080_128,
+    "Image_data08.npy": 16_545_280_128,
+    "Image_data09.npy": 11_282_720_128,
+}
 
 # Per-Image_data thumbnail part caches and the assembled test-aligned bundle.
 # Both are versioned so a change to the encoding invalidates them by name.
@@ -337,9 +364,9 @@ def _cached_file_is_complete(path: Path, expected_min_size: int) -> bool:
     behind the sidecar's back is re-fetched instead of trusted.
 
     Without a sidecar (a cache written before staging existed) we fall back to
-    the ``size > expected_min_size * 0.9`` heuristic. The floors it reads are now
-    the measured ones, but the rule stays a floor rather than an equality: the
-    exact sizes are today's, and pinning a legacy cache to them would re-download
+    the ``size > expected_min_size * 0.9`` heuristic. What it reads is now that
+    file's own measured size, but the rule stays a floor rather than an equality:
+    the exact sizes are today's, and pinning a legacy cache to them would re-download
     gigabytes the moment a file is re-uploaded a byte different. The residual
     risk — a legacy file truncated by less than 10% — is covered on the consumer
     side by :func:`_load_downloaded_artifact`, which quarantines an unreadable
@@ -737,12 +764,12 @@ def load_cytoself_data(
         _download_from_google_drive(
             GDRIVE_EMBEDDINGS_ID,
             embeddings_path,
-            expected_min_size=MIN_SIZE_EMBEDDINGS,
+            expected_min_size=ARTIFACT_SIZES[embeddings_path.name],
         )
         _download_from_google_drive(
             GDRIVE_LABELS_ID,
             labels_path,
-            expected_min_size=MIN_SIZE_LABELS_CSV,
+            expected_min_size=ARTIFACT_SIZES[labels_path.name],
         )
 
     # --- Extract attributes from labels ---
@@ -751,7 +778,7 @@ def load_cytoself_data(
             labels_path,
             pd.read_csv,
             GDRIVE_LABELS_ID,
-            expected_min_size=MIN_SIZE_LABELS_CSV,
+            expected_min_size=ARTIFACT_SIZES[labels_path.name],
         )
         aprint(f"Loaded {len(df):,} rows with columns: {list(df.columns)}")
 
@@ -794,7 +821,7 @@ def load_cytoself_data(
                 embeddings_path,
                 np.load,
                 GDRIVE_EMBEDDINGS_ID,
-                expected_min_size=MIN_SIZE_EMBEDDINGS,
+                expected_min_size=ARTIFACT_SIZES[embeddings_path.name],
             )
             aprint(f"Embeddings shape: {embeddings.shape}")
             aprint("Parameters: n_neighbors=15, min_dist=0.1, metric=cosine")
@@ -904,13 +931,13 @@ def _build_test_index_mapping(
         for filename, file_id in GDRIVE_LABEL_DATA_IDS.items():
             csv_path = cache_dir / filename
             _download_from_google_drive(
-                file_id, csv_path, expected_min_size=MIN_SIZE_LABEL_DATA_CSV
+                file_id, csv_path, expected_min_size=ARTIFACT_SIZES[filename]
             )
             df = _load_downloaded_artifact(
                 csv_path,
                 lambda p: pd.read_csv(p, header=None),
                 file_id,
-                expected_min_size=MIN_SIZE_LABEL_DATA_CSV,
+                expected_min_size=ARTIFACT_SIZES[filename],
             )
             label_dfs.append(df)
 
@@ -924,7 +951,7 @@ def _build_test_index_mapping(
             cache_dir / "label.csv",
             pd.read_csv,
             GDRIVE_LABELS_ID,
-            expected_min_size=MIN_SIZE_LABELS_CSV,
+            expected_min_size=ARTIFACT_SIZES["label.csv"],
         )
         aprint(f"Test labels: {len(test_labels):,} rows")
 
@@ -1218,19 +1245,22 @@ def _adopt_legacy_bundle(
     successful rename only one bundle name exists, so nothing is orphaned under
     the other one.
 
-    The rename OVERWRITES the versioned name, so it is refused outright while
-    that name is occupied — enforced HERE, not just by the callers. At
-    :func:`_load_cached_thumbnails` the precondition otherwise holds only by a
-    non-local accident: every rejecting branch of :func:`_read_bundle_blobs`
-    happens to quarantine the versioned file first. Add one cheap
-    reject-without-quarantining pre-check there and this would silently become a
-    ``replace()`` over a live bundle, which is the destruction the paragraph
-    above exists to prevent.
+    Taking the versioned name is refused while that name is occupied, and the
+    refusal is enforced twice over. The cheap ``exists()`` check below spares a
+    200 MB read when a v1 is already there, and it is enforced HERE rather than
+    only by the callers: at :func:`_load_cached_thumbnails` the precondition
+    otherwise holds by a non-local accident (every rejecting branch of
+    :func:`_read_bundle_blobs` happens to quarantine the versioned file first),
+    so one cheap reject-without-quarantining pre-check added there would turn
+    adoption into a clobber. The ``os.link`` that finishes the job is what makes
+    the refusal RELIABLE — a check followed by a rename is only a check, and the
+    validating read in between is long enough for a concurrent run to publish a
+    fresh v1 into the gap.
 
-    The un-renameable branch leaves the legacy file where it is: on the normal
+    The un-linkable branch leaves the legacy file where it is: on the normal
     path that is harmless (its blobs are returned, no v1 is written, and the
-    next run retries the rename), but a caller that goes on to write a v1 anyway
-    makes that leftover unreachable for good.
+    next run retries the adoption), but a caller that goes on to write a v1
+    anyway makes that leftover unreachable for good.
     """
     legacy_cache = cache_dir / LEGACY_THUMBNAIL_CACHE_NAME
     if not _legacy_bundle_is_adoptable() or not legacy_cache.exists():
@@ -1249,14 +1279,33 @@ def _adopt_legacy_bundle(
         if blobs is None:
             return None
         try:
-            legacy_cache.replace(thumbnails_cache)
+            # Link-then-unlink rather than `replace()`, because `replace()`
+            # OVERWRITES and the check above is only a check: reading and
+            # validating a 200 MB bundle takes long enough for a concurrent run
+            # to finish a rebuild and publish a fresh, fingerprinted v1 in the
+            # gap, which the rename would then destroy in favour of an
+            # unverifiable legacy one. `os.link` refuses an occupied name
+            # atomically, so the loser of that race keeps its hands off. Dying
+            # between the two calls leaves both names pointing at one inode —
+            # no extra bytes, and v1 takes precedence everywhere.
+            os.link(legacy_cache, thumbnails_cache)
+        except FileExistsError:
+            # Another run published a versioned bundle while this one was
+            # validating. Theirs is at least as good and carries a fingerprint;
+            # the blobs read here are still fine to return.
+            aprint(
+                f"  ⚠ Another run published {THUMBNAIL_CACHE_NAME} first — "
+                "using the legacy bundle for this run and leaving both in place"
+            )
         except OSError as exc:
-            # Un-renameable (an open handle on Windows, a read-only cache). The
-            # bytes are good, so use them; the next run tries the rename again.
+            # Un-linkable (an open handle on Windows, a read-only cache, a
+            # filesystem without hard links). The bytes are good, so use them;
+            # the next run tries the adoption again.
             aprint(
                 f"  ⚠ Could not rename the legacy bundle ({exc}) — using it in place"
             )
         else:
+            legacy_cache.unlink(missing_ok=True)
             aprint(
                 f"Adopted {len(blobs):,} thumbnails from "
                 f"{LEGACY_THUMBNAIL_CACHE_NAME} as {THUMBNAIL_CACHE_NAME}"
@@ -1340,12 +1389,12 @@ def _build_thumbnail_part(
     """
     img_path = cache_dir / filename
     _download_from_google_drive(
-        file_id, img_path, expected_min_size=MIN_SIZE_IMAGE_DATA
+        file_id, img_path, expected_min_size=ARTIFACT_SIZES[filename]
     )
 
     with asection(f"Processing {filename} ({position})"):
         arr = _load_downloaded_artifact(
-            img_path, np.load, file_id, expected_min_size=MIN_SIZE_IMAGE_DATA
+            img_path, np.load, file_id, expected_min_size=ARTIFACT_SIZES[filename]
         )
 
         n_crops = arr.shape[0]
@@ -1514,11 +1563,13 @@ def _existing_thumbnail_bundle(
 
     Legacy ADOPTION still runs, for its side effect, but ONLY when the
     versioned name is free — the same precedence :func:`_load_cached_thumbnails`
-    applies, and for a stronger reason here. Adoption ends in a ``replace()``,
-    so running it over a live v1 would destroy a fresh, fingerprinted bundle and
-    put an older unverifiable one in its place before any replacement exists —
-    erasing the very fingerprint that would have caught the mismatch, and
-    leaving an interrupted run serving thumbnails pasted onto the wrong points.
+    applies, and for a stronger reason here. Adoption takes the versioned name,
+    so running it over a live v1 would put an older unverifiable bundle where a
+    fresh fingerprinted one was, before any replacement exists — erasing the
+    very fingerprint that would have caught the mismatch, and leaving an
+    interrupted run serving thumbnails pasted onto the wrong points. Adoption
+    refuses that by itself too; this guard keeps the recompute path from even
+    reading a bundle it must not take.
 
     When the versioned name IS free, adopting is what keeps a pre-versioning
     bundle reachable: the rename leaves exactly one bundle, which the rebuild
@@ -2028,10 +2079,12 @@ def main() -> None:
     aprint("NOTE: First run downloads 185.8 GB — 4.23 GB of embeddings, 71 MB")
     aprint("      of label CSVs, and ten Image_data files of 11.3-23.6 GB each")
     aprint("      (181.5 GB) for the hover thumbnails — and computes UMAP")
-    aprint("      (~10-30 min). Needs ~16 GB RAM and ~190 GB of free disk: the")
-    aprint("      downloads stay cached, and the encoded thumbnails (per source")
-    aprint("      file, plus the assembled bundle and its staging copy) sit")
-    aprint("      alongside them.")
+    aprint("      (~10-30 min). Needs ~190 GB of free disk — the downloads stay")
+    aprint("      cached, and the encoded thumbnails (per source file, plus the")
+    aprint("      assembled bundle and its staging copy) sit alongside them —")
+    aprint("      and ~25 GB of RAM, since the thumbnail pass reads one whole")
+    aprint("      Image_data archive at a time and the largest is 23.6 GB.")
+    aprint("      --without-images needs ~16 GB, for the UMAP.")
     aprint("      Subsequent runs load from cache; an interrupted run resumes")
     aprint("      per file. Use --without-images for the ~4.24 GB run.")
     aprint("")
