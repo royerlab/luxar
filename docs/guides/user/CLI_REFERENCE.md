@@ -136,11 +136,12 @@ luxar gsplat batch-fit cancel    # Cancel all Slurm jobs for a batch run
 
 ## `luxar mesh`
 
-Bring classical triangle-surface files into Luxar. The reader is NumPy + stdlib only,
-so this works on a bare `pip install luxar` with no extras.
+Bring classical triangle-surface files into Luxar, and coarsen them. Both are NumPy +
+stdlib only, so they work on a bare `pip install luxar` with no extras.
 
 ```bash
 luxar mesh import            # Import a classical mesh file (PLY / OBJ / STL / glTF / GLB) → a .luxar.zarr scene
+luxar mesh lod               # Build a substitutive LOD ladder for a mesh scene
 ```
 
 Vertices are welded and polygons fan-triangulated on the way in, because STL is always
@@ -153,3 +154,40 @@ keep the file's exact vertex list.
 
 Draco- and meshopt-compressed glTF is refused by name rather than decoded — run the
 file through `gltf-transform` first.
+
+### `luxar mesh lod`
+
+Writes a `kind=lod` group whose coarse children are progressively **decimated** copies
+of the surface and whose finest child is the original. The viewer shows exactly one at a
+time, chosen by how much of the screen the object covers.
+
+Takes an input scene and an output scene, plus `-L/--levels` (default 3),
+`-K/--compression-factor` (default 4 — level *i* targets `V / K**i` vertices),
+`--node`, `--method` and `--overwrite`. The output path is normalized to the
+canonical `<stem>.luxar.zarr`, so `-o out` writes `out.luxar.zarr`; that
+normalized path is what `--overwrite` replaces and what the same-path guard
+compares against.
+
+Unlike `luxar gsplat lod` this reads and writes a **scene**, not a standalone store —
+there is no standalone mesh format, so the only sink for a mesh is a `.luxar.zarr`. The
+node is optional when the scene holds exactly one mesh (what `luxar mesh import`
+produces); with several, naming one is required rather than guessed at.
+
+`--method` takes `auto` or `cluster` — **not** the `gsplat lod` methods. Those reduce a
+Gaussian mixture, which a surface is not; a mesh is decimated instead. `auto` resolves
+to `cluster` today.
+
+Levels that cannot reduce the surface are dropped, so a small mesh may come back with
+fewer than `--levels`; one that cannot be reduced at all comes back as a plain leaf
+rather than a one-child group.
+
+The source node's placement and appearance come across with it, as does the scene's
+`viewer_config` (a source that set none gets an explicit `tone_mapping='ACES'`, matching
+`luxar mesh import`). The compositing attrs — `transform`, `nd_transform`, `opacity`,
+`blending_mode` and the rest — land on the `kind=lod` wrapper group, which is the layer
+the viewer inherits them from; `colormap` lands on every child, as a LUT when the palette
+is not one of the builtin names. Per-vertex colours and scalars are averaged per cluster
+on every coarse level, and every level stamps the source field's `scalar_data_range`, so
+the colormap maps the same value to the same colour at every level rather than only at the
+finest. Per-vertex **labels and image labels are not carried** — the reader does not
+surface them, so the round trip cannot see them.

@@ -238,6 +238,7 @@ def write_scalars(
     n_elements: int,
     ctx: DatasetCtx,
     per_array_bytes: bool = False,
+    bounds: Optional[Tuple[float, float]] = None,
 ) -> None:
     """Write scalars dataset to Zarr for colormap lookup.
 
@@ -251,6 +252,15 @@ def write_scalars(
         ctx: Encoder configuration (encoder, mode, compressor).
         per_array_bytes: Opt-in per-array dtype byte-budget chunking (points
             only; defaults ``False`` so lines/gsplats keep atom-sized chunks).
+        bounds: Explicit ``(min, max)`` display window to stamp instead of this
+            array's own min/max. For a node that is one LEVEL of a larger field
+            — an LOD ladder's coarsened copy — the array's own range is a
+            contracted one, and the viewer windows each level's colormap on the
+            stamped range, so per-level ranges make the same value a different
+            colour at every LOD switch. The supplied pair is WIDENED to cover
+            the data if the data exceeds it, because it doubles as the
+            BOUNDED_SCALAR quantization range (see the comment below) and a
+            value outside it would come back clipped.
     """
     # Validate that this is a geometry group. The logical element count is
     # passed by the caller; physical zarr shape can be zero for array_ref.
@@ -284,6 +294,15 @@ def write_scalars(
                 dtype=scalars.dtype,
                 per_array_bytes=per_array_bytes,
             )
+
+    # Applied to BOTH branches, so the parameter means one thing wherever it is
+    # passed — a uniform-valued level otherwise stamped [v, v] and ignored the
+    # ladder's window. Widened, never narrowed: the pair is also the
+    # quantization range below, so narrowing it onto the data would put a datum
+    # outside its own encoding range.
+    if bounds is not None:
+        scalar_min = min(scalar_min, float(bounds[0]))
+        scalar_max = max(scalar_max, float(bounds[1]))
 
     # Colormap scalars are legitimately signed (z-scores, velocities,
     # divergence). Encode as BOUNDED_SCALAR (no sign constraint) quantized
