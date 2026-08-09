@@ -237,6 +237,32 @@ describe('createProgressiveGSplatsLoader', () => {
     expect((lodNode.attrs as { foo?: string }).foo).toBe('bar');
   });
 
+  it('clears the label flags on each sub-LOD node, overriding the stored attrs', async () => {
+    // The gsplats writer stamps `has_labels` on EVERY `additive_<i>` group, but
+    // the pick path only resolves labels against the PARENT path — so a truthy
+    // flag here would make the spatial-index loader publish per-level `ranges`
+    // and the projection compose a per-level slot → on-disk map that the ladder
+    // concat then throws away (#1423). mockImplementationOnce (not
+    // mockImplementation) so the default stub is restored for the next tests.
+    zarrOpenMock.mockImplementationOnce((async () => ({
+      attrs: { foo: 'bar', has_labels: true, has_image_labels: true },
+    })) as never);
+
+    await createProgressiveGSplatsLoader(
+      makeNode('/g', 'gsplats'),
+      1,
+      {} as SceneNode['attrs'],
+      makeDeps()
+    );
+
+    const lodNode = gsplatsCtorArgs[0][1] as SceneNode;
+    // Non-label attrs still spread through from the store…
+    expect((lodNode.attrs as { foo?: string }).foo).toBe('bar');
+    // …but the two label flags are overridden, not merely absent.
+    expect(lodNode.attrs.has_labels).toBe(false);
+    expect(lodNode.attrs.has_image_labels).toBe(false);
+  });
+
   it('synthesizes a clean additive path for a bare-node ROOT (no "//additive_0")', async () => {
     // A standalone additive-ladder .gsplats.zarr opened directly has node.path "/".
     const node = makeNode('/', 'gsplats');

@@ -491,6 +491,128 @@ describe('projectGSplatsTo3D — happy paths', () => {
     expect((a[14] as Float32Array).length).toBe(splatCount * 6); // outCholesky
     expect((a[15] as Float32Array).length).toBe(splatCount); // outAmplitudes
     expect((a[16] as Float32Array).length).toBe(splatCount * 3); // outColors
+    // No picking map requested → the kernel's recording opt-out (empty array).
+    expect(a[17]).toBeInstanceOf(Uint32Array);
+    expect((a[17] as Uint32Array).length).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------
+  // sourceIndices (issue #1423): the map picking needs to translate a
+  // storage slot back into an on-disk element index. Only the general fused
+  // path compacts, so only it can answer.
+  // ---------------------------------------------------------------------
+
+  /**
+   * 4D fixture with dim 3 as the continuous hidden slicing dim (slice at 0),
+   * identity Cholesky. Splat 1 sits 50 units off-slice, so it attenuates below
+   * MIN_AMPLITUDE and is compacted out — the survivors 0 and 2 are
+   * NON-CONTIGUOUS, the only arrangement where slot ≠ source index.
+   */
+  function cullingNdParams(extra: Record<string, unknown> = {}) {
+    const ndim = 4;
+    const splatCount = 3;
+    const k = (ndim * (ndim + 1)) / 2; // 10
+    const cholesky = new Float32Array(splatCount * k);
+    for (let s = 0; s < splatCount; s++) {
+      for (let i = 0; i < ndim; i++) cholesky[s * k + (i * (i + 1)) / 2 + i] = 1.0;
+    }
+    // prettier-ignore
+    const positions = new Float32Array([
+      0, 0, 0, 0,
+      1, 1, 1, 50,
+      2, 2, 2, 0,
+    ]);
+    return {
+      positions,
+      choleskyFactors: cholesky,
+      amplitudes: new Float32Array(splatCount).fill(1),
+      colors: null,
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      },
+      ndim,
+      splatCount,
+      discreteDims: [],
+      discreteSteps: {},
+      extendToAllDims: [],
+      truncate: 3.0,
+      ...extra,
+    };
+  }
+
+  it('emitSourceIndices returns the surviving SOURCE indices on the general nD path', async () => {
+    const { mod } = await loadWorker();
+
+    const result = (await mod.workerAPI.projectGSplatsTo3D(
+      cullingNdParams({ emitSourceIndices: true })
+    )) as { visibleCount: number; sourceIndices?: Uint32Array };
+
+    expect(result.visibleCount).toBe(2);
+    expect(result.sourceIndices).toBeInstanceOf(Uint32Array);
+    // Dense prefix only — no worst-case tail.
+    expect(result.sourceIndices!.length).toBe(2);
+    expect(Array.from(result.sourceIndices!)).toEqual([0, 2]);
+  });
+
+  it('omits sourceIndices when emitSourceIndices is falsy', async () => {
+    const { mod } = await loadWorker();
+
+    const result = (await mod.workerAPI.projectGSplatsTo3D(cullingNdParams())) as {
+      visibleCount: number;
+      sourceIndices?: Uint32Array;
+    };
+
+    expect(result.visibleCount).toBe(2);
+    expect(result.sourceIndices).toBeUndefined();
+  });
+
+  it('omits sourceIndices on the standard-3D fast path (slot IS the source index)', async () => {
+    const { mod } = await loadWorker();
+
+    const splatCount = 3;
+    const result = (await mod.workerAPI.projectGSplatsTo3D({
+      positions: new Float32Array(splatCount * 3),
+      choleskyFactors: new Float32Array(splatCount * 6),
+      amplitudes: new Float32Array(splatCount).fill(1),
+      colors: null,
+      sharpness: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      },
+      ndim: 3,
+      splatCount,
+      discreteDims: [],
+      discreteSteps: {},
+      extendToAllDims: [],
+      truncate: 3.0,
+      // Requested, but the fast path emits every splat in order, so there is
+      // nothing to record — the composer's identity path covers it.
+      emitSourceIndices: true,
+    })) as { visibleCount: number; sourceIndices?: Uint32Array };
+
+    expect(result.visibleCount).toBe(splatCount);
+    expect(result.sourceIndices).toBeUndefined();
+  });
+
+  it('omits sourceIndices when nothing is visible', async () => {
+    const { mod } = await loadWorker();
+
+    // Every splat far off-slice in the hidden dim → visibleCount 0.
+    const params = cullingNdParams({ emitSourceIndices: true });
+    params.positions = new Float32Array([0, 0, 0, 50, 1, 1, 1, 50, 2, 2, 2, 50]);
+
+    const result = (await mod.workerAPI.projectGSplatsTo3D(params)) as {
+      visibleCount: number;
+      sourceIndices?: Uint32Array;
+    };
+
+    expect(result.visibleCount).toBe(0);
+    expect(result.sourceIndices).toBeUndefined();
   });
 });
 

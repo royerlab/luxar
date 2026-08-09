@@ -22,7 +22,11 @@ import {
 import { createPointsGeometry } from '../../../../rendering/node-factory/create-points-node';
 import { getPointTexture } from '../../../../rendering/point-geometry';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
-import { getCommittedData } from '../../../../types/committed-data';
+import {
+  getCommittedData,
+  getElementIdMap,
+  setElementIdMap,
+} from '../../../../types/committed-data';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
@@ -501,14 +505,30 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
     const points = makePoints('/p');
     root.add(points);
     const data = makeData(3);
-    // `resolveOnDiskElementId` reads the slot → on-disk map off this stamp
-    // (issue #1421), so pin the field alongside the reference identity — a
-    // future field-by-field stamp would satisfy `toBe(data)`'s successor
-    // checks but drop the map.
+    // `resolveOnDiskElementId` reads the slot → on-disk map off the MESH-level
+    // `elementIdMap` stamp (issue #1421/#1423), written in lockstep with
+    // `committedData`, so pin both here.
     data.elementIds = new Uint32Array([2048, 2049, 4096]);
     commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 4);
     expect((points.userData as { committedData?: unknown }).committedData).toBe(data);
-    expect((getCommittedData(points) as LoadedPointsData).elementIds).toBe(data.elementIds);
+    expect(getCommittedData(points) as LoadedPointsData).toBe(data);
+    expect(getElementIdMap(points)).toBe(data.elementIds);
+  });
+
+  it('CLEARS a stale element-ID map when the new commit has none', () => {
+    const root = new THREE.Group();
+    const points = makePoints('/p');
+    root.add(points);
+    setElementIdMap(points, new Uint32Array([9, 9, 9]));
+
+    const data = makeData(3);
+    expect(data.elementIds).toBeUndefined();
+    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 5);
+
+    // Left in place, the old map would describe geometry that is no longer on
+    // the GPU — a silently wrong label rather than "no answer".
+    expect(getElementIdMap(points)).toBeUndefined();
+    expect('elementIdMap' in points.userData).toBe(false);
   });
 
   it('skips geometry work when the SAME data reference is committed again, but refreshes the freshness stamp', () => {

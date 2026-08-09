@@ -28,8 +28,9 @@ import type {
   LoadedGSplatsData,
   GSplatsViewState,
   ProcessedGSplatsData,
+  SplatRange,
 } from '../../../types/gsplats';
-import { assertColorLayout } from '../../loaders';
+import { assertColorLayout, buildElementIdMap } from '../../loaders';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { getWorkerPool } from '../../../workers/worker-pool';
@@ -38,6 +39,7 @@ import { getWorkerPool } from '../../../workers/worker-pool';
 import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors';
 import { projectGSplatsInProcess } from '../../../workers/data-worker/projection/in-process';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
+import { isStandardGSplats3D } from '../../../workers/data-worker/projection/gsplats';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
@@ -117,13 +119,30 @@ function buildGSplatsParams(
     discreteSteps,
     extendToAllDims,
     truncate,
+    // Ask the kernel to record which source splat each emitted slot came from
+    // (issue #1423) only when there is a map to build AND the projection will
+    // actually compact. The standard-3D fast path emits every splat in order,
+    // so it produces no source indices — the shared predicate keeps this site
+    // and the dispatcher from disagreeing about which inputs take it.
+    emitSourceIndices:
+      data.ranges !== undefined && !isStandardGSplats3D(data.ndim, viewState.displayDims),
   };
 }
 
-/** Map a dispatcher result (worker or in-process) to `ProcessedGSplatsData`. */
+/**
+ * Map a dispatcher result (worker or in-process) to `ProcessedGSplatsData`.
+ *
+ * `ranges` are the loader's visible on-disk ranges (present only for a
+ * label-carrying node); combined with the kernel's recorded `sourceIndices`
+ * they compose the slot → on-disk element index map picking resolves labels
+ * through. `sourceIndices` is absent on the standard-3D fast path, where no
+ * compaction happened — passing `null` there puts the composer on its own
+ * identity/range-offset path, which is exactly right.
+ */
 function toProcessed(
   result: Awaited<ReturnType<typeof projectGSplatsInProcess>>,
-  colorComponents: 3 | 4
+  colorComponents: 3 | 4,
+  ranges: readonly SplatRange[] | undefined
 ): ProcessedGSplatsData {
   return {
     centers3D: result.centers3D,
@@ -135,6 +154,14 @@ function toProcessed(
     // Fused-scan cull metadata (AABB + max Cholesky row norm) — lets the
     // GPU commit skip its two O(N) main-thread scans (see types/gsplats.ts).
     bounds: result.bounds,
+    elementIds: ranges
+      ? buildElementIdMap(
+          ranges,
+          result.sourceIndices ?? null,
+          result.visibleCount,
+          Modules.SCENE_LOADER
+        )
+      : undefined,
   };
 }
 
@@ -199,7 +226,7 @@ export async function projectGSplatsTo3DUsingWorker(
       );
     }
 
-    return toProcessed(workerResult, data.colorComponents ?? 3);
+    return toProcessed(workerResult, data.colorComponents ?? 3, data.ranges);
   } catch (error) {
     // Dataset-switch abort: don't burn CPU on stale in-process work.
     if (error instanceof Error && error.name === 'WorkerAbortError') {
@@ -221,7 +248,11 @@ export async function projectGSplatsTo3DUsingWorker(
       'No worker available, falling back to in-process GSplats projection:',
       error
     );
-    return toProcessed(await projectGSplatsInProcess(params), data.colorComponents ?? 3);
+    return toProcessed(
+      await projectGSplatsInProcess(params),
+      data.colorComponents ?? 3,
+      data.ranges
+    );
   }
 }
 
@@ -269,7 +300,8 @@ export async function processGSplatsData(
     // the dispatcher handles the ndim===3 case efficiently.
     return toProcessed(
       await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate)),
-      data.colorComponents ?? 3
+      data.colorComponents ?? 3,
+      data.ranges
     );
   };
 

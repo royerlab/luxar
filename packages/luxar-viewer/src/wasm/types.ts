@@ -272,6 +272,10 @@ export interface WasmModule {
    * @param outCholesky3d - Output visible 3D Cholesky [splatCount * 6] worst-case
    * @param outAmplitudes - Output visible attenuated amplitudes [splatCount] worst-case
    * @param outColors - Output visible colors [splatCount * colorComponents] worst-case
+   * @param outSourceIndices - Output SOURCE index per emitted splat [splatCount]
+   *   worst-case. Compaction destroys the slot → source mapping, which picking
+   *   needs to reach an on-disk element index (issue #1423). Pass an EMPTY
+   *   array to opt out — the recording is then skipped entirely.
    * @returns Number of visible splats written
    */
   project_gsplats_nd_to_3d(
@@ -291,7 +295,8 @@ export interface WasmModule {
     outCenters3d: Float32Array,
     outCholesky3d: Float32Array,
     outAmplitudes: Float32Array,
-    outColors: Float32Array
+    outColors: Float32Array,
+    outSourceIndices: Uint32Array
   ): number;
 
   // ============================================================================
