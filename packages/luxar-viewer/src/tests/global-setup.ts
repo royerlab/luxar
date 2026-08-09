@@ -121,20 +121,6 @@ function isExpectationsStale(fixtureNames: string[]): boolean {
 }
 
 /**
- * Ensure the compiled WASM module exists so the WASM-vs-TS parity tests run.
- *
- * The parity harness (`wasm-vs-typescript.test.ts`) skips every case via
- * `it.skipIf(!wasmFilesExist)` when the artifacts are absent — which means a
- * dev box that never ran `make build-wasm` gets a fully-green suite that has
- * verified NOTHING about the compiled backend (the only guard against Rust↔TS
- * drift). To avoid that silent-coverage trap:
- *   - if the artifacts are missing and a Rust/wasm-pack toolchain is present,
- *     build them automatically (mirrors the auto fixture-generation above);
- *   - if no toolchain is available, emit a LOUD warning so the skip is visible;
- *   - if `LUXAR_REQUIRE_WASM_TESTS=1` (CI), a missing/unbuildable module is a
- *     hard failure.
- */
-/**
  * Required exports that the built `luxar_wasm.js` does not declare — i.e. the
  * evidence that a PRESENT build predates a kernel. Empty when it is current.
  *
@@ -161,6 +147,24 @@ function missingWasmExports(): readonly string[] {
   );
 }
 
+/**
+ * Ensure a CURRENT compiled WASM module exists so the WASM-vs-TS parity tests
+ * run against the real backend.
+ *
+ * The parity harness (`wasm-vs-typescript.test.ts`) skips every case via
+ * `it.skipIf(!wasmFilesExist)` when the artifacts are absent — which means a
+ * dev box that never ran `make build-wasm` gets a fully-green suite that has
+ * verified NOTHING about the compiled backend (the only guard against Rust↔TS
+ * drift). A build that is merely STALE is worse still: it does not skip, it
+ * runs and fails at first use with an opaque "x is not a function". To avoid
+ * both traps:
+ *   - if the artifacts are missing OR out of date (see `missingWasmExports`
+ *     below) and a Rust/wasm-pack toolchain is present, build them
+ *     automatically (mirrors the auto fixture-generation above);
+ *   - if no toolchain is available, emit a LOUD warning so the skip is visible;
+ *   - if `LUXAR_REQUIRE_WASM_TESTS=1` (CI), a missing/stale/unbuildable module
+ *     is a hard failure.
+ */
 export function ensureWasmBuilt(): void {
   const present = existsSync(WASM_JS_PATH) && existsSync(WASM_BIN_PATH);
   // A build missing a kernel is as useless as no build: it imports and

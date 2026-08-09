@@ -33,6 +33,18 @@
  */
 import type { WasmModule } from './types';
 
+/**
+ * WASM exports added after the initial kernel set, which a stale build may not
+ * have.
+ *
+ * `initWasm` asserts these at load time and `global-setup` rebuilds when one is
+ * absent — see the module comment above for why the list lives here rather than
+ * in either consumer.
+ *
+ * Add a name here when you add a kernel. The `satisfies` clause makes that safe:
+ * a name that is not a real {@link WasmModule} member fails to compile rather
+ * than silently never matching at runtime.
+ */
 export const REQUIRED_WASM_EXPORTS = [
   'compute_joint_codes',
   'mesh_vertex_visibility_mask',
