@@ -59,13 +59,13 @@ from pathlib import Path
 from arbol import Arbol, aprint
 
 from luxar.core.viewer_config import CameraConfig
-from luxar.demos._interop_common import build_gsplats_cache, build_interop_scene
-from luxar.utils.demos import (
+from luxar.demos import (
     cached_download,
     launch_viewer,
     parse_demo_flags,
     print_data_provenance,
 )
+from luxar.demos._interop_common import build_gsplats_cache, build_interop_scene
 from luxar.utils.paths import get_demos_output_dir
 
 DEMO_NAME = "gsplats_interop_spz"

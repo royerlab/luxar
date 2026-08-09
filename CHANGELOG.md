@@ -6,6 +6,40 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Tooling — the demos converge on one import spelling (#1304)
+
+The shared demo plumbing (`launch_viewer`, `parse_demo_flags`, `cached_download`,
+…) lives in `luxar/utils/demos.py` and `luxar/utils/data_fetch.py`, and
+`luxar/demos/__init__.py` is the barrel that re-exports it — the spelling
+`demos/README.md` §6 has always documented. Even so, 38 demo scripts reached past
+the barrel with `from luxar.utils.demos import …`. A two-symbol hole started it —
+`is_lfs_pointer` and `print_data_provenance` were never re-exported — but it only
+forced 12 of those files (4 and 8 respectively); the other 26 deep-imported names
+the barrel already had. That is the interesting part: one unavoidable exception per
+missing symbol was enough to make the deep form look like the house style, and it
+spread by copy-paste to files that never needed it. Two spellings for one surface
+cost the barrel its purpose — you could no longer read a helper's audience off it,
+and moving `utils/demos.py` meant chasing 40 call sites instead of one.
+
+The two missing names are now re-exported, and all 48 deep import statements
+across those 38 files (37 under `demos/`, one under `gsplats/demos/`) are the
+barrel spelling. No behaviour changes: `from X import f` binds the same function
+object either way, and for the 15 files that did not already import the barrel the
+three modules it adds (`luxar.demos`, `luxar.demos._dependencies`,
+`luxar.utils.data_fetch`) do no work at import time beyond defining names.
+
+`demos/tests/test_demo_import_spelling.py` pins it, with two invariants rather
+than one. The first fails the build on every deep *spelling* — `from
+luxar.utils.demos import …`, `import luxar.utils.demos`, `from luxar.utils import
+demos`, and their relative forms — across `luxar/demos` and all three
+`luxar/gsplats/**/demos` trees, discovered rather than enumerated. The second
+pins the hole that started this: a name imported from the barrel must really be
+bound on it, checked against live attributes because `__all__` is a declaration
+(ruff's F822 does not fire on `__init__.py`) and the gsplats trees are
+byte-compile-smoke only, where `py_compile` never resolves an import. Both
+detectors are exercised against a synthetic tree, not only against the clean one
+they now describe.
+
 #### Mesh gets substitutive LOD
 
 A mesh can now be a level of a `kind=lod` group, and `add_mesh(substitutive_lod=…)`
