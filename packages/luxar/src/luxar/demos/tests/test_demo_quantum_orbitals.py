@@ -1,8 +1,10 @@
 """Tests for the pure quantum-mechanics helpers in demo_quantum_orbitals.
 
 These cover deterministic analytic functions only — no fitting, no cache, no
-scene I/O. The demo is loaded by file path (see test_demo_ppi_flow_field for the
-rationale: ``luxar.demos`` is aliased to ``luxar.utils.demos``).
+scene I/O. The demo is loaded by file path — a leftover from when a
+``sys.modules`` alias shadowed the ``luxar.demos`` package. That alias is gone
+(see test_demo_ppi_flow_field), so ``from luxar.demos.demo_quantum_orbitals
+import …`` would work just as well.
 
 The orientation tests are the point of this file: the demo's whole claim is that
 it uses REAL (tesseral) harmonics, so ``2px`` is a dumbbell along x and ``3dxy``

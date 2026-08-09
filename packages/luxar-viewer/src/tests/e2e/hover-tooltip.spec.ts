@@ -24,6 +24,19 @@ import { waitForLuxarReady, waitForPointsLoaded, assertNoConsoleErrors } from '.
 const DATASET =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_labelled_points.luxar.zarr';
 
+/**
+ * Partitioned sibling of `DATASET` — the same labelled-points shape, but
+ * authored with `add_points(partition=...)` so the node is a `kind=partition`
+ * wrapper over four `part_<i>` leaves. The label CSR lives on the leaves;
+ * the wrapper is a bare group. See
+ * `generate_test_data.py::generate_labelled_partitioned_points_test`.
+ */
+const PARTITIONED_DATASET =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_labelled_partitioned_points.luxar.zarr';
+
+/** Label of the fixture's single isolated hover target, at the world origin. */
+const MARKER_LABEL = 'Origin marker';
+
 interface PickingDiagnostics {
   lastPickFiredTime: number;
   lastMouseMoveTime: number;
@@ -69,6 +82,48 @@ async function getCanvasCentre(page: Page): Promise<{ x: number; y: number }> {
       y: rect.top + rect.height / 2,
     };
   });
+}
+
+/**
+ * Project a WORLD-space point to viewport coordinates through the live
+ * camera. Stronger than `getCanvasCentre` for an assertion about *which*
+ * element was hit: it does not assume the default framing centres the point
+ * of interest, so a change to auto-framing turns into a miss at a known
+ * position rather than a silently different element.
+ *
+ * `THREE` is not on `window`, so the only handle on `Vector3` is an existing
+ * instance — `camera.position` — which is cloned and overwritten.
+ */
+async function projectWorldPoint(
+  page: Page,
+  world: [number, number, number]
+): Promise<{ x: number; y: number }> {
+  return await page.evaluate((w) => {
+    const debug = (
+      window as unknown as {
+        __luxarDebug: {
+          camera: {
+            position: {
+              clone: () => {
+                set: (x: number, y: number, z: number) => { project: (c: unknown) => unknown };
+              };
+            };
+          };
+          renderer: { domElement: HTMLCanvasElement };
+        };
+      }
+    ).__luxarDebug;
+    const camera = debug.camera;
+    const ndc = camera.position.clone().set(w[0], w[1], w[2]).project(camera) as {
+      x: number;
+      y: number;
+    };
+    const rect = debug.renderer.domElement.getBoundingClientRect();
+    return {
+      x: rect.left + ((ndc.x + 1) / 2) * rect.width,
+      y: rect.top + ((1 - ndc.y) / 2) * rect.height,
+    };
+  }, world);
 }
 
 test.describe('Hover-tooltip end-to-end (GPU picking + settle + overlay)', () => {
@@ -150,5 +205,96 @@ test.describe('Hover-tooltip end-to-end (GPU picking + settle + overlay)', () =>
 
     const after = await readDiagnostics(page);
     expect(after.lastPickFiredTime).toBe(start.lastPickFiredTime);
+  });
+});
+
+/**
+ * Regression coverage for #1415, and the only test in the suite that runs the
+ * hover pipeline against a `kind=partition` layer.
+ *
+ * The cases above use a FLAT node, where the handler's reported path and its
+ * lookup path are the same string — so they cannot observe the bug at all.
+ * Here the CSR lives on `labelled_parts/part_<i>` while the layer the viewer
+ * reports is `labelled_parts`; querying the wrapper (the pre-fix behaviour)
+ * finds no `label_offsets` / `label_bytes`, logs an info line, caches an empty
+ * label array, and leaves the tooltip blank forever after. Asserting the
+ * tooltip's exact TEXT — not merely that a pick fired — is what makes that
+ * silent failure visible.
+ */
+test.describe('Hover-tooltip on a kind=partition layer (#1415)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(`/?src=${PARTITIONED_DATASET}&debug`);
+    await waitForLuxarReady(page);
+    await waitForPointsLoaded(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    await assertNoConsoleErrors(page);
+  });
+
+  test('hovering the marker resolves its label from the part_<i> leaf', async ({ page }) => {
+    const overlay = page.locator('[data-overlay-name="__hover_text"]');
+    await expect(overlay).toHaveCount(1);
+
+    // Park the cursor away from the marker first, so the move onto it is a
+    // genuine settle (the scheduler only fires after the cursor stops).
+    const target = await projectWorldPoint(page, [0, 0, 0]);
+    await page.mouse.move(target.x + 120, target.y + 120);
+    await page.waitForTimeout(250);
+
+    await page.mouse.move(target.x, target.y);
+
+    // The exact authored label of the one point at the world origin. Every
+    // other point in the fixture sits at |x| >= 6, so a hit on anything else
+    // reads "Cluster point N" and fails loudly rather than passing vacuously.
+    await expect(overlay).toHaveText(MARKER_LABEL, { timeout: 10000 });
+    await expect(overlay).toHaveCSS('opacity', '1');
+  });
+
+  test('the selection event reports the wrapper as nodeName and the leaf as hitNodeName', async ({
+    page,
+  }) => {
+    // The public embedder payload's partition contract (#1415): `nodeName` is
+    // the user-facing layer, `hitNodeName` is the node `elementIndex` is
+    // actually local to. Under this fixture the two MUST differ.
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        __luxarDebug: { app: { on: (e: string, cb: (s: unknown) => void) => void } };
+        __selections: unknown[];
+      };
+      w.__selections = [];
+      w.__luxarDebug.app.on('selection', (sel) => {
+        if (sel) w.__selections.push(sel);
+      });
+    });
+
+    const target = await projectWorldPoint(page, [0, 0, 0]);
+    await page.mouse.move(target.x + 120, target.y + 120);
+    await page.waitForTimeout(250);
+    await page.mouse.move(target.x, target.y);
+
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(
+            () => (window as unknown as { __selections: unknown[] }).__selections.length
+          ),
+        { timeout: 10000 }
+      )
+      .toBeGreaterThan(0);
+
+    const sel = (await page.evaluate(() => {
+      const sels = (
+        window as unknown as {
+          __selections: { nodeName: string; elementIndex: number; hitNodeName: string }[];
+        }
+      ).__selections;
+      return sels[sels.length - 1];
+    }))!;
+
+    expect(sel.nodeName).toBe('/labelled_parts');
+    expect(sel.hitNodeName).toMatch(/^\/labelled_parts\/part_\d+$/);
+    expect(sel.hitNodeName).not.toBe(sel.nodeName);
+    expect(sel.elementIndex).toBeGreaterThanOrEqual(0);
   });
 });
