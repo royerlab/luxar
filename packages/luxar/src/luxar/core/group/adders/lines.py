@@ -29,6 +29,7 @@ from ..compositing import (
     position_bounds_from_array,
     slice_optional_array,
     sync_custom_colormap_attr,
+    validate_labels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
 from ..partition import reject_mismatched_partition_parent
@@ -539,6 +540,12 @@ def add_lines_partition_wrapper_impl(
     the single-polyline granularity and there's nothing to partition. We
     refuse the partition in that case with a clear error.
     """
+    # Entering a wrapper IS "a split is about to happen": from here on `labels`
+    # is sliced per part (per-VERTEX for Lines), and `slice_optional_array`
+    # passes a wrong-length list through whole. Scoped to the split paths so the
+    # plain-leaf gate order is untouched.
+    validate_labels_before_split(labels, n_vertices)
+
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
 
@@ -696,9 +703,18 @@ def add_lines_multi_lod_wrapper_impl(
     ``n_additive_sublods``, the global ``position_bounds``, and the
     standard compositing attrs.
 
+    ``labels`` (per-vertex) are written by the writer as ONE union CSR on the
+    parent (the subgroups carry none — the loader concatenates levels into one
+    buffer), so the scene is notified here exactly as on the flat path.
+
     ``counts`` and the ``*_for_energy`` arrays only feed the ladder's quality
     stamps — see the Points twin for what the viewer does with them.
     """
+    # See add_lines_partition_wrapper_impl: `labels` is about to be sliced per
+    # level, and a per-level length check cannot catch a wrong-length list whose
+    # length happens to match some level's vertex count.
+    validate_labels_before_split(labels, n_vertices)
+
     scene = group._find_scene()
     writer = group._require_scene_writer(scene)
     parent_node = parent or group
@@ -805,6 +821,11 @@ def add_lines_multi_lod_wrapper_impl(
         **attrs,
     )
 
+    # Ladder labels live in one CSR on the parent node, so the scene needs the
+    # same hover-overlay injection the flat path gets.
+    if labels is not None:
+        scene._notify_labels_added()
+
     # Mirror the writer's custom-colormap resolution (ndarray/matplotlib name
     # -> 'custom') so the returned node matches what zarr stores.
     sync_custom_colormap_attr(attrs)
@@ -850,6 +871,11 @@ def add_lines_substitutive_lod_wrapper_impl(
     original Lines node. Mirrors
     :func:`add_points_substitutive_lod_wrapper_impl`.
     """
+    # Before the lift: the coarse levels cost a full gsplat reduce, and the
+    # finest child may itself be laddered (which slices `labels`), so a
+    # wrong-length list must fail here rather than minutes later.
+    validate_labels_before_split(labels, len(vert_arr))
+
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
     from ..lod.group import (
         compose_additive_under_substitutive,

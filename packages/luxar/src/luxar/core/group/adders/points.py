@@ -30,6 +30,7 @@ from ..compositing import (
     reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
+    validate_labels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
 from ..partition import reject_mismatched_partition_parent
@@ -397,6 +398,12 @@ def add_points_partition_wrapper_impl(
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one Points child per BSP part."""
+    # Entering a wrapper IS "a split is about to happen": from here on `labels`
+    # is sliced per part, and `slice_optional_array` passes a wrong-length list
+    # through whole. Scoped to the split paths so the plain-leaf gate order (and
+    # therefore which error a multi-fault call reports) is untouched.
+    validate_labels_before_split(labels, n_points)
+
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
 
@@ -485,11 +492,20 @@ def add_points_multi_lod_wrapper_impl(
     logical "one node"). The viewer's progressive loader walks the
     subgroups; the user never sees the decomposition.
 
+    ``labels`` are written by the writer as ONE union CSR on the parent (the
+    subgroups carry none — the loader concatenates levels into one buffer), so
+    the scene is notified here exactly as on the flat path.
+
     ``counts`` and the three ``*_for_energy`` arrays are only used to stamp the
     ladder's quality metadata (``lod_stats.energy_fraction_cum`` per level plus
     ``level_stats.reference_energy`` on the parent), which lets the viewer
     release a LOD swap on committed energy instead of raw element count.
     """
+    # See add_points_partition_wrapper_impl: `labels` is about to be sliced per
+    # level, and a per-level length check cannot catch a wrong-length list whose
+    # length happens to match some level's.
+    validate_labels_before_split(labels, n_points)
+
     scene = group._find_scene()
     writer = group._require_scene_writer(scene)
     parent_node = parent or group
@@ -558,6 +574,11 @@ def add_points_multi_lod_wrapper_impl(
         **attrs,
     )
 
+    # Ladder labels live in one CSR on the parent node, so the scene needs the
+    # same hover-overlay injection the flat path gets.
+    if labels is not None:
+        scene._notify_labels_added()
+
     # Mirror the writer's custom-colormap resolution (ndarray/matplotlib name
     # -> 'custom') so the returned node matches what zarr stores.
     sync_custom_colormap_attr(attrs)
@@ -606,6 +627,11 @@ def add_points_substitutive_lod_wrapper_impl(
     ``opacity`` is therefore applied once at composite time to both the points
     child and the gsplat children (the lift uses ``opacity=1``).
     """
+    # Before the lift: the coarse levels cost a full gsplat reduce, and the
+    # finest child may itself be laddered (which slices `labels`), so a
+    # wrong-length list must fail here rather than minutes later.
+    validate_labels_before_split(labels, n_points)
+
     from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
     from ..lod.group import (
         compose_additive_under_substitutive,

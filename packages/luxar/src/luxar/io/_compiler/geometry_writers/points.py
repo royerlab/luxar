@@ -32,6 +32,7 @@ from ..node_common import (
     POINTS_RESERVED_ATTRS,
     apply_default_render_attrs,
     prepare_transform_attrs,
+    record_forwarded_sort_order,
     validate_broadcast_color,
     validate_node_path,
     validate_render_attrs,
@@ -58,7 +59,21 @@ def write_points(
     """Write points data progressively to Zarr (see ``write_points`` docstring).
 
     Returns the node metadata; the caller records it in the metadata cache.
+
+    Private forwarding flag ``_return_sort_order`` (opt-in): when truthy, the
+    returned metadata carries a ``"sort_order"`` key holding this node's spatial
+    permutation (``None`` when no spatial reordering was applied). Only
+    ``write_points_multi_lod`` sets it — it needs each level's permutation to
+    build the ladder's union label CSR, and the permutation is not persisted on
+    disk. Opt-in so the flat path never parks a big index array in the
+    compiler's metadata cache.
     """
+    # Private forwarding flag: the multi-LOD writer needs this node's spatial
+    # permutation to build the ladder's union label CSR (the permutation is not
+    # persisted on disk). Popped FIRST so it never reaches the attr validator or
+    # .zattrs.
+    return_sort_order = attrs.pop("_return_sort_order", False)
+
     # Import validation functions locally to avoid circular imports
     from ....validation.base import (
         validate_colors_for_writing,
@@ -275,6 +290,14 @@ def write_points(
         metadata["ordering"] = ordering_data["ordering"]
     else:
         metadata["ordering"] = "none"
+
+    # 10b. Forward the spatial permutation to a multi-LOD parent on request
+    # (``None`` means "no spatial reordering — identity").
+    record_forwarded_sort_order(
+        metadata,
+        return_sort_order,
+        ordering_data["sort_order"] if ordering_data is not None else None,
+    )
 
     # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
     if labels is not None:

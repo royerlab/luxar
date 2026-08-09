@@ -20,6 +20,7 @@ from ..compositing import (
     reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
+    validate_labels_before_split,
 )
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
 from ..partition import reject_mismatched_partition_parent
@@ -242,6 +243,13 @@ def add_gsplats_partition_wrapper_impl(
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one GSplats child per BSP part."""
+    # Entering a wrapper IS "a split is about to happen": from here on `labels`
+    # is sliced per part, and `slice_optional_array` passes a wrong-length list
+    # through whole — which would give every part the SAME labels (part 1's
+    # tooltips would be part 0's). GSplats have no additive-ladder labels, so
+    # this partition path is the only one that splits them.
+    validate_labels_before_split(labels, n_splats)
+
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
 

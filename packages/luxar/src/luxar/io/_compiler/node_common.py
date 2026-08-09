@@ -15,9 +15,11 @@ keys a caller must not supply.
 from __future__ import annotations
 
 import difflib
-from typing import Any, Dict, FrozenSet
+from typing import Any, Dict, FrozenSet, Optional
 
+import numpy as np
 import zarr
+from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
 
@@ -180,7 +182,10 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # (add_partition_group); the viewer reads it for back-to-front part
         # ordering.
         "bsp_tree",
-        # Geometry-writer internal forwarding flags.
+        # Geometry-writer internal forwarding flags. NOT an exhaustive list of
+        # them: a flag popped BEFORE this gate runs never needs listing here.
+        # ``_return_sort_order`` (see ``record_forwarded_sort_order``) is popped
+        # as the writers' very first statement and is deliberately absent.
         "_skip_scene_bounds",
     }
 )
@@ -403,6 +408,29 @@ def prepare_transform_attrs(attrs: Dict[str, Any], store: zarr.Group) -> None:
         if "scene_dimensions" in store.attrs:
             dims = Dimensions.from_dict(store.attrs["scene_dimensions"])
         attrs["nd_transform"] = validate_nd_transform(attrs["nd_transform"], dims)
+
+
+def record_forwarded_sort_order(
+    metadata: Dict[str, Any],
+    requested: bool,
+    sort_order: Optional[NDArray[np.integer]],
+) -> None:
+    """Record this node's spatial permutation in its metadata, on request.
+
+    Backs the private ``_return_sort_order`` forwarding flag on ``write_points``
+    / ``write_lines``: the multi-LOD parent writers need each level's spatial
+    permutation to build the ladder's union label CSR, and the permutation is
+    never persisted on disk. OPT-IN so the flat write path does not park a big
+    index array in the compiler's metadata cache.
+
+    Args:
+        metadata: The writer's metadata dict, mutated in place.
+        requested: The popped ``_return_sort_order`` flag.
+        sort_order: The node's permutation, or ``None`` for no spatial
+            reordering (identity).
+    """
+    if requested:
+        metadata["sort_order"] = sort_order
 
 
 def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:

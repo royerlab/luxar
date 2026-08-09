@@ -6,6 +6,37 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A streaming ladder no longer loses its labels (#1422)
+
+`add_points("pts", …, labels=…, additive_lod=True)` wrote a scene whose labels were
+unreachable from anywhere. The labels went into the `additive_<i>` subgroups, but a
+ladder's subgroups are an implementation detail the viewer never surfaces as nodes —
+so picking looked for a CSR on the parent, found none, and never provisioned label
+picking at all. The ladder adders also never told the scene labels existed, so a
+scene whose only labelled node was a ladder got no `overlays/__hover_text` and hover
+was off entirely. Three independent reasons for the same silence.
+
+The ladder now writes ONE `label_offsets`/`label_bytes` pair on the parent node,
+which carries `has_labels`, and the subgroups carry none. Its index space is the
+concatenation of the levels in coarsest→finest order, each in its own stored
+(spatially reordered) order — the same on-disk space a flat labelled leaf already
+uses, just spanning the levels, which is the space that matters because the loader
+concatenates levels into one buffer. Recovering each level's permutation needed a
+private `_return_sort_order` flag on the geometry writers, since the spatial sort is
+computed per level and never persisted. Labels are all-or-nothing across a ladder: a
+partially-labelled one cannot produce a coherent index space and is refused.
+
+A fully-loaded 3D scene resolves exactly. Under an nD slice the committed buffer is
+compacted, so slots shift — the same shift #1421/#1425 removed for flat nodes with a
+visible-slot → on-disk-index map, which is deliberately not published across a ladder
+because each level's map is in that level's own space; extending it is the piece left.
+
+Separately, a wrong-length `labels` was silently accepted on every splitting path
+(partition, additive, substitutive — Points, Lines and GSplats): the per-part slicer
+passes a mis-sized list through whole, so all parts got the *same* labels and part 1's
+tooltips were part 0's. Each wrapper now checks the full element count before it
+slices, leaving the plain-leaf gate order untouched.
+
 #### Hover labels index the right point (#1421)
 
 `PickResult.elementId` was the storage slot in the buffer that reached the GPU, never
@@ -77,6 +108,7 @@ distinct on-disk array, so no single map is meaningful; the loader factory clear
 label flags on each synthesized `additive_<i>` node and the ladder concat strips the
 field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) remains the
 last outstanding geometry.
+
 
 #### The port probe now matches the bind it predicts
 

@@ -42,7 +42,7 @@ group/
 ├── __init__.py          # re-exports Group
 ├── group.py             # Group class: public add_* API (delegates to adders/ + gsplats_pipeline/)
 ├── auto_partition.py     # resolve_auto_partition — compiler-level opt-in auto-partition
-├── compositing.py        # COMPOSITING_ATTRS, slice_optional_array, position_bounds_from_array
+├── compositing.py        # COMPOSITING_ATTRS, slice_optional_array, validate_labels_before_split, position_bounds_from_array
 ├── dim_order.py          # apply_dim_order_positions / apply_dim_order_cholesky
 ├── partition.py          # BSP splitters + PartitionSpec + validate_partition_group
 ├── adders/               # per-leaf add_<type> bodies (Points / Lines / GSplats)
@@ -150,6 +150,14 @@ LOD wrapper builders:
   nearest-ancestor-wins.
 - `slice_optional_array(value, indices, n_elements)` — slice a per-element leaf
   parameter by index; pass scalars / `None` / mis-sized inputs through unchanged.
+- `validate_labels_before_split(labels, n_elements)` — its companion guard: reject
+  a wrong-length `labels` against the FULL element count before a partition / LOD
+  decomposition. Needed precisely because `slice_optional_array` passes a mis-sized
+  list through unchanged, which would hand every part / level the same unsliced
+  list and write labels into the wrong slots. Called as the first statement of each
+  wrapper impl that slices labels (Points and Lines partition / additive / substitutive
+  wrappers, plus the GSplats partition wrapper) — never from the top of a leaf adder,
+  so the plain-leaf gate order stays exactly as it was.
 - `position_bounds_from_array(positions)` — per-axis min/max of an `(N, D)`
   array, matching the compiler's per-leaf `position_bounds` shape.
 

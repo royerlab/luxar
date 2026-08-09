@@ -86,7 +86,10 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
     // `createProgressivePointsLoader` now also clears `has_labels` /
     // `has_image_labels` on each sub-LOD's attrs, so the map is normally never
     // built at all; this keeps the invariant true whatever attrs a sub-LOD
-    // carries. (Per-level label resolution is #1422.)
+    // carries. The ladder's own labels live in one CSR on the PARENT node
+    // (#1422), whose index space is the concatenation of the levels — so a
+    // correct ladder map is a per-level map offset by the preceding levels'
+    // on-disk counts, not any single level's map passed through.
     const only = parts[0];
     if (only.elementIds === undefined) return only;
     const stripped: LoadedPointsData = { ...only };

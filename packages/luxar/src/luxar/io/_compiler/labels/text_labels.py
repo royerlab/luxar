@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 import numpy as np
 import zarr
@@ -88,3 +88,131 @@ def write_labels_csr(
     aprint(
         f"  ✓ Wrote labels ({n_nonempty}/{n_elements} non-empty, {total_bytes:,} bytes)"
     )
+
+
+def validate_ladder_labels(
+    levels: Sequence[Mapping[str, Any]],
+    positions_key: str,
+) -> bool:
+    """Pre-write gate for an additive ladder's labels; returns whether it is labelled.
+
+    PURE — reads only ``levels``, touches no store — so the multi-LOD writers can
+    call it BEFORE ``require_group`` creates the parent node. A rejected ladder
+    must not leave an empty group behind (the writers' documented fail-fast
+    contract).
+
+    Enforces two rules:
+
+    - **All-or-nothing**: labels on every level or on none. A partially-labelled
+      ladder cannot produce a correct union, and silently labelling only part of
+      it would misalign every slot after the first unlabelled level.
+    - **Per-level length**: each level's label count must equal that level's own
+      element count. The flat writers check this themselves; a laddered write
+      hands them ``labels=None``, so the check has to happen here instead.
+
+    Args:
+        levels: The per-level dicts handed to a multi-LOD writer.
+        positions_key: The key holding each level's ``(N, D)`` element array —
+            ``"positions"`` for Points, ``"vertices"`` for Lines.
+
+    Returns:
+        ``True`` when the ladder carries labels (so the caller should build the
+        parent union CSR), ``False`` when no level does.
+
+    Raises:
+        ValueError: On mixed label presence (the message names the first
+            unlabelled level) or a per-level length mismatch.
+    """
+    from ....validation.base import validate_labels_for_writing
+
+    labelled_flags = [lvl.get("labels") is not None for lvl in levels]
+    if not any(labelled_flags):
+        return False
+    if not all(labelled_flags):
+        missing = labelled_flags.index(False)
+        raise ValueError(
+            f"labels must be provided for every additive LOD level or for none; "
+            f"level {missing} (additive_{missing}) has no labels"
+        )
+    for lvl in levels:
+        validate_labels_for_writing(
+            lvl["labels"], int(np.asarray(lvl[positions_key]).shape[0])
+        )
+    return True
+
+
+def write_ladder_union_labels_csr(
+    group: zarr.Group,
+    level_labels: Sequence[Sequence[str]],
+    level_sort_orders: Sequence[Optional[np.ndarray]],
+    n_elements: int,
+    compressor: "CompressorLike",
+) -> None:
+    """Write ONE label CSR spanning an additive ladder's levels, on the parent.
+
+    An additive LOD ladder stores its data in ``additive_<i>/`` subgroups, but
+    the viewer's progressive loader concatenates the levels it has loaded into a
+    single buffer — so no one level's array is the thing a pick index addresses.
+    The label CSR therefore lives on the PARENT ladder node and spans the levels;
+    the ``additive_<i>`` subgroups carry no label arrays at all.
+
+    **Index-space contract**: index ``k`` of the parent CSR is the ``k``-th
+    element of the concatenation ``additive_0 || additive_1 || …``, with each
+    level in its own **stored** (spatially reordered) order. This is the SAME
+    on-disk index space a flat labelled leaf's CSR uses, just spanning the
+    ladder's levels rather than one array.
+
+    The viewer commits levels coarsest-first, so a fully-loaded ladder maps
+    straight through: index ``k`` is committed slot ``k``. The COMMITTED BUFFER is
+    not in general a prefix of this union, though — the per-level loader compacts
+    out elements culled by the current nD slice and fetches only the chunk ranges
+    a query intersects, so slots shift. A labelled ladder therefore resolves at
+    the RAW committed slot: exact for a fully-loaded 3D scene (no per-element
+    slice culling), and otherwise carrying the slot shift that issue #1421 /
+    PR #1425 removed for FLAT nodes by publishing a visible-slot -> on-disk-index
+    map. That map is deliberately not published across a ladder — each level's map
+    is in that level's own on-disk space, so the concatenation clears it —
+    and extending it (offsetting each level by the preceding levels' on-disk
+    counts) is the remaining piece of work.
+
+    Under the ``partition=``-outer + ``additive_lod=``-inner composition the CSR
+    lands on each ``part_<i>`` ladder parent, while the viewer resolves labels
+    against the OUTERMOST ``kind=partition`` wrapper, which carries none — so a
+    partitioned ladder does not resolve labels at all yet. That is pre-existing and
+    identical for flat partition parts.
+
+    For **Lines** the CSR is per-VERTEX (matching the flat Lines writer), while
+    the viewer's Lines pick id is a per-SEGMENT storage slot — so in practice only
+    a broadcast (one-string-per-node) label set resolves on Lines today. Per-vertex
+    Lines label addressing is issue #1424.
+
+    Args:
+        group: The PARENT ladder zarr group (not a subgroup).
+        level_labels: One label sequence per level, in ``additive_0 …``
+            (coarsest → finest) order, each in that level's INPUT order.
+        level_sort_orders: One spatial permutation per level, aligned with
+            ``level_labels``. ``None`` for a level that was not spatially
+            reordered (identity).
+        n_elements: Total element count across all levels (for validation).
+        compressor: Scene default compressor for both CSR arrays.
+
+    Raises:
+        ValueError: If ``level_labels`` and ``level_sort_orders`` differ in
+            length, or (via :func:`write_labels_csr`) if the union length does
+            not match ``n_elements``.
+    """
+    if len(level_labels) != len(level_sort_orders):
+        raise ValueError(
+            f"level_labels has {len(level_labels)} entries but level_sort_orders "
+            f"has {len(level_sort_orders)} — one permutation per level is required"
+        )
+
+    union: list[str] = []
+    for labels, sort_order in zip(level_labels, level_sort_orders):
+        if sort_order is None:
+            union.extend(labels)
+        else:
+            union.extend(labels[i] for i in sort_order)
+
+    # The union is already in final (committed) order — no further permutation.
+    write_labels_csr(group, union, n_elements, compressor, None)

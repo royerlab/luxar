@@ -143,6 +143,11 @@ carries a subset of **whole** polylines with segment indices local to the
 subgroup. The returned node is the parent — the user sees one logical node and
 the viewer's progressive loader walks the subgroups.
 
+`labels` are written by the writer as ONE union CSR on the **parent** (the
+subgroups carry none, because the loader concatenates loaded levels into one
+committed buffer), so the wrappers call `scene._notify_labels_added()` exactly as
+the flat path does — otherwise a ladder-only scene would get no hover overlay.
+
 ## Dependencies
 
 **Sibling modules** (`core/group/`):
@@ -151,7 +156,7 @@ the viewer's progressive loader walks the subgroups.
   `sah_bsp_partition`, `median_bsp_polylines`, `midpoint_bsp_polylines`,
   `DEFAULT_MAX_ELEMENTS`, `warn_if_oversized_single_part`)
 - `compositing` — `COMPOSITING_ATTRS`, `position_bounds_from_array`,
-  `slice_optional_array`
+  `slice_optional_array`, `validate_labels_before_split`
 - `dim_order` — `apply_dim_order_positions`, `apply_dim_order_cholesky`
 - `lod.points`, `lod.lines` — additive-LOD level builders and polyline
   identification

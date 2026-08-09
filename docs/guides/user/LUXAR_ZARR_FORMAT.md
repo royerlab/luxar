@@ -509,6 +509,40 @@ the parent's `level_stats` and inside each subgroup's `lod_stats` (alongside
   offset-adjusts on concatenation. Supports all four `line_type`
   variants (`segments` / `polyline` / `loop` / `indexed`).
 
+**Labels (Points / Lines):** per-element string labels are NOT stored per
+subgroup. No single level's array is what a pick index addresses, since the
+viewer's loader concatenates the levels it has loaded into one buffer — so the
+label CSR (`label_offsets` + `label_bytes`) lives on the **parent** node, which
+consequently carries `has_labels: true`, and the `additive_<i>` subgroups carry no
+label arrays and no `has_labels`. Index `k` of the parent CSR is the `k`-th
+element of the concatenation of `additive_<i>` in order (coarsest → finest), each
+level in its own stored (spatially reordered) order — the same on-disk index space
+a flat labelled leaf's CSR uses, just spanning the levels. Labels are
+all-or-nothing across a ladder: a partially-labelled ladder is rejected at write
+time.
+
+The viewer commits levels coarsest-first, so a fully-loaded ladder maps straight
+through — index `k` is committed slot `k`. The **committed buffer** is not in
+general a prefix of this union, though: the per-level loader compacts out elements
+culled by the current nD slice and fetches only the chunk ranges a query
+intersects, so slots shift. A labelled ladder therefore resolves at the raw
+committed slot — exact for a fully-loaded 3D scene (no per-element slice culling),
+and otherwise carrying the slot shift that issue #1421 / PR #1425 removed for
+**flat** nodes by publishing a visible-slot → on-disk-index map. That map is
+deliberately not published across a ladder (each level's map is in that level's own
+on-disk space, so the concatenation clears it); extending it — offsetting each
+level by the preceding levels' on-disk counts — is the remaining piece of work.
+
+Two further caveats. Under the documented `partition=`-outer +
+`additive_lod=`-inner composition the CSR lands on each `part_<i>` ladder parent
+while the viewer resolves labels against the outermost `kind=partition` wrapper,
+which carries none, so a partitioned ladder does not resolve labels yet
+(pre-existing, and identical for flat partition parts). And for Lines the CSR is
+per-vertex, matching the flat Lines writer, while the viewer's Lines pick id is a
+per-segment storage slot — so in practice only a broadcast (one-string-per-node)
+label set resolves on Lines today; per-vertex Lines label addressing is issue
+#1424.
+
 **Builder API (Python):**
 ```python
 # Same kwarg surface across all three leaf types.
@@ -1151,6 +1185,11 @@ label_i = utf8_decode(label_bytes[offsets[i] : offsets[i+1]])
 ```
 
 Empty strings are treated as null labels (no tooltip shown on hover). Labels are reordered to match spatial ordering if enabled.
+
+One exception to "the CSR sits on the node carrying the elements": a
+multi-additive-LOD Points / Lines node stores a single CSR on the **parent**,
+spanning its `additive_<i>` subgroups (which carry none) — see the **Labels**
+paragraph in the "Multi-additive LOD (progressive loading)" section above.
 
 #### Per-Element Image Labels (CSR-style)
 
