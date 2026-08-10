@@ -262,6 +262,7 @@ def add_points_impl(
                 stacklevel=2,
             )
         elif additive_lod is not None:
+            from ..lod.group import resolve_reveal_spatial_dims
             from ..lod.points import (
                 make_additive_lod_points,
                 resolve_additive_axis_points,
@@ -302,7 +303,9 @@ def add_points_impl(
                     scalars=scalars_for_energy,
                     salience_kind=additive_spec.get("salience_kind", "size"),
                     reveal_centre=additive_spec.get("reveal_centre"),
-                    spatial_dims=additive_spec.get("spatial_dims"),
+                    spatial_dims=resolve_reveal_spatial_dims(
+                        additive_spec, scene, ndim
+                    ),
                 )
                 if len(levels) > 1:
                     return add_points_multi_lod_wrapper_impl(

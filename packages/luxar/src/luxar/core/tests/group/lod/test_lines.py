@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.lines import (
     _indexed_connected_components,
     compute_additive_order_lines,
@@ -883,3 +883,77 @@ class TestLinesStreamBreakpoints:
         joined = np.concatenate([m for level in levels for m in level])
         assert joined.size == n
         assert np.array_equal(np.unique(joined), np.arange(n))
+
+
+class TestRevealSpatialDimsFromSceneLines:
+    """``add_lines`` fills ``spatial_dims`` from the scene, like ``add_points``.
+
+    The extent rule alone cannot drop a STACKED time column (it varies across
+    polylines exactly like a spatial axis does), so the adder passes the scene's
+    displayed dims. Six widely-spaced timepoints x two spatial shells at
+    |x| = 1 and 40, symmetric about x = 0 so the shells sit at genuinely
+    different radii from the bbox centre; one 2-vertex segment per (t, x).
+    """
+
+    _TIMES = (0.0, 20.0, 40.0, 60.0, 80.0, 100.0)
+
+    @classmethod
+    def _verts(cls) -> np.ndarray:
+        rows = []
+        for t in cls._TIMES:
+            for x in (1.0, -1.0, 40.0, -40.0):
+                rows.append([t, x, 0.0, 0.0])
+                rows.append([t, x, 1.0, 0.0])
+        return np.asarray(rows, dtype=np.float32)
+
+    @staticmethod
+    def _dims_4d() -> Dimensions:
+        return Dimensions(
+            [
+                Dimension("time", range=(0.0, 100.0), discrete=True, display=False),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+
+    def test_stacked_time_does_not_delay_an_off_centre_timepoint(
+        self, tmp_path
+    ) -> None:
+        verts = self._verts()
+        output = tmp_path / "reveal_lines_4d.luxar.zarr"
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=self._dims_4d())
+            scene.add_lines(
+                "ln",
+                verts,
+                widths=np.full(len(verts), 0.5, np.float32),
+                line_type="segments",
+                additive_lod=dict(method="radial", n_lods=2),
+            )
+
+        from luxar.encoding import ArrayDecoder
+
+        grp = zarr.open(str(output), mode="r")["ln"]
+        assert int(grp.attrs["n_additive_sublods"]) == 2
+        first = np.asarray(
+            ArrayDecoder().decode(grp["additive_0"]["vertices"]), dtype=np.float64
+        )
+        # Level 0 = the inner shell at EVERY timepoint, whole polylines only.
+        assert first.shape[0] == 24
+        np.testing.assert_allclose(np.abs(first[:, 1]), 1.0, atol=1e-2)
+        assert sorted(set(np.round(first[:, 0]).tolist())) == list(self._TIMES)
+
+    def test_control_the_extent_rule_alone_mixes_the_shells(self) -> None:
+        """Sensitivity control on identical data, through the bare-array API."""
+        verts = self._verts()
+        levels = make_additive_lod_lines(
+            verts,
+            line_type="segments",
+            widths=np.full(len(verts), 0.5, np.float32),
+            method="radial",
+            n_lods=2,
+        )
+        first = np.concatenate([verts[m] for m in levels[0]])
+        assert np.abs(first[:, 1]).max() > 1.0
+        assert sorted(set(np.round(first[:, 0]).tolist())) != list(self._TIMES)

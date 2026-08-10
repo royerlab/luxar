@@ -161,13 +161,17 @@ Three consequences, each load-bearing:
   Consequence to know about: cross-fade and the `e >= 0.6` early-upgrade release
   are therefore also inactive for a reveal, so shells hard-switch.
 
-Distance is measured only over axes with non-zero extent, so a stacked
-time/channel column cannot become a shell dimension (shells would otherwise
-expand through *time* as well as space). Override with `spatial_dims`.
+Distance is measured only over the axes with non-zero **covariance** extent
+(`GSplatData._nondegenerate_axes`), so a stacked time/channel axis — built with
+`sigma=0` — cannot become a shell dimension (the splats furthest in time would
+otherwise land at the end of the ladder). Override with `spatial_dims`.
 
 The same `radial` method, with the same two knobs and the same no-stamps rule, is
 available on Points and Lines — see `core/group/lod/`. On Lines it orders whole
 polylines by their own centre, so every prefix keeps valid segment topology.
+Those two have no covariance to read, so their shell axes come from the scene's
+displayed dims (`resolve_reveal_spatial_dims`), falling back to non-zero
+positional extent when the positions are not scene-aligned.
 
 `auto` is the default. It resolves (via `resolve_additive_method`) to `greedy`
 for `N ≤ _AUTO_ADDITIVE_MAX_N` (= 5000) and to `self_energy` above it. Rationale:

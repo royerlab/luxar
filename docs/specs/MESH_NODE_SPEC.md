@@ -1612,9 +1612,15 @@ stating because they are what make it read as a reveal:
 
 - the centre is the **node's own bbox centre, not the scene origin**, so a dataset far
   from the origin grows from its own middle rather than in from one corner;
-- distance is measured over **axes with non-zero extent only**, so a stacked time or
-  channel column cannot become a shell dimension — otherwise the shells would expand
-  through *time* as well as space.
+- the distance spans the **spatial axes only**, so a stacked time or channel column
+  cannot become a shell dimension — otherwise the elements furthest in time land at the
+  end of the ladder and an off-centre timepoint's slice paints last instead of growing
+  outward. How that set is found differs by geometry, and it is worth knowing which you
+  get: gsplats use the axes with real **covariance** extent (`_nondegenerate_axes`),
+  which a stacked axis fails by construction (it is built with `sigma=0`); element
+  geometries have no covariance, so `add_points` / `add_lines` take the scene's
+  **displayed** dims, falling back to non-zero positional extent when the positions are
+  not scene-aligned. Either way `spatial_dims` overrides it.
 
 On Lines it orders **whole polylines** by their own centre, so every prefix keeps valid
 segment topology. For **mesh** the ladder itself does not exist yet — the reveal is the

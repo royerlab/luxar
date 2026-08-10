@@ -652,3 +652,56 @@ def test_annotate_still_stamps_a_non_reveal_ladder(tmp_path: Path) -> None:
     stamped, n, has_w = _stamp_counts(store)
     assert stamped == n, f"only {stamped}/{n} sub-LODs stamped on an energy ladder"
     assert has_w
+
+
+def test_with_quality_does_not_re_add_the_weight_to_a_reveal_level(
+    tmp_path: Path,
+) -> None:
+    """The Q pass writes `reference_energy` per lod-group child — but not on a reveal.
+
+    Otherwise a single `annotate-quality --with-quality` run contradicts itself: the
+    e-pass erases the weight from a radial-laddered level and the Q pass immediately
+    puts it back, leaving exactly the half-written pair the reveal exists to avoid.
+    `quality` still goes on — it is a standalone readout, not half of the e pair.
+    """
+    data = _make_random_gsplat(n=400)
+    out = tmp_path / "levels_radial.gsplats.zarr"
+    build_recipe(
+        data,
+        "levels",
+        RecipeParams(
+            n_lods=3,
+            levels=1,
+            compression_factor=8,
+            additive_method="radial",
+            device="cpu",
+            seed=0,
+        ),
+    ).save(out)
+
+    annotate_quality_store(out, with_quality=True, device="cpu")
+
+    root = zarr.open(str(out), mode="r")
+    n_children = sum(1 for k in root.group_keys() if str(k).startswith("child_"))
+    assert n_children >= 2, "the levels recipe must produce a kind=lod ladder"
+    reveal_children = 0
+    for i in range(n_children):
+        child = root[f"child_{i}"]
+        stats = dict(child.attrs.get("level_stats", {}) or {})
+        n_sub = int(child.attrs.get("n_additive_sublods", 1))
+        subs = [child[f"additive_{j}"] for j in range(n_sub)] if n_sub > 1 else [child]
+        is_reveal = any(
+            dict(s.attrs.get("lod_stats", {}) or {}).get("lod_method") == "radial"
+            for s in subs
+        )
+        assert "quality" in stats, f"child_{i} lost its quality stamp"
+        if is_reveal:
+            reveal_children += 1
+            assert "reference_energy" not in stats, (
+                f"child_{i} is a reveal ladder but the Q pass re-added its weight"
+            )
+        else:
+            # Control, in the same run: a level whose ladder collapsed to one
+            # sub-LOD is not identifiable as a reveal, and keeps its weight.
+            assert "reference_energy" in stats
+    assert reveal_children, "no child was a radial ladder — the assertion was vacuous"

@@ -810,3 +810,78 @@ def test_non_reveal_ladders_still_carry_energy_stamps():
     stats = _sublod_stats(laddered)
     assert [("energy_fraction_cum" in s) for s in stats] == [True, True, True]
     assert "reference_energy" in laddered.substitutive_levels[0].stats
+
+
+def test_radial_erases_an_inherited_reference_energy():
+    """The weight must GO, not merely not be re-added.
+
+    `merged_level_stats` inherits the input level's stats, so a weight is usually
+    already there: a substitutive build stamps one per level (so
+    `--recipe levels/adaptive -m radial` hits this on every level), and so does
+    `gsplat additive` over an annotated tree. Skipping the `setdefault` alone left
+    the ladder half-stamped — no per-level `energy_fraction_cum`, but the leaf
+    weight the viewer pairs it with still on disk.
+    """
+    from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32))
+    level = data.substitutive_levels[0]
+    pre_stamped = GSplatData(
+        substitutive_levels=[
+            SubstitutiveLevel(
+                additive_sublods=level.additive_sublods,
+                compression_factor=level.compression_factor,
+                parent_method=level.parent_method,
+                level_index=level.level_index,
+                stats={**level.stats, "reference_energy": 1234.5},
+            )
+        ],
+        stats=dict(data.stats),
+    )
+
+    laddered = make_additive_lod(pre_stamped, n_lods=3, method="radial")
+    assert "reference_energy" not in laddered.substitutive_levels[0].stats
+
+    # Control: a non-reveal rebuild keeps the inherited weight (setdefault wins,
+    # so the group-consistent value from a substitutive build is not clobbered).
+    kept = make_additive_lod(pre_stamped, n_lods=3, method="mass")
+    assert kept.substitutive_levels[0].stats["reference_energy"] == 1234.5
+
+
+def test_empty_radial_ladder_keeps_both_halves_of_the_pair():
+    """An empty leaf labels itself `lod_method="none"` and stays fully stamped.
+
+    Nothing streams, so e(k)=1.0 makes the 1/e(k) compensation exactly 1 — there
+    is no reveal to protect. Dropping only the leaf weight there would half-write
+    the pair in the other direction, and `annotate-quality` (which mirrors the
+    build for an empty leaf) would then disagree with it.
+    """
+    laddered = make_additive_lod(_make_empty_gsplat(), n_lods=3, method="radial")
+
+    stats = _sublod_stats(laddered)
+    assert [s["energy_fraction_cum"] for s in stats] == [1.0]
+    assert "reference_energy" in laddered.substitutive_levels[0].stats
+
+
+@pytest.mark.parametrize(
+    ("dims", "match"),
+    [
+        ([], "non-empty"),
+        ([-1], "non-negative"),
+        ([0, 0], "must not repeat"),
+        ([0, 7], "out of range"),
+    ],
+    ids=["empty", "negative", "duplicate", "out-of-range"],
+)
+def test_radial_rejects_malformed_spatial_dims(dims: list[int], match: str) -> None:
+    """Each of these silently produced a WRONG ordering before being rejected.
+
+    A negative index ALIASES to another column under numpy indexing, a repeat
+    DOUBLE-COUNTS that axis in the distance, and an empty selection scores every
+    splat 0.0 — degrading the ladder to input order with nothing to show it. The
+    element-side scorer rejects the same four; the CLI bounds-checks too, but the
+    Python API reaches here directly.
+    """
+    data = _make_random_gsplat(n=8, ndim=3, seed=3)
+    with pytest.raises(ValueError, match=match):
+        compute_additive_order(data, method="radial", spatial_dims=dims)

@@ -251,7 +251,9 @@ def compute_additive_order_lines(
         reveal_centre: ``radial`` only — centre of the shells, defaulting to the
             spatial bounding-box centre of the polyline representatives.
         spatial_dims: ``radial`` only — columns the distance is measured over,
-            defaulting to the axes with non-zero extent.
+            defaulting to the columns with non-zero extent (which drops a
+            *constant* time/channel column but not a *stacked* one — see
+            :func:`~luxar.core.group.lod.group.radial_element_score`).
 
     Returns:
         ``(polyline_permutation, per_level_polyline_counts)``. The
@@ -304,9 +306,9 @@ def compute_additive_order_lines(
         # concentric shells. A polyline is revealed WHOLE — the ordering is over
         # polylines, not vertices — so segment topology survives every prefix.
         #
-        # ALL columns, not just the first three: `radial_element_score` derives
-        # its spatial axes from non-zero extent, and it can only exclude a
-        # stacked time/channel column if it can see it.
+        # ALL columns, not just the first three: the shell axes are chosen from
+        # the full column set (by `spatial_dims`, or by non-zero extent), so
+        # truncating to 3 would silently pick the wrong ones on nD data.
         #
         # Returns an EMPTY natural partition, deliberately — see the Points
         # equivalent: per-level counts would make `make_additive_lod_lines`
@@ -445,10 +447,13 @@ def make_additive_lod_lines(
           whole-polyline boundaries while honouring the vertex budget even when
           polyline lengths are highly skewed.
         reveal_centre: For ``method='radial'`` — centre of the concentric
-            shells, defaulting to the vertex bounding-box centre.
+            shells, defaulting to the bounding-box centre of the per-polyline
+            representatives (each polyline's own bbox centre).
         spatial_dims: For ``method='radial'`` — the vertex columns the shell
-            distance is measured over, defaulting to the axes with non-zero
-            extent.
+            distance is measured over, defaulting to the columns with non-zero
+            extent (which excludes a *constant* time/channel column, but not a
+            *stacked* one — see
+            :func:`~luxar.core.group.lod.group.radial_element_score`).
 
     Returns:
         List of LOD-level entries. Each entry is a list of per-polyline

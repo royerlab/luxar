@@ -325,6 +325,7 @@ def add_lines_impl(
                 stacklevel=2,
             )
         elif additive_lod is not None:
+            from ..lod.group import resolve_reveal_spatial_dims
             from ..lod.lines import (
                 make_additive_lod_lines,
                 resolve_additive_axis_lines,
@@ -366,7 +367,9 @@ def add_lines_impl(
                     scalars=scalars_for_energy,
                     salience_kind=additive_spec.get("salience_kind", "size"),
                     reveal_centre=additive_spec.get("reveal_centre"),
-                    spatial_dims=additive_spec.get("spatial_dims"),
+                    spatial_dims=resolve_reveal_spatial_dims(
+                        additive_spec, scene, vert_arr.shape[1]
+                    ),
                 )
                 if len(polyline_levels) > 1:
                     return add_lines_multi_lod_wrapper_impl(

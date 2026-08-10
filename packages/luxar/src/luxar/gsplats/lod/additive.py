@@ -447,12 +447,35 @@ def _radial_score(
     time or channel axis has zero variance, and including it would make the
     shells expand through TIME as well as space (every timepoint of the innermost
     shell before any of the next), which is not a reveal.
+
+    An explicit ``spatial_dims`` is validated rather than trusted, mirroring the
+    element-side :func:`~luxar.core.group.lod.group.radial_element_score`: every
+    rejected case silently produced a WRONG ordering instead of an error — a
+    negative index ALIASES to another column under numpy indexing, a repeat
+    DOUBLE-COUNTS that axis in the distance, and an empty selection scores every
+    splat 0.0, degrading the ladder to input order with nothing to show it.
     """
-    dims = (
-        np.asarray(spatial_dims, dtype=np.intp)
-        if spatial_dims is not None
-        else data._nondegenerate_axes()
-    )
+    if spatial_dims is None:
+        dims = data._nondegenerate_axes()
+    else:
+        dims = np.asarray(spatial_dims, dtype=np.intp)
+        if dims.ndim != 1 or dims.size == 0:
+            raise ValueError("spatial_dims must be a non-empty sequence of indices")
+        if int(dims.min()) < 0:
+            raise ValueError(
+                "spatial_dims must be non-negative (a negative index would alias "
+                f"to another column); got {list(spatial_dims)}"
+            )
+        if np.unique(dims).size != dims.size:
+            raise ValueError(
+                "spatial_dims must not repeat an axis (a repeat would count it "
+                f"twice in the distance); got {list(spatial_dims)}"
+            )
+        if int(dims.max()) >= data.ndim:
+            raise ValueError(
+                f"spatial_dims {list(spatial_dims)} out of range for centers with "
+                f"{data.ndim} columns"
+            )
     pts = np.asarray(data.centers, dtype=np.float64)[:, dims]
     if centre is None:
         origin = (pts.min(axis=0) + pts.max(axis=0)) / 2.0
@@ -1002,7 +1025,21 @@ def make_additive_lod(
     # contract — the viewer's display gate uses `reference_energy` as the
     # aggregation weight for the per-level fractions, and a weight with nothing
     # to weight is a half-written stamp.
-    if not _is_reveal_method(method):
+    #
+    # POP, not merely skip: `merged_level_stats` inherits the input level's stats,
+    # so a weight is usually already there — a substitutive build stamps one per
+    # level (so `--recipe levels/adaptive -m radial` hits this on every level),
+    # and so do `gsplat additive` over an annotated tree and any re-ladder of a
+    # previously energy-ordered leaf. Skipping the `setdefault` would leave those
+    # untouched and the ladder half-stamped anyway.
+    #
+    # The n == 0 branch is the one exception: it labels itself `lod_method="none"`
+    # and stamps a trivially-complete e(k)=1.0 (nothing to stream, so 1/e(k) is
+    # exactly 1), so it keeps its weight — and `annotate-quality` mirrors that
+    # empty-leaf case, which it could not do if the pair were split here.
+    if _is_reveal_method(method) and n > 0:
+        merged_level_stats.pop("reference_energy", None)
+    else:
         merged_level_stats.setdefault("reference_energy", float(reference_energy))
     new_sub_levels = list(data.substitutive_levels)
     new_sub_levels[s_target] = SubstitutiveLevel(

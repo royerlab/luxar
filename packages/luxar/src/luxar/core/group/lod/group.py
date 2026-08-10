@@ -894,6 +894,52 @@ REVEAL_ADDITIVE_METHODS: frozenset[str] = REVEAL_METHODS
 is_reveal_additive_method = is_reveal_method
 
 
+def resolve_reveal_spatial_dims(
+    spec: Dict[str, Any], scene: Any, n_cols: int
+) -> Optional[List[int]]:
+    """The ``spatial_dims`` a scene-aware adder should hand the reveal scorer.
+
+    The caller's explicit value always wins. Otherwise, and only for a reveal
+    ordering, fall back to :func:`default_reveal_spatial_dims` — the displayed
+    dims — so a stacked time/channel column cannot become a shell dimension.
+    ``None`` leaves :func:`radial_element_score` on its own extent rule.
+    """
+    explicit = spec.get("spatial_dims")
+    if explicit is not None or not is_reveal_additive_method(str(spec.get("method"))):
+        return explicit
+    return default_reveal_spatial_dims(scene, n_cols)
+
+
+def default_reveal_spatial_dims(scene: Any, n_cols: int) -> Optional[List[int]]:
+    """The scene's DISPLAYED columns, when a reveal can be anchored to them.
+
+    :func:`radial_element_score`'s own fallback — the columns with non-zero
+    positional extent — drops a *constant* time/channel column (the shape a
+    one-node-per-timepoint scene has), but it cannot drop a **stacked** one: a
+    column holding several timepoints in one array varies across elements exactly
+    the way a spatial axis does, so extent has nothing to separate them by. The
+    scene does: a stacked axis is a NON-DISPLAYED dimension. Anchoring the shells
+    to the displayed dims is the same Auto rule :func:`resolve_coarsen_dims` uses
+    for coarsening barriers.
+
+    Only the scene-aware callers (the ``add_points`` / ``add_lines`` adders) can
+    apply this; ``make_additive_lod_points`` / ``_lines`` are handed bare arrays
+    and keep the extent fallback.
+
+    Returns ``None`` — meaning "keep the extent fallback" — when there is no
+    dimension metadata, when the positions are not aligned with it (``dim_order``
+    / ``extend_to_all`` reshaped the columns, so a scene-dim index is not a
+    position column), or when every dimension is displayed (nothing to exclude).
+    """
+    dims = getattr(scene, "_dimensions", None) if scene is not None else None
+    if dims is None or int(getattr(dims, "ndim", -1)) != int(n_cols):
+        return None
+    displayed = sorted({int(d) for d in dims.displayed if 0 <= int(d) < n_cols})
+    if not displayed or len(displayed) == n_cols:
+        return None
+    return displayed
+
+
 def _resolve_score_dims(pts_all: NDArray, spatial_dims: Optional[List[int]]) -> NDArray:
     """Validate an explicit ``spatial_dims``, or derive it from non-zero extent.
 
@@ -956,13 +1002,19 @@ def radial_element_score(
     the scene origin: a dataset sitting far from the origin would otherwise
     reveal from one corner instead of growing from its own middle.
 
-    ``spatial_dims`` defaults to the axes with **non-zero extent**. That is the
-    element-side analogue of the gsplat path's ``_nondegenerate_axes`` (which is
-    covariance-based and has no meaning here), and it matters MORE here: a
-    stacked time or channel column in an element position array is a real
-    coordinate, not a degenerate covariance axis, so including it would make the
-    shells expand through time as well as space — every timepoint of the
-    innermost shell before any of the next, which is not a reveal.
+    ``spatial_dims`` defaults to the columns with **non-zero extent** — the
+    element-side stand-in for the gsplat path's ``_nondegenerate_axes`` (which is
+    covariance-based and has no meaning here). Read its reach precisely: it drops
+    a *constant* time/channel column, so a one-node-per-timepoint scene is
+    handled, but a **stacked** column (several timepoints in one array) varies
+    across elements exactly like a spatial axis and IS included — including it
+    pushes the elements furthest in time to the end of the ladder, so an
+    off-centre timepoint's slice paints last instead of growing outward. Extent
+    alone cannot separate the two cases; the scene can, which is why the
+    ``add_points`` / ``add_lines`` adders pass
+    :func:`default_reveal_spatial_dims` (the displayed dims) when the caller
+    named none. On a bare array — this function's own contract — pass
+    ``spatial_dims`` explicitly for stacked data.
 
     Unlike ``spatial-uniform`` / ``poisson-disk``, this deliberately does NOT
     require ``d >= 3``: a distance is well defined in any dimension, and a 2D

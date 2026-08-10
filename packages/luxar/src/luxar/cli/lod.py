@@ -20,7 +20,11 @@ from typing import Any, Optional
 import typer
 from arbol import aprint, asection
 
-from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
+from luxar.utils.lod_methods import (
+    GSPLAT_ADDITIVE_CHOICES_HELP,
+    REVEAL_METHODS,
+    is_reveal_method,
+)
 
 # Shared recipe/streaming validation surface — moved to
 # gsplat_ops/recipe_shared.py (consumed by six gsplat_ops modules);
@@ -189,13 +193,16 @@ def _parse_reveal_knobs(
     otherwise get an energy-ordered ladder with nothing to indicate the flag was
     dropped.
     """
-    if (reveal_centre is not None or spatial_dims is not None) and (
-        method_norm != "radial"
+    if (reveal_centre is not None or spatial_dims is not None) and not is_reveal_method(
+        str(method_norm)
     ):
+        # Asked of the shared registry, not compared against a literal, so a
+        # second reveal ordering needs no edit here.
         bad = "--reveal-centre" if reveal_centre is not None else "--spatial-dims"
+        listed = " / ".join(sorted(REVEAL_METHODS))
         raise typer.BadParameter(
-            f"{bad} only applies to the radial ordering; pass "
-            f"-m radial (got -m {method_norm})."
+            f"{bad} only applies to a reveal ordering ({listed}); pass "
+            f"-m {sorted(REVEAL_METHODS)[0]} (got -m {method_norm})."
         )
 
     parsed_centre = _parse_reveal_centre(reveal_centre)

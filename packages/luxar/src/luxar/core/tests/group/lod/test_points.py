@@ -12,11 +12,13 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import zarr
 
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.points import (
     DEFAULT_METHOD,
     DEFAULT_N_LODS,
@@ -150,10 +152,11 @@ class TestRadialOrderPoints:
         np.testing.assert_array_equal(near, moved)
 
     def test_zero_extent_column_is_not_a_shell_dimension(self) -> None:
-        # A stacked time/channel column is a real coordinate here (unlike the
-        # gsplat path's degenerate covariance axes), so it must be excluded by
-        # extent or the shells would expand through time as well as space —
-        # every timepoint of the inner shell before any of the next.
+        # A CONSTANT extra column — one node per timepoint — must not join the
+        # distance. This is the whole reach of the extent rule: a STACKED column
+        # varies across elements exactly like a spatial axis and is NOT excluded
+        # here, which is why the adders pass the scene's displayed dims instead
+        # (see TestRevealSpatialDimsFromScene).
         pos4 = np.hstack(
             [self._PTS, np.full((self._PTS.shape[0], 1), 7.0, dtype=np.float32)]
         )
@@ -640,3 +643,122 @@ class TestStreamBreakpoints:
         sizes = [int(grp[f"additive_{i}"].attrs["n_points"]) for i in range(n_sub)]
         assert sizes == [500, 500, 1000, 2000]
         assert sum(sizes) == 4_000
+
+
+class TestRevealSpatialDimsFromScene:
+    """The scene fills in ``spatial_dims`` for a reveal, so a STACKED axis is out.
+
+    ``radial_element_score``'s own default — the columns with non-zero positional
+    extent — drops a *constant* time/channel column but cannot drop a stacked
+    one: it varies across elements exactly like a spatial axis does. The scene
+    can, because a stacked axis is a non-displayed dimension.
+    """
+
+    @staticmethod
+    def _dims_4d() -> Dimensions:
+        return Dimensions(
+            [
+                Dimension("time", range=(0.0, 5.0), discrete=True, display=False),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+
+    def test_resolver_takes_the_displayed_dims(self) -> None:
+        from luxar.core.group.lod.group import resolve_reveal_spatial_dims
+
+        scene = SimpleNamespace(_dimensions=self._dims_4d())
+        spec = {"method": "radial", "spatial_dims": None}
+        assert resolve_reveal_spatial_dims(spec, scene, 4) == [1, 2, 3]
+
+    def test_resolver_leaves_an_explicit_value_and_a_non_reveal_alone(self) -> None:
+        from luxar.core.group.lod.group import resolve_reveal_spatial_dims
+
+        scene = SimpleNamespace(_dimensions=self._dims_4d())
+        explicit = {"method": "radial", "spatial_dims": [2, 3]}
+        assert resolve_reveal_spatial_dims(explicit, scene, 4) == [2, 3]
+        # A non-reveal ordering never gets a shell-geometry default injected.
+        assert resolve_reveal_spatial_dims({"method": "random"}, scene, 4) is None
+
+    @pytest.mark.parametrize(
+        ("scene", "n_cols"),
+        [
+            (SimpleNamespace(_dimensions=None), 4),
+            (SimpleNamespace(_dimensions=Dimensions.default_3d()), 3),
+            (SimpleNamespace(), 4),
+        ],
+        ids=["no-dimensions", "all-displayed", "no-attr"],
+    )
+    def test_resolver_falls_back_to_the_extent_rule(self, scene, n_cols) -> None:
+        # None means "keep radial_element_score's own default".
+        from luxar.core.group.lod.group import resolve_reveal_spatial_dims
+
+        spec = {"method": "radial", "spatial_dims": None}
+        assert resolve_reveal_spatial_dims(spec, scene, n_cols) is None
+
+    def test_resolver_falls_back_when_columns_are_not_scene_aligned(self) -> None:
+        # dim_order / extend_to_all reshaped the columns, so a scene-dim index is
+        # no longer a position column — the extent rule is the only safe default.
+        from luxar.core.group.lod.group import resolve_reveal_spatial_dims
+
+        scene = SimpleNamespace(_dimensions=self._dims_4d())
+        spec = {"method": "radial", "spatial_dims": None}
+        assert resolve_reveal_spatial_dims(spec, scene, 3) is None
+
+    #: Six timepoints, spaced far enough apart that time DOMINATES the spatial
+    #: spread if it joins the distance, and two spatial shells at |x| = 1 and 40
+    #: symmetric about x = 0 (so the shells sit at genuinely different radii from
+    #: the bbox centre — a shell pair on one side of it would be equidistant and
+    #: the assertions below would pass on a tie plus input order alone).
+    _TIMES = (0.0, 20.0, 40.0, 60.0, 80.0, 100.0)
+
+    @classmethod
+    def _stacked_cloud(cls) -> np.ndarray:
+        rows = [[t, x, 0.0, 0.0] for t in cls._TIMES for x in (1.0, -1.0, 40.0, -40.0)]
+        return np.asarray(rows, dtype=np.float32)
+
+    def test_stacked_time_does_not_delay_an_off_centre_timepoint(
+        self, tmp_path
+    ) -> None:
+        """End-to-end through ``add_points`` on a stacked 4D cloud.
+
+        A reveal must put every INNER-shell point in the first level whatever its
+        timepoint. Scoring over the time column too front-loads the middle
+        timepoints instead, so the outer shell at t=40/60 overtakes the inner
+        shell at t=0/100 — see the control below.
+        """
+        pos = self._stacked_cloud()
+        output = tmp_path / "reveal4d.luxar.zarr"
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=self._dims_4d())
+            scene.add_points("cloud", pos, additive_lod=dict(method="radial", n_lods=2))
+
+        grp = zarr.open(str(output), mode="r")["cloud"]
+        assert int(grp.attrs["n_additive_sublods"]) == 2
+        first = _decoded_positions(grp["additive_0"])
+        assert first.shape[0] == 12
+        # The whole inner shell, all six timepoints of it, and nothing else.
+        np.testing.assert_allclose(np.abs(first[:, 1]), 1.0, atol=1e-2)
+        assert sorted(set(np.round(first[:, 0]).tolist())) == list(self._TIMES)
+
+    def test_control_the_extent_rule_alone_mixes_the_shells(self) -> None:
+        """Sensitivity control for the test above, on identical data.
+
+        Without the scene (the bare-array API), the time column has real extent
+        and joins the distance — so level 0 holds part of the OUTER shell and
+        misses two timepoints of the inner one. This is what makes the end-to-end
+        assertion above non-vacuous.
+        """
+        pos = self._stacked_cloud()
+        levels = make_additive_lod_points(pos, method="radial", n_lods=2)
+        first = pos[levels[0]]
+        assert np.abs(first[:, 1]).max() > 1.0
+        assert sorted(set(np.round(first[:, 0]).tolist())) != list(self._TIMES)
+
+
+def _decoded_positions(sub: zarr.Group, root: zarr.Group | None = None) -> np.ndarray:
+    """Positions of one sub-LOD, decoded — AUTO stores them quantized per axis."""
+    from luxar.encoding import ArrayDecoder
+
+    return np.asarray(ArrayDecoder().decode(sub["positions"], root), dtype=np.float64)

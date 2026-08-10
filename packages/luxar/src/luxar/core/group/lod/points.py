@@ -118,8 +118,11 @@ def compute_additive_order_points(
             from the origin still grows from its own middle). One coordinate per
             spatial axis.
         spatial_dims: ``radial`` only — position columns the distance is measured
-            over, defaulting to the axes with non-zero extent so a stacked
-            time/channel column cannot become a shell dimension.
+            over, defaulting to the columns with non-zero extent. That drops a
+            *constant* time/channel column but not a *stacked* one (it varies
+            like a spatial axis), so pass it explicitly for stacked data — or go
+            through ``add_points``, which fills it from the scene's displayed
+            dims (:func:`~luxar.core.group.lod.group.resolve_reveal_spatial_dims`).
 
     Returns:
         ``(permutation, per_level_counts)`` — same shape as
@@ -386,8 +389,10 @@ def make_additive_lod_points(
         reveal_centre: For ``method='radial'`` — centre of the concentric
             shells, defaulting to the spatial bounding-box centre.
         spatial_dims: For ``method='radial'`` — the position columns the
-            shell distance is measured over, defaulting to the axes with
-            non-zero extent.
+            shell distance is measured over, defaulting to the columns with
+            non-zero extent (which excludes a *constant* time/channel column,
+            but not a *stacked* one — see
+            :func:`~luxar.core.group.lod.group.radial_element_score`).
 
     Returns:
         List of per-level index arrays, length

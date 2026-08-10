@@ -166,6 +166,14 @@ def _merge_attr_dict(
     group.attrs[key] = merged
 
 
+def _ladder_sub_groups(group: zarr.Group) -> List[zarr.Group]:
+    """The additive sub-LOD groups of a leaf, or the leaf itself when unladdered."""
+    n_additive = int(group.attrs.get("n_additive_sublods", 1))
+    if n_additive > 1:
+        return [group[f"additive_{i}"] for i in range(n_additive)]
+    return [group]
+
+
 def _ladder_is_reveal(sub_groups: List[zarr.Group]) -> bool:
     """Whether this ladder was ordered by a REVEAL method, read from its own stamps.
 
@@ -264,12 +272,7 @@ def _annotate_leaf(
     leaf. Only ``amplitudes`` (folded to alpha-effective ``A·α`` via any RGBA
     ``colors``) + the Cholesky diagonal are decoded, one sub-LOD resident at a
     time."""
-    n_additive = int(group.attrs.get("n_additive_sublods", 1))
-    sub_groups = (
-        [group[f"additive_{i}"] for i in range(n_additive)]
-        if n_additive > 1
-        else [group]
-    )
+    sub_groups = _ladder_sub_groups(group)
 
     raw_energies: List[float] = []
     counts: List[int] = []
@@ -471,12 +474,15 @@ def _annotate_node(
                 quality = mixture_quality(
                     level, ref, max_pair_splats=max_pair_splats, device=device
                 ).quality
-            _merge_attr_dict(
-                child,
-                "level_stats",
-                {"quality": quality, "reference_energy": ref_w},
-                dry_run=dry_run,
-            )
+            level_stamp: Dict[str, Any] = {"quality": quality}
+            if not _ladder_is_reveal(_ladder_sub_groups(child)):
+                # A reveal child carries no `energy_fraction_cum` (the e-only
+                # pass above erased any), so it must carry no `reference_energy`
+                # either — otherwise this Q pass would put back exactly the
+                # half-written stamp that pass just removed. `quality` still
+                # goes on: it is a standalone readout, not half of the e pair.
+                level_stamp["reference_energy"] = ref_w
+            _merge_attr_dict(child, "level_stats", level_stamp, dry_run=dry_run)
             report.levels.append(
                 LevelStamp(
                     path=str(child.path or "/"),
