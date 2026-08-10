@@ -43,7 +43,8 @@ declare global {
       ready: Promise<void>;
       renderGLSL: (shaderName: string) => Uint8Array;
       renderTSL: (
-        shaderName: string
+        shaderName: string,
+        opts?: { native?: boolean }
       ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
       listShaders: () => string[];
     };

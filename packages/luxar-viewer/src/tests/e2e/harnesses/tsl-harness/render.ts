@@ -105,7 +105,8 @@ export function renderGLSL(shaderName: string): Uint8Array {
  * `NodeBuilderState` that the backend stashes per-RenderObject.
  */
 export async function renderTSL(
-  shaderName: string
+  shaderName: string,
+  opts: { native?: boolean } = {}
 ): Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }> {
   const entry = SHADER_REGISTRY[shaderName];
   if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
@@ -118,8 +119,24 @@ export async function renderTSL(
     ? entry.buildTSLMaterial(uniforms)
     : (entry.source.webgpu(uniforms) as THREE.Material);
 
+  // `native: true` runs the graph on REAL WebGPU (WGSL codegen + Dawn/Metal
+  // execution) instead of the WebGL backend — the pixel-equivalence probe
+  // for browsers that have `navigator.gpu` (system Chrome; Playwright's
+  // bundled Chromium usually does not). Callers must check availability
+  // first: with `native` and no adapter, renderer.init() rejects. NOTE:
+  // the native readback is Y-FLIPPED relative to the WebGL paths'
+  // (verified 2026-08 on Apple Metal 3, where every line-volprim-* fixture
+  // matched its GLSL render EXACTLY — mean-covered diff 0.000 — after the
+  // flip); compare against renderGLSL with a row flip.
+  if (opts.native && !('gpu' in navigator)) {
+    throw new Error('native WebGPU requested but navigator.gpu is unavailable');
+  }
   const { WebGPURenderer } = await import('three/webgpu');
-  const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: true });
+  const renderer = new WebGPURenderer({
+    antialias: false,
+    alpha: false,
+    forceWebGL: !opts.native,
+  });
   renderer.setPixelRatio(1);
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
   await renderer.init();

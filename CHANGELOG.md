@@ -166,6 +166,18 @@ polynomial. With the flag off, the screen-space pipeline is byte-identical
 sum-mode sharpness LUT follow in later #1352 parts; the flip to
 volumetric-by-default is gated on the full perf + visual A/B (G1).
 
+Real WebGPU is verified for the primitive, not assumed: `renderTSL` grew
+a `native: true` mode (WGSL codegen + Dawn execution instead of the
+forced-WebGL backend), and on Apple Metal 3 every `line-volprim-*`
+fixture renders **exactly** its GLSL image — mean covered-pixel diff
+0.000 across all ten, after the native readback's documented row flip.
+The scaled-joint fixture doubles as the model-matrix regression from the
+PR review: the same joint authored under a non-uniform `mesh.scale`
+composes back to the identical world geometry, so its render must equal
+the unscaled joint's on each backend independently — object-space
+partner normalization (the reviewed bug) fails it at 1.8× the gate,
+while cross-backend parity alone would have let that bug through.
+
 #### A stale WASM build now names the kernel it is missing (#1412)
 
 `public/wasm/` is gitignored, so a checkout can hold a build that imports and
@@ -608,7 +620,7 @@ The capability flip is `lod=True` (alongside the `partition=True` of the entry b
 and the flavour split is why `lod` is its own column: it gates `kind=lod` groups, whose
 levels REPLACE one another, while an additive ladder is `additive_<i>/` subgroups inside
 a leaf. So mesh is LOD-capable and an additive prefix stays impossible. `require_lod_display_type`'s mesh-specific
-paragraph is gone with it — it became dead *and* misleading once every contract type was
+paragraph is gone with it — it became dead _and_ misleading once every contract type was
 LOD-capable, since the only way to reach that branch now is a future type.
 
 Two bugs that only a real write and a real render could find. The level-monotonicity
@@ -841,7 +853,7 @@ Two changes are the viewer's, not the demo's:
   that every other labelled demo has (a 4M-label embedding node) got 2x slower.
   What the run check buys is retained memory rather than time — a full byte
   compare costs about what the decode it replaces does — so it rejects on length
-  and on both *end* bytes before scanning the interior. Distinct labels
+  and on both _end_ bytes before scanning the interior. Distinct labels
   overwhelmingly differ at one end, which keeps that case at parity; without the
   end probes, equal-length labels sharing a prefix measured ~1.7x the old loop.
 - **An unlabelled node no longer logs a warning.** The pick handler asks any
@@ -975,7 +987,7 @@ function that is newly over the limit, or a baselined one whose complexity
 INCREASED, fails the check, while paid-down debt is reported as advisory so the
 baseline can be tightened. Keys deliberately omit line numbers, so an unrelated
 edit above a function never churns the baseline, and a baselined function that
-reappears under a new path at no greater complexity is classified as *moved* —
+reappears under a new path at no greater complexity is classified as _moved_ —
 also advisory, and itemised old-key-to-new-key — so the repository's continuing
 module-move series do not turn a required check red, including the commonest
 move-and-tidy shape. Move detection is disabled when the scan is restricted to
