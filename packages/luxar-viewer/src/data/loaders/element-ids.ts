@@ -45,13 +45,18 @@ export interface ElementIdRange {
  * Whether slot IS the on-disk index for these inputs: one range anchored at 0
  * and nothing compacted out.
  *
- * {@link buildElementIdMap} returns `undefined` for FOUR different reasons —
- * this identity, plus three fail-closed bail-outs — and the two meanings are
- * opposite: identity says "the slot is already right", a bail-out says "the
- * slot is WRONG and no map could be built". A consumer that composes maps (the
- * Points additive-ladder concat, #1439) must not read a bail-out as identity,
- * so it re-asks the question here. Exported to keep one source of truth: the
- * fast path below is this same predicate.
+ * {@link buildElementIdMap} returns `undefined` for FIVE different reasons —
+ * the empty `count <= 0` case, this identity, and three fail-closed bail-outs —
+ * and the meanings are opposite: identity says "the slot is already right", a
+ * bail-out says "the slot is WRONG and no map could be built". A consumer that
+ * composes maps (the Points additive-ladder concat, #1439) must not read a
+ * bail-out as identity, so it re-asks the question here. Exported to keep one
+ * source of truth: the fast path below is this same predicate.
+ *
+ * Note the `count <= 0` return comes FIRST and logs nothing, so it is the one
+ * `undefined` that can reach a caller as a non-identity "unavailable" on a
+ * ZERO-element payload — which is precisely the state the ladder composer
+ * exempts (an empty level writes no slots, so it cannot corrupt any).
  */
 export function isIdentityElementIdMap(
   ranges: readonly ElementIdRange[],

@@ -288,15 +288,25 @@ narrowly-scoped helpers each spatial-index loader composes:
   reads are delegated to `RangeLoader.loadDirectTyped` — the single
   dtype-preserving reader — so `color-loader.ts` keeps only the color-specific
   concerns (RGB layout, `original_dtype` restoration).
-- **`element-ids.ts`** — `buildElementIdMap(ranges, keptConcatIndices, count, logModule)`:
+- **`element-ids.ts`** — `buildElementIdMap(ranges, keptConcatIndices, count, logModule)`
+  and `isIdentityElementIdMap(ranges, keptConcatIndices)`:
   composes the visible-buffer slot → ON-DISK element index map that picking
   resolves per-element labels through (`label_offsets` / `label_bytes` are keyed
   by the on-disk index, while a pick shader can only report a storage slot).
   Shared by the Points projection (`data/points/projection.ts`) and the GSplats
   projection commit (`data/scene-loader/process/data-processor-gsplats.ts`) —
   both diverge from the on-disk index the same two ways (range loading +
-  visibility compaction). Returns `undefined` on the identity case and
-  fail-closed on inconsistent inputs, so callers fall back to the raw slot.
+  visibility compaction). It returns `undefined` for five different reasons, and
+  they do NOT mean the same thing: an empty visible set and the identity case
+  (one range from 0, nothing compacted) both mean "the slot is already the
+  on-disk index", while the three fail-closed bail-outs (count mismatch,
+  non-ascending kept indices, a kept index past the ranges) mean "the slot is
+  WRONG and no map could be built". Either way the caller falls back to the raw
+  slot, but a caller that COMPOSES maps into a wider index space must tell them
+  apart — hence `isIdentityElementIdMap`, the exported predicate the fast path
+  itself uses. The Points projection re-asks it to stamp
+  `LoadedPointsData.elementIdsUnavailable`, which makes the additive-ladder
+  concat refuse a union map instead of substituting identity (#1439).
   Lines uses it for ONE link of a longer chain
   (`data/scene-loader/process/data-processor-lines.ts`): its labels are
   per-vertex, so this helper maps loaded-local vertex → on-disk vertex, and the

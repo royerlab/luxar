@@ -34,11 +34,13 @@ non-integer per-level `n_points`, a parent `n_points` that disagrees with the
 levels' sum (the CSR and the levels are then from different builds), a level whose
 map length disagrees with its point count, and — newly distinguishable — a level
 whose projection WANTED a map but could not build one. That last case needed a new
-signal: `buildElementIdMap` returns `undefined` both for the identity and for its
-three bail-outs, and reading a bail-out as identity would have composed a plausible
-wrong id, so the projection now also stamps
-`LoadedPointsData.elementIdsUnavailable` and the composer refuses the whole union
-map when any level carries it. Refusing is not suppression — there is no channel
+signal: `buildElementIdMap` returns `undefined` for five different reasons — an
+empty visible set, the identity, and three fail-closed bail-outs — and reading a
+non-identity one as identity would have composed a plausible wrong id, so the
+projection now also stamps `LoadedPointsData.elementIdsUnavailable` and the
+composer refuses the whole union map when any NON-EMPTY level carries it (an
+empty level writes no slots, so it cannot corrupt one and is exempt). Refusing is
+not suppression — there is no channel
 for "no answer", so `resolveOnDiskElementId` returns the raw slot and on a sliced
 ladder the tooltip still shows whatever CSR row that hits. What it buys is that the
 wrong id is never one this code composed out of data it knows is inconsistent: no

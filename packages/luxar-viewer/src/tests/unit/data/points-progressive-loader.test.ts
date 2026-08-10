@@ -1438,6 +1438,25 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     expect(result.elementIds).toBeUndefined();
   });
 
+  it('does not burn the warn latch on an EMPTY single-part first paint', async () => {
+    // An empty LOD 0 is the terminal state of any slice that culls everything —
+    // ordinary, not a defect. It publishes no slots, so the single-part branch
+    // exempts it: its only observable effect would be spending the
+    // once-per-loader `_composeWarned` latch on a benign payload, permanently
+    // swallowing a later genuine warning.
+    const spy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const empty = makeLodData(0, 3, { color: 'uint8' });
+      empty.elementIdsUnavailable = true;
+      const result = await makeLoader([empty], [0, 100]).loadPoints(baseViewState);
+      expect(result.pointCount).toBe(0);
+      expect(result.elementIds).toBeUndefined();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('warns at most ONCE per loader about a fail-closed composition', async () => {
     // The concat re-runs on every (generation, lodCount) miss and a view change
     // bumps the generation, so an unlatched warning would spam tens of lines a

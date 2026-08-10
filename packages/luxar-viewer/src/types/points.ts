@@ -147,7 +147,10 @@ export interface LoadedPointsData {
    * Distinct from a plain missing {@link LoadedPointsData.elementIds}, which
    * usually means the identity holds. A consumer that composes this payload
    * into a wider index space (the additive-ladder concat) must not substitute
-   * identity for it — it publishes no map instead. That is not a suppression:
+   * identity for it — it publishes no map instead. ONE exemption: a payload
+   * with `pointCount === 0` contributes no slots to a composition, so it cannot
+   * corrupt one and does not veto its siblings' maps (both ladder-concat
+   * branches skip the flag there). That is not a suppression:
    * with no map, picking reports the raw slot, which on a sliced payload is
    * itself a wrong CSR row. It only guarantees the reported id is never one
    * composed from data known to be inconsistent.

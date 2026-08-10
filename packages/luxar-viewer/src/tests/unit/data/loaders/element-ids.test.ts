@@ -186,12 +186,14 @@ describe('buildElementIdMap', () => {
   });
 });
 
-// `buildElementIdMap` answers `undefined` for FOUR different reasons: the
-// identity fast path, and three fail-closed bail-outs. Their meanings are
-// OPPOSITE — "the slot is already the on-disk index" vs "the slot is wrong and
-// nothing could be built" — so a consumer that composes the result into a wider
-// index space (the Points additive-ladder concat, #1439) re-asks the question
-// through this predicate rather than assuming identity.
+// `buildElementIdMap` answers `undefined` for FIVE different reasons: the empty
+// `count <= 0` case (first, and silent), the identity fast path, and three
+// fail-closed bail-outs. Their meanings are OPPOSITE — "the slot is already the
+// on-disk index" vs "the slot is wrong and nothing could be built" — so a
+// consumer that composes the result into a wider index space (the Points
+// additive-ladder concat, #1439) re-asks the question through this predicate
+// rather than assuming identity. The empty case is the only one that reads as
+// "unavailable" on a ZERO-element payload, which the composer exempts.
 describe('isIdentityElementIdMap', () => {
   it('is true only for a single range anchored at 0 with no compaction', () => {
     expect(isIdentityElementIdMap([{ start: 0, end: 5 }] as ElementIdRange[], null)).toBe(true);
