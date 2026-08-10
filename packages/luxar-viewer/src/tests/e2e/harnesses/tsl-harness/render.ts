@@ -122,14 +122,20 @@ export async function renderTSL(
 
   // `native: true` runs the graph on REAL WebGPU (WGSL codegen + Dawn/Metal
   // execution) instead of the WebGL backend — the pixel-equivalence probe
-  // for browsers that have `navigator.gpu` (system Chrome; Playwright's
-  // bundled Chromium usually does not). Callers must check availability
-  // first: with `native` and no adapter, renderer.init() rejects. The raw
-  // native readback is Y-FLIPPED relative to the WebGL paths', so the flip
-  // is applied below before returning — both modes hand back the same
-  // bottom-up row convention and compare directly against renderGLSL
-  // (verified 2026-08 on Apple Metal 3, where every line-volprim-* fixture
-  // matched its GLSL render EXACTLY — mean-covered diff 0.000).
+  // for browsers with a working adapter (system Chrome). The mode must
+  // FAIL CLOSED: `navigator.gpu` exists even in Playwright's bundled
+  // Chromium with WebGPU off (its requestAdapter() just yields nothing),
+  // and WebGPURenderer does NOT reject there — its `getFallback` swaps in
+  // the WebGL backend with only a console warning, which would silently
+  // hand back a WebGL image with a spurious row flip on top. So the real
+  // guard is the backend-identity assertion AFTER init() below (#1449);
+  // the navigator.gpu check just gives a clearer error where the API is
+  // absent outright. The raw native readback is Y-FLIPPED relative to the
+  // WebGL paths', so the flip is applied before returning — both modes
+  // hand back the same bottom-up row convention and compare directly
+  // against renderGLSL (verified 2026-08 on Apple Metal 3, where every
+  // line-volprim-* fixture matched its GLSL render EXACTLY — mean-covered
+  // diff 0.000).
   if (opts.native && !('gpu' in navigator)) {
     throw new Error('native WebGPU requested but navigator.gpu is unavailable');
   }
@@ -142,6 +148,15 @@ export async function renderTSL(
   renderer.setPixelRatio(1);
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
   await renderer.init();
+  if (opts.native) {
+    const backend = (renderer as unknown as { backend?: { isWebGPUBackend?: boolean } }).backend;
+    if (!backend?.isWebGPUBackend) {
+      renderer.dispose();
+      throw new Error(
+        'native WebGPU requested but the renderer fell back to WebGL (no usable adapter)'
+      );
+    }
+  }
 
   // Capture the generated GLSL / WGSL strings by patching the renderer's
   // NodeManager. `_createNodeBuilderState(nodeBuilder)` is called by

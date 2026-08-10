@@ -1660,8 +1660,8 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // The SAME joint under a non-uniform MODEL SCALE (PR #1426 review,
   // finding 1): positions are authored pre-divided by JOIN_MODEL_SCALE
   // (4, 0.25, 1) and the mesh carries mesh.scale = JOIN_MODEL_SCALE, so
-  // the WORLD geometry — and
-  // therefore the correct render — is identical to `line-volprim-joint`
+  // the WORLD geometry — and therefore the correct render — is identical
+  // to `line-volprim-joint`
   // (widths are world-unit, untouched by the model matrix). The partner
   // direction is fetched in OBJECT space and must be normalized AFTER the
   // modelView transform; normalizing in object space leaves a non-unit
