@@ -16,6 +16,7 @@ import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/consta
 import { SliceCache } from '../../../cache/slice-cache';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
+import { log } from '../../../utils/log';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -1188,15 +1189,17 @@ describe('buildSliceViewSig extend_to_all membership (shared helper)', () => {
   });
 });
 
-describe('PointsProgressiveLoader — elementIds are never published (issue #1421)', () => {
-  // A ladder payload must NEVER carry a slot → on-disk map: each part is a
+describe('PointsProgressiveLoader — elementIds without levelOffsets (issue #1421)', () => {
+  // WITHOUT `levelOffsets` the parent node declares no union label CSR, so no
+  // reader can key by any index this ladder could publish: each part is a
   // sub-LOD (`additive_<i>`) whose arrays live in their own on-disk index
-  // space, while the labels the map would serve are ONE union CSR on the
-  // parent (#1422) keyed by the concatenation of those spaces. The
+  // space, while the labels a map would serve are ONE union CSR on the parent
+  // (#1422) keyed by the concatenation of those spaces. The
   // single-part branch is the FIRST-PAINT state of every ladder, not an
   // "unladdered node", so passing `parts[0]` through verbatim would make
   // hover report an additive_0 index until a second level lands and then
-  // silently switch to the raw slot.
+  // silently switch to the raw slot. (WITH `levelOffsets` — the parent DOES
+  // carry the union CSR — the maps are composed instead; see the #1439 block.)
   function labelledLod(pointCount: number, firstOnDisk: number): LoadedPointsData {
     const data = makeLodData(pointCount, 3, { color: 'uint8' });
     const ids = new Uint32Array(pointCount);
@@ -1238,5 +1241,272 @@ describe('PointsProgressiveLoader — elementIds are never published (issue #142
     const result = await loader.loadPoints(baseViewState);
     expect(result.pointCount).toBe(15);
     expect(result.elementIds).toBeUndefined();
+  });
+});
+
+describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439)', () => {
+  // WITH `levelOffsets` the PARENT node carries one union label CSR keyed by
+  // `additive_0 || additive_1 || …` (each level in its stored order), so every
+  // level's map is composed into that space by adding the preceding levels'
+  // ON-DISK counts. Constructor arg order: (loaders, nLods, path, energyTable,
+  // sliceCache, levelOffsets).
+  function labelledLod(pointCount: number, firstOnDisk: number): LoadedPointsData {
+    const data = makeLodData(pointCount, 3, { color: 'uint8' });
+    const ids = new Uint32Array(pointCount);
+    for (let i = 0; i < pointCount; i++) ids[i] = firstOnDisk + i;
+    data.elementIds = ids;
+    return data;
+  }
+
+  /**
+   * The shape the feature actually sees: a GAPPED map. Range loading and
+   * effective-radius compaction both produce non-contiguous on-disk indices, so
+   * a contiguous run cannot distinguish `base + ids[k]` from `base + ids[0] + k`.
+   */
+  function gappedLod(ids: number[]): LoadedPointsData {
+    const data = makeLodData(ids.length, 3, { color: 'uint8' });
+    data.elementIds = Uint32Array.from(ids);
+    return data;
+  }
+
+  function makeLoader(
+    parts: LoadedPointsData[],
+    levelOffsets: number[] | null,
+    nLods = parts.length
+  ): PointsProgressiveLoader {
+    return new PointsProgressiveLoader(
+      parts.map((p) => makeSubLoader(p)) as unknown as PointsSpatialIndexLoader[],
+      nLods,
+      '/points',
+      undefined,
+      null,
+      levelOffsets
+    );
+  }
+
+  it('passes the single-part payload through UNCHANGED (level 0 sits at offset 0)', async () => {
+    // Level 0's index space IS the parent CSR's, shifted by levelOffsets[0]=0 —
+    // no strip, no copy.
+    const lod0 = labelledLod(10, 2048);
+    const result = await makeLoader([lod0], [0, 4096]).loadPoints(baseViewState);
+    expect(result).toBe(lod0);
+    expect(result.elementIds).toBeInstanceOf(Uint32Array);
+    expect(Array.from(result.elementIds!.slice(0, 3))).toEqual([2048, 2049, 2050]);
+  });
+
+  it('offsets each GAPPED level map into the parent union CSR index space', async () => {
+    // additive_0 stores 100 rows on disk (only 4 of them visible here), so
+    // level 1's map must be shifted by 100 — not by the 4 loaded points. Both
+    // maps are gapped (culled chunks / compacted points), which is the only
+    // shape that pins per-slot indexing rather than a per-level base.
+    const result = await makeLoader(
+      [gappedLod([3, 9, 40, 41]), gappedLod([0, 17, 18])],
+      [0, 100, 200]
+    ).loadPoints(baseViewState);
+    expect(result.pointCount).toBe(7);
+    expect(result.elementIds).toBeInstanceOf(Uint32Array);
+    expect(Array.from(result.elementIds!)).toEqual([3, 9, 40, 41, 100, 117, 118]);
+  });
+
+  it('composes a PARTIALLY loaded ladder (levelOffsets longer than the parts)', async () => {
+    // Refinement stopped after level 1 (cache miss), so 2 of 3 levels are
+    // resident: the extra trailing offset must simply go unused.
+    const a = makeSubLoader(gappedLod([3, 9]));
+    const b = makeSubLoader(gappedLod([2, 5]));
+    const bData = gappedLod([2, 5]);
+    b.updateViewWithResidency = vi.fn(async () => ({ data: bData, allResident: false }));
+    const c = makeSubLoader(gappedLod([1]));
+    const loader = new PointsProgressiveLoader(
+      [a, b, c] as unknown as PointsSpatialIndexLoader[],
+      3,
+      '/points',
+      undefined,
+      null,
+      [0, 100, 350, 400]
+    );
+    const result = await loader.loadPoints(baseViewState);
+    expect(result.pointCount).toBe(4);
+    expect(c.updateViewWithResidency).not.toHaveBeenCalled();
+    expect(Array.from(result.elementIds!)).toEqual([3, 9, 102, 105]);
+  });
+
+  it('tolerates a level that loaded ZERO points', async () => {
+    const empty = makeLodData(0, 3, { color: 'uint8' });
+    empty.elementIds = new Uint32Array(0);
+    const result = await makeLoader(
+      [gappedLod([3, 9]), empty, gappedLod([4])],
+      [0, 100, 350, 400]
+    ).loadPoints(baseViewState);
+    expect(result.pointCount).toBe(3);
+    expect(Array.from(result.elementIds!)).toEqual([3, 9, 354]);
+  });
+
+  it('fills a level that published NO map with identity + offset', async () => {
+    // Level 1 took the projection's identity fast path (one range at 0, no
+    // compaction), so its slot k IS its level-space index.
+    const plain = makeLodData(3, 3, { color: 'uint8' });
+    const result = await makeLoader([labelledLod(2, 40), plain], [0, 100, 200]).loadPoints(
+      baseViewState
+    );
+    expect(Array.from(result.elementIds!)).toEqual([40, 41, 100, 101, 102]);
+  });
+
+  it('still emits a map when a MAP-LESS level is only partly loaded', async () => {
+    // No level published a map — level 0 loaded a single head range [0, 10) of
+    // its 100 on-disk rows, which IS the projection's identity fast path — but
+    // slot 10 is on-disk row 100, not 10. The ladder identity therefore does
+    // NOT hold, and dropping the running-sum check would silently return no
+    // map at all.
+    const result = await makeLoader(
+      [makeLodData(10, 3, { color: 'uint8' }), makeLodData(3, 3, { color: 'uint8' })],
+      [0, 100, 200]
+    ).loadPoints(baseViewState);
+    expect(result.pointCount).toBe(13);
+    expect(result.elementIds).toBeInstanceOf(Uint32Array);
+    expect(Array.from(result.elementIds!.slice(9))).toEqual([9, 100, 101, 102]);
+  });
+
+  it('emits NO map when every resident level is complete and unculled (identity)', async () => {
+    // No level published a map and each offset equals the running sum of the
+    // LOADED counts ⇒ slot === union on-disk index; stay allocation-free.
+    const result = await makeLoader(
+      [makeLodData(10, 3, { color: 'uint8' }), makeLodData(5, 3, { color: 'uint8' })],
+      [0, 10, 15]
+    ).loadPoints(baseViewState);
+    expect(result.pointCount).toBe(15);
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('fails closed when levelOffsets is shorter than the loaded levels', async () => {
+    const result = await makeLoader([labelledLod(10, 5), labelledLod(4, 7)], [0]).loadPoints(
+      baseViewState
+    );
+    expect(result.pointCount).toBe(14);
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('fails closed when a level publishes the wrong number of element ids', async () => {
+    const bad = labelledLod(4, 7);
+    bad.elementIds = new Uint32Array(3); // shorter than pointCount
+    const result = await makeLoader([labelledLod(10, 5), bad], [0, 100, 200]).loadPoints(
+      baseViewState
+    );
+    expect(result.pointCount).toBe(14);
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('fails closed on a single part whose map length disagrees with pointCount', async () => {
+    const lod0 = labelledLod(10, 2048);
+    lod0.elementIds = new Uint32Array(9);
+    const result = await makeLoader([lod0], [0, 4096]).loadPoints(baseViewState);
+    expect(result.elementIds).toBeUndefined();
+    // Non-destructive: the sub-LOD's own payload keeps its (bogus) map.
+    expect(lod0.elementIds!.length).toBe(9);
+  });
+
+  // `elementIdsUnavailable` — the projection wanted a map and could NOT build
+  // one, so its slots are not on-disk indices. That is the opposite of the
+  // identity, which is the other reason `elementIds` can be missing; reading it
+  // as identity would compose a confident WRONG id inside the right level.
+  it('fails closed when a level maps a slot PAST its own on-disk rows', async () => {
+    // Level 1 owns union rows [100, 350). An id of 260 in ITS index space
+    // composes to 360 — a real row that belongs to additive_2. Shifting it
+    // would report a confident label from the wrong level, so the ladder
+    // publishes no map at all instead.
+    const result = await makeLoader(
+      [gappedLod([3, 9]), gappedLod([2, 260]), gappedLod([4])],
+      [0, 100, 350, 400]
+    ).loadPoints(baseViewState);
+    expect(result.pointCount).toBe(5);
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('fails closed when the SINGLE part maps a slot past level 0’s rows', async () => {
+    // Same check on the first-paint state: level 0 owns [0, 100), so an id of
+    // 2048 names an additive_1 row in the parent's union CSR.
+    const lod0 = labelledLod(10, 2048);
+    const result = await makeLoader([lod0], [0, 100]).loadPoints(baseViewState);
+    expect(result).not.toBe(lod0);
+    expect(result.elementIds).toBeUndefined();
+    // Non-destructive, as everywhere else: the sub-LOD keeps its own map.
+    expect(lod0.elementIds!.length).toBe(10);
+  });
+
+  it('accepts the LAST loaded level up to its closing bound', async () => {
+    // The closing entry is what makes the final level checkable at all: 99 is
+    // the last row level 1 owns, so it must compose (to 199), not fail.
+    const result = await makeLoader([gappedLod([3]), gappedLod([99])], [0, 100, 200]).loadPoints(
+      baseViewState
+    );
+    expect(Array.from(result.elementIds!)).toEqual([3, 199]);
+  });
+
+  it('fails closed when a MULTI-part level flags elementIdsUnavailable', async () => {
+    const bailed = makeLodData(3, 3, { color: 'uint8' });
+    bailed.elementIdsUnavailable = true;
+    const result = await makeLoader([gappedLod([3, 9]), bailed], [0, 100, 200]).loadPoints(
+      baseViewState
+    );
+    expect(result.pointCount).toBe(5);
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('lets an EMPTY level flag elementIdsUnavailable without vetoing the map', async () => {
+    // A level culled to zero by the current slice writes nothing into the union
+    // map, so its missing map cannot corrupt a slot — the other levels' maps
+    // must still be composed.
+    const empty = makeLodData(0, 3, { color: 'uint8' });
+    empty.elementIdsUnavailable = true;
+    const result = await makeLoader(
+      [gappedLod([3, 9]), empty, gappedLod([4])],
+      [0, 100, 350, 400]
+    ).loadPoints(baseViewState);
+    expect(result.pointCount).toBe(3);
+    expect(Array.from(result.elementIds!)).toEqual([3, 9, 354]);
+  });
+
+  it('fails closed when the SINGLE part flags elementIdsUnavailable', async () => {
+    // The map it does carry is in nobody's index space; passing the payload
+    // through would publish it as if it were the parent's.
+    const bailed = labelledLod(4, 60);
+    bailed.elementIdsUnavailable = true;
+    const result = await makeLoader([bailed], [0, 100]).loadPoints(baseViewState);
+    expect(result).not.toBe(bailed);
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('does not burn the warn latch on an EMPTY single-part first paint', async () => {
+    // An empty LOD 0 is the terminal state of any slice that culls everything —
+    // ordinary, not a defect. It publishes no slots, so the single-part branch
+    // exempts it: its only observable effect would be spending the
+    // once-per-loader `_composeWarned` latch on a benign payload, permanently
+    // swallowing a later genuine warning.
+    const spy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const empty = makeLodData(0, 3, { color: 'uint8' });
+      empty.elementIdsUnavailable = true;
+      const result = await makeLoader([empty], [0, 100]).loadPoints(baseViewState);
+      expect(result.pointCount).toBe(0);
+      expect(result.elementIds).toBeUndefined();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('warns at most ONCE per loader about a fail-closed composition', async () => {
+    // The concat re-runs on every (generation, lodCount) miss and a view change
+    // bumps the generation, so an unlatched warning would spam tens of lines a
+    // second during dimension-animation playback.
+    const spy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const loader = makeLoader([labelledLod(10, 5), labelledLod(4, 7)], [0]);
+      await loader.loadPoints(baseViewState);
+      await loader.loadPoints({ ...baseViewState, slicePosition: [1, 0, 0, 0] });
+      await loader.loadPoints({ ...baseViewState, slicePosition: [2, 0, 0, 0] });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

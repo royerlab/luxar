@@ -129,30 +129,31 @@ The viewer commits levels coarsest-first, so a fully-loaded ladder maps straight
 through — index `k` is committed slot `k`. The **committed buffer** is not in
 general a prefix of this union, though: the per-level loader compacts out elements
 culled by the current nD slice and fetches only the chunk ranges a query
-intersects, so slots shift. A labelled ladder therefore resolves at the raw
-committed slot — exact for a fully-loaded 3D scene (no per-element slice culling),
-and otherwise carrying the slot shift that issue #1421 / PR #1425 removed for
-**flat** nodes by publishing a visible-slot → on-disk-index map. That map is
-deliberately not published across a ladder (each level's map is in that level's own
-on-disk space, so the concatenation clears it); extending it — offsetting each
-level by the preceding levels' on-disk counts — is the remaining piece of work
-(issue #1439).
+intersects, so slots shift. For **Points** the viewer corrects that shift: it
+composes each level's own visible-slot → on-disk-index map (the map issue #1421 /
+PR #1425 introduced for **flat** nodes) into this union index space, offsetting
+level `i` by the preceding levels' on-disk counts, so a labelled Points ladder
+resolves exactly under an nD slice too (issue #1439) — falling back to the raw
+committed slot only where the levels' own metadata is inconsistent. For **Lines**
+no map is composed across the levels, so a laddered lines node still resolves at
+the raw committed slot — a per-**segment** one against the per-**vertex** union
+CSR, and so the wrong row whatever the slicing (not merely shifted).
 
 Under the `partition=`-outer + `additive_lod=`-inner composition the CSR lands on
 each `part_<i>` ladder parent — which is exactly where the viewer looks. Since
 #1415 / PR #1420 the label lookup path is the hit LEAF scene node
 (`result.mainNode.name`) and a laddered part's scene node IS its ladder parent; the
 outermost `kind=partition` wrapper is the *reported* path only. So that composition
-resolves too, with the same raw-committed-slot caveat as an unpartitioned ladder.
+resolves too, through the same per-geometry path as an unpartitioned ladder.
 
 For Lines the CSR is per-**vertex**, matching the flat Lines writer, while the
 viewer's Lines pick id is a per-**segment** storage slot. Issue #1424 supplied the
 missing segment→vertex indirection for **flat** lines nodes — the picked segment's
 slot resolves back to that segment's start vertex row in the stored ordering — but
-through the same visible-slot → on-disk-index map no ladder publishes, so across a
-ladder the hover only lands on the right string when every element carries the same one
-(`labels` has no broadcast form — it is always one entry per element), until #1439
-carries that map over the levels.
+through the same visible-slot → on-disk-index map a **lines** ladder does not publish,
+so across a lines ladder the hover only lands on the right string when every element
+carries the same one (`labels` has no broadcast form — it is always one entry per
+element). #1439 carried that map over the levels for Points only.
 
 Labels are all-or-nothing across a ladder — a partially-labelled ladder cannot
 produce a correct union, so `validate_ladder_labels` rejects it.

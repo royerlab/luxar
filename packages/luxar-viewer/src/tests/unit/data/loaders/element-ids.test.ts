@@ -15,7 +15,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildElementIdMap, type ElementIdRange } from '../../../../data/loaders/element-ids';
+import {
+  buildElementIdMap,
+  isIdentityElementIdMap,
+  type ElementIdRange,
+} from '../../../../data/loaders/element-ids';
 import { Modules } from '../../../../utils/log';
 
 const MOD = Modules.SPATIAL_INDEX_LOADER;
@@ -179,5 +183,48 @@ describe('buildElementIdMap', () => {
         Modules.GSPLATS_SPATIAL_INDEX_LOADER
       )
     ).toBeUndefined();
+  });
+});
+
+// `buildElementIdMap` answers `undefined` for FIVE different reasons: the empty
+// `count <= 0` case (first, and silent), the identity fast path, and three
+// fail-closed bail-outs. Their meanings are OPPOSITE — "the slot is already the
+// on-disk index" vs "the slot is wrong and nothing could be built" — so a
+// consumer that composes the result into a wider index space (the Points
+// additive-ladder concat, #1439) re-asks the question through this predicate
+// rather than assuming identity. The empty case is the only one that reads as
+// "unavailable" on a ZERO-element payload, which the composer exempts.
+describe('isIdentityElementIdMap', () => {
+  it('is true only for a single range anchored at 0 with no compaction', () => {
+    expect(isIdentityElementIdMap([{ start: 0, end: 5 }] as ElementIdRange[], null)).toBe(true);
+  });
+
+  it('is false for every shape that makes the slot diverge', () => {
+    // Range not anchored at 0 (chunk culling) …
+    expect(isIdentityElementIdMap([{ start: 2048, end: 4096 }] as ElementIdRange[], null)).toBe(
+      false
+    );
+    // … several ranges …
+    expect(
+      isIdentityElementIdMap(
+        [
+          { start: 0, end: 10 },
+          { start: 20, end: 30 },
+        ] as ElementIdRange[],
+        null
+      )
+    ).toBe(false);
+    // … and compaction, even from a single [0, N) range.
+    expect(
+      isIdentityElementIdMap([{ start: 0, end: 5 }] as ElementIdRange[], new Uint32Array([0, 2]))
+    ).toBe(false);
+  });
+
+  it('separates the identity from the bail-outs that also return undefined', () => {
+    // Count mismatch: the composer bails (no map) but the slot is NOT the
+    // on-disk index — exactly the pair the predicate has to keep apart.
+    const bailRanges = [{ start: 2048, end: 4096 }] as ElementIdRange[];
+    expect(buildElementIdMap(bailRanges, null, 3, MOD)).toBeUndefined();
+    expect(isIdentityElementIdMap(bailRanges, null)).toBe(false);
   });
 });

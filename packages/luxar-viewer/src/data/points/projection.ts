@@ -23,7 +23,7 @@
 
 import * as THREE from 'three';
 import { assertColorLayout } from '../loaders/color-loader';
-import { buildElementIdMap } from '../loaders/element-ids';
+import { buildElementIdMap, isIdentityElementIdMap } from '../loaders/element-ids';
 import { log, Modules } from '../../utils/log';
 import {
   shouldApplyEffectiveRadius,
@@ -686,6 +686,16 @@ export function projectPointsTo3D(
   const elementIds = wantsElementIds
     ? buildElementIdMap(ranges, keptConcatIndices, numPoints, Modules.SPATIAL_INDEX_LOADER)
     : undefined;
+  // A missing map has two OPPOSITE meanings (see `isIdentityElementIdMap`):
+  // the identity (slot is already the on-disk index) or a fail-closed bail-out
+  // (slot is wrong and nothing could be built). Only a consumer that COMPOSES
+  // this payload into a wider index space — the additive-ladder concat, #1439 —
+  // can tell them apart, so record which one happened. Stamped only when true
+  // so the common payload shape is unchanged.
+  const elementIdsUnavailable =
+    wantsElementIds &&
+    elementIds === undefined &&
+    !isIdentityElementIdMap(ranges, keptConcatIndices);
 
   // Return from accumulator when using target buffers (zero
   // allocations).
@@ -706,6 +716,7 @@ export function projectPointsTo3D(
     // exists on the non-identity path and is a small Uint32Array.
     const result = ctx.accumulator.getData(numPoints);
     if (elementIds) result.elementIds = elementIds;
+    if (elementIdsUnavailable) result.elementIdsUnavailable = true;
     return result;
   }
 
@@ -720,6 +731,7 @@ export function projectPointsTo3D(
     // (or unchanged when no filtering occurred).
     scalars: (scalars as PointScalarArray | null | undefined) ?? undefined,
     elementIds,
+    ...(elementIdsUnavailable ? { elementIdsUnavailable: true } : {}),
     pointCount: numPoints,
     ndim,
     metadata: {
