@@ -18,6 +18,7 @@
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { wasmArtifactExists, wasmJsPath } from '../../helpers/wasm-artifact';
+import { REQUIRED_WASM_EXPORTS } from '../../../wasm/required-exports';
 
 /** The helper's real byte read needs the artifact — see the module comment. */
 const artifactPresent = wasmArtifactExists();
@@ -36,6 +37,7 @@ const LOAD_MESSAGE = 'simulated unloadable WASM artifact';
  * that won't import, both surface here). The real bytes are read and handed to
  * that mock, which ignores them. `initResult` is what the mocked `initSync`
  * hands back — the instantiated exports the helper must forward to the check.
+ * Pass `mockShim: false` to leave the REAL shim in place (see the last case).
  *
  * Returns the helper's exports plus the mocked check itself, so a case can
  * assert on what it received.
@@ -44,22 +46,26 @@ async function loadHelperWith({
   stale,
   loadable,
   initResult,
+  mockShim = true,
 }: {
   stale: boolean;
   loadable: boolean;
   initResult?: unknown;
+  mockShim?: boolean;
 }) {
   vi.resetModules();
-  const assertRequiredWasmExports = vi.fn(() => {
+  const assertRequiredWasmExports = vi.fn((_module: unknown, _instanceExports?: unknown) => {
     if (stale) throw new Error(STALE_MESSAGE);
   });
   vi.doMock('../../../wasm', () => ({ assertRequiredWasmExports }));
-  vi.doMock(wasmJsPath, () => ({
-    initSync: () => {
-      if (!loadable) throw new Error(LOAD_MESSAGE);
-      return initResult;
-    },
-  }));
+  if (mockShim) {
+    vi.doMock(wasmJsPath, () => ({
+      initSync: () => {
+        if (!loadable) throw new Error(LOAD_MESSAGE);
+        return initResult;
+      },
+    }));
+  }
   return { ...(await import('../../helpers/wasm-artifact')), assertRequiredWasmExports };
 }
 
@@ -120,5 +126,30 @@ describe.skipIf(!artifactPresent)('loadWasmArtifact', () => {
     });
     await loadWasmArtifact();
     expect(assertRequiredWasmExports).toHaveBeenCalledWith(expect.anything(), initResult);
+  });
+
+  it('forwards instantiated exports the REAL shim carries every required kernel on', async () => {
+    // The two cases above run against a mocked `initSync`, so they pin the
+    // forwarding but say nothing about what the real one hands back. Both halves
+    // of the second argument's premise are only asserted in prose otherwise:
+    // that `initSync` returns the instantiated `.wasm` exports at all (a
+    // wasm-bindgen release that returned some wrapper instead), and that every
+    // name in REQUIRED_WASM_EXPORTS is a FREE function there (wasm-bindgen
+    // mangles a struct method to `<struct>_<method>`, which the shim's
+    // namespace would still satisfy). Either way `initWasm` would reject a
+    // perfectly current build and the app would run the TypeScript fallback for
+    // ever behind one warning line, with nothing else in the suite noticing.
+    // Only `../../../wasm` is mocked here — to capture the arguments.
+    const { loadWasmArtifact, assertRequiredWasmExports } = await loadHelperWith({
+      stale: false,
+      loadable: true,
+      mockShim: false,
+    });
+    await loadWasmArtifact();
+    const instanceExports = assertRequiredWasmExports.mock.calls[0][1] as
+      Record<string, unknown> | undefined;
+    for (const name of REQUIRED_WASM_EXPORTS) {
+      expect(typeof instanceExports?.[name], `${name} is not a raw .wasm export`).toBe('function');
+    }
   });
 });
