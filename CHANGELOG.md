@@ -6,6 +6,28 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A stale WASM build now names the kernel it is missing (#1412)
+
+`public/wasm/` is gitignored, so a checkout can hold a build that imports and
+`initSync`s fine while predating a newer kernel. `initWasm()` already rejected
+that, but the tests and benchmarks that load the artifact themselves — `await
+import(...)` plus `as unknown as WasmModule`, which promises the whole interface
+regardless of what was loaded — failed instead as an opaque
+`x is not a function` deep inside an unrelated kernel test. All six of those
+sites now share one loader (`src/tests/helpers/wasm-artifact.ts`) that calls
+`assertRequiredWasmExports` before the cast, so the failure reads "missing
+required export `<kernel>` — rebuild it with pnpm build:wasm". The check looks
+at the instantiated `.wasm` exports as well as the shim's namespace, so a build
+with only one of the two files overwritten is caught too. A vitest run mostly
+does not get that far — the global setup scans the built shim for those same
+required exports and REBUILDS a stale artifact before any test loads it — so
+the loader's hard throw is the diagnosis for what that setup structurally cannot
+see: a MIXED build whose shim still declares every name while the binary behind
+it does not, and any caller that runs outside that setup (benchmarks, tools).
+A source-level tripwire (`direct-import-guard.test.ts`) keeps the next such site
+on that loader: it fails on any other viewer source that both names
+`luxar_wasm.js` and calls `initSync(`.
+
 #### A hand-built partition of per-part ladders now gets the tile anchor itself (#1411)
 
 `add_points` / `add_lines` / `add_mesh` reject `partition=` together with

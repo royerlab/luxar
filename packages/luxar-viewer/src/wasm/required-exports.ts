@@ -11,7 +11,12 @@
  *   mesh culling kernels.
  *
  * Add a name here when you add a kernel, so a stale build is diagnosed rather
- * than silently half-working.
+ * than silently half-working — and REMOVE it when you rename or delete that
+ * kernel, or every consumer reports a freshly built artifact as "stale" and
+ * sends the reader to rebuild it in a loop. Only free functions belong here:
+ * the names are matched against the raw `.wasm` exports as well as the shim's,
+ * and wasm-bindgen mangles anything else (a struct method exports as
+ * `<struct>_<method>`).
  *
  * ## Why this lives in its own module
  *
