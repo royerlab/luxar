@@ -1136,10 +1136,22 @@ def additive_level_stats(
     Returns:
         ``(per_level_lod_stats, reference_energy, parent_level_stats)``.
         ``reference_energy`` is ``None`` — and no ``energy_fraction_cum`` is
-        stamped — when the total energy is not positive and finite (all-black
-        colors, zero radii). That is deliberate: an absent stamp makes the
-        viewer fall back to its count rule, whereas a fabricated 0.0 would make
-        it release swaps on data that carries no energy at all.
+        stamped — in two cases:
+
+        * the total energy is not positive and finite (all-black colors, zero
+          radii). An absent stamp makes the viewer fall back to its count rule,
+          whereas a fabricated 0.0 would make it release swaps on data that
+          carries no energy at all;
+        * ``method`` orders a REVEAL (:func:`is_reveal_additive_method`). A
+          radial prefix is a *partial object at full brightness*, not a dim
+          version of the whole, so the viewer's ``1/e(k)`` energy compensation
+          would blow the innermost shell out (~20× for a 5%-energy prefix) and
+          then dim it as the object completes — the exact inverse of growing in.
+          The compensation is gated on the BLENDING MODE, never on geometry
+          type, so authoring-time omission is the only place to stop it.
+
+        ``lod_method`` and the count fields are still stamped either way: they
+        are provenance, and nothing keys brightness off them.
     """
     if len(level_energies) != len(level_counts):
         raise ValueError(
@@ -1148,7 +1160,12 @@ def additive_level_stats(
         )
 
     total = float(sum(level_energies))
-    usable = total > 0.0 and total == total and total != float("inf")
+    usable = (
+        total > 0.0
+        and total == total
+        and total != float("inf")
+        and not is_reveal_additive_method(method)
+    )
 
     per_level: List[Dict[str, Any]] = []
     cum_energy = 0.0

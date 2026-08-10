@@ -97,6 +97,107 @@ class TestComputeAdditiveOrderPoints:
         assert counts == []
 
 
+class TestRadialOrderPoints:
+    """``radial`` — the concentric-shell reveal ordering.
+
+    It is the only method that sorts ASCENDING (its score is a distance, not a
+    contribution to maximise), so the mutation that must fail these is flipping
+    the sort direction.
+    """
+
+    #: Distances 1, 2, 3, 4 from the ORIGIN, one per axis so all three columns
+    #: have extent (hence `spatial_dims` defaults to all of them), and in an
+    #: order that is not already sorted — so a pass cannot be explained by the
+    #: input arriving pre-ordered.
+    _PTS = np.array(
+        [
+            [0.0, 2.0, 0.0],  # d = 2
+            [3.0, 0.0, 0.0],  # d = 3
+            [0.0, 0.0, 1.0],  # d = 1
+            [0.0, 0.0, 4.0],  # d = 4
+        ],
+        dtype=np.float32,
+    )
+
+    def test_orders_innermost_first(self) -> None:
+        perm, counts = compute_additive_order_points(
+            self._PTS, method="radial", reveal_centre=[0.0, 0.0, 0.0]
+        )
+        assert perm.tolist() == [2, 0, 1, 3]
+        assert counts == [], "radial must leave slicing to the breakpoint vocabularies"
+
+    def test_default_centre_is_the_bbox_centre_not_the_origin(self) -> None:
+        # Spread on x only, so `spatial_dims` derives to [0] and the centre takes
+        # ONE coordinate. bbox centre is x=15, so x=12 is innermost; an
+        # origin-centred (or scene-centred) implementation would start at x=10.
+        pos = np.array(
+            [[10.0, 0.0, 0.0], [12.0, 0.0, 0.0], [20.0, 0.0, 0.0]], dtype=np.float32
+        )
+        perm, _ = compute_additive_order_points(pos, method="radial")
+        assert pos[perm[0], 0] == 12.0
+
+        pinned, _ = compute_additive_order_points(
+            pos, method="radial", reveal_centre=[0.0]
+        )
+        assert pos[pinned[0], 0] == 10.0
+
+    def test_is_translation_invariant(self) -> None:
+        # The bbox-centre default is what makes this hold: a dataset 1000 units
+        # from the origin still reveals from its own middle, identically.
+        far = self._PTS + np.float32(1000.0)
+        near, _ = compute_additive_order_points(self._PTS, method="radial")
+        moved, _ = compute_additive_order_points(far, method="radial")
+        np.testing.assert_array_equal(near, moved)
+
+    def test_zero_extent_column_is_not_a_shell_dimension(self) -> None:
+        # A stacked time/channel column is a real coordinate here (unlike the
+        # gsplat path's degenerate covariance axes), so it must be excluded by
+        # extent or the shells would expand through time as well as space —
+        # every timepoint of the inner shell before any of the next.
+        pos4 = np.hstack(
+            [self._PTS, np.full((self._PTS.shape[0], 1), 7.0, dtype=np.float32)]
+        )
+        p3, _ = compute_additive_order_points(self._PTS, method="radial")
+        p4, _ = compute_additive_order_points(pos4, method="radial")
+        np.testing.assert_array_equal(p3, p4)
+
+    def test_explicit_spatial_dims_restrict_the_distance(self) -> None:
+        # Measuring over x alone ignores a y spread that would otherwise dominate.
+        pos = np.array(
+            [[0.0, 50.0, 0.0], [9.0, 0.0, 0.0], [1.0, 40.0, 0.0]], dtype=np.float32
+        )
+        perm, _ = compute_additive_order_points(
+            pos, method="radial", reveal_centre=[0.0], spatial_dims=[0]
+        )
+        assert pos[perm, 0].tolist() == [0.0, 1.0, 9.0]
+
+    def test_out_of_range_spatial_dims_raises(self) -> None:
+        with pytest.raises(ValueError, match="out of range"):
+            compute_additive_order_points(self._PTS, method="radial", spatial_dims=[9])
+
+    def test_wrong_length_centre_raises(self) -> None:
+        with pytest.raises(ValueError, match="one coordinate per spatial axis"):
+            compute_additive_order_points(
+                self._PTS, method="radial", reveal_centre=[0.0, 0.0]
+            )
+
+    def test_works_in_2d_unlike_the_samplers(self) -> None:
+        # `spatial-uniform` / `poisson-disk` demand d >= 3; a distance does not,
+        # and 2D scenes are a first-class authoring path.
+        pos = np.array([[3.0, 1.0], [1.0, 2.0], [5.0, 3.0]], dtype=np.float32)
+        perm, _ = compute_additive_order_points(
+            pos, method="radial", reveal_centre=[0.0, 0.0]
+        )
+        assert pos[perm, 0].tolist() == [1.0, 3.0, 5.0]
+
+    def test_single_position_does_not_collapse_to_input_order(self) -> None:
+        # No axis has extent, so the non-zero-extent default would select NO
+        # columns and score everything 0.0. The fallback uses every axis instead.
+        pos = np.zeros((3, 3), dtype=np.float32)
+        perm, _ = compute_additive_order_points(pos, method="radial")
+        assert sorted(perm.tolist()) == [0, 1, 2]
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Ladder constructor
 # ────────────────────────────────────────────────────────────────────────
@@ -135,6 +236,58 @@ class TestMakeAdditiveLodPoints:
         pos = np.zeros((0, 3), dtype=np.float32)
         levels = make_additive_lod_points(pos, method="random", n_lods=4)
         assert levels == []
+
+    def test_radial_levels_grow_outward(self) -> None:
+        # 100 points on a line; a 4-level equal-count ladder must hand out the
+        # innermost quarter first. Checked on max radius per level, which is
+        # monotone iff the ordering really is by distance.
+        pos = np.zeros((100, 3), dtype=np.float32)
+        pos[:, 0] = np.linspace(-50.0, 50.0, 100)
+        levels = make_additive_lod_points(pos, method="radial", n_lods=4)
+
+        assert sum(len(L) for L in levels) == 100
+        assert len(levels) == 4
+        max_r = [float(np.abs(pos[L, 0]).max()) for L in levels]
+        assert max_r == sorted(max_r), max_r
+
+    def test_radial_honours_the_stream_vocabulary(self) -> None:
+        # The trap this guards: `spatial-uniform` / `poisson-disk` return a
+        # natural partition and the builder then BYPASSES the breakpoint
+        # vocabularies entirely. `radial` must not join that tuple, or a
+        # `stream:`/`counts:` spec would be silently ignored on a reveal.
+        pos = np.zeros((100, 3), dtype=np.float32)
+        pos[:, 0] = np.linspace(-50.0, 50.0, 100)
+        levels = make_additive_lod_points(pos, method="radial", counts=[10, 30, 70])
+
+        assert [len(L) for L in levels] == [10, 20, 40, 30]
+
+    def test_radial_kwargs_reach_the_scorer_through_the_builder(self) -> None:
+        # Threading test: the centre override must survive the builder, not just
+        # `compute_additive_order_points`. Pinned at one end, the first level is
+        # that end; by default (bbox centre) it would be the middle.
+        pos = np.zeros((40, 3), dtype=np.float32)
+        pos[:, 0] = np.linspace(0.0, 39.0, 40)
+
+        pinned = make_additive_lod_points(
+            pos, method="radial", n_lods=4, reveal_centre=[0.0]
+        )
+        assert float(pos[pinned[0], 0].max()) < 10.0
+
+        default = make_additive_lod_points(pos, method="radial", n_lods=4)
+        first = pos[default[0], 0]
+        assert float(first.min()) > 10.0 and float(first.max()) < 30.0
+
+    def test_radial_spatial_dims_reach_the_scorer_through_the_builder(self) -> None:
+        # The other kwarg, threaded the same way: restricting to x makes the
+        # ladder ignore a y spread that would otherwise set the order.
+        pos = np.zeros((40, 3), dtype=np.float32)
+        pos[:, 0] = np.linspace(0.0, 39.0, 40)
+        pos[:, 1] = np.linspace(500.0, 0.0, 40)  # opposing, much larger spread
+
+        restricted = make_additive_lod_points(
+            pos, method="radial", n_lods=4, reveal_centre=[0.0], spatial_dims=[0]
+        )
+        assert float(pos[restricted[0], 0].max()) < 10.0
 
 
 # ────────────────────────────────────────────────────────────────────────

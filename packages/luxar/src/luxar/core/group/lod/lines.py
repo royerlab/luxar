@@ -17,12 +17,17 @@ Polyline-identification per ``line_type``:
   damage" choice). For these the helper logs a warning and emits a
   single LOD level.
 
-Three ordering methods mirror the Points helper:
+Five ordering methods mirror the Points helper:
 
 * ``random``           — uniform-random per-polyline permutation.
 * ``salience``         — sort polylines by ``length × max_width`` desc.
 * ``spatial-uniform``  — stratified-grid sampling on per-polyline bbox
   centers (:func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order`).
+* ``poisson-disk``     — blue-noise sampling on the same bbox centers.
+* ``radial``           — concentric shells around the node's own bbox centre,
+  ordering WHOLE polylines by their own centre's distance, so a streaming
+  prefix grows outward from the middle with segment topology intact (the
+  reveal). See :func:`luxar.core.group.lod.group.radial_element_score`.
 """
 
 from __future__ import annotations
@@ -414,6 +419,8 @@ def make_additive_lod_lines(
     colors: Optional[NDArray] = None,
     scalars: Optional[NDArray] = None,
     salience_kind: Literal["size", "energy"] = "size",
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
 ) -> List[List[NDArray[np.intp]]]:
     """Compute per-LOD-level polyline groupings for Lines.
 
@@ -437,6 +444,11 @@ def make_additive_lod_lines(
           count (along the additive order) reaches it, so cuts stay on
           whole-polyline boundaries while honouring the vertex budget even when
           polyline lengths are highly skewed.
+        reveal_centre: For ``method='radial'`` — centre of the concentric
+            shells, defaulting to the vertex bounding-box centre.
+        spatial_dims: For ``method='radial'`` — the vertex columns the shell
+            distance is measured over, defaulting to the axes with non-zero
+            extent.
 
     Returns:
         List of LOD-level entries. Each entry is a list of per-polyline
@@ -482,6 +494,8 @@ def make_additive_lod_lines(
             method=method,
             n_lods=n_lods,
             seed=seed,
+            reveal_centre=reveal_centre,
+            spatial_dims=spatial_dims,
         )
 
     if method in ("spatial-uniform", "poisson-disk"):

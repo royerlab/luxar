@@ -6,12 +6,18 @@ of three peer implementations of the same additive-LOD pattern, alongside
 ``core/group/lod/lines.py`` (per-polyline) and ``gsplats/lod/additive.py``
 (Gaussian-energy ordering).
 
-Three ordering methods, all geometry-agnostic-ish:
+Five ordering methods, all geometry-agnostic-ish:
 
 * ``random``     — uniform-random permutation (with optional seed).
 * ``salience``   — sort by radii descending (largest points first).
 * ``spatial-uniform`` — stratified-grid sampling
   (:func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order`).
+* ``poisson-disk`` — blue-noise sampling
+  (:func:`luxar.core.group.lod.poisson_disk.poisson_disk_order`).
+* ``radial``     — concentric shells around the node's own bbox centre, so a
+  streaming prefix grows outward from the middle (the reveal). The only
+  ascending sort, and the only one whose ladder carries no energy stamps —
+  see :func:`luxar.core.group.lod.group.radial_element_score`.
 
 The breakpoints API mirrors the gsplats one in vocabulary but without
 the gsplats-only ``energy:`` variant:
@@ -334,6 +340,8 @@ def make_additive_lod_points(
     colors: Optional[NDArray] = None,
     scalars: Optional[NDArray] = None,
     salience_kind: Literal["size", "energy"] = "size",
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
 ) -> List[NDArray[np.intp]]:
     """Compute per-LOD-level index arrays for Points.
 
@@ -377,6 +385,11 @@ def make_additive_lod_points(
             sorts by radius alone (legacy). ``'energy'`` sorts by
             ``luminance × radius**3`` — the same per-element score the
             ``energy:`` breakpoints accumulate against.
+        reveal_centre: For ``method='radial'`` — centre of the concentric
+            shells, defaulting to the spatial bounding-box centre.
+        spatial_dims: For ``method='radial'`` — the position columns the
+            shell distance is measured over, defaulting to the axes with
+            non-zero extent.
 
     Returns:
         List of per-level index arrays, length
@@ -397,7 +410,13 @@ def make_additive_lod_points(
         natural_counts: List[int] = []
     else:
         perm, natural_counts = compute_additive_order_points(
-            positions, radii=radii, method=method, n_lods=n_lods, seed=seed
+            positions,
+            radii=radii,
+            method=method,
+            n_lods=n_lods,
+            seed=seed,
+            reveal_centre=reveal_centre,
+            spatial_dims=spatial_dims,
         )
 
     if method in ("spatial-uniform", "poisson-disk"):

@@ -365,6 +365,8 @@ def add_lines_impl(
                     colors=colors_for_energy,
                     scalars=scalars_for_energy,
                     salience_kind=additive_spec.get("salience_kind", "size"),
+                    reveal_centre=additive_spec.get("reveal_centre"),
+                    spatial_dims=additive_spec.get("spatial_dims"),
                 )
                 if len(polyline_levels) > 1:
                     return add_lines_multi_lod_wrapper_impl(

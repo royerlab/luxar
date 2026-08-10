@@ -207,6 +207,76 @@ class TestComputeAdditiveOrderLines:
         assert len(counts) == 4
 
 
+class TestRadialOrderLines:
+    """``radial`` — the concentric-shell reveal, ordering WHOLE polylines.
+
+    The per-polyline granularity is the point: a prefix of a vertex-ordered
+    reveal would cut polylines in half and leave dangling segment topology,
+    which is the invariant the whole Lines ladder exists to protect.
+    """
+
+    @staticmethod
+    def _fan():
+        """Five 2-vertex segments at x = 1..5, each its own polyline.
+
+        Vertex order is shuffled relative to distance so a pass cannot be
+        explained by the input arriving pre-ordered.
+        """
+        xs = [3.0, 4.0, 2.0, 5.0, 1.0]
+        verts = np.array(
+            [[x, 0.0, 0.0] for x in xs for _ in range(2)], dtype=np.float32
+        )
+        return verts, identify_polylines(len(verts), "segments")
+
+    def test_orders_innermost_polyline_first(self) -> None:
+        verts, polys = self._fan()
+        perm, counts = compute_additive_order_lines(
+            verts, polys, method="radial", reveal_centre=[0.0]
+        )
+
+        # Each polyline's representative is its own bbox centre; here that is
+        # its x. Innermost (x=1, input position 4) must come first.
+        order = [float(verts[polys[i][0], 0]) for i in perm]
+        assert order == [1.0, 2.0, 3.0, 4.0, 5.0]
+        assert counts == []
+
+    def test_permutation_indexes_polylines_not_vertices(self) -> None:
+        # The property that keeps every prefix topologically valid: 10 vertices,
+        # 5 polylines, so a polyline-granular permutation has length 5.
+        verts, polys = self._fan()
+        perm, _ = compute_additive_order_lines(verts, polys, method="radial")
+
+        assert perm.shape == (len(polys),) == (5,)
+        assert sorted(perm.tolist()) == list(range(5))
+
+    def test_is_translation_invariant(self) -> None:
+        verts, polys = self._fan()
+        far = verts + np.float32(1000.0)
+        near, _ = compute_additive_order_lines(verts, polys, method="radial")
+        moved, _ = compute_additive_order_lines(far, polys, method="radial")
+        np.testing.assert_array_equal(near, moved)
+
+    def test_zero_extent_column_is_not_a_shell_dimension(self) -> None:
+        # A 4-D input whose time column is constant must order identically to
+        # its 3-D equivalent. The Lines path is the one that needed care here:
+        # the per-polyline centre helper is shared with the samplers, which want
+        # only the first 3 columns, while radial needs to SEE the time column in
+        # order to exclude it by extent.
+        verts, polys = self._fan()
+        verts4 = np.hstack([verts, np.full((verts.shape[0], 1), 7.0, dtype=np.float32)])
+        p3, _ = compute_additive_order_lines(verts, polys, method="radial")
+        p4, _ = compute_additive_order_lines(verts4, polys, method="radial")
+        np.testing.assert_array_equal(p3, p4)
+
+    def test_default_centre_is_the_bbox_centre_not_the_origin(self) -> None:
+        verts, polys = self._fan()
+        perm, _ = compute_additive_order_lines(verts, polys, method="radial")
+
+        # bbox centre over x is 3.0, so the x=3 polyline is innermost — not x=1,
+        # which is what an origin-centred implementation would pick.
+        assert float(verts[polys[perm[0]][0], 0]) == 3.0
+
+
 # ────────────────────────────────────────────────────────────────────────
 # make_additive_lod_lines
 # ────────────────────────────────────────────────────────────────────────
@@ -283,6 +353,78 @@ class TestMakeAdditiveLodLines:
         )
         assert sum(len(L) for L in levels) == 2  # both polylines covered
         assert all(len(L) > 0 for L in levels)  # empty levels dropped
+
+    @staticmethod
+    def _ladder_fan(n=40, span=39.0):
+        xs = np.linspace(0.0, span, n, dtype=np.float32)
+        verts = np.repeat(xs, 2)[:, None] * np.array(
+            [[1.0, 0.0, 0.0]], dtype=np.float32
+        )
+        return verts.astype(np.float32)
+
+    def test_radial_levels_grow_outward(self) -> None:
+        verts = self._ladder_fan()
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", method="radial", n_lods=4
+        )
+
+        assert sum(len(L) for L in levels) == 40
+        # Max distance from the bbox centre must be monotone across levels iff
+        # the ordering really is by distance.
+        centre = (verts[:, 0].min() + verts[:, 0].max()) / 2.0
+        max_r = [
+            float(max(abs(verts[p, 0].mean() - centre) for p in level))
+            for level in levels
+        ]
+        assert max_r == sorted(max_r), max_r
+
+    def test_radial_honours_the_stream_vocabulary(self) -> None:
+        # Guards the same trap as the Points twin: `radial` must NOT be treated
+        # like the samplers, whose natural partition bypasses `counts:`.
+        verts = self._ladder_fan()
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", method="radial", counts=[4, 12, 28]
+        )
+
+        assert [len(L) for L in levels] == [4, 8, 16, 12]
+
+    def test_radial_kwargs_reach_the_scorer_through_the_builder(self) -> None:
+        # Threading test: the centre override must survive the builder.
+        verts = self._ladder_fan()
+        pinned = make_additive_lod_lines(
+            verts,
+            line_type="segments",
+            method="radial",
+            n_lods=4,
+            reveal_centre=[0.0],
+        )
+        first_xs = [float(verts[p, 0].mean()) for p in pinned[0]]
+        assert max(first_xs) < 10.0
+
+        default = make_additive_lod_lines(
+            verts, line_type="segments", method="radial", n_lods=4
+        )
+        default_xs = [float(verts[p, 0].mean()) for p in default[0]]
+        assert min(default_xs) > 10.0 and max(default_xs) < 30.0
+
+    def test_radial_spatial_dims_reach_the_scorer_through_the_builder(self) -> None:
+        verts = self._ladder_fan()
+        # Add an opposing, much larger y spread that would dominate the distance
+        # unless `spatial_dims` restricts it away.
+        ys = np.linspace(500.0, 0.0, verts.shape[0], dtype=np.float32)
+        verts = verts.copy()
+        verts[:, 1] = ys
+
+        restricted = make_additive_lod_lines(
+            verts,
+            line_type="segments",
+            method="radial",
+            n_lods=4,
+            reveal_centre=[0.0],
+            spatial_dims=[0],
+        )
+        first_xs = [float(verts[p, 0].mean()) for p in restricted[0]]
+        assert max(first_xs) < 10.0
 
 
 # ────────────────────────────────────────────────────────────────────────
