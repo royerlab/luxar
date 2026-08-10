@@ -160,13 +160,23 @@ def _parse_reveal_spatial_dims(spec: Optional[str], ndim: int) -> Optional["list
     if spec is None:
         return None
     try:
-        parsed = sorted({int(t) for t in spec.split(",") if t.strip() != ""})
+        parsed = [int(t) for t in spec.split(",") if t.strip() != ""]
     except ValueError as e:
         raise typer.BadParameter(
             f"--spatial-dims must be comma-separated integers; got {spec!r}"
         ) from e
+    # Order is PRESERVED and duplicates REJECTED, deliberately unlike
+    # `--coarsen-dims` (which sorts, because a barrier set is order-free). Here the
+    # order is load-bearing: `--reveal-centre` supplies one coordinate per LISTED
+    # axis, so `sorted(set(...))` made `--spatial-dims 2,0 --reveal-centre 10,20`
+    # silently mean "axis 0 centred at 10" rather than the pairing the user typed.
     if not parsed:
         raise typer.BadParameter("--spatial-dims must list >=1 index")
+    if len(set(parsed)) != len(parsed):
+        raise typer.BadParameter(
+            f"--spatial-dims must not repeat an axis (a repeat would count it "
+            f"twice in the distance); got {parsed}"
+        )
     for i in parsed:
         if i < 0 or i >= ndim:
             raise typer.BadParameter(

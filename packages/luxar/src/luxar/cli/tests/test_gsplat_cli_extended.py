@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pytest
+import typer
 import yaml
 from typer.testing import CliRunner
 
@@ -3228,16 +3229,29 @@ class TestLODCommand:
         arrs = [np.asarray(s.centers, dtype=np.float64) for s in subs]
         allc = np.concatenate(arrs)
         centre = (allc.min(axis=0) + allc.max(axis=0)) / 2.0
-        # Each shell must lie outside the previous one: the cumulative maximum
-        # radius is non-decreasing. Fails if the sort direction is flipped.
-        cum_max, acc = [], None
-        for a in arrs:
-            acc = a if acc is None else np.concatenate([acc, a])
-            cum_max.append(float(np.linalg.norm(acc - centre, axis=1).max()))
-        assert cum_max == sorted(cum_max), cum_max
-        # ...and it must actually GROW, not merely fail to shrink — a single
-        # all-splats level would satisfy monotonicity vacuously.
-        assert cum_max[0] < cum_max[-1], cum_max
+        # PER-SHELL bounds, not a cumulative maximum. This assertion used to be
+        # `cum_max == sorted(cum_max)` over cumulative prefixes, which is true of
+        # EVERY ordering by construction — it had no teeth, and the trailing
+        # `cum_max[0] < cum_max[-1]` only showed the globally farthest splat was
+        # not in the first chunk. Requiring each shell to start no closer than the
+        # previous one ended is the property only a radial ordering has; verified
+        # by mutation (a "radial silently ignored" mutant passes the old form and
+        # fails this one).
+        bounds = [
+            (
+                float(np.linalg.norm(a - centre, axis=1).min()),
+                float(np.linalg.norm(a - centre, axis=1).max()),
+            )
+            for a in arrs
+        ]
+        for i in range(1, len(bounds)):
+            assert bounds[i][0] >= bounds[i - 1][1] - 1e-6, (
+                f"shell {i} starts at r={bounds[i][0]:.3f} but shell {i - 1} "
+                f"reached r={bounds[i - 1][1]:.3f} — shells are not nested: {bounds}"
+            )
+        # And the ladder must span a real range, so a degenerate single-radius
+        # fixture cannot satisfy the above vacuously.
+        assert bounds[-1][1] > bounds[0][1], bounds
 
     def test_radial_ladder_carries_no_energy_stamps(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
@@ -3424,6 +3438,27 @@ class TestLODCommand:
         )
         assert result.exit_code != 0
         assert not out.exists()
+
+    def test_spatial_dims_preserves_the_listed_order(self) -> None:
+        """`--spatial-dims` must NOT sort — the order pairs with `--reveal-centre`.
+
+        It went through `sorted(set(...))`, so `--spatial-dims 2,0 --reveal-centre
+        10,20` silently meant "axis 0 centred at 10, axis 2 at 20" rather than the
+        pairing the user typed. Deliberately unlike `--coarsen-dims`, where a
+        barrier SET is order-free.
+        """
+        from luxar.cli.lod import _parse_reveal_spatial_dims
+
+        assert _parse_reveal_spatial_dims("2,0", 3) == [2, 0]
+        assert _parse_reveal_spatial_dims("0,2", 3) == [0, 2]
+
+    def test_spatial_dims_rejects_duplicates(self) -> None:
+        """A duplicate was silently collapsed by `set()`; it now errors, because a
+        repeat would count that axis twice in the distance."""
+        from luxar.cli.lod import _parse_reveal_spatial_dims
+
+        with pytest.raises(typer.BadParameter, match="must not repeat"):
+            _parse_reveal_spatial_dims("0,0", 3)
 
     def test_coarsen_dims_rejected_for_additive(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
