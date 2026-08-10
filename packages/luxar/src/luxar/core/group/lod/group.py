@@ -864,6 +864,31 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
 DEFAULT_ADDITIVE_METHOD: Literal["random"] = "random"
 DEFAULT_ADDITIVE_N_LODS: int = 4
 
+#: Every accepted ``additive_lod={"method": ...}`` value, in one place. The
+#: per-geometry Literals (``points.PointsMethodName`` / ``lines.LinesMethodName``)
+#: enumerate the same names for the type checker; this tuple is what actually
+#: rejects user input, so a name added there and not here is silently unusable.
+ADDITIVE_METHODS: tuple[str, ...] = (
+    "random",
+    "salience",
+    "spatial-uniform",
+    "poisson-disk",
+    "radial",
+)
+
+#: Methods that order for a REVEAL rather than for approximation quality, and so
+#: must not carry energy stamps — the viewer's ``1/e(k)`` brightness
+#: compensation is gated on the blending mode, not on geometry type, and a
+#: reveal's prefix is a partial object at FULL brightness rather than a dim
+#: version of the whole. Mirrors ``gsplats.lod.additive._REVEAL_METHODS``; see
+#: MESH_NODE_SPEC §9.1, whose reasoning is geometry-agnostic.
+REVEAL_ADDITIVE_METHODS: frozenset[str] = frozenset({"radial"})
+
+
+def is_reveal_additive_method(method: str) -> bool:
+    """Whether ``method`` orders a reveal, so its ladder carries no energy stamps."""
+    return method in REVEAL_ADDITIVE_METHODS
+
 
 def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
     """Normalize the ``additive_lod=`` kwarg into a spec dict (or ``None``).
@@ -876,12 +901,16 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
     if spec is None or spec is False:
         return None
     if spec is True:
+        # Same KEY SET as the dict branch below — a consumer reading
+        # spec["reveal_centre"] must not depend on which branch produced it.
         return {
             "method": DEFAULT_ADDITIVE_METHOD,
             "n_lods": DEFAULT_ADDITIVE_N_LODS,
             "counts": None,
             "seed": None,
             "salience_kind": "size",
+            "reveal_centre": None,
+            "spatial_dims": None,
         }
     if not isinstance(spec, dict):
         raise TypeError(
@@ -892,16 +921,9 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
     kwargs.pop("recompute", None)
 
     method = kwargs.pop("method", DEFAULT_ADDITIVE_METHOD)
-    if method not in (
-        "random",
-        "salience",
-        "spatial-uniform",
-        "poisson-disk",
-    ):
-        raise ValueError(
-            "method must be one of 'random' / 'salience' / 'spatial-uniform' "
-            f"/ 'poisson-disk'; got {method!r}"
-        )
+    if method not in ADDITIVE_METHODS:
+        listed = " / ".join(repr(m) for m in ADDITIVE_METHODS)
+        raise ValueError(f"method must be one of {listed}; got {method!r}")
 
     n_lods = int(kwargs.pop("n_lods", DEFAULT_ADDITIVE_N_LODS))
     if n_lods < 1:
@@ -940,11 +962,42 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
             f"salience_kind must be 'size' or 'energy'; got {salience_kind!r}"
         )
 
+    # Shell geometry for method="radial" only. Validated here rather than at
+    # write time for the same reason as `counts` above: under a substitutive
+    # ladder the wrapper group exists on disk before its children are written,
+    # so a late raise leaves a partial group behind.
+    reveal_centre = kwargs.pop("reveal_centre", None)
+    if reveal_centre is not None:
+        reveal_centre = [float(c) for c in reveal_centre]
+        if not reveal_centre:
+            raise ValueError("reveal_centre must not be empty")
+    spatial_dims = kwargs.pop("spatial_dims", None)
+    if spatial_dims is not None:
+        spatial_dims = [int(d) for d in spatial_dims]
+        if not spatial_dims:
+            raise ValueError("spatial_dims must not be empty")
+        if len(set(spatial_dims)) != len(spatial_dims):
+            raise ValueError(
+                f"spatial_dims must not repeat an axis; got {spatial_dims}"
+            )
+        if any(d < 0 for d in spatial_dims):
+            raise ValueError(f"spatial_dims must be non-negative; got {spatial_dims}")
+    if (reveal_centre is not None or spatial_dims is not None) and not (
+        is_reveal_additive_method(method)
+    ):
+        # Silently ignoring these would look like the centre had been honoured.
+        raise ValueError(
+            "additive_lod: 'reveal_centre' / 'spatial_dims' apply only to a "
+            f"reveal ordering ({' / '.join(sorted(REVEAL_ADDITIVE_METHODS))}); "
+            f"got method={method!r}"
+        )
+
     if kwargs:
         raise ValueError(
             f"additive_lod for {geometry}: unrecognized keys "
             f"{sorted(kwargs)}. Valid keys: method, n_lods, counts, "
-            f"breakpoints, seed, salience_kind, recompute."
+            f"breakpoints, seed, salience_kind, reveal_centre, spatial_dims, "
+            f"recompute."
         )
 
     return {
@@ -953,6 +1006,8 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
         "counts": counts,
         "seed": seed,
         "salience_kind": salience_kind,
+        "reveal_centre": reveal_centre,
+        "spatial_dims": spatial_dims,
     }
 
 
