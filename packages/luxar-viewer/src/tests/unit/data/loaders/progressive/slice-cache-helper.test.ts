@@ -94,6 +94,37 @@ describe('slice-cache-helper — prefix ladders', () => {
     expect(sc.getStats().size).toBe(measureLodBytes([lod]));
   });
 
+  it('deep-copies and bills a lines vertexRangeBounds array through a store/restore round trip', () => {
+    // `LoadedLinesData.vertexRangeBounds` (issue #1424) is a FLAT `Uint32Array`
+    // of `[start, end)` pairs rather than an `ElementIdRange[]` object array
+    // ENTIRELY because of these two generic helpers: an object array would be
+    // billed 0 bytes by `measureLodBytes` (the LRU would then hold roughly twice
+    // the bytes the budget believes for a fragmented labelled slice) and passed
+    // into the stored snapshot BY REFERENCE by `cloneLodSnapshot`. Both halves of
+    // that justification are pinned here — the docblocks in `types/lines.ts` and
+    // `data/lines/lines-spatial-index-loader.ts` rest on them.
+    const withBounds = makeLod(4) as FakeLod & { vertexRangeBounds: Uint32Array };
+    withBounds.vertexRangeBounds = new Uint32Array([5, 7, 100, 4098]);
+
+    // (a) MEASURED, and the field is what moves the number: 4 float32 positions
+    // alone vs those plus 4 uint32 bounds.
+    expect(measureLodBytes([makeLod(4)])).toBe(4 * 4);
+    expect(measureLodBytes([withBounds])).toBe(4 * 4 + 4 * 4);
+
+    storeLadder(sc, PATH, view, [withBounds]);
+    expect(sc.getStats().size).toBe(measureLodBytes([withBounds]));
+
+    // (b) DEEP-COPIED: a distinct, non-aliased buffer with equal contents. The
+    // source is the loader's own array, so an alias would let a later load
+    // silently rewrite a cached snapshot.
+    const restored = restoreLadder<typeof withBounds>(sc, PATH, view, N_LODS);
+    const bounds = restored![0].vertexRangeBounds;
+    expect(bounds).toBeInstanceOf(Uint32Array);
+    expect(bounds).not.toBe(withBounds.vertexRangeBounds);
+    expect(bounds.buffer).not.toBe(withBounds.vertexRangeBounds.buffer);
+    expect(Array.from(bounds)).toEqual([5, 7, 100, 4098]);
+  });
+
   it('never downgrades: a shorter snapshot leaves the longer entry intact', () => {
     storeLadder(sc, PATH, view, [makeLod(10), makeLod(5), makeLod(2)]);
     const key = SliceCache.makeKey(PATH, buildSliceViewSig(view));

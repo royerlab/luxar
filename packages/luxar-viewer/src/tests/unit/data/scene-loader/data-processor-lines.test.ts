@@ -452,6 +452,17 @@ describe('processLinesData — elementIds composition (picking labels)', () => {
     expect(staged.processed.elementIds).toBeUndefined();
   });
 
+  it('fails CLOSED on an UNCOMPACTED (over-long) source segment table', async () => {
+    // The projection sizes the table to the VISIBLE stream exactly, so a table
+    // as long as the LOADED segment count is a producer that never applied the
+    // clip. An "at least this long" guard would accept it and read a prefix,
+    // mapping slot s → segment row s: with these ranges that yields the
+    // plausible-looking [5, 100] instead of nothing. Exact-length only.
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 1, 2])));
+    const staged = await run(makeRangedData([5, 7, 100, 104]));
+    expect(staged.processed.elementIds).toBeUndefined();
+  });
+
   it('fails CLOSED when a source segment row is out of range', async () => {
     mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 9])));
     const staged = await run(makeRangedData([5, 7, 100, 104]));
@@ -531,6 +542,54 @@ describe('processLinesData — elementIds composition (picking labels)', () => {
     mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(0));
     const staged = await run(makeRangedData([5, 7, 100, 104]));
     expect(staged.processed.elementIds).toBeUndefined();
+  });
+
+  it('composes the SAME E → D → C → A answer through the WORKER path', async () => {
+    // Every other composition test sits at `segmentCount: 3`, i.e. below the
+    // `segmentCount > 1000` worker threshold, so it only ever exercises the
+    // in-process dispatcher. The worker RPC carries `emitSourceIndices` in its
+    // params and `sourceSegmentIndices` back in its result; pin both, mocking
+    // only the worker pool (the composer itself is the real one).
+    //
+    // 2000 loaded segments over 4000 loaded vertices, segment r joining local
+    // vertices (2r, 2r + 1), across two on-disk ranges [5, 7) and [100, 4098):
+    //   slot 0 → row 0 → local vertex 0 → on-disk 5
+    //   slot 1 → row 2 → local vertex 4 → on-disk 102
+    // — the same pair the in-process composition test asserts.
+    const segmentCount = 2000;
+    const data: LoadedLinesData = {
+      positions: new Float32Array(4000 * 3),
+      segments: Uint32Array.from({ length: 4000 }, (_v, i) => i),
+      widths: new Float32Array(4000),
+      colors: null,
+      sharpness: null,
+      scalars: undefined,
+      segmentCount,
+      vertexCount: 4000,
+      ndim: 3,
+      vertexRangeBounds: new Uint32Array([5, 7, 100, 4098]),
+    };
+
+    const projectLinesTo3D = vi.fn(async (_params: unknown) =>
+      makeClippedResult(new Uint32Array([0, 2]))
+    );
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectLinesTo3D })),
+    });
+
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const staged = await processLinesData('/lines', data, viewState, root, 1);
+    if (!staged || staged.noop) throw new Error('expected a geometry staged commit');
+
+    // (a) the worker was the one that ran, and it was asked for the table.
+    expect(projectLinesTo3D).toHaveBeenCalledTimes(1);
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
+    const params = projectLinesTo3D.mock.calls[0][0] as { emitSourceIndices?: boolean };
+    expect(params.emitSourceIndices).toBe(true);
+
+    // (b) the returned table composes to the on-disk START-vertex rows.
+    expect(Array.from(staged.processed.elementIds!)).toEqual([5, 102]);
   });
 });
 

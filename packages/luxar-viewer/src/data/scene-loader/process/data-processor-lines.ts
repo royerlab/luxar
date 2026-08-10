@@ -163,7 +163,16 @@ function composeLinesElementIds(
     return undefined;
   }
   if (visibleSegmentCount <= 0) return undefined; // no slots to map
-  if (sourceSegmentIndices === undefined || sourceSegmentIndices.length < visibleSegmentCount) {
+  if (sourceSegmentIndices === undefined || sourceSegmentIndices.length !== visibleSegmentCount) {
+    // EXACT length, not "at least": the projection publishes a table that
+    // describes precisely the visible stream (`workers/data-worker/projection/
+    // lines.ts` sizes it `visibleCount` and only publishes it when its own set-bit
+    // count agrees), so a longer table is not a superset to read a prefix of — it
+    // is an UNCOMPACTED `segmentCount`-long table from a producer that ignored the
+    // clip, and a `>=` check would accept it and map every slot `s` to segment row
+    // `s`: exactly the wrong-but-plausible answer this map exists to prevent.
+    // Every other guard here is an exact-match rejection for the same reason.
+    //
     // Deliberately does not assert what the projection did: the table is also
     // dropped when the clip kernel's visibility mask and returned count
     // disagree, and that case logs its own warning at the detection site in

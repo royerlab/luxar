@@ -125,17 +125,18 @@ app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hit
 ```
 
 > **Note on `selection`:** fires with the element under the cursor (or `null`
-> when the hover clears) on any dataset. What `elementIndex` counts is per-node —
-> see `SelectionPayload` for the exact contract: a labelled node reports an
-> on-disk index (for a labelled **lines** node, the picked segment's start-vertex
-> row), while an unlabelled one reports the visible-buffer slot. Subscribe **before** the dataset loads
-> (i.e. before `init()` / `switchDataset()`) — the GPU picking pipeline is
-> provisioned at load time only when a listener exists, so picking stays
-> zero-cost for pages that never consume it. Hover-driven; click-to-select is
-> a planned follow-up. `nodeName` is the user-facing layer (the outermost
-> `kind=partition` wrapper when there is one), while `elementIndex` is local to
-> the leaf actually hit — index it against `hitNodeName`, which equals
-> `nodeName` when the node is not partitioned.
+> when the hover clears) on any dataset. What `elementIndex` counts is
+> per-node — see `SelectionPayload` for the exact contract: a labelled node
+> reports an on-disk index (for a labelled **lines** node, the picked
+> segment's start-vertex row), while an unlabelled one reports the
+> visible-buffer slot. Subscribe **before** the dataset loads (i.e. before
+> `init()` / `switchDataset()`) — the GPU picking pipeline is provisioned at
+> load time only when a listener exists, so picking stays zero-cost for pages
+> that never consume it. Hover-driven; click-to-select is a planned follow-up.
+> `nodeName` is the user-facing layer (the outermost `kind=partition` wrapper
+> when there is one), while `elementIndex` is local to the leaf actually hit —
+> index it against `hitNodeName`, which equals `nodeName` when the node is not
+> partitioned.
 
 ### What's NOT supported in v1
 
