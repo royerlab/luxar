@@ -64,6 +64,50 @@ incoming binding in rather than overwriting it, so a one-part partition nested i
 a genuine tiling no longer drops the outer tile anchor — the standalone writer and
 the scene graft agree again on that shape.
 
+#### Lines — the volumetric primitive's ray-integral math (#1352, no rendering change)
+
+Groundwork for replacing the Lines screen-space quad with a cylindrically
+symmetric primitive. The quad is ill-posed when a segment points at the camera:
+the projected axis collapses, so the quad's orientation is decided by noise while
+its width stays full, and tubes viewed end-on turn into a starburst of needles.
+The replacement is a segment convolved with an isotropic 3D Gaussian,
+`rho = a·G_2D(r)·W(s)` with an erf-softened axial window — orientation-free by
+construction, and linear in the source measure, so independently-drawn segments
+sum to exactly the ideal bent tube with no join machinery at all.
+
+`materials/line/ray-integral.ts` is the closed form for it: a CPU reference, a
+GLSL block and TSL builders for the sum-mode ray integral and the peak-mode
+capsule profile, all generated from one constant set (the same single-source
+shape as `_shared/erf.ts`, which it consumes). **Nothing renders differently** —
+no production shader imports it yet. It lands first so the wiring slice has a
+pinned reference to be tested against, exactly as the erf polynomial did.
+
+The two analytic limits are pinned as tests: side-on reduces to the untruncated
+Gaussian stroke at `sigma = 2·width / GAUSSIAN_EQUIVALENT_TRUNCATION`, and end-on
+to `a·L·G(r0)` — path length times the radial profile, finite and orientation-free
+where the quad degenerates. So is additivity, the property the whole design rests
+on: splitting a segment and summing the halves reproduces the whole, across the
+lane boundary and at near-end-on angles.
+
+Most of the work is in the numerics, which is where this would actually break.
+The `|u| → 0` end-on singularity and the near-coincident-erf-argument hazard turn
+out to be the same condition — writing the window's argument gap as
+`Δ = L·|u|/(sigma·√2)` cancels the `1/|u|` algebraically — so there is one
+derivative lane keyed on `Δ`, threshold 0.5, chosen where `erfPoly`'s difference
+quotient stops being trustworthy rather than by taste. Three float32 clamps keep
+both `mix` arms finite (a discarded arm that overflows still poisons the result
+through `Inf·0`), pinned by a `Math.fround` harness against a deliberately
+unguarded mutant. The window is clamped non-negative because the shader erf is a
+least-squares fit that can go slightly negative near saturation.
+
+Three things this does NOT do, spelled out in the module header so the wiring
+slice does not inherit them as surprises: it covers `beta = 2` only, so the
+`sharpness` knob needs the LUT the issue proposes; it changes fragment shading,
+not the screen-space footprint, and end-on the quad IS the sliver, so a
+conservative stencil is still required; and its additivity means the joint-code /
+cap-suppression subsystem and the screen-space coverage compensations would
+double-count rather than merely be redundant.
+
 #### `nd_transform` on a group — and on any node's property setter — is checked against the scene dimensions
 
 A geometry leaf's *creation-time* `nd_transform` has always been validated against
@@ -105,7 +149,6 @@ after every attr is validated and written, so a group refused at construction ti
 leaves no phantom entry (leaf writers have their own post-write attr steps and are
 unchanged here). Attr-agnostic, so it fixes the same trap for a bad `opacity` /
 `transform`. Fixes #1418.
-
 
 #### The hover label lookup finds the CSR again on a partitioned layer (#1415)
 

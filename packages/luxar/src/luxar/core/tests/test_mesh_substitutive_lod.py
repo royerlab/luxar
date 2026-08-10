@@ -985,7 +985,5 @@ class TestPartitionBoundAnchorMesh:
         over = tmp_path / "over"
         over.mkdir()
         with pytest.raises(ValueError) as exc:
-            self.write(
-                over, coverage_fractions=[0.0, 2.0, MAX_COVERAGE_FRACTION + 0.5]
-            )
+            self.write(over, coverage_fractions=[0.0, 2.0, MAX_COVERAGE_FRACTION + 0.5])
         assert f"[0, {MAX_COVERAGE_FRACTION:g}]" in str(exc.value)

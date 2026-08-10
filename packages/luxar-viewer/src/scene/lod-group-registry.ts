@@ -139,9 +139,10 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * partition-bound ladders (see ``partitioned_coverage_fractions``) and still fails
  * 32:9 even at 0.2.
  *
- * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on an
- * explicitly authored ``coverage_fractions=[...]`` list — see
- * ``core/group/lod/group.py``) is defined as ``1 / FILL_FACTOR``, i.e. the metric a
+ * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on any
+ * ``coverage_fraction``, authored or derived — a partition-bound ladder derives
+ * exactly this value; see ``core/group/lod/group.py``) is defined as
+ * ``1 / FILL_FACTOR``, i.e. the metric a
  * screen-filling object produces. Changing this value must change that one; a
  * Python test (``test_max_coverage_fraction_matches_the_viewer_fill_factor``) reads
  * this file

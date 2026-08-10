@@ -155,8 +155,10 @@ extracted to keep `node.py` readable.
   whole-object ladder's finest anchor, up to `4.0` for a partition-bound or
   explicitly authored one — multiplied by a quarter of the current viewport
   diagonal to get the pixel comparison).
-- **`add_partition_group_impl`** — validates `display_type` ∈
-  {`points`, `lines`, `gsplats`} and `max_elements` (int ≥ 1), then creates a
+- **`add_partition_group_impl`** — validates `display_type` against the
+  partition-capable rows of `typing_utils/geometry_capabilities.py`
+  (`points` / `lines` / `gsplats` / `mesh` today — `mesh` earned it with
+  `luxar.mesh.split`) and `max_elements` (int ≥ 1), then creates a
   child group with `kind="partition"`. A `kind=partition` group is a
   compile-time decomposition of one large geometry node into homogeneous
   children for per-child frustum culling and LOD; the user still sees one

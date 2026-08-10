@@ -20,6 +20,7 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 | `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
 | `shader-glsl.ts`   | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
 | `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
+| `ray-integral.ts`  | The #1352 volumetric-line ray integral (`lineRayIntegralRef` / `lineRayIntegralPoly`), the peak-mode capsule profile, the CPU ray/segment geometry, and their GLSL/TSL twins. Pure math — no shader consumes it yet                    |
 
 ## Rendering model in one paragraph
 
@@ -252,6 +253,38 @@ only 0.076% — and why the zigzag is gated on its flux profile instead.
 (Both columns measured in headless Chromium with `dpr=1` pinned on
 2026-08-07, the unmitred one via `&lineJoin=none`. The E2E job is not part of the
 per-PR CI run; the spec runs under `make test-e2e`.)
+
+## The `#1352` volumetric primitive (`ray-integral.ts`) — not wired up
+
+`ray-integral.ts` is the math for the proposed replacement of the
+screen-space quad with a cylindrically symmetric **volumetric** primitive: a
+segment convolved with an isotropic 3D Gaussian, whose closed-form ray
+integral is finite and orientation-free end-on (where the quad degenerates
+to a zero-area sliver — the artifact #1352 is about). It carries a CPU
+reference, a float64 mirror of the SHADER's lanes and literals
+(`lineRayIntegralPoly` — it predicts what the shader computes, **not**
+its float32 precision; the overflow guards are invisible to it), a GLSL
+block and TSL builders, all generated from one set of constants — the
+`_shared/erf.ts` staging pattern, including that module's `tsl-harness`
+parity entry and codegen snapshot.
+
+**Nothing in this folder consumes it yet.** Read its module header before
+wiring it in; three things there bear directly on the code above:
+
+- `sigma = 2 · width / GAUSSIAN_EQUIVALENT_TRUNCATION`. The authored width
+  is a half-width, and the vertex stage doubles it (see the quad expansion
+  paragraph above), so the world radius at `|vPerpNorm| = 1` is `2 · width`.
+- The side-on limit is the **bare** `exp(−K·p²)`, not the shifted-truncated
+  super-Gaussian this folder's fragment draws — measured +1.71% cross-section
+  mass, and up to 41% brighter at `p = 0.9`. Un-truncating is exactly what
+  makes the integral additive.
+- Because it IS additive, wiring it in has to **retire** the joint-code cap
+  suppression and the screen-space `widthScale` / `edgeAA` factors rather
+  than keep them: both were built to compensate a rasterized quad, and
+  applying them on top of a world-space integral double-counts. It also
+  needs a conservative screen-space footprint (a fragment shader only runs
+  where the quad rasterizes, and end-on the quad IS the sliver), and a
+  decision on `sharpness` — the closed form is the `β = 2` case only.
 
 ## Geometry and storage layout
 
