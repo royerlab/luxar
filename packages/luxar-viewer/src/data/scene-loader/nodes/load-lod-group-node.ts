@@ -351,8 +351,9 @@ export async function loadLodGroupNode(
     const canDefer = hasRegistry && i !== eagerIdx && supportsLod(child.type);
 
     if (canDefer) {
-      // Cheap-attach: placeholder mesh + loader, no array fetch. The thunk runs
-      // the expensive tail (and registration) on first activation.
+      // Cheap-attach: placeholder mesh + loader, no array fetch. The activation
+      // thunk runs the expensive tail ONLY: registration stays on the eager
+      // `loadXNode` path, so a lazy level never joins the per-slice sweep.
       const lazyChild = child;
       let entryChild: LODGroupChild;
       if (child.type === 'gsplats') {
@@ -459,8 +460,8 @@ export async function loadLodGroupNode(
     // Geometry-agnostic by construction: it branches on the wrapper's *kind*
     // (lod/partition), never on the inner leaf type, and the load runs through
     // the same ``loadChildren`` recursion as any other node — so a
-    // partition/lod nesting of points or lines defers identically to gsplats
-    // (the three node types stay symmetric here; see the parametrized test).
+    // partition/lod nesting of points, lines or mesh defers identically to
+    // gsplats (all four stay symmetric here; see the parametrized test).
     //
     // A per-child transform would make the transform-less placeholder
     // mis-project its bounds, so those (rare) fall through to the eager path
