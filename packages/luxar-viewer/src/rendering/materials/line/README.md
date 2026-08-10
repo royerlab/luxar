@@ -323,6 +323,20 @@ for the G1 gate:
   therefore on COVERAGE; attribute continuity holds exactly only for
   constant-attribute polylines.
 
+The "no light from behind the camera" claim has one exempt lane, also left
+for the G1 gate: the soft/soft general lane keeps the full-line closed form
+plus the near FADE (the gsplat convention), because clipping a
+Gaussian×erf-window product at an arbitrary ray bound is the same
+Owen-T-class integral the mixed lane needs four splits for. Its retained
+behind-eye fraction is exactly `½erfc(sin(ray, axis)·(d − nearCull)/(σ√2))`
+in the closest approach's depth `d` — pinned against quadrature in
+`line-volumetric-integral.test.ts`. Read that as a bound on CLEARANCE, not
+on angle: broadside is the best case rather than an exempt one, and
+near-axial rays leak more, not less (they are the ones the
+structural-parallel lane takes over and clips exactly). With `nearCull` at
+1e-3·scene diagonal it takes the camera inside the tube to matter, and the
+near fade is already ramping there.
+
 End-on viewing is exact (the screen-space quad degenerates there), and the
 sum output is normalized by σ√2π so a long segment's side-on core matches
 the quad's core intensity exactly — the calibration that makes the session

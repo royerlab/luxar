@@ -47,7 +47,12 @@ perspective near plane is folded in as one more plane clip where it stays
 closed-form (an s-bound in the structural-parallel lane, a ξ-bound in the
 general plane lane), so a segment straddling the eye no longer
 contributes light from behind the camera; the soft/soft oblique lane
-keeps the whole-ray + near-fade convention shared with gsplats.
+keeps the whole-ray + near-fade convention shared with gsplats, and that
+exemption is bounded too — its retained behind-eye fraction is exactly
+½erfc(sin(ray, axis)·(d − nearCull)/(σ√2)) in the closest approach's
+depth, so it is a clearance bound and not an angular one (broadside is
+the best case, near-axial the worst, and it takes the camera inside the
+tube for the near fade not to have swallowed it already).
 
 The lane math lives once in `_shared/line-volumetric.ts` as a CPU
 reference validated against brute numerical quadrature
@@ -111,7 +116,6 @@ after every attr is validated and written, so a group refused at construction ti
 leaves no phantom entry (leaf writers have their own post-write attr steps and are
 unchanged here). Attr-agnostic, so it fixes the same trap for a bad `opacity` /
 `transform`. Fixes #1418.
-
 
 #### The hover label lookup finds the CSR again on a partitioned layer (#1415)
 

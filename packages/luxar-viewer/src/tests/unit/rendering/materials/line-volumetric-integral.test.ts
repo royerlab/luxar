@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { erfPoly } from '../../../../rendering/materials/_shared/erf';
+import { erfPoly, erfRef } from '../../../../rendering/materials/_shared/erf';
 import {
   LINE_PARALLEL_LANE_THRESHOLD,
   lineVolumetricModelDensity,
@@ -572,6 +572,43 @@ describe('lineVolumetricSumIntegral vs quadrature', () => {
       expect(withBound).toBe(unbounded);
       const refClipped = quadrature(o, d, seg, 40001, 50);
       expect(unbounded - refClipped).toBeGreaterThan(0.3 * unbounded);
+    });
+
+    it('soft/soft leak is ½erfc(sin·clearance/σ√2) — clearance, NOT angle, bounds it', () => {
+      // What the exemption costs, in closed form. Ray offset PERPENDICULAR
+      // to both the axis and the ray direction, so the closest approach is
+      // exactly at t = 50 and `clearance = 50 − tMin` is exact.
+      //
+      // The point of the grid: broadside (90°) is the BEST case, not an
+      // exempt one — it still leaks 16% one σ short of the near plane — and
+      // near-axial is WORSE, not better (those rays are simply the ones the
+      // structural-parallel lane takes over and clips exactly). Any future
+      // claim that the leak is confined to a near-axial cone fails here.
+      const seg: VolumetricSegment = { a: [-200, 0, 0], b: [200, 0, 0], sigma: SIGMA };
+      for (const tiltDeg of [90, 45, 20, 5]) {
+        const tilt = (tiltDeg * Math.PI) / 180;
+        const az = (30 * Math.PI) / 180;
+        const d: Vec3 = [
+          Math.cos(tilt),
+          Math.sin(tilt) * Math.cos(az),
+          Math.sin(tilt) * Math.sin(az),
+        ];
+        // x̂ × d̂ — perpendicular to the axis AND to the ray.
+        const n = vnormalize([0, -d[2], d[1]]);
+        const P = vadd([5, 0, 0], vscale(n, 0.4));
+        const o = vsub(P, vscale(d, 50));
+        const full = lineVolumetricSumIntegral(o, d, seg);
+        for (const clearance of [0, 1, 2]) {
+          const clipped = quadrature(o, d, seg, 40001, 50 - clearance);
+          const predicted = 0.5 * (1 - erfRef((Math.sin(tilt) * clearance) / (SIGMA * Math.SQRT2)));
+          expect((full - clipped) / full, `tilt=${tiltDeg} clearance=${clearance}`).toBeCloseTo(
+            predicted,
+            3
+          );
+        }
+        // And the lane itself is unmoved by the bound, at every angle.
+        expect(lineVolumetricSumIntegral(o, d, seg, { tMin: 50 })).toBe(full);
+      }
     });
   });
 

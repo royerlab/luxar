@@ -74,9 +74,25 @@
  * eye. The near plane is treated as ONE MORE PLANE CLIP where that stays
  * closed-form: the structural-parallel lane maps it to an s-bound, the
  * general plane lane to a ξ-bound (see {@link SumIntegralOptions.tMin}).
- * The soft/soft general lane keeps the documented full-line + near-fade
- * convention — its behind-eye mass is exponentially small outside the
- * few-degrees-of-axial cone the structural lane owns.
+ *
+ * The soft/soft general lane is the ONE exemption — clipping a
+ * Gaussian×erf-window product at an arbitrary ray bound is the same
+ * Owen-T-class integral the mixed lane needs four splits for, so that lane
+ * keeps the full-line closed form and the shader's near FADE, the same
+ * convention gsplats use. The retained behind-eye mass is exactly
+ *
+ *   leak / I_full = ½·erfc( sin(ray, axis) · (d − nearCull) / (σ√2) )
+ *
+ * with `d` the closest approach's depth — measured against quadrature to
+ * three digits in `line-volumetric-integral.test.ts`. Note what governs it:
+ * the near-plane CLEARANCE in ray-σ units, NOT the ray angle. Broadside is
+ * the best case, not an exempt one (90° with one σ of clearance still keeps
+ * 16% of the integral behind the eye), and near-axial rays are WORSE, not
+ * better — they are simply the ones the structural-parallel lane takes over
+ * and clips exactly. Since `nearCull` is 1e-3·scene diagonal, a leak worth
+ * seeing needs the closest approach within a few σ of the eye, i.e. the
+ * camera inside the tube, where the near fade is already ramping. Clipping
+ * this lane properly is a G1-gate item, not a silent approximation.
  *
  * ## The load-bearing identity
  *
@@ -221,9 +237,10 @@ export interface SumIntegralOptions {
    * CLIP in the lanes where it stays closed-form: the structural-parallel
    * lane (mapped to an s-bound) and the general plane lane (a ξ-bound).
    * The soft/soft general lane deliberately IGNORES it and keeps the
-   * documented full-line + near-fade convention: its behind-eye mass is
-   * exponentially small except within a few degrees of axial, where the
-   * structural lane takes over. Undefined = whole line (the ortho path).
+   * full-line + near-fade convention; its retained behind-eye fraction is
+   * ½·erfc(sin(ray, axis)·(d − nearCull)/(σ√2)) in the closest approach's
+   * depth `d` — see the module header for what that does and does not
+   * bound. Undefined = whole line (the ortho path).
    */
   readonly tMin?: number;
 }
