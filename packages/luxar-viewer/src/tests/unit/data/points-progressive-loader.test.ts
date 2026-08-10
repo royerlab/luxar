@@ -1192,7 +1192,9 @@ describe('buildSliceViewSig extend_to_all membership (shared helper)', () => {
 describe('PointsProgressiveLoader — elementIds without levelOffsets (issue #1421)', () => {
   // WITHOUT `levelOffsets` the parent node declares no union label CSR, so no
   // reader can key by any index this ladder could publish: each part is a
-  // sub-LOD (`additive_<i>`) in its own private on-disk index space. The
+  // sub-LOD (`additive_<i>`) whose arrays live in their own on-disk index
+  // space, while the labels a map would serve are ONE union CSR on the parent
+  // (#1422) keyed by the concatenation of those spaces. The
   // single-part branch is the FIRST-PAINT state of every ladder, not an
   // "unladdered node", so passing `parts[0]` through verbatim would make
   // hover report an additive_0 index until a second level lands and then

@@ -238,11 +238,15 @@ describe('createProgressiveGSplatsLoader', () => {
   });
 
   it('clears the label flags on each sub-LOD node, overriding the stored attrs', async () => {
-    // The gsplats writer stamps `has_labels` on EVERY `additive_<i>` group, but
-    // the pick path only resolves labels against the PARENT path — so a truthy
-    // flag here would make the spatial-index loader publish per-level `ranges`
-    // and the projection compose a per-level slot → on-disk map that the ladder
-    // concat then throws away (#1423). mockImplementationOnce (not
+    // A gsplat ladder carries no labels at any level — the authoring path has
+    // no `labels` channel — and the pick path only ever resolves labels against
+    // the PARENT path anyway, so the clearing here is defensive against
+    // whatever attrs a sub-LOD group happens to carry: a truthy flag would make
+    // the spatial-index loader publish per-level `ranges` that the ladder concat
+    // then has to throw away — the projection runs DOWNSTREAM of the concat
+    // (`data-processor-gsplats.ts` gates `emitSourceIndices` on the already-
+    // concatenated payload's `ranges`), so no per-level slot → on-disk map is
+    // ever composed in the first place (#1423). mockImplementationOnce (not
     // mockImplementation) so the default stub is restored for the next tests.
     zarrOpenMock.mockImplementationOnce((async () => ({
       attrs: { foo: 'bar', has_labels: true, has_image_labels: true },
@@ -330,11 +334,15 @@ describe('createProgressivePointsLoader', () => {
   });
 
   it('overrides each sub-LOD node’s label flags with the PARENT’s (here: absent)', async () => {
-    // `write_points_multi_lod` stamps `has_labels` on EVERY `additive_<i>`
-    // group, but a sub-LOD's CSR is in its own private index space and no
-    // reader can key by it — the flags are therefore always overridden with
-    // the PARENT node's declaration (#1439). This parent declares nothing, so
-    // both read false and no per-level map is ever built (#1421).
+    // Since #1422 `write_points_multi_lod` stamps the label flags (and the union
+    // CSR) on the ladder PARENT and leaves every `additive_<i>` group bare —
+    // the parent is also the only path the pick path resolves labels against.
+    // A sub-LOD's stored flags are therefore never trusted: the fixture below
+    // hand-stamps `has_labels` / `has_image_labels` on the level anyway, to
+    // prove the override is unconditional and always takes the PARENT node's
+    // declaration (#1439). This parent declares nothing, so both read false and
+    // no per-level map is built only for the ladder concat to throw away
+    // (#1421).
     // mockImplementationOnce (not mockImplementation) so the default stub is
     // restored for the following tests.
     // `n_points` is VALID here, so the null offsets below can only come from
@@ -526,11 +534,16 @@ describe('createProgressiveLinesLoader', () => {
   });
 
   it('clears the label flags on each sub-LOD node, overriding the stored attrs', async () => {
-    // `write_lines_multi_lod` stamps `has_labels` on EVERY `additive_<i>` group,
-    // but the pick path only resolves labels against the PARENT path — so a
-    // truthy flag here would make the spatial-index loader publish per-level
-    // `vertexRangeBounds` and the projection compose a per-level slot → on-disk map
-    // that the ladder concat then throws away (#1424). mockImplementationOnce
+    // Since #1422 `write_lines_multi_lod` stamps the label flags (and the
+    // per-vertex union CSR) on the ladder PARENT and leaves every
+    // `additive_<i>` group bare, which is also the only path the pick path
+    // resolves labels against. The clearing here is therefore defensive against
+    // any attrs a sub-LOD may carry — a truthy flag would make the
+    // spatial-index loader publish per-level `vertexRangeBounds` that the ladder
+    // concat then has to throw away; the projection runs DOWNSTREAM of the concat
+    // (`data-processor-lines.ts:95` gates `emitSourceIndices` on the already-
+    // concatenated payload's `vertexRangeBounds`), so no per-level segment-slot →
+    // on-disk start-vertex map is ever composed (#1424). mockImplementationOnce
     // (not mockImplementation) so the default stub is restored for the
     // following tests.
     zarrOpenMock.mockImplementationOnce((async () => ({

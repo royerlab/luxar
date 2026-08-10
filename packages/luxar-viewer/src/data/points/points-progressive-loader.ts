@@ -195,13 +195,28 @@ function concatenatePointsData(
     // "unladdered", it is the first-paint state of EVERY ladder (this loader
     // only exists for `n_additive_sublods` nodes).
     //
-    // With `levelOffsets` (the parent publishes the union CSR) level 0's index
-    // space IS the parent's, shifted by `levelOffsets[0] === 0` — so the map is
-    // already correct and the payload passes through UNCHANGED (no strip, no
-    // copy). Without it the parent has no CSR any reader could key by, so a map
-    // in a sub-LOD's private index space must be stripped: hover would
-    // otherwise report an additive_0 index while only LOD 0 is resident and the
-    // raw slot once a second level lands.
+    // The ladder's labels live in ONE CSR on the PARENT node (#1422), whose
+    // index space is the concatenation of the levels, so a correct ladder map is
+    // a per-level map offset by the preceding levels' on-disk counts (#1439).
+    // WITH `levelOffsets` that composition is running: `additive_0`'s on-disk
+    // range IS the union CSR's PREFIX, so level 0's index space already is the
+    // parent's, shifted by `levelOffsets[0] === 0` — the map is correct as it
+    // stands and the payload passes through UNCHANGED (no strip, no copy), and it
+    // stays correct as further levels land because the multi-part branch below
+    // composes them.
+    //
+    // WITHOUT `levelOffsets` the parent declares no CSR any reader could key by,
+    // so the GUARD applies (belt-and-braces): that payload must never publish a
+    // slot → on-disk map. Not because `parts[0]`'s map is in the wrong space — it
+    // is not, it is the union's prefix, so passing it through would in fact
+    // resolve correctly while it is the only committed level. It is that a
+    // tooltip which is right at first paint and silently degrades to the raw slot
+    // the moment a second level lands is worse than one consistently at the raw
+    // slot, which is what every doc surface promises.
+    // `createProgressivePointsLoader` also clears `has_labels` /
+    // `has_image_labels` on each sub-LOD's attrs whenever the composition cannot
+    // run, so the map is normally never built at all in that case; this keeps the
+    // invariant true whatever attrs a sub-LOD carries.
     const only = parts[0];
     const offsetOk = levelOffsets !== null && levelOffsets.length >= 2 && levelOffsets[0] === 0;
     if (offsetOk) {

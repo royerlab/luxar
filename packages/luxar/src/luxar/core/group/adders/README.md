@@ -133,6 +133,30 @@ array. Attrs are split: those in `COMPOSITING_ATTRS` go on the wrapper, the
 rest on each leaf. Per-element arrays are sliced into each part via
 `slice_optional_array`.
 
+Every wrapper impl opens with its geometry's pre-split gate
+(`validate_points_channels_before_split` /
+`validate_lines_channels_before_split` /
+`validate_gsplats_channels_before_split` from `compositing`), which runs the flat
+writer's own step-0 channel sweep against the **source** element count — Points
+in the order colors, radii, sharpness, scalars, labels; Lines with `widths`
+FIRST, then colors, sharpness, scalars, labels; GSplats as the
+amplitudes/Cholesky/colors trio, then labels. The gate does not restate those
+rules: it calls the same function the writer calls
+(`validate_points_channels` / `validate_lines_channels` /
+`validate_gsplat_inputs`, the siblings of mesh's `validate_mesh_arrays`), so a
+channel added to a writer's gate is covered here too. Without the gate
+`slice_optional_array` passes a wrong-length channel through whole and a part
+whose own count happens to match accepts it, so the write succeeds with values on
+the wrong elements. Mesh does the same thing in `_validate_partition_sources`;
+the gate belongs at the top of the wrapper, never the leaf adder, so the
+plain-leaf error order is untouched (a call that also trips the positions/attr
+gates therefore reports the channel fault first here). Uniform values whose own
+length can collide with the element count (an RGB(A) list/tuple, a `(k,)`
+Cholesky) are classified before slicing rather than length-tested. Lines
+additionally validate `indices` — topology before channels, as mesh validates
+`faces` first — via `validate_line_indices_before_split`, called from each split
+branch of `add_lines` ahead of that branch's topology builder.
+
 Per-part recursion passes `partition=False` (not `None`) to bypass the
 compiler auto-partition heuristic — `None` would re-trigger it on each part
 and blow up the leaf count. `dim_order` / `fill` / `fill_sigma` are nulled in
@@ -148,6 +172,11 @@ carries a subset of **whole** polylines with segment indices local to the
 subgroup. The returned node is the parent — the user sees one logical node and
 the viewer's progressive loader walks the subgroups.
 
+`labels` are written by the writer as ONE union CSR on the **parent** (the
+subgroups carry none, because the loader concatenates loaded levels into one
+committed buffer), so the wrappers call `scene._notify_labels_added()` exactly as
+the flat path does — otherwise a ladder-only scene would get no hover overlay.
+
 ## Dependencies
 
 **Sibling modules** (`core/group/`):
@@ -156,7 +185,13 @@ the viewer's progressive loader walks the subgroups.
   `sah_bsp_partition`, `median_bsp_polylines`, `midpoint_bsp_polylines`,
   `DEFAULT_MAX_ELEMENTS`, `warn_if_oversized_single_part`)
 - `compositing` — `COMPOSITING_ATTRS`, `position_bounds_from_array`,
-  `slice_optional_array`
+  `slice_optional_array`, `is_broadcast_color`,
+  `validate_points_channels_before_split`,
+  `validate_lines_channels_before_split`,
+  `validate_line_indices_before_split`,
+  `validate_gsplats_channels_before_split` (labels ride along last — via the
+  shared writer sweep for points/lines, via `validate_labels_before_split` for
+  gsplats)
 - `dim_order` — `apply_dim_order_positions`, `apply_dim_order_cholesky`
 - `lod.points`, `lod.lines` — additive-LOD level builders and polyline
   identification

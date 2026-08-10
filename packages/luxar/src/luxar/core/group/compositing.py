@@ -11,6 +11,17 @@ Exposed:
   layer") rather than getting copied onto each internal child.
 * :func:`slice_optional_array` — slice an array-valued leaf parameter by
   index, leaving scalars / None / mis-sized inputs untouched.
+* :func:`is_broadcast_color` — classify a uniform RGB(A) sequence (which must
+  reach every part whole) apart from per-element color data.
+* :func:`validate_labels_before_split` — reject a wrong-length ``labels``
+  before any partition / LOD decomposition.
+* :func:`validate_points_channels_before_split`,
+  :func:`validate_lines_channels_before_split`,
+  :func:`validate_gsplats_channels_before_split` — the same pre-split gate for
+  every other per-element channel (colors / radii / widths / sharpness /
+  scalars / amplitudes / Cholesky), delegating to the writers' own sweeps.
+* :func:`validate_line_indices_before_split` — the topology half of the Lines
+  gate: the flat ``indexed`` layout/parity check, run before the channels.
 * :func:`position_bounds_from_array` — per-axis min/max of an (N, D)
   position array, in the writer's shape.
 * :func:`sync_custom_colormap_attr` — mirror the writer's custom-colormap
@@ -162,6 +173,279 @@ def slice_optional_array(value: Any, indices: np.ndarray, n_elements: int) -> An
     if arr.shape[0] == n_elements:
         return arr[indices]
     return value
+
+
+def validate_labels_before_split(labels: Any, n_elements: int) -> None:
+    """Reject a wrong-length ``labels`` BEFORE any partition / LOD decomposition.
+
+    The companion guard to :func:`slice_optional_array`, which passes a list whose
+    length does not match ``n_elements`` through **unchanged** rather than slicing
+    it (that pass-through is deliberate — it is how broadcast values reach every
+    part). For labels that is a trap: every part / LOD level would receive the
+    same unsliced list, and the write would SUCCEED with labels in the wrong
+    slots. The downstream per-part / per-level length checks cannot catch it,
+    because a level's own length may coincidentally match. So the full-count check
+    has to happen upstream of the split.
+
+    No wrapper impl calls this directly any more: it is reached from
+    :func:`validate_gsplats_channels_before_split`, which is the one geometry
+    whose channel validator does not cover labels. Points and Lines get the
+    equivalent check from the writer sweeps their gates delegate to
+    (``validate_labels_for_writing``, last in the flat order). Whichever door, the
+    call belongs to a wrapper's pre-split gate — entering a wrapper is exactly "a
+    split is about to happen" — and deliberately NOT to the top of a leaf adder:
+    the plain-leaf path validates in the writer, and hoisting the check above
+    ``_validate_data_dimensions`` there would change which error a multi-fault
+    call reports. Same reasoning, and the same house rule, as
+    ``adders/mesh.py::_validate_partition_sources``.
+
+    No-op when ``labels`` is ``None``.
+
+    Args:
+        labels: The caller's ``labels`` argument (per-point for Points, per-splat
+            for GSplats, per-vertex for Lines).
+        n_elements: The node's FULL element count, before any decomposition.
+
+    Raises:
+        ValidationError: If ``labels`` is not a sequence of one string per element.
+    """
+    if labels is None:
+        return
+    from ...validation.base import validate_labels_for_writing
+
+    validate_labels_for_writing(labels, n_elements)
+
+
+def is_broadcast_color(colors: Any) -> bool:
+    """Whether ``colors`` is a uniform RGB(A) sequence rather than per-element data.
+
+    Classifies on TYPE/SHAPE only — a list/tuple of 3 or 4 numeric components,
+    which is exactly the admission test
+    :func:`~luxar.io._compiler.node_common.validate_broadcast_color` applies at
+    the writer (on the flat path a list/tuple ``colors`` is ALWAYS the broadcast
+    form). Values are deliberately left to that validator, so a bad uniform
+    color fails with the same message it gets without ``partition=``.
+
+    Needed because a uniform color's OWN length can collide with the element
+    count: a 3-point node with ``colors=(1.0, 0.0, 0.0)`` satisfies
+    :func:`slice_optional_array`'s length test and is gathered as if its three
+    components were three point rows.
+
+    On Points / Lines / GSplats the consequence is a SPURIOUS REJECTION, not a
+    silent mis-write: those parts are disjoint, so with 3 or 4 elements split
+    over at least two parts the slice lengths sum to at most 4 and some part
+    always gets a length outside ``{3, 4}``, which its writer refuses. Measured
+    without this classifier: 3 points + an RGB triple raises "Uniform color must
+    have 3 (RGB) or 4 (RGBA) components" at every cap, and 4 points + an RGBA
+    tuple at cap 3 raises from ``part_1`` with ``part_0`` ALREADY WRITTEN —
+    a legal input refused, sometimes only after stranding a partial node. Mesh,
+    which solved this first, is the one geometry where it can be silent instead:
+    its parts SHARE vertices, so two parts can each take a valid 3-of-4 slice
+    (see the rationale in ``adders/mesh.py``). Same rule, both places.
+
+    Only a list/tuple can be the broadcast form at all, which is why numpy colors
+    of every shape classify as ``False`` here (the writer refuses a 1-D numpy
+    color outright and wants ``(1, c)``). A list of triples classifies as
+    ``False`` too, because its entries are sequences rather than numbers — but it
+    is not thereby "gathered normally": a list/tuple ``colors`` is ALWAYS the
+    broadcast form to the writer, so ``[[1.0, 0.0, 0.0]] * 200`` is refused on
+    both paths ("Uniform color must have 3 (RGB) or 4 (RGBA) components, got
+    200"), and a 3-long list of triples is refused for its components ("component
+    0 must be a finite number"). Per-element colors are an ndarray.
+    """
+    if not isinstance(colors, (list, tuple)) or len(colors) not in (3, 4):
+        return False
+    return all(isinstance(c, (int, float, np.integer, np.floating)) for c in colors)
+
+
+def validate_points_channels_before_split(
+    n_points: int,
+    *,
+    colors: Any = None,
+    radii: Any = None,
+    sharpness: Any = None,
+    scalars: Any = None,
+    labels: Any = None,
+) -> None:
+    """Run the flat Points write gate over every per-point channel, pre-split.
+
+    The generalisation of :func:`validate_labels_before_split` to the rest of
+    the channels (issue #1437). Same trap, same reasoning: a wrong-length
+    per-point array takes :func:`slice_optional_array`'s pass-through branch, so
+    every part / LOD level receives the whole unsliced array, and a part whose
+    own element count happens to equal that array's length ACCEPTS it — the
+    write succeeds with values paired to the wrong points.
+
+    This does not re-implement the checks: it calls
+    :func:`~luxar.io._compiler.geometry_writers.points.validate_points_channels`,
+    which IS the writer's own step-0d/0e sweep (colors → radii → sharpness →
+    scalars → labels), just against the source count. Sharing one
+    implementation is deliberate — a channel added to the writer's gate is
+    covered here the same day, so this gate cannot drift from what the child
+    write accepts. Every legal broadcast form the flat path accepts therefore
+    passes THIS GATE too (a scalar radius, a ``(1, c)`` colors row, an RGB
+    triple). Passing the gate is not the same as reaching disk on every path:
+    under ``substitutive_lod=`` a broadcast ``colors`` — tuple or ``(1, 3)`` row —
+    is separately refused downstream by the gsplat lift, which bakes the coarse
+    levels from per-element RGB. That refusal predates this gate and is tracked in
+    #1444; per-element ``colors`` is unaffected.
+
+    The CHANNEL verdict is identical with and without a wrapper. Note the gate
+    runs ABOVE the positions / dimension / attr checks on the split paths, so a
+    call that ALSO trips one of those (a NaN position, a wrong column count, an
+    unknown attr) reports the channel fault first here and the positions/attr
+    fault on the plain-leaf path. Both refuse, and neither writes.
+
+    Call as the FIRST statement of a wrapper impl, never from a leaf adder — see
+    :func:`validate_labels_before_split` for why the placement is load-bearing.
+
+    Args:
+        n_points: The node's FULL point count, before any decomposition.
+        colors: Per-point ``(n, 3|4)`` array, a ``(1, c)`` broadcast row, or a
+            uniform RGB(A) list/tuple.
+        radii: Per-point array, ``(1,)`` broadcast array, or scalar.
+        sharpness: Per-point array, ``(1,)`` broadcast array, or scalar.
+        scalars: Per-point array, ``(1,)`` broadcast array, or scalar.
+        labels: One string per point.
+
+    Raises:
+        ValidationError: If any channel is not a legal per-point or broadcast
+            value for ``n_points`` elements.
+    """
+    from ...io._compiler.geometry_writers.points import validate_points_channels
+
+    validate_points_channels(
+        n_points,
+        colors=colors,
+        radii=radii,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
+
+
+def validate_lines_channels_before_split(
+    n_vertices: int,
+    *,
+    widths: Any,
+    colors: Any = None,
+    sharpness: Any = None,
+    scalars: Any = None,
+    labels: Any = None,
+) -> None:
+    """Run the flat Lines write gate over every per-vertex channel, pre-split.
+
+    The Lines twin of :func:`validate_points_channels_before_split` — read that
+    docstring for the trap this closes, for why the implementation is shared
+    with the writer rather than repeated, and for the exact scope of the
+    identical-verdict promise. All four channels are per-VERTEX (not
+    per-segment), and ``widths`` is required, so it is validated first and
+    unconditionally. The topology half of the same gate is
+    :func:`validate_line_indices_before_split`, which must run BEFORE this one.
+
+    Args:
+        n_vertices: The node's FULL vertex count, before any decomposition.
+        widths: Per-vertex array, ``(1,)`` broadcast array, or scalar.
+        colors: Per-vertex ``(n, 3|4)`` array, a ``(1, c)`` broadcast row, or a
+            uniform RGB(A) list/tuple.
+        sharpness: Per-vertex array, ``(1,)`` broadcast array, or scalar.
+        scalars: Per-vertex array, ``(1,)`` broadcast array, or scalar.
+        labels: One string per vertex.
+
+    Raises:
+        ValidationError: If any channel is not a legal per-vertex or broadcast
+            value for ``n_vertices`` elements.
+    """
+    from ...io._compiler.geometry_writers.lines import validate_lines_channels
+
+    validate_lines_channels(
+        n_vertices,
+        widths=widths,
+        colors=colors,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
+
+
+def validate_line_indices_before_split(
+    indices: Any, n_vertices: int, line_type: str
+) -> None:
+    """Reject a malformed ``indexed`` edge list BEFORE any split touches it.
+
+    The topology half of the Lines pre-split gate, and it runs FIRST — mesh
+    validates ``faces`` before any per-vertex channel for exactly this reason
+    (``adders/mesh.py``): a bad edge list makes every channel verdict moot.
+
+    Needed because the split paths do not go through the writer's ``indexed``
+    gate before they interpret the edges. ``lod.lines.identify_polylines``
+    checks dtype and bounds and then does ``reshape(-1, 2)``, so an ``(E, 3)``
+    array was reinterpreted as ``3E/2`` edges the author never wound and WROTE
+    CLEANLY (the flat writer refuses it), and an odd flat count raised a raw
+    ``cannot reshape array of size 23 into shape (2)`` instead of the guided
+    "even element count" message. Called from each split branch of
+    ``add_lines`` immediately before that branch's topology builder, which is
+    the first consumer — the wrapper impls are too late for the raw-reshape
+    case.
+
+    No-op unless ``line_type == "indexed"`` with a non-``None`` ``indices``; the
+    "requires indices array" refusal stays where it already is on each path.
+
+    Raises:
+        ValueError: If the edge list is not a flat ``(2E,)`` or ``(E, 2)``
+            integer array with an even element count and in-bounds indices.
+    """
+    if line_type != "indexed" or indices is None:
+        return
+    from ...io._compiler.geometry_writers.lines import validate_line_indices
+
+    validate_line_indices(indices, n_vertices)
+
+
+def validate_gsplats_channels_before_split(
+    centers: np.ndarray,
+    amplitudes: Any,
+    cholesky_factors: np.ndarray,
+    *,
+    colors: Any = None,
+    labels: Any = None,
+) -> bool:
+    """Run the flat GSplats write gate over the source arrays, pre-split.
+
+    The GSplats twin of :func:`validate_points_channels_before_split`. The whole
+    amplitudes / Cholesky / colors trio is checked by one validator
+    (:func:`~luxar.io._compiler.gsplat_assembly.validate_gsplat_inputs`), which
+    derives the splat count from ``centers`` itself — so handing it the SOURCE
+    arrays yields the flat verdict, including the uniform ``(k,)`` Cholesky and
+    scalar-amplitude broadcast forms.
+
+    Args:
+        centers: The node's full ``(N, D)`` centers array.
+        amplitudes: Per-splat ``(N,)`` array or a scalar.
+        cholesky_factors: Per-splat ``(N, k)`` array or a uniform ``(k,)`` one.
+        colors: Per-splat ``(N, 3|4)`` array, a ``(1, c)`` broadcast row, or a
+            uniform RGB(A) list/tuple.
+        labels: One string per splat.
+
+    Returns:
+        ``cholesky_is_uniform`` — whether ``cholesky_factors`` is the uniform
+        ``(k,)`` form, straight from the validator that already decided it. The
+        caller needs this to skip slicing that array, and recomputing the rule at
+        the call site would be one more copy of exactly the kind of duplication
+        this gate exists to remove.
+
+    Raises:
+        ValueError: If the trio's shapes/values are not a legal per-splat or
+            broadcast combination for ``len(centers)`` splats.
+        ValidationError: If ``labels`` is not one string per splat.
+    """
+    from ...io._compiler.gsplat_assembly import validate_gsplat_inputs
+
+    (*_normalized, n_splats, _n_dims, cholesky_is_uniform) = validate_gsplat_inputs(
+        centers, amplitudes, cholesky_factors, colors
+    )
+    validate_labels_before_split(labels, n_splats)
+    return bool(cholesky_is_uniform)
 
 
 def position_bounds_from_array(positions: np.ndarray) -> Dict[str, List[float]]:

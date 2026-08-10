@@ -61,8 +61,11 @@ worker dispatcher kernel in-process. `projection.ts` here exports only
   A ladder never publishes them: `createProgressiveLinesLoader` clears both
   label flags on each synthesized `additive_<i>` node, and
   `concatenateLinesData` strips the field defensively — a sub-LOD's ranges
-  describe that level's own on-disk space, not the parent's (per-level labels
-  are #1422).
+  describe that level's own on-disk space, not the parent's per-vertex union CSR
+  spanning all the levels (#1422); offsetting each level's ranges by the preceding
+  levels' on-disk vertex counts, which is that union's index space, is what #1439
+  did for the Points ladder — lines has no counterpart yet, so a laddered lines
+  node still hovers at the raw segment slot.
 - **Progressive concatenation remaps segment indices.** When
   `LinesProgressiveLoader` concatenates per-LOD `LoadedLinesData`, each
   subgroup's `segments` array indexes its _own local_ vertex buffer, so

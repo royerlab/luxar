@@ -117,18 +117,18 @@ export interface PickResultHandlerPorts {
  *   and what an embedder should index against).
  *
  *   Two known limits survive this fix, both outside the handler:
- *   (i) under an *additive ladder* the CSR is today scattered per
- *   `additive_<i>` sub-group (which is not a scene node) while the
- *   committed buffer concatenates every loaded level, so no single path
- *   can index it — labels there are unusable regardless of the path
- *   chosen. That is a producer-side gap (#1422, not on main yet): when
- *   the parent node instead carries ONE union CSR keyed by
- *   `additive_0 || additive_1 || …`, the parent path DOES index the
- *   committed buffer, because for Points the loader composes the levels'
- *   slot → on-disk maps into that union space (#1439). A Lines ladder is
- *   still out — #1424 gave lines the per-node segment→vertex chain, but
- *   nothing composes a ladder's LEVELS — and gsplat ladders carry no
- *   labels at all; and
+ *   (i) an *additive ladder* carries ONE union CSR on its parent node
+ *   (#1422), spanning the levels in `additive_<i>` order — the same node
+ *   `lookupPath` names, and the same space the progressive loader
+ *   produces when it concatenates the committed levels, so the lookup is
+ *   correct — for POINTS also under slicing, since the loader now
+ *   composes each level's slot → on-disk map into that union space,
+ *   offsetting level `i` by the preceding levels' on-disk `n_points`
+ *   (#1439). Not for LINES: its raw slot is a per-*segment* one while the
+ *   union CSR is per-*vertex* (#1424), so a labelled laddered lines node
+ *   is wrong at the granularity, not merely at an offset, whatever the
+ *   slicing — and nothing composes a lines ladder's LEVELS either;
+ *   gsplat ladders carry no labels at all; and
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
  *   arrives already resolved wherever the node can resolve one — Points,
  *   GSplats and Lines all do, for a node declaring `has_labels` /
@@ -142,13 +142,16 @@ export interface PickResultHandlerPorts {
  *   vertex row in the on-disk (spatially sorted) VERTEX ordering, not a
  *   segment row: line labels are per-vertex, and a segment carries a
  *   single `flat` pick id, so exactly one of its two endpoints can be
- *   reported and by convention it is the start (#1424). An *unlabelled*
- *   lines node still reports the raw visible-segment slot, which is
- *   neither an on-disk row nor even the right granularity for a
- *   per-vertex CSR. A Points or GSplats node declaring no labels
- *   likewise keeps the raw storage slot — no CSR to miss, but an
- *   embedder reading `SelectionPayload.elementIndex` there is reading a
- *   slot.
+ *   reported and by convention it is the start (#1424). That resolution
+ *   is published for a FLAT lines node only, so any lines node without
+ *   it — an *unlabelled* one, and equally a labelled LADDERED one, whose
+ *   per-level maps a lines ladder's concat still drops (limit (i), where
+ *   only Points composes them) — still reports the raw
+ *   visible-segment slot, which is neither an on-disk row nor even the
+ *   right granularity for a per-vertex CSR. A Points or GSplats node
+ *   declaring no labels likewise keeps the raw storage slot — no CSR to
+ *   miss, but an embedder reading `SelectionPayload.elementIndex` there
+ *   is reading a slot.
  * - `null` result → clear hover (`updateHoverContent(null)`); no loader calls.
  * - Non-null result → fetch label + image URL in parallel; emit a
  *   payload only when at least one is truthy. An empty-string label

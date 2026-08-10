@@ -27,14 +27,12 @@
  *    picking stays allocation-free in the common Points case). The commit
  *    (`commit-points-geometry.ts`) forwards `LoadedPointsData.elementIds` to
  *    the mesh stamp.
- *  - **Points additive ladders** — the READER half only, and INERT on main
- *    today: it activates when the PARENT node carries one union label CSR
- *    keyed by `additive_0 || additive_1 || …` (each level in its stored
- *    order), which is the writer half — `add_points(..., labels=…,
- *    additive_lod=True)` still writes a CSR per sub-group and stamps no
- *    `has_labels` on the parent, so nothing here fires until #1422 lands.
- *    Given that CSR, the per-level maps are composed into its index space.
- *    Because a sub-LOD has
+ *  - **Points additive ladders** — composed as well, into the ladder's union
+ *    index space. `add_points(..., labels=…, additive_lod=True)` writes ONE
+ *    union label CSR on the PARENT node, keyed by
+ *    `additive_0 || additive_1 || …` (each level in its stored order) and
+ *    declared by the parent's `has_labels` (#1422); the per-level maps are
+ *    composed into that space. Because a sub-LOD has
  *    no CSR a reader could key by, `createProgressivePointsLoader` overrides
  *    each `additive_<i>` node's label flags with the PARENT's: with a union CSR
  *    every level builds its own level-space map, and
@@ -109,14 +107,15 @@
  *    because they name the same object: `picking-system.ts::readbackAndVote`
  *    builds the result with `elementId: resolveOnDiskElementId(nodeEntry.main,
  *    …)` and `mainNode: nodeEntry.main`, so the node this helper reads the map
- *    from is the node whose `name` becomes the CSR path. One composition still
- *    falls through: `partition=` forwards `additive_lod=` into every part
- *    (`core/group/adders/points.py`), and the part's CSR is then written per
- *    `additive_<i>` sub-group while the part group itself never receives
- *    `has_labels` — so such a part publishes no map and carries no readable
- *    labels at all. That is the WRITER half of the per-level label gap
- *    (#1422): once the part group carries the union CSR, the reader half above
- *    already composes it. Not a hole in the partition slicing.
+ *    from is the node whose `name` becomes the CSR path. The
+ *    `partition=`-forwards-`additive_lod=` composition
+ *    (`core/group/adders/points.py`) is readable too since #1422: the part's
+ *    ladder parent — which IS the part's scene node — carries one union CSR
+ *    spanning its `additive_<i>` levels and declares `has_labels`. For POINTS
+ *    it is MAPPED as well, by exactly the ladder composition above — that
+ *    composition reads the parent flags off the part group, so a partitioned
+ *    ladder needs no separate path. A LINES part stays readable-but-unmapped,
+ *    like any lines ladder, and resolves at the raw committed slot.
  *
  * **Identity fallback is not always a safe answer**, so the map's lifetime is
  * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::
