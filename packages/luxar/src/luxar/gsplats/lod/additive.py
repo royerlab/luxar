@@ -435,6 +435,23 @@ def _residual_energy_curve(
 # ─────────────────────────────────────────────────────────────────────
 
 
+#: Ordering methods that express a REVEAL rather than an approximation, and so
+#: must not carry energy stamps. Named as a set rather than tested inline because
+#: the same rule governs the Points/Lines ladders, and a second hand-written
+#: ``method == "radial"`` in another module is how it would rot.
+_REVEAL_METHODS: frozenset[str] = frozenset({"radial"})
+
+
+def _is_reveal_method(method: str) -> bool:
+    """Whether ``method`` orders for a reveal, not for approximation quality.
+
+    A reveal's prefix is a *partial object at full brightness*, not a dim version
+    of the whole, so the viewer's ``1/e(k)`` brightness compensation is backwards
+    for it — see the call sites and MESH_NODE_SPEC §9.1.
+    """
+    return method in _REVEAL_METHODS
+
+
 def _radial_score(
     data: GSplatData,
     centre: Sequence[float] | None = None,
@@ -910,7 +927,19 @@ def make_additive_lod(
                 "lod_n_splats": int(end - prev),
                 "lod_cumulative_n": end,
             }
-            if energy_total > 0.0:
+            # `radial` is a REVEAL, so it carries no energy stamps. The viewer
+            # multiplies a leaf's brightness by 1/e(k) while a ladder is
+            # incomplete, gated on the BLENDING MODE and not on geometry type
+            # (`scene/lod-fade.ts`). That is right for a contribution-ordered
+            # prefix, which genuinely is a dimmer version of the whole, and
+            # backwards for a radial one, which is a PARTIAL OBJECT AT FULL
+            # BRIGHTNESS: an inner shell holding 5% of the energy would be
+            # brightened ~20x, blazing and then dimming as the object completes —
+            # the exact inverse of growing outward. Omitting the stamp is the
+            # honest encoding, and `energyCompensation(undefined)` returns
+            # exactly 1, so the leaf is byte-identical. See MESH_NODE_SPEC §9.1,
+            # which states the rule for mesh; the reasoning is geometry-agnostic.
+            if energy_total > 0.0 and not _is_reveal_method(method):
                 e_frac = float(energy_cum[end - 1] / energy_total)
                 if np.isfinite(e_frac):
                     lod_stats["energy_fraction_cum"] = min(1.0, max(0.0, e_frac))
@@ -954,7 +983,13 @@ def make_additive_lod(
     # make_substitutive_lod) and that must win for coarser levels — self-
     # energy is quadratic in amplitude, so per-level totals differ and would
     # skew partition-of-lod aggregation.
-    merged_level_stats.setdefault("reference_energy", float(reference_energy))
+    # Both-or-neither: a reveal ladder omits `energy_fraction_cum` per sub-LOD
+    # (above), so it must omit the leaf's `reference_energy` too. The pair is a
+    # contract — the viewer's display gate uses `reference_energy` as the
+    # aggregation weight for the per-level fractions, and a weight with nothing
+    # to weight is a half-written stamp.
+    if not _is_reveal_method(method):
+        merged_level_stats.setdefault("reference_energy", float(reference_energy))
     new_sub_levels = list(data.substitutive_levels)
     new_sub_levels[s_target] = SubstitutiveLevel(
         additive_sublods=new_sublods,

@@ -761,3 +761,46 @@ def test_radial_rejects_a_mis_shaped_centre():
     data = _ray_gsplat(np.array([1.0, 2.0], dtype=np.float32))
     with pytest.raises(ValueError, match="one coordinate per spatial axis"):
         compute_additive_order(data, method="radial", reveal_centre=[0.0, 0.0])
+
+
+def _sublod_stats(laddered: GSplatData) -> list[dict]:
+    """`lod_stats` of every additive sub-LOD of the (single) substitutive level."""
+    return [dict(s.stats) for s in laddered.substitutive_levels[0].additive_sublods]
+
+
+def test_radial_ladder_carries_no_energy_stamps():
+    """A reveal must not be brightened by the viewer's 1/e(k) compensation.
+
+    `energyCompensation` is gated on the BLENDING MODE, not on geometry type, so a
+    stamped radial ladder would blow out the inner shell (~20x for a 5% first
+    shell) and dim as the object completes — the inverse of growing outward.
+    Omitting the stamp makes `energyCompensation(undefined)` return exactly 1.
+    """
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32))
+
+    laddered = make_additive_lod(data, n_lods=3, method="radial")
+
+    stats = _sublod_stats(laddered)
+    assert len(stats) == 3
+    for i, s in enumerate(stats):
+        assert "energy_fraction_cum" not in s, f"sub-LOD {i} carries an energy stamp"
+        # The non-energy provenance must survive — this is not a blanket wipe.
+        assert s["lod_method"] == "radial"
+        assert s["lod_n_splats"] > 0
+    # Both-or-neither: the leaf weight goes too, or the pair is half-written.
+    assert "reference_energy" not in laddered.substitutive_levels[0].stats
+
+
+def test_non_reveal_ladders_still_carry_energy_stamps():
+    """The sensitivity control: suppression is scoped to reveal methods only.
+
+    Without this, a bug that dropped stamps for EVERY method would pass the test
+    above while silently disabling cross-fade and energy compensation everywhere.
+    """
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32))
+
+    laddered = make_additive_lod(data, n_lods=3, method="mass")
+
+    stats = _sublod_stats(laddered)
+    assert [("energy_fraction_cum" in s) for s in stats] == [True, True, True]
+    assert "reference_energy" in laddered.substitutive_levels[0].stats
