@@ -30,7 +30,7 @@ from __future__ import annotations
 import heapq
 import math
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from scipy import sparse
@@ -60,27 +60,18 @@ from luxar.utils.lod_breakpoints import (
 from luxar.utils.lod_breakpoints import (
     streaming_chunk_splats as streaming_chunk_splats,
 )
+from luxar.utils.lod_methods import ADDITIVE_CHOICES, ADDITIVE_METHODS
+from luxar.utils.lod_methods import AutoOrMethod as AutoOrMethod
+from luxar.utils.lod_methods import MethodName as MethodName
+from luxar.utils.lod_methods import is_reveal_method as _is_reveal_method
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
-MethodName = Literal[
-    "greedy", "self_energy", "mass", "amplitude", "spectral", "random", "radial"
-]
-_VALID_METHODS = (
-    "greedy",
-    "self_energy",
-    "mass",
-    "amplitude",
-    "spectral",
-    "random",
-    "radial",
-)
-
-#: ``method`` accepted at the API/CLI boundary, including the size-adaptive
-#: ``"auto"`` sentinel resolved by :func:`resolve_additive_method`.
-AutoOrMethod = Literal[
-    "auto", "greedy", "self_energy", "mass", "amplitude", "spectral", "random", "radial"
-]
-_VALID_CHOICES: tuple[str, ...] = ("auto", *_VALID_METHODS)
+# The method registry lives in `luxar.utils.lod_methods` so the CLI can share it
+# without importing this package (`luxar/gsplats/__init__.py` costs ~1.3 s, which
+# would nearly triple `luxar --help`). Re-exported under the historical names —
+# `MethodName` / `AutoOrMethod` are imported from here by `pyramid` and `recipes`.
+_VALID_METHODS: tuple[str, ...] = ADDITIVE_METHODS
+_VALID_CHOICES: tuple[str, ...] = ADDITIVE_CHOICES
 
 #: ``method="auto"`` resolves to ``greedy`` (the Minoux 1978 lazy-greedy
 #: submodular selection in :func:`_lazy_greedy` — provably (1-1/e)-optimal at
@@ -435,23 +426,6 @@ def _residual_energy_curve(
 # ─────────────────────────────────────────────────────────────────────
 
 
-#: Ordering methods that express a REVEAL rather than an approximation, and so
-#: must not carry energy stamps. Named as a set rather than tested inline because
-#: the same rule governs the Points/Lines ladders, and a second hand-written
-#: ``method == "radial"`` in another module is how it would rot.
-_REVEAL_METHODS: frozenset[str] = frozenset({"radial"})
-
-
-def _is_reveal_method(method: str) -> bool:
-    """Whether ``method`` orders for a reveal, not for approximation quality.
-
-    A reveal's prefix is a *partial object at full brightness*, not a dim version
-    of the whole, so the viewer's ``1/e(k)`` brightness compensation is backwards
-    for it — see the call sites and MESH_NODE_SPEC §9.1.
-    """
-    return method in _REVEAL_METHODS
-
-
 def _radial_score(
     data: GSplatData,
     centre: Sequence[float] | None = None,
@@ -748,6 +722,8 @@ def make_additive_lod(
     max_n_dense: int = 2_000,
     seed: int | None = None,
     substitutive_level: int | None = None,
+    reveal_centre: Sequence[float] | None = None,
+    spatial_dims: Sequence[int] | None = None,
 ) -> GSplatData:
     """Permute and split a fitted gsplat dataset into a multi-LOD ladder.
 
@@ -797,6 +773,14 @@ def make_additive_lod(
     substitutive_level : int, optional
         Index of the substitutive level to build the ladder for. Defaults
         to ``data.default_substitutive``.
+    reveal_centre : sequence of float, optional
+        ``method='radial'`` only — centre of the concentric shells. Defaults to
+        the spatial bounding-box centre (NOT the scene origin, so a dataset far
+        from the origin still reveals from its own middle).
+    spatial_dims : sequence of int, optional
+        ``method='radial'`` only — the centre columns the shell distance is
+        measured over. Defaults to the non-degenerate axes, so a stacked
+        time/channel axis cannot become a shell dimension.
 
     Returns
     -------
@@ -873,6 +857,8 @@ def make_additive_lod(
                 truncation_sigmas=truncation_sigmas,
                 max_n_dense=max_n_dense,
                 seed=seed,
+                reveal_centre=reveal_centre,
+                spatial_dims=spatial_dims,
             )
 
         # Cumulative self-energy over the ladder ordering — the e(k) of the

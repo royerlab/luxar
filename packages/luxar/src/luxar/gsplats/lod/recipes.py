@@ -43,6 +43,7 @@ Two return shapes (see :data:`RecipeResult`):
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Callable, List, Literal, Optional, Union, get_args
 
@@ -127,6 +128,10 @@ class RecipeParams:
     # stream (additive prefix) ladder — every recipe ladders by default
     n_lods: int = 4
     additive_method: AutoOrMethod = "auto"
+    # `additive_method="radial"` only — the concentric-shell reveal. Defaults:
+    # the bbox centre, over the non-degenerate axes.
+    reveal_centre: Optional[Sequence[float]] = None
+    spatial_dims: Optional[Sequence[int]] = None
     breakpoints: BreakpointSpec = "equal-count"
     truncation_sigmas: float = 3.0
     max_n_dense: int = 2000
@@ -204,6 +209,8 @@ def build_stream(data: GSplatData, params: RecipeParams) -> GSplatData:
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,
+        reveal_centre=params.reveal_centre,
+        spatial_dims=params.spatial_dims,
     )
 
 
@@ -255,6 +262,8 @@ def build_levels_matrix(data: GSplatData, params: RecipeParams) -> GSplatData:
         coarsen_dims=params.coarsen_dims,
         n_additive_lods=params.n_lods,
         additive_method=params.additive_method,
+        additive_reveal_centre=params.reveal_centre,
+        additive_spatial_dims=params.spatial_dims,
         breakpoints=params.breakpoints,
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
@@ -373,6 +382,8 @@ def _substitutive_for_part(
                 max_n_dense=params.max_n_dense,
                 seed=None if params.seed is None else params.seed + s,
                 substitutive_level=s,
+                reveal_centre=params.reveal_centre,
+                spatial_dims=params.spatial_dims,
             )
     # Build each part's lod group with viewport-relative coverage_fraction
     # thresholds. These are PARTITIONED ladders, and here the reason is GEOMETRIC:
@@ -558,6 +569,8 @@ def _ladder_for_part(
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,
+        reveal_centre=params.reveal_centre,
+        spatial_dims=params.spatial_dims,
     )
     return laddered.tree
 

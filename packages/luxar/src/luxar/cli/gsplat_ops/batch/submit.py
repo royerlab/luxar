@@ -8,6 +8,8 @@ from typing import Optional
 import typer
 from arbol import aprint
 
+from luxar.utils.lod_methods import ADDITIVE_CHOICES_HELP
+
 from .submit_pipeline import (
     build_plan_configs,
     generate_all_scripts,
@@ -314,7 +316,7 @@ def run_batch_submit(
         None,
         "--merge-additive-method",
         help="Additive ladder method for --merge-recipe stream "
-        "(auto (default) | greedy | self_energy).",
+        f"({ADDITIVE_CHOICES_HELP}). Default auto.",
         rich_help_panel="Merge LOD",
     ),
     merge_breakpoints: Optional[str] = typer.Option(

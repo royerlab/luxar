@@ -8,6 +8,8 @@ from typing import Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
+from luxar.utils.lod_methods import ADDITIVE_CHOICES_HELP
+
 from .fit_utils import (
     FitPipelineCtx,
     assemble_fit_config,
@@ -195,9 +197,9 @@ def run_fit_volume(
         None,
         "-m",
         "--additive-method",
-        help="[--recipe stream] auto (default: greedy at small N, "
-        "self_energy for large parts) | greedy ((1-1/e)-optimal) | "
-        "self_energy (cheap O(N log N) for very large parts).",
+        help=f"[--recipe stream] {ADDITIVE_CHOICES_HELP}. auto (the default) is "
+        "greedy ((1-1/e)-optimal) at small N, self_energy (cheap O(N log N)) "
+        "for large parts. radial reveals outward from the bbox centre.",
         rich_help_panel="Per-part LOD",
     ),
     recipe_breakpoints: Optional[str] = typer.Option(

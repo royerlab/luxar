@@ -130,7 +130,44 @@ compute_additive_order(
 | `self_energy` | sort by $\|\phi_i\|^2 \propto a_i^2 |\Sigma_i|^{1/2}$ desc | $O(N\log N)$  | sometimes         | no                  |
 | `spectral`    | sort by $|u_1[i]|$ desc                                   | sparse Gram   | no                | no                  |
 | `greedy`      | matching pursuit; sparse / dense fallback                 | sparse Gram   | yes               | yes ($1-1/e$)       |
+| `radial`      | sort by distance from the bbox centre **asc**              | $O(N\log N)$  | n/a — a reveal    | n/a — a reveal      |
 | `auto`        | size-adaptive: `greedy` if `N ≤ 5000` else `self_energy`  | (see chosen)  | (see chosen)      | (see chosen)        |
+
+### `radial` — the reveal
+
+Every other method above ranks splats by how much they *contribute*, so a prefix
+is a low-quality approximation of the whole scene. `radial` is categorically
+different: it orders by distance from the object's own bounding-box centre, so a
+prefix is a **complete rendering of the inner part of the object** and successive
+prefixes grow outward as concentric shells. Streaming a `radial` ladder makes a
+scene appear to grow from its middle. That is purely an authoring choice — the
+viewer needs no changes and does nothing special with it.
+
+Three consequences, each load-bearing:
+
+- **It is the only ASCENDING sort.** Its score is a distance, not a contribution
+  to maximise. Every neighbouring branch in `compute_additive_order` sorts
+  `-score`.
+- **The centre is the bounding-box centre, not the scene origin**, so a dataset
+  sitting far from the origin still reveals from its own middle rather than from
+  one corner. Override with `reveal_centre`.
+- **A `radial` ladder carries NO energy stamps** (`energy_fraction_cum` per
+  sub-LOD, `reference_energy` on the leaf), and this is enforced at authoring
+  time. The viewer multiplies brightness by `1/e(k)` while a ladder is
+  incomplete — correct for an approximation, backwards for a reveal, where an
+  inner shell holding 5% of the energy would be blown out ~20× and then *dim* as
+  the object completes. The compensation is gated on the blending mode and never
+  on geometry type, so omitting the stamps is the only place to stop it.
+  Consequence to know about: cross-fade and the `e >= 0.6` early-upgrade release
+  are therefore also inactive for a reveal, so shells hard-switch.
+
+Distance is measured only over axes with non-zero extent, so a stacked
+time/channel column cannot become a shell dimension (shells would otherwise
+expand through *time* as well as space). Override with `spatial_dims`.
+
+The same `radial` method, with the same two knobs and the same no-stamps rule, is
+available on Points and Lines — see `core/group/lod/`. On Lines it orders whole
+polylines by their own centre, so every prefix keeps valid segment topology.
 
 `auto` is the default. It resolves (via `resolve_additive_method`) to `greedy`
 for `N ≤ _AUTO_ADDITIVE_MAX_N` (= 5000) and to `self_energy` above it. Rationale:

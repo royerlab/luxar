@@ -157,7 +157,7 @@ additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--n-lods` | 4 | additive LOD levels |
-| `--method` / `-m` | auto | `auto` (greedy at N ≤ 5000, else self_energy) / `greedy` / `self_energy` / `mass` / `amplitude` / `spectral` / `random` |
+| `--method` / `-m` | auto | `auto` (greedy at N ≤ 5000, else self_energy) / `greedy` / `self_energy` / `mass` / `amplitude` / `spectral` / `random` / `radial` (concentric-shell reveal from the bbox centre; no energy stamps) |
 | `--breakpoints` / `-b` | equal-count | `equal-count` / `stream:C` (geometric streaming ladder, first chunk C splats then doubling; sized per part/level) / `counts:N1,N2,...` (clamped per part) / `energy:f1,f2,...` |
 | `--target-ms` | — | streaming sizing: derive `stream:<c>` so the first additive chunk downloads in ~this many ms (mutually exclusive with `--breakpoints`) |
 | `--bandwidth-mbps` | 25 | assumed downlink for `--target-ms` sizing |

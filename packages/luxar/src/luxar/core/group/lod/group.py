@@ -65,6 +65,7 @@ from arbol import aprint
 from numpy.typing import NDArray
 
 from ....typing_utils.geometry_capabilities import require_lod_display_type
+from ....utils.lod_methods import REVEAL_METHODS, is_reveal_method
 from ....validation.types import validate_truncation_radius
 
 if TYPE_CHECKING:
@@ -879,17 +880,18 @@ ADDITIVE_METHODS: tuple[str, ...] = (
 )
 
 #: Methods that order for a REVEAL rather than for approximation quality, and so
-#: must not carry energy stamps — the viewer's ``1/e(k)`` brightness
-#: compensation is gated on the blending mode, not on geometry type, and a
-#: reveal's prefix is a partial object at FULL brightness rather than a dim
-#: version of the whole. Mirrors ``gsplats.lod.additive._REVEAL_METHODS``; see
-#: MESH_NODE_SPEC §9.1, whose reasoning is geometry-agnostic.
-REVEAL_ADDITIVE_METHODS: frozenset[str] = frozenset({"radial"})
-
-
-def is_reveal_additive_method(method: str) -> bool:
-    """Whether ``method`` orders a reveal, so its ladder carries no energy stamps."""
-    return method in REVEAL_ADDITIVE_METHODS
+#: must not carry energy stamps — the viewer's ``1/e(k)`` brightness compensation
+#: is gated on the blending mode, not on geometry type, and a reveal's prefix is a
+#: partial object at FULL brightness rather than a dim version of the whole.
+#:
+#: ALIASES the shared registry rather than restating it. The element-side
+#: ``ADDITIVE_METHODS`` above and the gsplat-side one legitimately differ (they
+#: order different things), but which methods are reveals is a property of the
+#: *concept*, so it is written once in :mod:`luxar.utils.lod_methods` and shared
+#: with the gsplat ladder. See MESH_NODE_SPEC §9.1, whose reasoning is
+#: geometry-agnostic.
+REVEAL_ADDITIVE_METHODS: frozenset[str] = REVEAL_METHODS
+is_reveal_additive_method = is_reveal_method
 
 
 def radial_element_score(

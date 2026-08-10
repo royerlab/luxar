@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Literal, Optional
 
 import typer
 
+from luxar.utils.lod_methods import ADDITIVE_CHOICES_HELP
+
 from .additive import run_additive_dataset as _run_additive_dataset_impl
 from .cull import run_cull_dataset as _run_cull_dataset_impl
 from .filter_slice import (
@@ -541,9 +543,9 @@ def additive_dataset(
         None,
         "--method",
         "-m",
-        help="Additive ordering per leaf: auto (default; greedy at small N, "
-        "self_energy above) | greedy | self_energy | mass | amplitude | "
-        "spectral | random.",
+        help=f"Additive ordering per leaf: {ADDITIVE_CHOICES_HELP}. auto (the "
+        "default) is greedy at small N, self_energy above. radial reveals "
+        "outward from the bbox centre.",
     ),
     breakpoints: Optional[str] = typer.Option(
         None,

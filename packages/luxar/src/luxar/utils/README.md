@@ -118,6 +118,22 @@ the network and payload, not the geometry type, so this is the one place both
 - `stream_cuts(n, chunk, max_levels=...)`: Cumulative geometric cuts `[c, 2c, 4c, …, n]` over `n` elements
 - `sibling_aware_stream_breakpoints(...)`: Raise a `stream:C` ladder's first chunk for a leaf that has a coarser sibling in its lod group
 
+### `lod_methods.py`
+The additive-LOD **ordering-method registry** — the single source of truth for
+which orderings exist. Sibling of `lod_breakpoints.py` and here for the same
+reason: the implementation lives in `luxar.gsplats.lod.additive`, but the CLI
+needs the list too, and importing anything under `luxar.gsplats` executes that
+package's `__init__` (~1.3 s measured), which would nearly triple `luxar --help`.
+A stdlib-only leaf module is free to import from either side, so the two can share
+one list instead of hand-copying it — they previously held two literal tuples with
+no consistency test, and the copies had already diverged.
+
+**Key Names:**
+- `ADDITIVE_METHODS` / `ADDITIVE_CHOICES`: the implemented orderings, and the same set plus the size-adaptive `auto` sentinel accepted at the API/CLI boundary
+- `ADDITIVE_CHOICES_HELP`: `auto|greedy|…` rendered for `--method` help strings, so help text cannot fall out of date
+- `MethodName` / `AutoOrMethod`: the `Literal` types, re-exported from `gsplats.lod.additive` for its existing importers
+- `REVEAL_METHODS` / `is_reveal_method()`: which orderings are a *reveal* (currently `radial`) rather than a contribution ranking. A reveal's ladder must carry no energy stamps, because the viewer brightens an incomplete ladder by `1/e(k)` — right for an approximation, backwards for a partial object rendered at full brightness. Shared by the gsplat ladder and `core.group.lod.group.additive_level_stats` so the rule is written once for all geometries.
+
 ### `paths.py`
 Path utilities for Luxar dataset generation.
 

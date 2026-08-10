@@ -16,8 +16,14 @@ from luxar.gsplats.lod.additive import (
     _residual_energy_curve,
     _self_energy_score,
 )
+from luxar.utils.lod_methods import ADDITIVE_METHODS
 
-METHODS = ("random", "amplitude", "mass", "self_energy", "spectral", "greedy")
+#: DERIVED from the registry, not hand-listed. This was an opt-in allowlist, and
+#: a method missing from it got zero coverage from the four parametrized property
+#: tests below — silently. Deriving it means a new ordering method is covered the
+#: moment it is registered. ``ADDITIVE_METHODS`` excludes the ``auto`` sentinel,
+#: which is exactly what these tests want (they pass a concrete method).
+METHODS = ADDITIVE_METHODS
 
 
 def _make_random_gsplat(n: int = 64, ndim: int = 3, seed: int = 0) -> GSplatData:

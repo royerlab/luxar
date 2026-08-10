@@ -19,16 +19,21 @@ from typing import Any, Mapping, Optional
 import typer
 from arbol import aprint
 
-# Valid ordering methods for the additive (prefix-sum) axis.
-VALID_ADDITIVE_METHODS = (
-    "auto",
-    "greedy",
-    "self_energy",
-    "mass",
-    "amplitude",
-    "spectral",
-    "random",
-)
+from luxar.utils.lod_methods import ADDITIVE_CHOICES
+
+#: Valid ordering methods for the additive (prefix-sum) axis.
+#:
+#: DERIVED from the shared registry, not hand-copied. This used to be a literal
+#: tuple, and it had already rotted: ``radial`` was invisible to every gsplat CLI
+#: surface until this line changed, and three ``--method`` help strings still
+#: advertised only ``auto|greedy|self_energy``. Adding a method to
+#: :mod:`luxar.utils.lod_methods` now reaches the CLI with no second edit.
+#:
+#: The registry deliberately lives under ``utils`` rather than in
+#: :mod:`luxar.gsplats.lod.additive`, which owns the implementation: importing
+#: anything under ``luxar.gsplats`` executes its ``__init__`` (~1.3 s measured),
+#: which would nearly triple ``luxar --help``.
+VALID_ADDITIVE_METHODS: tuple[str, ...] = ADDITIVE_CHOICES
 
 # Valid substitutive partition algorithms.
 VALID_SUBSTITUTIVE_METHODS = (
