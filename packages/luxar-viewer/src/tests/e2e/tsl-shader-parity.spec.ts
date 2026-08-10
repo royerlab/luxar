@@ -2508,6 +2508,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-volprim-fat-peak',
     'line-volprim-pick-sideon',
     'line-volprim-pick-endon',
+    'line-volprim-pick-persp',
     'line-volprim-pick-joint',
   ] as const) {
     test(`${variant}: volumetric line primitive parity across backends`, async ({ page }) => {
@@ -2654,6 +2655,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ['line-volprim-fat-peak', 'line-volprim-pick-sideon', 'exact'],
     ['line-volprim-fat-sideon', 'line-volprim-pick-sideon', 'subset'],
     ['line-volprim-fat-endon', 'line-volprim-pick-endon', 'exact'],
+    // The V joint vs the max-mode visual V: same geometry, same capsule
+    // family, same bisector cuts — the one pair that puts the CUT ends
+    // (the ray-domain [tLo, tHi] interval) under the footprint contract.
+    // A pick-side cut divergence flips whole half-spaces, so ribbon
+    // sensitivity does not depend on fat geometry here.
+    ['line-volprim-peak', 'line-volprim-pick-joint', 'exact'],
   ] as const) {
     test(`${pickName}: pick footprint agrees with ${visualName} (${agreement})`, async ({
       page,
@@ -2763,17 +2770,67 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
       // Pick ID contract on the covered core: R carries nodeId (42, which
       // clamps to 255 in this RGBA8 readback) and G the element id's low
-      // half (slot 0 here) — a footprint that agrees but decodes the wrong
-      // element would still be a broken pick.
+      // half — 0 for slot 0, and slot 1's raw 1.0 also saturates to 255
+      // here, so the joint pair reads G ∈ {0, 255} with BOTH values
+      // required (each leg pickable under its own id). A footprint that
+      // agrees but decodes the wrong element would still be a broken pick.
+      const expectedSlots = pickName === 'line-volprim-pick-joint' ? [0, 255] : [0];
+      const seenSlots = new Set<number>();
       let core = 0;
       for (let i = 0; i < size * size; i++) {
         if (pick[i * 4 + 2] > 64) {
           core++;
           expect(pick[i * 4], 'covered pick pixel must carry the node id').toBe(255);
-          expect(pick[i * 4 + 1], 'covered pick pixel must carry element slot 0').toBe(0);
+          const g = pick[i * 4 + 1];
+          expect(expectedSlots, 'covered pick pixel carries a known element slot').toContain(g);
+          seenSlots.add(g);
         }
       }
       expect(core, 'a bright pick core must exist').toBeGreaterThan(10);
+      expect(
+        [...seenSlots].sort((a, b) => a - b),
+        'every expected slot must be picked'
+      ).toEqual(expectedSlots);
     });
   }
+
+  test('line-volprim-pick-joint: the bisector cut assigns each half-space to its own segment id', async ({
+    page,
+  }) => {
+    // The one property no other test can see when it breaks on BOTH
+    // backends at once: the pick pass's ray-domain cut interval. Dropping
+    // the cuts leaks each leg's round cap into the partner's half-space —
+    // cross-backend parity stays green if both backends drop it, and the
+    // footprint pair stays green because the leak hides inside the
+    // partner's own coverage. The element id cannot hide: under the
+    // peak-cut fixture's geometry the bisector plane is pixel column 32,
+    // so covered pixels at x ≥ 34 must decode to slot 1 (G saturates to
+    // 255) and x ≤ 30 to slot 0 — on each backend independently.
+    // MUTATION-VERIFIED: hardA/hardB forced false in the pick fragment
+    // must fail this test (wrong-slot pixels appear across the plane).
+    await bootHarness(page);
+    for (const backend of ['glsl', 'tsl'] as const) {
+      const p =
+        backend === 'glsl'
+          ? await runGLSL(page, 'line-volprim-pick-joint')
+          : (await runTSL(page, 'line-volprim-pick-joint')).pixels;
+      let wrong = 0;
+      let checked = 0;
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+          const i = (y * 64 + x) * 4;
+          if (p[i + 2] <= 8) continue; // uncovered / dim
+          if (x >= 34) {
+            checked++;
+            if (p[i + 1] !== 255) wrong++;
+          } else if (x <= 30) {
+            checked++;
+            if (p[i + 1] !== 0) wrong++;
+          }
+        }
+      }
+      expect(checked, `${backend}: covered pixels on both sides`).toBeGreaterThan(100);
+      expect(wrong, `${backend}: pixels decoding to the WRONG segment across the cut`).toBe(0);
+    }
+  });
 });

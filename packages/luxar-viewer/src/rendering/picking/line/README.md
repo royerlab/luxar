@@ -25,10 +25,13 @@ splits, near-plane clip algebra) is present. Output contract is unchanged:
 `gl_FragDepth = 1 − brightness`.
 
 Footprint agreement is pinned in `tsl-shader-parity.spec.ts`: **exact** (up to
-the 1-px quantisation ribbon) against the peak-mode visual footprint and the
+the 1-px quantisation ribbon) against the peak-mode visual footprint (side-on
+AND the V joint, which puts the bisector-cut ends under the contract), the
 end-on additive disc, and **pick ⊆ visible** against the side-on additive
 footprint — the additive family's separable radial·axial coverage keeps dim
 (< ~10% brightness) corner crescents beyond the endpoints that no capsule
 reaches, so those corners are visible-but-unpickable by design. The invariant
 that must never break is the other direction: nothing is pickable where
-nothing is visible.
+nothing is visible. A separate half-space test pins the property none of the
+above can see when it breaks on both backends at once: with the bisector cuts
+active, each side of a joint decodes to exactly its own segment id.

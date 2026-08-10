@@ -1827,6 +1827,23 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: (m) =>
       buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
   },
+  // PERSPECTIVE pick — the only pick fixture that builds the TSL
+  // perspective graph variant (diverging rays, the vertex near-clip
+  // chain, per-fragment nearFade at the hit depth) and drives the GLSL
+  // uIsOrtho=0 branches. Same straddling end-on geometry as
+  // `line-volprim-endon-persp` (starts BEHIND the eye), so the near-clip
+  // stencil reshaping is load-bearing, not decorative.
+  'line-volprim-pick-persp': {
+    source: VOLUMETRIC_LINE_PICK_SOURCE,
+    buildUniforms: () =>
+      buildPickLineUniforms(buildLineDataTexture([0, 0, 0.5], [0, 0, -0.3]), false),
+    buildTSLMaterial: (uniforms) =>
+      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: false,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) => buildLineInstancedMesh(m, [0, 0, 0.5], [0, 0, -0.3]),
+    buildCamera: buildBehindCamera,
+  },
   // The V joint under pick: the only pick fixture that reaches the
   // partner fetch, the bisector-cut construction, and the peak lane's
   // ray-domain cut interval [tLo, tHi] — in both backends.

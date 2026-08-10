@@ -41,9 +41,11 @@ never allowed. Mutation-verified: a 20% pick-σ deflation (the visible-but-not-
 hoverable bug class) fails all three pairs at 244/156 off-ribbon pixels and
 2× the difference belt, against zero clean; a stencil-only inflation measured
 the reverse direction structurally bounded at < 2 px by the capsule's own
-brightness floor. Cross-backend parity gets three new pick fixtures
-(side-on / end-on / V-joint, the joint reaching the partner fetch and the
-ray-domain cut interval), all under the existing ≤ 2.0 covered-pixel gate.
+brightness floor. Cross-backend parity gets four new pick fixtures
+(side-on / end-on / a straddling perspective end-on that is the only one
+building the TSL perspective pick graph / V-joint, the joint reaching the
+partner fetch and the ray-domain cut interval), all under the existing
+≤ 2.0 covered-pixel gate.
 
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 
