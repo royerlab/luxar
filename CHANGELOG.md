@@ -28,6 +28,108 @@ A source-level tripwire (`direct-import-guard.test.ts`) keeps the next such site
 on that loader: it fails on any other viewer source that both names
 `luxar_wasm.js` and calls `initSync(`.
 
+#### A hand-built partition of per-part ladders now gets the tile anchor itself (#1411)
+
+`add_points` / `add_lines` / `add_mesh` reject `partition=` together with
+`substitutive_lod=`, so the adders treated every auto-derived ladder as whole-object
+and anchored its finest at `1.0`. But a caller can hand-build the `kind=partition`
+wrapper and call the adder once per part — what `demo_biodiversity_planetary_scale`
+does, and, given that mutual exclusion, the only way to get per-tile ladders at all —
+and that ladder switches on ONE TILE, whose projected diagonal is intrinsically a
+fraction of the whole object's, so every part sat on its finest level at the opening
+framing. The same hole existed for `add_gsplats_from_data(..., lod_group=...)` — and
+therefore for `add_gsplats_from_file` per part, since an ordinary ladder store is
+matrix-shaped and routes through it.
+
+The four scene adders now detect a `kind=partition` ancestor of the insertion point
+(a plain `add_group` in between still counts — the ladder is still inside one tile)
+and derive `partitioned_coverage_fractions` instead, logging the switch rather than
+making it silently, so a hand-built partition lands on exactly the thresholds
+`luxar gsplat lod --recipe adaptive` derives for the same tree. An explicit
+`substitutive_lod=dict(coverage_fractions=[...])` / `lod_group=dict(...)` list still
+wins verbatim, so the biodiversity demo's hand-tuned ladder is untouched. A
+hand-authored per-child `coverage_fraction=` on `add_lod_group` (the shape
+`examples/partition_of_lod_example.py` builds) is also unaffected — nothing is
+derived there, so those thresholds remain the author's to set.
+
+`graft_gsplat_node`'s own fallback (for a *non*-matrix-shaped grafted subtree) gained
+the same scene-side check as a silent defensive term, but it is consulted ONCE, to
+seed the recursion at the entry call. Asking it again deeper would be
+self-referential — by then the nearest `kind=partition` ancestor is a wrapper the
+graft itself just created — and it would overrule the recursion's own one-part
+exclusion, putting a one-part grafted partition back on the tile anchor. For the same
+reason a nested one-part partition no longer drops an outer binding: it is OR-ed in,
+not overwritten.
+
+New helpers `is_partition_bound(node)` and
+`derive_coverage_fractions(counts, insertion_point, name=...)` in
+`core/group/lod/group.py`; they are the scene-graph mirror of the `under_partition`
+recursion flag the two gsplat writers already thread through a detached tree. The
+rule assumes the partition is a real tiling (>= 2 parts) — a one-part "partition" is
+the whole object and keeps the whole-object anchor, which the writers and
+`build_adaptive` already enforce where they can see the whole tree. The scene-adder
+path is the one place that cannot: part 0's ladder is derived before part 1 exists,
+so the sibling count does not exist yet.
+
+The compiler's finalize pass therefore gained a read-only diagnostic,
+`warn_one_part_partition_anchors`: by then the final sibling count IS visible, so a
+tile-anchored ladder that ended up under a `kind=partition` holding a single part
+prints one warning naming the group and the two ways out (drop the wrapper, or pass
+an explicit `coverage_fractions=`). It rewrites nothing and never raises.
+
+Two smaller things fell out of the same rule. Mesh substitutive LOD now accepts an
+explicit `coverage_fractions=` list up to `MAX_COVERAGE_FRACTION` like the other three
+geometries, so the anchor a mesh ladder can now *derive* is also one an author can
+*write* — it was bounded at `1.0`, which would have made the tile anchor
+derivation-only. And `gsplat_tree.write_gsplat_node`'s partition branch now ORs an
+incoming binding in rather than overwriting it, so a one-part partition nested inside
+a genuine tiling no longer drops the outer tile anchor — the standalone writer and
+the scene graft agree again on that shape.
+
+#### Lines — the volumetric primitive's ray-integral math (#1352, no rendering change)
+
+Groundwork for replacing the Lines screen-space quad with a cylindrically
+symmetric primitive. The quad is ill-posed when a segment points at the camera:
+the projected axis collapses, so the quad's orientation is decided by noise while
+its width stays full, and tubes viewed end-on turn into a starburst of needles.
+The replacement is a segment convolved with an isotropic 3D Gaussian,
+`rho = a·G_2D(r)·W(s)` with an erf-softened axial window — orientation-free by
+construction, and linear in the source measure, so independently-drawn segments
+sum to exactly the ideal bent tube with no join machinery at all.
+
+`materials/line/ray-integral.ts` is the closed form for it: a CPU reference, a
+GLSL block and TSL builders for the sum-mode ray integral and the peak-mode
+capsule profile, all generated from one constant set (the same single-source
+shape as `_shared/erf.ts`, which it consumes). **Nothing renders differently** —
+no production shader imports it yet. It lands first so the wiring slice has a
+pinned reference to be tested against, exactly as the erf polynomial did.
+
+The two analytic limits are pinned as tests: side-on reduces to the untruncated
+Gaussian stroke at `sigma = 2·width / GAUSSIAN_EQUIVALENT_TRUNCATION`, and end-on
+to `a·L·G(r0)` — path length times the radial profile, finite and orientation-free
+where the quad degenerates. So is additivity, the property the whole design rests
+on: splitting a segment and summing the halves reproduces the whole, across the
+lane boundary and at near-end-on angles.
+
+Most of the work is in the numerics, which is where this would actually break.
+The `|u| → 0` end-on singularity and the near-coincident-erf-argument hazard turn
+out to be the same condition — writing the window's argument gap as
+`Δ = L·|u|/(sigma·√2)` cancels the `1/|u|` algebraically — so there is one
+derivative lane keyed on `Δ`, threshold 0.5, chosen where `erfPoly`'s difference
+quotient stops being trustworthy rather than by taste. Three float32 clamps keep
+both `mix` arms finite (a discarded arm that overflows still poisons the result
+through `Inf·0`), pinned by a `Math.fround` harness against a deliberately
+unguarded mutant. The window is clamped non-negative because the shader erf is a
+least-squares fit that can go slightly negative near saturation.
+
+Three things this does NOT do, spelled out in the module header so the wiring
+slice does not inherit them as surprises: it covers `beta = 2` only, so the
+`sharpness` knob needs the LUT the issue proposes; it changes fragment shading,
+not the screen-space footprint, and end-on the quad IS the sliver, so a
+conservative stencil is still required; and its additivity means the joint-code /
+cap-suppression subsystem and the screen-space coverage compensations would
+double-count rather than merely be redundant.
+
 #### `nd_transform` on a group — and on any node's property setter — is checked against the scene dimensions
 
 A geometry leaf's *creation-time* `nd_transform` has always been validated against

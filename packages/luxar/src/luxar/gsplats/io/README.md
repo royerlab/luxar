@@ -405,7 +405,9 @@ Migration mappings:
   (bare leaf, additive ladder, or `kind=lod` group depending on shape)
 - **v3.0/v3.1 with `selector: "pixel_size"` / per-child `min_pixel_size`** →
   same tree re-written with `selector: "coverage"` + derived per-child
-  `coverage_fraction` (`sqrt(N_i/N_finest)`), stamped v3.3
+  `coverage_fraction` (`sqrt(N_i/N_finest)`, or that × `MAX_COVERAGE_FRACTION`
+  = 4.0 for a partition-bound ladder — i.e. a legacy `adaptive` / `overview`
+  store, whose derivation is topology-aware), stamped v3.3
 
 Migrated arrays are written with `ordering="none"` so element order is
 preserved (no Morton/Hilbert re-sort), but **encoding follows the current policy**:

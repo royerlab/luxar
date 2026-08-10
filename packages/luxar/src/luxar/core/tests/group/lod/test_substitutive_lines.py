@@ -14,6 +14,7 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
+from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.core.group.lod.lines import resolve_substitutive_axis_lines
 from luxar.gsplats.lift import (
     coarse_substitutive_levels,
@@ -509,6 +510,143 @@ class TestAdditiveLevelStatsPairingLines:
         assert stored["caller_key"] == 123
         assert np.isfinite(stored["reference_energy"])
         assert stored["reference_energy"] > 0
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Partition-bound anchor (hand-built kind=partition of per-part ladders)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _lines_ladder_coverage(
+    tmp_path, store_name, *, n_seg=250, levels=2, partitioned, wrap_in_group=False, **kw
+):
+    """Build TWO Lines ladders — a real 2-tile partition, or the same pair at root.
+
+    Returns one per-child ``coverage_fraction`` list per part, coarsest→finest.
+    Two parts on purpose: a ONE-part ``kind=partition`` is the degenerate shape
+    ``partitioned_coverage_fractions`` documents as 4x too coarse (its "tile" is
+    the whole object), so it must not be the fixture that motivates the rule.
+
+    Both variants get byte-identical per-part geometry (the segment list is split
+    on whole-segment boundaries), so their per-level bead counts — and therefore
+    the derived ladders before anchoring — are identical; the only thing that can
+    differ is which anchor was chosen.
+
+    ``method="kmeans_lloyd"`` instead of the default ``"auto"``: at these sizes
+    ``auto`` routes to the submodular ``greedy`` Runnalls path, whose sparse-Gram
+    build scales with OVERLAP DENSITY — the worst case for a lifted bead string —
+    and costs tens of seconds. Every assertion here reads per-level COUNTS
+    (``compression_factor``/``levels`` decide those, identically for either method)
+    and never reduction quality, so the cheap O(N log N) reduction is sound — the
+    same reasoning as ``_acceptance_params`` in ``test_gsplats.py``. Pre-existing
+    tests keep ``auto``.
+    """
+    out = tmp_path / store_name
+    verts = _segments(n_seg)
+    half = n_seg // 2  # split on a whole-SEGMENT boundary (2 vertices each)
+    halves = [verts[: 2 * half], verts[2 * half :]]
+    spec = dict(levels=levels, method="kmeans_lloyd", device="cpu", seed=0, **kw)
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        if partitioned:
+            wrapper = scene.add_partition_group(
+                "tiled", display_type="lines", max_elements=half
+            )
+        else:
+            wrapper = scene
+        for i, part_verts in enumerate(halves):
+            target = (
+                wrapper.add_group(f"holder_{i}")
+                if (partitioned and wrap_in_group)
+                else wrapper
+            )
+            target.add_lines(f"part_{i}", part_verts, 0.8, substitutive_lod=spec)
+
+    root = zarr.open(str(out), mode="r")
+    node = root["tiled"] if partitioned else root
+    out_lists = []
+    for i in range(len(halves)):
+        holder = node[f"holder_{i}"] if (partitioned and wrap_in_group) else node
+        lod = holder[f"part_{i}"]
+        assert lod.attrs["kind"] == "lod"
+        names = sorted(
+            (k for k in lod.keys() if k.startswith("child_")),
+            key=lambda k: int(k.split("_")[1]),
+        )
+        out_lists.append([float(lod[k].attrs["coverage_fraction"]) for k in names])
+    return out_lists
+
+
+class TestPartitionBoundAnchorLines:
+    """A hand-built partition of per-part Lines ladders gets the fills-screen anchor.
+
+    Before ``derive_coverage_fractions`` detected the ``kind=partition`` ancestor,
+    this path always auto-derived the WHOLE-OBJECT ladder (finest ``1.0``), so
+    every tile sat on its finest level at the opening whole-object framing.
+
+    Three tests here REGRESS without the fix
+    (``test_partition_ladder_is_the_root_ladder_times_the_ceiling``,
+    ``test_finest_is_exactly_the_ceiling``,
+    ``test_plain_group_between_partition_and_ladder_still_anchored``). The other two
+    are CONTROLS that pass either way and pin what must NOT change.
+
+    The fixture is a real TWO-tile partition, and every assertion covers BOTH
+    parts. The Lines ladder is keyed on the lifted BEAD count, which is not on
+    disk, so the expected lists are obtained by building the identical per-part
+    geometry at the scene root and rescaling by ``MAX_COVERAGE_FRACTION`` (exact —
+    a power of two).
+    """
+
+    def test_partition_ladders_are_the_root_ladders_times_the_ceiling(
+        self, tmp_path
+    ) -> None:
+        root = _lines_ladder_coverage(tmp_path, "root.luxar.zarr", partitioned=False)
+        tiled = _lines_ladder_coverage(tmp_path, "tiled.luxar.zarr", partitioned=True)
+        assert len(tiled) == len(root) == 2, "must be a real 2-tile partition"
+        for i, (tile, whole) in enumerate(zip(tiled, root)):
+            assert len(tile) >= 3
+            assert tile == pytest.approx([f * MAX_COVERAGE_FRACTION for f in whole]), (
+                f"part_{i}"
+            )
+
+    def test_finest_is_exactly_the_ceiling_for_every_part(self, tmp_path) -> None:
+        tiled = _lines_ladder_coverage(tmp_path, "tiled.luxar.zarr", partitioned=True)
+        assert len(tiled) == 2
+        for i, tile in enumerate(tiled):
+            assert tile[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
+
+    def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path) -> None:
+        """CONTROL (passes pre-fix): no partition ancestor → finest stays 1.0 —
+        the over-trigger guard."""
+        root = _lines_ladder_coverage(tmp_path, "root.luxar.zarr", partitioned=False)
+        assert len(root) == 2
+        for i, whole in enumerate(root):
+            assert whole[-1] == 1.0, f"part_{i}"
+
+    def test_plain_group_between_partition_and_ladder_still_anchored(
+        self, tmp_path
+    ) -> None:
+        tiled = _lines_ladder_coverage(
+            tmp_path, "tiled.luxar.zarr", partitioned=True, wrap_in_group=True
+        )
+        assert len(tiled) == 2
+        for i, tile in enumerate(tiled):
+            assert tile[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
+
+    def test_explicit_coverage_fractions_still_win_under_a_partition(
+        self, tmp_path
+    ) -> None:
+        """CONTROL (passes pre-fix): an explicit list must keep winning verbatim."""
+        explicit = [0.0, 3.52, 4.0]
+        tiled = _lines_ladder_coverage(
+            tmp_path,
+            "tiled.luxar.zarr",
+            partitioned=True,
+            coverage_fractions=explicit,
+        )
+        assert len(tiled) == 2
+        for i, tile in enumerate(tiled):
+            assert tile == pytest.approx(explicit), f"part_{i}"
 
 
 class TestSubstitutiveLinesGuards:

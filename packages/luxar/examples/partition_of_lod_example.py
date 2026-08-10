@@ -26,7 +26,11 @@ part projects to only a fraction of the whole ribbon, so the viewer's
 whole-object anchor (1.0, reached at ~a quarter of the viewport diagonal) would
 put every part on its fine level at the opening framing. See
 ``partitioned_coverage_fractions`` — the ``adaptive`` / ``overview`` gsplat
-recipes derive the same anchor automatically.
+recipes and the scene adders' ``substitutive_lod=`` / ``lod_group=`` auto-derive
+pick the same anchor automatically. This example does NOT go through that
+auto-derive: it authors each child's ``coverage_fraction`` by hand on
+``add_lod_group``, so the value below is the author's to set (and to keep in
+metric space).
 
 Educational value:
 - See the ``[N parts × M LODs]`` combined badge in the layers panel.
