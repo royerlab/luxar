@@ -196,9 +196,10 @@ LOD wrapper builders:
 - `is_broadcast_color(colors)` — classify a uniform RGB(A) list/tuple by
   type/shape, because its OWN length can collide with the element count (3 points
   with an RGB triple, 4 vertices with an RGBA one) and `slice_optional_array`
-  would otherwise gather its components as if they were element rows. The GSplats
-  wrapper classifies the uniform `(k,)` Cholesky the same way, by `ndim == 1`
-  (`k = 6` for 3-D, which a 6-splat node matches exactly). On these three
+  would otherwise gather its components as if they were element rows. The uniform
+  `(k,)` Cholesky collides the same way (`k = 6` for 3-D, which a 6-splat node
+  matches exactly); the GSplats wrapper reads that off the `cholesky_is_uniform`
+  flag its gate returns rather than re-testing the shape. On these three
   geometries the parts are disjoint, so the mis-slice REFUSES a legal input
   (sometimes only after a partial node is written) rather than mis-writing
   silently; mesh, whose parts share vertices, is the case where it can be
