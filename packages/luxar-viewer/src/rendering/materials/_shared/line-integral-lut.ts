@@ -32,10 +32,15 @@
  *   T·σ_eff) covers the profile at every sharpness, and ClampToEdge
  *   returns exactly 0 for any q ≥ 1 the stencil's AA apron lets through.
  *
- * The AXIAL window deliberately stays the β = 2 erf machinery (the general
- * β separable model is exact for an infinite rod and cap-local otherwise;
- * ≤ ~20% shape error inside the end caps at the knob extremes — the
- * accepted trade recorded in the #1352 plan).
+ * The AXIAL window deliberately stays the β = 2 erf machinery — the
+ * accepted trade recorded in the #1352 plan. The separable model is exact
+ * for an infinite rod (mid-segment, any β); the error is confined to the
+ * END CAPS, where the erf keeps a Gaussian-shaped rolloff instead of the
+ * profile's own end shape. Measured against the capsule-consistent 3D
+ * density, the worst cap-point deviation is ~0.5× (β = 0.25) to ~0.77×
+ * (β = 16) of the mid-segment center intensity: a high-β line's ends
+ * fade like Gaussian ends instead of extending bluntly ~T·σ past the
+ * endpoint. Revisited at the G1 visual gate.
  *
  * ## Texture
  *
