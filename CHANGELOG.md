@@ -93,7 +93,8 @@ buffer is compacted, so slots shift — the same shift #1421/#1425 removed for f
 with a visible-slot → on-disk-index map, which this writer does not itself publish
 across a ladder because each level's map is in that level's own space; extending it is
 what #1439 does, just below, for Points — the loader offsets each level's map by the
-preceding levels' on-disk counts, so a sliced Points ladder resolves exactly too. This also covers the `partition=`-outer + `additive_lod=`-inner
+preceding levels' on-disk counts, so a sliced Points ladder resolves exactly too.
+This also covers the `partition=`-outer + `additive_lod=`-inner
 composition: the CSR lands on each `part_<i>` ladder parent, which is the node the
 picker looks up since #1415/#1420. On Lines the CSR is per-vertex, matching the flat
 Lines writer, while the pick id is a per-segment storage slot; #1424 closed that
@@ -641,11 +642,12 @@ reported vertex is by convention the segment's **start**, and the embedder's
 Points/GSplats twins: nothing is
 published for a node declaring neither `has_labels` nor `has_image_labels`, the map is
 stamped onto the mesh in lockstep with `committedData` (and cleared with it), it is never
-built across an additive ladder — the loader factory clears both label flags on each
-synthesized `additive_<i>` node and the ladder concat strips the field belt-and-braces
-(a laddered node's labels are one union CSR on its parent since #1422, and carrying the
-map across the levels of that union is #1439, so a laddered Lines node still resolves at
-the raw segment slot) — and every inconsistency fails closed to the raw slot
+built across an additive LINES ladder — `createProgressiveLinesLoader` clears both label
+flags on each synthesized `additive_<i>` node and the ladder concat strips the field
+belt-and-braces (a laddered node's labels are one union CSR on its parent since #1422;
+#1439 carries the map across the levels of that union for Points only, so a laddered
+Lines node still resolves at the raw segment slot) — and every inconsistency fails
+closed to the raw slot
 rather than to a plausible-looking wrong answer, warning wherever the composer can tell
 the difference. All four geometry types now resolve hover labels through the one
 `resolveOnDiskElementId` seam on a FLAT node; mesh needs no map of its own, since it
