@@ -2496,6 +2496,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-volprim-endon-ortho',
     'line-volprim-endon-persp',
     'line-volprim-joint',
+    'line-volprim-joint-scaled',
     'line-volprim-peak',
     'line-volprim-peak-cut',
     'line-volprim-peak-uncut',
@@ -2623,6 +2624,34 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       worst = Math.max(worst, Math.abs(alpha / colMax - model));
     }
     expect(worst, 'per-row |rendered/colMax − S(q, knob=1)|').toBeLessThan(0.007);
+  });
+
+  test('line-volprim-joint-scaled: a non-uniform model matrix leaves the joint invariant', async ({
+    page,
+  }) => {
+    // PR #1426 review, finding 1: the partner direction is fetched in
+    // OBJECT space and must be normalized AFTER the modelView transform.
+    // The scaled fixture authors the same joint pre-divided by a
+    // non-uniform scale and composes it back via mesh.scale, so the WORLD
+    // geometry — and the correct render — is byte-identical to the
+    // unscaled joint. Object-space normalization (the pre-fix bug) skews
+    // the bisector normal and tanHalf, which shows up here as a
+    // scaled-vs-unscaled divergence on EACH backend independently (a
+    // stronger check than cross-backend parity, which both-backends-wrong
+    // would slip past).
+    await bootHarness(page);
+    const scaledG = await runGLSL(page, 'line-volprim-joint-scaled');
+    const plainG = await runGLSL(page, 'line-volprim-joint');
+    expect(
+      meanAbsDiffPerCoveredPixel(scaledG, plainG),
+      'GLSL: scaled joint must render identically to the unscaled joint'
+    ).toBeLessThan(1.0);
+    const scaledT = await runTSL(page, 'line-volprim-joint-scaled');
+    const plainT = await runTSL(page, 'line-volprim-joint');
+    expect(
+      meanAbsDiffPerCoveredPixel(scaledT.pixels, plainT.pixels),
+      'TSL: scaled joint must render identically to the unscaled joint'
+    ).toBeLessThan(1.0);
   });
 
   test('line-volprim-nearclip-joint: MAX cross-backend divergence stays at noise level', async ({

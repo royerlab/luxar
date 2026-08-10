@@ -350,7 +350,7 @@ reference validated against brute numerical quadrature
 (`line-volumetric-integral.test.ts`: exact lanes < 0.6%, error envelopes
 pinned with sensitivity controls), and both shader backends mirror it —
 GLSL as a second source pair (the codebase's first genuine shader-source
-selection) and TSL as a twin factory, with eleven `line-volprim-*` parity
+selection) and TSL as a twin factory, with twelve `line-volprim-*` parity
 fixtures pinning pixel-level backend agreement, including the partner
 fetch, the mixed-lane splits, the peak capsule, the fragment-stage
 colormap LUT, a near-plane-straddling telephoto disc, and a straddling
@@ -365,6 +365,22 @@ polynomial. With the flag off, the screen-space pipeline is byte-identical
 (unit-asserted) and codegen snapshots are unchanged. Picking and the
 sum-mode sharpness LUT follow in later #1352 parts; the flip to
 volumetric-by-default is gated on the full perf + visual A/B (G1).
+
+Real WebGPU is verified for the primitive, not assumed: `renderTSL` grew
+a `native: true` mode (WGSL codegen + Dawn execution instead of the
+forced-WebGL backend; it fails closed by asserting the live backend after
+`init()`, since `navigator.gpu` exists even where no adapter does and the
+renderer would otherwise fall back to WebGL silently), and on Apple
+Metal 3 every `line-volprim-*` fixture renders **exactly** its GLSL image
+— mean covered-pixel diff 0.000 across all twelve, with the native
+readback's row flip folded into `renderTSL` itself so both modes return
+the same convention.
+The scaled-joint fixture doubles as the model-matrix regression from the
+PR review: the same joint authored under a non-uniform `mesh.scale`
+composes back to the identical world geometry, so its render must equal
+the unscaled joint's on each backend independently — object-space
+partner normalization (the reviewed bug) fails it at 1.8× the gate,
+while cross-backend parity alone would have let that bug through.
 
 #### A stale WASM build now names the kernel it is missing (#1412)
 
