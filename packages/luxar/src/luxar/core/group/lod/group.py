@@ -1263,9 +1263,11 @@ def additive_level_stats(
           of growing in. The compensation is gated on the BLENDING MODE, never on
           geometry type, so authoring-time omission is the only place to stop it.
           Measured: it reaches a leaf only via the viewer's ``kind=lod`` group
-          registry, so it bites inside a lod group and is inert on a bare leaf —
-          the rule stays unconditional because a bare ladder can be embedded in
-          one later.
+          registry, so it bites inside a lod group and is inert on a bare leaf.
+          The rule stays unconditional because ``method`` already covers both —
+          a reveal ladder authored under a ``kind=lod`` group is exactly where
+          the stamps would bite, and no path can smuggle them back in (every
+          ladder rebuild re-consults the predicate).
 
         ``lod_method`` and the count fields are still stamped either way: they
         are provenance, and nothing keys brightness off them.
@@ -1472,7 +1474,13 @@ def gsplat_additive_lod_from(
     * ``method`` is NOT carried over. The Points/Lines methods name orderings in
       the element domain (``spatial-uniform`` over point positions); the coarse
       children of a substitutive ladder are merged Gaussian beads, where the
-      bead-domain orderings apply.
+      bead-domain orderings apply. Consequence worth knowing for
+      ``method="radial"``: only the FINEST child (the original element leaf)
+      reveals outward — the coarse bead levels get energy-ordered ladders, so
+      they fill in and are ``1/e(k)``-compensated, which is correct for them.
+      Verified on a composed Points node: the two coarse gsplats children carry
+      stamped ``self_energy`` ladders while the points leaf carries an unstamped
+      ``radial`` one, so the both-or-neither stamp contract holds per level.
     * ``self_energy``, not ``auto``. ``auto`` routes levels of <= 5000 splats to
       the submodular ``greedy``, whose sparse-Gram build is a pure-Python
       per-pair loop scaling with OVERLAP DENSITY — and coarse levels of a lifted

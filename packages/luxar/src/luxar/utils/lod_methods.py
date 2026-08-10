@@ -69,9 +69,19 @@ AutoOrMethod = Literal[
 #: are read for a ladder that sits *inside* a lod group (``levels`` / ``adaptive``
 #: / ``overview``, all of which carry stream ladders by default) and are inert on
 #: a bare ``stream``/``flat`` leaf — a stamped and an unstamped bare leaf render
-#: byte-identically. The rule stays unconditional anyway, because a bare ladder
-#: is one ``gsplat additive`` (or one ``annotate-quality``) away from being
-#: embedded in a lod group, and nothing would re-derive the suppression then.
+#: byte-identically.
+#:
+#: That does NOT make the rule conditional, because the method is the only thing
+#: an authoring call has to key on and it already distinguishes both cases:
+#: ``lod --recipe levels|adaptive|overview -m radial`` writes reveal ladders
+#: *directly inside* a lod group (where the stamps bite), and
+#: ``--recipe stream -m radial`` writes a bare one (where they are inert). One
+#: predicate covers both. Nor is there a route that turns a suppressed ladder
+#: into a stamped one behind your back: every ladder-producing path rebuilds
+#: through :func:`~luxar.gsplats.lod.additive.make_additive_lod` (or
+#: :func:`~luxar.core.group.lod.group.additive_level_stats`) and so re-consults
+#: this set — verified for ``gsplat additive`` and ``lod --recipe levels``, both
+#: of which DISCARD an input ladder and re-derive from the method they are given.
 REVEAL_METHODS: frozenset[str] = frozenset({"radial"})
 
 

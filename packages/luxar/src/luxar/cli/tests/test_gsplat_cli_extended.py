@@ -5247,6 +5247,80 @@ class TestAdditiveCommand:
         lvl_stats = loaded.substitutive_levels[0].stats
         assert lvl_stats.get("lod_n_lods") == 2, lvl_stats
 
+    def test_re_laddering_re_derives_the_reveal_stamp_rule(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Re-laddering an already-radial ladder re-decides the stamps from the
+        NEW method — it never inherits the old one's suppression or lack of it.
+
+        This is what makes the no-energy-stamps rule safe to state
+        unconditionally: there is no route by which a suppressed reveal ladder
+        quietly acquires stamps, or by which an energy-ordered rebuild quietly
+        loses them. Both directions are asserted, because the second is the
+        sensitivity control for the first — without it, "no stamps" could just
+        mean this command never stamps anything.
+        """
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        radial = tmp_path / "radial.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "additive",
+                    str(medium_gsplats),
+                    str(radial),
+                    "-m",
+                    "radial",
+                ],
+            ).exit_code
+            == 0
+        )
+
+        def stamps(path: Path) -> tuple[str | None, list[float | None], object]:
+            data = GSplatData.load(path, include_stats=True)
+            subs = data.additive_sublods
+            return (
+                subs[0].stats.get("lod_method"),
+                [s.stats.get("energy_fraction_cum") for s in subs],
+                data.substitutive_levels[0].stats.get("reference_energy"),
+            )
+
+        method, e_cum, ref = stamps(radial)
+        assert method == "radial"
+        assert e_cum == [None] * len(e_cum), e_cum
+        assert ref is None
+
+        # Re-ladder the REVEAL as a reveal again: still unstamped.
+        again = tmp_path / "again.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app, ["gsplat", "additive", str(radial), str(again), "-m", "radial"]
+            ).exit_code
+            == 0
+        )
+        method, e_cum, ref = stamps(again)
+        assert method == "radial"
+        assert e_cum == [None] * len(e_cum), e_cum
+        assert ref is None
+
+        # Sensitivity control: re-ladder the SAME reveal with an energy-ordered
+        # method. The stamps must come back, and the method must no longer be a
+        # reveal — proving the assertions above track the method, not the command.
+        energy = tmp_path / "energy.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "additive", str(radial), str(energy), "-m", "self_energy"],
+            ).exit_code
+            == 0
+        )
+        method, e_cum, ref = stamps(energy)
+        assert method == "self_energy"
+        assert all(v is not None for v in e_cum), e_cum
+        assert ref is not None
+
 
 class TestFlattenCommand:
     """`gsplat flatten` collapses any tree (esp. a kind=partition) into a single

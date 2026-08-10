@@ -1670,9 +1670,18 @@ a lod group and are inert on a bare `stream`/`flat` leaf. Verified by rendering 
 radial ladder twice, stamped and unstamped, under a throttled server: as a bare leaf the
 two are byte-identical frame for frame, while inside a `levels` group the stamped arm is
 **1.87× brighter in mean luma** (p99 luma 109 → 155) for as long as the ladder is
-incomplete, converging to identical once it completes. The rule is still unconditional,
-because a bare ladder is one `gsplat additive` — or one `annotate-quality` — away from
-sitting inside a lod group, and nothing would re-derive the suppression at that point.
+incomplete, converging to identical once it completes.
+
+The rule stays unconditional, and the reason is not that a bare ladder might drift into a
+lod group — it cannot do so silently. Every ladder-producing path rebuilds through
+`make_additive_lod` / `additive_level_stats` and therefore re-consults `REVEAL_METHODS`:
+both `gsplat additive` and `lod --recipe levels` were run on an already-radial ladder and
+both **discarded** it, re-deriving from the method they were given (default → a `greedy`
+ladder, correctly stamped; `-m radial` → still unstamped). The real reason is simpler: the
+method is the only thing an authoring call keys on, and it already covers both cases —
+`--recipe levels|adaptive|overview -m radial` writes reveal ladders *directly inside* a lod
+group, where the stamps bite, and `--recipe stream -m radial` writes a bare one, where they
+are inert. One predicate, both cases, no scope test needed.
 
 The rule is **enforced at write time**: `add_mesh` raises if `level_stats` or `lod_stats` is
 supplied (`_reject_energy_stamps` in `packages/luxar/src/luxar/core/group/adders/mesh.py`) — on key

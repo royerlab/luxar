@@ -164,8 +164,12 @@ Three consequences, each load-bearing:
   by default) and are inert on a bare `stream`/`flat` leaf. Measured on a
   throttled server: a bare leaf renders byte-identically stamped or not, while
   inside a `levels` group the stamped arm is 1.87× brighter in mean luma until
-  the ladder completes. The rule is unconditional regardless, since `gsplat
-  additive` or `annotate-quality` can put a bare ladder inside a lod group later.
+  the ladder completes. The rule is unconditional regardless, because the method
+  already distinguishes both cases: `--recipe levels|adaptive|overview -m radial`
+  writes reveal ladders *inside* a lod group (stamps bite) and `--recipe stream -m
+  radial` writes a bare one (stamps inert). Nothing can smuggle stamps back in
+  either — `gsplat additive` and `lod --recipe levels` both DISCARD an input
+  ladder and re-derive from the method they are given (verified).
   Consequence to know about: cross-fade and the `e >= 0.6` early-upgrade release
   are therefore also inactive for a reveal, so shells hard-switch.
 

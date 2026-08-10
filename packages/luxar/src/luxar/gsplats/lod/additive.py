@@ -765,9 +765,10 @@ def _sublod_stats(
     is byte-identical. Measured: the compensation reaches a leaf only through the
     viewer's ``kind=lod`` group registry, so it bites for a ladder inside a lod
     group (1.87x brighter in mean luma while incomplete) and is inert on a bare
-    leaf — but the rule stays unconditional, since ``gsplat additive`` can embed a
-    bare ladder in a lod group later. See MESH_NODE_SPEC §9.1, which states the
-    rule for mesh; the reasoning is geometry-agnostic.
+    leaf. The rule stays unconditional because ``method`` already covers both —
+    ``lod --recipe levels|adaptive|overview -m radial`` lands reveal ladders inside
+    a lod group, ``--recipe stream -m radial`` does not. See MESH_NODE_SPEC §9.1,
+    which states the rule for mesh; the reasoning is geometry-agnostic.
     """
     stats: dict[str, Any] = {
         "lod_method": method,
