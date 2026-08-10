@@ -404,7 +404,10 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
   // staying out of the codegen list.
   //
   // This one renders a UNIFORM frame, and legitimately: the quad overfills the
-  // perspective frame, both id channels are per-node constants, and the cutout arm's
+  // perspective frame; the node id is a per-node constant and the element id, though
+  // a per-VERTEX ordinal (`gl_VertexID`, flat), lands on the same byte for both
+  // triangles of this 4-vertex quad — the harness target is RGBA8, so any non-zero
+  // ordinal clamps to 255 and the high half is 0 throughout; and the cutout arm's
   // brightness is the constant 1.0 before the fade scales it — 4096 pixels of the
   // same RGBA. So the parity spec cannot use its `assertBothRendered` helper here
   // (whose "did anything render?" proxy is "some pixel differs from pixel 0"); it

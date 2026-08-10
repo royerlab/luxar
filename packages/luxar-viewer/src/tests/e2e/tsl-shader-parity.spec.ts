@@ -2386,7 +2386,13 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       //
       // This one compares against the ORTHO-camera `mesh-pick`, and unlike the visual
       // pair that is sound: in the cutout arm every channel it reads is framing-
-      // independent. The two id channels are per-node constants, and the shader
+      // independent. R is the per-node id. G/A are the element id, which IS a
+      // per-vertex ordinal (`gl_VertexID`, flat) rather than a node constant — but on
+      // this 4-vertex quad both triangles resolve to the same pair of bytes in the
+      // harness's RGBA8 target (a non-zero ordinal clamps to 255, and the high half is
+      // 0 for every one of them), so which triangle covers the centre cannot move
+      // them. The comparison also stays within ONE backend, which is what makes the
+      // differing provoking-vertex conventions irrelevant here. And the shader
       // REPLACES the interpolated coverage with the constant 1.0 for cutout survivors
       // (`a = 1.0`) before the fade scales it — so the un-faded brightness is 255 at
       // any pixel of any camera, and no reference entry of its own is needed.
@@ -2426,8 +2432,9 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     // `assertBothRendered` is deliberately NOT used on this one. Its "did anything
     // render?" proxy is "some pixel differs from pixel 0", and this frame is a single
     // RGBA value repeated 4096 times — legitimately, by construction: the quad
-    // overfills the perspective frame, the two id channels are per-node constants,
-    // and the cutout arm's brightness is the constant 1.0 before the fade scales it.
+    // overfills the perspective frame, the two id channels come out byte-identical
+    // for both of its triangles (see the note above), and the cutout arm's brightness
+    // is the constant 1.0 before the fade scales it.
     // The honest replacement is the pair above plus the check below: the centre pixel
     // is pinned to the un-faded entry's id channels and its scaled brightness (so it
     // is a real surface fragment, not the clear colour), and EVERY other pixel must
