@@ -6,6 +6,38 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Every per-element channel is length-checked before a split, not just labels (#1437)
+
+`add_points("g", positions_200, colors=colors_100, partition={"max_elements": 100})`
+wrote cleanly, and gave both 100-point parts the *same* 100 colors. The per-part
+slicer passes a value through unchanged when its leading length does not match the
+element count — that is how a broadcast RGB triple or a scalar radius reaches every
+part — and a per-element array of the wrong length takes the same branch. When a
+part's own count happens to equal that array's length, the part's writer accepts it.
+Without the split, the flat writer rejects every one of those inputs, which is the
+tell: the split was what hid the fault. #1422 closed this for `labels`; the same trap
+was still open for Points `colors`/`radii`/`sharpness`/`scalars`, Lines
+`widths`/`colors`/`sharpness`/`scalars`, and GSplats
+`amplitudes`/`cholesky_factors`/`colors`, across all seven wrappers.
+
+Each geometry now has one pre-split gate that re-runs its flat writer's step-0
+validators, in the flat order, against the SOURCE element count — so a given input
+fails identically with and without `partition=` / `additive_lod=` /
+`substitutive_lod=`. Deferring to the real validators is what keeps the legal
+broadcast forms legal, including the deliberate ones (a scalar radius of exactly 0.0
+is accepted where an array of zeros is not). The gates sit at the top of the wrapper
+impls, never the leaf adders, so the plain-leaf error order is untouched — the same
+placement rule the labels guard and mesh's `_validate_partition_sources` follow. On
+the two substitutive paths the win is again *where* it fails: the finest child is
+written last, after every coarse gsplat level, so a wrong-length channel used to
+strand a partial `kind=lod` node.
+
+Two uniform values were also being mis-sliced, because their own length can collide
+with the element count: a 3- or 4-component RGB(A) list/tuple on a 3- or 4-element
+node, and a uniform 1-D `(k,)` `cholesky_factors` on a `k`-splat node (`k = 6` for
+3-D data, so exactly a 6-splat one). Both are now classified by type/shape before
+slicing rather than length-tested, so every part gets the value that was authored.
+
 #### A streaming ladder no longer loses its labels (#1422)
 
 `add_points("pts", …, labels=…, additive_lod=True)` wrote a scene whose labels were

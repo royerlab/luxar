@@ -16,11 +16,12 @@ from ...gsplats import GSplats
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
     COMPOSITING_ATTRS,
+    is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
-    validate_labels_before_split,
+    validate_gsplats_channels_before_split,
 )
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
 from ..partition import reject_mismatched_partition_parent
@@ -243,12 +244,23 @@ def add_gsplats_partition_wrapper_impl(
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one GSplats child per BSP part."""
-    # Entering a wrapper IS "a split is about to happen": from here on `labels`
-    # is sliced per part, and `slice_optional_array` passes a wrong-length list
-    # through whole — which would give every part the SAME labels (part 1's
-    # tooltips would be part 0's). GSplats have no additive-ladder labels, so
-    # this partition path is the only one that splits them.
-    validate_labels_before_split(labels, n_splats)
+    # Entering a wrapper IS "a split is about to happen": from here on every
+    # per-splat channel is sliced per part, and `slice_optional_array` passes a
+    # wrong-length value through whole — which would give every part the SAME
+    # labels/colors/amplitudes (part 1's tooltips would be part 0's). GSplats
+    # have no additive/substitutive wrapper here (gsplat LOD goes through
+    # GSplatData, already length-consistent), so this is the only split path.
+    validate_gsplats_channels_before_split(
+        ctr_arr, amplitudes, chol_arr, colors, labels
+    )
+
+    # Two per-splat parameters have a broadcast form whose OWN length can collide
+    # with the splat count, so classify both up front rather than letting
+    # `slice_optional_array`'s length test gather them: a uniform RGB(A)
+    # list/tuple (3 or 4 splats), and a UNIFORM 1-D Cholesky of shape (k,) —
+    # k = D(D+1)/2, so 6 for 3-D data, which a 6-splat node matches exactly.
+    uniform_color = is_broadcast_color(colors)
+    uniform_cholesky = chol_arr.ndim == 1
 
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -272,8 +284,12 @@ def add_gsplats_partition_wrapper_impl(
             name=f"part_{i}",
             centers=ctr_arr[indices],
             amplitudes=slice_optional_array(amplitudes, indices, n_splats),
-            cholesky_factors=slice_optional_array(chol_arr, indices, n_splats),
-            colors=slice_optional_array(colors, indices, n_splats),
+            cholesky_factors=chol_arr
+            if uniform_cholesky
+            else slice_optional_array(chol_arr, indices, n_splats),
+            colors=colors
+            if uniform_color
+            else slice_optional_array(colors, indices, n_splats),
             labels=slice_optional_array(labels, indices, n_splats),
             image_labels=None,
             extend_to_all=extend_to_all,

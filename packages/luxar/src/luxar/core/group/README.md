@@ -42,7 +42,7 @@ group/
 ├── __init__.py          # re-exports Group
 ├── group.py             # Group class: public add_* API (delegates to adders/ + gsplats_pipeline/)
 ├── auto_partition.py     # resolve_auto_partition — compiler-level opt-in auto-partition
-├── compositing.py        # COMPOSITING_ATTRS, slice_optional_array, validate_labels_before_split, position_bounds_from_array
+├── compositing.py        # COMPOSITING_ATTRS, slice_optional_array, is_broadcast_color, validate_*_before_split, position_bounds_from_array
 ├── dim_order.py          # apply_dim_order_positions / apply_dim_order_cholesky
 ├── partition.py          # BSP splitters + PartitionSpec + validate_partition_group
 ├── adders/               # per-leaf add_<type> bodies (Points / Lines / GSplats)
@@ -158,6 +158,22 @@ LOD wrapper builders:
   wrapper impl that slices labels (Points and Lines partition / additive / substitutive
   wrappers, plus the GSplats partition wrapper) — never from the top of a leaf adder,
   so the plain-leaf gate order stays exactly as it was.
+- `validate_points_channels_before_split(n_points, colors=…, radii=…, sharpness=…,
+  scalars=…, labels=…)`, `validate_lines_channels_before_split(n_vertices, widths=…,
+  …)`, `validate_gsplats_channels_before_split(centers, amplitudes,
+  cholesky_factors, colors, labels)` — the same pre-split gate for EVERY other
+  per-element channel, not just labels. Each re-runs its geometry's flat writer
+  step-0 validators, in the flat order, against the SOURCE element count, so a
+  given input fails identically with and without `partition=` / `additive_lod=` /
+  `substitutive_lod=`. Same placement rule as the labels guard (first statement of
+  the wrapper impl, never a leaf adder); they fold the labels check in last, which
+  is where the flat gate has it.
+- `is_broadcast_color(colors)` — classify a uniform RGB(A) list/tuple by
+  type/shape, because its OWN length can collide with the element count (3 points
+  with an RGB triple, 4 vertices with an RGBA one) and `slice_optional_array`
+  would otherwise gather its components as if they were element rows. The GSplats
+  wrapper classifies the uniform `(k,)` Cholesky the same way, by `ndim == 1`
+  (`k = 6` for 3-D, which a 6-splat node matches exactly).
 - `position_bounds_from_array(positions)` — per-axis min/max of an `(N, D)`
   array, matching the compiler's per-leaf `position_bounds` shape.
 

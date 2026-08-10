@@ -133,6 +133,20 @@ array. Attrs are split: those in `COMPOSITING_ATTRS` go on the wrapper, the
 rest on each leaf. Per-element arrays are sliced into each part via
 `slice_optional_array`.
 
+Every wrapper impl opens with its geometry's pre-split gate
+(`validate_points_channels_before_split` /
+`validate_lines_channels_before_split` /
+`validate_gsplats_channels_before_split` from `compositing`), which re-runs the
+flat writer's step-0 validators — colors, radii/widths, sharpness, scalars,
+amplitudes/Cholesky, then labels — against the **source** element count. Without
+it `slice_optional_array` passes a wrong-length channel through whole and a part
+whose own count happens to match accepts it, so the write succeeds with values on
+the wrong elements. Mesh does the same thing in
+`_validate_partition_sources`; the gate belongs at the top of the wrapper, never
+the leaf adder, so the plain-leaf error order is untouched. Uniform values whose
+own length can collide with the element count (an RGB(A) list/tuple, a `(k,)`
+Cholesky) are classified before slicing rather than length-tested.
+
 Per-part recursion passes `partition=False` (not `None`) to bypass the
 compiler auto-partition heuristic — `None` would re-trigger it on each part
 and blow up the leaf count. `dim_order` / `fill` / `fill_sigma` are nulled in
@@ -161,7 +175,11 @@ the flat path does — otherwise a ladder-only scene would get no hover overlay.
   `sah_bsp_partition`, `median_bsp_polylines`, `midpoint_bsp_polylines`,
   `DEFAULT_MAX_ELEMENTS`, `warn_if_oversized_single_part`)
 - `compositing` — `COMPOSITING_ATTRS`, `position_bounds_from_array`,
-  `slice_optional_array`, `validate_labels_before_split`
+  `slice_optional_array`, `is_broadcast_color`,
+  `validate_points_channels_before_split`,
+  `validate_lines_channels_before_split`,
+  `validate_gsplats_channels_before_split` (each folds in
+  `validate_labels_before_split`)
 - `dim_order` — `apply_dim_order_positions`, `apply_dim_order_cholesky`
 - `lod.points`, `lod.lines` — additive-LOD level builders and polyline
   identification

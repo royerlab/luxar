@@ -11,6 +11,15 @@ Exposed:
   layer") rather than getting copied onto each internal child.
 * :func:`slice_optional_array` — slice an array-valued leaf parameter by
   index, leaving scalars / None / mis-sized inputs untouched.
+* :func:`is_broadcast_color` — classify a uniform RGB(A) sequence (which must
+  reach every part whole) apart from per-element color data.
+* :func:`validate_labels_before_split` — reject a wrong-length ``labels``
+  before any partition / LOD decomposition.
+* :func:`validate_points_channels_before_split`,
+  :func:`validate_lines_channels_before_split`,
+  :func:`validate_gsplats_channels_before_split` — the same pre-split gate for
+  every other per-element channel (colors / radii / widths / sharpness /
+  scalars / amplitudes / Cholesky).
 * :func:`position_bounds_from_array` — per-axis min/max of an (N, D)
   position array, in the writer's shape.
 * :func:`sync_custom_colormap_attr` — mirror the writer's custom-colormap
@@ -200,6 +209,191 @@ def validate_labels_before_split(labels: Any, n_elements: int) -> None:
     from ...validation.base import validate_labels_for_writing
 
     validate_labels_for_writing(labels, n_elements)
+
+
+def is_broadcast_color(colors: Any) -> bool:
+    """Whether ``colors`` is a uniform RGB(A) sequence rather than per-element data.
+
+    Classifies on TYPE/SHAPE only — a list/tuple of 3 or 4 numeric components,
+    which is exactly the admission test
+    :func:`~luxar.io._compiler.node_common.validate_broadcast_color` applies at
+    the writer (on the flat path a list/tuple ``colors`` is ALWAYS the broadcast
+    form). Values are deliberately left to that validator, so a bad uniform
+    color fails with the same message it gets without ``partition=``.
+
+    Needed because a uniform color's OWN length can collide with the element
+    count: a 3-point node with ``colors=(1.0, 0.0, 0.0)`` satisfies
+    :func:`slice_optional_array`'s length test and is gathered as if its three
+    components were three point rows — silently, since a permuted 3-list is
+    itself a valid uniform RGB. The mesh adder solved this first
+    (``adders/mesh.py::_is_broadcast_color``); this is the same rule for the
+    Points / Lines / GSplats wrappers.
+
+    A per-element list of triples fails the component test (its entries are
+    sequences, not numbers) and is gathered normally, as are numpy colors of any
+    shape — the writer refuses a 1-D numpy color outright, so only a list/tuple
+    can be the broadcast form.
+    """
+    if not isinstance(colors, (list, tuple)) or len(colors) not in (3, 4):
+        return False
+    return all(isinstance(c, (int, float, np.integer, np.floating)) for c in colors)
+
+
+def validate_points_channels_before_split(
+    n_points: int,
+    *,
+    colors: Any = None,
+    radii: Any = None,
+    sharpness: Any = None,
+    scalars: Any = None,
+    labels: Any = None,
+) -> None:
+    """Run the flat Points write gate over every per-point channel, pre-split.
+
+    The generalisation of :func:`validate_labels_before_split` to the rest of
+    the channels (issue #1437). Same trap, same reasoning: a wrong-length
+    per-point array takes :func:`slice_optional_array`'s pass-through branch, so
+    every part / LOD level receives the whole unsliced array, and a part whose
+    own element count happens to equal that array's length ACCEPTS it — the
+    write succeeds with values paired to the wrong points.
+
+    The validators and their order are the flat writer's step-0 gate verbatim
+    (``io/_compiler/geometry_writers/points.py``): colors → radii → sharpness →
+    scalars → labels, so a call that trips several is told about the same one it
+    would be told about without ``partition=`` / ``additive_lod=`` /
+    ``substitutive_lod=``. Every legal broadcast form the flat path accepts is
+    accepted here too (a scalar radius, a ``(1, c)`` colors row, an RGB triple).
+
+    Call as the FIRST statement of a wrapper impl, never from a leaf adder — see
+    :func:`validate_labels_before_split` for why the placement is load-bearing.
+
+    Args:
+        n_points: The node's FULL point count, before any decomposition.
+        colors: Per-point ``(n, 3|4)`` array, a ``(1, c)`` broadcast row, or a
+            uniform RGB(A) list/tuple.
+        radii: Per-point array, ``(1,)`` broadcast array, or scalar.
+        sharpness: Per-point array, ``(1,)`` broadcast array, or scalar.
+        scalars: Per-point array, ``(1,)`` broadcast array, or scalar.
+        labels: One string per point.
+
+    Raises:
+        ValidationError: If any channel is not a legal per-point or broadcast
+            value for ``n_points`` elements.
+    """
+    from ...io._compiler.node_common import (
+        validate_broadcast_color,
+        validate_scalars_preflight,
+    )
+    from ...validation.base import (
+        validate_colors_for_writing,
+        validate_radii_for_writing,
+        validate_sharpness_for_writing,
+    )
+
+    if colors is not None:
+        if isinstance(colors, np.ndarray):
+            # channels=(3, 4): the alpha column is per-point opacity.
+            validate_colors_for_writing(colors, n_points, channels=(3, 4))
+        elif isinstance(colors, (list, tuple)):
+            validate_broadcast_color(colors, "colors")
+    if radii is not None:
+        validate_radii_for_writing(radii, n_points)
+    if sharpness is not None:
+        validate_sharpness_for_writing(sharpness, n_points)
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_points)
+    validate_labels_before_split(labels, n_points)
+
+
+def validate_lines_channels_before_split(
+    n_vertices: int,
+    *,
+    widths: Any,
+    colors: Any = None,
+    sharpness: Any = None,
+    scalars: Any = None,
+    labels: Any = None,
+) -> None:
+    """Run the flat Lines write gate over every per-vertex channel, pre-split.
+
+    The Lines twin of :func:`validate_points_channels_before_split` — read that
+    docstring for the trap this closes. All four channels are per-VERTEX (not
+    per-segment), and ``widths`` is required, so it is validated
+    unconditionally, exactly as the flat writer does. Validator order is the
+    flat gate's (``io/_compiler/geometry_writers/lines.py``): widths → colors →
+    sharpness → scalars → labels.
+
+    Args:
+        n_vertices: The node's FULL vertex count, before any decomposition.
+        widths: Per-vertex array, ``(1,)`` broadcast array, or scalar.
+        colors: Per-vertex ``(n, 3|4)`` array, a ``(1, c)`` broadcast row, or a
+            uniform RGB(A) list/tuple.
+        sharpness: Per-vertex array, ``(1,)`` broadcast array, or scalar.
+        scalars: Per-vertex array, ``(1,)`` broadcast array, or scalar.
+        labels: One string per vertex.
+
+    Raises:
+        ValidationError: If any channel is not a legal per-vertex or broadcast
+            value for ``n_vertices`` elements.
+    """
+    from ...io._compiler.node_common import (
+        validate_broadcast_color,
+        validate_scalars_preflight,
+    )
+    from ...validation.base import (
+        validate_colors_for_writing,
+        validate_sharpness_for_writing,
+        validate_widths_for_writing,
+    )
+
+    validate_widths_for_writing(widths, n_vertices)
+    if colors is not None:
+        if isinstance(colors, np.ndarray):
+            validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
+        elif isinstance(colors, (list, tuple)):
+            validate_broadcast_color(colors, "colors")
+    if sharpness is not None:
+        validate_sharpness_for_writing(sharpness, n_vertices)
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_vertices)
+    validate_labels_before_split(labels, n_vertices)
+
+
+def validate_gsplats_channels_before_split(
+    centers: np.ndarray,
+    amplitudes: Any,
+    cholesky_factors: np.ndarray,
+    colors: Any = None,
+    labels: Any = None,
+) -> None:
+    """Run the flat GSplats write gate over the source arrays, pre-split.
+
+    The GSplats twin of :func:`validate_points_channels_before_split`. The whole
+    amplitudes / Cholesky / colors trio is checked by one validator
+    (:func:`~luxar.io._compiler.gsplat_assembly.validate_gsplat_inputs`), which
+    derives the splat count from ``centers`` itself — so handing it the SOURCE
+    arrays yields the flat verdict, including the uniform ``(k,)`` Cholesky and
+    scalar-amplitude broadcast forms.
+
+    Args:
+        centers: The node's full ``(N, D)`` centers array.
+        amplitudes: Per-splat ``(N,)`` array or a scalar.
+        cholesky_factors: Per-splat ``(N, k)`` array or a uniform ``(k,)`` one.
+        colors: Per-splat ``(N, 3|4)`` array, a ``(1, c)`` broadcast row, or a
+            uniform RGB(A) list/tuple.
+        labels: One string per splat.
+
+    Raises:
+        ValueError: If the trio's shapes/values are not a legal per-splat or
+            broadcast combination for ``len(centers)`` splats.
+        ValidationError: If ``labels`` is not one string per splat.
+    """
+    from ...io._compiler.gsplat_assembly import validate_gsplat_inputs
+
+    (*_normalized, n_splats, _n_dims, _uniform) = validate_gsplat_inputs(
+        centers, amplitudes, cholesky_factors, colors
+    )
+    validate_labels_before_split(labels, n_splats)
 
 
 def position_bounds_from_array(positions: np.ndarray) -> Dict[str, List[float]]:
