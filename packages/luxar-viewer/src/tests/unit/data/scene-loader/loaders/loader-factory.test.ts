@@ -333,17 +333,22 @@ describe('createProgressivePointsLoader', () => {
     expect(pointsCtorArgs[0][3]).toBe(deps.zarrStore);
   });
 
-  it('clears the label flags on each sub-LOD node, overriding the stored attrs', async () => {
-    // Since #1422 `write_points_multi_lod` stamps the label flags (and the
-    // union CSR) on the ladder PARENT and leaves every `additive_<i>` group
-    // bare, which is also the only path the pick path resolves labels against.
-    // The clearing here is therefore defensive against any attrs a sub-LOD may
-    // carry — a truthy flag would make `projectPointsTo3D` build a per-level
-    // slot → on-disk map that the ladder concat then throws away (#1421).
+  it('overrides each sub-LOD node’s label flags with the PARENT’s (here: absent)', async () => {
+    // Since #1422 `write_points_multi_lod` stamps the label flags (and the union
+    // CSR) on the ladder PARENT and leaves every `additive_<i>` group bare —
+    // the parent is also the only path the pick path resolves labels against.
+    // A sub-LOD's stored flags are therefore never trusted: the fixture below
+    // hand-stamps `has_labels` / `has_image_labels` on the level anyway, to
+    // prove the override is unconditional and always takes the PARENT node's
+    // declaration (#1439). This parent declares nothing, so both read false and
+    // no per-level map is built only for the ladder concat to throw away
+    // (#1421).
     // mockImplementationOnce (not mockImplementation) so the default stub is
     // restored for the following tests.
+    // `n_points` is VALID here, so the null offsets below can only come from
+    // the parent gate — not from the unusable-counts branch.
     zarrOpenMock.mockImplementationOnce((async () => ({
-      attrs: { foo: 'bar', has_labels: true, has_image_labels: true },
+      attrs: { foo: 'bar', n_points: 100, has_labels: true, has_image_labels: true },
     })) as never);
 
     await createProgressivePointsLoader(
@@ -359,6 +364,126 @@ describe('createProgressivePointsLoader', () => {
     // …but the two label flags are overridden, not merely absent.
     expect(lodNode.attrs.has_labels).toBe(false);
     expect(lodNode.attrs.has_image_labels).toBe(false);
+    // No parent CSR ⇒ no level offsets (6th ctor arg) ⇒ the ladder publishes
+    // no picking map at all.
+    expect(pointsProgressiveCtorArgs[0][5]).toBeNull();
+  });
+
+  it('propagates a PARENT label declaration and the on-disk CSR-style levelOffsets', async () => {
+    // The parent carries the ladder's UNION CSR (#1422), so every level must
+    // build its own level-space map and the concat offsets level `i` by the
+    // preceding levels' ON-DISK `n_points` (#1439).
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_labels: true };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 100 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 250 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 400 } })) as never);
+
+    await createProgressivePointsLoader(node, 3, {} as SceneNode['attrs'], makeDeps());
+
+    for (const args of pointsCtorArgs) {
+      const lodNode = args[1] as SceneNode;
+      expect(lodNode.attrs.has_labels).toBe(true);
+      expect(lodNode.attrs.has_image_labels).toBe(false);
+    }
+    // CSR-style bounds: level 0 always starts at 0 and the CLOSING entry is
+    // the union row count, so every level (the last one included) has an end
+    // the composer can bound its ids against.
+    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 100, 350, 750]);
+  });
+
+  it('propagates a has_image_labels-only parent (the other half of the gate)', async () => {
+    // Defensive: pins the `has_image_labels` half of the reader's
+    // `parentDeclaresLabels` gate. No producer can currently write this shape —
+    // `add_points` refuses to build a ladder when `image_labels` is set (it
+    // falls through to a single leaf with a warning) and
+    // `write_points_multi_lod` has no image-labels channel at all.
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_image_labels: true };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 7 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 11 } })) as never);
+
+    await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_image_labels).toBe(true);
+    expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_labels).toBe(false);
+    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 7, 18]);
+  });
+
+  it('passes null levelOffsets (no throw) when a labelled ladder lacks n_points', async () => {
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_image_labels: true };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 100 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: {} })) as never);
+
+    await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    expect(pointsProgressiveCtorArgs[0][5]).toBeNull();
+    // …and with no offsets to place them in, the per-level maps are NOT built:
+    // they would be allocated once per level per view change and discarded.
+    expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_image_labels).toBe(false);
+    expect((pointsCtorArgs[1][1] as SceneNode).attrs.has_image_labels).toBe(false);
+  });
+
+  it('rejects a NaN n_points (typeof NaN === "number")', async () => {
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_labels: true };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 100 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: Number.NaN } })) as never);
+
+    await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    // A weaker `typeof === 'number'` check would pass NaN through and poison
+    // every later offset.
+    expect(pointsProgressiveCtorArgs[0][5]).toBeNull();
+  });
+
+  it('fails closed when the parent n_points disagrees with the levels’ sum', async () => {
+    // The writer's parent `n_points` IS the sum of the levels' row counts, so a
+    // mismatch means the CSR and the levels are from different builds —
+    // composing would land in someone else's row.
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_labels: true, n_points: 999 };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 100 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 250 } })) as never);
+
+    await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    expect(pointsProgressiveCtorArgs[0][5]).toBeNull();
+    expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_labels).toBe(false);
+  });
+
+  it('accepts a parent n_points that MATCHES the levels’ sum', async () => {
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_labels: true, n_points: 350 };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 100 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 250 } })) as never);
+
+    await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 100, 350]);
+  });
+
+  it('fails closed when the levels sum past the 2^32 picking-map index range', async () => {
+    // Each count is individually a safe integer, but the composed map is a
+    // Uint32Array of UNION indices — a wider union would wrap into another
+    // CSR row, so it is the SUM that has to be range-checked.
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_labels: true };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 3_000_000_000 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 3_000_000_000 } })) as never);
+
+    await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    expect(pointsProgressiveCtorArgs[0][5]).toBeNull();
+    expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_labels).toBe(false);
   });
 });
 

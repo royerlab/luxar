@@ -535,28 +535,29 @@ The viewer commits levels coarsest-first, so a fully-loaded ladder maps straight
 through — index `k` is committed slot `k`. The **committed buffer** is not in
 general a prefix of this union, though: the per-level loader compacts out elements
 culled by the current nD slice and fetches only the chunk ranges a query
-intersects, so slots shift. A labelled ladder therefore resolves at the raw
-committed slot — exact for a fully-loaded 3D scene (no per-element slice culling),
-and otherwise carrying the slot shift that issue #1421 / PR #1425 removed for
-**flat** nodes by publishing a visible-slot → on-disk-index map. That map is
-deliberately not published across a ladder (each level's map is in that level's own
-on-disk space, so the concatenation clears it); extending it — offsetting each
-level by the preceding levels' on-disk counts — is the remaining piece of work
-(issue #1439).
+intersects, so slots shift. For **Points** that shift is corrected: the viewer
+composes each level's own visible-slot → on-disk-index map (the map issue #1421 /
+PR #1425 introduced for **flat** nodes) into this union index space, offsetting
+level `i` by the preceding levels' on-disk counts, so a labelled Points ladder
+resolves exactly under an nD slice too (issue #1439). Where the levels' metadata is
+inconsistent the viewer publishes no map at all and falls back to the raw committed
+slot, rather than composing an index it cannot trust. For **Lines** no map is
+composed across the levels, so a laddered lines node still resolves at the raw
+committed slot.
 
 Two further notes. Under the documented `partition=`-outer +
 `additive_lod=`-inner composition the CSR lands on each `part_<i>` ladder parent,
 which is exactly where the viewer looks it up (the hit leaf scene node — the
 outermost `kind=partition` wrapper is the reported path only), so that composition
-resolves too, with the same raw-committed-slot caveat. And for Lines the CSR is
+resolves too, through the same per-geometry path as an unpartitioned ladder. And for Lines the CSR is
 per-vertex, matching the flat Lines writer, while the viewer's Lines pick id is a
 per-segment storage slot. Issue #1424 bridged that granularity for **flat** Lines
 nodes — a labelled flat lines node resolves the picked segment's slot back to that
 segment's start vertex row in the stored ordering — but it does so through the same
-visible-slot → on-disk-index map no ladder publishes, so across a ladder the hover only
-lands on the right string when every element carries the same one (there is no
-broadcast label form — `labels` is always one entry per element), until #1439 carries
-that map over the levels.
+visible-slot → on-disk-index map a **lines** ladder does not publish, so across a lines
+ladder the hover only lands on the right string when every element carries the same one
+(there is no broadcast label form — `labels` is always one entry per element). #1439
+carried that map over the levels for Points only; a laddered Lines node is still open.
 
 **Builder API (Python):**
 ```python
@@ -1287,15 +1288,16 @@ lines node resolves the slot all the way back to the picked segment's start
 vertex in the stored ordering (#1424). A lines node with no labels publishes no
 such mapping and still reports the raw visible-segment slot, which after spatial
 range loading or an nD slice compacting invisible elements out is not an on-disk
-row at all. A multi-additive-LOD (laddered) Points or Lines node is the other
-case that publishes no mapping: its label CSR spans the levels and so lives on
-the parent, which does declare `has_labels`, but no slot → on-disk map is
-composed across a ladder — `{hover_index}` there is the raw committed slot. On
-Points that equals the union index for a fully-loaded, unsliced layer and shifts
-once culling or compaction is active; on Lines the raw slot is a per-*segment*
-one against the per-*vertex* union CSR, so it is wrong at the granularity
-whatever the slicing (issue #1439; see the **Labels** paragraph of the
-multi-additive-LOD section above).
+row at all. A multi-additive-LOD (laddered) node carries its label CSR on the
+ladder parent, which is the node that declares `has_labels`. A laddered
+**Points** node resolves like a flat one: the viewer composes each level's map
+into that union CSR's index space (issue #1439), so `{hover_index}` is the
+on-disk row under culling and compaction too — it degrades to the raw committed
+slot only when the levels' own metadata is inconsistent. A laddered **Lines**
+node publishes no mapping across its levels, so `{hover_index}` there is the raw
+committed slot, which is a per-*segment* one against the per-*vertex* union CSR
+and so wrong at the granularity whatever the slicing (see the **Labels**
+paragraph of the multi-additive-LOD section above).
 
 ### Compound Ordering
 
