@@ -45,15 +45,67 @@ export type { WasmModule } from './types';
 let wasmJsUrlOverride: string | undefined;
 
 /**
- * Failing this check enters the normal TypeScript fallback path, which is
- * correct but slower — `make build-wasm` is the fix. The list itself lives in
+ * Reject a module that imported and initialised fine but predates one of the
+ * `REQUIRED_WASM_EXPORTS` kernels. The list itself lives in
  * `./required-exports.ts` because the vitest global setup shares it; see the
  * comment there for why it is a separate module.
+ *
+ * `make build-wasm` is the fix for a genuinely stale build, but the two caller
+ * classes react to a failed check very differently:
+ * - {@link initWasm} catches it and enters the normal TypeScript fallback path,
+ *   which is correct but slower;
+ * - the test/benchmark loader (`src/tests/helpers/wasm-artifact.ts`) lets it
+ *   throw — there is no fallback there, and failing loudly by name is the whole
+ *   point.
+ *
+ * {@link initWasm} calls this before handing the module out, so the runtime
+ * path is covered. Tests, benchmarks and tools that want the compiled kernels
+ * load the built artifact themselves — `await import('.../public/wasm/
+ * luxar_wasm.js')` + `initSync()`, bypassing `initWasm` — and get this check
+ * from the ONE loader they all share, `src/tests/helpers/wasm-artifact.ts`.
+ * That loader calls it before the `as unknown as WasmModule` cast (the double
+ * cast promises the entire interface while the artifact may be missing half of
+ * it, so a stale gitignored build otherwise surfaces as an opaque "x is not a
+ * function" from whichever kernel assertion runs first) and OUTSIDE the catch
+ * that downgrades a load failure to a skip (inside it, the named message would
+ * be swallowed too). `direct-import-guard.test.ts` pins exactly one rule to
+ * keep that true: no source outside that helper may load the artifact itself —
+ * it fails on any other `.ts` under `src/`, `tools/` or `scripts/` that both
+ * mentions `luxar_wasm.js` and calls `initSync(`.
+ *
+ * {@link initWasm} is the one deliberate exception to the placement rule: it
+ * calls this INSIDE the try whose catch returns a {@link TypeScriptFallback},
+ * because entering the documented fallback is the right response to a stale
+ * build on the runtime path. The guard test exempts this module for that reason.
+ *
+ * @param module The wasm-bindgen JS shim's namespace.
+ * @param instanceExports What `initSync()` / the shim's `default()` returned —
+ *   the instantiated `.wasm` exports. Checking the namespace alone is not
+ *   enough for a MIXED artifact (only one of `luxar_wasm.js` /
+ *   `luxar_wasm_bg.wasm` overwritten): the shim declares a static wrapper per
+ *   kernel, so its namespace reads as complete while the binary behind it
+ *   predates the kernel, and instantiation still succeeds because WebAssembly
+ *   only links imports. Omit it (or pass a non-object) to check the namespace
+ *   alone.
  */
-function assertRequiredWasmExports(module: Record<string, unknown>): void {
+export function assertRequiredWasmExports(
+  module: Record<string, unknown>,
+  instanceExports?: unknown
+): void {
+  const compiled =
+    typeof instanceExports === 'object' && instanceExports !== null
+      ? (instanceExports as Record<string, unknown>)
+      : undefined;
   for (const name of REQUIRED_WASM_EXPORTS) {
-    if (typeof module[name] !== 'function') {
-      throw new Error(`Loaded WASM module is stale: missing required export "${name}"`);
+    if (typeof module[name] !== 'function' || (compiled && typeof compiled[name] !== 'function')) {
+      // The remediation rides IN the message: on the hard direct-import path
+      // this throw is all the reader gets (no logger, no fallback warning), and
+      // a vitest failure line that names the missing kernel without saying how
+      // to fix it is only half the diagnosis #1412 asked for.
+      throw new Error(
+        `Loaded WASM module is stale: missing required export "${name}" — ` +
+          'rebuild it with pnpm build:wasm (or make build-wasm)'
+      );
     }
   }
 }
@@ -124,10 +176,14 @@ export async function initWasm(): Promise<WasmModule> {
     const wasmModule = await importWasm(wasmJsUrl);
 
     // Initialize WASM (loads the .wasm binary), then reject mixed/stale dev
-    // artifacts before returning them as the WasmModule interface. Throwing
-    // here deliberately enters the normal TypeScript fallback path.
-    await wasmModule.default();
-    assertRequiredWasmExports(wasmModule as Record<string, unknown>);
+    // artifacts before returning them as the WasmModule interface. This check
+    // sits INSIDE the swallowing try ON PURPOSE — the inverse of what the
+    // test-side loader does: throwing here enters the normal TypeScript
+    // fallback path, which is the documented runtime behaviour for a missing or
+    // stale build. Do not "fix" it by moving the call out of the try; that
+    // would make every embedder crash instead.
+    const instanceExports = await wasmModule.default();
+    assertRequiredWasmExports(wasmModule as Record<string, unknown>, instanceExports);
 
     log.info(Modules.WASM, 'Loaded compiled WASM module');
 

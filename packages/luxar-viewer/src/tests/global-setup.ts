@@ -174,9 +174,10 @@ function missingWasmExports(): readonly string[] {
  * `it.skipIf(!wasmFilesExist)` when the artifacts are absent — which means a
  * dev box that never ran `make build-wasm` gets a fully-green suite that has
  * verified NOTHING about the compiled backend (the only guard against Rust↔TS
- * drift). A build that is merely STALE is worse still: it does not skip, it
- * runs and fails at first use with an opaque "x is not a function". To avoid
- * both traps:
+ * drift). A build that is merely STALE is worse still: it does not skip, it is
+ * loaded — and the shared loader (`src/tests/helpers/wasm-artifact.ts`) aborts
+ * every suite that loads it with "missing required export `<kernel>`". To
+ * avoid both traps:
  *   - if the artifacts are missing OR out of date (see `missingWasmExports`
  *     below) and a Rust/wasm-pack toolchain is present, build them
  *     automatically (mirrors the auto fixture-generation above);
@@ -189,8 +190,8 @@ function missingWasmExports(): readonly string[] {
 export function ensureWasmBuilt(): void {
   const present = existsSync(WASM_JS_PATH) && existsSync(WASM_BIN_PATH);
   // A build missing a kernel is as useless as no build: it imports and
-  // initialises fine, then fails at first use with "x is not a function", which
-  // reads as a code defect rather than an old artifact. Same branch, same fix.
+  // initialises fine, then aborts every suite that loads it in `beforeAll` with
+  // "missing required export `<kernel>`". Same branch, same fix.
   const stale = present ? missingWasmExports() : [];
   if (present && stale.length === 0) return;
 
@@ -208,14 +209,15 @@ export function ensureWasmBuilt(): void {
     // The two cases have OPPOSITE consequences, so they must not share a
     // sentence. `it.skipIf(!wasmFilesExist)` keys on PRESENCE: a missing build
     // skips the parity harness (silent under-coverage), while a stale one is
-    // loaded and runs — and fails at the first kernel it does not export. Only
-    // deleting the artifact turns the second case into the first.
+    // loaded — and the shared loader aborts the file in `beforeAll` on the
+    // first kernel it does not export. Only deleting the artifact turns the
+    // second case into the first.
     const msg = stale.length
       ? `[test-setup] Compiled WASM is STALE (missing ${stale.join(', ')}) and wasm-pack\n` +
         '             is not installed. A stale build is NOT skipped — the WASM-vs-\n' +
-        '             TypeScript parity tests load it and FAIL at first use with\n' +
-        '             "<kernel> is not a function". Install Rust + wasm-pack and run\n' +
-        '             `make build-wasm` (or `pnpm build:wasm`), or delete\n' +
+        '             TypeScript parity tests load it and ABORT in `beforeAll` with\n' +
+        '             "missing required export <kernel>". Install Rust + wasm-pack and\n' +
+        '             run `make build-wasm` (or `pnpm build:wasm`), or delete\n' +
         '             packages/luxar-viewer/public/wasm/ to skip those tests instead.'
       : '[test-setup] Compiled WASM not found and wasm-pack is not installed.\n' +
         '             WASM-vs-TypeScript parity tests will be SKIPPED — the compiled\n' +
