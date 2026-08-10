@@ -1830,18 +1830,38 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // PERSPECTIVE pick — the only pick fixture that builds the TSL
   // perspective graph variant (diverging rays, the vertex near-clip
   // chain, per-fragment nearFade at the hit depth) and drives the GLSL
-  // uIsOrtho=0 branches. Same straddling end-on geometry as
-  // `line-volprim-endon-persp` (starts BEHIND the eye), so the near-clip
-  // stencil reshaping is load-bearing, not decorative.
+  // uIsOrtho=0 branches. NEAR-PLANE STRADDLING geometry + knobs of
+  // `line-volprim-nearclip` below (starts BEHIND the eye at camera-space
+  // z = +0.5, nearCull 0.35), so the vertex stage's quad near-clip
+  // reshaping is load-bearing here, not decorative. The thin world width
+  // (0.002), telephoto scale (6400) and raised extent clamp (128) are
+  // required, not stylistic: at the default width the near-clipped
+  // endpoint's raw stencil width trips the coverageFade cull, NOTHING
+  // renders, and `assertBothRendered` rejects the buffer as vacuous —
+  // see the sibling's comment for the numbers.
   'line-volprim-pick-persp': {
     source: VOLUMETRIC_LINE_PICK_SOURCE,
-    buildUniforms: () =>
-      buildPickLineUniforms(buildLineDataTexture([0, 0, 0.5], [0, 0, -0.3]), false),
+    buildUniforms: () => ({
+      ...buildPickLineUniforms(
+        buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+          startWidth: 0.002,
+          endWidth: 0.002,
+        }),
+        false,
+        0.35
+      ),
+      uPerspectiveLineScale: { value: 6400.0 },
+      uMaxLinePixelWidth: { value: 128.0 },
+    }),
     buildTSLMaterial: (uniforms) =>
       volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
         isOrtho: false,
       }) as unknown as THREE.Material,
-    buildMesh: (m) => buildLineInstancedMesh(m, [0, 0, 0.5], [0, 0, -0.3]),
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+        startWidth: 0.002,
+        endWidth: 0.002,
+      }),
     buildCamera: buildBehindCamera,
   },
   // The V joint under pick: the only pick fixture that reaches the
