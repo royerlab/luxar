@@ -11,11 +11,9 @@
  */
 
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { existsSync, readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 import type { WasmModule } from '../../../wasm/types';
 import { TypeScriptFallback } from '../../../wasm/typescript';
+import { tryLoadWasmArtifact, wasmArtifactExists } from '../../helpers/wasm-artifact';
 
 // Increase timeout for all benchmarks in this file - coverage instrumentation
 // adds significant overhead to the tight loops used by performance benchmarks.
@@ -23,11 +21,7 @@ vi.setConfig({ testTimeout: 30_000 });
 
 // Check if WASM files exist. Benchmarks are skipped when artifacts are absent
 // unless LUXAR_REQUIRE_WASM_TESTS=1 is set, in which case a smoke test fails.
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const wasmJsPath = join(__dirname, '../../../../public/wasm/luxar_wasm.js');
-const wasmBinaryPath = join(__dirname, '../../../../public/wasm/luxar_wasm_bg.wasm');
-const wasmFilesExist = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
+const wasmFilesExist = wasmArtifactExists();
 const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
 
 // Benchmark configuration
@@ -112,15 +106,15 @@ describe.skipIf(!wasmFilesExist)('WASM Performance Benchmarks', () => {
   beforeAll(async () => {
     if (!wasmFilesExist) return;
 
-    try {
-      const wasmBinary = readFileSync(wasmBinaryPath);
-      const wasm = await import(wasmJsPath);
-      wasm.initSync({ module: wasmBinary });
-      wasmModule = wasm as unknown as WasmModule;
+    // A load failure leaves the benchmarks unrun; a STALE build still throws by
+    // name (see tests/helpers/wasm-artifact.ts).
+    const loaded = await tryLoadWasmArtifact((error) => {
+      console.error('Failed to load WASM module:', error);
+    });
+    if (loaded) {
+      wasmModule = loaded;
       tsModule = new TypeScriptFallback();
       console.log('[Benchmark] WASM module loaded successfully');
-    } catch (error) {
-      console.error('Failed to load WASM module:', error);
     }
   });
 

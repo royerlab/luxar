@@ -139,9 +139,10 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * partition-bound ladders (see ``partitioned_coverage_fractions``) and still fails
  * 32:9 even at 0.2.
  *
- * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on an
- * explicitly authored ``coverage_fractions=[...]`` list — see
- * ``core/group/lod/group.py``) is defined as ``1 / FILL_FACTOR``, i.e. the metric a
+ * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on any
+ * ``coverage_fraction``, authored or derived — a partition-bound ladder derives
+ * exactly this value; see ``core/group/lod/group.py``) is defined as
+ * ``1 / FILL_FACTOR``, i.e. the metric a
  * screen-filling object produces. Changing this value must change that one; a
  * Python test (``test_max_coverage_fraction_matches_the_viewer_fill_factor``) reads
  * this file
@@ -181,15 +182,16 @@ export interface LODGroupChild {
   object: THREE.Object3D;
   /**
    * Viewport-relative LOD-switch threshold, strictly monotonic increasing in
-   * coarsest→finest order (coarsest 0.0; the auto-derived ladder anchors its
-   * finest at 1.0). Multiplied by ``FILL_FACTOR × viewportDiagonal`` at
-   * selection time to compare against the group's projected bbox diagonal in
+   * coarsest→finest order (coarsest 0.0; the auto-derived WHOLE-OBJECT ladder
+   * anchors its finest at 1.0). Multiplied by ``FILL_FACTOR × viewportDiagonal``
+   * at selection time to compare against the group's projected bbox diagonal in
    * pixels — so 1.0 activates once that diagonal reaches about a quarter of the
    * viewport diagonal (any normal full-frame view), and coarser levels take over
-   * as it shrinks. An explicitly authored ladder may go up to ``1/FILL_FACTOR``
-   * (4.0, a screen-filling object) to hold a level until later than that — e.g.
-   * a spatially tiled layer whose tiles each project to a fraction of the
-   * viewport. No upper bound is enforced here.
+   * as it shrinks. An explicitly authored **or partition-bound** ladder may go up
+   * to ``1/FILL_FACTOR`` (4.0, a screen-filling object) to hold a level until
+   * later than that — a spatially tiled layer's tiles each project to a fraction
+   * of the viewport, so the producer derives that anchor for them automatically.
+   * No upper bound is enforced here.
    */
   coverageFraction: number;
   /**

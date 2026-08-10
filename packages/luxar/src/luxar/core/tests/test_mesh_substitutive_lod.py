@@ -869,3 +869,121 @@ class TestNormalFrame:
                 normals=normals,
                 normal_dims=(0, 0, 1),
             )
+
+
+class TestPartitionBoundAnchorMesh:
+    """A hand-built partition of per-tile mesh ladders gets the fills-screen anchor.
+
+    `add_mesh` refuses `partition=` together with `substitutive_lod=`, so building
+    the `kind=partition` wrapper by hand and calling the adder once per part is the
+    ONLY way to get per-tile mesh ladders. Before the mesh wrapper routed through
+    `derive_coverage_fractions` it always derived the WHOLE-OBJECT ladder (finest
+    `1.0`), so both tiles sat on their finest decimation level at the opening
+    full-frame view. The Points/Lines peers of these tests live in
+    `core/tests/group/lod/test_substitutive_{points,lines}.py`.
+    """
+
+    @staticmethod
+    def write(tmp_path: Path, *, partitioned: bool = True, **spec) -> Path:
+        """Two offset spheres, each its own ladder, under a partition or the root.
+
+        `partitioned=False` places the SAME two ladders at the scene root — the
+        over-trigger control, where only the insertion point differs.
+        """
+        verts, faces = octasphere(4)
+        store = tmp_path / "tiled.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            wrapper = (
+                scene.add_partition_group(
+                    "tiled", display_type="mesh", max_elements=len(verts)
+                )
+                if partitioned
+                else scene
+            )
+            for i, shift in enumerate((-3.0, 3.0)):
+                shifted = verts.copy()
+                shifted[:, 0] += shift
+                wrapper.add_mesh(
+                    f"part_{i}",
+                    shifted,
+                    faces,
+                    substitutive_lod={"levels": 2, **spec},
+                )
+        return store
+
+    @staticmethod
+    def coverage(nodes: Dict[str, Dict[str, Any]], part: str) -> List[float]:
+        kids = [
+            (path, attrs)
+            for path, attrs in nodes.items()
+            if path.startswith(f"{part}/child_") and attrs.get("type") == "mesh"
+        ]
+        kids.sort(key=lambda kv: int(kv[0].rsplit("_", 1)[1]))
+        return [float(attrs["coverage_fraction"]) for _, attrs in kids]
+
+    def test_every_part_ladder_is_partition_anchored(self, tmp_path):
+        from luxar.core.group.lod.group import (
+            MAX_COVERAGE_FRACTION,
+            partitioned_coverage_fractions,
+        )
+
+        nodes = read_nodes(self.write(tmp_path))
+        assert nodes["tiled"]["kind"] == "partition"
+        for i in range(2):
+            part = f"tiled/part_{i}"
+            assert nodes[part]["kind"] == "lod"
+            counts = [
+                int(attrs["n_vertices"])
+                for path, attrs in sorted(
+                    (
+                        (p, a)
+                        for p, a in nodes.items()
+                        if p.startswith(f"{part}/child_") and a.get("type") == "mesh"
+                    ),
+                    key=lambda kv: int(kv[0].rsplit("_", 1)[1]),
+                )
+            ]
+            assert len(counts) >= 2
+            assert self.coverage(nodes, part) == pytest.approx(
+                partitioned_coverage_fractions(counts)
+            )
+            assert self.coverage(nodes, part)[-1] == pytest.approx(
+                MAX_COVERAGE_FRACTION
+            )
+
+    def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path):
+        """CONTROL: the same ladders outside a partition keep the 1.0 anchor."""
+        nodes = read_nodes(self.write(tmp_path, partitioned=False))
+        for i in range(2):
+            assert self.coverage(nodes, f"part_{i}")[-1] == pytest.approx(1.0)
+
+    def test_explicit_coverage_fractions_still_win_under_a_partition(self, tmp_path):
+        """CONTROL: an explicit list is used verbatim, partition or not."""
+        explicit = [0.0, 0.6, 1.0]
+        nodes = read_nodes(self.write(tmp_path, coverage_fractions=explicit))
+        for i in range(2):
+            assert self.coverage(nodes, f"tiled/part_{i}") == pytest.approx(explicit)
+
+    def test_an_explicit_list_may_reach_the_partition_anchor(self, tmp_path):
+        """An explicit mesh ladder may END at `MAX_COVERAGE_FRACTION`, verbatim.
+
+        The mesh resolver (`lod/mesh.py::_validate_coverage_fractions_spec`) bounds
+        an explicit list at `[0, MAX_COVERAGE_FRACTION]`, exactly like the
+        Points/Lines/GSplats resolvers. It has to: under a `kind=partition` the
+        SAME ladder DERIVES a finest of exactly `MAX_COVERAGE_FRACTION`, so a bound
+        of `1.0` would have made the tile anchor reachable by derivation but not by
+        hand. Anything above the ceiling still raises.
+        """
+        from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+
+        explicit = [0.0, 2.0, MAX_COVERAGE_FRACTION]
+        nodes = read_nodes(self.write(tmp_path, coverage_fractions=explicit))
+        for i in range(2):
+            assert self.coverage(nodes, f"tiled/part_{i}") == pytest.approx(explicit)
+
+        over = tmp_path / "over"
+        over.mkdir()
+        with pytest.raises(ValueError) as exc:
+            self.write(over, coverage_fractions=[0.0, 2.0, MAX_COVERAGE_FRACTION + 0.5])
+        assert f"[0, {MAX_COVERAGE_FRACTION:g}]" in str(exc.value)
