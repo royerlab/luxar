@@ -1571,6 +1571,50 @@ describe('projectPointsTo3D — elementIds map', () => {
     expect(Array.from(first.elementIds!)).toEqual([5, 9]);
   });
 
+  // `buildElementIdMap` returns `undefined` for FIVE reasons — the empty
+  // `count <= 0` case, the identity, and three fail-closed bail-outs — whose
+  // meanings are opposite. A consumer that composes this payload into a wider
+  // index space (the additive-ladder concat, #1439) must be able to tell them
+  // apart, so everything that is not the identity is stamped as
+  // `elementIdsUnavailable`.
+  //
+  // Only the NEGATIVE side is worth pinning here. The `count <= 0` return IS
+  // reachable through this function's public inputs (a labelled call whose
+  // ranges sum to 0 and are not a single `[0, N)`), but no PRODUCTION caller
+  // gets there: `points-spatial-index-loader.ts` short-circuits on
+  // `ranges.length === 0` and never calls the projection for an empty visible
+  // set. The three bail-outs are defensive — the composer's own cases live in
+  // `tests/unit/data/loaders/element-ids.test.ts`, and the ladder's handling of
+  // the flag (including the zero-point exemption) is pinned in
+  // `points-progressive-loader.test.ts`.
+  it('does NOT flag elementIdsUnavailable on the identity path or an unlabelled node', () => {
+    const identity = projectPointsTo3D(
+      wasm,
+      new Float32Array([0, 0, 0, 1, 1, 1]),
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 2 }] as PointRange[],
+      labelledCtx()
+    );
+    expect(identity.elementIds).toBeUndefined();
+    expect(identity.elementIdsUnavailable).toBeUndefined();
+
+    // No label CSR ⇒ no map was ever wanted ⇒ nothing is "unavailable".
+    const unlabelled = projectPointsTo3D(
+      wasm,
+      new Float32Array([0, 0, 0, 1, 1, 1]),
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 5, end: 6 }] as PointRange[],
+      makeCtx()
+    );
+    expect(unlabelled.elementIdsUnavailable).toBeUndefined();
+  });
+
   it('feeds resolveOnDiskElementId end to end (producer ↔ consumer seam)', () => {
     // The real producer output, stamped exactly as the commit pipeline stamps
     // it, read back by the real picking consumer.

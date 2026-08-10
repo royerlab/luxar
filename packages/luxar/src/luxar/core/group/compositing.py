@@ -234,11 +234,17 @@ def is_broadcast_color(colors: Any) -> bool:
     On Points / Lines / GSplats the consequence is a SPURIOUS REJECTION, not a
     silent mis-write: those parts are disjoint, so with 3 or 4 elements split
     over at least two parts the slice lengths sum to at most 4 and some part
-    always gets a length outside ``{3, 4}``, which its writer refuses. Measured
-    without this classifier: 3 points + an RGB triple raises "Uniform color must
-    have 3 (RGB) or 4 (RGBA) components" at every cap, and 4 points + an RGBA
-    tuple at cap 3 raises from ``part_1`` with ``part_0`` ALREADY WRITTEN —
-    a legal input refused, sometimes only after stranding a partial node. Mesh,
+    always gets a length outside ``{3, 4}``, which its writer refuses. Which
+    refusal you get depends on list vs tuple, because :func:`slice_optional_array`
+    keeps a list a list and ``np.asarray``s a tuple. Measured without this
+    classifier: 3 points + an RGB *list* raises "Uniform color must have 3 (RGB)
+    or 4 (RGBA) components, got 1" at every cap, where the same triple as a
+    *tuple* raises "Expected shape (1, 3) or (1, 3), got (1,)" from the array
+    validator instead. And 4 points + an RGBA *list* under ``midpoint`` / ``sah``
+    (which split them 3 + 1, where the default ``median`` splits 2 + 2) raises
+    from ``part_1`` with ``part_0`` ALREADY WRITTEN, carrying the RGB and the
+    authored alpha dropped — a legal input refused, sometimes only after
+    stranding a partial node. Mesh,
     which solved this first, is the one geometry where it can be silent instead:
     its parts SHARE vertices, so two parts can each take a valid 3-of-4 slice
     (see the rationale in ``adders/mesh.py``). Same rule, both places.

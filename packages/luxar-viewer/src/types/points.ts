@@ -121,16 +121,41 @@ export interface LoadedPointsData {
    * concatenated) or effective-radius compaction (zero-radius points are
    * dropped in place).
    *
-   * OMITTED in three cases, in all of which consumers use the slot directly:
-   * when the node declares neither `has_labels` nor `has_image_labels` (the
-   * map costs 4 B/point on the zero-allocation accumulator path and no LABEL
-   * reader exists — the embedder `selection` event can still fire on such a
-   * node and keeps reporting the slot); when the identity holds — a single
-   * range starting at 0 with no compaction, i.e. the common plain-3D case;
-   * and on an additive LOD ladder, where each sub-LOD has its own on-disk
-   * index space (`points-progressive-loader.ts::concatenatePointsData`).
+   * OMITTED in three cases: when the node declares neither `has_labels` nor
+   * `has_image_labels` (the map costs 4 B/point on the zero-allocation
+   * accumulator path and no LABEL reader exists — the embedder `selection`
+   * event can still fire on such a node and keeps reporting the slot); when
+   * the identity holds — a single range starting at 0 with no compaction, i.e.
+   * the common plain-3D case; and when the map could not be built at all, in
+   * which case {@link LoadedPointsData.elementIdsUnavailable} is set (the slot
+   * is NOT a valid substitute — only the first two cases let a consumer use it
+   * directly).
+   *
+   * On an additive LOD ladder each level's map is in that LEVEL's on-disk
+   * index space. `points-progressive-loader.ts::concatenatePointsData` either
+   * composes the levels into the PARENT node's union label CSR space (when the
+   * parent declares that CSR — the `levelOffsets` path, #1439) or publishes
+   * nothing at all.
    */
   elementIds?: Uint32Array;
+
+  /**
+   * Set (only when true) when a slot → on-disk map was WANTED — the node
+   * declares `has_labels` / `has_image_labels` — but could not be built: the
+   * slot is NOT the on-disk index and there is no map to say what is.
+   *
+   * Distinct from a plain missing {@link LoadedPointsData.elementIds}, which
+   * usually means the identity holds. A consumer that composes this payload
+   * into a wider index space (the additive-ladder concat) must not substitute
+   * identity for it — it publishes no map instead. ONE exemption: a payload
+   * with `pointCount === 0` contributes no slots to a composition, so it cannot
+   * corrupt one and does not veto its siblings' maps (both ladder-concat
+   * branches skip the flag there). That is not a suppression:
+   * with no map, picking reports the raw slot, which on a sliced payload is
+   * itself a wrong CSR row. It only guarantees the reported id is never one
+   * composed from data known to be inconsistent.
+   */
+  elementIdsUnavailable?: boolean;
 
   /** Number of points loaded (top-level for consistency with Lines/GSplats) */
   pointCount: number;
