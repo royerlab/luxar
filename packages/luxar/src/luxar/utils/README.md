@@ -198,6 +198,35 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - Git LFS data loading with local cache fallback
 - Educational examples of Luxar features
 
+### `process.py`
+Deterministic teardown for long-lived child processes (stdlib-only). Owns the
+lifecycle of the subprocess trees `luxar demo run` spawns so Ctrl-C (or
+SIGTERM/SIGHUP) never orphans a `luxar serve` on its port.
+
+**Key Functions:**
+- `run_child_process()`: Spawn a command, wait for it, and tear it (and its
+  whole process group, when isolated) down on every exit path via a
+  SIGINT → SIGTERM → SIGKILL escalation; optional `on_spawn` hook receives the
+  child PID (= new pgid when isolated)
+- `terminate_process_group()`: The same escalation for a group discovered
+  after the fact (used by `luxar demo stop`)
+- `can_kill_process_groups()`: Whether POSIX process-group signalling exists
+
+### `demo_runs.py`
+Discovery + kill engine behind `luxar demo stop` (stdlib-only): find every
+running demo — even one forgotten in another terminal — and free its ports.
+
+**Key Functions:**
+- `register_run()` / `unregister_run()`: JSON pidfile per launch under
+  `~/.cache/luxar/running/`, written by `demo run`'s `on_spawn` hook and
+  removed on exit (so the registry only ever names survivors)
+- `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
+  strays (`-m luxar.demos.demo_*` command lines); prunes dead/hijacked
+  entries, never returns the caller's own process group
+- `stop_run()`: Tear one run's process group down via `terminate_process_group`
+- `describe_port_holder()`: Best-effort "port 8000 is held by demo 'X'" hint
+  for `pick_port`'s busy-port warning
+
 ## Usage Examples
 
 ### Creating Demo Scenes

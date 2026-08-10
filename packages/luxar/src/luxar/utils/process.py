@@ -28,6 +28,11 @@ from arbol import aprint
 _CAN_KILLPG = hasattr(os, "killpg") and hasattr(os, "getpgid")
 
 
+def can_kill_process_groups() -> bool:
+    """True where process-group signalling (``os.killpg``) is available."""
+    return _CAN_KILLPG
+
+
 def run_child_process(
     cmd: Sequence[str],
     *,
@@ -35,6 +40,7 @@ def run_child_process(
     isolate_group: bool = True,
     interrupt_timeout: float = 5.0,
     term_timeout: float = 3.0,
+    on_spawn: Optional[Callable[[int], None]] = None,
 ) -> int:
     """Spawn ``cmd``, wait for it, and own its teardown on every exit path.
 
@@ -52,6 +58,10 @@ def run_child_process(
             SIGTERM.
         term_timeout: Seconds to wait after SIGTERM before escalating to
             SIGKILL (also the reap timeout for the direct child).
+        on_spawn: Called with the child's PID right after the spawn (when
+            isolated, that PID is also the new process-group id). Used by
+            ``demo run`` to register the run for ``luxar demo stop``; failures
+            are swallowed so bookkeeping can never break the launch.
 
     Returns:
         The child's exit code (signal death mapped to ``128 + n``), or ``130``
@@ -59,6 +69,8 @@ def run_child_process(
     """
     isolate = isolate_group and _CAN_KILLPG
     proc = subprocess.Popen(list(cmd), start_new_session=isolate)
+    if on_spawn is not None:
+        _safe(on_spawn, proc.pid)
     # A session leader's process-group id equals its pid; capture it so the
     # group can still be signalled after the direct child has been reaped
     # (grandchildren may outlive it). The whole body below the spawn is inside
@@ -171,6 +183,19 @@ def _teardown(
             """True while the direct child PID is still running."""
             return proc.poll() is None
 
+    _escalate(send, alive, interrupt_timeout, term_timeout)
+
+    # Reap our direct child so it does not linger as a zombie.
+    _safe(proc.wait, timeout=term_timeout)
+
+
+def _escalate(
+    send: Callable[[int], None],
+    alive: Callable[[], bool],
+    interrupt_timeout: float,
+    term_timeout: float,
+) -> None:
+    """Drive the SIGINT → SIGTERM → SIGKILL ladder until ``alive()`` is False."""
     try:
         for sig, grace in (
             (signal.SIGINT, interrupt_timeout),
@@ -192,8 +217,43 @@ def _teardown(
         if alive():
             send(_SIGKILL)
 
-    # Reap our direct child so it does not linger as a zombie.
-    _safe(proc.wait, timeout=term_timeout)
+
+def terminate_process_group(
+    pgid: int,
+    *,
+    interrupt_timeout: float = 5.0,
+    term_timeout: float = 3.0,
+) -> bool:
+    """Kill a whole process group we did not spawn; True once it is gone.
+
+    The ``luxar demo stop`` counterpart of :func:`run_child_process`'s owned
+    teardown: the same graceful escalation, but targeting a group discovered
+    after the fact (a forgotten or orphaned demo). There is no direct child to
+    reap here — the group's own parent (or init, once orphaned) does that —
+    so after SIGKILL we only wait briefly for the group to drain before
+    reporting. Returns False off POSIX or when the group survives SIGKILL
+    (e.g. a process owned by another user).
+    """
+    if not _CAN_KILLPG:
+        return False
+    if not _killpg(pgid, 0):
+        return True  # already gone
+
+    def send(sig: int) -> None:
+        """Deliver ``sig`` to the target group."""
+        _killpg(pgid, sig)
+
+    def alive() -> bool:
+        """True while any member of the target group survives."""
+        return _killpg(pgid, 0)
+
+    _escalate(send, alive, interrupt_timeout, term_timeout)
+    # Give SIGKILL a moment to land (and lingering zombies a moment to be
+    # reaped by their parent) before declaring the group stuck.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and _killpg(pgid, 0):
+        time.sleep(0.05)
+    return not _killpg(pgid, 0)
 
 
 def _killpg(pgid: int, sig: int) -> bool:

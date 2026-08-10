@@ -6,6 +6,25 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### `luxar demo stop` — clear running demos and free their ports
+
+A demo forgotten in another terminal keeps 8000/5173, so the next `demo run`
+silently shifts ports while the browser surfaces the older scene — the
+"I started demo B and got demo A" trap. `luxar demo stop` now finds every
+running demo and tears each one's process group down with the same
+SIGINT → SIGTERM → SIGKILL escalation Ctrl-C uses. Discovery is two-source:
+a JSON pidfile registry (`~/.cache/luxar/running/`) that `demo run`/`run-all`
+maintain around each launch, plus a `ps` sweep for `-m luxar.demos.demo_*`
+command lines that catches strays with no registry entry. The listing is
+printed and confirmed before anything dies (`-y` skips; `--dry-run` only
+lists; `stop <key>` targets one demo) — several agents/people may run demos
+on one machine, and "stop everything" must never take a colleague's live
+server down unseen. The `pick_port` "port busy" warning now also names a
+luxar-owned squatter ("Port 8000 is held by demo 'X' (PID N) — run
+`luxar demo stop` to clear it"), so the port shift explains itself.
+New: `luxar.utils.demo_runs` (discovery + kill engine),
+`terminate_process_group` / `on_spawn` in `luxar.utils.process`.
+
 #### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
 
 The volumetric line primitive (#1426) gains its picking pass, so the flag now
