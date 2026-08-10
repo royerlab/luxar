@@ -41,8 +41,12 @@ lookups. It is built only for a node declaring `has_labels` /
 the zero-allocation path — and omitted on the identity path (one range starting
 at 0, no effective-radius compaction). An unlabelled node can still be picked
 (the embedder `selection` event provisions picking on its own), and its
-`elementIndex` keeps reporting the storage slot. `PointsProgressiveLoader`
-strips the map anyway: each additive sub-LOD has its own on-disk index space.
+`elementIndex` keeps reporting the storage slot. Across an additive ladder,
+`PointsProgressiveLoader` composes the per-level maps into the PARENT node's
+union label CSR space (`additive_0 || additive_1 || …`) by offsetting level `i`
+with the preceding levels' on-disk `n_points` — and strips them entirely when
+the parent declares no union CSR, since a sub-LOD's own index space is not one
+any reader can key by (#1439).
 
 ## Invariants
 
@@ -61,7 +65,8 @@ strips the map anyway: each additive sub-LOD has its own on-disk index space.
   without intermediate Float32 widening. One bounded exception: the
   `elementIds` map is a fresh `Uint32Array(numPoints)` per update, and
   only for a labelled node on a non-identity range set — an unlabelled
-  node, a single `[0, N)` range, and every additive sub-LOD all skip it.
+  node, a single `[0, N)` range, and every sub-LOD of a ladder whose parent
+  declares no union label CSR all skip it.
 - **Dtype-aware scale propagation.** `radiusScale` lives on
   `geometry.userData` and is propagated to the material's uniforms via
   `syncPointMaterialWithGeometry` (the only one of the three

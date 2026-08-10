@@ -70,7 +70,9 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     // never published at all; this keeps the invariant true whatever attrs a
     // sub-LOD carries. (A ladder's labels are ONE per-vertex union CSR on the
     // parent since #1422; composing a map across the levels of that union is
-    // #1439, so until then a laddered lines node hovers at the raw slot.)
+    // what #1439 did for the POINTS ladder — `points-progressive-loader.ts`'s
+    // `levelOffsets` path — and lines has no counterpart yet, so a laddered
+    // lines node still hovers at the raw slot.)
     const only = parts[0];
     if (only.vertexRangeBounds === undefined) return only;
     const stripped: LoadedLinesData = { ...only };

@@ -90,16 +90,19 @@ partially-labelled one cannot produce a coherent index space and is refused.
 
 On Points, a fully-loaded 3D scene resolves exactly. Under an nD slice the committed
 buffer is compacted, so slots shift — the same shift #1421/#1425 removed for flat nodes
-with a visible-slot → on-disk-index map, which is deliberately not published across a
-ladder because each level's map is in that level's own space; extending it is the piece
-left (#1439). This also covers the `partition=`-outer + `additive_lod=`-inner
+with a visible-slot → on-disk-index map, which this writer does not itself publish
+across a ladder because each level's map is in that level's own space; extending it is
+what #1439 does, just below, for Points — the loader offsets each level's map by the
+preceding levels' on-disk counts, so a sliced Points ladder resolves exactly too.
+This also covers the `partition=`-outer + `additive_lod=`-inner
 composition: the CSR lands on each `part_<i>` ladder parent, which is the node the
 picker looks up since #1415/#1420. On Lines the CSR is per-vertex, matching the flat
 Lines writer, while the pick id is a per-segment storage slot; #1424 closed that
 granularity gap for FLAT nodes by resolving the picked segment's slot back to its start
 vertex row, but that chain runs through the very slot → on-disk map a ladder does not
 publish — so on a laddered Lines node the hover only lands on the right string when
-every element carries the same one, until #1439 carries the map across the levels.
+every element carries the same one; #1439 carried that map across the levels for
+Points only, so a labelled lines ladder is still open.
 
 Separately, a wrong-length `labels` was silently accepted on the partition paths
 (Points, Lines and GSplats) and on the additive ladder (Points and Lines): the per-part
@@ -109,6 +112,61 @@ once the finest child was reached — minutes of gsplat reduce later, with the c
 levels already on disk and a partial `kind=lod` node left behind. All seven wrappers
 now check the full element count before they slice, leaving the plain-leaf gate order
 untouched.
+
+#### A Points additive ladder can index its labels — the reader half (#1439)
+
+`#1421` publishes a visible-slot → on-disk-index map for a FLAT labelled Points
+node, so hover stays right when the loader fetches only the chunk ranges a query
+intersects or compacts culled elements out. A ladder published none: each level's
+map is in that level's own on-disk space, so the loader factory cleared
+`has_labels` on every synthesized `additive_<i>` and the concat stripped any map
+that appeared. Hover on a labelled ladder therefore resolved at the raw committed
+slot — wrong on any 4D+ scene, or any view where chunk culling or effective-radius
+compaction is active.
+
+The viewer now composes them. When the PARENT node declares the ladder's union
+label CSR — one CSR keyed by the concatenation `additive_0 || additive_1 || …`,
+each level in its stored order — the factory propagates that declaration to every
+sub-LOD (so each level builds its own level-space map) and passes down
+`levelOffsets`, CSR-style bounds over the levels' ON-DISK `n_points` (one entry
+more than there are levels, so every level has both a start and an end).
+`concatenatePointsData` then shifts level `i`'s map by `levelOffsets[i]` into the
+union space; a level that published no map took the projection's identity fast
+path, so it contributes `levelOffsets[i] + slot`. Nothing is allocated when the
+whole resident ladder is complete and unculled (the slot already IS the union
+index) or when the parent declares no CSR — the unlabelled ladder behaves exactly
+as before.
+
+Every uncertainty refuses the union map rather than composing one: a missing or
+non-integer per-level `n_points`, a parent `n_points` that disagrees with the
+levels' sum (the CSR and the levels are then from different builds), a union wider
+than the 2^32 index range the map is stored in, a level whose map length disagrees
+with its point count, a level-space index that reaches past the rows its OWN level
+owns (it would name a real row belonging to a sibling level — a confidently wrong
+label rather than a missing one), and — newly distinguishable — a level whose
+projection WANTED a map but could not build one. That last case needed a new
+signal: `buildElementIdMap` returns `undefined` for five different reasons — an
+empty visible set, the identity, and three fail-closed bail-outs — and reading a
+non-identity one as identity would have composed a plausible wrong id, so the
+projection now also stamps `LoadedPointsData.elementIdsUnavailable` and the
+composer refuses the whole union map when any NON-EMPTY level carries it (an
+empty level writes no slots, so it cannot corrupt one and is exempt). Refusing is
+not suppression — there is no channel
+for "no answer", so `resolveOnDiskElementId` returns the raw slot and on a sliced
+ladder the tooltip still shows whatever CSR row that hits. What it buys is that the
+wrong id is never one this code composed out of data it knows is inconsistent: no
+worse than the pre-#1439 behaviour, which is the only honest guarantee available
+without a suppression channel.
+
+Points only. The writer half — `add_points(..., labels=…, additive_lod=True)`
+stamping one union CSR on the parent instead of one per sub-group — is #1422, just
+above, so this is live: a labelled Points ladder now hovers correctly under an nD
+slice, under chunk culling and under effective-radius compaction. A Lines ladder is
+a separate gap: #1424 gave lines the per-node segment→vertex chain, but nothing
+composes the LEVELS of a ladder the way `PointsProgressiveLoader` now does, and a
+lines ladder's raw slot is a per-SEGMENT one against a per-VERTEX union CSR, so it
+is wrong at the granularity and not merely at an offset. Gsplat ladders carry no
+labels at all.
 
 #### Mesh fades out near the camera, like the other three types (#1431)
 
@@ -488,13 +546,14 @@ starting at 0, nothing compacted), which is the common plain-3D case, so picking
 allocates nothing there — as is a node declaring neither `has_labels` nor
 `has_image_labels`, which has no label reader; picking is still provisioned for such a
 node when an embedder `selection` listener exists, and that payload's `elementIndex`
-keeps reporting the storage slot, unchanged. It is also deliberately stripped across an
-additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
-so no single map is meaningful (the loader factory now also clears the label flags on
-each sub-LOD, so it is never built there). A ladder's labels are not per-level either:
-#1422 writes ONE union CSR on the ladder parent, spanning the levels, and offsetting
-each level's map by the preceding levels' on-disk counts to match that union space is
-what is left (#1439). A
+keeps reporting the storage slot, unchanged. Across an additive LOD ladder it is
+stripped unless the PARENT node declares a union CSR over the concatenated levels: a
+sub-LOD's own index space is not one any reader can key by, so the loader factory
+clears the label flags on each sub-LOD and the concat publishes nothing. A ladder's
+labels are not per-level either: #1422 writes ONE union CSR on the ladder parent,
+spanning the levels, and when the parent declares it the levels' maps are composed
+into that union space — offset by the preceding levels' on-disk counts — instead of
+being stripped (#1439, Points only). A
 `kind=partition` points layer composes with the fix above (#1415): the handler now
 resolves labels against the hit `part_<i>` leaf rather than the outermost wrapper, and
 that leaf is both the node whose sliced CSR is read and the node this map is stamped on.
@@ -541,8 +600,8 @@ distinct on-disk array, so no single map is meaningful; the loader factory clear
 label flags on each synthesized `additive_<i>` node and the ladder concat strips the
 field belt-and-braces. A ladder's labels live in ONE union CSR on its parent since
 #1422 (a gsplat ladder carries none at all — no `labels` channel authors one), and
-carrying the map across the levels of a Points / Lines ladder is #1439. Lines (#1424)
-is fixed in the entry below.
+carrying the map across the levels of a ladder is #1439 — since done for Points; a
+Lines ladder is still open. Lines (#1424) is fixed in the entry below.
 
 #### Hover labels index the right line vertex (#1424)
 
@@ -583,11 +642,12 @@ reported vertex is by convention the segment's **start**, and the embedder's
 Points/GSplats twins: nothing is
 published for a node declaring neither `has_labels` nor `has_image_labels`, the map is
 stamped onto the mesh in lockstep with `committedData` (and cleared with it), it is never
-built across an additive ladder — the loader factory clears both label flags on each
-synthesized `additive_<i>` node and the ladder concat strips the field belt-and-braces
-(a laddered node's labels are one union CSR on its parent since #1422, and carrying the
-map across the levels of that union is #1439, so a laddered Lines node still resolves at
-the raw segment slot) — and every inconsistency fails closed to the raw slot
+built across an additive LINES ladder — `createProgressiveLinesLoader` clears both label
+flags on each synthesized `additive_<i>` node and the ladder concat strips the field
+belt-and-braces (a laddered node's labels are one union CSR on its parent since #1422;
+#1439 carries the map across the levels of that union for Points only, so a laddered
+Lines node still resolves at the raw segment slot) — and every inconsistency fails
+closed to the raw slot
 rather than to a plausible-looking wrong answer, warning wherever the composer can tell
 the difference. All four geometry types now resolve hover labels through the one
 `resolveOnDiskElementId` seam on a FLAT node; mesh needs no map of its own, since it
