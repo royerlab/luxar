@@ -53,13 +53,98 @@ import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /**
+ * Compose the levels' slot → on-disk maps into ONE map in the parent's union
+ * CSR index space (`additive_0 || additive_1 || …`), by offsetting level `i`
+ * with the preceding levels' ON-DISK counts (`levelOffsets`, #1439).
+ *
+ * A level that publishes no map of its own took the projection's identity fast
+ * path (one range starting at 0, nothing compacted), so its slot `k` IS its
+ * level-space index and contributes `levelOffsets[i] + k`. A level whose
+ * projection WANTED a map but could not build one flags
+ * `elementIdsUnavailable`: its slots mean nothing, identity is not a legal
+ * substitute, and the whole union map is refused.
+ *
+ * Returns `undefined` — hover then falls back to the raw slot — when the
+ * identity holds across the whole ladder (no level published a map AND every
+ * resident level is complete, so slot === union on-disk index; the common
+ * fully-loaded unsliced case stays allocation-free, matching flat Points), or
+ * when the inputs are inconsistent. Inconsistency FAILS CLOSED rather than
+ * throwing: this feeds the hover path.
+ */
+function buildLadderElementIdMap(
+  parts: LoadedPointsData[],
+  levelOffsets: readonly number[],
+  totalPoints: number,
+  warn: (message: string) => void
+): Uint32Array | undefined {
+  if (levelOffsets.length < parts.length) {
+    warn(
+      `Progressive Points: ${levelOffsets.length} level offsets for ${parts.length} loaded ` +
+        'levels — picking labels fall back to the visible-buffer slot.'
+    );
+    return undefined;
+  }
+  let anyMap = false;
+  let identity = true;
+  let running = 0;
+  for (const [i, part] of parts.entries()) {
+    const ids = part.elementIds;
+    if (part.elementIdsUnavailable === true) {
+      warn(
+        `Progressive Points: level ${i} could not build a slot → on-disk map (its slots are ` +
+          'not on-disk indices) — picking labels fall back to the visible-buffer slot.'
+      );
+      return undefined;
+    }
+    if (ids !== undefined) {
+      anyMap = true;
+      if (ids.length !== part.pointCount) {
+        warn(
+          `Progressive Points: level ${i} published ${ids.length} element ids for ` +
+            `${part.pointCount} points — picking labels fall back to the visible-buffer slot.`
+        );
+        return undefined;
+      }
+    }
+    // Identity only survives while every level is fully resident and unculled:
+    // its on-disk offset must equal the running sum of the LOADED counts.
+    if (levelOffsets[i] !== running) identity = false;
+    running += part.pointCount;
+  }
+  if (!anyMap && identity) return undefined;
+
+  const out = new Uint32Array(totalPoints);
+  let w = 0;
+  for (const [i, part] of parts.entries()) {
+    const base = levelOffsets[i];
+    const ids = part.elementIds;
+    for (let k = 0; k < part.pointCount; k++) {
+      out[w++] = base + (ids === undefined ? k : ids[k]);
+    }
+  }
+  return out;
+}
+
+/**
  * Concatenate per-LOD `LoadedPointsData` into one. Optional attribute
  * arrays (`colors`, `radii`, `sharpness`, `scalars`) are concatenated
  * only when ALL levels carry them (mixed-presence is dropped — keeps
  * the loader simple and matches the writer's all-or-nothing per-attr
  * policy).
+ *
+ * `levelOffsets` (non-null only for a ladder whose PARENT declares the union
+ * label CSR) gives each level's start inside that CSR's index space; with it
+ * the per-level picking maps are composed into one union map, and without it
+ * none is published at all — see {@link buildLadderElementIdMap}. `warn` is the
+ * owning loader's once-per-instance fail-closed reporter (this runs on every
+ * memoized concat, so an unlatched `log.warning` would spam once per level per
+ * view change — tens per second under dimension-animation playback).
  */
-function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
+function concatenatePointsData(
+  parts: LoadedPointsData[],
+  levelOffsets: readonly number[] | null,
+  warn: (message: string) => void = () => {}
+): LoadedPointsData {
   if (parts.length === 0) {
     // Construct a minimal LoadedPointsData with empty arrays so the
     // commit pipeline doesn't NPE on edge cases (no LODs visible yet).
@@ -76,18 +161,35 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
     };
   }
   if (parts.length === 1) {
-    // GUARD (belt-and-braces): a ladder payload must never publish a slot →
-    // on-disk map. `parts[0]` is a SUB-LOD (`additive_0`), so its map is in
-    // that level's index space, not the parent node's, and `parts.length === 1`
-    // is not "unladdered" — this loader only exists for `n_additive_sublods`
-    // nodes, so it is the first-paint state of EVERY ladder. Passing the map
-    // through would make hover report an additive_0 index while only LOD 0 is
-    // resident and the raw slot once a second level lands.
-    // `createProgressivePointsLoader` now also clears `has_labels` /
-    // `has_image_labels` on each sub-LOD's attrs, so the map is normally never
-    // built at all; this keeps the invariant true whatever attrs a sub-LOD
-    // carries. (Per-level label resolution is #1422.)
+    // `parts[0]` is a SUB-LOD (`additive_0`) — `parts.length === 1` is not
+    // "unladdered", it is the first-paint state of EVERY ladder (this loader
+    // only exists for `n_additive_sublods` nodes).
+    //
+    // With `levelOffsets` (the parent publishes the union CSR) level 0's index
+    // space IS the parent's, shifted by `levelOffsets[0] === 0` — so the map is
+    // already correct and the payload passes through UNCHANGED (no strip, no
+    // copy). Without it the parent has no CSR any reader could key by, so a map
+    // in a sub-LOD's private index space must be stripped: hover would
+    // otherwise report an additive_0 index while only LOD 0 is resident and the
+    // raw slot once a second level lands.
     const only = parts[0];
+    const offsetOk = levelOffsets !== null && levelOffsets.length >= 1 && levelOffsets[0] === 0;
+    // A level that WANTED a map and failed to build one is NOT the identity:
+    // its slots are not on-disk indices, so it must not pass through as if
+    // they were. Same fail-closed treatment as a length mismatch.
+    const unusable = only.elementIdsUnavailable === true;
+    const lengthBad = only.elementIds !== undefined && only.elementIds.length !== only.pointCount;
+    if (offsetOk && (unusable || lengthBad)) {
+      warn(
+        unusable
+          ? 'Progressive Points: level 0 could not build a slot → on-disk map (its slots are ' +
+              'not on-disk indices) — picking labels fall back to the visible-buffer slot.'
+          : `Progressive Points: level 0 published ${only.elementIds?.length} element ids for ` +
+              `${only.pointCount} points — picking labels fall back to the visible-buffer slot.`
+      );
+    } else if (offsetOk) {
+      return only;
+    }
     if (only.elementIds === undefined) return only;
     const stripped: LoadedPointsData = { ...only };
     delete stripped.elementIds;
@@ -159,7 +261,13 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count, 1, 'scalars');
   if (scalars) result.scalars = scalars;
 
-  // `elementIds` is DELIBERATELY not concatenated — see the single-part branch.
+  // Slot → on-disk map: composed into the parent's union CSR index space when
+  // the parent declares one, otherwise not published at all (see the
+  // single-part branch and `buildLadderElementIdMap`).
+  if (levelOffsets !== null) {
+    const elementIds = buildLadderElementIdMap(parts, levelOffsets, totalPoints, warn);
+    if (elementIds) result.elementIds = elementIds;
+  }
 
   return result;
 }
@@ -192,6 +300,23 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
   // ladder reads as unstamped — never blend stamped and guessed entries).
   private energyTable: readonly number[] | null;
+  // Exclusive prefix sum of the levels' ON-DISK element counts — where each
+  // `additive_<i>` starts inside the parent node's union label CSR index
+  // space. Non-null only when the parent declares that CSR
+  // (`createProgressivePointsLoader`); null means no ladder picking map is
+  // published at all.
+  private readonly levelOffsets: readonly number[] | null;
+  // One fail-closed composition warning per LOADER, not per concat: the concat
+  // re-runs on every (generation, lodCount) miss and a view change bumps the
+  // generation, so a malformed ladder would otherwise log tens of lines a
+  // second during dimension-animation playback. Same latch pattern as
+  // `slice-cache-helper.ts::markOversizedWarned` / the label-loader demotion.
+  private _composeWarned = false;
+  private readonly warnComposeFailure = (message: string): void => {
+    if (this._composeWarned) return;
+    this._composeWarned = true;
+    log.warning(Modules.SPATIAL_INDEX_LOADER, `${message} (logged once per node)`);
+  };
   // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
   private readonly path: string;
   private readonly sliceCache: SliceCache | null;
@@ -213,12 +338,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     nLods: number,
     path: string,
     energyTable?: ReadonlyArray<number | null | undefined>,
-    sliceCache?: SliceCache | null
+    sliceCache?: SliceCache | null,
+    levelOffsets?: readonly number[] | null
   ) {
     this.lodLoaders = lodLoaders;
     this.nLods = nLods;
     this.path = path;
     this.sliceCache = sliceCache ?? null;
+    this.levelOffsets = levelOffsets ?? null;
     this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
     this.energyTable =
       energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
@@ -300,7 +427,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // foreground frames as the ladder deepens. Mirrors GSplatsProgressiveLoader.
     const isPrefetch = viewState.prefetch === true;
     const finish = (): LoadedPointsData =>
-      isPrefetch ? concatenatePointsData([]) : this.concatenateMemoized(session);
+      isPrefetch ? concatenatePointsData([], null) : this.concatenateMemoized(session);
 
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       // DEPARTURE store: snapshot the OUTGOING view's partial ladder before
@@ -494,7 +621,11 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         this._concatCache && this._concatCache.generation === this._resetGeneration
           ? this._concatCache.result
           : null;
-      const result = concatenatePointsData(this.loadedLODs);
+      const result = concatenatePointsData(
+        this.loadedLODs,
+        this.levelOffsets,
+        this.warnComposeFailure
+      );
       setPrefixParent(result, prevMemo);
       this._concatCache = {
         generation: this._resetGeneration,

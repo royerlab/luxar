@@ -310,61 +310,124 @@ export async function createProgressivePointsLoader(
     `Creating progressive Points loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );
 
-  const lodLoaders: PointsSpatialIndexLoader[] = [];
+  // PASS 1 — open every `additive_<i>` group (one open per level, in order)
+  // and collect what the level offsets are decided from. The synthesized nodes
+  // are built in pass 2, AFTER `levelOffsets` is known: their label flags
+  // depend on it, and stamping them first would make every level build a
+  // per-level picking map that the concat is going to discard.
+  const levels: Array<{ loc: zarr.Location<zarr.Readable>; attrs: Record<string, unknown> }> = [];
   const energyTable: Array<number | null> = [];
+  // Per-level ON-DISK row counts (`n_points` on each `additive_<i>` group, NOT
+  // the loaded count) — the offsets into the parent CSR's index space.
+  const onDiskCounts: Array<number | undefined> = [];
 
   for (let i = 0; i < nAdditive; i++) {
     const lodLoc = parentLoc.resolve(`additive_${i}`);
     const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+    levels.push({ loc: lodLoc, attrs: lodAttrs });
     energyTable.push(energyFractionFromAttrs(lodAttrs));
+    onDiskCounts.push(typeof lodAttrs.n_points === 'number' ? lodAttrs.n_points : undefined);
+  }
 
-    const lodNode: SceneNode = {
-      path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
-      type: 'points',
-      attrs: {
-        ...lodAttrs,
-        opacity: parentEffectiveAttrs.opacity,
-        absorption: parentEffectiveAttrs.absorption,
-        gamma: parentEffectiveAttrs.gamma,
-        intensity: parentEffectiveAttrs.intensity,
-        offset: parentEffectiveAttrs.offset,
-        blending_mode: parentEffectiveAttrs.blending_mode,
-        extend_to_all: node.attrs.extend_to_all,
-        // A sub-LOD's label CSR lives on `additive_<i>` but the pick path only
-        // ever resolves labels against the PARENT node's path, so no reader
-        // can key by a sub-LOD's on-disk index. Clearing the flags here keeps
-        // `projectPointsTo3D` from building a slot → on-disk map per level
-        // that the ladder concat then discards. (The parent's own missing
-        // `has_labels` is #1422.) These two keys therefore CONTRADICT the
-        // store: whoever implements per-level labels must decide whether a
-        // level has a CSR from the real `lodGroup.attrs` / the `additive_<i>`
-        // group itself, never from this synthesized node.
-        has_labels: false,
-        has_image_labels: false,
-      },
-      hasSpatialIndex: false,
-      children: [],
-    };
+  // Does the PARENT node carry the ladder's UNION label CSR? That CSR is keyed
+  // by the concatenation `additive_0 || additive_1 || …`, each level in its own
+  // stored order (#1422), so it is the parent — never a sub-LOD — that decides
+  // whether a ladder has readable labels at all.
+  const parentDeclaresLabels =
+    node.attrs.has_labels === true || node.attrs.has_image_labels === true;
+  // Exclusive prefix sum of the on-disk counts: `levelOffsets[i]` is where
+  // level `i` starts inside the parent's union CSR index space (so [0] === 0).
+  // Only meaningful when the parent declares labels; fail CLOSED (null → hover
+  // falls back to the raw slot) rather than composing into wrong rows.
+  let levelOffsets: number[] | null = null;
+  if (parentDeclaresLabels) {
+    const usable = onDiskCounts.every((n) => n !== undefined && Number.isSafeInteger(n) && n >= 0);
+    if (!usable) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Progressive Points ${node.path} declares labels but a sub-LOD is missing a valid ` +
+          '`n_points`; per-level picking maps are disabled (hover falls back to the ' +
+          'visible-buffer slot).'
+      );
+    } else {
+      const total = (onDiskCounts as number[]).reduce((s, n) => s + n, 0);
+      // Free cross-check: the writer's parent `n_points` IS the sum of the
+      // levels' row counts (`n_points_total`), so a mismatch means the CSR and
+      // the levels come from different builds — composing would land in
+      // someone else's row. Only checked when the parent actually carries the
+      // attr; its absence is not evidence of anything.
+      if (typeof node.attrs.n_points === 'number' && node.attrs.n_points !== total) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Progressive Points ${node.path}: sub-LOD row counts sum to ${total} but the parent ` +
+            `declares n_points=${node.attrs.n_points}; the label CSR and the levels disagree, ` +
+            'so per-level picking maps are disabled (hover falls back to the visible-buffer slot).'
+        );
+      } else {
+        levelOffsets = [];
+        let acc = 0;
+        for (const n of onDiskCounts as number[]) {
+          levelOffsets.push(acc);
+          acc += n;
+        }
+      }
+    }
+  }
+  // Per-level maps are only ever USED when the offsets exist to place them.
+  const levelsBuildMaps = parentDeclaresLabels && levelOffsets !== null;
 
-    lodLoaders.push(
-      new PointsSpatialIndexLoader(
+  // PASS 2 — synthesize each sub-LOD node and its loader.
+  const lodLoaders: PointsSpatialIndexLoader[] = levels.map(
+    ({ loc: lodLoc, attrs: lodAttrs }, i) => {
+      const lodNode: SceneNode = {
+        path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
+        type: 'points',
+        attrs: {
+          ...lodAttrs,
+          opacity: parentEffectiveAttrs.opacity,
+          absorption: parentEffectiveAttrs.absorption,
+          gamma: parentEffectiveAttrs.gamma,
+          intensity: parentEffectiveAttrs.intensity,
+          offset: parentEffectiveAttrs.offset,
+          blending_mode: parentEffectiveAttrs.blending_mode,
+          extend_to_all: node.attrs.extend_to_all,
+          // A sub-LOD carries no CSR of ITS OWN that any reader can key by — the
+          // pick path resolves labels against the PARENT node's path — so a
+          // sub-LOD's stored flags are never trusted and are always overridden
+          // here. They are overridden with the parent's declaration, AND only
+          // when the composition can actually run: with `levelOffsets` each level
+          // builds its own level-space slot → on-disk map and
+          // `concatenatePointsData` offsets it into the parent's index space by
+          // the preceding levels' on-disk counts (#1439). Without them (no parent
+          // CSR, or a failed cross-check) both stay false, so no per-level map is
+          // built only to be discarded, and picking stays allocation-free exactly
+          // as before.
+          has_labels: levelsBuildMaps && node.attrs.has_labels === true,
+          has_image_labels: levelsBuildMaps && node.attrs.has_image_labels === true,
+        },
+        hasSpatialIndex: false,
+        children: [],
+      };
+
+      return new PointsSpatialIndexLoader(
         lodLoc,
         lodNode,
         deps.arrayRefRegistry,
         deps.zarrStore,
         deps.l0Cache ?? undefined,
         deps.cachingStore?.getPrefetcher() ?? undefined
-      )
-    );
-  }
+      );
+    }
+  );
 
   return new PointsProgressiveLoader(
     lodLoaders,
     nAdditive,
     node.path,
     energyTable,
-    deps.sliceCache ?? undefined
+    deps.sliceCache ?? undefined,
+    levelOffsets
   );
 }
 

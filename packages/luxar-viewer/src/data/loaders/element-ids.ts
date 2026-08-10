@@ -32,6 +32,25 @@ export interface ElementIdRange {
 }
 
 /**
+ * Whether slot IS the on-disk index for these inputs: one range anchored at 0
+ * and nothing compacted out.
+ *
+ * {@link buildElementIdMap} returns `undefined` for FOUR different reasons —
+ * this identity, plus three fail-closed bail-outs — and the two meanings are
+ * opposite: identity says "the slot is already right", a bail-out says "the
+ * slot is WRONG and no map could be built". A consumer that composes maps (the
+ * Points additive-ladder concat, #1439) must not read a bail-out as identity,
+ * so it re-asks the question here. Exported to keep one source of truth: the
+ * fast path below is this same predicate.
+ */
+export function isIdentityElementIdMap(
+  ranges: readonly ElementIdRange[],
+  keptConcatIndices: ArrayLike<number> | null
+): boolean {
+  return keptConcatIndices === null && ranges.length === 1 && ranges[0].start === 0;
+}
+
+/**
  * Map visible-buffer slots back to the ON-DISK element indices the per-element
  * label CSR (`label_offsets` / `label_bytes`) is keyed by.
  *
@@ -59,7 +78,7 @@ export function buildElementIdMap(
   // Identity fast path: one range anchored at 0 and nothing compacted out ⇒
   // slot === on-disk index. This is the common plain-3D case, and it must not
   // pay for a redundant N-element array.
-  if (keptConcatIndices === null && ranges.length === 1 && ranges[0].start === 0) {
+  if (isIdentityElementIdMap(ranges, keptConcatIndices)) {
     return undefined;
   }
 

@@ -6,6 +6,45 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A Points additive ladder can index its labels — the reader half (#1439)
+
+`#1421` publishes a visible-slot → on-disk-index map for a FLAT labelled Points
+node, so hover stays right when the loader fetches only the chunk ranges a query
+intersects or compacts culled elements out. A ladder published none: each level's
+map is in that level's own on-disk space, so the loader factory cleared
+`has_labels` on every synthesized `additive_<i>` and the concat stripped any map
+that appeared. Hover on a labelled ladder therefore resolved at the raw committed
+slot — wrong on any 4D+ scene, or any view where chunk culling or effective-radius
+compaction is active.
+
+The viewer now composes them. When the PARENT node declares the ladder's union
+label CSR — one CSR keyed by the concatenation `additive_0 || additive_1 || …`,
+each level in its stored order — the factory propagates that declaration to every
+sub-LOD (so each level builds its own level-space map) and passes down
+`levelOffsets`, the exclusive prefix sum of the levels' ON-DISK `n_points`.
+`concatenatePointsData` then shifts level `i`'s map by `levelOffsets[i]` into the
+union space; a level that published no map took the projection's identity fast
+path, so it contributes `levelOffsets[i] + slot`. Nothing is allocated when the
+whole resident ladder is complete and unculled (the slot already IS the union
+index) or when the parent declares no CSR — the unlabelled ladder behaves exactly
+as before.
+
+Every uncertainty fails closed to the raw slot rather than to a confident wrong
+label: a missing or non-integer per-level `n_points`, a parent `n_points` that
+disagrees with the levels' sum (the CSR and the levels are then from different
+builds), a level whose map length disagrees with its point count, and — newly
+distinguishable — a level whose projection WANTED a map but could not build one.
+That last case needed a new signal: `buildElementIdMap` returns `undefined` both
+for the identity and for its three bail-outs, and reading a bail-out as identity
+would have composed a plausible wrong id, so the projection now also stamps
+`LoadedPointsData.elementIdsUnavailable` and the composer refuses the whole union
+map when any level carries it.
+
+Points only, and **inert on main**: the writer half — `add_points(..., labels=…,
+additive_lod=True)` stamping one union CSR on the parent instead of one per
+sub-group — is #1422 and has not landed. Lines ladders additionally need the
+segment-vs-vertex indirection of #1424; gsplat ladders carry no labels at all.
+
 #### A stale WASM build now names the kernel it is missing (#1412)
 
 `public/wasm/` is gitignored, so a checkout can hold a build that imports and
@@ -266,10 +305,12 @@ starting at 0, nothing compacted), which is the common plain-3D case, so picking
 allocates nothing there — as is a node declaring neither `has_labels` nor
 `has_image_labels`, which has no label reader; picking is still provisioned for such a
 node when an embedder `selection` listener exists, and that payload's `elementIndex`
-keeps reporting the storage slot, unchanged. It is also deliberately stripped across an
-additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
-so no single map is meaningful (the loader factory now also clears the label flags on
-each sub-LOD, so it is never built there); per-level label resolution is #1422. A
+keeps reporting the storage slot, unchanged. Across an additive LOD ladder it is
+stripped unless the PARENT node declares a union CSR over the concatenated levels: a
+sub-LOD's own index space is not one any reader can key by, so the loader factory
+clears the label flags on each sub-LOD and the concat publishes nothing — and when the
+parent DOES declare that CSR, the levels' maps are composed into it instead (#1439,
+inert until the #1422 writer lands). A
 `kind=partition` points layer composes with the fix above (#1415): the handler now
 resolves labels against the hit `part_<i>` leaf rather than the outermost wrapper, and
 that leaf is both the node whose sliced CSR is read and the node this map is stamped on.

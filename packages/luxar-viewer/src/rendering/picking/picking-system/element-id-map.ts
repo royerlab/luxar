@@ -27,6 +27,24 @@
  *    picking stays allocation-free in the common Points case). The commit
  *    (`commit-points-geometry.ts`) forwards `LoadedPointsData.elementIds` to
  *    the mesh stamp.
+ *  - **Points additive ladders** — the READER half only, and INERT on main
+ *    today: it activates when the PARENT node carries one union label CSR
+ *    keyed by `additive_0 || additive_1 || …` (each level in its stored
+ *    order), which is the writer half — `add_points(..., labels=…,
+ *    additive_lod=True)` still writes a CSR per sub-group and stamps no
+ *    `has_labels` on the parent, so nothing here fires until #1422 lands.
+ *    Given that CSR, the per-level maps are composed into its index space.
+ *    Because a sub-LOD has
+ *    no CSR a reader could key by, `createProgressivePointsLoader` overrides
+ *    each `additive_<i>` node's label flags with the PARENT's: with a union CSR
+ *    every level builds its own level-space map, and
+ *    `points-progressive-loader.ts::concatenatePointsData` offsets level `i` by
+ *    the preceding levels' ON-DISK counts (`n_points`) to land it in that union
+ *    space — a level that published no map (projection identity fast path)
+ *    contributing `offset + slot`. Nothing is emitted when the parent declares
+ *    no labels, when the whole resident ladder is complete and unculled (slot
+ *    IS the union index), or when the inputs are inconsistent (fail closed to
+ *    the raw slot) — issue #1439.
  *  - **Mesh** — nothing to do: its pick shader already reports the on-disk
  *    vertex ordinal via `gl_VertexID`, so the lookup correctly no-ops.
  *  - **GSplats** — composed at PROJECTION time, not load time
@@ -52,7 +70,12 @@
  *    transient allocation plus ~8 B/splat of memcpy on top, none of which
  *    Points pays. All of it is gated on `has_labels` / `has_image_labels`.
  *  - **Lines** — same class of divergence, still outstanding: on top of range
- *    loading it has a segment-vs-vertex granularity mismatch.
+ *    loading it has a segment-vs-vertex granularity mismatch. Its additive
+ *    ladders are out for the same reason — the ladder composition above is
+ *    Points-only until that indirection exists (#1424).
+ *  - **GSplat additive ladders** — nothing to compose: the authoring path has
+ *    no `labels` channel for a gsplat ladder, so no level of one carries
+ *    labels at all.
  *  - **Partitioned points and gsplats** — composed, no longer a gap.
  *    `core/group/adders/points.py` and `core/group/adders/gsplats.py` slice the
  *    CSR onto each `part_<i>` leaf, so a partitioned labelled node publishes a
@@ -69,8 +92,9 @@
  *    (`core/group/adders/points.py`), and the part's CSR is then written per
  *    `additive_<i>` sub-group while the part group itself never receives
  *    `has_labels` — so such a part publishes no map and carries no readable
- *    labels at all. That is the per-level label gap (#1422), not a hole in the
- *    partition slicing above.
+ *    labels at all. That is the WRITER half of the per-level label gap
+ *    (#1422): once the part group carries the union CSR, the reader half above
+ *    already composes it. Not a hole in the partition slicing.
  *
  * **Identity fallback is not always a safe answer**, so the map's lifetime is
  * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::

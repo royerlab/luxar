@@ -117,11 +117,16 @@ export interface PickResultHandlerPorts {
  *   and what an embedder should index against).
  *
  *   Two known limits survive this fix, both outside the handler:
- *   (i) under an *additive ladder* the CSR is scattered per
+ *   (i) under an *additive ladder* the CSR is today scattered per
  *   `additive_<i>` sub-group (which is not a scene node) while the
  *   committed buffer concatenates every loaded level, so no single path
  *   can index it — labels there are unusable regardless of the path
- *   chosen (producer-side gap, tracked separately as #1422); and
+ *   chosen. That is a producer-side gap (#1422, not on main yet): when
+ *   the parent node instead carries ONE union CSR keyed by
+ *   `additive_0 || additive_1 || …`, the parent path DOES index the
+ *   committed buffer, because for Points the loader composes the levels'
+ *   slot → on-disk maps into that union space (#1439). Lines ladders
+ *   additionally wait on #1424; gsplat ladders carry no labels; and
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
  *   arrives already resolved wherever the node can resolve one — Points
  *   and GSplats both do, for a node declaring `has_labels` /
