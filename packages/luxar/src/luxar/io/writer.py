@@ -240,6 +240,13 @@ class ZarrWriterProtocol(Protocol):
         ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` / ``labels``.
         See :func:`luxar.core.group.lod.points.make_additive_lod_points`
         for the level-construction helper that produces the input.
+
+        ``labels`` is all-or-nothing across the ladder (a partially-labelled
+        ladder is rejected) and is NOT written per level: the implementation
+        writes ONE CSR pair on the PARENT node, spanning the levels in
+        ``additive_0 … additive_{n-1}`` order with each level in its own stored
+        (spatially reordered) order. The parent therefore carries ``has_labels``
+        and the subgroups carry none.
         """
         ...
 
@@ -259,6 +266,13 @@ class ZarrWriterProtocol(Protocol):
         parent group does not stamp it). See
         :func:`luxar.core.group.lod.lines.make_additive_lod_lines` for the
         helper that produces the input.
+
+        ``labels`` is all-or-nothing across the ladder (a partially-labelled
+        ladder is rejected) and is NOT written per level: the implementation
+        writes ONE per-VERTEX CSR pair on the PARENT node, spanning the levels in
+        ``additive_0 … additive_{n-1}`` order with each level in its own stored
+        (spatially reordered) order. The parent therefore carries ``has_labels``
+        and the subgroups carry none.
         """
         ...
 

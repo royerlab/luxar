@@ -164,6 +164,44 @@ def slice_optional_array(value: Any, indices: np.ndarray, n_elements: int) -> An
     return value
 
 
+def validate_labels_before_split(labels: Any, n_elements: int) -> None:
+    """Reject a wrong-length ``labels`` BEFORE any partition / LOD decomposition.
+
+    The companion guard to :func:`slice_optional_array`, which passes a list whose
+    length does not match ``n_elements`` through **unchanged** rather than slicing
+    it (that pass-through is deliberate — it is how broadcast values reach every
+    part). For labels that is a trap: every part / LOD level would receive the
+    same unsliced list, and the write would SUCCEED with labels in the wrong
+    slots. The downstream per-part / per-level length checks cannot catch it,
+    because a level's own length may coincidentally match. So the full-count check
+    has to happen upstream of the split.
+
+    Call this as the FIRST statement of a wrapper impl that slices ``labels``
+    (the partition / additive-LOD / substitutive-LOD wrappers on Points and
+    Lines, plus the GSplats partition wrapper) — entering a wrapper is exactly
+    "a split is about to happen". Deliberately NOT called from the top of the
+    leaf adders: the plain-leaf path validates in the writer, and hoisting this
+    above ``_validate_data_dimensions`` and the writer's channel gates would
+    change which error a multi-fault call reports. Same reasoning, and the same
+    house rule, as ``adders/mesh.py::_validate_partition_sources``.
+
+    No-op when ``labels`` is ``None``.
+
+    Args:
+        labels: The caller's ``labels`` argument (per-point for Points, per-splat
+            for GSplats, per-vertex for Lines).
+        n_elements: The node's FULL element count, before any decomposition.
+
+    Raises:
+        ValidationError: If ``labels`` is not a sequence of one string per element.
+    """
+    if labels is None:
+        return
+    from ...validation.base import validate_labels_for_writing
+
+    validate_labels_for_writing(labels, n_elements)
+
+
 def position_bounds_from_array(positions: np.ndarray) -> Dict[str, List[float]]:
     """Per-axis min/max of an ``(N, D)`` position array, in the writer's shape.
 

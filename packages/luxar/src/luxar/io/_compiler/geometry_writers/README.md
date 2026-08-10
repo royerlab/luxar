@@ -63,6 +63,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 8. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
    - `write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)` — if `labels is not None`
    - `write_image_labels_csr(group, image_labels, n_points, ctx.compressor, sort_order)` — if `image_labels is not None`
+   - A multi-LOD **parent** instead gets a single union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's `sort_order` in the metadata so the parent can build that union
 
 9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds", "ordering"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels` (no `"type"` key)
 
@@ -115,6 +116,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 9. **Write labels** (CSR serialization; `sort_order` = `ordering_data["vertex_sort_indices"]` when ordered, per-vertex):
    - `write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)` — if `labels is not None`
    - `write_image_labels_csr(group, image_labels, n_vertices, ctx.compressor, sort_order)` — if `image_labels is not None`
+   - A multi-LOD **parent** instead gets a single per-vertex union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's per-vertex `sort_order` in the metadata so the parent can build that union
 
 10. **Return metadata**: `{"n_vertices", "n_segments", "ndim", "original_line_type", "has_colors", "has_sharpness", "max_width"}` plus ordering keys and `position_bounds` (and conditionally `has_spatial_index`, `has_scalars`, `has_labels`, `has_image_labels`) — no `"type"` key
 

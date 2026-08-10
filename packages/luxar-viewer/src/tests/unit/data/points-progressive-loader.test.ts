@@ -1190,7 +1190,9 @@ describe('buildSliceViewSig extend_to_all membership (shared helper)', () => {
 
 describe('PointsProgressiveLoader — elementIds are never published (issue #1421)', () => {
   // A ladder payload must NEVER carry a slot → on-disk map: each part is a
-  // sub-LOD (`additive_<i>`) with its own on-disk index space. The
+  // sub-LOD (`additive_<i>`) whose arrays live in their own on-disk index
+  // space, while the labels the map would serve are ONE union CSR on the
+  // parent (#1422) keyed by the concatenation of those spaces. The
   // single-part branch is the FIRST-PAINT state of every ladder, not an
   // "unladdered node", so passing `parts[0]` through verbatim would make
   // hover report an additive_0 index until a second level lands and then
