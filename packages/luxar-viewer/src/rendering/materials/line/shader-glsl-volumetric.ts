@@ -55,9 +55,11 @@
  * `usesPeakProjection(blendingMode)`) the same way it stamps the other
  * blending defines — mode changes already rebuild the program.
  *
- * Sharpness: the sum path is β=2 regardless of the sharpness knob (the
- * closed form exists only for the Gaussian); the peak path honours β
- * exactly. The sum-mode sharpness LUT is #1352 PR-4.
+ * Sharpness: the peak path honours β exactly (pointwise profile); the sum
+ * path samples the general-β RADIAL from the shared Abel LUT
+ * (`_shared/line-integral-lut.ts`, #1352 PR-4) while its AXIAL window
+ * stays the β = 2 erf machinery (the closed form exists only for the
+ * Gaussian — a cap-local approximation, exact for an infinite rod).
  */
 import {
   GLSL_SANITIZE_FUNCTIONS,
@@ -76,6 +78,7 @@ import {
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
 import { FALLOFF_FLOOR, FALLOFF_K, GAUSSIAN_EQUIVALENT_TRUNCATION } from '../_shared/falloff';
+import { LINE_RADIAL_LUT_HEIGHT, LINE_RADIAL_LUT_WIDTH } from '../_shared/line-integral-lut';
 import {
   LINE_PARALLEL_LANE_THRESHOLD,
   LINE_SIGMA_PER_WIDTH,
@@ -99,6 +102,14 @@ const G = {
   INV_SQRT_PI: (1 / Math.sqrt(Math.PI)).toFixed(7), // 0.5641896
   INV_SQRT_2PI: (1 / Math.sqrt(2 * Math.PI)).toFixed(7), // 0.3989423
   QUARTER_SQRT2: (1 / (2 * Math.SQRT2)).toFixed(7), // 0.3535534
+  INV_T: (1 / T).toFixed(7), // 0.3295000 — q = sqrt(r2n)/T
+  // Texel-center-exact UV map for the sharpness radial LUT (#1352 PR-4):
+  // u = (q·(W−1) + 0.5)/W lands q = 0 / q = 1 on the first/last texel
+  // CENTER, so the row endpoints (S = 1 and S = 0) are read unfiltered.
+  LUT_U_SCALE: ((LINE_RADIAL_LUT_WIDTH - 1) / LINE_RADIAL_LUT_WIDTH).toFixed(7),
+  LUT_U_BIAS: (0.5 / LINE_RADIAL_LUT_WIDTH).toFixed(7),
+  LUT_V_SCALE: ((LINE_RADIAL_LUT_HEIGHT - 1) / LINE_RADIAL_LUT_HEIGHT).toFixed(7),
+  LUT_V_BIAS: (0.5 / LINE_RADIAL_LUT_HEIGHT).toFixed(7),
 };
 
 export const VOLUMETRIC_LINE_VERTEX_SHADER = /* glsl */ `
@@ -418,6 +429,12 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
     uniform float uOffset;
     uniform highp float uAbsorption;
     uniform lowp float uHasElementAlpha;
+    // Sharpness radial LUT (#1352 PR-4) — sampled only by the SUM branch
+    // (the peak lane evaluates its profile pointwise), but declared
+    // unconditionally: the peak compile variant simply strips the unused
+    // sampler, and one declaration keeps the two variants' uniform tables
+    // from drifting.
+    uniform sampler2D uLineRadialLUT;
     #ifdef USE_COLORMAP
     uniform sampler2D uColormapTex;
     uniform float uScalarMin;
@@ -585,7 +602,16 @@ export const VOLUMETRIC_LINE_FRAGMENT_SHADER = /* glsl */ `
       // _shared/line-volumetric.ts — keep the three implementations in
       // lockstep (reference / GLSL / TSL).
       if (r2n >= ${G.T_SQ}) discard;
-      float radial = max(exp(-0.5 * r2n) - ${G.C}, 0.0) * ${G.INV_ONE_MINUS_C};
+      // RADIAL factor S(q, s) from the shared Abel LUT (#1352 PR-4),
+      // q = sqrt(r2n)/T ∈ [0, 1) after the reject above. The β = 2 row IS
+      // the former analytic (exp(−0.5·r2n) − C)/(1 − C) expression, so the
+      // LUT is sampled UNCONDITIONALLY — no analytic/LUT seam on the knob
+      // axis. Rows hit exactly 0 at q = 1 (the stencil truncation); the
+      // AXIAL window below deliberately stays the β = 2 erf machinery
+      // (cap-local approximation, see line-integral-lut.ts).
+      float radial = texture(uLineRadialLUT, vec2(
+        sqrt(r2n) * ${G.INV_T} * ${G.LUT_U_SCALE} + ${G.LUT_U_BIAS},
+        clamp(sharp, 0.0, 1.0) * ${G.LUT_V_SCALE} + ${G.LUT_V_BIAS})).r;
       bool hardA = vCutA.w > 0.5;
       bool hardB = vCutB.w > 0.5;
       float sAtCenter = sM + 0.5 * L;  // endpoint-coords axial closest approach

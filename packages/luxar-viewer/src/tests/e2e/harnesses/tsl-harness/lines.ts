@@ -18,6 +18,7 @@ import {
   lineWebGPUFactory,
   buildLineTSLNodesFromUniforms,
 } from '../../../../rendering/materials/line/shader-tsl';
+import { getLineRadialLUTTexture } from '../../../../rendering/materials/_shared/line-integral-lut';
 import { LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders';
 import {
   linePickWebGPUFactory,
@@ -400,6 +401,10 @@ function buildVisualLineUniforms(
     uInvGamma: { value: 1.0 },
     uIntensity: { value: 1.0 },
     uOffset: { value: 0.0 },
+    // Sharpness radial LUT (#1352 PR-4): required by the volumetric sum
+    // graphs on both backends; inert extra entry for the screen-space
+    // fixtures (their shaders never declare/reference it).
+    uLineRadialLUT: { value: getLineRadialLUTTexture() },
   };
 }
 
@@ -1562,6 +1567,72 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildLineInstancedMesh,
+  },
+  // SHARPNESS extremes under additive (#1352 PR-4): every fixture above
+  // rides the default knob 0.5 (β = 2, the LUT row that IS the old
+  // analytic radial), so these two are the only coverage of the LUT's
+  // OTHER rows. `sharp-hard` pins the knob ceiling (β = 16, near-tophat
+  // radial); `sharp-taper` interpolates the knob 0 → 1 ALONG the segment,
+  // driving the per-fragment `sharp` mix through the LUT's v-axis
+  // filtering on both backends at once. Wide so the profile shape spans
+  // many pixels instead of hiding inside edge AA.
+  'line-volprim-sharp-hard': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, {
+          startWidth: 0.3,
+          endWidth: 0.3,
+          startSharpness: 1.0,
+          endSharpness: 1.0,
+        }),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, {
+        startWidth: 0.3,
+        endWidth: 0.3,
+        startSharpness: 1.0,
+        endSharpness: 1.0,
+      }),
+  },
+  'line-volprim-sharp-taper': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, {
+          startWidth: 0.3,
+          endWidth: 0.3,
+          startSharpness: 0.0,
+          endSharpness: 1.0,
+        }),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, {
+        startWidth: 0.3,
+        endWidth: 0.3,
+        startSharpness: 0.0,
+        endSharpness: 1.0,
+      }),
   },
   // End-on segment under an ORTHO camera: every fragment's ray is
   // structurally parallel to the axis — the lane the screen-space quad

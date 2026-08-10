@@ -6,6 +6,37 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
+
+Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,
+luminous, volumetric) rendered every line at β = 2 regardless of the per-vertex
+sharpness knob — the closed-form ray integral exists only for the Gaussian, and
+PR-2 documented the gap. The knob now works: the sum fragments' RADIAL factor is
+sampled from a shared 128×64 R16F LUT of `S(q, s)` — the shifted+normalized
+untruncated Abel transform of the repo profile `exp(−K·rad^β)`, `β = 2^(6s−2)` —
+so the line-of-sight-integrated cross-section is the true general-β one. The
+AXIAL erf window deliberately stays β = 2 (a cap-local approximation, exact for
+an infinite rod — the trade recorded in the #1352 plan). Peak modes were already
+exact and are untouched.
+
+Two properties carry the design. The β = 2 row of the LUT equals the former
+analytic radial IDENTICALLY (the Abel transform of a Gaussian is a Gaussian), so
+the fragments sample the LUT unconditionally — there is no analytic/LUT seam
+anywhere on the knob axis, and default-sharpness scenes cannot move. And every
+row is pinned to exactly 0 at q = 1, so the vertex stencil's truncation radius
+covers the profile at every sharpness. The CPU reference
+(`_shared/line-integral-lut.ts`) integrates by tanh-sinh quadrature —
+machine-precision across the whole knob range, including the β < 1 cusp a plain
+compactified trapezoid stalls on — and the unit tests hold the β = 2 row to the
+analytic radial, every row's monotonicity and endpoints, both axes' resolution
+adequacy against denser rebuilds, and the half-float storage error. New parity
+fixtures pin the knob extremes cross-backend (`line-volprim-sharp-hard`) and the
+along-segment knob interpolation (`line-volprim-sharp-taper`), plus a
+mutation-verified physics test: the taper's half-max core is ≥2× wider at the
+hard end than the soft end (a LUT wired to a constant row reads ratio ≈ 1 and
+fails). The texture is a lazy singleton built on the first volumetric material
+(~16 KB, tens of ms); screen-space materials never trigger it.
+
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 
 `add_points("g", positions_200, colors=colors_100, partition={"max_elements": 100})`

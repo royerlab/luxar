@@ -72,6 +72,7 @@ import {
   INV_ONE_MINUS_FALLOFF_FLOOR,
 } from '../_shared/falloff';
 import { erfAsTSL, erfPolyTSL } from '../_shared/erf';
+import { LINE_RADIAL_LUT_HEIGHT, LINE_RADIAL_LUT_WIDTH } from '../_shared/line-integral-lut';
 import {
   LINE_PARALLEL_LANE_THRESHOLD,
   LINE_SIGMA_PER_WIDTH,
@@ -103,6 +104,13 @@ import type { LineTSLConfig, LineTSLNodes } from './shader-tsl';
 const T = GAUSSIAN_EQUIVALENT_TRUNCATION;
 const T_SQ = T * T;
 const T_SQ_DILATION = T * T * LINE_STENCIL_DILATION;
+// Texel-center-exact UV map for the sharpness radial LUT (#1352 PR-4) —
+// mirrors the GLSL twin's LUT_* constants.
+const INV_T = 1 / T;
+const LUT_U_SCALE = (LINE_RADIAL_LUT_WIDTH - 1) / LINE_RADIAL_LUT_WIDTH;
+const LUT_U_BIAS = 0.5 / LINE_RADIAL_LUT_WIDTH;
+const LUT_V_SCALE = (LINE_RADIAL_LUT_HEIGHT - 1) / LINE_RADIAL_LUT_HEIGHT;
+const LUT_V_BIAS = 0.5 / LINE_RADIAL_LUT_HEIGHT;
 const INV_SQRT2 = Math.SQRT1_2;
 const TWO_OVER_SQRT_PI = 2 / Math.sqrt(Math.PI);
 const INV_SQRT_PI = 1 / Math.sqrt(Math.PI);
@@ -203,6 +211,16 @@ export function volumetricLineWebGPUFactory(
   // projection — the GLSL twin's LUXAR_PEAK_PROJECTION define, here a
   // build-time graph variant (the wrapper rebuilds on projection change).
   const peakGraph = usesPeakProjection(blendingMode);
+  // Sum-family graphs sample the sharpness radial LUT UNCONDITIONALLY
+  // (#1352 PR-4 — the β = 2 row is the analytic radial, so there is no
+  // analytic lane to fall back to); the peak graphs evaluate their
+  // profile pointwise and never bind it.
+  if (!peakGraph && !nodes.uLineRadialLUT) {
+    throw new Error(
+      'volumetricLineWebGPUFactory: sum-family blending mode but nodes.uLineRadialLUT is not bound (see _shared/line-integral-lut.ts).'
+    );
+  }
+  const uLineRadialLUT = peakGraph ? null : nodes.uLineRadialLUT!;
   const isOrtho = config.isOrtho === true;
 
   // ---- Varyings (all per-segment constants → flat) ----
@@ -613,9 +631,21 @@ export function volumetricLineWebGPUFactory(
       // quadrature-validated in _shared/line-volumetric.ts; keep the three
       // implementations (reference / GLSL / TSL) in lockstep.
       Discard(r2n.greaterThanEqual(T_SQ));
-      const radial: TSLNode = max(exp(r2n.mul(-0.5)).sub(FALLOFF_FLOOR), 0.0)
-        .mul(INV_ONE_MINUS_FALLOFF_FLOOR)
-        .toVar();
+      // RADIAL factor S(q, s) from the shared Abel LUT (#1352 PR-4),
+      // q = sqrt(r2n)/T ∈ [0, 1) after the reject above — mirrors the
+      // GLSL twin's sampling exactly (the β = 2 row IS the former
+      // analytic (exp(−0.5·r2n) − C)/(1 − C) expression; rows hit 0 at
+      // q = 1; the axial window stays β = 2 — see line-integral-lut.ts).
+      const radial: TSLNode = uLineRadialLUT!
+        .sample(
+          vec2(
+            sqrt(r2n)
+              .mul(INV_T * LUT_U_SCALE)
+              .add(LUT_U_BIAS),
+            clamp(sharp, 0.0, 1.0).mul(LUT_V_SCALE).add(LUT_V_BIAS)
+          )
+        )
+        .r.toVar();
       const hardA: TSLNode = vCutA.w.greaterThan(0.5).toVar();
       const hardB: TSLNode = vCutB.w.greaterThan(0.5).toVar();
       const sAtCenter: TSLNode = sM.add(L.mul(0.5)).toVar();
