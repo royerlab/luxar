@@ -60,7 +60,9 @@ import math
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Dict, Final, List, Literal, Optional
 
+import numpy as np
 from arbol import aprint
+from numpy.typing import NDArray
 
 from ....typing_utils.geometry_capabilities import require_lod_display_type
 from ....validation.types import validate_truncation_radius
@@ -888,6 +890,67 @@ REVEAL_ADDITIVE_METHODS: frozenset[str] = frozenset({"radial"})
 def is_reveal_additive_method(method: str) -> bool:
     """Whether ``method`` orders a reveal, so its ladder carries no energy stamps."""
     return method in REVEAL_ADDITIVE_METHODS
+
+
+def radial_element_score(
+    coords: NDArray,
+    centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
+) -> NDArray:
+    """Distance of each element from ``centre``, over the spatial axes only.
+
+    The ordering key for ``method="radial"`` — the concentric-shell reveal —
+    shared by Points and Lines so the two can't disagree about what "radial"
+    means. ``coords`` is one representative coordinate per element: a point's
+    position, or a polyline's own bbox centre.
+
+    ``centre`` defaults to the **bounding-box centre of the spatial axes**, not
+    the scene origin: a dataset sitting far from the origin would otherwise
+    reveal from one corner instead of growing from its own middle.
+
+    ``spatial_dims`` defaults to the axes with **non-zero extent**. That is the
+    element-side analogue of the gsplat path's ``_nondegenerate_axes`` (which is
+    covariance-based and has no meaning here), and it matters MORE here: a
+    stacked time or channel column in an element position array is a real
+    coordinate, not a degenerate covariance axis, so including it would make the
+    shells expand through time as well as space — every timepoint of the
+    innermost shell before any of the next, which is not a reveal.
+
+    Unlike ``spatial-uniform`` / ``poisson-disk``, this deliberately does NOT
+    require ``d >= 3``: a distance is well defined in any dimension, and a 2D
+    scene is a first-class authoring path.
+    """
+    pts_all = np.asarray(coords, dtype=np.float64)
+    if pts_all.ndim != 2:
+        raise ValueError(f"coords must be 2-D (N, d); got shape {pts_all.shape}")
+    if spatial_dims is not None:
+        dims = np.asarray(spatial_dims, dtype=np.intp)
+        if dims.size and int(dims.max()) >= pts_all.shape[1]:
+            raise ValueError(
+                f"spatial_dims {list(spatial_dims)} out of range for coords with "
+                f"{pts_all.shape[1]} columns"
+            )
+    else:
+        mins_all = pts_all.min(axis=0)
+        maxs_all = pts_all.max(axis=0)
+        dims = np.flatnonzero(maxs_all - mins_all > 0.0).astype(np.intp)
+        # A single-position input has no extent on any axis. Fall back to every
+        # axis rather than to an empty selection, which would score every element
+        # 0.0 and silently degrade the ordering to input order.
+        if dims.size == 0:
+            dims = np.arange(pts_all.shape[1], dtype=np.intp)
+
+    pts = pts_all[:, dims]
+    if centre is None:
+        origin = (pts.min(axis=0) + pts.max(axis=0)) / 2.0
+    else:
+        origin = np.asarray(centre, dtype=np.float64)
+        if origin.shape != (len(dims),):
+            raise ValueError(
+                f"reveal_centre must have one coordinate per spatial axis "
+                f"{[int(d) for d in dims]}; got {len(origin)}"
+            )
+    return np.asarray(np.linalg.norm(pts - origin, axis=1), dtype=np.float64)
 
 
 def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:

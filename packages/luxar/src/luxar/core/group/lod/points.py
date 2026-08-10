@@ -33,15 +33,19 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .group import (
+    ADDITIVE_METHODS,
     DEFAULT_ADDITIVE_METHOD,
     DEFAULT_ADDITIVE_N_LODS,
+    radial_element_score,
     resolve_additive_axis,
 )
 from .poisson_disk import poisson_disk_order
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Points additive LOD.
-PointsMethodName = Literal["random", "salience", "spatial-uniform", "poisson-disk"]
+PointsMethodName = Literal[
+    "random", "salience", "spatial-uniform", "poisson-disk", "radial"
+]
 
 
 # Default for ``additive_lod=True`` and ``additive_lod=dict()``. Aliases of the
@@ -87,6 +91,8 @@ def compute_additive_order_points(
     method: PointsMethodName = DEFAULT_METHOD,
     n_lods: int = DEFAULT_N_LODS,
     seed: Optional[int] = None,
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
 ) -> Tuple[NDArray[np.intp], List[int]]:
     """Compute an additive ordering permutation over Points.
 
@@ -94,12 +100,20 @@ def compute_additive_order_points(
         positions: ``(N, d)`` array. ``d >= 3`` for ``spatial-uniform``;
             other methods don't care about ``d``.
         radii: ``(N,)`` array or ``None``. Required for ``salience``.
-        method: One of ``random`` / ``salience`` / ``spatial-uniform``.
-        n_lods: Only consulted by ``spatial-uniform`` for deciding how
-            many grid levels to iterate. ``random`` and ``salience``
-            return a single permutation; the slicing into LOD levels
-            happens later in :func:`make_additive_lod_points`.
+        method: One of ``random`` / ``salience`` / ``spatial-uniform`` /
+            ``poisson-disk`` / ``radial``.
+        n_lods: Only consulted by ``spatial-uniform`` / ``poisson-disk`` for
+            deciding how many grid levels to iterate. ``random``, ``salience``
+            and ``radial`` return a single permutation; the slicing into LOD
+            levels happens later in :func:`make_additive_lod_points`.
         seed: For ``random``; ignored by others.
+        reveal_centre: ``radial`` only — centre of the shells, defaulting to the
+            spatial bounding-box centre (NOT the scene origin, so a dataset far
+            from the origin still grows from its own middle). One coordinate per
+            spatial axis.
+        spatial_dims: ``radial`` only — position columns the distance is measured
+            over, defaulting to the axes with non-zero extent so a stacked
+            time/channel column cannot become a shell dimension.
 
     Returns:
         ``(permutation, per_level_counts)`` — same shape as
@@ -145,9 +159,28 @@ def compute_additive_order_points(
             )
         return poisson_disk_order(positions, n_lods, seed=seed or 0)
 
+    if method == "radial":
+        # ASCENDING, unlike `salience` above: the score is a DISTANCE, so the
+        # nearest is revealed first and the prefixes grow outward as concentric
+        # shells. Returns an EMPTY natural partition, deliberately — unlike
+        # `spatial-uniform` / `poisson-disk`, whose per-level counts make
+        # `make_additive_lod_points` bypass the `counts:` / `stream:` / `energy:`
+        # breakpoint vocabularies entirely. A reveal must stay compatible with
+        # those, so the caller does the slicing.
+        return (
+            np.argsort(
+                radial_element_score(positions, reveal_centre, spatial_dims),
+                kind="stable",
+            ).astype(np.intp),
+            [],
+        )
+
+    # Unreachable for a well-typed caller — the branches above are exhaustive
+    # over PointsMethodName — but `method` arrives as a plain string from the
+    # resolver and from user code, so the runtime guard stays.
     raise ValueError(
-        "method must be one of 'random' / 'salience' / 'spatial-uniform' / "
-        f"'poisson-disk'; got {method!r}"
+        f"method must be one of {' / '.join(repr(m) for m in ADDITIVE_METHODS)}; "
+        f"got {method!r}"
     )
 
 
