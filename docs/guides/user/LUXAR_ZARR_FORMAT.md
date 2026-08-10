@@ -1203,14 +1203,16 @@ non-partitioned node both refer to the same node.
 
 Whether `{hover_index}` is the *on-disk* element index — the one the node's
 arrays and its label CSR are keyed by — depends on the geometry. It is the
-on-disk index for a Points or GSplats node that declares `has_labels` or
+on-disk index for a Points, GSplats or Lines node that declares `has_labels` or
 `has_image_labels`, and for a Mesh always, since mesh picking reports the
-vertex's on-disk ordinal directly. For **Lines** it never is: a line is drawn
-one instance per *segment* and picking reports that segment's slot, while the
-lines label CSR is written per *vertex* — so the index misses its CSR row even
-on a fully loaded, unsliced layer, and spatial range loading (only the visible
-on-disk ranges are concatenated) or an nD slice compacting invisible elements
-out shifts it further. Tracked as #1424.
+vertex's on-disk ordinal directly. **Lines** takes the longest route to get
+there: a line is drawn one instance per *segment* and picking reports that
+segment's slot, while the lines label CSR is written per *vertex*, so a labelled
+lines node resolves the slot all the way back to the picked segment's start
+vertex in the stored ordering (#1424). A lines node with no labels publishes no
+such mapping and still reports the raw visible-segment slot, which after spatial
+range loading or an nD slice compacting invisible elements out is not an on-disk
+row at all.
 
 ### Compound Ordering
 
