@@ -29,9 +29,11 @@ the half-float budget (≤ 8e-4, test-pinned — at most one 8-bit quantization 
 near a rounding threshold), not byte-exactly. And every
 row is pinned to exactly 0 at q = 1, so the vertex stencil's truncation radius
 covers the profile at every sharpness. The CPU reference
-(`_shared/line-integral-lut.ts`) integrates by tanh-sinh quadrature —
-machine-precision across the whole knob range, including the β < 1 cusp a plain
-compactified trapezoid stalls on — and the unit tests hold the β = 2 row to the
+(`_shared/line-integral-lut.ts`) integrates by tanh-sinh quadrature — converged
+well beyond the texture's half-float precision across the whole knob range
+(worst self-convergence 3.2e-5, at β = 16; ≤ 5e-15 elsewhere, including the
+β < 1 cusp a plain compactified trapezoid stalls on) — and the unit tests hold
+the β = 2 row to the
 analytic radial, every row's monotonicity and endpoints, both axes' resolution
 adequacy against denser rebuilds, and the half-float storage error. New parity
 fixtures pin the knob extremes cross-backend (`line-volprim-sharp-hard`) and the
