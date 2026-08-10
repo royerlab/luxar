@@ -26,15 +26,13 @@ private `_return_sort_order` flag on the geometry writers, since the spatial sor
 computed per level and never persisted. Labels are all-or-nothing across a ladder: a
 partially-labelled one cannot produce a coherent index space and is refused.
 
-On Points, a fully-loaded 3D scene resolves exactly. Under an nD slice the committed
-buffer is compacted, so slots shift — the same shift #1421/#1425 removed for flat nodes
-with a visible-slot → on-disk-index map, which is deliberately not published across a
-ladder because each level's map is in that level's own space; extending it is the piece
-left (#1439). This also covers the `partition=`-outer + `additive_lod=`-inner
-composition: the CSR lands on each `part_<i>` ladder parent, which is the node the
-picker looks up since #1415/#1420. On Lines the CSR is per-vertex, matching the flat
-Lines writer, while the pick id is a per-segment storage slot — so there only a
-broadcast (one-string-per-node) label set resolves, ladder or not, until #1424 lands.
+A fully-loaded 3D scene resolves exactly. Under an nD slice the committed buffer is
+compacted, so slots shift — the same shift #1421/#1425 removed for flat nodes with a
+visible-slot → on-disk-index map, which is deliberately not published across a ladder
+because each level's map is in that level's own space; extending it is the piece left
+(#1439). This also covers the `partition=`-outer + `additive_lod=`-inner composition:
+the CSR lands on each `part_<i>` ladder parent, which is the node the picker looks up
+since #1415/#1420.
 
 Separately, a wrong-length `labels` was silently accepted on every splitting path
 (partition, additive, substitutive — Points, Lines and GSplats): the per-part slicer
@@ -224,6 +222,7 @@ that hit leaf. `nodeName` and `elementIndex` keep their meanings — the layer a
 an index local to the leaf — which under a partition are not joinable; embedders
 that need to resolve the element index against the store should index against
 `hitNodeName`, which equals `nodeName` whenever there is no partition wrapper.
+
 
 #### Tooling — the demos converge on one import spelling (#1304)
 
