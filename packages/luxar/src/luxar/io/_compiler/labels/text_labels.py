@@ -198,8 +198,9 @@ def write_ladder_union_labels_csr(
     that granularity for FLAT lines nodes — the picked segment's slot resolves back
     to that segment's START vertex row in the stored ordering — but it does so
     through the same visible-slot -> on-disk-index map no ladder publishes, so
-    across a ladder only a broadcast (one-string-per-node) label set resolves until
-    #1439 carries that map over the levels.
+    across a ladder the hover only lands on the right string when every element
+    carries the same one (``labels`` has no broadcast form — it is always one entry
+    per element), until #1439 carries that map over the levels.
 
     Args:
         group: The PARENT ladder zarr group (not a subgroup).

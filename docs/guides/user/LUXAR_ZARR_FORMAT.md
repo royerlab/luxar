@@ -553,9 +553,10 @@ per-vertex, matching the flat Lines writer, while the viewer's Lines pick id is 
 per-segment storage slot. Issue #1424 bridged that granularity for **flat** Lines
 nodes — a labelled flat lines node resolves the picked segment's slot back to that
 segment's start vertex row in the stored ordering — but it does so through the same
-visible-slot → on-disk-index map no ladder publishes, so across a ladder only a
-broadcast (one-string-per-node) label set resolves until #1439 carries that map over
-the levels.
+visible-slot → on-disk-index map no ladder publishes, so across a ladder the hover only
+lands on the right string when every element carries the same one (there is no
+broadcast label form — `labels` is always one entry per element), until #1439 carries
+that map over the levels.
 
 **Builder API (Python):**
 ```python

@@ -150,8 +150,9 @@ viewer's Lines pick id is a per-**segment** storage slot. Issue #1424 supplied t
 missing segment→vertex indirection for **flat** lines nodes — the picked segment's
 slot resolves back to that segment's start vertex row in the stored ordering — but
 through the same visible-slot → on-disk-index map no ladder publishes, so across a
-ladder only a broadcast (one-string-per-node) label set resolves until #1439 carries
-that map over the levels.
+ladder the hover only lands on the right string when every element carries the same one
+(`labels` has no broadcast form — it is always one entry per element), until #1439
+carries that map over the levels.
 
 Labels are all-or-nothing across a ladder — a partially-labelled ladder cannot
 produce a correct union, so `validate_ladder_labels` rejects it.

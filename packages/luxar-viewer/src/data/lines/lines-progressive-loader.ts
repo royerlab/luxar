@@ -64,7 +64,8 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     // for `n_additive_sublods` nodes, so it is the first-paint state of EVERY
     // ladder — and a tooltip that is right at first paint and silently degrades
     // to the raw slot the moment a second level lands is worse than one
-    // consistently at the raw slot, which is what every doc surface promises. `createProgressiveLinesLoader` now also clears `has_labels` /
+    // consistently at the raw slot, which is what every doc surface promises.
+    // `createProgressiveLinesLoader` now also clears `has_labels` /
     // `has_image_labels` on each sub-LOD's attrs, so the ranges are normally
     // never published at all; this keeps the invariant true whatever attrs a
     // sub-LOD carries. (A ladder's labels are ONE per-vertex union CSR on the

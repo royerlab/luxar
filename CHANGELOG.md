@@ -36,14 +36,17 @@ picker looks up since #1415/#1420. On Lines the CSR is per-vertex, matching the 
 Lines writer, while the pick id is a per-segment storage slot; #1424 closed that
 granularity gap for FLAT nodes by resolving the picked segment's slot back to its start
 vertex row, but that chain runs through the very slot → on-disk map a ladder does not
-publish — so on a laddered Lines node only a broadcast (one-string-per-node) label set
-resolves until #1439 carries the map across the levels.
+publish — so on a laddered Lines node the hover only lands on the right string when
+every element carries the same one, until #1439 carries the map across the levels.
 
-Separately, a wrong-length `labels` was silently accepted on every splitting path
-(partition, additive, substitutive — Points, Lines and GSplats): the per-part slicer
-passes a mis-sized list through whole, so all parts got the *same* labels and part 1's
-tooltips were part 0's. Each wrapper now checks the full element count before it
-slices, leaving the plain-leaf gate order untouched.
+Separately, a wrong-length `labels` was silently accepted on the partition paths
+(Points, Lines and GSplats) and on the additive ladder (Points and Lines): the per-part
+slicer passes a mis-sized list through whole, so all parts got the *same* labels and
+part 1's tooltips were part 0's. The two substitutive paths did reject it, but only
+once the finest child was reached — minutes of gsplat reduce later, with the coarse
+levels already on disk and a partial `kind=lod` node left behind. All seven wrappers
+now check the full element count before they slice, leaving the plain-leaf gate order
+untouched.
 
 #### Mesh fades out near the camera, like the other three types (#1431)
 
