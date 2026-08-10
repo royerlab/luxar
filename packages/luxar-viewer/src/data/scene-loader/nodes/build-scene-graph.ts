@@ -22,6 +22,7 @@ import { ZarrSceneAttrs, ZarrNodeAttrs } from '../../../types/zarr';
 import type { SceneNode } from '../../data-loader-types';
 import { isGeometryType } from '../../../types/geometry-capabilities';
 import { enumerateStore } from './enumerate-store';
+import { normalizeExtendDims } from '../view-state/extend-tolerance';
 
 /**
  * Build the scene graph structure rooted at `rootLoc`. The optional
@@ -162,12 +163,42 @@ export async function buildSceneGraph(
       }
     }
 
-    // Log if extend_to_all is present
-    if (attrs?.extend_to_all) {
-      log.data(
-        Modules.SCENE_LOADER,
-        `Node ${entry.path} has extend_to_all: ${attrs.extend_to_all.join(', ')}`
-      );
+    // Normalize + log `extend_to_all`. The raw attr is NOT trusted to be a
+    // `string[]`: an older producer could stamp the unresolved `'all'`
+    // sentinel, and `'all'.join` is undefined — the `log.data` template below
+    // is evaluated eagerly, so that used to throw here and abort the whole
+    // scene-graph build. The normalized array is written BACK onto the node's
+    // attrs (same idiom as `customLutBytes` above), which is what makes this the
+    // coercion point for every node the graph builder visits: every downstream
+    // consumer (loader-factory's synthesized LOD children, the spatial-index
+    // loaders' `attrs.extend_to_all || []`, `announceExtendToAllOnce`,
+    // `SpatialQueryBuilder`) reads the node attrs and would otherwise re-inherit
+    // the raw value and throw at query time instead. Written back only when the
+    // attr was PRESENT — a node without one keeps no key at all (nothing
+    // downstream distinguishes absent from `[]`, but there is no reason to
+    // invent one). `deriveNodeViewState` normalizes again as belt-and-braces,
+    // including for the root node, which this loop skips.
+    const rawExtendDims: unknown = attrs?.extend_to_all;
+    if (rawExtendDims !== undefined && rawExtendDims !== null) {
+      const extendDims = normalizeExtendDims(rawExtendDims);
+      const malformed = !Array.isArray(rawExtendDims) || extendDims.length < rawExtendDims.length;
+      if (malformed) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Node ${entry.path} has a malformed extend_to_all attr ` +
+            `(${JSON.stringify(rawExtendDims)}) — expected a list of dimension names. ` +
+            (extendDims.length === 0
+              ? 'Treating the node as not extended.'
+              : `Extending across [${extendDims.join(', ')}] only.`)
+        );
+      }
+      (node.attrs as ZarrNodeAttrs).extend_to_all = extendDims;
+      if (extendDims.length > 0) {
+        log.data(
+          Modules.SCENE_LOADER,
+          `Node ${entry.path} has extend_to_all: ${extendDims.join(', ')}`
+        );
+      }
     }
 
     // Find parent and add as child

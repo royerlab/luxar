@@ -6,7 +6,7 @@ enabling memory-efficient handling of arbitrarily large datasets.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional, Protocol, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Sequence, Tuple, Union
 
 import numpy as np
 from numpy.typing import NDArray
@@ -231,7 +231,7 @@ class ZarrWriterProtocol(Protocol):
         path: NodePath,
         levels: list,
         *,
-        extend_to_all: Optional[Union[list, str]] = None,
+        extend_to_all: Optional[List[str]] = None,
         **attrs: Any,
     ) -> dict:
         """Write multi-additive-LOD Points: parent node + ``additive_<i>/`` subgroups.
@@ -248,7 +248,7 @@ class ZarrWriterProtocol(Protocol):
         path: NodePath,
         levels: list,
         *,
-        extend_to_all: Optional[Union[list, str]] = None,
+        extend_to_all: Optional[List[str]] = None,
         **attrs: Any,
     ) -> dict:
         """Write multi-additive-LOD Lines (polyline-level granularity).

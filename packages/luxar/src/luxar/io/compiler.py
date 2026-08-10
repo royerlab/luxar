@@ -679,7 +679,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         path: NodePath,
         levels: List[Dict[str, Any]],
         *,
-        extend_to_all: Optional[Union[List[str], str]] = None,
+        extend_to_all: Optional[List[str]] = None,
         **attrs: Any,
     ) -> Dict[str, Any]:
         """Write multi-additive-LOD Points: parent node + ``additive_<i>/`` subgroups.
@@ -699,7 +699,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` /
                 ``labels``. ``positions`` is required; others may be
                 ``None``.
-            extend_to_all: Forwarded to each per-level write.
+            extend_to_all: Forwarded to each per-level write. Already-resolved
+                dimension NAMES — the caller expands the ``"all"`` sentinel,
+                which must never reach disk (it is stamped verbatim here, onto
+                the parent group and every sub-LOD).
             **attrs: Additional parent-node attrs (compositing,
                 colormap, etc.).
 
@@ -790,7 +793,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         path: NodePath,
         levels: List[Dict[str, Any]],
         *,
-        extend_to_all: Optional[Union[List[str], str]] = None,
+        extend_to_all: Optional[List[str]] = None,
         **attrs: Any,
     ) -> Dict[str, Any]:
         """Write multi-additive-LOD Lines.

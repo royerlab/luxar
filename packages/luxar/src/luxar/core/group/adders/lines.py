@@ -798,10 +798,29 @@ def add_lines_multi_lod_wrapper_impl(
         f"{[len(L) for L in polyline_levels]})"
     )
 
+    # The writer stamps this value VERBATIM onto the parent group AND every
+    # ``additive_<i>/`` sub-LOD, so the ``"all"`` sentinel must be resolved
+    # before it gets there (the writer's signature now only accepts a resolved
+    # list). The ``is not None`` guard preserves today's behaviour: a ladder
+    # emits no single-value advisory at all — the flat path is never reached on
+    # this branch. Resolving unconditionally would ADD a first one, fired once
+    # per BSP part under ``partition=`` + ``additive_lod=``, advising extension
+    # on a dim the layer is meant to be sliced by, and mis-attributed to
+    # ``Group.add_lines``. Note this diverges from the sibling sole-resolver
+    # ``gsplats_pipeline/lod_dispatch.py:239``, which is unguarded and does
+    # warn. Must stay an explicit kwarg: in ``attrs`` it would collide.
+    final_extend_dims: Optional[List[str]] = None
+    if extend_to_all is not None:
+        final_extend_dims = scene._resolve_extend_to_all(
+            extend_to_all, vert_arr, "lines"
+        )
+        if final_extend_dims:
+            aprint(f"  📡 Extending visibility across: {final_extend_dims}")
+
     metadata = writer.write_lines_multi_lod(
         path,
         level_slices,
-        extend_to_all=extend_to_all,
+        extend_to_all=final_extend_dims,
         **attrs,
     )
 

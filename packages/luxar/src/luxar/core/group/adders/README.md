@@ -113,7 +113,10 @@ Each `*_impl` walks the same ordered decision tree:
    prefix-monotone levels and, if more than one level results, delegate to the
    multi-LOD wrapper. Fires after the 1-part-partition fall-through, so a
    single `add_*` call can compose partition-of-additive-LOD.
-6. **Single-leaf write**: validate dimensions, resolve `extend_to_all`, check
+6. **Single-leaf write**: validate dimensions, resolve `extend_to_all` (this is
+   where the `"all"` sentinel becomes a concrete dim-name list for a flat leaf
+   AND for every part of a partition, whose recursion re-enters here; the
+   multi-LOD wrapper resolves it itself — see below), check
    colormap/colors/scalars mutual-exclusivity, then call the scene writer
    (`write_points` / `write_lines` / `write_gsplats`) and return the
    constructed `Points` / `Lines` / `GSplats` node.
@@ -147,6 +150,12 @@ Write a single parent node carrying `n_additive_sublods=N` plus a global
 carries a subset of **whole** polylines with segment indices local to the
 subgroup. The returned node is the parent — the user sees one logical node and
 the viewer's progressive loader walks the subgroups.
+
+Unlike the partition wrapper, this one does not recurse through a leaf adder,
+so it resolves `extend_to_all` itself (when not `None`) right before the writer
+call: the multi-LOD writers stamp that value verbatim onto the parent group AND
+every `additive_<i>/` subgroup, so an unresolved `"all"` sentinel would reach
+disk where the viewer expects a list of dimension names.
 
 ## Dependencies
 
