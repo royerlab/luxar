@@ -209,6 +209,27 @@ describe('buildSceneGraph — malformed extend_to_all (#1441)', () => {
       warnSpy.mockRestore();
     }
   });
+
+  it('normalizes a bare-node ROOT too (the listing loop never visits it)', async () => {
+    // A detached `.gsplats.zarr` subtree: the file root IS the leaf, so its
+    // attrs go straight to a leaf loader. `deriveNodeViewState` normalizing
+    // again does not help there — `SpatialQueryBuilder` and
+    // `announceExtendToAllOnce` read the node attrs directly.
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      enumerateStoreMock.mockResolvedValue([]);
+      const rootAttrs = { type: 'gsplats', extend_to_all: 'all' } as unknown as ZarrSceneAttrs;
+
+      const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+      expect(root.type).toBe('gsplats');
+      expect((root.attrs as { extend_to_all?: unknown }).extend_to_all).toEqual([]);
+      const messages = warnSpy.mock.calls.map((c) => String(c[1]));
+      expect(messages.some((m) => m.includes('extend_to_all'))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 describe('buildSceneGraph — overlay skip', () => {

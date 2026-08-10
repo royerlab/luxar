@@ -333,6 +333,48 @@ class TestExtendToAll:
         for i in range(3):
             assert "extend_to_all" not in parent[f"additive_{i}"].attrs
 
+    def test_additive_lod_omitted_stays_silent(self, tmp_path) -> None:
+        """A ladder authored WITHOUT extend_to_all emits no candidate advisory.
+
+        The wrapper's resolve is guarded on ``is not None`` precisely so the
+        ladder path keeps behaving as it always has. Data here is the advisory's
+        trigger case (Time has one value but a wider range), so an unguarded
+        resolve would warn — once per BSP part under ``partition=`` +
+        ``additive_lod=``, misattributed to ``Group.add_points``.
+        """
+        dims = Dimensions(
+            [
+                Dimension("X", display=True),
+                Dimension("Y", display=True),
+                Dimension("Z", display=True),
+                Dimension("Time", display=False, range=(0, 10)),
+            ]
+        )
+
+        rng = np.random.RandomState(3)
+        positions = np.zeros((200, 4), dtype=np.float32)
+        positions[:, :3] = rng.rand(200, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            # The flat sibling DOES warn on the same data — proof the trigger
+            # condition is met and the ladder's silence is the guard, not the data.
+            with pytest.warns(UserWarning, match="Time"):
+                scene.add_points("flat", positions)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                scene.add_points(
+                    "laddered",
+                    positions,
+                    additive_lod=dict(n_lods=3, method="random", seed=42),
+                )
+
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
+        parent = store["laddered"]
+        assert "extend_to_all" not in parent.attrs
+        for i in range(3):
+            assert "extend_to_all" not in parent[f"additive_{i}"].attrs
+
     def test_no_warning_without_range(self, tmp_path) -> None:
         """Test no warning when dimension has no defined range."""
         dims = Dimensions(

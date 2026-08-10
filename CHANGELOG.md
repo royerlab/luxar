@@ -37,6 +37,9 @@ That write-back is what makes the defence real: the synthesized `additive_<i>`
 children built by the loader factory, the three spatial-index loaders, and
 `SpatialQueryBuilder` all read the node attrs, so normalizing only for the log
 line would have moved the `TypeError` from load time to query time.
+The store listing never contains the root, so the root node is coerced
+explicitly alongside the loop — it is a real node for a detached
+`.gsplats.zarr` subtree, whose file root IS the leaf.
 `deriveNodeViewState` normalizes again — silently, since it runs every update
 cycle — for attrs that never came through the graph builder. The `"all"` sentinel
 is deliberately not reinterpreted viewer-side: the displayed-dimension set is

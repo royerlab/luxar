@@ -25,6 +25,43 @@ import { enumerateStore } from './enumerate-store';
 import { normalizeExtendDims } from '../view-state/extend-tolerance';
 
 /**
+ * Normalize + log a node's `extend_to_all`. The raw attr is NOT trusted to be a
+ * `string[]`: an older producer could stamp the unresolved `'all'` sentinel, and
+ * `'all'.join` is undefined — the `log.data` line below is evaluated eagerly, so
+ * that used to throw and abort the whole scene-graph build. The normalized array
+ * is written BACK onto the node's attrs (same idiom as `customLutBytes`), which
+ * is what makes this the coercion point for the whole graph: every downstream
+ * consumer (loader-factory's synthesized LOD children, the spatial-index
+ * loaders' `attrs.extend_to_all || []`, `announceExtendToAllOnce`,
+ * `SpatialQueryBuilder`) reads the node attrs and would otherwise re-inherit the
+ * raw value and throw at query time instead. Written back only when the attr was
+ * PRESENT — a node without one keeps no key at all (nothing downstream
+ * distinguishes absent from `[]`, but there is no reason to invent one).
+ * `deriveNodeViewState` normalizes again as belt-and-braces.
+ */
+function normalizeNodeExtendDims(node: SceneNode): void {
+  const rawExtendDims: unknown = (node.attrs as ZarrNodeAttrs | undefined)?.extend_to_all;
+  if (rawExtendDims === undefined || rawExtendDims === null) return;
+
+  const extendDims = normalizeExtendDims(rawExtendDims);
+  const malformed = !Array.isArray(rawExtendDims) || extendDims.length < rawExtendDims.length;
+  if (malformed) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `Node ${node.path} has a malformed extend_to_all attr ` +
+        `(${JSON.stringify(rawExtendDims)}) — expected a list of dimension names. ` +
+        (extendDims.length === 0
+          ? 'Treating the node as not extended.'
+          : `Extending across [${extendDims.join(', ')}] only.`)
+    );
+  }
+  (node.attrs as ZarrNodeAttrs).extend_to_all = extendDims;
+  if (extendDims.length > 0) {
+    log.data(Modules.SCENE_LOADER, `Node ${node.path} has extend_to_all: ${extendDims.join(', ')}`);
+  }
+}
+
+/**
  * Build the scene graph structure rooted at `rootLoc`. The optional
  * `store` argument is the same store the location was opened from —
  * `enumerateStore` is called with it to get the contents listing.
@@ -56,6 +93,15 @@ export async function buildSceneGraph(
     hasSpatialIndex: false,
     children: [],
   };
+
+  // The loop below only visits the listing, which excludes '/', so the root is
+  // coerced here. It matters for a BARE NODE root (a detached `.gsplats.zarr`
+  // subtree, where the file root IS the leaf/lod/partition node): its attrs go
+  // straight to a leaf loader, and `deriveNodeViewState`'s own normalization
+  // does not reach `SpatialQueryBuilder` / `announceExtendToAllOnce`, which read
+  // the node attrs directly. A scene root never carries the attr, so this is a
+  // no-op there.
+  normalizeNodeExtendDims(root);
 
   // Build node map
   const nodeMap = new Map<string, SceneNode>();
@@ -163,43 +209,7 @@ export async function buildSceneGraph(
       }
     }
 
-    // Normalize + log `extend_to_all`. The raw attr is NOT trusted to be a
-    // `string[]`: an older producer could stamp the unresolved `'all'`
-    // sentinel, and `'all'.join` is undefined — the `log.data` template below
-    // is evaluated eagerly, so that used to throw here and abort the whole
-    // scene-graph build. The normalized array is written BACK onto the node's
-    // attrs (same idiom as `customLutBytes` above), which is what makes this the
-    // coercion point for every node the graph builder visits: every downstream
-    // consumer (loader-factory's synthesized LOD children, the spatial-index
-    // loaders' `attrs.extend_to_all || []`, `announceExtendToAllOnce`,
-    // `SpatialQueryBuilder`) reads the node attrs and would otherwise re-inherit
-    // the raw value and throw at query time instead. Written back only when the
-    // attr was PRESENT — a node without one keeps no key at all (nothing
-    // downstream distinguishes absent from `[]`, but there is no reason to
-    // invent one). `deriveNodeViewState` normalizes again as belt-and-braces,
-    // including for the root node, which this loop skips.
-    const rawExtendDims: unknown = attrs?.extend_to_all;
-    if (rawExtendDims !== undefined && rawExtendDims !== null) {
-      const extendDims = normalizeExtendDims(rawExtendDims);
-      const malformed = !Array.isArray(rawExtendDims) || extendDims.length < rawExtendDims.length;
-      if (malformed) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Node ${entry.path} has a malformed extend_to_all attr ` +
-            `(${JSON.stringify(rawExtendDims)}) — expected a list of dimension names. ` +
-            (extendDims.length === 0
-              ? 'Treating the node as not extended.'
-              : `Extending across [${extendDims.join(', ')}] only.`)
-        );
-      }
-      (node.attrs as ZarrNodeAttrs).extend_to_all = extendDims;
-      if (extendDims.length > 0) {
-        log.data(
-          Modules.SCENE_LOADER,
-          `Node ${entry.path} has extend_to_all: ${extendDims.join(', ')}`
-        );
-      }
-    }
+    normalizeNodeExtendDims(node);
 
     // Find parent and add as child
     const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
