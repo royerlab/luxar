@@ -44,6 +44,67 @@ from ..spatial_ordering.points import (
 )
 
 
+def validate_points_channels(
+    n_points: int,
+    *,
+    colors: Any = None,
+    radii: Any = None,
+    sharpness: Any = None,
+    scalars: Any = None,
+    labels: Any = None,
+) -> None:
+    """Validate every per-point channel against ``n_points``. Pure — no I/O.
+
+    Steps 0d-0e of :func:`write_points`'s fail-fast gate, factored out because a
+    SECOND caller needs exactly them and nothing else:
+    :func:`luxar.core.group.compositing.validate_points_channels_before_split`
+    runs this against the SOURCE point count before a ``partition=`` /
+    ``additive_lod=`` / ``substitutive_lod=`` decomposition. Without that, a
+    wrong-length channel rode the per-part slicer's pass-through branch into
+    every part and was ACCEPTED by any part whose own count happened to match
+    (#1437), and the plain-leaf path refuses the same input outright.
+
+    Sharing the function rather than repeating the checks is what keeps that
+    promise true as the rules change: the pre-split gate cannot drift from what
+    the child write accepts, because it IS what the child write runs. Same
+    contract, and same wording, as the mesh sibling
+    :func:`~luxar.io._compiler.geometry_writers.mesh.validate_mesh_arrays`.
+    """
+    from ....validation.base import (
+        validate_colors_for_writing,
+        validate_labels_for_writing,
+        validate_radii_for_writing,
+        validate_sharpness_for_writing,
+    )
+
+    # 0d. Pre-flight length sweep over ALL provided per-point arrays. The
+    # spatial-ordering fancy-indexing below silently TRUNCATES a too-long
+    # array and raises a raw IndexError on a too-short one, so lengths must
+    # be checked before build_points_ordering runs. The per-dataset
+    # validators further down remain in place (belt and braces).
+    if colors is not None:
+        if isinstance(colors, np.ndarray):
+            # Points accept RGBA: the alpha column is per-point opacity
+            # (consumed by every blending mode; mapped into optical depth in
+            # volumetric — see VOLUMETRIC_BLENDING_SPEC.md, phase 3).
+            validate_colors_for_writing(colors, n_points, channels=(3, 4))
+        elif isinstance(colors, (list, tuple)):
+            validate_broadcast_color(colors, "colors")
+    if radii is not None:
+        # Validates arrays AND broadcast scalars (same finite/positive rules).
+        validate_radii_for_writing(radii, n_points)
+    if sharpness is not None:
+        # Validates arrays AND broadcast scalars (same [0, 1] bounds).
+        validate_sharpness_for_writing(sharpness, n_points)
+    if scalars is not None:
+        validate_scalars_preflight(scalars, n_points)
+    # 0e. Labels: sequence-of-str type + length check (the CSR serializer
+    # would otherwise AttributeError on a non-str entry AFTER the arrays
+    # were written).
+    if labels is not None:
+        validate_labels_for_writing(labels, n_points)
+
+
 def write_points(
     ctx: GeometryWriteCtx,
     path: NodePath,
@@ -77,7 +138,6 @@ def write_points(
     # Import validation functions locally to avoid circular imports
     from ....validation.base import (
         validate_colors_for_writing,
-        validate_labels_for_writing,
         validate_positions_for_writing,
         validate_radii_for_writing,
         validate_sharpness_for_writing,
@@ -98,32 +158,17 @@ def write_points(
     path = validate_node_path(path)
     # 0c. Positions shape/finiteness.
     n_points, n_dims = validate_positions_for_writing(positions)
-    # 0d. Pre-flight length sweep over ALL provided per-point arrays. The
-    # spatial-ordering fancy-indexing below silently TRUNCATES a too-long
-    # array and raises a raw IndexError on a too-short one, so lengths must
-    # be checked before build_points_ordering runs. The per-dataset
-    # validators further down remain in place (belt and braces).
-    if colors is not None:
-        if isinstance(colors, np.ndarray):
-            # Points accept RGBA: the alpha column is per-point opacity
-            # (consumed by every blending mode; mapped into optical depth in
-            # volumetric — see VOLUMETRIC_BLENDING_SPEC.md, phase 3).
-            validate_colors_for_writing(colors, n_points, channels=(3, 4))
-        elif isinstance(colors, (list, tuple)):
-            validate_broadcast_color(colors, "colors")
-    if radii is not None:
-        # Validates arrays AND broadcast scalars (same finite/positive rules).
-        validate_radii_for_writing(radii, n_points)
-    if sharpness is not None:
-        # Validates arrays AND broadcast scalars (same [0, 1] bounds).
-        validate_sharpness_for_writing(sharpness, n_points)
-    if scalars is not None:
-        validate_scalars_preflight(scalars, n_points)
-    # 0e. Labels: sequence-of-str type + length check (the CSR serializer
-    # would otherwise AttributeError on a non-str entry AFTER the arrays
-    # were written).
-    if labels is not None:
-        validate_labels_for_writing(labels, n_points)
+    # 0d-0e. Per-point channel sweep (colors, radii, sharpness, scalars, then
+    # labels), shared verbatim with the pre-split gate the partition / LOD
+    # wrappers run against the source count — see validate_points_channels.
+    validate_points_channels(
+        n_points,
+        colors=colors,
+        radii=radii,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
     # 0f. Transform / nd_transform normalization is pure attr processing
     # (reads only the scene dimensions), so run it in the gate too — a bad
     # transform must not leave a partial node behind.

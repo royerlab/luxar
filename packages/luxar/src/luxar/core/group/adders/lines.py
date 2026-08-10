@@ -30,6 +30,7 @@ from ..compositing import (
     position_bounds_from_array,
     slice_optional_array,
     sync_custom_colormap_attr,
+    validate_line_indices_before_split,
     validate_lines_channels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
@@ -146,6 +147,10 @@ def add_lines_impl(
 
             substitutive_spec = resolve_substitutive_axis_lines(substitutive_lod)
             if substitutive_spec is not None:
+                # Topology first (see validate_line_indices_before_split): the
+                # finest child is written LAST, so a malformed edge list was
+                # refused only after the coarse levels were already on disk.
+                validate_line_indices_before_split(indices, n_vertices, line_type)
                 return add_lines_substitutive_lod_wrapper_impl(
                     group,
                     name=name,
@@ -225,6 +230,11 @@ def add_lines_impl(
                     "image_labels is not supported alongside partition=. "
                     "Decompose the data manually or omit image_labels."
                 )
+
+            # Topology first, and BEFORE identify_polylines: it checks only
+            # dtype and bounds and then reshapes to pairs, so a malformed edge
+            # list is silently reinterpreted there (or dies on a raw reshape).
+            validate_line_indices_before_split(indices, n_vertices, line_type)
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
@@ -322,6 +332,9 @@ def add_lines_impl(
 
             additive_spec = resolve_additive_axis_lines(additive_lod)
             if additive_spec is not None:
+                # Topology first, and BEFORE make_additive_lod_lines — same
+                # reshape hazard as the partition branch above.
+                validate_line_indices_before_split(indices, n_vertices, line_type)
                 widths_arr = (
                     widths
                     if isinstance(widths, np.ndarray) and widths.shape == (n_vertices,)

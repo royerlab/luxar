@@ -9,34 +9,64 @@ All notable changes to Luxar are documented in this file.
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 
 `add_points("g", positions_200, colors=colors_100, partition={"max_elements": 100})`
-wrote cleanly, and gave both 100-point parts the *same* 100 colors. The per-part
-slicer passes a value through unchanged when its leading length does not match the
-element count — that is how a broadcast RGB triple or a scalar radius reaches every
-part — and a per-element array of the wrong length takes the same branch. When a
-part's own count happens to equal that array's length, the part's writer accepts it.
-Without the split, the flat writer rejects every one of those inputs, which is the
-tell: the split was what hid the fault. #1422 closed this for `labels`; the same trap
-was still open for Points `colors`/`radii`/`sharpness`/`scalars`, Lines
-`widths`/`colors`/`sharpness`/`scalars`, and GSplats
-`amplitudes`/`cholesky_factors`/`colors`, across all seven wrappers.
+wrote cleanly, and handed BOTH 100-point parts the same unsliced 100-colour array —
+each then applying its own spatial permutation to it, so the two stored arrays are
+not even equal to each other. Every point in the node is coloured by an unrelated
+point. The per-part slicer passes a value through unchanged when its leading length
+does not match the element count — that is how a broadcast RGB triple or a scalar
+radius reaches every part — and a per-element array of the wrong length takes the
+same branch. When a part's own count happens to equal that array's length, the
+part's writer accepts it. Without the split, the flat writer rejects every one of
+those inputs, which is the tell: the split was what hid the fault. #1422 closed this
+for `labels`; the same trap was still open for Points
+`colors`/`radii`/`sharpness`/`scalars`, Lines `widths`/`colors`/`sharpness`/`scalars`,
+and GSplats `amplitudes`/`cholesky_factors`/`colors`, across all seven wrappers.
 
-Each geometry now has one pre-split gate that re-runs its flat writer's step-0
-validators, in the flat order, against the SOURCE element count — so a given input
-fails identically with and without `partition=` / `additive_lod=` /
-`substitutive_lod=`. Deferring to the real validators is what keeps the legal
-broadcast forms legal, including the deliberate ones (a scalar radius of exactly 0.0
-is accepted where an array of zeros is not). The gates sit at the top of the wrapper
+Each geometry now has one pre-split gate that runs its flat writer's own step-0
+channel sweep against the SOURCE element count. Not a copy of it — the sweep was
+extracted from each writer into one function (`validate_points_channels`,
+`validate_lines_channels`, joining the mesh precedent `validate_mesh_arrays`) that
+the writer and the gate both call, so the gate cannot drift from what the child
+write accepts as the rules change. GSplats already shared `validate_gsplat_inputs`
+this way. Sharing the real validators is also what keeps the legal broadcast forms
+legal, including the deliberate asymmetries (a scalar radius of exactly 0.0 is
+accepted where an array of zeros is not). The gates sit at the top of the wrapper
 impls, never the leaf adders, so the plain-leaf error order is untouched — the same
 placement rule the labels guard and mesh's `_validate_partition_sources` follow. On
 the two substitutive paths the win is again *where* it fails: the finest child is
 written last, after every coarse gsplat level, so a wrong-length channel used to
 strand a partial `kind=lod` node.
 
+What is guaranteed is that the per-element CHANNEL verdict is the same with and
+without a wrapper. The gate deliberately sits above the positions / dimension /
+attr checks, so a call that ALSO trips one of those — a NaN coordinate, a wrong
+column count, an unknown attr — now reports the channel fault first on the split
+paths where the plain leaf reports the other one. Both refuse and neither writes;
+only the message differs.
+
+The Lines `indices` list had the same hole one channel over, and it is closed the
+same way. An `(E, 3)` array is refused by the flat writer, but the split paths reach
+`identify_polylines` first, which checks dtype and bounds and then reshapes to pairs
+— so eight triangles became twelve edges the author never wound, and the store took
+them; an odd flat count died on a raw `cannot reshape array of size 23 into shape
+(2)` instead of the guided message. The writer's own indexed gate is now shared as
+`validate_line_indices` and runs in each split branch before that branch's topology
+builder — topology before channels, as mesh validates `faces` first.
+
 Two uniform values were also being mis-sliced, because their own length can collide
 with the element count: a 3- or 4-component RGB(A) list/tuple on a 3- or 4-element
 node, and a uniform 1-D `(k,)` `cholesky_factors` on a `k`-splat node (`k = 6` for
-3-D data, so exactly a 6-splat one). Both are now classified by type/shape before
-slicing rather than length-tested, so every part gets the value that was authored.
+3-D data, so exactly a 6-splat one). On these three geometries the parts are
+disjoint, so the gathered slice never has a legal length and the symptom was a
+legal input REFUSED — at cap 3 on a 4-element node, only after `part_0` was already
+on disk. (Mesh is the one geometry where the same collision can write silently
+instead, because its parts share vertices; it has classified since #1382.) Both are
+now classified by type/shape before slicing, so every part gets what was authored.
+
+One neighbouring fix, same shape: `add_gsplats` checked `colors` + `colormap`
+mutual exclusion AFTER the partition branch, unlike its two siblings, so the
+refusal came from inside `part_0` and left a childless `kind=partition` group
+behind. Hoisted above the branches.
 
 #### A streaming ladder no longer loses its labels (#1422)
 

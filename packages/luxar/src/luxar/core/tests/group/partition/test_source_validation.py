@@ -172,6 +172,114 @@ class TestGSplatsPartitionSourceValidation:
         with pytest.raises(ValueError, match=message):
             scene.add_gsplats("g", centers=_positions(_N, seed=13), **kwargs)
 
+    def test_colors_plus_colormap_leaves_no_partial_wrapper(self, tmp_path):
+        """The exclusion is checked ABOVE the partition branch, like the siblings.
+
+        Checked after it, the refusal came from inside ``part_0`` and left the
+        store holding ``g`` as a childless ``kind=partition`` group; the flat path
+        refuses the same call and writes nothing.
+        """
+        compiler, scene, _ = _scene(tmp_path, "gsplats_colormap_clash.luxar.zarr")
+
+        with pytest.raises(ValueError, match="both 'colors' and 'colormap'"):
+            scene.add_gsplats(
+                "g",
+                centers=_positions(_N, seed=14),
+                amplitudes=1.0,
+                cholesky_factors=_cholesky(_N),
+                colors=np.zeros((_N, 3), dtype=np.float32),
+                colormap="viridis",
+                partition={"max_elements": _HALF},
+            )
+
+        assert "g" not in compiler.store
+
+
+# 24 vertices as 12 edges: an (8, 3) array has the same 24 elements but a layout
+# the flat writer refuses, and the split paths' topology builder would reshape it
+# into 12 edges the author never wound.
+_N_IDX = 24
+_BAD_LAYOUT = np.arange(_N_IDX, dtype=np.uint32).reshape(8, 3)
+_ODD_FLAT = np.arange(_N_IDX - 1, dtype=np.uint32)
+_INDEX_CASES = [
+    ("bad_layout", _BAD_LAYOUT, "flat \\(2E,\\) array or an \\(E, 2\\) array"),
+    ("odd_flat", _ODD_FLAT, "even element count"),
+]
+_INDEX_SPLITS = [
+    ("partition", {"partition": {"max_elements": 6}}),
+    ("additive", {"additive_lod": {"n_lods": 3}}),
+    ("substitutive", {"substitutive_lod": True}),
+]
+
+
+class TestLinesIndicesSourceValidation:
+    """``indices`` is the same bug class one channel over (#1437 follow-up).
+
+    ``identify_polylines`` checks dtype and bounds and then reshapes to pairs, so
+    a malformed edge list was reinterpreted rather than refused. Topology is
+    validated FIRST now, before the channels, exactly as mesh validates ``faces``
+    before any per-vertex channel.
+    """
+
+    @pytest.mark.parametrize("case,indices,message", _INDEX_CASES)
+    @pytest.mark.parametrize("split,split_kwargs", _INDEX_SPLITS)
+    def test_malformed_indices_raise_on_every_split_path(
+        self, tmp_path, case, indices, message, split, split_kwargs
+    ):
+        compiler, scene, _ = _scene(tmp_path, f"idx_{split}_{case}.luxar.zarr")
+
+        with pytest.raises(ValueError, match=message):
+            scene.add_lines(
+                "line",
+                _positions(_N_IDX, seed=15),
+                widths=0.2,
+                indices=indices,
+                line_type="indexed",
+                **split_kwargs,
+            )
+
+        # Nothing on disk: the substitutive path used to reach ``child_3`` with
+        # its coarse levels already written.
+        assert "line" not in compiler.store
+
+    @pytest.mark.parametrize("case,indices,message", _INDEX_CASES)
+    def test_flat_path_rejects_the_same_indices(self, tmp_path, case, indices, message):
+        _, scene, _ = _scene(tmp_path, f"idx_flat_{case}.luxar.zarr")
+
+        with pytest.raises(ValueError, match=message):
+            scene.add_lines(
+                "line",
+                _positions(_N_IDX, seed=15),
+                widths=0.2,
+                indices=indices,
+                line_type="indexed",
+            )
+
+    @pytest.mark.parametrize(
+        "layout,indices",
+        [
+            ("pairs", np.arange(_N_IDX, dtype=np.uint32).reshape(-1, 2)),
+            ("flat", np.arange(_N_IDX, dtype=np.uint32)),
+        ],
+    )
+    @pytest.mark.parametrize("split,split_kwargs", _INDEX_SPLITS[:2])
+    def test_legal_layouts_still_split(
+        self, tmp_path, layout, indices, split, split_kwargs
+    ):
+        """The control: both documented layouts still partition / ladder fine."""
+        compiler, scene, path = _scene(tmp_path, f"idx_ok_{split}_{layout}.luxar.zarr")
+        scene.add_lines(
+            "line",
+            _positions(_N_IDX, seed=16),
+            widths=0.2,
+            indices=indices,
+            line_type="indexed",
+            **split_kwargs,
+        )
+        compiler.finalize()
+
+        assert "line" in zarr.open_group(path, mode="r")
+
 
 def _part_names(path: str, node: str) -> list[str]:
     store = zarr.open_group(path, mode="r")

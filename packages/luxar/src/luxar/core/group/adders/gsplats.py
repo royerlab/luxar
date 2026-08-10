@@ -91,6 +91,16 @@ def add_gsplats_impl(
         n_splats = ctr_arr.shape[0]
         ndim = ctr_arr.shape[1]
 
+        # Colormap / colors mutual exclusivity — validated BEFORE the partition
+        # branch, as the Points and Lines adders do. Checked after the branch it
+        # was refused only from inside ``part_0``, leaving the store holding a
+        # childless ``kind=partition`` group where the plain-leaf path writes
+        # nothing at all.
+        if colors is not None and attrs.get("colormap") is not None:
+            raise ValueError(
+                "Cannot specify both 'colors' and 'colormap'. Use one or the other."
+            )
+
         # Apply compiler-level auto-partition heuristic (opt-in; default
         # off). User-explicit ``partition=`` always wins.
         partition = resolve_auto_partition(scene, n_splats, partition)
@@ -179,13 +189,6 @@ def add_gsplats_impl(
             attrs["extend_to_all"] = final_extend_dims
             aprint(f"  📡 Extending visibility across: {final_extend_dims}")
 
-        # Colormap / colors mutual exclusivity
-        colormap = attrs.get("colormap")
-        if colors is not None and colormap is not None:
-            raise ValueError(
-                "Cannot specify both 'colors' and 'colormap'. Use one or the other."
-            )
-
         parent_node = parent or group
 
         writer = group._require_scene_writer(scene)
@@ -259,6 +262,9 @@ def add_gsplats_partition_wrapper_impl(
     # `slice_optional_array`'s length test gather them: a uniform RGB(A)
     # list/tuple (3 or 4 splats), and a UNIFORM 1-D Cholesky of shape (k,) —
     # k = D(D+1)/2, so 6 for 3-D data, which a 6-splat node matches exactly.
+    # Parts are disjoint here, so the gathered slice never has a legal length and
+    # the symptom is a REFUSED legal input (see compositing.is_broadcast_color),
+    # not a silent mis-write.
     uniform_color = is_broadcast_color(colors)
     uniform_cholesky = chol_arr.ndim == 1
 

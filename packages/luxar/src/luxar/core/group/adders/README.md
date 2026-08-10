@@ -136,16 +136,26 @@ rest on each leaf. Per-element arrays are sliced into each part via
 Every wrapper impl opens with its geometry's pre-split gate
 (`validate_points_channels_before_split` /
 `validate_lines_channels_before_split` /
-`validate_gsplats_channels_before_split` from `compositing`), which re-runs the
-flat writer's step-0 validators — colors, radii/widths, sharpness, scalars,
-amplitudes/Cholesky, then labels — against the **source** element count. Without
-it `slice_optional_array` passes a wrong-length channel through whole and a part
+`validate_gsplats_channels_before_split` from `compositing`), which runs the flat
+writer's own step-0 channel sweep against the **source** element count — Points
+in the order colors, radii, sharpness, scalars, labels; Lines with `widths`
+FIRST, then colors, sharpness, scalars, labels; GSplats as the
+amplitudes/Cholesky/colors trio, then labels. The gate does not restate those
+rules: it calls the same function the writer calls
+(`validate_points_channels` / `validate_lines_channels` /
+`validate_gsplat_inputs`, the siblings of mesh's `validate_mesh_arrays`), so a
+channel added to a writer's gate is covered here too. Without the gate
+`slice_optional_array` passes a wrong-length channel through whole and a part
 whose own count happens to match accepts it, so the write succeeds with values on
-the wrong elements. Mesh does the same thing in
-`_validate_partition_sources`; the gate belongs at the top of the wrapper, never
-the leaf adder, so the plain-leaf error order is untouched. Uniform values whose
-own length can collide with the element count (an RGB(A) list/tuple, a `(k,)`
-Cholesky) are classified before slicing rather than length-tested.
+the wrong elements. Mesh does the same thing in `_validate_partition_sources`;
+the gate belongs at the top of the wrapper, never the leaf adder, so the
+plain-leaf error order is untouched (a call that also trips the positions/attr
+gates therefore reports the channel fault first here). Uniform values whose own
+length can collide with the element count (an RGB(A) list/tuple, a `(k,)`
+Cholesky) are classified before slicing rather than length-tested. Lines
+additionally validate `indices` — topology before channels, as mesh validates
+`faces` first — via `validate_line_indices_before_split`, called from each split
+branch of `add_lines` ahead of that branch's topology builder.
 
 Per-part recursion passes `partition=False` (not `None`) to bypass the
 compiler auto-partition heuristic — `None` would re-trigger it on each part
@@ -178,6 +188,7 @@ the flat path does — otherwise a ladder-only scene would get no hover overlay.
   `slice_optional_array`, `is_broadcast_color`,
   `validate_points_channels_before_split`,
   `validate_lines_channels_before_split`,
+  `validate_line_indices_before_split`,
   `validate_gsplats_channels_before_split` (each folds in
   `validate_labels_before_split`)
 - `dim_order` — `apply_dim_order_positions`, `apply_dim_order_cholesky`

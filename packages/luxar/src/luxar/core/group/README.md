@@ -162,18 +162,37 @@ LOD wrapper builders:
   scalars=…, labels=…)`, `validate_lines_channels_before_split(n_vertices, widths=…,
   …)`, `validate_gsplats_channels_before_split(centers, amplitudes,
   cholesky_factors, colors, labels)` — the same pre-split gate for EVERY other
-  per-element channel, not just labels. Each re-runs its geometry's flat writer
-  step-0 validators, in the flat order, against the SOURCE element count, so a
-  given input fails identically with and without `partition=` / `additive_lod=` /
-  `substitutive_lod=`. Same placement rule as the labels guard (first statement of
-  the wrapper impl, never a leaf adder); they fold the labels check in last, which
-  is where the flat gate has it.
+  per-element channel, not just labels. Each one CALLS its geometry's writer-side
+  sweep (`geometry_writers.points.validate_points_channels`,
+  `geometry_writers.lines.validate_lines_channels`,
+  `gsplat_assembly.validate_gsplat_inputs`) against the SOURCE element count
+  rather than restating the rules, so the gate cannot drift from what the child
+  write accepts. What that buys is a per-element CHANNEL verdict identical with
+  and without `partition=` / `additive_lod=` / `substitutive_lod=`. The gate runs
+  ABOVE the positions / dimension / attr checks on the split paths, so a call
+  that also trips one of those reports the channel fault first here and the
+  positions/attr fault on the plain-leaf path — both refuse, neither writes.
+  Same placement rule as the labels guard (first statement of the wrapper impl,
+  never a leaf adder); they fold the labels check in last, which is where the
+  flat gate has it.
+- `validate_line_indices_before_split(indices, n_vertices, line_type)` — the
+  TOPOLOGY half of the Lines gate, and it runs first (mesh validates `faces`
+  before any channel for the same reason). Calls the writer's shared
+  `validate_line_indices`, because the split paths reach
+  `lod.lines.identify_polylines` — dtype and bounds only, then `reshape(-1, 2)` —
+  before any writer gate, so an `(E, 3)` array was reinterpreted as `3E/2` edges
+  and written. Called from each split branch of `add_lines`, before that
+  branch's topology builder (the wrapper impls are too late to beat the reshape).
 - `is_broadcast_color(colors)` — classify a uniform RGB(A) list/tuple by
   type/shape, because its OWN length can collide with the element count (3 points
   with an RGB triple, 4 vertices with an RGBA one) and `slice_optional_array`
   would otherwise gather its components as if they were element rows. The GSplats
   wrapper classifies the uniform `(k,)` Cholesky the same way, by `ndim == 1`
-  (`k = 6` for 3-D, which a 6-splat node matches exactly).
+  (`k = 6` for 3-D, which a 6-splat node matches exactly). On these three
+  geometries the parts are disjoint, so the mis-slice REFUSES a legal input
+  (sometimes only after a partial node is written) rather than mis-writing
+  silently; mesh, whose parts share vertices, is the case where it can be
+  silent, and it shares this classifier.
 - `position_bounds_from_array(positions)` — per-axis min/max of an `(N, D)`
   array, matching the compiler's per-leaf `position_bounds` shape.
 
