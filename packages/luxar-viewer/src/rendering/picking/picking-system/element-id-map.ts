@@ -64,13 +64,20 @@
  *    because they name the same object: `picking-system.ts::readbackAndVote`
  *    builds the result with `elementId: resolveOnDiskElementId(nodeEntry.main,
  *    …)` and `mainNode: nodeEntry.main`, so the node this helper reads the map
- *    from is the node whose `name` becomes the CSR path. One composition still
- *    falls through: `partition=` forwards `additive_lod=` into every part
- *    (`core/group/adders/points.py`), and the part's CSR is then written per
- *    `additive_<i>` sub-group while the part group itself never receives
- *    `has_labels` — so such a part publishes no map and carries no readable
- *    labels at all. That is the per-level label gap (#1422), not a hole in the
- *    partition slicing above.
+ *    from is the node whose `name` becomes the CSR path. The
+ *    `partition=`-forwards-`additive_lod=` composition
+ *    (`core/group/adders/points.py`) is readable too since #1422: the part's
+ *    ladder parent — which IS the part's scene node — carries one union CSR
+ *    spanning its `additive_<i>` levels and declares `has_labels`. It still
+ *    publishes no MAP, for the same reason no unpartitioned ladder does (next
+ *    bullet), so it resolves at the raw committed slot.
+ *  - **Additive ladders** — readable, unmapped. The union CSR's index space is
+ *    the concatenation of the levels in their own on-disk orders, but each
+ *    level's map is in that level's own space, so `createProgressive*Loader`
+ *    builds none (it clears `has_labels` on every synthesized sub-LOD) and the
+ *    ladder concat strips any that appears. Offsetting level `i`'s map by the
+ *    preceding levels' on-disk counts is exactly that union space and is what
+ *    would close it (#1439).
  *
  * **Identity fallback is not always a safe answer**, so the map's lifetime is
  * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::

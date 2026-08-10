@@ -531,13 +531,14 @@ and otherwise carrying the slot shift that issue #1421 / PR #1425 removed for
 **flat** nodes by publishing a visible-slot → on-disk-index map. That map is
 deliberately not published across a ladder (each level's map is in that level's own
 on-disk space, so the concatenation clears it); extending it — offsetting each
-level by the preceding levels' on-disk counts — is the remaining piece of work.
+level by the preceding levels' on-disk counts — is the remaining piece of work
+(issue #1439).
 
-Two further caveats. Under the documented `partition=`-outer +
-`additive_lod=`-inner composition the CSR lands on each `part_<i>` ladder parent
-while the viewer resolves labels against the outermost `kind=partition` wrapper,
-which carries none, so a partitioned ladder does not resolve labels yet
-(pre-existing, and identical for flat partition parts). And for Lines the CSR is
+Two further notes. Under the documented `partition=`-outer +
+`additive_lod=`-inner composition the CSR lands on each `part_<i>` ladder parent,
+which is exactly where the viewer looks it up (the hit leaf scene node — the
+outermost `kind=partition` wrapper is the reported path only), so that composition
+resolves too, with the same raw-committed-slot caveat. And for Lines the CSR is
 per-vertex, matching the flat Lines writer, while the viewer's Lines pick id is a
 per-segment storage slot — so in practice only a broadcast (one-string-per-node)
 label set resolves on Lines today; per-vertex Lines label addressing is issue

@@ -183,13 +183,15 @@ def write_ladder_union_labels_csr(
     map. That map is deliberately not published across a ladder — each level's map
     is in that level's own on-disk space, so the concatenation clears it —
     and extending it (offsetting each level by the preceding levels' on-disk
-    counts) is the remaining piece of work.
+    counts) is the remaining piece of work, tracked as issue #1439.
 
     Under the ``partition=``-outer + ``additive_lod=``-inner composition the CSR
-    lands on each ``part_<i>`` ladder parent, while the viewer resolves labels
-    against the OUTERMOST ``kind=partition`` wrapper, which carries none — so a
-    partitioned ladder does not resolve labels at all yet. That is pre-existing and
-    identical for flat partition parts.
+    lands on each ``part_<i>`` ladder parent, which is exactly where the viewer
+    looks: since #1415 / PR #1420 the label lookup path is the HIT LEAF scene node
+    (``result.mainNode.name``), and a laddered part's scene node IS its ladder
+    parent — the outermost ``kind=partition`` wrapper is the *reported* path only.
+    So that composition resolves too, with the same raw-committed-slot caveat as
+    an unpartitioned ladder.
 
     For **Lines** the CSR is per-VERTEX (matching the flat Lines writer), while
     the viewer's Lines pick id is a per-SEGMENT storage slot — so in practice only

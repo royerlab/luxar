@@ -117,11 +117,15 @@ export interface PickResultHandlerPorts {
  *   and what an embedder should index against).
  *
  *   Two known limits survive this fix, both outside the handler:
- *   (i) under an *additive ladder* the CSR is scattered per
- *   `additive_<i>` sub-group (which is not a scene node) while the
- *   committed buffer concatenates every loaded level, so no single path
- *   can index it — labels there are unusable regardless of the path
- *   chosen (producer-side gap, tracked separately as #1422); and
+ *   (i) an *additive ladder* carries ONE union CSR on its parent node
+ *   (#1422), spanning the levels in `additive_<i>` order — the same node
+ *   `lookupPath` names, and the same space the progressive loader
+ *   produces when it concatenates the committed levels, so the lookup is
+ *   correct on a fully-loaded, unsliced layer. What is missing there is
+ *   the slot → on-disk map ACROSS the ladder (each level's map is in
+ *   that level's own space, so the concat drops it), so a culled or
+ *   compacted view resolves at a shifted raw slot and names the wrong
+ *   element (#1439); and
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
  *   arrives already resolved wherever the node can resolve one — Points
  *   and GSplats both do, for a node declaring `has_labels` /

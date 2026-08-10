@@ -29,7 +29,10 @@ partially-labelled one cannot produce a coherent index space and is refused.
 A fully-loaded 3D scene resolves exactly. Under an nD slice the committed buffer is
 compacted, so slots shift — the same shift #1421/#1425 removed for flat nodes with a
 visible-slot → on-disk-index map, which is deliberately not published across a ladder
-because each level's map is in that level's own space; extending it is the piece left.
+because each level's map is in that level's own space; extending it is the piece left
+(#1439). This also covers the `partition=`-outer + `additive_lod=`-inner composition:
+the CSR lands on each `part_<i>` ladder parent, which is the node the picker looks up
+since #1415/#1420.
 
 Separately, a wrong-length `labels` was silently accepted on every splitting path
 (partition, additive, substitutive — Points, Lines and GSplats): the per-part slicer

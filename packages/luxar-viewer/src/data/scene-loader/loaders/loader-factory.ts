@@ -337,7 +337,7 @@ export async function createProgressivePointsLoader(
         // on-disk map per level that the ladder concat then discards. Extending
         // that map ACROSS the ladder (offsetting each level by the preceding
         // levels' on-disk counts, which is exactly the parent CSR's index
-        // space) is what would let a sliced ladder hover correctly.
+        // space) is what would let a sliced ladder hover correctly — #1439.
         has_labels: false,
         has_image_labels: false,
       },

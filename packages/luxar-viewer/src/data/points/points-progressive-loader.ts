@@ -89,7 +89,7 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
     // carries. The ladder's own labels live in one CSR on the PARENT node
     // (#1422), whose index space is the concatenation of the levels — so a
     // correct ladder map is a per-level map offset by the preceding levels'
-    // on-disk counts, not any single level's map passed through.
+    // on-disk counts, not any single level's map passed through (#1439).
     const only = parts[0];
     if (only.elementIds === undefined) return only;
     const stripped: LoadedPointsData = { ...only };
