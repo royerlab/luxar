@@ -72,19 +72,22 @@ export interface SelectionPayload {
    * This is the ON-DISK element index (the one the leaf's arrays and its
    * label CSR are keyed by) wherever the node can resolve one — through a
    * published slot → on-disk map, or trivially where the identity already
-   * holds and no map is published. Today: a FLAT Points, GSplats or Lines node
-   * declaring `has_labels` / `has_image_labels`, and Mesh, whose
+   * holds and no map is published. Today: a Points, GSplats or Lines node
+   * declaring `has_labels` / `has_image_labels` — flat, or, for Points, an
+   * additive-LOD ladder (see below) — and Mesh, whose
    * `gl_VertexID` already is the on-disk ordinal. For a LINES node that
    * on-disk index is the picked segment's START vertex, not a segment index:
    * line labels are per-vertex, and a segment carries a single pick id, so its
-   * start endpoint is the one reported. A multi-additive-LOD (laddered) Points
-   * or Lines node is the exception among labelled nodes: its label CSR spans
-   * the levels and so declares `has_labels` on the ladder parent (#1422), but
-   * no map is composed across a ladder, so it reports the raw committed slot.
-   * On POINTS that equals the union index on a fully-loaded, unsliced layer
-   * and shifts under culling or compaction; on LINES the raw slot is a
-   * per-segment one against the per-vertex union CSR, so it is wrong at the
-   * granularity whatever the slicing (#1439). Otherwise it is the element's
+   * start endpoint is the one reported. A multi-additive-LOD (laddered) node
+   * carries its label CSR on the ladder parent, spanning the levels, and
+   * declares `has_labels` there (#1422). On POINTS that resolves like a flat
+   * node: the per-level maps are composed into the union CSR's index space
+   * (#1439), so the index holds under culling and compaction too, degrading to
+   * the raw committed slot only when the levels' own metadata is inconsistent.
+   * On LINES no map is composed across the levels, so it reports the raw
+   * committed slot, which is a per-segment one against the per-vertex union
+   * CSR — wrong at the granularity whatever the slicing (#1439 covers Points
+   * only). Otherwise it is the element's
    * slot in the buffer that reached the GPU, which after spatial range loading
    * or nD compaction is NOT the on-disk index — and on an unlabelled Lines
    * node it is a per-segment slot in what is a per-vertex element space

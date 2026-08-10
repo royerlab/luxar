@@ -27,6 +27,29 @@
  *    picking stays allocation-free in the common Points case). The commit
  *    (`commit-points-geometry.ts`) forwards `LoadedPointsData.elementIds` to
  *    the mesh stamp.
+ *  - **Points additive ladders** — composed as well, into the ladder's union
+ *    index space. `add_points(..., labels=…, additive_lod=True)` writes ONE
+ *    union label CSR on the PARENT node, keyed by
+ *    `additive_0 || additive_1 || …` (each level in its stored order) and
+ *    declared by the parent's `has_labels` (#1422); the per-level maps are
+ *    composed into that space. Because a sub-LOD has
+ *    no CSR a reader could key by, `createProgressivePointsLoader` overrides
+ *    each `additive_<i>` node's label flags with the PARENT's: with a union CSR
+ *    every level builds its own level-space map, and
+ *    `points-progressive-loader.ts::concatenatePointsData` offsets level `i` by
+ *    the preceding levels' ON-DISK counts (`n_points`) to land it in that union
+ *    space — a level that published no map (projection identity fast path)
+ *    contributing `offset + slot`. Each id is BOUNDED by its own level's row
+ *    count as well as shifted: an index past it would name a real row belonging
+ *    to a sibling level, which is a confidently wrong label rather than a
+ *    missing one. Nothing is emitted when the parent declares
+ *    no labels, when the whole resident ladder is complete and unculled (slot
+ *    IS the union index), or when the inputs are inconsistent. That last case
+ *    is NOT a suppression: with no map this helper returns the slot, so on a
+ *    sliced ladder the tooltip still shows whatever CSR row the slot hits. What
+ *    refusing buys is that the wrong id is never one this code COMPOSED out of
+ *    data it knows is inconsistent — no worse than the pre-#1439 behaviour —
+ *    issue #1439.
  *  - **Mesh** — nothing to do: its pick shader already reports the on-disk
  *    vertex ordinal via `gl_VertexID`, so the lookup correctly no-ops.
  *  - **GSplats** — composed at PROJECTION time, not load time
@@ -65,6 +88,13 @@
  *    varying, so exactly one can be reported: by convention it is the **START**
  *    vertex. Gated on `has_labels` / `has_image_labels` like the others, and it
  *    fails closed to the raw slot on any inconsistency.
+ *  - **Lines additive ladders** — still out. The per-node indirection above
+ *    exists now, but nothing composes the LEVELS: `lines-progressive-loader.ts`
+ *    has no counterpart to the Points ladder offsetting above, and a level's
+ *    `vertexRangeBounds` are in that level's own vertex space.
+ *  - **GSplat additive ladders** — nothing to compose: the authoring path has
+ *    no `labels` channel for a gsplat ladder, so no level of one carries
+ *    labels at all.
  *  - **Partitioned points, gsplats and lines** — composed, no longer a gap.
  *    `core/group/adders/points.py`, `core/group/adders/gsplats.py` and
  *    `core/group/adders/lines.py` slice the
@@ -81,16 +111,11 @@
  *    `partition=`-forwards-`additive_lod=` composition
  *    (`core/group/adders/points.py`) is readable too since #1422: the part's
  *    ladder parent — which IS the part's scene node — carries one union CSR
- *    spanning its `additive_<i>` levels and declares `has_labels`. It still
- *    publishes no MAP, for the same reason no unpartitioned ladder does (next
- *    bullet), so it resolves at the raw committed slot.
- *  - **Additive ladders** — readable, unmapped. The union CSR's index space is
- *    the concatenation of the levels in their own on-disk orders, but each
- *    level's map is in that level's own space, so `createProgressive*Loader`
- *    builds none (it clears `has_labels` on every synthesized sub-LOD) and the
- *    ladder concat strips any that appears. Offsetting level `i`'s map by the
- *    preceding levels' on-disk counts is exactly that union space and is what
- *    would close it (#1439).
+ *    spanning its `additive_<i>` levels and declares `has_labels`. For POINTS
+ *    it is MAPPED as well, by exactly the ladder composition above — that
+ *    composition reads the parent flags off the part group, so a partitioned
+ *    ladder needs no separate path. A LINES part stays readable-but-unmapped,
+ *    like any lines ladder, and resolves at the raw committed slot.
  *
  * **Identity fallback is not always a safe answer**, so the map's lifetime is
  * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::

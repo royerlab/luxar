@@ -25,10 +25,13 @@
  * Stored in a module-owned {@link WeakMap} keyed on the concat-result object,
  * NOT as a field on the data:
  * - The data object is sometimes SHARED (the single-LOD concat returns the raw
- *   LOD object directly, but only when that object publishes no picking index
- *   space — `elementIds` for Points, `ranges` for GSplats,
- *   `vertexRangeBounds` for Lines — which the concat must otherwise strip off a
- *   shallow copy) or DEEP-CLONED
+ *   LOD object directly, but only when that object's picking index space —
+ *   `elementIds` for Points, `ranges` for GSplats, `vertexRangeBounds` for
+ *   Lines — is already the one the node's label CSR is keyed by, which the
+ *   concat must otherwise strip off a shallow copy. That holds when the object
+ *   publishes no index space at all, and — for a Points ladder whose parent
+ *   carries the union CSR (#1439) — also when it publishes one, since level 0
+ *   sits at offset 0 of that union space) or DEEP-CLONED
  *   (slice-cache ladder restore), so a
  *   mutable field would alias or be lost; identity-keyed WeakMap entries are
  *   immune. A restored-from-cache clone simply has no entry → no append on the
