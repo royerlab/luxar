@@ -19,12 +19,10 @@
  * covers the dispatcher wrappers that orchestrate those kernels.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { existsSync, readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 import { TypeScriptFallback } from '../../../../wasm/typescript';
 import type { WasmModule } from '../../../../wasm/types';
 import { arraysEqual } from '../../../helpers/array-compare';
+import { loadWasmArtifact, wasmArtifactExists } from '../../../helpers/wasm-artifact';
 import {
   projectGSplatsViaDispatcher,
   projectLinesViaDispatcher,
@@ -47,21 +45,16 @@ import type { PointsMetadata, EffectiveRadiusConfig } from '../../../../types/po
 // Backends: TypeScript reference (always) + compiled WASM (when built)
 // ---------------------------------------------------------------------------
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const wasmJsPath = join(__dirname, '../../../../../public/wasm/luxar_wasm.js');
-const wasmBinaryPath = join(__dirname, '../../../../../public/wasm/luxar_wasm_bg.wasm');
-const wasmAvailable = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
+const wasmAvailable = wasmArtifactExists();
 
 const tsBackend: WasmModule = new TypeScriptFallback();
 let wasmBackend: WasmModule | null = null;
 
 beforeAll(async () => {
   if (!wasmAvailable) return;
-  const wasmBinary = readFileSync(wasmBinaryPath);
-  const wasm = await import(wasmJsPath);
-  wasm.initSync({ module: wasmBinary });
-  wasmBackend = wasm as unknown as WasmModule;
+  // Strict on purpose: an incompatible or stale build fails here by name rather
+  // than as an opaque "x is not a function" mid-comparison.
+  wasmBackend = await loadWasmArtifact();
 });
 
 /** Continuous dim metadata entry (display flag irrelevant here). */
