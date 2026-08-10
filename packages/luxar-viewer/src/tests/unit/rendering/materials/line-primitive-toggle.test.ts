@@ -4,7 +4,20 @@
  * peak-projection define lifecycle. TSL-side selection is covered by the
  * codegen snapshots and the tsl-shader-parity `line-volprim-*` fixtures.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// Thin dispatch spies for the PICK factories: the real implementations
+// still run (they are what the parity fixtures validate); the spies only
+// record which factory the wrapper's `_rebuild` selected.
+vi.mock('../../../../rendering/picking/line/pick-volumetric.tsl', async (importOriginal) => {
+  const mod =
+    await importOriginal<typeof import('../../../../rendering/picking/line/pick-volumetric.tsl')>();
+  return { ...mod, volumetricLinePickWebGPUFactory: vi.fn(mod.volumetricLinePickWebGPUFactory) };
+});
+vi.mock('../../../../rendering/picking/line/pick.tsl', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../../../rendering/picking/line/pick.tsl')>();
+  return { ...mod, linePickWebGPUFactory: vi.fn(mod.linePickWebGPUFactory) };
+});
 
 import {
   DEFAULT_LINE_PRIMITIVE,
@@ -127,6 +140,15 @@ describe('LineMaterial primitive selection (GLSL)', () => {
     q.dispose();
   });
 
+  it('volumetric PICK shaders never import erf (peak lane only)', async () => {
+    // The pick fragment is the peak capsule unconditionally — if an erf
+    // symbol shows up, sum-lane machinery leaked into the pick pass.
+    const { VOLUMETRIC_LINE_PICK_FRAGMENT_SHADER } =
+      await import('../../../../rendering/picking/line/shaders-volumetric');
+    expect(VOLUMETRIC_LINE_PICK_FRAGMENT_SHADER).not.toContain('luxarErf');
+    expect(VOLUMETRIC_LINE_PICK_FRAGMENT_SHADER).toContain('gl_FragDepth');
+  });
+
   it('volumetric shaders import the SHARED erf implementations', () => {
     // The spike embedded a stale pre-re-solve c0; the production shader
     // must carry the shared module's coefficient (erf.ts, re-solved
@@ -134,5 +156,90 @@ describe('LineMaterial primitive selection (GLSL)', () => {
     expect(VOLUMETRIC_LINE_FRAGMENT_SHADER).toContain('1.126454454'); // erfPoly c0
     expect(VOLUMETRIC_LINE_FRAGMENT_SHADER).not.toContain('1.126422828'); // spike c0
     expect(VOLUMETRIC_LINE_FRAGMENT_SHADER).toContain('luxarErfAS'); // A&S mixed lane
+  });
+});
+
+describe('LinePickingMaterial primitive selection (#1352 PR-3)', () => {
+  it('defaults to the screen-space pick pair, byte-identical to the pre-toggle build', async () => {
+    const { LinePickingMaterial } = await import('../../../../rendering/picking/line/material');
+    const { LINE_PICK_VERTEX_SHADER, LINE_PICK_FRAGMENT_SHADER } =
+      await import('../../../../rendering/picking/line/shaders');
+    const m = new LinePickingMaterial({ nodeId: 7 });
+    expect(m.vertexShader).toBe(LINE_PICK_VERTEX_SHADER);
+    expect(m.fragmentShader).toBe(LINE_PICK_FRAGMENT_SHADER);
+    m.dispose();
+  });
+
+  it('selects the volumetric pick pair (explicit and via session override)', async () => {
+    const { LinePickingMaterial } = await import('../../../../rendering/picking/line/material');
+    const { VOLUMETRIC_LINE_PICK_VERTEX_SHADER, VOLUMETRIC_LINE_PICK_FRAGMENT_SHADER } =
+      await import('../../../../rendering/picking/line/shaders-volumetric');
+    const explicit = new LinePickingMaterial({ nodeId: 7, primitive: 'volumetric' });
+    expect(explicit.vertexShader).toBe(VOLUMETRIC_LINE_PICK_VERTEX_SHADER);
+    expect(explicit.fragmentShader).toBe(VOLUMETRIC_LINE_PICK_FRAGMENT_SHADER);
+    expect(explicit.userData.linePrimitive).toBe('volumetric');
+    explicit.dispose();
+    // The session override — the production path: create-lines-node passes
+    // no primitive, so the pick material must resolve the same override the
+    // visual material does or the two rasterize different stencils.
+    setLinePrimitiveOverride('volumetric');
+    const viaOverride = new LinePickingMaterial({ nodeId: 7 });
+    expect(viaOverride.vertexShader).toBe(VOLUMETRIC_LINE_PICK_VERTEX_SHADER);
+    viaOverride.dispose();
+  });
+
+  it('clone() round-trips the primitive', async () => {
+    const { LinePickingMaterial } = await import('../../../../rendering/picking/line/material');
+    const { VOLUMETRIC_LINE_PICK_VERTEX_SHADER } =
+      await import('../../../../rendering/picking/line/shaders-volumetric');
+    const m = new LinePickingMaterial({ nodeId: 7, primitive: 'volumetric' });
+    const c = m.clone();
+    expect(c.vertexShader).toBe(VOLUMETRIC_LINE_PICK_VERTEX_SHADER);
+    expect(c.userData.linePrimitive).toBe('volumetric');
+    m.dispose();
+    c.dispose();
+  });
+
+  it('TSL wrapper dispatches to the volumetric pick factory (and back)', async () => {
+    const { LinePickingTSLMaterial } =
+      await import('../../../../rendering/picking/line/material-tsl');
+    const volFactory = vi.mocked(
+      (await import('../../../../rendering/picking/line/pick-volumetric.tsl'))
+        .volumetricLinePickWebGPUFactory
+    );
+    const quadFactory = vi.mocked(
+      (await import('../../../../rendering/picking/line/pick.tsl')).linePickWebGPUFactory
+    );
+    volFactory.mockClear();
+    quadFactory.mockClear();
+
+    const vol = new LinePickingTSLMaterial({ nodeId: 7, primitive: 'volumetric' });
+    expect(volFactory).toHaveBeenCalledTimes(1);
+    expect(quadFactory).not.toHaveBeenCalled();
+    // A texture rebind rebuilds through the SAME factory.
+    const tex = new (await import('three')).DataTexture(
+      new Float32Array(24),
+      6,
+      1,
+      (await import('three')).RGBAFormat,
+      (await import('three')).FloatType
+    );
+    vol.updateLineTexture(tex);
+    expect(volFactory).toHaveBeenCalledTimes(2);
+    expect(quadFactory).not.toHaveBeenCalled();
+    // clone carries the variant through the constructor.
+    const c = vol.clone();
+    expect(c.userData.linePrimitive).toBe('volumetric');
+    expect(quadFactory).not.toHaveBeenCalled();
+
+    volFactory.mockClear();
+    const quad = new LinePickingTSLMaterial({ nodeId: 7 });
+    expect(quadFactory).toHaveBeenCalledTimes(1);
+    expect(volFactory).not.toHaveBeenCalled();
+
+    vol.dispose();
+    c.dispose();
+    quad.dispose();
+    tex.dispose();
   });
 });

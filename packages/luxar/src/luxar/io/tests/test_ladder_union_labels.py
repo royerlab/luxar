@@ -17,7 +17,9 @@ Tests cover:
 - A malformed level array still reports the GEOMETRY fault, not a label one
 - A rejected ladder leaves no partial node behind (fail-fast gate)
 - A wrong-length ``labels`` raises instead of silently mislabelling every level,
-  at every one of the seven ``validate_labels_before_split`` call sites
+  at every one of the seven wrapper pre-split gates (Points and Lines reach the
+  labels check through the shared writer sweep their gate delegates to; GSplats
+  through ``validate_labels_before_split``)
 - ``partition=``-outer + ``additive_lod=``-inner puts the union on each part
 """
 
@@ -242,6 +244,81 @@ class TestPointsLadderUnionLabels:
 
         # No empty 'ladder' group may be left behind by the rejected write.
         assert "ladder" not in compiler.store
+
+    def test_per_level_n_points_matches_arrays_and_sums_to_parent(self, tmp_path):
+        """``n_points`` is per-level and sums to the parent's — the viewer's cross-check.
+
+        The viewer half of #1439 composes each level's picking map into the
+        parent's union label CSR index space (#1422) by reading the ``n_points``
+        attr on every ``additive_<i>`` group and prefix-summing it, and it
+        CROSS-CHECKS the parent's ``n_points`` against that sum — a disagreement
+        disables the composition outright (it reads as a CSR and a set of levels
+        from different builds). So two writer facts are load-bearing for picking
+        correctness, and neither was pinned against the ARRAYS before: every
+        existing ladder test reads the same attr the viewer reads, so a writer
+        that started stamping a cumulative or padded ``n_points`` would keep
+        them all green while every composed hover id landed in a sibling
+        level's CSR row.
+
+        The trap is real because the user-facing ``counts`` ARE cumulative:
+        ``counts=[8, 40, 200, 1500]`` on 1500 points yields levels of
+        8/32/160/1300 rows. Every count below is therefore deliberately
+        different from its level's size, so a cumulative stamp cannot pass.
+        """
+        path = str(tmp_path / "counts.luxar.zarr")
+        n_points = 1500
+        positions = _random_positions(n_points, seed=131)
+        labels = [f"cell_{i}" for i in range(n_points)]
+        # CUMULATIVE breakpoints -> per-level sizes 8 / 32 / 160 / 1300.
+        cumulative_counts = [8, 40, 200, 1500]
+
+        compiler = LuxarZarrCompiler(path)
+        scene = compiler.create_scene(dimensions=_make_3d_dims())
+        scene.add_points(
+            "pts",
+            positions,
+            labels=labels,
+            additive_lod={"counts": cumulative_counts},
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        parent = store["pts"]
+        n_sublods = int(parent.attrs["n_additive_sublods"])
+        assert n_sublods == len(cumulative_counts)
+
+        # (a) Each level's attr must be that level's OWN row count.
+        level_sizes = []
+        level_attrs = []
+        for i in range(n_sublods):
+            level = parent[f"additive_{i}"]
+            rows = int(level["positions"].shape[0])
+            assert int(level.attrs["n_points"]) == rows, (
+                f"additive_{i}: n_points attr {level.attrs['n_points']} != "
+                f"{rows} stored positions rows"
+            )
+            level_sizes.append(rows)
+            level_attrs.append(int(level.attrs["n_points"]))
+
+        # The counts really are cumulative, so every level past the first has a
+        # size that differs from its count — without that the assertions above
+        # would pass a cumulative stamp too. (Level 0's count and size always
+        # coincide; it is the prefix of length one.)
+        assert level_sizes == [8, 32, 160, 1300]
+        assert all(
+            size != count for size, count in zip(level_sizes[1:], cumulative_counts[1:])
+        ), level_sizes
+
+        # (b) The parent's attr is the SUM of the levels' (exactly what the
+        # viewer cross-checks its prefix sum against, hence the attrs and not
+        # just the rows).
+        assert int(parent.attrs["n_points"]) == sum(level_attrs)
+        assert int(parent.attrs["n_points"]) == sum(level_sizes) == n_points
+
+        # …and the union CSR spans exactly that concatenated index space, which
+        # is what the composed pick ids address.
+        assert len(parent["label_offsets"]) == sum(level_sizes) + 1
+        assert len(decode_labels(parent)) == sum(level_sizes)
 
     def test_partition_of_ladder_puts_the_union_on_each_part(self, tmp_path):
         """``partition=``-outer + ``additive_lod=``-inner: one union per part.

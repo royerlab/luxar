@@ -5,7 +5,8 @@
  * behind-camera + ortho-near culling, sorted-index permutation) plus
  * the line-pick counterparts + multi-row, cap-suppression, clipping-remap,
  * and exact-near-plane boundary variants, plus the volumetric-primitive
- * (`line-volprim-*`) family. 42 registry entries.
+ * (`line-volprim-*`) family, visual and pick alike (hardcoded entry
+ * counts drift — count `Object.keys(LINE_SHADERS)` when it matters).
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -19,6 +20,8 @@ import {
   buildLineTSLNodesFromUniforms,
 } from '../../../../rendering/materials/line/shader-tsl';
 import { LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders';
+import { VOLUMETRIC_LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders-volumetric';
+import { volumetricLinePickWebGPUFactory } from '../../../../rendering/picking/line/pick-volumetric.tsl';
 import {
   linePickWebGPUFactory,
   buildLinePickTSLNodesFromUniforms,
@@ -432,6 +435,17 @@ function buildVisualLineTSLMaterial(
   material.blending = THREE.NoBlending;
   return material;
 }
+
+/**
+ * FAT geometry for the pick/visible footprint-agreement fixtures
+ * (#1352 PR-3): drawn half-width ≈ 19 px at the standard ortho scale 64,
+ * so a σ-level footprint divergence moves the coverage boundary by
+ * multiple pixels instead of hiding inside the rasterisation ribbon.
+ */
+const FOOTPRINT_STYLE: LineFixtureStyle = {
+  startWidth: 0.3,
+  endWidth: 0.3,
+};
 
 const REMAP_STYLE: LineFixtureStyle = {
   startColor: [1.0, 0.0, 0.0],
@@ -1767,6 +1781,162 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]),
+  },
+  // === Volumetric PICK parity + footprint agreement (#1352 PR-3) ===
+  // The volumetric pick pass: the visual stadium stencil vertex with the
+  // pick IDs, and the PEAK capsule fragment used UNCONDITIONALLY (the
+  // pick hotspot sits on the centerline regardless of the visual blending
+  // mode). Output contract matches `line-pick`:
+  // (nodeId, elementIdLow16, brightness, elementIdHigh16), depth = 1 − b.
+  //
+  // The sideon/endon pick fixtures and their `-fat-` visual twins share
+  // FAT geometry (FOOTPRINT_STYLE, drawn half-width ≈ 19 px at this ortho
+  // scale) so the pick/visible footprint-agreement spec has real
+  // sensitivity: a 20% σ divergence moves the coverage boundary ~4 px —
+  // far outside the 1-px rasterisation ribbon — where the default ~3 px
+  // half-width would bury it in quantisation.
+  'line-volprim-fat-sideon': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+  },
+  'line-volprim-fat-endon': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
+  },
+  // The same fat side-on segment under MAX blending: the PEAK capsule the
+  // pick pass mirrors. The footprint-agreement spec asserts pick ≡ this
+  // fixture EXACTLY (same capsule on both sides), while the additive twin
+  // above is a superset (its separable radial·axial coverage keeps dim
+  // corner crescents beyond the endpoints that no capsule reaches).
+  'line-volprim-fat-peak': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+        true
+      ),
+    buildDefines: () => ({ LUXAR_PEAK_PROJECTION: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+  },
+  'line-volprim-pick-sideon': {
+    source: VOLUMETRIC_LINE_PICK_SOURCE,
+    buildUniforms: () =>
+      buildPickLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) =>
+      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+  },
+  // END-ON pick — the #1352 headline case: the screen-space pick quad
+  // degenerates to a sliver here, the volumetric capsule picks a finite
+  // disc. Same geometry as `line-volprim-fat-endon`.
+  'line-volprim-pick-endon': {
+    source: VOLUMETRIC_LINE_PICK_SOURCE,
+    buildUniforms: () =>
+      buildPickLineUniforms(
+        buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) =>
+      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
+  },
+  // PERSPECTIVE pick — the only pick fixture that builds the TSL
+  // perspective graph variant (diverging rays, the vertex near-clip
+  // chain, per-fragment nearFade at the hit depth) and drives the GLSL
+  // uIsOrtho=0 branches. NEAR-PLANE STRADDLING geometry + knobs of
+  // `line-volprim-nearclip` below (starts BEHIND the eye at camera-space
+  // z = +0.5, nearCull 0.35), so the vertex stage's quad near-clip
+  // reshaping is load-bearing here, not decorative. The thin world width
+  // (0.002), telephoto scale (6400) and raised extent clamp (128) are
+  // required, not stylistic: at the default width the near-clipped
+  // endpoint's raw stencil width trips the coverageFade cull, NOTHING
+  // renders, and `assertBothRendered` rejects the buffer as vacuous —
+  // see the sibling's comment for the numbers.
+  'line-volprim-pick-persp': {
+    source: VOLUMETRIC_LINE_PICK_SOURCE,
+    buildUniforms: () => ({
+      ...buildPickLineUniforms(
+        buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+          startWidth: 0.002,
+          endWidth: 0.002,
+        }),
+        false,
+        0.35
+      ),
+      uPerspectiveLineScale: { value: 6400.0 },
+      uMaxLinePixelWidth: { value: 128.0 },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: false,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+        startWidth: 0.002,
+        endWidth: 0.002,
+      }),
+    buildCamera: buildBehindCamera,
+  },
+  // The V joint under pick: the only pick fixture that reaches the
+  // partner fetch, the bisector-cut construction, and the peak lane's
+  // ray-domain cut interval [tLo, tHi] — in both backends.
+  'line-volprim-pick-joint': {
+    source: VOLUMETRIC_LINE_PICK_SOURCE,
+    buildUniforms: () => buildPickLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
+    buildTSLMaterial: (uniforms) =>
+      volumetricLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
+    buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
   },
   // NEAR-PLANE STRADDLING (review finding 2 on PR #1426): an end-on
   // segment that starts BEHIND the eye (camera-space z = +0.5) and ends in
