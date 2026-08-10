@@ -539,7 +539,11 @@ def add_points_multi_lod_wrapper_impl(
     # same inputs the ordering used, so summing it per level reproduces the
     # ladder's cumulative curve exactly — no need to thread it out of the
     # builder (whose List[level] return shape many tests depend on).
-    from ..lod.group import additive_level_stats, breakpoints_kind_of
+    from ..lod.group import (
+        additive_level_stats,
+        breakpoints_kind_of,
+        resolve_ladder_extend_to_all,
+    )
     from ..lod.points import compute_points_energy
 
     energy = compute_points_energy(
@@ -593,24 +597,15 @@ def add_points_multi_lod_wrapper_impl(
         f"(method={method!r}, sizes={[int(L.size) for L in levels]})"
     )
 
-    # The writer stamps this value VERBATIM onto the parent group AND every
-    # ``additive_<i>/`` sub-LOD, so the ``"all"`` sentinel must be resolved
-    # before it gets there (the writer's signature now only accepts a resolved
-    # list). The ``is not None`` guard preserves today's behaviour: a ladder
-    # emits no single-value advisory at all — the flat path is never reached on
-    # this branch. Resolving unconditionally would ADD a first one, fired once
-    # per BSP part under ``partition=`` + ``additive_lod=``, advising extension
-    # on a dim the layer is meant to be sliced by, and mis-attributed to
-    # ``Group.add_points``. Note this diverges from the sibling sole-resolver
-    # ``gsplats_pipeline/lod_dispatch.py:239``, which is unguarded and does
-    # warn. Must stay an explicit kwarg: in ``attrs`` it would collide.
-    final_extend_dims: Optional[List[str]] = None
-    if extend_to_all is not None:
-        final_extend_dims = scene._resolve_extend_to_all(
-            extend_to_all, pos_arr, "points"
-        )
-        if final_extend_dims:
-            aprint(f"  📡 Extending visibility across: {final_extend_dims}")
+    # Nothing else resolves the ``"all"`` sentinel on this branch (unlike the
+    # partition wrapper, we do not recurse through the leaf adder) and the
+    # writer stamps the value VERBATIM onto the parent group AND every
+    # ``additive_<i>/`` sub-LOD — see ``resolve_ladder_extend_to_all`` for why
+    # ``None`` stays unresolved. Must stay an explicit kwarg: in ``attrs`` it
+    # would collide.
+    final_extend_dims = resolve_ladder_extend_to_all(
+        scene, extend_to_all, pos_arr, "points"
+    )
 
     metadata = writer.write_points_multi_lod(
         path,

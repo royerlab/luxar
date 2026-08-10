@@ -762,7 +762,11 @@ def add_lines_multi_lod_wrapper_impl(
     # tube volume per polyline). Energy is per-POLYLINE here, so the levels are
     # summed over their member polylines; the flattened polyline list is
     # rebuilt in level order, which is exactly the order the builder sliced.
-    from ..lod.group import additive_level_stats, breakpoints_kind_of
+    from ..lod.group import (
+        additive_level_stats,
+        breakpoints_kind_of,
+        resolve_ladder_extend_to_all,
+    )
     from ..lod.lines import compute_lines_energy
 
     flat_polylines = [poly for level in polyline_levels for poly in level]
@@ -854,24 +858,15 @@ def add_lines_multi_lod_wrapper_impl(
         f"{[len(L) for L in polyline_levels]})"
     )
 
-    # The writer stamps this value VERBATIM onto the parent group AND every
-    # ``additive_<i>/`` sub-LOD, so the ``"all"`` sentinel must be resolved
-    # before it gets there (the writer's signature now only accepts a resolved
-    # list). The ``is not None`` guard preserves today's behaviour: a ladder
-    # emits no single-value advisory at all — the flat path is never reached on
-    # this branch. Resolving unconditionally would ADD a first one, fired once
-    # per BSP part under ``partition=`` + ``additive_lod=``, advising extension
-    # on a dim the layer is meant to be sliced by, and mis-attributed to
-    # ``Group.add_lines``. Note this diverges from the sibling sole-resolver
-    # ``gsplats_pipeline/lod_dispatch.py:239``, which is unguarded and does
-    # warn. Must stay an explicit kwarg: in ``attrs`` it would collide.
-    final_extend_dims: Optional[List[str]] = None
-    if extend_to_all is not None:
-        final_extend_dims = scene._resolve_extend_to_all(
-            extend_to_all, vert_arr, "lines"
-        )
-        if final_extend_dims:
-            aprint(f"  📡 Extending visibility across: {final_extend_dims}")
+    # Nothing else resolves the ``"all"`` sentinel on this branch (unlike the
+    # partition wrapper, we do not recurse through the leaf adder) and the
+    # writer stamps the value VERBATIM onto the parent group AND every
+    # ``additive_<i>/`` sub-LOD — see ``resolve_ladder_extend_to_all`` for why
+    # ``None`` stays unresolved. Must stay an explicit kwarg: in ``attrs`` it
+    # would collide.
+    final_extend_dims = resolve_ladder_extend_to_all(
+        scene, extend_to_all, vert_arr, "lines"
+    )
 
     metadata = writer.write_lines_multi_lod(
         path,
