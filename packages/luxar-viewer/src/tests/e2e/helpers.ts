@@ -1469,3 +1469,55 @@ export async function samplePixelAt(
   const [pixel] = await samplePixelsAt(page, selector, [[fx, fy]]);
   return pixel;
 }
+
+/** Result of {@link probeWebGPUBackend}. */
+export interface WebGPUBackendProbe {
+  /** True only when a REAL native WebGPU backend is driving the page. */
+  isNative: boolean;
+  /** `capabilities.apiSurface` as reported by the viewer, if available. */
+  apiSurface?: string;
+  /** `capabilities.framebufferYDown` as reported by the viewer, if available. */
+  framebufferYDown?: boolean;
+}
+
+/**
+ * Probe which graphics backend is physically running behind
+ * `?renderer=webgpu`, for specs that must skip on the WebGL2 fallback.
+ *
+ * `capabilities.apiSurface === 'webgpu'` does NOT answer this: it is
+ * `'webgpu'` for any active `WebGPURenderer`, *including* one whose
+ * internal backend has fallen back to WebGL2 — the headless-chromium
+ * norm. That field means "which method-signature contract should I
+ * follow?", not "which GPU backend is running?" (#1449). So `isNative`
+ * reads the backend's own flag and nothing else, which also leaves
+ * `apiSurface` free to be *asserted* by callers rather than assumed.
+ *
+ * The tell is deliberately POSITIVE (`isWebGPUBackend === true`, set by
+ * three's `WebGPUBackend` constructor): a negative `isWebGLBackend
+ * !== true` check fails OPEN under structural drift — a renamed flag, a
+ * third backend, a wrapped `backend` — silently restoring the very
+ * fail-open behaviour #1449 fixed. The positive form fails closed
+ * (skip), mirroring `isWebGLRenderer` in `rendering/renderer-capabilities.ts`.
+ */
+export async function probeWebGPUBackend(page: Page): Promise<WebGPUBackendProbe> {
+  return await page.evaluate(() => {
+    const debug = (
+      window as unknown as {
+        __luxarDebug?: {
+          app?: {
+            sceneManager?: {
+              capabilities?: { apiSurface?: string; framebufferYDown?: boolean };
+            };
+          };
+          renderer?: { backend?: { isWebGPUBackend?: boolean } };
+        };
+      }
+    ).__luxarDebug;
+    const caps = debug?.app?.sceneManager?.capabilities;
+    return {
+      isNative: debug?.renderer?.backend?.isWebGPUBackend === true,
+      apiSurface: caps?.apiSurface,
+      framebufferYDown: caps?.framebufferYDown,
+    };
+  });
+}

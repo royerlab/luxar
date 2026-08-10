@@ -5,12 +5,24 @@
  * internal WebGL2 backend, so the bulk of CI exercises the TSL graphs
  * *through* WebGL2 — useful but doesn't catch WGSL compilation issues,
  * real WebGPU adapter limits, or the 256-byte row-padding deinterlace.
- * This spec auto-skips when no real WebGPU adapter is present, and on
- * a real-WebGPU runtime it exercises the WebGPU-specific paths.
+ * The native-only tests here auto-skip when no real WebGPU adapter is
+ * present; the HDR capture round-trip at the bottom deliberately does
+ * not (see its own comment — it makes no native claim).
+ *
+ * A native gate MUST probe the physical backend, not
+ * `capabilities.apiSurface` (#1449): `apiSurface` is `'webgpu'` for any
+ * active `WebGPURenderer` *including* one whose internal backend has
+ * fallen back to WebGL2 — that is its documented meaning ("which
+ * method-signature contract?", not "which GPU backend?"). Gating on it
+ * alone made these tests run on the WebGL2 fallback in headless CI and
+ * report "native WebGPU verified" for a run that never touched WGSL or
+ * the 256-byte row padding. Hence the shared `probeWebGPUBackend`
+ * helper; do not "simplify" the gate back to an `apiSurface` check.
  *
  * The suite is deliberately fast and read-only: a screenshot at an
  * unaligned width (forces `compactWebGPUReadbackRows` to engage) and
- * an HDR capture round-trip in each mode. Heavier validation lives in
+ * an HDR capture round-trip in two of its three modes
+ * (`raw-scene-hdr` is not covered). Heavier validation lives in
  * the TSL parity harness (`tsl-shader-parity.spec.ts`).
  *
  * @see picking/PICKING_DESIGN.md — WebGPU implementation details
@@ -18,58 +30,44 @@
  */
 
 import { test, expect } from './fixtures';
-import { waitForLuxarReady, waitForPointsLoaded } from './helpers';
+import { probeWebGPUBackend, waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
 const SKIP_REASON =
-  'native-WebGPU smoke spec requires a real WebGPU adapter; ' +
+  'these tests require a real WebGPU adapter; ' +
   'Playwright chromium falls back to WebGL2 in headless mode. ' +
   'Run manually with a WebGPU-enabled Chrome stable for full coverage.';
 
-test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
+const SURFACE_SKIP_REASON =
+  'no WebGPURenderer surface on this page: `?renderer=webgpu` dropped all the ' +
+  'way to THREE.WebGLRenderer, so caps.apiSurface is "webgl2" and the WebGPU ' +
+  'readback arm this test exercises does not exist here.';
+
+test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`/?renderer=webgpu&src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page);
   });
 
-  test('reports caps.apiSurface === "webgpu" under real WebGPU; skips otherwise', async ({
+  test('under a native WebGPU backend, caps report apiSurface "webgpu" and a top-down framebuffer', async ({
     page,
   }) => {
-    const api = await page.evaluate(
-      () => (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
-    );
-    test.skip(api !== 'webgpu', SKIP_REASON);
-    expect(api).toBe('webgpu');
-  });
-
-  test('caps.framebufferYDown is true under real WebGPU (top-down framebuffer)', async ({
-    page,
-  }) => {
-    const probe = await page.evaluate(() => {
-      const dbg = (window as any).__luxarDebug;
-      return {
-        api: dbg.app.sceneManager.capabilities.apiSurface,
-        framebufferYDown: dbg.app.sceneManager.capabilities.framebufferYDown,
-        isWebGLBackend: dbg.renderer?.backend?.isWebGLBackend === true,
-      };
-    });
-    test.skip(probe.api !== 'webgpu', SKIP_REASON);
-    // Skip if the underlying backend is the WebGL2 fallback — that
-    // path is exercised by the separate `webgpu-force-webgl` spec
-    // path; here we want a real native WebGPU adapter.
-    test.skip(probe.isWebGLBackend, SKIP_REASON);
+    // The gate is the physical backend alone, so both capability
+    // fields below stay falsifiable claims about what the viewer
+    // derived from it. Skipping on the WebGL2 fallback is deliberate:
+    // that path is covered by the `webgpu-force-webgl` specs.
+    const probe = await probeWebGPUBackend(page);
+    test.skip(!probe.isNative, SKIP_REASON);
+    expect(probe.apiSurface).toBe('webgpu');
     expect(probe.framebufferYDown).toBe(true);
   });
 
   test('screenshot at an unaligned canvas width returns a non-empty, compact buffer', async ({
     page,
   }) => {
-    const api = await page.evaluate(
-      () => (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
-    );
-    test.skip(api !== 'webgpu', SKIP_REASON);
+    test.skip(!(await probeWebGPUBackend(page)).isNative, SKIP_REASON);
 
     // 853 is deliberately chosen: 853 × 4 (RGBA8) = 3412 bytes, which
     // pads to 3584 = 14 × 256 under WebGPU's `bytesPerRow` rule. If
@@ -118,13 +116,30 @@ test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
     expect(probe.length).toBeGreaterThan(0);
   });
 
-  test('captureHDRPixels round-trips for visible-ldr and hdr-effects-pre-tone modes', async ({
+  // NOT native-gated, on purpose. This is a `?renderer=webgpu` *surface*
+  // round-trip: it runs on the native adapter AND on WebGPURenderer's
+  // WebGL2 backend, so it makes no WGSL / real-adapter claim. What it does
+  // prove holds on either backend — `captureHDRPixels` reaches
+  // `readPixelsCompactAsync` through the WebGPURenderer method-signature
+  // contract (the arm that takes no destination buffer and compacts padded
+  // rows, which the `?renderer=webgl` path never takes), and the returned
+  // buffer honours `length === width * height * 4`. Gating it on the native
+  // backend would leave `captureHDRPixels` with zero automated execution
+  // anywhere.
+  //
+  // The gate is therefore `apiSurface`, NOT the native-backend probe: that
+  // arm is selected by `caps.apiSurface !== 'webgl2'` in
+  // `readPixelsCompactAsync`, so the claim above holds exactly while the
+  // WebGPURenderer surface is present. A page that drops all the way to a
+  // plain `THREE.WebGLRenderer` (no adapter, or below-spec adapter limits —
+  // see `renderer-setup.ts`'s `{ fallback: true }`) reports `'webgl2'` and
+  // takes the WebGL arm, which would pass this test while proving the
+  // opposite of what it says.
+  test('captureHDRPixels round-trips through the WebGPU readback surface (either backend)', async ({
     page,
   }) => {
-    const api = await page.evaluate(
-      () => (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
-    );
-    test.skip(api !== 'webgpu', SKIP_REASON);
+    const { apiSurface } = await probeWebGPUBackend(page);
+    test.skip(apiSurface !== 'webgpu', SURFACE_SKIP_REASON);
 
     for (const mode of ['visible-ldr', 'hdr-effects-pre-tone'] as const) {
       const { width, height, length } = await page.evaluate(async (m) => {
