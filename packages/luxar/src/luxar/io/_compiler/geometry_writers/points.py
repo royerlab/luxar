@@ -32,6 +32,7 @@ from ..node_common import (
     POINTS_RESERVED_ATTRS,
     apply_default_render_attrs,
     prepare_transform_attrs,
+    record_forwarded_sort_order,
     validate_broadcast_color,
     validate_node_path,
     validate_render_attrs,
@@ -43,46 +44,39 @@ from ..spatial_ordering.points import (
 )
 
 
-def write_points(
-    ctx: GeometryWriteCtx,
-    path: NodePath,
-    positions: NDArray[np.float32],
-    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
-    radii: Optional[Union[NDArray[np.float32], float]] = None,
-    sharpness: Optional[Union[NDArray[np.float32], float]] = None,
-    scalars: Optional[Union[NDArray[np.float32], float]] = None,
-    labels: Optional["Sequence[str]"] = None,
-    image_labels: Optional[Any] = None,
-    **attrs: Any,
-) -> PointsMetadata:
-    """Write points data progressively to Zarr (see ``write_points`` docstring).
+def validate_points_channels(
+    n_points: int,
+    *,
+    colors: Any = None,
+    radii: Any = None,
+    sharpness: Any = None,
+    scalars: Any = None,
+    labels: Any = None,
+) -> None:
+    """Validate every per-point channel against ``n_points``. Pure — no I/O.
 
-    Returns the node metadata; the caller records it in the metadata cache.
+    Steps 0d-0e of :func:`write_points`'s fail-fast gate, factored out because a
+    SECOND caller needs exactly them and nothing else:
+    :func:`luxar.core.group.compositing.validate_points_channels_before_split`
+    runs this against the SOURCE point count before a ``partition=`` /
+    ``additive_lod=`` / ``substitutive_lod=`` decomposition. Without that, a
+    wrong-length channel rode the per-part slicer's pass-through branch into
+    every part and was ACCEPTED by any part whose own count happened to match
+    (#1437), and the plain-leaf path refuses the same input outright.
+
+    Sharing the function rather than repeating the checks is what keeps that
+    promise true as the rules change: the pre-split gate cannot drift from what
+    the child write accepts, because it IS what the child write runs. Same
+    contract, and same wording, as the mesh sibling
+    :func:`~luxar.io._compiler.geometry_writers.mesh.validate_mesh_arrays`.
     """
-    # Import validation functions locally to avoid circular imports
     from ....validation.base import (
         validate_colors_for_writing,
         validate_labels_for_writing,
-        validate_positions_for_writing,
         validate_radii_for_writing,
         validate_sharpness_for_writing,
     )
 
-    # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group
-    # is created and before any array lands on disk, so an invalid input
-    # cannot leave a partial node behind. NOTE this gate is best-effort, not
-    # transactional: validators that need the store (image_labels, custom
-    # colormap LUT resolution) still run post-write and can leak a partial
-    # node on failure (F7 residual — transactional/temp-dir writes are a
-    # separate project).
-    #
-    # 0a. Pure attr validators + reserved writer-stamp collisions.
-    validate_render_attrs(attrs, reserved_attrs=POINTS_RESERVED_ATTRS)
-    # 0b. Node path: every segment must be a valid node name — an empty path
-    # would resolve require_group("") to the scene ROOT and clobber it.
-    path = validate_node_path(path)
-    # 0c. Positions shape/finiteness.
-    n_points, n_dims = validate_positions_for_writing(positions)
     # 0d. Pre-flight length sweep over ALL provided per-point arrays. The
     # spatial-ordering fancy-indexing below silently TRUNCATES a too-long
     # array and raises a raw IndexError on a too-short one, so lengths must
@@ -109,6 +103,72 @@ def write_points(
     # were written).
     if labels is not None:
         validate_labels_for_writing(labels, n_points)
+
+
+def write_points(
+    ctx: GeometryWriteCtx,
+    path: NodePath,
+    positions: NDArray[np.float32],
+    colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+    radii: Optional[Union[NDArray[np.float32], float]] = None,
+    sharpness: Optional[Union[NDArray[np.float32], float]] = None,
+    scalars: Optional[Union[NDArray[np.float32], float]] = None,
+    labels: Optional["Sequence[str]"] = None,
+    image_labels: Optional[Any] = None,
+    **attrs: Any,
+) -> PointsMetadata:
+    """Write points data progressively to Zarr (see ``write_points`` docstring).
+
+    Returns the node metadata; the caller records it in the metadata cache.
+
+    Private forwarding flag ``_return_sort_order`` (opt-in): when truthy, the
+    returned metadata carries a ``"sort_order"`` key holding this node's spatial
+    permutation (``None`` when no spatial reordering was applied). Only
+    ``write_points_multi_lod`` sets it — it needs each level's permutation to
+    build the ladder's union label CSR, and the permutation is not persisted on
+    disk. Opt-in so the flat path never parks a big index array in the
+    compiler's metadata cache.
+    """
+    # Private forwarding flag: the multi-LOD writer needs this node's spatial
+    # permutation to build the ladder's union label CSR (the permutation is not
+    # persisted on disk). Popped FIRST so it never reaches the attr validator or
+    # .zattrs.
+    return_sort_order = attrs.pop("_return_sort_order", False)
+
+    # Import validation functions locally to avoid circular imports
+    from ....validation.base import (
+        validate_colors_for_writing,
+        validate_positions_for_writing,
+        validate_radii_for_writing,
+        validate_sharpness_for_writing,
+    )
+
+    # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group
+    # is created and before any array lands on disk, so an invalid input
+    # cannot leave a partial node behind. NOTE this gate is best-effort, not
+    # transactional: validators that need the store (image_labels, custom
+    # colormap LUT resolution) still run post-write and can leak a partial
+    # node on failure (F7 residual — transactional/temp-dir writes are a
+    # separate project).
+    #
+    # 0a. Pure attr validators + reserved writer-stamp collisions.
+    validate_render_attrs(attrs, reserved_attrs=POINTS_RESERVED_ATTRS)
+    # 0b. Node path: every segment must be a valid node name — an empty path
+    # would resolve require_group("") to the scene ROOT and clobber it.
+    path = validate_node_path(path)
+    # 0c. Positions shape/finiteness.
+    n_points, n_dims = validate_positions_for_writing(positions)
+    # 0d-0e. Per-point channel sweep (colors, radii, sharpness, scalars, then
+    # labels), shared verbatim with the pre-split gate the partition / LOD
+    # wrappers run against the source count — see validate_points_channels.
+    validate_points_channels(
+        n_points,
+        colors=colors,
+        radii=radii,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
     # 0f. Transform / nd_transform normalization is pure attr processing
     # (reads only the scene dimensions), so run it in the gate too — a bad
     # transform must not leave a partial node behind.
@@ -275,6 +335,14 @@ def write_points(
         metadata["ordering"] = ordering_data["ordering"]
     else:
         metadata["ordering"] = "none"
+
+    # 10b. Forward the spatial permutation to a multi-LOD parent on request
+    # (``None`` means "no spatial reordering — identity").
+    record_forwarded_sort_order(
+        metadata,
+        return_sort_order,
+        ordering_data["sort_order"] if ordering_data is not None else None,
+    )
 
     # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
     if labels is not None:

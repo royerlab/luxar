@@ -39,6 +39,7 @@ from arbol import aprint
 from ...mesh import Mesh
 from ..compositing import (
     COMPOSITING_ATTRS,
+    is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
@@ -959,26 +960,6 @@ def _resolve_mesh_partition(partition: Any) -> tuple[int, str]:
     )
 
 
-def _is_broadcast_color(colors: Any) -> bool:
-    """Whether ``colors`` is a uniform RGB(A) sequence rather than per-vertex data.
-
-    Classifies on SHAPE only — a list/tuple of 3 or 4 numeric components — which is
-    the admission test
-    :func:`~luxar.io._compiler.node_common.validate_broadcast_color` applies at the
-    writer. Values (finite, non-negative, alpha in range) are deliberately left to
-    that validator, so a bad uniform color fails with the same message it gets
-    without ``partition=``.
-
-    A per-vertex list of triples fails the component test (its entries are
-    sequences, not numbers) and is gathered normally, as are numpy colors of any
-    shape — the writer refuses a 1-D numpy color outright, so only a list/tuple can
-    be the broadcast form.
-    """
-    if not isinstance(colors, (list, tuple)) or len(colors) not in (3, 4):
-        return False
-    return all(isinstance(c, (int, float, np.integer, np.floating)) for c in colors)
-
-
 def _validate_partition_sources(
     faces_arr: np.ndarray,
     n_vertices: int,
@@ -1136,7 +1117,7 @@ def _add_mesh_partition(
     # Each part then receives a different rotated 3-slice of the components —
     # SILENTLY, because a 3-element result is itself a valid uniform RGB. Classify
     # the broadcast form up front so every part gets the color the caller wrote.
-    uniform_color = _is_broadcast_color(colors)
+    uniform_color = is_broadcast_color(colors)
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)

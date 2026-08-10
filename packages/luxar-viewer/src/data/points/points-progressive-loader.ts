@@ -77,16 +77,22 @@ function concatenatePointsData(parts: LoadedPointsData[]): LoadedPointsData {
   }
   if (parts.length === 1) {
     // GUARD (belt-and-braces): a ladder payload must never publish a slot →
-    // on-disk map. `parts[0]` is a SUB-LOD (`additive_0`), so its map is in
-    // that level's index space, not the parent node's, and `parts.length === 1`
-    // is not "unladdered" — this loader only exists for `n_additive_sublods`
-    // nodes, so it is the first-paint state of EVERY ladder. Passing the map
-    // through would make hover report an additive_0 index while only LOD 0 is
-    // resident and the raw slot once a second level lands.
+    // on-disk map. Not because `parts[0]`'s map is in the wrong space — it is
+    // always `additive_0`, whose on-disk range IS the parent union CSR's
+    // PREFIX (#1422), so passing it through would in fact resolve correctly
+    // while it is the only committed level. It is that `parts.length === 1` is
+    // not "unladdered" — this loader only exists for `n_additive_sublods`
+    // nodes, so it is the first-paint state of EVERY ladder — and a tooltip
+    // that is right at first paint and silently degrades to the raw slot the
+    // moment a second level lands is worse than one consistently at the raw
+    // slot, which is what every doc surface promises.
     // `createProgressivePointsLoader` now also clears `has_labels` /
     // `has_image_labels` on each sub-LOD's attrs, so the map is normally never
     // built at all; this keeps the invariant true whatever attrs a sub-LOD
-    // carries. (Per-level label resolution is #1422.)
+    // carries. The ladder's own labels live in one CSR on the PARENT node
+    // (#1422), whose index space is the concatenation of the levels — so a
+    // correct ladder map is a per-level map offset by the preceding levels'
+    // on-disk counts, not any single level's map passed through (#1439).
     const only = parts[0];
     if (only.elementIds === undefined) return only;
     const stripped: LoadedPointsData = { ...only };

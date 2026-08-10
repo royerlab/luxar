@@ -26,10 +26,12 @@ from ...points import Points
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
     COMPOSITING_ATTRS,
+    is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
+    validate_points_channels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
 from ..partition import reject_mismatched_partition_parent
@@ -397,6 +399,25 @@ def add_points_partition_wrapper_impl(
     **attrs: Any,
 ) -> "Group":
     """Build a kind=partition wrapper Group with one Points child per BSP part."""
+    # Entering a wrapper IS "a split is about to happen": from here on every
+    # per-point channel is sliced per part, and `slice_optional_array` passes a
+    # wrong-length value through whole. Scoped to the split paths so the
+    # plain-leaf gate order (and therefore which error a multi-fault call
+    # reports) is untouched.
+    validate_points_channels_before_split(
+        n_points,
+        colors=colors,
+        radii=radii,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
+
+    # A uniform RGB(A) list/tuple is the one leaf parameter whose OWN length can
+    # collide with the point count (a 3-point node with an RGB triple), so
+    # classify it up front instead of letting the length test gather it.
+    uniform_color = is_broadcast_color(colors)
+
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
 
@@ -418,7 +439,9 @@ def add_points_partition_wrapper_impl(
         wrapper.add_points(
             name=f"part_{i}",
             positions=pos_arr[indices],
-            colors=slice_optional_array(colors, indices, n_points),
+            colors=colors
+            if uniform_color
+            else slice_optional_array(colors, indices, n_points),
             radii=slice_optional_array(radii, indices, n_points),
             sharpness=slice_optional_array(sharpness, indices, n_points),
             scalars=slice_optional_array(scalars, indices, n_points),
@@ -485,11 +508,28 @@ def add_points_multi_lod_wrapper_impl(
     logical "one node"). The viewer's progressive loader walks the
     subgroups; the user never sees the decomposition.
 
+    ``labels`` are written by the writer as ONE union CSR on the parent (the
+    subgroups carry none — the loader concatenates levels into one buffer), so
+    the scene is notified here exactly as on the flat path.
+
     ``counts`` and the three ``*_for_energy`` arrays are only used to stamp the
     ladder's quality metadata (``lod_stats.energy_fraction_cum`` per level plus
     ``level_stats.reference_energy`` on the parent), which lets the viewer
     release a LOD swap on committed energy instead of raw element count.
     """
+    # See add_points_partition_wrapper_impl: every per-point channel is about to
+    # be sliced per level, and a per-level length check cannot catch a
+    # wrong-length value whose length happens to match some level's.
+    validate_points_channels_before_split(
+        n_points,
+        colors=colors,
+        radii=radii,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
+    uniform_color = is_broadcast_color(colors)
+
     scene = group._find_scene()
     writer = group._require_scene_writer(scene)
     parent_node = parent or group
@@ -519,7 +559,9 @@ def add_points_multi_lod_wrapper_impl(
         level_slices.append(
             {
                 "positions": pos_arr[level_indices].astype(np.float32),
-                "colors": slice_optional_array(colors, level_indices, n_points),
+                "colors": colors
+                if uniform_color
+                else slice_optional_array(colors, level_indices, n_points),
                 "radii": slice_optional_array(radii, level_indices, n_points),
                 "sharpness": slice_optional_array(sharpness, level_indices, n_points),
                 "scalars": slice_optional_array(scalars, level_indices, n_points),
@@ -577,6 +619,11 @@ def add_points_multi_lod_wrapper_impl(
         **attrs,
     )
 
+    # Ladder labels live in one CSR on the parent node, so the scene needs the
+    # same hover-overlay injection the flat path gets.
+    if labels is not None:
+        scene._notify_labels_added()
+
     # Mirror the writer's custom-colormap resolution (ndarray/matplotlib name
     # -> 'custom') so the returned node matches what zarr stores.
     sync_custom_colormap_attr(attrs)
@@ -625,6 +672,19 @@ def add_points_substitutive_lod_wrapper_impl(
     ``opacity`` is therefore applied once at composite time to both the points
     child and the gsplat children (the lift uses ``opacity=1``).
     """
+    # Before the lift: the coarse levels cost a full gsplat reduce, and the
+    # finest child (written LAST, after every coarse level is already on disk) is
+    # where a wrong-length channel would otherwise be caught — stranding a
+    # partial kind=lod group. Fail here instead, before anything is written.
+    validate_points_channels_before_split(
+        n_points,
+        colors=colors,
+        radii=radii,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
+
     from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
     from ..lod.group import (
         compose_additive_under_substitutive,

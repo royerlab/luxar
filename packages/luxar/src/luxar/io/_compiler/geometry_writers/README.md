@@ -26,12 +26,13 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_render_attrs(attrs, POINTS_RESERVED_ATTRS)` — reserved writer-stamp collisions
    - `validate_node_path(path)` — every segment must be a valid node name; the bare root path `overlays` is reserved (screen-space overlay metadata lives under `overlays/<name>`) and rejected here
    - `validate_positions_for_writing(positions)` → `(n_points, n_dims)`
-   - `validate_colors_for_writing(colors, n_points, channels=(3,4))` — if colors is an array (Points accept RGBA: alpha is per-point opacity)
-   - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
-   - `validate_radii_for_writing(radii, n_points)` — arrays AND broadcast scalars
-   - `validate_sharpness_for_writing(sharpness, n_points)` — arrays AND broadcast scalars
-   - `validate_scalars_preflight(scalars, n_points)` — length check
-   - `validate_labels_for_writing(labels, n_points)` — sequence-of-str type + length
+   - `validate_points_channels(n_points, colors=…, radii=…, sharpness=…, scalars=…, labels=…)` — every per-point channel check, in one shared function for the same reason mesh has `validate_mesh_arrays`: a SECOND caller runs **exactly this** and nothing else. `compositing.validate_points_channels_before_split` runs it against the SOURCE point count before a `partition=` / `additive_lod=` / `substitutive_lod=` split, because the per-part slicer passes a wrong-length channel through whole and a part whose own count happens to match then ACCEPTS it (#1437) — where the plain-leaf path refuses the same input. Sharing the function is what keeps the pre-split gate from drifting from what the child write accepts. It covers, in this order:
+     - `validate_colors_for_writing(colors, n_points, channels=(3,4))` — if colors is an array (Points accept RGBA: alpha is per-point opacity)
+     - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
+     - `validate_radii_for_writing(radii, n_points)` — arrays AND broadcast scalars
+     - `validate_sharpness_for_writing(sharpness, n_points)` — arrays AND broadcast scalars
+     - `validate_scalars_preflight(scalars, n_points)` — length check
+     - `validate_labels_for_writing(labels, n_points)` — sequence-of-str type + length
    - `prepare_transform_attrs(attrs, ctx.store)` — transform / nd_transform normalization
 
 2. **Setup**: `ctx.store.require_group(path)`
@@ -63,6 +64,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 8. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
    - `write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)` — if `labels is not None`
    - `write_image_labels_csr(group, image_labels, n_points, ctx.compressor, sort_order)` — if `image_labels is not None`
+   - A multi-LOD **parent** instead gets a single union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's `sort_order` in the metadata so the parent can build that union
 
 9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds", "ordering"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels` (no `"type"` key)
 
@@ -74,13 +76,14 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_positions_for_writing(vertices)` → `(n_vertices, n_dims)`
    - Validate `line_type` in `("segments", "polyline", "loop", "indexed")`
    - Type-specific vertex count checks (segments: even, polyline: ≥2, loop: ≥3, indexed: requires `indices`)
-   - Indexed `indices` are normalized with `np.asarray` and accepted only as a flat even-element `(2E,)` array or an `(E, 2)` pair array; the element count, integer dtype, and `[0, n_vertices)` bounds are validated before conversion
-   - `validate_widths_for_writing(widths, n_vertices)` — arrays AND broadcast scalars
-   - `validate_colors_for_writing(colors, n_vertices, channels=(3,4))` — if colors is an array
-   - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
-   - `validate_sharpness_for_writing(sharpness, n_vertices)` — arrays AND broadcast scalars
-   - `validate_scalars_preflight(scalars, n_vertices)` — length check
-   - `validate_labels_for_writing(labels, n_vertices)` — if `labels is not None` (labels are per-vertex)
+   - `validate_line_indices(indices, n_vertices)` — the indexed edge list, shared with a second caller like the two functions below. Normalizes with `np.asarray` and accepts only a flat even-element `(2E,)` array or an `(E, 2)` pair array, then integer dtype and `[0, n_vertices)` bounds — all before `convert_to_indexed`, which is what makes the bounds check meaningful. Returns the normalized array. `compositing.validate_line_indices_before_split` runs it from each split branch of `add_lines`, ahead of that branch's topology builder: `lod.lines.identify_polylines` checks only dtype and bounds and then reshapes to pairs, so an `(E, 3)` array was reinterpreted as `3E/2` edges the author never wound and written (#1437). Topology before channels, mirroring mesh's faces-first order
+   - `validate_lines_channels(n_vertices, widths=…, colors=…, sharpness=…, scalars=…, labels=…)` — every per-vertex channel check in one shared function, the Points sibling (see its entry above for why it is shared). `widths` is required, so it is validated first and unconditionally; all four channels are per-VERTEX, not per-segment. It covers, in this order:
+     - `validate_widths_for_writing(widths, n_vertices)` — arrays AND broadcast scalars
+     - `validate_colors_for_writing(colors, n_vertices, channels=(3,4))` — if colors is an array
+     - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
+     - `validate_sharpness_for_writing(sharpness, n_vertices)` — arrays AND broadcast scalars
+     - `validate_scalars_preflight(scalars, n_vertices)` — length check
+     - `validate_labels_for_writing(labels, n_vertices)` — if `labels is not None` (labels are per-vertex)
    - `prepare_transform_attrs(attrs, ctx.store)`
 
 2. **Setup**: `ctx.store.require_group(path)` and print the named write header. For `segments` input with at least 16 vertices, a warn-only authoring lint fires when more than 90% of consecutive edges form a forward coordinate chain (immediate `(a,b),(b,a)` reversals are excluded). The warning names the logical node and fires once across partition leaves; it recommends shared-index `polyline`/`indexed` authoring for joint continuity.
@@ -115,6 +118,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 9. **Write labels** (CSR serialization; `sort_order` = `ordering_data["vertex_sort_indices"]` when ordered, per-vertex):
    - `write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)` — if `labels is not None`
    - `write_image_labels_csr(group, image_labels, n_vertices, ctx.compressor, sort_order)` — if `image_labels is not None`
+   - A multi-LOD **parent** instead gets a single per-vertex union CSR (`write_ladder_union_labels_csr`) and its `additive_<i>` levels get none — the writer is called with `labels=None` plus the private `_return_sort_order=True` flag, which returns this node's per-vertex `sort_order` in the metadata so the parent can build that union
 
 10. **Return metadata**: `{"n_vertices", "n_segments", "ndim", "original_line_type", "has_colors", "has_sharpness", "max_width"}` plus ordering keys and `position_bounds` (and conditionally `has_spatial_index`, `has_scalars`, `has_labels`, `has_image_labels`) — no `"type"` key
 

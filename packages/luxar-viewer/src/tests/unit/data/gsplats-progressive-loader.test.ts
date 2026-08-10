@@ -1042,7 +1042,8 @@ describe('concatenateGSplatsData — picking index-space fields (issue #1423)', 
   // on-disk index space, while the pick path resolves labels against the
   // PARENT node. `parts.length === 1` is the first-paint state of EVERY
   // ladder, not an "unladdered" node, so the single-part passthrough is
-  // exactly where a per-level map would leak. (Per-level labels are #1422.)
+  // exactly where a per-level map would leak. (A Points / Lines ladder's labels
+  // live in one union CSR on the parent — #1422; gsplat ladders carry none.)
   it('strips ranges from a single-part passthrough', () => {
     const only: LoadedGSplatsData = {
       ...makeLodData(4),

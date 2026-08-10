@@ -46,6 +46,110 @@ is deliberately not reinterpreted viewer-side: the displayed-dimension set is
 mutable at runtime, so it would not mean at view time what it meant at author
 time.
 
+#### Every per-element channel is length-checked before a split, not just labels (#1437)
+
+`add_points("g", positions_200, colors=colors_100, partition={"max_elements": 100})`
+wrote cleanly, and handed BOTH 100-point parts the same unsliced 100-colour array —
+each then applying its own spatial permutation to it, so the two stored arrays are
+not even equal to each other. Every point in the node is coloured by an unrelated
+point. The per-part slicer passes a value through unchanged when its leading length
+does not match the element count — that is how a broadcast RGB triple or a scalar
+radius reaches every part — and a per-element array of the wrong length takes the
+same branch. When a part's own count happens to equal that array's length, the
+part's writer accepts it. Without the split, the flat writer rejects every one of
+those inputs, which is the tell: the split was what hid the fault. #1422 closed this
+for `labels`; the same trap was still open for Points
+`colors`/`radii`/`sharpness`/`scalars`, Lines `widths`/`colors`/`sharpness`/`scalars`,
+and GSplats `amplitudes`/`cholesky_factors`/`colors`, across all seven wrappers.
+
+Each geometry now has one pre-split gate that runs its flat writer's own step-0
+channel sweep against the SOURCE element count. Not a copy of it — the sweep was
+extracted from each writer into one function (`validate_points_channels`,
+`validate_lines_channels`, joining the mesh precedent `validate_mesh_arrays`) that
+the writer and the gate both call, so the gate cannot drift from what the child
+write accepts as the rules change. GSplats already shared `validate_gsplat_inputs`
+this way. Sharing the real validators is also what keeps the legal broadcast forms
+legal, including the deliberate asymmetries (a scalar radius of exactly 0.0 is
+accepted where an array of zeros is not). The gates sit at the top of the wrapper
+impls, never the leaf adders, so the plain-leaf error order is untouched — the same
+placement rule the labels guard and mesh's `_validate_partition_sources` follow. On
+the two substitutive paths the win is again *where* it fails: the finest child is
+written last, after every coarse gsplat level, so a wrong-length channel used to
+strand a partial `kind=lod` node.
+
+What is guaranteed is that the per-element CHANNEL verdict is the same with and
+without a wrapper. The gate deliberately sits above the positions / dimension /
+attr checks, so a call that ALSO trips one of those — a NaN coordinate, a wrong
+column count, an unknown attr — now reports the channel fault first on the split
+paths where the plain leaf reports the other one. Both refuse and neither writes;
+only the message differs.
+
+The Lines `indices` list had the same hole one channel over, and it is closed the
+same way. An `(E, 3)` array is refused by the flat writer, but the split paths reach
+`identify_polylines` first, which checks dtype and bounds and then reshapes to pairs
+— so eight triangles became twelve edges the author never wound, and the store took
+them; an odd flat count died on a raw `cannot reshape array of size 23 into shape
+(2)` instead of the guided message. The writer's own indexed gate is now shared as
+`validate_line_indices` and runs in each split branch before that branch's topology
+builder — topology before channels, as mesh validates `faces` first.
+
+Two uniform values were also being mis-sliced, because their own length can collide
+with the element count: a 3- or 4-component RGB(A) list/tuple on a 3- or 4-element
+node, and a uniform 1-D `(k,)` `cholesky_factors` on a `k`-splat node (`k = 6` for
+3-D data, so exactly a 6-splat one). On these three geometries the parts are
+disjoint, so the gathered slice never has a legal length and the symptom was a
+legal input REFUSED — for a *list* colour under `midpoint` / `sah` on a 4-element
+node, only after `part_0` was already on disk with the alpha dropped. (Mesh is the one geometry where the same collision can write silently
+instead, because its parts share vertices; it has classified since #1382.) Both are
+now classified by type/shape before slicing, so every part gets what was authored.
+
+One neighbouring fix, same shape: `add_gsplats` checked `colors` + `colormap`
+mutual exclusion AFTER the partition branch, unlike its two siblings, so the
+refusal came from inside `part_0` and left a childless `kind=partition` group
+behind. Hoisted above the branches.
+
+#### A streaming ladder no longer loses its labels (#1422)
+
+`add_points("pts", …, labels=…, additive_lod=True)` wrote a scene whose labels were
+unreachable from anywhere. The labels went into the `additive_<i>` subgroups, but a
+ladder's subgroups are an implementation detail the viewer never surfaces as nodes —
+so picking looked for a CSR on the parent, found none, and never provisioned label
+picking at all. The ladder adders also never told the scene labels existed, so a
+scene whose only labelled node was a ladder got no `overlays/__hover_text` and hover
+was off entirely. Three independent reasons for the same silence.
+
+The ladder now writes ONE `label_offsets`/`label_bytes` pair on the parent node,
+which carries `has_labels`, and the subgroups carry none. Its index space is the
+concatenation of the levels in coarsest→finest order, each in its own stored
+(spatially reordered) order — the same on-disk space a flat labelled leaf already
+uses, just spanning the levels, which is the space that matters because the loader
+concatenates levels into one buffer. Recovering each level's permutation needed a
+private `_return_sort_order` flag on the geometry writers, since the spatial sort is
+computed per level and never persisted. Labels are all-or-nothing across a ladder: a
+partially-labelled one cannot produce a coherent index space and is refused.
+
+On Points, a fully-loaded 3D scene resolves exactly. Under an nD slice the committed
+buffer is compacted, so slots shift — the same shift #1421/#1425 removed for flat nodes
+with a visible-slot → on-disk-index map, which is deliberately not published across a
+ladder because each level's map is in that level's own space; extending it is the piece
+left (#1439). This also covers the `partition=`-outer + `additive_lod=`-inner
+composition: the CSR lands on each `part_<i>` ladder parent, which is the node the
+picker looks up since #1415/#1420. On Lines the CSR is per-vertex, matching the flat
+Lines writer, while the pick id is a per-segment storage slot; #1424 closed that
+granularity gap for FLAT nodes by resolving the picked segment's slot back to its start
+vertex row, but that chain runs through the very slot → on-disk map a ladder does not
+publish — so on a laddered Lines node the hover only lands on the right string when
+every element carries the same one, until #1439 carries the map across the levels.
+
+Separately, a wrong-length `labels` was silently accepted on the partition paths
+(Points, Lines and GSplats) and on the additive ladder (Points and Lines): the per-part
+slicer passes a mis-sized list through whole, so all parts got the *same* labels and
+part 1's tooltips were part 0's. The two substitutive paths did reject it, but only
+once the finest child was reached — minutes of gsplat reduce later, with the coarse
+levels already on disk and a partial `kind=lod` node left behind. All seven wrappers
+now check the full element count before they slice, leaving the plain-leaf gate order
+untouched.
+
 #### Mesh fades out near the camera, like the other three types (#1431)
 
 Points, Lines and GSplats all suppress geometry approaching the near plane through
@@ -427,7 +531,10 @@ node when an embedder `selection` listener exists, and that payload's `elementIn
 keeps reporting the storage slot, unchanged. It is also deliberately stripped across an
 additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
 so no single map is meaningful (the loader factory now also clears the label flags on
-each sub-LOD, so it is never built there); per-level label resolution is #1422. A
+each sub-LOD, so it is never built there). A ladder's labels are not per-level either:
+#1422 writes ONE union CSR on the ladder parent, spanning the levels, and offsetting
+each level's map by the preceding levels' on-disk counts to match that union space is
+what is left (#1439). A
 `kind=partition` points layer composes with the fix above (#1415): the handler now
 resolves labels against the hit `part_<i>` leaf rather than the outermost wrapper, and
 that leaf is both the node whose sliced CSR is read and the node this map is stamped on.
@@ -472,8 +579,10 @@ branch is unreachable and even an uncompacted labelled node allocates a full N-e
 map. It is likewise never published across an additive ladder — each sub-LOD is a
 distinct on-disk array, so no single map is meaningful; the loader factory clears the
 label flags on each synthesized `additive_<i>` node and the ladder concat strips the
-field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) is fixed in
-the entry below.
+field belt-and-braces. A ladder's labels live in ONE union CSR on its parent since
+#1422 (a gsplat ladder carries none at all — no `labels` channel authors one), and
+carrying the map across the levels of a Points / Lines ladder is #1439. Lines (#1424)
+is fixed in the entry below.
 
 #### Hover labels index the right line vertex (#1424)
 
@@ -516,11 +625,13 @@ published for a node declaring neither `has_labels` nor `has_image_labels`, the 
 stamped onto the mesh in lockstep with `committedData` (and cleared with it), it is never
 built across an additive ladder — the loader factory clears both label flags on each
 synthesized `additive_<i>` node and the ladder concat strips the field belt-and-braces
-(per-level labels are #1422) — and every inconsistency fails closed to the raw slot
+(a laddered node's labels are one union CSR on its parent since #1422, and carrying the
+map across the levels of that union is #1439, so a laddered Lines node still resolves at
+the raw segment slot) — and every inconsistency fails closed to the raw slot
 rather than to a plausible-looking wrong answer, warning wherever the composer can tell
 the difference. All four geometry types now resolve hover labels through the one
-`resolveOnDiskElementId` seam; mesh needs no map of its own, since it loads whole and its
-`gl_VertexID` slot already is the on-disk row.
+`resolveOnDiskElementId` seam on a FLAT node; mesh needs no map of its own, since it
+loads whole and its `gl_VertexID` slot already is the on-disk row.
 
 #### The port probe now matches the bind it predicts
 

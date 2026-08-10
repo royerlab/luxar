@@ -1222,7 +1222,9 @@ describe('LinesProgressiveLoader — RGBA color layout (colorK stride, volumetri
 
 describe('LinesProgressiveLoader — vertexRangeBounds are never published (issue #1424)', () => {
   // A ladder payload must NEVER carry the on-disk VERTEX range bounds: each part is a
-  // sub-LOD (`additive_<i>`) with its own on-disk vertex space. The single-part
+  // sub-LOD (`additive_<i>`) whose vertices live in their own on-disk space, while the
+  // labels those bounds would serve are ONE per-vertex union CSR on the parent
+  // (#1422) keyed by the concatenation of those spaces. The single-part
   // branch is the FIRST-PAINT state of every ladder, not an "unladdered node",
   // so passing `parts[0]` through verbatim would make hover report an
   // additive_0 vertex row until a second level lands and then silently switch

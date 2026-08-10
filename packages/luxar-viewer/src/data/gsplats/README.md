@@ -50,7 +50,9 @@ Scene-loader code never imports the concrete class — it goes through
   are in that level's on-disk space, so `concatenateGSplatsData` strips
   `ranges`, the one such field on `LoadedGSplatsData`. The composed map
   never passes through the concat at all — it lives one stage later, on
-  `ProcessedGSplatsData` (per-level labels are #1422).
+  `ProcessedGSplatsData`. A gsplat ladder carries no labels at any level
+  anyway — the authoring path has no `labels` channel for it (the Points /
+  Lines ladders put one union CSR on the parent instead, #1422).
 - Hidden-dim attenuation uses **marginal** Σ, not conditional. The
   marginal path is correct for diagonal hidden-display covariance
   (the typical case for time-stamped / channel-stamped splats). See the

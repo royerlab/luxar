@@ -70,6 +70,10 @@ from ._compiler.geometry_writers.lines import write_lines as _write_lines_impl
 from ._compiler.geometry_writers.mesh import write_mesh as _write_mesh_impl
 from ._compiler.geometry_writers.points import write_points as _write_points_impl
 from ._compiler.gsplat_assembly import apply_gsplat_group_attrs
+from ._compiler.labels.text_labels import (
+    validate_ladder_labels,
+    write_ladder_union_labels_csr,
+)
 from ._compiler.node_common import prepare_transform_attrs as _prepare_transform_attrs
 from ._compiler.node_common import validate_node_path as _validate_node_path
 from ._compiler.node_common import validate_render_attrs as _validate_render_attrs
@@ -693,12 +697,22 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         / ``visible``) — these inherit down to subgroups via the
         viewer's scene-graph composition at render time.
 
+        **Labels**: per-element string labels are written as ONE CSR pair on the
+        PARENT node (which therefore carries ``has_labels``); the
+        ``additive_<i>`` subgroups carry none. The parent CSR's index space is
+        the committed union — the concatenation of the levels in
+        ``additive_0 … additive_{n-1}`` order, each level in its own stored
+        (spatially reordered) order — because the viewer's progressive loader
+        concatenates loaded levels into one buffer. Labels are all-or-nothing
+        across the ladder.
+
         Args:
             path: Path for the points node within the store.
             levels: List of per-level dicts with keys ``positions`` /
                 ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` /
                 ``labels``. ``positions`` is required; others may be
-                ``None``.
+                ``None``. ``labels`` must be present on every level or
+                on none.
             extend_to_all: Forwarded to each per-level write. Already-resolved
                 dimension NAMES — the caller expands the ``"all"`` sentinel,
                 which must never reach disk (it is stamped verbatim here, onto
@@ -724,6 +738,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # being non-idempotent.
         _prepare_transform_attrs(attrs, self.store)
 
+        # Labels ride on the PARENT as one union CSR, so the ladder's label
+        # situation is resolved here — inside the fail-fast block, ABOVE
+        # require_group, because this gate is pure and a rejected ladder must
+        # not leave an empty node behind.
+        labelled = validate_ladder_labels(levels, "positions")
+
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
         path = _validate_node_path(path)
@@ -740,6 +760,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # the writer's defaults (opacity=1.0, etc.) — the parent's
         # compositing wins via scene-graph composition.
         level_metas: List[Dict[str, Any]] = []
+        level_sort_orders: List[Optional[np.ndarray]] = []
         for i, lvl in enumerate(levels):
             level_path = f"{path}/additive_{i}"
             level_meta = self.write_points(
@@ -749,11 +770,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 radii=lvl.get("radii"),
                 sharpness=lvl.get("sharpness"),
                 scalars=lvl.get("scalars"),
-                labels=lvl.get("labels"),
+                # Labels live on the parent as one union CSR — never per level.
+                labels=None,
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
+                **({"_return_sort_order": True} if labelled else {}),
             )
+            # POP, not read: the permutation is only needed to build the union
+            # CSR, and the metadata dict lands in ``self._metadata_cache``.
+            if labelled:
+                level_sort_orders.append(level_meta.pop("sort_order", None))
             level_metas.append(level_meta)
 
         # Parent-node attrs. Persist after subgroup writes so they
@@ -780,6 +807,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "position_bounds": global_bounds,
             "levels": level_metas,
         }
+
+        # The ladder's union label CSR, written AFTER the attr stamps above so
+        # no attr update can clobber the ``has_labels`` flag
+        # ``write_labels_csr`` stamps on the parent.
+        if labelled:
+            write_ladder_union_labels_csr(
+                group,
+                [lvl["labels"] for lvl in levels],
+                level_sort_orders,
+                n_points_total,
+                self.compressor,
+            )
+            metadata["has_labels"] = True
+
         self._metadata_cache[path] = metadata
         aprint(
             f"✅ Multi-LOD Points written to {path} ({n_levels} levels, "
@@ -804,6 +845,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         that level's vertices) + ``n_polylines``. Each subgroup is
         written via :meth:`write_lines` with ``line_type='indexed'``
         and the local segment indices.
+
+        **Labels** (per-VERTEX for Lines) are written as ONE CSR pair on the
+        PARENT node — which therefore carries ``has_labels`` — describing the
+        committed union: the concatenation of the levels in
+        ``additive_0 … additive_{n-1}`` order, each level in its own stored
+        (spatially reordered) order. The ``additive_<i>`` subgroups carry none.
+        Labels are all-or-nothing across the ladder.
         """
         self._check_not_finalized("write_lines_multi_lod")
 
@@ -819,6 +867,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # being non-idempotent.
         _prepare_transform_attrs(attrs, self.store)
 
+        # Labels ride on the PARENT as one per-vertex union CSR, so the ladder's
+        # label situation is resolved here — inside the fail-fast block, ABOVE
+        # require_group, because this gate is pure and a rejected ladder must
+        # not leave an empty node behind.
+        labelled = validate_ladder_labels(levels, "vertices")
+
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
         path = _validate_node_path(path)
@@ -831,6 +885,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         global_bounds = self._compute_position_bounds(all_vertices)
 
         level_metas: List[Dict[str, Any]] = []
+        level_sort_orders: List[Optional[np.ndarray]] = []
         for i, lvl in enumerate(levels):
             level_path = f"{path}/additive_{i}"
             # write_lines expects a flat ``indices`` array (length 2M)
@@ -848,14 +903,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 colors=lvl.get("colors"),
                 sharpness=lvl.get("sharpness"),
                 scalars=lvl.get("scalars"),
-                labels=lvl.get("labels"),
+                # Labels live on the parent as one union CSR — never per level.
+                labels=None,
                 image_labels=None,
                 indices=flat_indices,
                 line_type="indexed" if flat_indices is not None else "polyline",
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
+                **({"_return_sort_order": True} if labelled else {}),
             )
+            # POP, not read: the permutation is only needed to build the union
+            # CSR, and the metadata dict lands in ``self._metadata_cache``.
+            if labelled:
+                level_sort_orders.append(level_meta.pop("sort_order", None))
             level_metas.append(level_meta)
 
         # Sum per-level segment counts so the parent advertises a segment
@@ -889,6 +950,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "position_bounds": global_bounds,
             "levels": level_metas,
         }
+
+        # The ladder's union label CSR (per-VERTEX), written AFTER the attr
+        # stamps above so no attr update can clobber the ``has_labels`` flag
+        # ``write_labels_csr`` stamps on the parent.
+        if labelled:
+            write_ladder_union_labels_csr(
+                group,
+                [lvl["labels"] for lvl in levels],
+                level_sort_orders,
+                n_vertices_total,
+                self.compressor,
+            )
+            metadata["has_labels"] = True
+
         self._metadata_cache[path] = metadata
         aprint(
             f"✅ Multi-LOD Lines written to {path} ({n_levels} levels, "
