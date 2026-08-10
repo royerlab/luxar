@@ -27,6 +27,7 @@ import {
   getCommittedData,
   hasCommittedData,
   setCommittedData,
+  setElementIdMap,
 } from '../../../types/committed-data';
 import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import type { LoadedLinesData } from '../../../types/lines';
@@ -225,6 +226,13 @@ export function commitLinesGeometry(
     // SAME reference (memoized progressive concat) can then take the
     // stamp-only no-op path instead of re-projecting + re-uploading.
     setCommittedData(mesh, staged.sourceData);
+    // Slot → on-disk element index map for picking, written in LOCKSTEP with
+    // the stamp above so it always describes the buffers just uploaded. For
+    // lines a slot is a visible SEGMENT and the value is that segment's START
+    // vertex row (line labels are per-vertex — issue #1424). A projection that
+    // produced no map clears any previous commit's, which is what keeps a stale
+    // map from outliving its geometry. Points/gsplats parity.
+    setElementIdMap(mesh, staged.processed.elementIds);
 
     if (segmentCount === 0) {
       log.info(
