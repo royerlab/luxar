@@ -442,6 +442,88 @@ describe('commitLinesGeometry — no-op commit skip (committedData)', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────
+// Issue #1424: the elementIdMap stamp is written in LOCKSTEP with committedData
+// so it always describes the buffers currently on the GPU.
+describe('commitLinesGeometry — elementIdMap stamp', () => {
+  const stampOf = (mesh: THREE.Mesh) =>
+    (mesh.userData as { elementIdMap?: Uint32Array }).elementIdMap;
+
+  it('stamps the map next to committedData on a real commit', () => {
+    mockUpdateInstancedLinesMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const elementIds = new Uint32Array([5, 102, 103]);
+    const staged: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(3),
+      processed: { ...makeProcessed(3), elementIds },
+    };
+    commitLinesGeometry(staged, root, null, undefined, 1);
+    if (staged.noop) throw new Error('expected geometry staged commit');
+    expect(stampOf(mesh)).toBe(elementIds);
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBe(staged.sourceData);
+  });
+
+  it('DELETES a previous commit map when the new commit produced none', () => {
+    // A stale map is a silently WRONG label — strictly worse than falling back
+    // to the raw slot — so absence must clear, not merely leave the old value.
+    mockUpdateInstancedLinesMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    commitLinesGeometry(
+      {
+        path: '/lines',
+        sourceData: makeSourceData(3),
+        processed: { ...makeProcessed(3), elementIds: new Uint32Array([7, 8, 9]) },
+      },
+      root,
+      null,
+      undefined,
+      1
+    );
+    expect(stampOf(mesh)).toBeInstanceOf(Uint32Array);
+
+    commitLinesGeometry(
+      { path: '/lines', sourceData: makeSourceData(2), processed: makeProcessed(2) },
+      root,
+      null,
+      undefined,
+      2
+    );
+    expect(stampOf(mesh)).toBeUndefined();
+    expect('elementIdMap' in mesh.userData).toBe(false);
+  });
+
+  it('the no-op (stamp-only) branch touches neither committedData nor the map', () => {
+    mockUpdateInstancedLinesMesh.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/lines');
+    root.add(mesh);
+    const first: StagedLinesCommit = {
+      path: '/lines',
+      sourceData: makeSourceData(3),
+      processed: { ...makeProcessed(3), elementIds: new Uint32Array([5, 102, 103]) },
+    };
+    commitLinesGeometry(first, root, null, undefined, 1);
+    const stampAfterCommit = stampOf(mesh);
+    const committedAfterCommit = (mesh.userData as { committedData?: unknown }).committedData;
+
+    commitLinesGeometry(
+      { path: '/lines', noop: true, sourceData: makeSourceData(3) },
+      root,
+      null,
+      undefined,
+      9
+    );
+
+    expect(stampOf(mesh)).toBe(stampAfterCommit);
+    expect((mesh.userData as { committedData?: unknown }).committedData).toBe(committedAfterCommit);
+  });
+});
+
 describe('commitLinesGeometry — committedLadderComplete stamp', () => {
   const ladderComplete = (mesh: THREE.Mesh) =>
     (mesh.userData as { committedLadderComplete?: boolean }).committedLadderComplete;

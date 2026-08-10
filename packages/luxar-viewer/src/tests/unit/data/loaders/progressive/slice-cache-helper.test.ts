@@ -94,6 +94,13 @@ describe('slice-cache-helper — prefix ladders', () => {
     expect(sc.getStats().size).toBe(measureLodBytes([lod]));
   });
 
+  // The lines `vertexRangeBounds` counterpart (issue #1424) deliberately does
+  // NOT live here: these helpers walk typed arrays by SHAPE, never by name, so
+  // a second inline fake payload would be provably equivalent to the
+  // `elementIds` one above and could not fence the flat-`Uint32Array` design
+  // decision it exists for. It is pinned against a real loader payload in
+  // `tests/unit/data/lines/spatial-index-loader.test.ts` instead.
+
   it('never downgrades: a shorter snapshot leaves the longer entry intact', () => {
     storeLadder(sc, PATH, view, [makeLod(10), makeLod(5), makeLod(2)]);
     const key = SliceCache.makeKey(PATH, buildSliceViewSig(view));
