@@ -768,6 +768,38 @@ function peakCutEntry(src: LineTexelSource): RegistryEntry {
   };
 }
 
+/**
+ * Non-uniform model scale for `line-volprim-joint-scaled`, chosen so the
+ * composed WORLD geometry equals the unscaled joint while an object-space-
+ * normalized partner direction comes out badly non-unit in camera space:
+ * |MV·q̂_obj| = 1/√(a²/sx² + b²/sy²) for world direction (a, b), which for
+ * this joint's (±0.894, −0.447) legs is 0.55 under (4, 0.25) — a 45%
+ * length error that visibly skews the bisector normal and tanHalf. NOT
+ * (2, 0.5): that pair is CONJUGATE to this exact geometry (the expression
+ * above evaluates to 1.0) and left the pre-fix bug invisible (measured
+ * mutation-blind before this scale was derived).
+ */
+const JOIN_MODEL_SCALE: readonly [number, number, number] = [4, 0.25, 1];
+
+/** {@link buildJoinTexelSource} with positions pre-divided by {@link JOIN_MODEL_SCALE}. */
+function buildScaledJoinTexelSource(): LineTexelSource {
+  const src = buildJoinTexelSource();
+  const unscale = (arr: Float32Array) => {
+    const out = new Float32Array(arr.length);
+    for (let i = 0; i < arr.length; i += 3) {
+      out[i] = arr[i] / JOIN_MODEL_SCALE[0];
+      out[i + 1] = arr[i + 1] / JOIN_MODEL_SCALE[1];
+      out[i + 2] = arr[i + 2] / JOIN_MODEL_SCALE[2];
+    }
+    return out;
+  };
+  return {
+    ...src,
+    startPositions: unscale(src.startPositions),
+    endPositions: unscale(src.endPositions),
+  };
+}
+
 function buildJoinDataTexture(src: LineTexelSource): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Float32Array(48), 6, 2, THREE.RGBAFormat, THREE.FloatType);
   tex.magFilter = THREE.NearestFilter;
@@ -1638,6 +1670,36 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
+  },
+  // The SAME joint under a non-uniform MODEL SCALE (PR #1426 review,
+  // finding 1): positions are authored pre-divided by JOIN_MODEL_SCALE
+  // (4, 0.25, 1) and the mesh carries mesh.scale = JOIN_MODEL_SCALE, so
+  // the WORLD geometry — and therefore the correct render — is identical
+  // to `line-volprim-joint`
+  // (widths are world-unit, untouched by the model matrix). The partner
+  // direction is fetched in OBJECT space and must be normalized AFTER the
+  // modelView transform; normalizing in object space leaves a non-unit
+  // camera-space direction that skews the bisector normal and tanHalf —
+  // exactly what this fixture renders. The parity spec asserts both
+  // cross-backend parity AND equality with the unscaled joint.
+  'line-volprim-joint-scaled': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildScaledJoinTexelSource()), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => {
+      const mesh = buildJoinMesh(buildScaledJoinTexelSource(), material);
+      mesh.scale.set(...JOIN_MODEL_SCALE);
+      return mesh;
+    },
   },
   // The same joint under MAX blending: the peak-family capsule body
   // (LUXAR_PEAK_PROJECTION on the GLSL side, the peak graph variant on
