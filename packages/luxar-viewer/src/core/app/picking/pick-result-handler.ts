@@ -121,15 +121,14 @@ export interface PickResultHandlerPorts {
  *   (#1422), spanning the levels in `additive_<i>` order — the same node
  *   `lookupPath` names, and the same space the progressive loader
  *   produces when it concatenates the committed levels, so the lookup is
- *   correct on a fully-loaded, unsliced layer — for POINTS, whose raw
- *   visible slot then IS the on-disk index. Not for LINES: its raw slot
- *   is a per-*segment* one while the union CSR is per-*vertex* (#1424),
- *   so a labelled laddered lines node is wrong at the granularity, not
- *   merely at an offset, whatever the slicing. What is missing for both
- *   is the slot → on-disk map ACROSS the ladder (each level's map is in
- *   that level's own space, so the concat drops it), so a culled or
- *   compacted view resolves at a shifted raw slot and names the wrong
- *   element (#1439); and
+ *   correct — for POINTS also under slicing, since the loader now
+ *   composes each level's slot → on-disk map into that union space,
+ *   offsetting level `i` by the preceding levels' on-disk `n_points`
+ *   (#1439). Not for LINES: its raw slot is a per-*segment* one while the
+ *   union CSR is per-*vertex* (#1424), so a labelled laddered lines node
+ *   is wrong at the granularity, not merely at an offset, whatever the
+ *   slicing — and nothing composes a lines ladder's LEVELS either;
+ *   gsplat ladders carry no labels at all; and
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
  *   arrives already resolved wherever the node can resolve one — Points,
  *   GSplats and Lines all do, for a node declaring `has_labels` /
@@ -146,7 +145,8 @@ export interface PickResultHandlerPorts {
  *   reported and by convention it is the start (#1424). That resolution
  *   is published for a FLAT lines node only, so any lines node without
  *   it — an *unlabelled* one, and equally a labelled LADDERED one, whose
- *   per-level maps limit (i)'s concat drops — still reports the raw
+ *   per-level maps a lines ladder's concat still drops (limit (i), where
+ *   only Points composes them) — still reports the raw
  *   visible-segment slot, which is neither an on-disk row nor even the
  *   right granularity for a per-vertex CSR. A Points or GSplats node
  *   declaring no labels likewise keeps the raw storage slot — no CSR to
