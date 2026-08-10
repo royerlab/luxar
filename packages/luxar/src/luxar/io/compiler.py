@@ -59,6 +59,7 @@ from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
     finalize_lod_position_bounds,
+    warn_one_part_partition_anchors,
 )
 from ._compiler.finalize.validation import validate_discrete_dimension_ranges
 from ._compiler.geometry_writers.gsplats import (
@@ -1135,6 +1136,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _finalize_lod_display_types(self, store: zarr.Group) -> None:
         finalize_lod_display_types(store)
 
+    def _warn_one_part_partition_anchors(self, store: zarr.Group) -> None:
+        """Report a fills-screen LOD ladder under a ONE-part kind=partition.
+
+        Read-only: finalize is simply the first place the final sibling count is
+        visible. See ``warn_one_part_partition_anchors`` for why it warns rather
+        than re-anchors.
+        """
+        warn_one_part_partition_anchors(store)
+
     def _expand_bounds_with_transforms(self, store: zarr.Group) -> None:
         self._scene_bounds = expand_bounds_with_transforms(store, self._scene_bounds)
 
@@ -1272,6 +1282,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # (which never carried their own bounds) and the LOD
             # selector can't see them.
             self._finalize_lod_position_bounds(store)
+
+            # Report — never rewrite — a per-TILE (fills-screen) LOD ladder
+            # sitting under a ONE-part kind=partition. The scene adders derive
+            # part 0's anchor before part 1 exists, so this is the first point
+            # where the final sibling count is visible.
+            self._warn_one_part_partition_anchors(store)
 
             # Now consolidate metadata with all data present
             zarr.consolidate_metadata(store.store)

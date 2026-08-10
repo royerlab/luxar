@@ -635,6 +635,7 @@ def add_points_substitutive_lod_wrapper_impl(
     from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
     from ..lod.group import (
         compose_additive_under_substitutive,
+        derive_coverage_fractions,
         gsplat_additive_lod_from,
         level_additive_lod,
     )
@@ -652,7 +653,6 @@ def add_points_substitutive_lod_wrapper_impl(
         suppress_reason="image_labels is set" if image_labels is not None else None,
     )
     compression_factor = int(spec["compression_factor"])
-    from ..lod.group import coverage_fractions
 
     # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake
     # scalars -> RGB (via the same LUT normalisation the viewer uses) and lift
@@ -750,6 +750,7 @@ def add_points_substitutive_lod_wrapper_impl(
     # by the lift and ``lifted.n_splats == n_points`` — but keying off ``lifted``
     # keeps the two geometries' wrappers structurally identical and robust.
     counts = [int(c.n_splats) for c in coarse_first] + [int(lifted.n_splats)]
+    parent_node = parent or group
     explicit = spec.get("coverage_fractions")
     if explicit is not None:
         if len(explicit) != len(counts):
@@ -764,15 +765,14 @@ def add_points_substitutive_lod_wrapper_impl(
         # i.e. any normal full-frame view). No per-level radius or world-extent
         # needed.
         #
-        # This is the WHOLE-OBJECT anchor. ``add_points`` rejects
-        # ``partition=`` together with ``substitutive_lod=``, so the library path
-        # cannot build a per-tile ladder here — but a caller CAN hand-build a
-        # ``kind=partition`` wrapper and call this per part (that is what
-        # ``demo_biodiversity_planetary_scale`` does). Such a ladder needs the
-        # fills-screen anchor instead (see ``partitioned_coverage_fractions``);
-        # until this path can detect it, pass an explicit
-        # ``coverage_fractions=[...]`` scaled by ``MAX_COVERAGE_FRACTION``.
-        coverage_vals = coverage_fractions(counts)
+        # The ANCHOR is chosen from the insertion point: ``add_points`` rejects
+        # ``partition=`` together with ``substitutive_lod=``, but a caller CAN
+        # hand-build a ``kind=partition`` wrapper and call this once per part (what
+        # ``demo_biodiversity_planetary_scale`` does), and such a per-tile ladder
+        # needs the fills-screen anchor. ``derive_coverage_fractions`` detects that
+        # ancestor automatically and logs the choice; an explicit
+        # ``coverage_fractions=[...]`` still wins (the branch above).
+        coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
 
     # Compositing attrs ride on the kind=lod Group; everything else (colormap,
     # truncation_radius, ...) rides onto each child.
@@ -785,7 +785,6 @@ def add_points_substitutive_lod_wrapper_impl(
     # `colormap` (when scalars were baked) stays on the finest Points child only.
     gsplat_child_attrs = {k: v for k, v in child_attrs.items() if k != "colormap"}
 
-    parent_node = parent or group
     aprint(
         f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + points "
         f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"

@@ -661,9 +661,12 @@ def add_mesh_substitutive_lod_wrapper_impl(
     scalar→RGB baking, mass-preserving amplitudes, an anisotropy cap — and a mesh
     is simply decimated (its per-vertex colours and scalars are averaged per
     cluster, so both reach every level). What is shared is the SHAPE: a
-    ``kind=lod`` group, children coarsest→finest, viewport-relative ``coverage_fraction`` per child
-    from :func:`luxar.core.group.lod.group.coverage_fractions`, compositing attrs
-    on the group and everything else on the children.
+    ``kind=lod`` group, children coarsest→finest, viewport-relative
+    ``coverage_fraction`` per child from
+    :func:`luxar.core.group.lod.group.derive_coverage_fractions` (so a ladder
+    hand-placed under a ``kind=partition`` wrapper gets the fills-screen per-tile
+    anchor, exactly as the Points/Lines wrappers do), compositing attrs on the
+    group and everything else on the children.
 
     **Level targets are vertex counts**, ``V / K**i``, because that is the
     currency the decimator's search is expressed in. Triangle count would be an
@@ -681,7 +684,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     """
     from ....io._compiler.geometry_writers.mesh import validate_mesh_arrays
     from ....mesh.decimate import decimate_cluster
-    from ..lod.group import coverage_fractions, resolve_coarsen_dims
+    from ..lod.group import derive_coverage_fractions, resolve_coarsen_dims
 
     # Fail-fast pre-write gate, part two: the ARRAYS, run BEFORE any decimation
     # and before `add_lod_group` creates the group. The adder already ran the
@@ -821,6 +824,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
         )
 
     counts = [int(c.vertices.shape[0]) for c in coarse] + [n_vertices]
+    parent_node = parent or group
     explicit = spec.get("coverage_fractions")
     if explicit is not None:
         if len(explicit) != len(counts):
@@ -832,7 +836,18 @@ def add_mesh_substitutive_lod_wrapper_impl(
             )
         coverage_vals = list(explicit)
     else:
-        coverage_vals = coverage_fractions(counts)
+        # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (vertex-count
+        # ratios; the viewer anchors the finest at a quarter of the live viewport
+        # diagonal, i.e. any normal full-frame view).
+        #
+        # The ANCHOR is chosen from the insertion point: ``add_mesh`` rejects
+        # ``partition=`` together with ``substitutive_lod=``, so a caller who wants
+        # per-tile mesh ladders MUST hand-build the ``kind=partition`` wrapper and
+        # call this once per part — and such a per-tile ladder needs the
+        # fills-screen anchor. ``derive_coverage_fractions`` detects that ancestor
+        # automatically and logs the choice; an explicit ``coverage_fractions=[...]``
+        # still wins (the branch above).
+        coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -852,7 +867,6 @@ def add_mesh_substitutive_lod_wrapper_impl(
     # gate, which the helper's docstring requires.
     field_range = _shared_scalar_window(scalar_data_range, scalars, n_vertices)
 
-    parent_node = parent or group
     aprint(
         f"  📐 Substitutive-LOD '{name}': {len(coarse)} decimated levels + original "
         f"(vertex counts coarsest→finest={counts}, K={compression_factor})"

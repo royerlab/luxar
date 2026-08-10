@@ -879,6 +879,7 @@ def add_lines_substitutive_lod_wrapper_impl(
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
     from ..lod.group import (
         compose_additive_under_substitutive,
+        derive_coverage_fractions,
         gsplat_additive_lod_from,
         level_additive_lod,
     )
@@ -911,7 +912,6 @@ def add_lines_substitutive_lod_wrapper_impl(
         ),
     )
     compression_factor = int(spec["compression_factor"])
-    from ..lod.group import coverage_fractions
 
     # Scalar+colormap lines: pass scalars+colormap THROUGH to the lift, which
     # interpolates the scalar per bead then maps it through the LUT (matching the
@@ -998,6 +998,7 @@ def add_lines_substitutive_lod_wrapper_impl(
     # gives the real Lines node the highest switch threshold (a vertex count is
     # a different, much smaller scale and would collapse the top thresholds).
     counts = [int(c.n_splats) for c in coarse_first] + [int(lifted.n_splats)]
+    parent_node = parent or group
     explicit = spec.get("coverage_fractions")
     if explicit is not None:
         if len(explicit) != len(counts):
@@ -1012,15 +1013,16 @@ def add_lines_substitutive_lod_wrapper_impl(
         # i.e. any normal full-frame view). No per-level radius or world-extent
         # needed.
         #
-        # This is the WHOLE-OBJECT anchor. ``add_lines`` rejects
-        # ``partition=`` together with ``substitutive_lod=``, so the library path
-        # cannot build a per-tile ladder here — but a caller CAN hand-build a
-        # ``kind=partition`` wrapper and call this per part (that is what
-        # ``demo_biodiversity_planetary_scale`` does). Such a ladder needs the
-        # fills-screen anchor instead (see ``partitioned_coverage_fractions``);
-        # until this path can detect it, pass an explicit
-        # ``coverage_fractions=[...]`` scaled by ``MAX_COVERAGE_FRACTION``.
-        coverage_vals = coverage_fractions(counts)
+        # The ANCHOR is chosen from the insertion point: ``add_lines`` rejects
+        # ``partition=`` together with ``substitutive_lod=``, but a caller CAN
+        # hand-build a ``kind=partition`` wrapper and call this once per part —
+        # the shape ``demo_biodiversity_planetary_scale`` uses for its Points
+        # layers (its ``add_lines`` calls take the plain scene-level ``partition=``
+        # path instead, with no ladder). Such a per-tile ladder needs the
+        # fills-screen anchor; ``derive_coverage_fractions`` detects that ancestor
+        # automatically and logs the choice, and an explicit
+        # ``coverage_fractions=[...]`` still wins (the branch above).
+        coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -1031,7 +1033,6 @@ def add_lines_substitutive_lod_wrapper_impl(
     # Lines child only.
     gsplat_child_attrs = {k: v for k, v in child_attrs.items() if k != "colormap"}
 
-    parent_node = parent or group
     aprint(
         f"  📐 Substitutive-LOD '{name}': {len(coarse_first)} gsplat levels + lines "
         f"(counts coarsest→finest={counts}, K={spec['compression_factor']})"
