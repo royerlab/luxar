@@ -25,7 +25,9 @@ import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { lineWebGPUFactory, type LineTSLNodes } from './shader-tsl';
+import { volumetricLineWebGPUFactory } from './shader-tsl-volumetric';
 import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
+import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 import type { LineJoinStyle } from '../../../types/line-join';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -39,6 +41,7 @@ import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   isVolumetricMode,
+  usesPeakProjection,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -207,6 +210,11 @@ export class LineTSLMaterial
     // time, so the session override still wins.
     this.userData.lineJoin = materialConfig.join;
 
+    // The rendering primitive (#1352) picks WHICH factory rebuildGraph
+    // runs — stored unresolved like lineJoin, resolved at build time so
+    // the ?linePrimitive= session override wins.
+    this.userData.linePrimitive = materialConfig.primitive;
+
     // For max mode, the shader needs the LUXAR_MAX_RGB_CONTRIBUTION
     // define from the very first compile; volumetric mirrors this with
     // LUXAR_VOLUMETRIC (the factory derives the output branch from
@@ -217,6 +225,16 @@ export class LineTSLMaterial
     }
     if (isVolumetricMode(this.userData.blendingMode as BlendingMode)) {
       this.defines.LUXAR_VOLUMETRIC = '';
+    }
+    // Volumetric PRIMITIVE only: peak vs sum ray projection is a graph
+    // variant; the define is its rebuild-boundary tracker (same pattern
+    // as the two above, and the same define the GLSL twin stamps).
+    if (
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) ===
+        'volumetric' &&
+      usesPeakProjection((this.userData.blendingMode as BlendingMode) ?? 'additive')
+    ) {
+      this.defines.LUXAR_PEAK_PROJECTION = '';
     }
 
     // Capture explicit overrides BEFORE the first rebuild —
@@ -282,7 +300,14 @@ export class LineTSLMaterial
     // value is the simpler source of truth here.)
     const isOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
     this.rebuildColormapNodes(useColormap);
-    lineWebGPUFactory(
+    // The primitive picks the factory (#1352) — the TSL counterpart of the
+    // GLSL twin's shader-source pair selection.
+    const factory =
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) ===
+      'volumetric'
+        ? volumetricLineWebGPUFactory
+        : lineWebGPUFactory;
+    factory(
       this.tslNodes as LineTSLNodes,
       {
         useColormap,
@@ -499,6 +524,23 @@ export class LineTSLMaterial
       delete this.defines.LUXAR_VOLUMETRIC;
       definesChanged = true;
     }
+    // Volumetric PRIMITIVE only (#1352): peak vs sum ray projection is a
+    // graph variant; the define is its rebuild-boundary tracker. The
+    // screen-space graph has no such split — never stamped there.
+    if (
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) ===
+      'volumetric'
+    ) {
+      const wantsPeak = usesPeakProjection(mode);
+      const hasPeak = 'LUXAR_PEAK_PROJECTION' in this.defines;
+      if (wantsPeak && !hasPeak) {
+        this.defines.LUXAR_PEAK_PROJECTION = '';
+        definesChanged = true;
+      } else if (!wantsPeak && hasPeak) {
+        delete this.defines.LUXAR_PEAK_PROJECTION;
+        definesChanged = true;
+      }
+    }
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;
 
@@ -534,6 +576,8 @@ export class LineTSLMaterial
       // copying it onto the clone afterwards would leave the already-built
       // graph without join geometry.
       join: this.userData.lineJoin as LineJoinStyle | undefined,
+      // Same for the rendering primitive: it picked the factory.
+      primitive: this.userData.linePrimitive as LinePrimitive | undefined,
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,

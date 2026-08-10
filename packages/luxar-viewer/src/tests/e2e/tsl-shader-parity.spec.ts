@@ -2256,4 +2256,129 @@ test.describe('TSL ↔ GLSL shader parity', () => {
         `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
     ).toBeLessThan(2.0);
   });
+
+  // ============================================================
+  // Volumetric line PRIMITIVE (#1352, ?linePrimitive=volumetric).
+  // The lane math itself is quadrature-validated on the CPU
+  // (line-volumetric-integral.test.ts); these tests pin that the two
+  // shader CODE PATHS evaluate it identically — every fragment lane has
+  // at least one fixture that reaches it (see the fixture comments in
+  // harnesses/tsl-harness/lines.ts).
+  // ============================================================
+
+  for (const variant of [
+    'line-volprim-sideon',
+    'line-volprim-endon-ortho',
+    'line-volprim-endon-persp',
+    'line-volprim-joint',
+    'line-volprim-peak',
+    'line-volprim-peak-cut',
+    'line-volprim-peak-uncut',
+    'line-volprim-taper',
+    'line-volprim-colormap',
+    'line-volprim-nearclip',
+    'line-volprim-nearclip-joint',
+  ] as const) {
+    test(`${variant}: volumetric line primitive parity across backends`, async ({ page }) => {
+      await bootHarness(page);
+
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant}: per-covered-pixel parity (footprint-invariant)`
+      ).toBeLessThan(2.0);
+    });
+  }
+
+  test('line-volprim-nearclip-joint: MAX cross-backend divergence stays at noise level', async ({
+    page,
+  }) => {
+    // Belt-and-suspenders beside the mean-based loop: the general-lane
+    // near-binding forms (cap-as-plane / constant-cap product) light up a
+    // limited pixel population — the near clip and the near fade overlap
+    // by design — and a MAX gate stays sensitive even if a future geometry
+    // tweak shrinks that population below what a mean can see.
+    // Mutation-calibrated: a disabled ξ-near tightening reads 96 and a
+    // disabled nearBinding selection reads 119, against backend noise ≤ 8.
+    await bootHarness(page);
+    const glsl = await runGLSL(page, 'line-volprim-nearclip-joint');
+    const tsl = await runTSL(page, 'line-volprim-nearclip-joint');
+    let maxDiff = 0;
+    for (let i = 0; i < glsl.length; i++) {
+      maxDiff = Math.max(maxDiff, Math.abs(glsl[i] - tsl.pixels[i]));
+    }
+    expect(maxDiff, 'max per-channel |GLSL − TSL|').toBeLessThanOrEqual(8);
+  });
+
+  test('line-volprim-peak-cut: the peak lane stops dead at the bisector plane', async ({
+    page,
+  }) => {
+    // The peak family carries the same bisector cut as the sum lanes, so a
+    // joint's two cells partition the bend instead of overlapping — the
+    // single coverage `normal`/`opaque` need (gl.MAX never did). Only the
+    // FIRST leg of the V is drawn here, and its cut end owns exactly the
+    // half-space `x_world <= 0` (pixel column 32 under this ortho setup),
+    // so nothing of it may light the far side. `-uncut` is the same
+    // geometry with free-end codes: its soft cap DOES reach across, which
+    // is what makes the black assertion below non-vacuous (without the
+    // cut, `-cut` renders `-uncut`). Mutation-calibrated: forcing the cut
+    // off reads 123 on the far side, against the bound of 2 below.
+    await bootHarness(page);
+    const cut = await runGLSL(page, 'line-volprim-peak-cut');
+    const uncut = await runGLSL(page, 'line-volprim-peak-uncut');
+    // Max over the far side, leaving 2 px of margin for rasterisation.
+    const farSideMax = (p: number[]) => {
+      let m = 0;
+      for (let y = 0; y < 64; y++) {
+        for (let x = 34; x < 64; x++) {
+          const i = (y * 64 + x) * 4;
+          m = Math.max(m, p[i], p[i + 1], p[i + 2]);
+        }
+      }
+      return m;
+    };
+    expect(farSideMax(uncut), 'control: the uncapped end must reach across').toBeGreaterThan(64);
+    expect(farSideMax(cut), 'cut cell must not light the partner half-space').toBeLessThanOrEqual(
+      2
+    );
+  });
+
+  test('line-volprim-endon-ortho: the end-on segment renders a finite bright disc', async ({
+    page,
+  }) => {
+    // The #1352 headline case: the screen-space quad DEGENERATES end-on
+    // (zero-area projected quad → nothing rasterises), while the
+    // volumetric primitive integrates the full segment length through
+    // every axial ray. The disc must be present, centred, and brighter
+    // than the same-width side-on core (path length L ≫ chord 2σ).
+    await bootHarness(page);
+
+    const endon = await runGLSL(page, 'line-volprim-endon-ortho');
+    const sideon = await runGLSL(page, 'line-volprim-sideon');
+    const px = (p: number[], x: number, y: number) =>
+      Math.max(p[(y * 64 + x) * 4], p[(y * 64 + x) * 4 + 1], p[(y * 64 + x) * 4 + 2]);
+
+    const centre = px(endon, 32, 32);
+    expect(centre, 'end-on centre must be lit').toBeGreaterThan(32);
+    // Radially symmetric: four compass points at r=4px agree closely.
+    const ring = [px(endon, 36, 32), px(endon, 28, 32), px(endon, 32, 36), px(endon, 32, 28)];
+    for (const v of ring) {
+      expect(Math.abs(v - ring[0]), 'end-on disc must be radially symmetric').toBeLessThanOrEqual(
+        12
+      );
+    }
+    // Far corner stays empty (finite disc, not a smeared quad).
+    expect(px(endon, 4, 4), 'end-on far field must be black').toBeLessThanOrEqual(2);
+    // Path-length brightening vs the side-on core of the same width. Both
+    // saturate the 8-bit readback at 255 here (the end-on path is ~L/2σ ≈
+    // 1.8× over an already-saturating core), so ≥ is the strongest
+    // brightness claim this readback can make; the finite-disc and
+    // symmetry assertions above carry the shape claim.
+    expect(centre, 'end-on centre at least matches the side-on core').toBeGreaterThanOrEqual(
+      px(sideon, 32, 32)
+    );
+  });
 });
