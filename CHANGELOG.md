@@ -58,8 +58,8 @@ with the element count: a 3- or 4-component RGB(A) list/tuple on a 3- or 4-eleme
 node, and a uniform 1-D `(k,)` `cholesky_factors` on a `k`-splat node (`k = 6` for
 3-D data, so exactly a 6-splat one). On these three geometries the parts are
 disjoint, so the gathered slice never has a legal length and the symptom was a
-legal input REFUSED — at cap 3 on a 4-element node, only after `part_0` was already
-on disk. (Mesh is the one geometry where the same collision can write silently
+legal input REFUSED — for a *list* colour under `midpoint` / `sah` on a 4-element
+node, only after `part_0` was already on disk with the alpha dropped. (Mesh is the one geometry where the same collision can write silently
 instead, because its parts share vertices; it has classified since #1382.) Both are
 now classified by type/shape before slicing, so every part gets what was authored.
 
