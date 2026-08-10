@@ -401,7 +401,10 @@ def lod_recipe(
         help="[-m radial] Comma-separated centre of the concentric shells, one "
         "coordinate per spatial axis. Default: the dataset's own bounding-box "
         "centre — NOT the scene origin, so a dataset far from the origin still "
-        "reveals from its own middle.",
+        "reveals from its own middle. On a PARTITIONED recipe "
+        "(tiles/overview/adaptive) the ladder is built per part, so the default "
+        "centres EACH PART on itself (N local reveals); pass this flag to make "
+        "the whole object grow from one point.",
     ),
     spatial_dims: Optional[str] = typer.Option(
         None,

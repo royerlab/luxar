@@ -9,8 +9,8 @@ surface, and three ``--method`` help strings still advertised only
 
 **Why it lives under ``utils`` rather than beside the implementation.** Importing
 anything under ``luxar.gsplats`` executes ``luxar/gsplats/__init__.py``, which
-costs ~1.3 s (measured) — it would nearly triple ``luxar --help`` for the sake of
-one tuple. ``luxar.utils`` is already on the CLI's import path, so a leaf module
+adds ~600 ms on top of the CLI's own ~250 ms import (a 3.4x multiplier on
+``luxar --help``, stable over 3 runs) — for the sake of one tuple. ``luxar.utils`` is already on the CLI's import path, so a leaf module
 here is free. The same reasoning already put the shared breakpoint vocabulary in
 ``luxar.utils.lod_breakpoints``.
 

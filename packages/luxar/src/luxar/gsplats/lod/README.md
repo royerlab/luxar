@@ -165,6 +165,34 @@ Distance is measured only over axes with non-zero extent, so a stacked
 time/channel column cannot become a shell dimension (shells would otherwise
 expand through *time* as well as space). Override with `spatial_dims`.
 
+#### On a PARTITIONED recipe, pass `--reveal-centre` explicitly
+
+With `tiles` / `overview` / `adaptive`, the ladder is built **per part**, and the
+default centre is each part's *own* bounding box. So `-m radial` without a centre
+gives **N independent local reveals** — the object appears to grow from every tile's
+middle at once — not one reveal growing from the object's middle. Measured on a
+4-part BSP of a ball (mean distance of the first shell, per part):
+
+| | → own part centre | → global centre |
+|---|---|---|
+| no `--reveal-centre` | **16.3–17.6** (part avg 27–28) | 35–36 (part avg 37) |
+| `--reveal-centre 0,0,0` | 24–25 (part avg 27–28) | **24–26** (part avg 37) |
+
+Both behaviours are useful and this is a deliberate default, not an oversight:
+per-part centres make each *visible* tile paint its own middle first, which is the
+right thing when tiles are frustum-culled and streamed independently. But if you
+want the whole object to grow from one point, **pass the centre**:
+
+```bash
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr \
+    --recipe tiles -m radial --reveal-centre 0,0,0
+```
+
+The `batch-fit` path (`--merge-additive-method radial`) accepts the method but has
+**no** centre override — its manifest is string-keyed and the two knobs are not
+plumbed — so a batch merge always produces per-part reveals. Use `gsplat lod` if you
+need a global one.
+
 The same `radial` method, with the same two knobs and the same no-stamps rule, is
 available on Points and Lines — see `core/group/lod/`. On Lines it orders whole
 polylines by their own centre, so every prefix keeps valid segment topology.

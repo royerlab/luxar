@@ -67,8 +67,8 @@ from luxar.utils.lod_methods import is_reveal_method as _is_reveal_method
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
 # The method registry lives in `luxar.utils.lod_methods` so the CLI can share it
-# without importing this package (`luxar/gsplats/__init__.py` costs ~1.3 s, which
-# would nearly triple `luxar --help`). Re-exported under the historical names —
+# without importing this package (`luxar/gsplats/__init__.py` adds ~600 ms on top
+# of the CLI's own ~250 ms import — a 3.4x multiplier on `luxar --help`). Re-exported under the historical names —
 # `MethodName` / `AutoOrMethod` are imported from here by `pyramid` and `recipes`.
 _VALID_METHODS: tuple[str, ...] = GSPLAT_ADDITIVE_METHODS
 _VALID_CHOICES: tuple[str, ...] = GSPLAT_ADDITIVE_CHOICES
