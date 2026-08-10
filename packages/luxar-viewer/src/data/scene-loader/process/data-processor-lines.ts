@@ -144,8 +144,19 @@ function hasRGBAColors(data: LoadedLinesData): boolean {
  *
  * Fails CLOSED (returns `undefined`, one warning) on any inconsistency: picking
  * then falls back to the raw slot, exactly as it behaved before this map
- * existed. Writing a garbage index would instead surface a wrong-but-plausible
- * label.
+ * existed. Be exact about what that buys, because "fails closed" here does NOT
+ * mean "no answer": on a LABELLED node the raw slot is still a segment number
+ * handed to a per-vertex CSR, so a rejection degrades to the pre-#1424
+ * wrong-but-plausible label rather than suppressing it. What it does avoid is
+ * inventing a NEW wrong answer out of inputs already known to be inconsistent.
+ * Actually suppressing the lookup would need an "unresolved" state threaded
+ * through `resolveOnDiskElementId`, `PickResult.elementId` and
+ * `SelectionPayload.elementIndex` — the identity-fallback convention Points
+ * (#1421) and GSplats (#1423) already landed on, so changing it is a
+ * four-geometry job, not a lines-local one (and a sentinel id would leak
+ * garbage into the embedder's `elementIndex`). The shapes that actually reach
+ * these branches are a broken build or inputs `validateLineSegmentReferences`
+ * throws on upstream first.
  */
 function composeLinesElementIds(
   data: LoadedLinesData,
