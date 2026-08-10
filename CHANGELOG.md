@@ -44,9 +44,16 @@ stays as the generic destination for a `register()`ed material with no camera
 uniforms; it simply no longer has mesh as its resident.
 
 One documentation correction falls out. The near-plane floor derivation on
-`MAX_NEAR_FAR_RATIO` called mesh "the one type the floor can clip", because it was.
-With the same fade at the same 0.01 reject and the same `1.0589 · nearCull`
-headroom, the losslessness argument now covers all four types.
+`MAX_NEAR_FAR_RATIO` called mesh "the one type the floor can clip", because it was —
+it had no fade at all, so the floor could clip it at full brightness. With the same
+fade at the same 0.01 reject and the same `1.0589 · nearCull` headroom, mesh joins
+points and gsplats in the exactly-lossless group. The same pass tightened what that
+derivation claims for LINES, which had been swept in with them: a line does not
+reject on the fade, it only multiplies it into the intensity chain (its discard is a
+separate `max(rgb) < 1e-4` test on the colour, which the fade never enters), so the
+floor can still take a line fragment at up to 1% of its authored contribution. That
+residual predates #1431, is not what sets the constant, and is now written down
+instead of rounded to "lossless".
 
 #### A hand-built partition of per-part ladders now gets the tile anchor itself (#1411)
 

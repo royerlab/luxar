@@ -206,20 +206,33 @@ export function minNearForRadius(expandedRadius: number): number {
  *    `minDistance`. All four types are inside the fade-suppressed region
  *    throughout that band by construction, so nothing visible is lost there
  *    and this does not move C.
- *  - **C ≥ 992, stay lossless for all four geometry types.** Every one of
- *    them already suppresses anything closer than `nearCull = 1e-3 ·
- *    diagonal` via `perspectiveNearFade` (`materials/_shared/glsl-lib.ts`),
- *    though by three different mechanisms worth knowing before trusting
- *    this: Points and GSplats REJECT the vertex when the fade drops below
- *    0.01 (both backends); Lines instead cull only when BOTH endpoints are
- *    near, clip a half-near segment onto the `nearCull` plane, and apply
- *    the fade PER-FRAGMENT as a multiply with no reject of its own (their
- *    discard is a separate `max(rgb) < 1e-4` test); Mesh applies it
- *    PER-FRAGMENT too (a triangle spans depth) but WITH a discard at the same
- *    0.01, because it writes depth (#1431). Whichever mechanism, the fade is
- *    what governs, and it is under 0.01 below `1.0589 · nearCull` (the root of
- *    `smoothstep(1, 2, x) = 0.01`, solved rather than eyeballed in
- *    `tests/.../clipping/_near-fade-model.ts`).
+ *  - **C ≥ 992, keep everything the floor clips inside the near fade, for all
+ *    four geometry types.** Every one of them already suppresses anything
+ *    closer than `nearCull = 1e-3 · diagonal` via `perspectiveNearFade`
+ *    (`materials/_shared/glsl-lib.ts`), and the fade is under 0.01 below
+ *    `1.0589 · nearCull` (the root of `smoothstep(1, 2, x) = 0.01`, solved
+ *    rather than eyeballed in `tests/.../clipping/_near-fade-model.ts`). That
+ *    single bound is what the tests assert — but what each type DOES with a
+ *    sub-0.01 fade differs, and the difference is the difference between
+ *    "lossless" and "very nearly", so it is worth knowing before trusting this:
+ *
+ *    Points and GSplats REJECT the vertex outright below 0.01 (both backends),
+ *    and Mesh discards the FRAGMENT at the same 0.01 (per fragment because a
+ *    triangle spans depth; a discard rather than a multiply because it writes
+ *    depth — #1431). For those three the floor is exactly lossless: what it
+ *    clips was not going to be rasterized at all.
+ *
+ *    Lines are the one partial case. They cull only when BOTH endpoints are
+ *    near, clip a half-near segment onto the `nearCull` plane, and then apply
+ *    the fade PER-FRAGMENT as a plain multiply with no reject of its own —
+ *    their discard is a separate `max(rgb) < 1e-4` test on the COLOR, which
+ *    the fade never enters. So a line fragment inside the clipped band is
+ *    attenuated to under 1% of its authored contribution but is not
+ *    necessarily zero, and the floor can take it. That residual is a property
+ *    of the line shader, not of this constant: no value of C removes it while
+ *    still bounding the ratio, it predates #1431, and at ≤1% of one fragment
+ *    inside a 0.1%-of-diagonal shell it is not what sets C. Closing it would
+ *    mean giving the line shader its own fade reject.
  *
  *    The worst case is NOT the camera on the sphere surface — it is just
  *    OUTSIDE it, at the crossover `dist = R · (C+1)/(C-1) ≈ 1.002 · R`,
@@ -242,11 +255,11 @@ export function minNearForRadius(expandedRadius: number): number {
  * companion test pins the crossover as strictly worse than the surface, and
  * the arithmetic test asserts the constant survives that 10% `nearCull`
  * tightening — so a future change to `nearCull`, to the fade band, or to this
- * constant fails there. (Mesh used to be the one exception — it had no near fade
- * in either backend, so the floor could clip it visibly. Since #1431 it carries
- * the same fade with the same 0.01 reject and the same `1.0589 · nearCull`
- * headroom, so the losslessness argument above covers all four types and the
- * floor clips nothing the eye would have seen under perspective.)
+ * constant fails there. (Mesh used to be the FULL exception — it had no near fade
+ * in either backend at all, so the floor could clip it at full brightness. Since
+ * #1431 it carries the same fade with the same 0.01 reject and the same
+ * `1.0589 · nearCull` headroom, which moves it into the exactly-lossless group
+ * with points and gsplats and leaves lines as the only ≤1% residual above.)
  *
  * The losslessness argument assumes `nearCull` and this floor are derived from
  * the SAME bounds, which holds on the metadata and per-frame paths. It can
