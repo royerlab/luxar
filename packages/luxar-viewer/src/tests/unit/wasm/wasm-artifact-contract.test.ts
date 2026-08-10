@@ -1,0 +1,155 @@
+/**
+ * Behavioural counterpart to `direct-import-guard.test.ts`: the split between
+ * the two loaders in `src/tests/helpers/wasm-artifact.ts`. That helper's module
+ * comment explains WHY the staleness assertion sits outside the load `catch`
+ * (#1412); this file pins that it still does.
+ *
+ * Both failure modes are simulated rather than staged on disk: the
+ * `../../../wasm` mock decides whether the build reads as stale, and the shim
+ * mock decides whether it loads at all. What is NOT simulated is the helper's
+ * `readFileSync` of `luxar_wasm_bg.wasm` — under this vitest setup a Node
+ * builtin cannot be mocked for a module the test merely imports (`node:fs`
+ * stays external, so neither `vi.mock('node:fs')` nor `vi.spyOn(fs, …)` reaches
+ * the helper). These cases therefore need the built artifact to be readable and
+ * SKIP rather than turn red without it: CI always has it (`typescript-tests`
+ * builds WASM and runs with `LUXAR_REQUIRE_WASM_TESTS=1`), and locally
+ * `global-setup.ts` builds it whenever wasm-pack is installed.
+ */
+
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { wasmArtifactExists, wasmJsPath } from '../../helpers/wasm-artifact';
+import { REQUIRED_WASM_EXPORTS } from '../../../wasm/required-exports';
+
+/** The helper's real byte read needs the artifact — see the module comment. */
+const artifactPresent = wasmArtifactExists();
+
+/** Message a stale build's `assertRequiredWasmExports` throws with. */
+const STALE_MESSAGE = 'missing required export "compute_joint_codes"';
+/** Message the simulated import/`initSync` step fails with. */
+const LOAD_MESSAGE = 'simulated unloadable WASM artifact';
+
+/**
+ * Re-import the helper with both of its failure modes under our control.
+ *
+ * `stale` decides whether the staleness assertion throws. `loadable` decides
+ * whether the import/`initSync` step succeeds: the mocked shim's `initSync`
+ * throws, which stands in for the whole step (an incompatible build, or a shim
+ * that won't import, both surface here). The real bytes are read and handed to
+ * that mock, which ignores them. `initResult` is what the mocked `initSync`
+ * hands back — the instantiated exports the helper must forward to the check.
+ * Pass `mockShim: false` to leave the REAL shim in place (see the last case).
+ *
+ * Returns the helper's exports plus the mocked check itself, so a case can
+ * assert on what it received.
+ */
+async function loadHelperWith({
+  stale,
+  loadable,
+  initResult,
+  mockShim = true,
+}: {
+  stale: boolean;
+  loadable: boolean;
+  initResult?: unknown;
+  mockShim?: boolean;
+}) {
+  vi.resetModules();
+  const assertRequiredWasmExports = vi.fn((_module: unknown, _instanceExports?: unknown) => {
+    if (stale) throw new Error(STALE_MESSAGE);
+  });
+  vi.doMock('../../../wasm', () => ({ assertRequiredWasmExports }));
+  if (mockShim) {
+    vi.doMock(wasmJsPath, () => ({
+      initSync: () => {
+        if (!loadable) throw new Error(LOAD_MESSAGE);
+        return initResult;
+      },
+    }));
+  }
+  return { ...(await import('../../helpers/wasm-artifact')), assertRequiredWasmExports };
+}
+
+afterEach(() => {
+  vi.doUnmock('../../../wasm');
+  vi.doUnmock(wasmJsPath);
+  vi.resetModules();
+});
+
+describe.skipIf(!artifactPresent)('tryLoadWasmArtifact', () => {
+  it('THROWS for a stale build, without reporting a load failure', async () => {
+    // The assertion that pins "the staleness check is outside the load catch":
+    // were it inside, this would resolve to null via onLoadFailure and every
+    // caller would then fail on a null module.
+    const { tryLoadWasmArtifact } = await loadHelperWith({ stale: true, loadable: true });
+    const onLoadFailure = vi.fn();
+    await expect(tryLoadWasmArtifact(onLoadFailure)).rejects.toThrow(STALE_MESSAGE);
+    expect(onLoadFailure).not.toHaveBeenCalled();
+  });
+
+  it('returns null and reports when the artifact will not load', async () => {
+    const { tryLoadWasmArtifact } = await loadHelperWith({ stale: false, loadable: false });
+    const onLoadFailure = vi.fn();
+    await expect(tryLoadWasmArtifact(onLoadFailure)).resolves.toBeNull();
+    expect(onLoadFailure).toHaveBeenCalledOnce();
+    expect((onLoadFailure.mock.calls[0][0] as Error).message).toBe(LOAD_MESSAGE);
+  });
+
+  it('resolves to the module when the build loads and is current', async () => {
+    const { tryLoadWasmArtifact } = await loadHelperWith({ stale: false, loadable: true });
+    const onLoadFailure = vi.fn();
+    await expect(tryLoadWasmArtifact(onLoadFailure)).resolves.not.toBeNull();
+    expect(onLoadFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe.skipIf(!artifactPresent)('loadWasmArtifact', () => {
+  it('throws for a stale build (catches nothing)', async () => {
+    const { loadWasmArtifact } = await loadHelperWith({ stale: true, loadable: true });
+    await expect(loadWasmArtifact()).rejects.toThrow(STALE_MESSAGE);
+  });
+
+  it('throws when the artifact will not load (catches nothing)', async () => {
+    const { loadWasmArtifact } = await loadHelperWith({ stale: false, loadable: false });
+    await expect(loadWasmArtifact()).rejects.toThrow(LOAD_MESSAGE);
+  });
+
+  it('forwards the instantiated exports to the staleness check', async () => {
+    // The shim's namespace alone cannot see a MIXED build (new JS shim, old
+    // `.wasm` binary): its wrappers are declared statically. Only the exports
+    // object the init call returns shows the gap, so the helper must pass it
+    // along rather than drop it.
+    const initResult = { marker: 'instance exports' };
+    const { loadWasmArtifact, assertRequiredWasmExports } = await loadHelperWith({
+      stale: false,
+      loadable: true,
+      initResult,
+    });
+    await loadWasmArtifact();
+    expect(assertRequiredWasmExports).toHaveBeenCalledWith(expect.anything(), initResult);
+  });
+
+  it('forwards instantiated exports the REAL shim carries every required kernel on', async () => {
+    // The two cases above run against a mocked `initSync`, so they pin the
+    // forwarding but say nothing about what the real one hands back. Both halves
+    // of the second argument's premise are only asserted in prose otherwise:
+    // that `initSync` returns the instantiated `.wasm` exports at all (a
+    // wasm-bindgen release that returned some wrapper instead), and that every
+    // name in REQUIRED_WASM_EXPORTS is a FREE function there (wasm-bindgen
+    // mangles a struct method to `<struct>_<method>`, which the shim's
+    // namespace would still satisfy). Either way `initWasm` would reject a
+    // perfectly current build and the app would run the TypeScript fallback for
+    // ever behind one warning line, with nothing else in the suite noticing.
+    // Only `../../../wasm` is mocked here — to capture the arguments.
+    const { loadWasmArtifact, assertRequiredWasmExports } = await loadHelperWith({
+      stale: false,
+      loadable: true,
+      mockShim: false,
+    });
+    await loadWasmArtifact();
+    const instanceExports = assertRequiredWasmExports.mock.calls[0][1] as
+      Record<string, unknown> | undefined;
+    for (const name of REQUIRED_WASM_EXPORTS) {
+      expect(typeof instanceExports?.[name], `${name} is not a raw .wasm export`).toBe('function');
+    }
+  });
+});

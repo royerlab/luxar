@@ -20,10 +20,8 @@
  * and skips cleanly when `public/wasm/luxar_wasm_bg.wasm` is absent.
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { existsSync, readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 import type { WasmModule } from '../../../wasm/types';
+import { loadWasmArtifact, wasmArtifactExists } from '../../helpers/wasm-artifact';
 
 vi.mock('../../../utils/log', () => ({
   log: { info: vi.fn(), warning: vi.fn(), error: vi.fn() },
@@ -48,22 +46,15 @@ const RUNS = 5;
 /** Splat counts to bench. */
 const SIZES = [1_000_000, 5_000_000];
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const wasmJsPath = join(__dirname, '../../../../public/wasm/luxar_wasm.js');
-const wasmBinaryPath = join(__dirname, '../../../../public/wasm/luxar_wasm_bg.wasm');
-const wasmAvailable = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
+const wasmAvailable = wasmArtifactExists();
 
 let wasmModule: WasmModule | null = null;
 
 beforeAll(async () => {
   if (!wasmAvailable) return;
-  // Same loader shape as perf-budget: read the .wasm bytes, initSync via
-  // the JS shim — bypasses bundler path resolution in vitest/jsdom.
-  const wasmBinary = readFileSync(wasmBinaryPath);
-  const wasm = await import(wasmJsPath);
-  wasm.initSync({ module: wasmBinary });
-  wasmModule = wasm as unknown as WasmModule;
+  // Strict like perf-budget: an incompatible or stale build fails here by name
+  // rather than mid-benchmark.
+  wasmModule = await loadWasmArtifact();
 });
 
 function measure(fn: () => void): number {
