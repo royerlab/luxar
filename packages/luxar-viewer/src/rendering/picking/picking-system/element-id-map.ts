@@ -41,7 +41,10 @@
  *    `points-progressive-loader.ts::concatenatePointsData` offsets level `i` by
  *    the preceding levels' ON-DISK counts (`n_points`) to land it in that union
  *    space — a level that published no map (projection identity fast path)
- *    contributing `offset + slot`. Nothing is emitted when the parent declares
+ *    contributing `offset + slot`. Each id is BOUNDED by its own level's row
+ *    count as well as shifted: an index past it would name a real row belonging
+ *    to a sibling level, which is a confidently wrong label rather than a
+ *    missing one. Nothing is emitted when the parent declares
  *    no labels, when the whole resident ladder is complete and unculled (slot
  *    IS the union index), or when the inputs are inconsistent. That last case
  *    is NOT a suppression: with no map this helper returns the slot, so on a

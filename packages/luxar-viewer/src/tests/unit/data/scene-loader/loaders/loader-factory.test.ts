@@ -361,7 +361,7 @@ describe('createProgressivePointsLoader', () => {
     expect(pointsProgressiveCtorArgs[0][5]).toBeNull();
   });
 
-  it('propagates a PARENT label declaration and the on-disk prefix-sum levelOffsets', async () => {
+  it('propagates a PARENT label declaration and the on-disk CSR-style levelOffsets', async () => {
     // The parent carries the ladder's UNION CSR (#1422), so every level must
     // build its own level-space map and the concat offsets level `i` by the
     // preceding levels' ON-DISK `n_points` (#1439).
@@ -379,8 +379,10 @@ describe('createProgressivePointsLoader', () => {
       expect(lodNode.attrs.has_labels).toBe(true);
       expect(lodNode.attrs.has_image_labels).toBe(false);
     }
-    // Exclusive prefix sum — level 0 always starts at 0.
-    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 100, 350]);
+    // CSR-style bounds: level 0 always starts at 0 and the CLOSING entry is
+    // the union row count, so every level (the last one included) has an end
+    // the composer can bound its ids against.
+    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 100, 350, 750]);
   });
 
   it('propagates a has_image_labels-only parent (the other half of the gate)', async () => {
@@ -394,7 +396,7 @@ describe('createProgressivePointsLoader', () => {
 
     expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_image_labels).toBe(true);
     expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_labels).toBe(false);
-    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 7]);
+    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 7, 18]);
   });
 
   it('passes null levelOffsets (no throw) when a labelled ladder lacks n_points', async () => {
@@ -452,7 +454,23 @@ describe('createProgressivePointsLoader', () => {
 
     await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
 
-    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 100]);
+    expect(pointsProgressiveCtorArgs[0][5]).toEqual([0, 100, 350]);
+  });
+
+  it('fails closed when the levels sum past the 2^32 picking-map index range', async () => {
+    // Each count is individually a safe integer, but the composed map is a
+    // Uint32Array of UNION indices — a wider union would wrap into another
+    // CSR row, so it is the SUM that has to be range-checked.
+    const node = makeNode('/p', 'points');
+    node.attrs = { has_labels: true };
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 3_000_000_000 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_points: 3_000_000_000 } })) as never);
+
+    await createProgressivePointsLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    expect(pointsProgressiveCtorArgs[0][5]).toBeNull();
+    expect((pointsCtorArgs[0][1] as SceneNode).attrs.has_labels).toBe(false);
   });
 });
 

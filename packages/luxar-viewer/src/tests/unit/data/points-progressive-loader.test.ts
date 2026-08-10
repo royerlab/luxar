@@ -1286,7 +1286,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     // Level 0's index space IS the parent CSR's, shifted by levelOffsets[0]=0 —
     // no strip, no copy.
     const lod0 = labelledLod(10, 2048);
-    const result = await makeLoader([lod0], [0, 100]).loadPoints(baseViewState);
+    const result = await makeLoader([lod0], [0, 4096]).loadPoints(baseViewState);
     expect(result).toBe(lod0);
     expect(result.elementIds).toBeInstanceOf(Uint32Array);
     expect(Array.from(result.elementIds!.slice(0, 3))).toEqual([2048, 2049, 2050]);
@@ -1299,7 +1299,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     // shape that pins per-slot indexing rather than a per-level base.
     const result = await makeLoader(
       [gappedLod([3, 9, 40, 41]), gappedLod([0, 17, 18])],
-      [0, 100]
+      [0, 100, 200]
     ).loadPoints(baseViewState);
     expect(result.pointCount).toBe(7);
     expect(result.elementIds).toBeInstanceOf(Uint32Array);
@@ -1320,7 +1320,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
       '/points',
       undefined,
       null,
-      [0, 100, 350]
+      [0, 100, 350, 400]
     );
     const result = await loader.loadPoints(baseViewState);
     expect(result.pointCount).toBe(4);
@@ -1333,7 +1333,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     empty.elementIds = new Uint32Array(0);
     const result = await makeLoader(
       [gappedLod([3, 9]), empty, gappedLod([4])],
-      [0, 100, 350]
+      [0, 100, 350, 400]
     ).loadPoints(baseViewState);
     expect(result.pointCount).toBe(3);
     expect(Array.from(result.elementIds!)).toEqual([3, 9, 354]);
@@ -1343,7 +1343,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     // Level 1 took the projection's identity fast path (one range at 0, no
     // compaction), so its slot k IS its level-space index.
     const plain = makeLodData(3, 3, { color: 'uint8' });
-    const result = await makeLoader([labelledLod(2, 40), plain], [0, 100]).loadPoints(
+    const result = await makeLoader([labelledLod(2, 40), plain], [0, 100, 200]).loadPoints(
       baseViewState
     );
     expect(Array.from(result.elementIds!)).toEqual([40, 41, 100, 101, 102]);
@@ -1357,7 +1357,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     // map at all.
     const result = await makeLoader(
       [makeLodData(10, 3, { color: 'uint8' }), makeLodData(3, 3, { color: 'uint8' })],
-      [0, 100]
+      [0, 100, 200]
     ).loadPoints(baseViewState);
     expect(result.pointCount).toBe(13);
     expect(result.elementIds).toBeInstanceOf(Uint32Array);
@@ -1369,7 +1369,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     // LOADED counts ⇒ slot === union on-disk index; stay allocation-free.
     const result = await makeLoader(
       [makeLodData(10, 3, { color: 'uint8' }), makeLodData(5, 3, { color: 'uint8' })],
-      [0, 10]
+      [0, 10, 15]
     ).loadPoints(baseViewState);
     expect(result.pointCount).toBe(15);
     expect(result.elementIds).toBeUndefined();
@@ -1386,7 +1386,9 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
   it('fails closed when a level publishes the wrong number of element ids', async () => {
     const bad = labelledLod(4, 7);
     bad.elementIds = new Uint32Array(3); // shorter than pointCount
-    const result = await makeLoader([labelledLod(10, 5), bad], [0, 100]).loadPoints(baseViewState);
+    const result = await makeLoader([labelledLod(10, 5), bad], [0, 100, 200]).loadPoints(
+      baseViewState
+    );
     expect(result.pointCount).toBe(14);
     expect(result.elementIds).toBeUndefined();
   });
@@ -1394,7 +1396,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
   it('fails closed on a single part whose map length disagrees with pointCount', async () => {
     const lod0 = labelledLod(10, 2048);
     lod0.elementIds = new Uint32Array(9);
-    const result = await makeLoader([lod0], [0, 100]).loadPoints(baseViewState);
+    const result = await makeLoader([lod0], [0, 4096]).loadPoints(baseViewState);
     expect(result.elementIds).toBeUndefined();
     // Non-destructive: the sub-LOD's own payload keeps its (bogus) map.
     expect(lod0.elementIds!.length).toBe(9);
@@ -1404,10 +1406,43 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
   // one, so its slots are not on-disk indices. That is the opposite of the
   // identity, which is the other reason `elementIds` can be missing; reading it
   // as identity would compose a confident WRONG id inside the right level.
+  it('fails closed when a level maps a slot PAST its own on-disk rows', async () => {
+    // Level 1 owns union rows [100, 350). An id of 260 in ITS index space
+    // composes to 360 — a real row that belongs to additive_2. Shifting it
+    // would report a confident label from the wrong level, so the ladder
+    // publishes no map at all instead.
+    const result = await makeLoader(
+      [gappedLod([3, 9]), gappedLod([2, 260]), gappedLod([4])],
+      [0, 100, 350, 400]
+    ).loadPoints(baseViewState);
+    expect(result.pointCount).toBe(5);
+    expect(result.elementIds).toBeUndefined();
+  });
+
+  it('fails closed when the SINGLE part maps a slot past level 0’s rows', async () => {
+    // Same check on the first-paint state: level 0 owns [0, 100), so an id of
+    // 2048 names an additive_1 row in the parent's union CSR.
+    const lod0 = labelledLod(10, 2048);
+    const result = await makeLoader([lod0], [0, 100]).loadPoints(baseViewState);
+    expect(result).not.toBe(lod0);
+    expect(result.elementIds).toBeUndefined();
+    // Non-destructive, as everywhere else: the sub-LOD keeps its own map.
+    expect(lod0.elementIds!.length).toBe(10);
+  });
+
+  it('accepts the LAST loaded level up to its closing bound', async () => {
+    // The closing entry is what makes the final level checkable at all: 99 is
+    // the last row level 1 owns, so it must compose (to 199), not fail.
+    const result = await makeLoader([gappedLod([3]), gappedLod([99])], [0, 100, 200]).loadPoints(
+      baseViewState
+    );
+    expect(Array.from(result.elementIds!)).toEqual([3, 199]);
+  });
+
   it('fails closed when a MULTI-part level flags elementIdsUnavailable', async () => {
     const bailed = makeLodData(3, 3, { color: 'uint8' });
     bailed.elementIdsUnavailable = true;
-    const result = await makeLoader([gappedLod([3, 9]), bailed], [0, 100]).loadPoints(
+    const result = await makeLoader([gappedLod([3, 9]), bailed], [0, 100, 200]).loadPoints(
       baseViewState
     );
     expect(result.pointCount).toBe(5);
@@ -1422,7 +1457,7 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     empty.elementIdsUnavailable = true;
     const result = await makeLoader(
       [gappedLod([3, 9]), empty, gappedLod([4])],
-      [0, 100, 350]
+      [0, 100, 350, 400]
     ).loadPoints(baseViewState);
     expect(result.pointCount).toBe(3);
     expect(Array.from(result.elementIds!)).toEqual([3, 9, 354]);

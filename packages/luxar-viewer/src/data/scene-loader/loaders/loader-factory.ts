@@ -336,8 +336,11 @@ export async function createProgressivePointsLoader(
   // whether a ladder has readable labels at all.
   const parentDeclaresLabels =
     node.attrs.has_labels === true || node.attrs.has_image_labels === true;
-  // Exclusive prefix sum of the on-disk counts: `levelOffsets[i]` is where
-  // level `i` starts inside the parent's union CSR index space (so [0] === 0).
+  // CSR-style bounds over the on-disk counts, length `nAdditive + 1`:
+  // `levelOffsets[i]` is where level `i` starts inside the parent's union CSR
+  // index space (so [0] === 0) and `levelOffsets[i + 1]` is where it ends, so
+  // the composer can also BOUND each level's ids instead of only shifting
+  // them. The last entry is the union's total row count.
   // Only meaningful when the parent declares labels; on anything unusable stay
   // null (hover then reports the raw slot — no better than before #1439, but
   // never an id composed into someone else's CSR row).
@@ -365,6 +368,18 @@ export async function createProgressivePointsLoader(
             `declares n_points=${node.attrs.n_points}; the label CSR and the levels disagree, ` +
             'so per-level picking maps are disabled (hover falls back to the visible-buffer slot).'
         );
+      } else if (total > 0xffffffff) {
+        // The composed map is a `Uint32Array` of union indices, so a union
+        // wider than 2^32 rows would wrap silently into another CSR row (and
+        // past 2^53 the prefix sums stop being exact at all). Individually
+        // safe-integer counts can still sum past both bounds, so the SUM is
+        // what has to be checked.
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Progressive Points ${node.path}: sub-LOD row counts sum to ${total}, past the ` +
+            '2^32 index range the picking map is stored in; per-level picking maps are ' +
+            'disabled (hover falls back to the visible-buffer slot).'
+        );
       } else {
         levelOffsets = [];
         let acc = 0;
@@ -372,6 +387,9 @@ export async function createProgressivePointsLoader(
           levelOffsets.push(acc);
           acc += n;
         }
+        // Closing bound: `levelOffsets[nAdditive]` === the union row count, so
+        // every level — the last one included — has an end to be checked against.
+        levelOffsets.push(acc);
       }
     }
   }

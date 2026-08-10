@@ -57,6 +57,12 @@ import { log, Modules, LogEmoji } from '../../utils/log';
  * CSR index space (`additive_0 || additive_1 || …`), by offsetting level `i`
  * with the preceding levels' ON-DISK counts (`levelOffsets`, #1439).
  *
+ * `levelOffsets` is CSR-style: `nLods + 1` entries, so level `i` owns the
+ * half-open union range `[levelOffsets[i], levelOffsets[i + 1])`. A composed id
+ * outside its OWN level's range would name a real row belonging to a SIBLING
+ * level — a confidently wrong label rather than a missing one — so each id is
+ * bounded, not just shifted.
+ *
  * A level that publishes no map of its own took the projection's identity fast
  * path (one range starting at 0, nothing compacted), so its slot `k` IS its
  * level-space index and contributes `levelOffsets[i] + k`. A level whose
@@ -82,9 +88,10 @@ function buildLadderElementIdMap(
   totalPoints: number,
   warn: (message: string) => void
 ): Uint32Array | undefined {
-  if (levelOffsets.length < parts.length) {
+  // `parts.length + 1`: the LAST loaded level needs its closing bound too.
+  if (levelOffsets.length < parts.length + 1) {
     warn(
-      `Progressive Points: ${levelOffsets.length} level offsets for ${parts.length} loaded ` +
+      `Progressive Points: ${levelOffsets.length} level bounds for ${parts.length} loaded ` +
         'levels — picking labels fall back to the visible-buffer slot.'
     );
     return undefined;
@@ -125,9 +132,23 @@ function buildLadderElementIdMap(
   let w = 0;
   for (const [i, part] of parts.entries()) {
     const base = levelOffsets[i];
+    // Rows level `i` owns in the union: anything past this belongs to the NEXT
+    // level, so a level-space index that reaches it is inconsistent with the
+    // `n_points` the offsets were built from (a store whose spatial index and
+    // attrs disagree). Refuse rather than shift it into a sibling's row.
+    const span = levelOffsets[i + 1] - base;
     const ids = part.elementIds;
     for (let k = 0; k < part.pointCount; k++) {
-      out[w++] = base + (ids === undefined ? k : ids[k]);
+      const local = ids === undefined ? k : ids[k];
+      // Negated compare so a NaN / undefined slot also fails closed.
+      if (!(local < span)) {
+        warn(
+          `Progressive Points: level ${i} maps a slot to index ${local}, past its ${span} ` +
+            'on-disk rows — picking labels fall back to the visible-buffer slot.'
+        );
+        return undefined;
+      }
+      out[w++] = base + local;
     }
   }
   return out;
@@ -141,7 +162,8 @@ function buildLadderElementIdMap(
  * policy).
  *
  * `levelOffsets` (non-null only for a ladder whose PARENT declares the union
- * label CSR) gives each level's start inside that CSR's index space; with it
+ * label CSR) gives each level's half-open extent inside that CSR's index
+ * space — CSR-style, so it holds one entry MORE than there are levels; with it
  * the per-level picking maps are composed into one union map, and without it
  * none is published at all — see {@link buildLadderElementIdMap}. `warn` is the
  * owning loader's once-per-instance fail-closed reporter (this runs on every
@@ -181,24 +203,28 @@ function concatenatePointsData(
     // otherwise report an additive_0 index while only LOD 0 is resident and the
     // raw slot once a second level lands.
     const only = parts[0];
-    const offsetOk = levelOffsets !== null && levelOffsets.length >= 1 && levelOffsets[0] === 0;
-    // A level that WANTED a map and failed to build one is NOT the identity:
-    // its slots are not on-disk indices, so it must not pass through as if
-    // they were. Same fail-closed treatment as a length mismatch. An EMPTY
-    // level has no slots to be wrong about, so it is exempt (as in
-    // `buildLadderElementIdMap`).
-    const unusable = only.pointCount > 0 && only.elementIdsUnavailable === true;
-    const lengthBad = only.elementIds !== undefined && only.elementIds.length !== only.pointCount;
-    if (offsetOk && (unusable || lengthBad)) {
-      warn(
-        unusable
-          ? 'Progressive Points: level 0 could not build a slot → on-disk map (its slots are ' +
-              'not on-disk indices) — picking labels fall back to the visible-buffer slot.'
-          : `Progressive Points: level 0 published ${only.elementIds?.length} element ids for ` +
-              `${only.pointCount} points — picking labels fall back to the visible-buffer slot.`
-      );
-    } else if (offsetOk) {
-      return only;
+    const offsetOk = levelOffsets !== null && levelOffsets.length >= 2 && levelOffsets[0] === 0;
+    if (offsetOk) {
+      // Level 0 owns union rows [0, levelOffsets[1]) — `levelOffsets[0]` is 0,
+      // so its span IS its closing bound. The same three fail-closed checks
+      // `buildLadderElementIdMap` applies, on the one level there is:
+      // a level that WANTED a map and failed to build one is NOT the identity
+      // (its slots are not on-disk indices); a length mismatch means the map
+      // does not describe this payload; and an id past level 0's rows names a
+      // real row belonging to additive_1 in the union CSR. An EMPTY level has
+      // no slots to be wrong about, so it is exempt.
+      const span = levelOffsets[1];
+      let failure: string | null = null;
+      if (only.pointCount > 0 && only.elementIdsUnavailable === true) {
+        failure =
+          'level 0 could not build a slot → on-disk map (its slots are not on-disk indices)';
+      } else if (only.elementIds !== undefined && only.elementIds.length !== only.pointCount) {
+        failure = `level 0 published ${only.elementIds.length} element ids for ${only.pointCount} points`;
+      } else if (only.elementIds?.some((id) => !(id < span))) {
+        failure = `level 0 maps a slot past its ${span} on-disk rows`;
+      }
+      if (failure === null) return only;
+      warn(`Progressive Points: ${failure} — picking labels fall back to the visible-buffer slot.`);
     }
     if (only.elementIds === undefined) return only;
     const stripped: LoadedPointsData = { ...only };
@@ -310,11 +336,11 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
   // ladder reads as unstamped — never blend stamped and guessed entries).
   private energyTable: readonly number[] | null;
-  // Exclusive prefix sum of the levels' ON-DISK element counts — where each
-  // `additive_<i>` starts inside the parent node's union label CSR index
-  // space. Non-null only when the parent declares that CSR
-  // (`createProgressivePointsLoader`); null means no ladder picking map is
-  // published at all.
+  // CSR-style bounds over the levels' ON-DISK element counts (`nLods + 1`
+  // entries): level `i` occupies `[levelOffsets[i], levelOffsets[i + 1])`
+  // inside the parent node's union label CSR index space. Non-null only when
+  // the parent declares that CSR (`createProgressivePointsLoader`); null means
+  // no ladder picking map is published at all.
   private readonly levelOffsets: readonly number[] | null;
   // One fail-closed composition warning per LOADER, not per concat: the concat
   // re-runs on every (generation, lodCount) miss and a view change bumps the

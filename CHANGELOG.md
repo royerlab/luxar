@@ -21,7 +21,8 @@ The viewer now composes them. When the PARENT node declares the ladder's union
 label CSR — one CSR keyed by the concatenation `additive_0 || additive_1 || …`,
 each level in its stored order — the factory propagates that declaration to every
 sub-LOD (so each level builds its own level-space map) and passes down
-`levelOffsets`, the exclusive prefix sum of the levels' ON-DISK `n_points`.
+`levelOffsets`, CSR-style bounds over the levels' ON-DISK `n_points` (one entry
+more than there are levels, so every level has both a start and an end).
 `concatenatePointsData` then shifts level `i`'s map by `levelOffsets[i]` into the
 union space; a level that published no map took the projection's identity fast
 path, so it contributes `levelOffsets[i] + slot`. Nothing is allocated when the
@@ -31,9 +32,12 @@ as before.
 
 Every uncertainty refuses the union map rather than composing one: a missing or
 non-integer per-level `n_points`, a parent `n_points` that disagrees with the
-levels' sum (the CSR and the levels are then from different builds), a level whose
-map length disagrees with its point count, and — newly distinguishable — a level
-whose projection WANTED a map but could not build one. That last case needed a new
+levels' sum (the CSR and the levels are then from different builds), a union wider
+than the 2^32 index range the map is stored in, a level whose map length disagrees
+with its point count, a level-space index that reaches past the rows its OWN level
+owns (it would name a real row belonging to a sibling level — a confidently wrong
+label rather than a missing one), and — newly distinguishable — a level whose
+projection WANTED a map but could not build one. That last case needed a new
 signal: `buildElementIdMap` returns `undefined` for five different reasons — an
 empty visible set, the identity, and three fail-closed bail-outs — and reading a
 non-identity one as identity would have composed a plausible wrong id, so the
