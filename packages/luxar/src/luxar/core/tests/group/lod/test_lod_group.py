@@ -34,6 +34,8 @@ from luxar.core.group.lod.group import (
     compose_additive_under_substitutive,
     compute_lod_display_type,
     coverage_fractions,
+    derive_coverage_fractions,
+    is_partition_bound,
     partitioned_coverage_fractions,
     resolve_display_type,
     resolve_substitutive_axis,
@@ -768,6 +770,109 @@ class TestPartitionedCoverageFractions:
             resolve_substitutive_axis(
                 {"coverage_fractions": [0.0, bad, 0.9, 0.5]}, "Points"
             )
+
+
+# ────────────────────────────────────────────────────────────────────────
+# is_partition_bound / derive_coverage_fractions — anchor choice by ancestry
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestIsPartitionBound:
+    """Detect a ``kind=partition`` ancestor of a ladder's insertion point.
+
+    The node handed in is the future lod group's PARENT, so the partition wrapper
+    itself counts; and anything between the partition and the ladder (a plain
+    ``add_group``) leaves the ladder inside one tile, so that counts too.
+    """
+
+    def test_the_partition_group_itself(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            part = scene.add_partition_group(
+                "tiles", display_type="points", max_elements=1000
+            )
+            assert is_partition_bound(part) is True
+
+    def test_plain_group_nested_under_the_partition(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            part = scene.add_partition_group(
+                "tiles", display_type="points", max_elements=1000
+            )
+            inner = part.add_group("part_0").add_group("deeper")
+            assert is_partition_bound(inner) is True
+
+    def test_lod_group_under_the_partition(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            part = scene.add_partition_group(
+                "tiles", display_type="gsplats", max_elements=1000
+            )
+            assert is_partition_bound(part.add_lod_group("ladder")) is True
+
+    def test_scene_root_is_not_bound(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            assert is_partition_bound(scene) is False
+
+    def test_plain_group_with_no_partition_anywhere(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            assert is_partition_bound(scene.add_group("a").add_group("b")) is False
+
+    def test_partition_nested_under_a_plain_group(self, tmp_path) -> None:
+        """The walk is up the whole chain, not just one hop."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            outer = scene.add_group("outer")
+            part = outer.add_partition_group(
+                "tiles", display_type="points", max_elements=1000
+            )
+            assert is_partition_bound(part) is True
+            assert is_partition_bound(outer) is False
+
+
+class TestDeriveCoverageFractions:
+    """Which ladder the adders' single chokepoint returns, per insertion point."""
+
+    COUNTS = [25, 100, 400]
+
+    def test_scene_root_gets_the_whole_object_ladder(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            out = derive_coverage_fractions(self.COUNTS, scene, name="cloud")
+        assert out == pytest.approx(coverage_fractions(self.COUNTS))
+        assert out[-1] == 1.0
+
+    def test_under_a_partition_gets_the_fills_screen_ladder(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            part = scene.add_partition_group(
+                "tiles", display_type="points", max_elements=1000
+            )
+            out = derive_coverage_fractions(self.COUNTS, part, name="tile_0")
+        assert out == pytest.approx(partitioned_coverage_fractions(self.COUNTS))
+        assert out[-1] == pytest.approx(MAX_COVERAGE_FRACTION)
+
+    def test_plain_group_between_partition_and_ladder_still_bound(
+        self, tmp_path
+    ) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            part = scene.add_partition_group(
+                "tiles", display_type="points", max_elements=1000
+            )
+            inner = part.add_group("group_in_tile")
+            out = derive_coverage_fractions(self.COUNTS, inner, name="tile_0")
+        assert out[-1] == pytest.approx(MAX_COVERAGE_FRACTION)
+
+    def test_plain_group_outside_a_partition_is_whole_object(self, tmp_path) -> None:
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            out = derive_coverage_fractions(
+                self.COUNTS, scene.add_group("plain"), name="cloud"
+            )
+        assert out[-1] == 1.0
 
 
 # ────────────────────────────────────────────────────────────────────────

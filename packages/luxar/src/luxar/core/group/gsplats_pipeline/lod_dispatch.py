@@ -46,12 +46,13 @@ def add_gsplats_as_lod_group_impl(
     land on the kind=lod ``Group`` itself; per-leaf gsplats attrs
     (truncation_radius, extend_to_all, colormap) ride into each child.
     """
-    from ..lod.group import coverage_fractions
+    from ..lod.group import derive_coverage_fractions
 
     # Substitutive convention: index 0 = finest, n-1 = coarsest. The
     # LOD group needs coarsest first.
     n_sub = result.n_substitutive
     order = list(range(n_sub - 1, -1, -1))
+    parent_node = parent or group
 
     # Per-level total splat count (sum across each level's additive
     # ladder) — used both for logging and for auto-deriving
@@ -72,8 +73,11 @@ def add_gsplats_as_lod_group_impl(
         # Auto-derive (coarsest-first) as viewport-relative coverage fractions
         # ``sqrt(N_i/N_finest)`` — count ratios only, so no per-level radius or
         # world-extent is needed; the viewer anchors the finest at a quarter of the
-        # live viewport diagonal (any normal full-frame view).
-        coverage_vals = coverage_fractions(splat_counts)
+        # live viewport diagonal (any normal full-frame view). A ladder whose
+        # insertion point sits under a hand-built ``kind=partition`` switches on ONE
+        # TILE, so it takes the fills-screen anchor instead — detected and logged by
+        # ``derive_coverage_fractions``.
+        coverage_vals = derive_coverage_fractions(splat_counts, parent_node, name=name)
 
     # Separate compositing attrs (go on the kind=lod Group) from
     # per-leaf gsplats attrs (go on each child). Anything not in the
@@ -92,7 +96,6 @@ def add_gsplats_as_lod_group_impl(
     # in ``**child_attrs`` would raise TypeError.
     child_attrs.pop("coverage_fraction", None)
 
-    parent_node = parent or group
     # All children in this branch are gsplats leaves, so the user-facing
     # ``display_type`` is unambiguously "gsplats". Set it here so the
     # on-disk attrs are self-describing.

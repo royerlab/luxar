@@ -151,12 +151,14 @@ extracted to keep `node.py` readable.
   with `kind="lod"`. A `kind=lod` group picks one of N alternative children at
   runtime by projecting the group's bbox diagonal to screen pixels and
   comparing against each child's `coverage_fraction` threshold (a
-  dimensionless, viewport-relative value — `0.0` coarsest, `1.0` the
-  auto-derived finest anchor, up to `4.0` for an explicitly authored ladder —
-  multiplied by a quarter of the current viewport diagonal to get the pixel
-  comparison).
-- **`add_partition_group_impl`** — validates `display_type` ∈
-  {`points`, `lines`, `gsplats`} and `max_elements` (int ≥ 1), then creates a
+  dimensionless, viewport-relative value — `0.0` coarsest, `1.0` a
+  whole-object ladder's finest anchor, up to `4.0` for a partition-bound or
+  explicitly authored one — multiplied by a quarter of the current viewport
+  diagonal to get the pixel comparison).
+- **`add_partition_group_impl`** — validates `display_type` against the
+  partition-capable rows of `typing_utils/geometry_capabilities.py`
+  (`points` / `lines` / `gsplats` / `mesh` today — `mesh` earned it with
+  `luxar.mesh.split`) and `max_elements` (int ≥ 1), then creates a
   child group with `kind="partition"`. A `kind=partition` group is a
   compile-time decomposition of one large geometry node into homogeneous
   children for per-child frustum culling and LOD; the user still sees one

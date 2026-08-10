@@ -1,4 +1,8 @@
-"""Finalize-time back-fill of position_bounds / display_type on kind=lod groups."""
+"""Finalize-time back-fill of position_bounds / display_type on kind=lod groups.
+
+Also hosts :func:`warn_one_part_partition_anchors`, which reports (never rewrites)
+the one anchor mistake no *producer* can catch — see its docstring.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ from typing import Dict, List, Optional
 import zarr
 from arbol import aprint
 
+from ....core.group.lod.group import MAX_COVERAGE_FRACTION
 from ....typing_utils._format_contract import GEOMETRY_TYPES
 from ....typing_utils.geometry_capabilities import require_lod_display_type
 
@@ -167,3 +172,94 @@ def finalize_lod_display_types(store: zarr.Group) -> None:
             walk(group[child_name])
 
     walk(store)
+
+
+#: How close a child's ``coverage_fraction`` must be to ``MAX_COVERAGE_FRACTION``
+#: to read as the per-tile, fills-screen anchor. The derived value is an exact
+#: power-of-two rescale (``1.0 × 4.0``), so this only absorbs JSON round-tripping.
+_ANCHOR_TOLERANCE: float = 1e-9
+
+
+def _is_tile_anchored(group: "zarr.Group") -> bool:
+    """Does this kind=lod group's finest child sit on the fills-screen anchor?
+
+    Reads every child group's ``coverage_fraction`` rather than trusting insertion
+    order: the ladder is written coarsest→finest, but a hand-built group need not
+    be, and the question here is only whether the ladder REACHES the ceiling.
+    """
+    for child_name in group.group_keys():
+        raw = dict(group[child_name].attrs).get("coverage_fraction")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            if float(raw) >= MAX_COVERAGE_FRACTION - _ANCHOR_TOLERANCE:
+                return True
+    return False
+
+
+def warn_one_part_partition_anchors(store: zarr.Group) -> None:
+    """Warn about a fills-screen ladder under a ONE-PART ``kind=partition``.
+
+    The per-tile anchor (``coverage_fraction`` up to ``MAX_COVERAGE_FRACTION`` =
+    4.0) is correct only when the partition is a real TILING: a tile's projected
+    bbox diagonal is intrinsically a fraction of the whole object's, so a
+    whole-object anchor would put every tile on its finest level while the object
+    is merely full-frame. A ONE-part partition inverts that — its single part's
+    bbox IS the whole object — and the ladder then holds its finest level back
+    until the object *overfills* the screen.
+
+    Every producer that can see the final sibling count already excludes that
+    shape (``gsplats/lod/recipes.py::build_adaptive`` and both gsplat tree
+    writers). The SCENE-ADDER path
+    (``core/group/lod/group.py::derive_coverage_fractions``) cannot: it is handed
+    only the insertion point, and part 0's ladder is derived before part 1 has
+    been added. Finalize is the first moment the sibling count exists, which is
+    why the check lives here.
+
+    **Reports, never rewrites.** An authored ``coverage_fractions=[0, …, 4.0]``
+    list and a derived one are indistinguishable on disk, so silently
+    re-anchoring would override a deliberate choice. One warning per offending
+    ``kind=lod`` group.
+
+    The test mirrors the producers' rule exactly: a ladder is legitimately
+    tile-anchored when ANY enclosing partition is a real tiling, because that is
+    what both gsplat writers thread down (``under_partition or len(children) >
+    1`` — an inner one-part wrapper ORs the outer binding in rather than clearing
+    it). So a warning needs BOTH a one-part partition above the ladder AND no
+    genuine tiling further up: ``partition(2 parts) → partition(1 part) → lod``
+    is still inside one tile and is correct, while a genuine multi-part partition
+    nested inside a one-part wrapper is likewise not blamed for its children's
+    (correct) anchors. When it does fire, the offender named is the NEAREST
+    enclosing partition.
+    """
+
+    def walk(
+        group: "zarr.Group", lone_partition: Optional[str], under_tiling: bool
+    ) -> None:
+        attrs = dict(group.attrs)
+        kind = attrs.get("kind")
+        child_names = list(group.group_keys())
+        if (
+            kind == "lod"
+            and lone_partition is not None
+            and not under_tiling
+            and _is_tile_anchored(group)
+        ):
+            aprint(
+                f"  ⚠️  kind=lod group '{group.path or '/'}' is anchored at "
+                f"coverage_fraction={MAX_COVERAGE_FRACTION:g} — the per-TILE, "
+                f"fills-screen anchor — but its enclosing kind=partition group "
+                f"'{lone_partition}' holds only ONE part. A one-part partition is "
+                "not a tiling: that part's bbox IS the whole object, so this "
+                "ladder will hold its finest level back until the object "
+                "OVERFILLS the viewport instead of showing it at a normal "
+                "full-frame view. Drop the partition wrapper, or pass an "
+                "explicit coverage_fractions=[...] ending at 1.0."
+            )
+        if kind == "partition":
+            if len(child_names) > 1:
+                under_tiling = True
+            else:
+                lone_partition = group.path or "/"
+        for child_name in child_names:
+            walk(group[child_name], lone_partition, under_tiling)
+
+    walk(store, None, False)
