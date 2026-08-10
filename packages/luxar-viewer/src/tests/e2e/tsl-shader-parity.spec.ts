@@ -315,6 +315,36 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('volumetric line ray integral: GLSL block and TSL builders agree numerically', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    // The #1352 primitive's math (materials/line/ray-integral.ts). Both
+    // sides sweep the erf-window gap across the Δ = 0.5 lane threshold
+    // (x) and the window midpoint across [-3, 3] (y), encoding the
+    // sum-mode integral in red and the peak-mode capsule profile in
+    // green. The two implementations share only CONSTANTS — the GLSL is
+    // an interpolated string, the TSL a hand-built node graph — so this
+    // is the ONLY check that constrains the expression tree itself. An
+    // inverted `mix`, a reversed `step` or a dropped 1/sqrt2 separate the
+    // channels here (measured: 3272, 3272 and 3542 of 4096 pixels) and are
+    // invisible to every CPU-side test. What this canNOT see: the float32
+    // finiteness guards, which only ever alter the mix arm that is
+    // multiplied by zero (the codegen snapshot pins their presence, and
+    // the unit suite's fround harness pins their behaviour); and a sign
+    // flip on the midpoint M, because the integral is exactly even in M.
+    const glslPixels = await runGLSL(page, 'line-ray-integral');
+    const tslResult = await runTSL(page, 'line-ray-integral');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-ray-integral');
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `line-ray-integral GLSL/TSL divergence: mean abs diff ${diff.toFixed(3)} on 0-255 scale.`
+    ).toBeLessThan(2.0);
+  });
+
   test('fxaa renders identically through both backends', async ({ page }) => {
     await bootHarness(page);
 

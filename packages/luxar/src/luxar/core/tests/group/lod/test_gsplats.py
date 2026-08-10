@@ -15,13 +15,21 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import zarr
 
+from luxar.core.dimensions import Dimensions
+from luxar.core.group.lod.group import (
+    MAX_COVERAGE_FRACTION,
+    coverage_fractions,
+    partitioned_coverage_fractions,
+)
 from luxar.core.group.lod.gsplats import (
     resolve_additive_axis_gsplats,
     resolve_substitutive_axis_gsplats,
 )
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod import make_additive_lod, make_substitutive_lod
+from luxar.io.compiler import LuxarZarrCompiler
 
 
 def _make_random_gsplat(n: int = 64, ndim: int = 3, seed: int = 0) -> GSplatData:
@@ -222,3 +230,253 @@ class TestResolveAdditiveAxisGsplats:
         ``make_additive_lod`` and rejected, rather than silently ignored."""
         with pytest.raises(ValueError, match="method must be one of"):
             resolve_additive_axis_gsplats(flat, {"method": "poisson-disk"})
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Partition-bound anchor for add_gsplats_from_data(lod_group=...)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _write_pyramid(tmp_path, name, *, partitioned, wrap_in_group=False, **lod_group):
+    """Write TWO stored pyramids through the scene adder and read their thresholds.
+
+    ``partitioned=True`` hand-builds the ``kind=partition`` wrapper first (the
+    shape ``add_gsplats_from_data`` cannot reach on its own), which is what makes
+    each ladder a per-tile one. TWO parts on purpose: a one-part
+    ``kind=partition`` is the degenerate shape ``partitioned_coverage_fractions``
+    documents as 4x too coarse (its "tile" IS the whole object), so it must not be
+    the fixture the rule is argued from.
+
+    Returns ``[(coverage, counts), ...]``, one entry per part. The two part sizes
+    are deliberately NON-proportional: 256 reduces to 16/64/256 (exact powers of
+    ``K``), while 102 reduces to 7/26/102 — the ``ceil`` in the reduction breaks the
+    ratio — so the two derived ladders differ numerically. A proportional pair (say
+    256 and 128) would derive to the *identical* list, and the fixture could not
+    then tell per-part derivation from wrapper-level derivation. See
+    ``test_every_partition_bound_ladder_is_fills_screen_anchored``, which asserts
+    the two lists differ.
+    """
+    parts = [
+        make_substitutive_lod(
+            _make_random_gsplat(n=n, seed=seed), levels=2, device="cpu"
+        )
+        for n, seed in ((256, 3), (102, 4))
+    ]
+    out = tmp_path / name
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        wrapper = (
+            scene.add_partition_group("tiled", display_type="gsplats", max_elements=256)
+            if partitioned
+            else scene
+        )
+        for i, data in enumerate(parts):
+            target = (
+                wrapper.add_group(f"holder_{i}")
+                if (partitioned and wrap_in_group)
+                else wrapper
+            )
+            target.add_gsplats_from_data(f"part_{i}", data, lod_group=lod_group or True)
+
+    root = zarr.open(str(out), mode="r")
+    node = root["tiled"] if partitioned else root
+    results = []
+    for i in range(len(parts)):
+        holder = node[f"holder_{i}"] if (partitioned and wrap_in_group) else node
+        lod = holder[f"part_{i}"]
+        results.append((_lod_child_coverage(lod), _lod_child_counts(lod)))
+    return results
+
+
+def _child_names(lod_group) -> list:
+    return sorted(
+        (k for k in lod_group.keys() if k.startswith("child_")),
+        key=lambda k: int(k.split("_")[1]),
+    )
+
+
+def _lod_child_coverage(lod_group) -> list:
+    return [
+        float(lod_group[k].attrs["coverage_fraction"]) for k in _child_names(lod_group)
+    ]
+
+
+def _lod_child_counts(lod_group) -> list:
+    return [int(lod_group[k].attrs["n_splats"]) for k in _child_names(lod_group)]
+
+
+class TestPartitionBoundAnchorGsplats:
+    """``lod_group=`` under a hand-built ``kind=partition`` takes the tile anchor.
+
+    The dispatch used to auto-derive the WHOLE-OBJECT ladder unconditionally
+    (finest ``1.0``). Two tests here REGRESS without the fix
+    (``test_every_partition_bound_ladder_is_fills_screen_anchored``,
+    ``test_plain_group_between_partition_and_ladder_still_anchored``); the other two
+    are CONTROLS that pass either way and pin what must NOT change. The fixture is
+    a real TWO-tile partition and every assertion covers both tiles.
+    """
+
+    def test_every_partition_bound_ladder_is_fills_screen_anchored(
+        self, tmp_path
+    ) -> None:
+        parts = _write_pyramid(tmp_path, "tiled.luxar.zarr", partitioned=True)
+        assert len(parts) == 2, "must be a real 2-tile partition"
+        for i, (cov, counts) in enumerate(parts):
+            assert cov == pytest.approx(partitioned_coverage_fractions(counts)), (
+                f"part_{i}"
+            )
+            assert cov[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
+        # Each ladder is derived from its OWN counts, not the wrapper's: the two
+        # parts are non-proportional (see _write_pyramid), so a wrapper-level
+        # derivation would give both the identical list.
+        assert parts[0][0] != pytest.approx(parts[1][0]), (
+            "the two parts derived identical thresholds, so this fixture cannot "
+            f"distinguish per-part from wrapper-level derivation: {parts}"
+        )
+
+    def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path) -> None:
+        """CONTROL (passes pre-fix): the over-trigger guard."""
+        parts = _write_pyramid(tmp_path, "root.luxar.zarr", partitioned=False)
+        assert len(parts) == 2
+        for i, (cov, counts) in enumerate(parts):
+            assert cov == pytest.approx(coverage_fractions(counts)), f"part_{i}"
+            assert cov[-1] == 1.0, f"part_{i}"
+
+    def test_plain_group_between_partition_and_ladder_still_anchored(
+        self, tmp_path
+    ) -> None:
+        parts = _write_pyramid(
+            tmp_path, "tiled.luxar.zarr", partitioned=True, wrap_in_group=True
+        )
+        assert len(parts) == 2
+        for i, (cov, _counts) in enumerate(parts):
+            assert cov[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
+
+    def test_explicit_coverage_fractions_still_win_under_a_partition(
+        self, tmp_path
+    ) -> None:
+        """CONTROL (passes pre-fix): an explicit list must keep winning verbatim."""
+        explicit = [0.0, 3.52, 4.0]
+        parts = _write_pyramid(
+            tmp_path,
+            "tiled.luxar.zarr",
+            partitioned=True,
+            coverage_fractions=explicit,
+        )
+        assert len(parts) == 2
+        for i, (cov, _counts) in enumerate(parts):
+            assert cov == pytest.approx(explicit), f"part_{i}"
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Acceptance: the hand-built scene path == what `gsplat lod --recipe adaptive`
+# derives for the same tree (issue #1411)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _acceptance_params():
+    """Recipe params sized so NOTHING is clamped or randomised away.
+
+    ``levels=2`` with ``K=4`` on 128-splat parts is well inside
+    ``_substitutive_for_part``'s ``levels <= log_K(n)`` clamp, so the per-part
+    reduction the recipe runs and the one the scene path runs below are the same
+    call with the same arguments — which is what makes a count-for-count
+    comparison of the two ladders legitimate. Additive ladders and quality stamps
+    are off: they change level *contents*, never level *counts*, so leaving them
+    on would only slow the test down.
+    """
+    from luxar.gsplats.lod.recipes import RecipeParams
+
+    return RecipeParams(
+        max_elements=128,
+        levels=2,
+        compression_factor=4,
+        additive_ladders=False,
+        quality_stamps=False,
+        device="cpu",
+        seed=0,
+    )
+
+
+def test_hand_built_partition_matches_the_adaptive_recipe(tmp_path) -> None:
+    """A hand-built ``kind=partition`` of scene-adder ladders must land on the
+    SAME per-tile thresholds the ``adaptive`` recipe derives.
+
+    This is the acceptance criterion of #1411. What it pins is the DISPATCH, not
+    the formula: both paths ultimately call the same
+    ``partitioned_coverage_fractions`` (and path B re-runs path A's
+    ``to_spatial_partition`` / ``make_substitutive_lod``), so this is not two
+    independent implementations agreeing. The difference is how each one *chooses*
+    that function — ``recipes._substitutive_for_part`` names it outright because it
+    *knows* it is building a per-tile ladder, while the scene adder has to *detect*
+    the partition from the insertion point. They can only agree if that detection
+    works.
+
+    The comparison is count-for-count, not merely shape-for-shape: both sides
+    partition the SAME flattened data with the same ``max_elements``/rule and then
+    reduce each part with the same ``compression_factor``/``levels``, so the
+    per-level splat counts are asserted equal before the thresholds are.
+    Run in-process (no CLI subprocess) on a 512-splat CPU-only dataset.
+    """
+    from luxar.gsplats.lod.recipes import build_adaptive
+    from luxar.gsplats.tree import GSplatLodGroup, total_splats
+
+    params = _acceptance_params()
+    data = _make_random_gsplat(n=512, seed=7)
+
+    # ---- path A: the library recipe (what `gsplat lod --recipe adaptive` runs).
+    recipe_tree = build_adaptive(data, params)
+    recipe_counts, recipe_coverage = [], []
+    for part in recipe_tree.children:
+        assert isinstance(part, GSplatLodGroup), (
+            "the adaptive recipe must give every part its own kind=lod group; "
+            f"got {type(part).__name__}"
+        )
+        recipe_counts.append([total_splats(c) for c in part.children])
+        recipe_coverage.append(
+            [float(c.meta["coverage_fraction"]) for c in part.children]
+        )
+    assert len(recipe_coverage) > 1  # a real partition, not a single tile
+
+    # ---- path B: hand-built kind=partition + one scene-adder ladder per part.
+    # The SAME parts (same flatten → same BSP → same max_elements/rule) reduced
+    # the same way, so only the threshold derivation can differ.
+    base = data.flattened()
+    partition = base.to_spatial_partition(
+        max_elements=params.effective_max_elements, rule=params.partition_rule
+    )
+    out = tmp_path / "handbuilt.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        wrapper = scene.add_partition_group(
+            "tiled",
+            display_type="gsplats",
+            max_elements=params.effective_max_elements,
+        )
+        for i, part in enumerate(partition.children):
+            sub = make_substitutive_lod(
+                GSplatData.from_tree(part),
+                compression_factor=params.compression_factor,
+                levels=params.levels,
+                method=params.substitutive_method,
+                device=params.device,
+                seed=params.seed,
+            )
+            wrapper.add_gsplats_from_data(f"part_{i}", sub, lod_group=True)
+
+    tiled = zarr.open(str(out), mode="r")["tiled"]
+    scene_counts = [
+        _lod_child_counts(tiled[f"part_{i}"]) for i in range(len(partition.children))
+    ]
+    scene_coverage = [
+        _lod_child_coverage(tiled[f"part_{i}"]) for i in range(len(partition.children))
+    ]
+
+    assert scene_counts == recipe_counts, (
+        "the two paths must reduce to identical per-level counts, or the "
+        "threshold comparison below is not count-for-count"
+    )
+    for i, (scene_cov, recipe_cov) in enumerate(zip(scene_coverage, recipe_coverage)):
+        assert scene_cov == pytest.approx(recipe_cov), f"part_{i}"
+        assert scene_cov[0] == 0.0
+        assert scene_cov[-1] == pytest.approx(MAX_COVERAGE_FRACTION)

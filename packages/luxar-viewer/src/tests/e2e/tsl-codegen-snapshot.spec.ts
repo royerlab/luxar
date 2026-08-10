@@ -204,17 +204,24 @@ const SHADERS = [
   'mesh-flat-normal',
   'mesh-colormap',
   'mesh-pick',
-  // Shared-math erf polynomial (materials/_shared/erf.ts): the snapshot
-  // pins the LITERALS the TSL code generator emits for the coefficient
-  // values — the textual half of the value-level parity contract (the
-  // pixel half is the parity spec's 'erf' test). MUST STAY LAST among the
-  // pre-#1352 entries: the shared `render` std140 uniform group
-  // accumulates members in first-encounter order across the whole run, so
-  // a new entry built BEFORE the geometry shaders reorders
+  // Shared math. These pin the LITERALS the TSL code generator emits —
+  // the textual half of each module's value-level parity contract (the
+  // pixel half is the parity spec's same-named test):
+  //   'erf'               materials/_shared/erf.ts, the polynomial coefficients
+  //   'line-ray-integral' materials/line/ray-integral.ts, the #1352 volumetric
+  //                       line primitive: both numerical lanes, the lane
+  //                       select, all three float32 finiteness guards, and the
+  //                       capsule profile.
+  // THESE MUST STAY AHEAD OF ANY FUTURE GEOMETRY ENTRY (their order
+  // relative to each other does not matter — neither adds a `render`-group
+  // member, which is also why the volumetric-line entries below are
+  // unaffected by them): the shared `render` std140 uniform group
+  // accumulates members in first-encounter order across the whole run,
+  // so an entry built BEFORE the geometry shaders reorders
   // `cameraViewMatrix` / `cameraProjectionMatrix` in every subsequent
-  // snapshot (49 files of spurious churn when 'erf' briefly led this
-  // list). New entries append BELOW, never above.
+  // snapshot (49 files of spurious churn when 'erf' briefly led this list).
   'erf',
+  'line-ray-integral',
   // Volumetric line PRIMITIVE (#1352, ?linePrimitive=volumetric) — one
   // entry per distinct GRAPH: ortho sum (sideon; endon-ortho/joint/taper
   // share its code, differing only in uniforms), perspective sum

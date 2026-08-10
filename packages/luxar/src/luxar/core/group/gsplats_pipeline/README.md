@@ -67,7 +67,16 @@ Both functions produce a `GSplatData` and hand it to
   `blending_mode` — land on the wrapper **only**, everything else rides onto
   each child. `blending_mode` must NOT be duplicated onto the parts: it is
   nearest-setter-wins, so a part's copy shadows the wrapper and the layer's
-  Blend control goes inert.
+  Blend control goes inert. Per-child `coverage_fraction` thresholds ride from
+  each node's own `meta`; the **fallback** for a meta-less lod group is
+  partition-binding-aware in three ways — the recursion's `_under_partition` flag,
+  a `kind=partition` child of the ladder itself (the `overview` shape, the common
+  reachable case), and `is_partition_bound(parent or group)` on the SCENE side.
+  Note the scope: only a *non*-matrix-shaped subtree is grafted at all, so a
+  per-part `add_gsplats_from_file` of an ordinary ladder store never reaches here
+  — it is matrix-shaped and anchored by `lod_dispatch`. The scene-side term is a
+  defensive fallback for a hand-built / nested lod-of-lods tree, which no library
+  producer writes today.
 - `add_gsplats_from_volume_impl` — fits in one step. With
   `progressive=True` it calls `fit_progressive_gaussian_splats`
   (honoring `max_splats_per_pass`, `psnr_patience`, `max_passes`);
@@ -81,9 +90,14 @@ gsplats child per substitutive level, written coarsest→finest and named
 `child_<i>`. Substitutive index convention is index 0 = finest,
 `n-1` = coarsest, so the level loop iterates in reverse. Per-level splat
 counts (summed across each level's additive ladder) feed both logging and
-auto-derivation of `coverage_fractions` via
-[`lod/group.coverage_fractions`](../lod/group.py) when the caller did
-not supply explicit thresholds.
+auto-derivation of the per-child `coverage_fraction` thresholds via
+[`lod/group.derive_coverage_fractions`](../lod/group.py) when the caller did
+not supply explicit ones. That chokepoint picks the anchor from the insertion
+point: `coverage_fractions` (finest `1.0`) normally, or
+`partitioned_coverage_fractions` (finest `MAX_COVERAGE_FRACTION` = `4.0`) when
+`is_partition_bound(parent or group)` — i.e. the ladder is going inside a
+hand-built `kind=partition` wrapper, where it switches on one tile rather than
+the whole object.
 
 Attribute routing splits on
 [`COMPOSITING_ATTRS`](../compositing.py): compositing attrs (opacity,
@@ -129,7 +143,9 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 - `luxar.gsplats` — `GSplatData`, `fit_gaussian_splats`,
   `fit_progressive_gaussian_splats`, `io.load_gsplats`
 - `core/group/lod/gsplats.py` — substitutive/additive axis resolvers
-- `core/group/lod/group.py` — `coverage_fractions`
+- `core/group/lod/group.py` — `derive_coverage_fractions` (and the
+  `coverage_fractions` / `partitioned_coverage_fractions` /
+  `is_partition_bound` it dispatches between)
 - `core/group/compositing.py` — `COMPOSITING_ATTRS`
 - `core/group/dim_order.py` — per-LOD dim_order application
 - `core/gsplats.py` — the `GSplats` node returned for multi-additive writes

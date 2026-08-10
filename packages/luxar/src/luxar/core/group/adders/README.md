@@ -84,7 +84,12 @@ per-vertex `normals` / `colors` / `scalars` / `labels` follow that index.
 `substitutive_lod=` writes a `kind=lod` group whose coarse children are
 progressively DECIMATED copies of the surface (`luxar.mesh.decimate`) and whose
 finest child is the original. It cannot be combined with `partition=` — the same
-refusal `add_points` / `add_lines` carry. There is still no multi-LOD (additive)
+refusal `add_points` / `add_lines` carry, which is why a hand-built
+`kind=partition` wrapper is the only route to per-tile mesh ladders; like its
+three siblings the wrapper derives its `coverage_fraction` thresholds through
+`lod.group.derive_coverage_fractions`, so such a ladder is auto-anchored at
+fills-screen (finest `4.0`) instead of the whole-object `1.0`. There is still no
+multi-LOD (additive)
 wrapper: mesh refuses the additive prefix ladder (and
 `blending_mode='volumetric'`) with a per-case explanation.
 

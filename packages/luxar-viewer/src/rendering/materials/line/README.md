@@ -22,6 +22,7 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 | `shader-tsl.ts`             | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
 | `shader-glsl-volumetric.ts` | `VOLUMETRIC_LINE_VERTEX_SHADER` + `VOLUMETRIC_LINE_FRAGMENT_SHADER` + `VOLUMETRIC_LINE_SOURCE` — the volumetric primitive's GLSL pair (see the section below).                                                                         |
 | `shader-tsl-volumetric.ts`  | `volumetricLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the volumetric pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                |
+| `ray-integral.ts`  | The #1352 volumetric-line ray integral (`lineRayIntegralRef` / `lineRayIntegralPoly`), the peak-mode capsule profile, the CPU ray/segment geometry, and their GLSL/TSL twins. Pure math — no shader consumes it yet                    |
 
 ## Rendering model in one paragraph
 
@@ -345,6 +346,24 @@ closed form is Gaussian-only; the LUT is #1352 PR-4); peak modes honour β.
 Picking still uses the screen-space footprint while the flag is off-default
 (#1352 PR-3). The primitive is BUILD-time: it selects the GLSL source pair /
 TSL factory at material construction and never changes on a live material.
+
+### `ray-integral.ts` — the same integral, a second time
+
+`ray-integral.ts` (#1352 part 1) landed on its own, ahead of this wiring, as
+a staged shared-math module in the `_shared/erf.ts` mould: CPU reference,
+float64 shader mirror, GLSL block, TSL builders, a `tsl-harness` parity entry
+and a codegen snapshot. The lanes the fragment shaders above actually run
+came from the other direction and live in `_shared/line-volumetric.ts`, which
+grew the cut/cap/near-clip families this primitive needs and carries no
+shader builders of its own.
+
+So the folder now states the ray integral twice, and **nothing consumes
+`ray-integral.ts`**. That is a bookkeeping debt of the series order, not a
+disagreement: where the two overlap (the soft/soft closed form and the σ
+calibration) they agree. Consolidating them — one module, one CPU reference,
+one set of shader builders — belongs to the next slice of #1352, not here,
+because folding it in now would rewrite lanes that have already been
+quadrature-pinned against `line-volumetric-integral.test.ts`.
 
 ## Geometry and storage layout
 
