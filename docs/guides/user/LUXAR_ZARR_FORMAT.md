@@ -750,7 +750,28 @@ per-vertex arrays are reordered by the vertex sort):
 
 Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
 (`image_label_offsets`/`image_label_bytes`) are supported with the same
-CSR-style layout as Points (see *Per-Element Labels*).
+CSR-style layout as Points (see *Per-Element Labels*). Because the labels are
+per-vertex while the viewer picks whole *segments*, hover and selection on a
+lines node report the picked segment's **start** vertex. Two consequences follow
+from that convention: on a segment that the current slice clips only partially
+the reported start vertex may lie entirely outside the visible slab (what is
+drawn starts at the clipped position, not at the stored vertex), and **any
+vertex that is never a segment's start is unreachable by hovering** — its label
+can never be shown.
+
+Which vertices those are depends on `original_line_type` (the segment pairs are
+built by `luxar.io._ordering.lines.convert_to_indexed`):
+
+- **`segments`** — the pairs are consecutive disjoint vertices `(0,1)`, `(2,3)`,
+  …, so **every odd-numbered vertex** (in authored order) is only ever an end:
+  half of the label array is unreachable. Author the label you want shown on the
+  even-numbered vertex of each pair.
+- **`polyline`** — the pairs are `(0,1)`, `(1,2)`, …, so only the final vertex is
+  unreachable.
+- **`loop`** — the last vertex connects back to the first, so every vertex starts
+  a segment and all labels are reachable.
+- **`indexed`** — whichever subset the supplied `indices` never place first,
+  plus any vertex no segment references at all.
 
 ### 5. Mesh Nodes
 
@@ -1143,7 +1164,7 @@ consumers must treat missing and `"none"` identically.
 
 #### Per-Element Labels (CSR-style)
 
-Optional per-element string labels for hover tooltips (GPU picking). Available on all four geometry node types (points, lines, gsplats, mesh — per-vertex for lines and mesh). When present, `.zattrs` includes `"has_labels": true`.
+Optional per-element string labels for hover tooltips (GPU picking). Available on all four geometry node types (points, lines, gsplats, mesh — per-vertex for lines and mesh). When present, `.zattrs` includes `"has_labels": true`. For lines the picked unit is a *segment*, so hover/selection reports the label of that segment's **start** vertex.
 
 **label_offsets/** Array:
 - **Shape:** `(N+1,)` where N = number of elements
@@ -1195,7 +1216,7 @@ Overlays with `"hover": true` in their `.zattrs` act as hover tooltips. Their `t
 |----------|-------------|
 | `{hover_label}` | The label string for the picked element |
 | `{hover_node}` | Zarr path of the picked layer (e.g., "/cells") |
-| `{hover_index}` | Element index within the node that was hit (on-disk index or buffer slot — see below) |
+| `{hover_index}` | Element index within the node that was hit (on-disk index or buffer slot — see below). For a **lines** node carrying per-vertex labels it is the picked segment's start-vertex row in the stored (spatially ordered) vertex arrays — line labels are per-vertex and a segment carries a single pick id, so its start endpoint is the one reported. |
 
 When labels exist on any node but no hover overlay is explicitly defined, a default hover overlay is auto-injected at scene finalization time.
 
@@ -1207,14 +1228,16 @@ non-partitioned node both refer to the same node.
 
 Whether `{hover_index}` is the *on-disk* element index — the one the node's
 arrays and its label CSR are keyed by — depends on the geometry. It is the
-on-disk index for a Points or GSplats node that declares `has_labels` or
+on-disk index for a Points, GSplats or Lines node that declares `has_labels` or
 `has_image_labels`, and for a Mesh always, since mesh picking reports the
-vertex's on-disk ordinal directly. For **Lines** it never is: a line is drawn
-one instance per *segment* and picking reports that segment's slot, while the
-lines label CSR is written per *vertex* — so the index misses its CSR row even
-on a fully loaded, unsliced layer, and spatial range loading (only the visible
-on-disk ranges are concatenated) or an nD slice compacting invisible elements
-out shifts it further. Tracked as #1424.
+vertex's on-disk ordinal directly. **Lines** takes the longest route to get
+there: a line is drawn one instance per *segment* and picking reports that
+segment's slot, while the lines label CSR is written per *vertex*, so a labelled
+lines node resolves the slot all the way back to the picked segment's start
+vertex in the stored ordering (#1424). A lines node with no labels publishes no
+such mapping and still reports the raw visible-segment slot, which after spatial
+range loading or an nD slice compacting invisible elements out is not an on-disk
+row at all.
 
 ### Compound Ordering
 

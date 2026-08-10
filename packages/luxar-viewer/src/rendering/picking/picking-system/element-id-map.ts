@@ -51,10 +51,23 @@
  *    wasm-bindgen, which copies it into linear memory and back out — so a
  *    transient allocation plus ~8 B/splat of memcpy on top, none of which
  *    Points pays. All of it is gated on `has_labels` / `has_image_labels`.
- *  - **Lines** — same class of divergence, still outstanding: on top of range
- *    loading it has a segment-vs-vertex granularity mismatch.
- *  - **Partitioned points and gsplats** — composed, no longer a gap.
- *    `core/group/adders/points.py` and `core/group/adders/gsplats.py` slice the
+ *  - **Lines** — the longest chain, because on top of range loading it has a
+ *    GRANULARITY mismatch: the pick shader reports a visible SEGMENT slot while
+ *    line labels are per-VERTEX. Four spaces, composed in
+ *    `data/scene-loader/process/data-processor-lines.ts` and stamped by
+ *    `commit-lines-geometry.ts` (issue #1424): **E** visible segment slot → **D**
+ *    loaded segment row (the projection's `sourceSegmentIndices`, derived from
+ *    the same `visibility` mask every clipping kernel compacts against) → **C**
+ *    loaded-local vertex index (`LoadedLinesData.segments[2·D]`) → **A** on-disk
+ *    sorted vertex row (the loader's flat `vertexRangeBounds` pairs through
+ *    `buildElementIdMap`).
+ *    A segment has TWO endpoints and the pick id is a `flat` vertex-stage
+ *    varying, so exactly one can be reported: by convention it is the **START**
+ *    vertex. Gated on `has_labels` / `has_image_labels` like the others, and it
+ *    fails closed to the raw slot on any inconsistency.
+ *  - **Partitioned points, gsplats and lines** — composed, no longer a gap.
+ *    `core/group/adders/points.py`, `core/group/adders/gsplats.py` and
+ *    `core/group/adders/lines.py` slice the
  *    CSR onto each `part_<i>` leaf, so a partitioned labelled node publishes a
  *    map in the PART's local on-disk space — which is exactly the space that
  *    leaf's sliced CSR is keyed by. Since #1415/#1420,
@@ -76,16 +89,21 @@
  * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::
  * noteDepthSortBlendingModeSwitch` drops `committedData` on any sortable node
  * switched from a commutative mode TO `normal` / `volumetric` (the LayersPanel
- * compose chain) — and both map-publishing geometries are exposed: POINTS
- * (drawn as instanced quads on a `THREE.Mesh`) and GSPLATS, the geometry most
- * likely to be switched to `normal` / `volumetric` in the first place. There
+ * compose chain) — and all three map-publishing geometries are exposed: POINTS
+ * (drawn as instanced quads on a `THREE.Mesh`), GSPLATS — the geometry most
+ * likely to be switched to `normal` / `volumetric` in the first place — and
+ * LINES, which is depth-sortable too (`types/geometry-capabilities.ts`) and
+ * whose commit calls `noteDepthSortCommit` (`commit-lines-geometry.ts`). There
  * the object stays drawn and pickable: the stamp is cleared purely to defeat
  * the commit no-op gate, and the `requestReprocess?.()` that re-stamps it is
  * async, so a pick in that window would resolve through the raw slot — a
- * silently WRONG label rather than "no answer". It therefore calls
- * `invalidateCommittedDataStamp`, which leaves this map in place (the buffers
- * it describes are untouched); only `clearCommittedData`, used where the
- * geometry is genuinely released (LOD demotion, dataset teardown), drops both.
+ * silently WRONG label rather than "no answer", and for LINES strictly worse
+ * than for the other two, because the raw slot is a SEGMENT number handed to a
+ * per-VERTEX label array (a GRANULARITY error, not merely an offset error). It
+ * therefore calls `invalidateCommittedDataStamp`, which leaves this map in
+ * place (the buffers it describes are untouched); only `clearCommittedData`,
+ * used where the geometry is genuinely released (LOD demotion, dataset
+ * teardown), drops both.
  *
  * @module rendering/picking/picking-system/element-id-map
  */

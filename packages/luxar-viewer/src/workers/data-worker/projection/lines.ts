@@ -17,6 +17,7 @@ import { transfer } from 'comlink';
 import { pickBackend, type WasmCtx } from '../state';
 import { validateProjectionInputs, validateLineSegmentReferences } from '../validation';
 import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from '../../color-utils';
+import { log, Modules } from '../../../utils/log';
 import type { ProjectionViewState } from '../types';
 import type { LinesProjectionBounds } from '../../../types/lines';
 
@@ -111,6 +112,14 @@ export async function projectLinesTo3D(
      * linearly like any scalar), emitting `startAlphas`/`endAlphas`.
      */
     colorComponents?: 3 | 4;
+    /**
+     * Record, for every emitted visible slot, which LOADED SEGMENT ROW it came
+     * from (`sourceSegmentIndices`). Opt-in: it costs 4 B per visible segment
+     * and only a label-carrying node has a reader (issue #1424), so
+     * `data-processor-lines.ts` sets it exactly when the loader published
+     * `vertexRangeBounds`. Mirrors `emitSourceIndices` on the gsplats projection.
+     */
+    emitSourceIndices?: boolean;
   }
 ): Promise<{
   startPositions: Float32Array;
@@ -139,6 +148,15 @@ export async function projectLinesTo3D(
    * scalars, structured-clone safe.
    */
   bounds?: LinesProjectionBounds;
+  /**
+   * Visible slot → LOADED SEGMENT ROW table (length `visibleSegmentCount`),
+   * present only when `emitSourceIndices` was requested, at least one segment
+   * survived clipping, and the visibility mask's set-bit count agrees with the
+   * count the clip kernel returned (it is dropped rather than published with a
+   * zero-filled tail otherwise). Index space **E → D** of the lines picking
+   * chain; `data-processor-lines.ts` composes the rest.
+   */
+  sourceSegmentIndices?: Uint32Array;
 }> {
   const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
 
@@ -397,6 +415,47 @@ export async function projectLinesTo3D(
     endJointCode
   );
 
+  // Step 9 (opt-in): visible slot → loaded segment row.
+  //
+  // Sound BY CONSTRUCTION rather than by re-deriving anything: every kernel
+  // above writes a DENSE, ORDER-PRESERVING visible stream — its output cursor
+  // advances only on a visible segment (`out_idx` in
+  // `wasm/rust/src/lines_clipping.rs`, and identically in the >16D TS
+  // reference) — so slot `s` is the s-th set bit of exactly this `visibility`
+  // array. Deriving the table from the same array the kernels consume is what
+  // makes it impossible for the two to drift.
+  let sourceSegmentIndices: Uint32Array | undefined;
+  if (params.emitSourceIndices) {
+    const table = new Uint32Array(visibleCount);
+    let w = 0;
+    for (let r = 0; r < segmentCount; r++) {
+      if (visibility[r] !== 0) table[w++] = r;
+    }
+    // Cross-check the mask against the count the kernel returned before
+    // publishing. If the two disagree the table keeps its correct LENGTH with a
+    // zero-filled tail, which every downstream guard passes (`length >=
+    // visibleSegmentCount`, `row < segmentCount`) while resolving each unfilled
+    // slot to segment row 0 — a wrong-but-plausible label with no warning. The
+    // shape that produces it is named in `data/loaders/element-ids.ts`: a stale
+    // prebuilt `public/wasm/` whose glue predates a changed out-param signature,
+    // leaving the caller's buffer untouched. Publish nothing instead and let the
+    // composer fall back to the raw slot, per the fail-closed convention that
+    // module documents — but report BOTH counts here, at the only place that
+    // knows them, because the composer can only see that no table arrived.
+    if (w === visibleCount) {
+      sourceSegmentIndices = table;
+    } else {
+      log.warning(
+        Modules.LINES_LOADER,
+        `Lines source-segment table dropped: the visibility mask has ${w} set bits ` +
+          `but the clip kernel reported ${visibleCount} visible segments. Likely a ` +
+          'clipping backend whose visibility mask disagrees with its returned count ' +
+          '(e.g. a stale prebuilt public/wasm/ whose glue predates a changed ' +
+          'out-param signature). Picking labels fall back to the visible-buffer slot.'
+      );
+    }
+  }
+
   // Build transferable list
   const transferables: ArrayBuffer[] = [
     startPositions.buffer as ArrayBuffer,
@@ -415,6 +474,7 @@ export async function projectLinesTo3D(
     startJointCode.buffer as ArrayBuffer,
     endJointCode.buffer as ArrayBuffer,
   ];
+  if (sourceSegmentIndices) transferables.push(sourceSegmentIndices.buffer as ArrayBuffer);
 
   return transfer(
     {
@@ -434,6 +494,7 @@ export async function projectLinesTo3D(
       startJointCode,
       endJointCode,
       visibleSegmentCount: visibleCount,
+      ...(sourceSegmentIndices ? { sourceSegmentIndices } : {}),
       bounds: computeLinesProjectionBounds(
         startPositions,
         endPositions,

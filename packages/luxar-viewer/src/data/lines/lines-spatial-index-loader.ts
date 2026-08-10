@@ -68,6 +68,23 @@ import {
 import { createEmptyLinesData } from './projection';
 
 /**
+ * Flatten `[{start, end}, …]` into the `[start0, end0, start1, end1, …]`
+ * `Uint32Array` shape `LoadedLinesData.vertexRangeBounds` publishes.
+ *
+ * The flat form is what makes the field cache-correct: the SliceCache measures
+ * and deep-copies own typed-array properties only, so an object array would be
+ * billed as 0 bytes and shared by reference with every stored snapshot.
+ */
+function flattenRangeBounds(ranges: readonly { start: number; end: number }[]): Uint32Array {
+  const out = new Uint32Array(ranges.length * 2);
+  for (let i = 0; i < ranges.length; i++) {
+    out[2 * i] = ranges[i].start;
+    out[2 * i + 1] = ranges[i].end;
+  }
+  return out;
+}
+
+/**
  * Lines data loader using spatial indices for efficient nD queries.
  *
  * Key features:
@@ -464,6 +481,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const vertexRanges = computeVertexRangesFromIndices(sortedIndices);
     const mergedVertexRanges = mergeRanges(vertexRanges);
 
+    // Publish the loaded VERTEX ranges (index space A — the on-disk sorted
+    // vertex rows the per-vertex label CSR is keyed by) only for a node that
+    // declares one. They are one link of the slot → on-disk map picking
+    // resolves labels through (issue #1424), and nothing else reads them;
+    // ungated, every lines node would drag the array through each SliceCache
+    // snapshot for no reader. `LabelLoader.hasLabels()` keys on the same two
+    // attrs; the Points / GSplats twins gate identically.
+    const wantsElementIds = attrs.has_labels === true || attrs.has_image_labels === true;
+    // Flattened to `[start0, end0, …]` so the SliceCache MEASURES and
+    // DEEP-COPIES it like every other per-vertex array (see
+    // `LoadedLinesData.vertexRangeBounds`).
+    const vertexRangeBounds = wantsElementIds ? flattenRangeBounds(mergedVertexRanges) : undefined;
+
     // DIAGNOSTIC: Show vertex index distribution
     const minIdx = sortedIndices[0];
     const maxIdx = sortedIndices[sortedIndices.length - 1];
@@ -642,7 +672,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       }
 
       // Return from accumulator (subarrays, zero copy!)
-      return accumulator.getData(segmentCount, vertexCount);
+      // `getData` mints a FRESH object literal every call, so stamping the
+      // vertex range bounds onto it cannot mutate a previously returned payload
+      // (same contract the gsplats loader relies on for `ranges`).
+      const data = accumulator.getData(segmentCount, vertexCount);
+      if (vertexRangeBounds !== undefined) data.vertexRangeBounds = vertexRangeBounds;
+      return data;
     }
 
     // Fallback: Load to separate arrays (allocations when accumulator disabled)
@@ -705,6 +740,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       segmentCount: Math.floor(segmentData.length / 2),
       vertexCount: vertexIndexMapSize,
       ndim: attrs.ndim,
+      ...(vertexRangeBounds !== undefined ? { vertexRangeBounds } : {}),
     };
   }
 
