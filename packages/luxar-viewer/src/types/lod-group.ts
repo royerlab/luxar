@@ -5,8 +5,9 @@ import type { BlendingMode } from './blending';
  * A `Group` whose `kind === 'lod'` selects one of N alternative
  * children at runtime based on the projected bbox diagonal in pixels and
  * each child's `coverage_fraction` threshold — a viewport-relative fraction
- * (0..4, the auto-derived ladder using 0..1) the viewer multiplies by a fixed
- * fraction (a quarter) of the viewport
+ * (0..4; the auto-derived WHOLE-OBJECT ladder uses 0..1, while an explicitly
+ * authored or partition-bound ladder may reach 4.0) the viewer multiplies by a
+ * fixed fraction (a quarter) of the viewport
  * diagonal, so a `coverage_fraction` of 1.0 activates once the object's
  * projected bbox diagonal reaches about a quarter of the viewport diagonal —
  * i.e. at any normal full-frame view — and coarser children step in as it

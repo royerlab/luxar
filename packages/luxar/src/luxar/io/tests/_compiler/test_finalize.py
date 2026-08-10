@@ -6,10 +6,12 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.io._compiler.finalize.hashing import compute_content_hashes
 from luxar.io._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
     finalize_lod_position_bounds,
+    warn_one_part_partition_anchors,
 )
 from luxar.io._compiler.finalize.validation import validate_discrete_dimension_ranges
 from luxar.typing_utils._format_contract import GEOMETRY_TYPES
@@ -427,3 +429,113 @@ def test_position_bounds_backfill_ignores_array_siblings() -> None:
         "min": [-1.0, 0.0, 0.0],
         "max": [1.0, 2.0, 1.0],
     }
+
+
+# ────────────────────────────────────────────────────────────────────────
+# warn_one_part_partition_anchors — the check no PRODUCER can make
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _anchored_ladder(parent: zarr.Group, name: str, finest: float) -> None:
+    """A kind=lod group of two mesh children whose finest threshold is ``finest``."""
+    lod = parent.create_group(name)
+    lod.attrs["kind"] = "lod"
+    lod.attrs["display_type"] = "mesh"
+    for i, coverage in enumerate((0.0, finest)):
+        child = lod.create_group(f"child_{i}")
+        child.attrs["type"] = "mesh"
+        child.attrs["coverage_fraction"] = coverage
+
+
+def _partition_of_ladders(n_parts: int, finest: float) -> zarr.Group:
+    root = zarr.group()
+    part = root.create_group("tiled")
+    part.attrs["kind"] = "partition"
+    part.attrs["display_type"] = "mesh"
+    part.attrs["max_elements"] = 100
+    for i in range(n_parts):
+        _anchored_ladder(part, f"part_{i}", finest)
+    return root
+
+
+def test_warns_for_a_tile_anchored_ladder_under_a_one_part_partition(capsys) -> None:
+    # The undetectable-at-derive-time case: the scene adder anchored part 0 at
+    # 4.0 before it could know part 1 would never arrive.
+    warn_one_part_partition_anchors(_partition_of_ladders(1, MAX_COVERAGE_FRACTION))
+    out = capsys.readouterr().out
+    assert "tiled/part_0" in out
+    assert "ONE part" in out
+    assert "coverage_fractions" in out, "the message must name the way out"
+
+
+def test_does_not_warn_for_a_genuine_multi_part_partition(capsys) -> None:
+    # Two parts IS a tiling, so 4.0 is the correct anchor there.
+    warn_one_part_partition_anchors(_partition_of_ladders(2, MAX_COVERAGE_FRACTION))
+    assert capsys.readouterr().out == ""
+
+
+def test_does_not_warn_for_a_whole_object_ladder(capsys) -> None:
+    # A one-part partition holding a 1.0-anchored ladder is exactly right.
+    warn_one_part_partition_anchors(_partition_of_ladders(1, 1.0))
+    assert capsys.readouterr().out == ""
+
+
+def test_does_not_warn_without_a_partition_ancestor(capsys) -> None:
+    # A hand-authored 4.0 ladder outside any partition is the author's business.
+    root = zarr.group()
+    _anchored_ladder(root, "ladder", MAX_COVERAGE_FRACTION)
+    warn_one_part_partition_anchors(root)
+    assert capsys.readouterr().out == ""
+
+
+def test_blames_the_nearest_partition_not_an_outer_one_part_wrapper(capsys) -> None:
+    """A real tiling nested inside a one-part wrapper must not be blamed.
+
+    Its ladders switch on a genuine tile, so their 4.0 anchor is correct; only
+    the ladder bound DIRECTLY to the lone part is wrong.
+    """
+    root = zarr.group()
+    outer = root.create_group("outer")
+    outer.attrs["kind"] = "partition"
+    inner = outer.create_group("only_part")
+    inner.attrs["kind"] = "partition"
+    for i in range(2):
+        _anchored_ladder(inner, f"tile_{i}", MAX_COVERAGE_FRACTION)
+
+    warn_one_part_partition_anchors(root)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_does_not_warn_for_a_one_part_partition_inside_a_real_tiling(capsys) -> None:
+    """The inverse nesting: a lone part sitting INSIDE a genuine tiling.
+
+    Both gsplat writers OR an incoming binding in rather than overwriting it
+    (``under_partition or len(children) > 1``), so the ladder here really is
+    inside one of the outer partition's two tiles and 4.0 is the anchor they
+    derive for it. Blaming the nearest wrapper alone would report that as a
+    mistake.
+    """
+    root = zarr.group()
+    outer = root.create_group("tiled")
+    outer.attrs["kind"] = "partition"
+    _anchored_ladder(outer, "part_0", MAX_COVERAGE_FRACTION)
+    inner = outer.create_group("part_1")
+    inner.attrs["kind"] = "partition"
+    _anchored_ladder(inner, "only_part", MAX_COVERAGE_FRACTION)
+
+    warn_one_part_partition_anchors(root)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_warns_once_per_offending_group(capsys) -> None:
+    root = zarr.group()
+    part = root.create_group("tiled")
+    part.attrs["kind"] = "partition"
+    holder = part.create_group("only_part")  # a plain group between the two
+    _anchored_ladder(holder, "ladder", MAX_COVERAGE_FRACTION)
+
+    warn_one_part_partition_anchors(root)
+
+    assert capsys.readouterr().out.count("tiled/only_part/ladder") == 1
