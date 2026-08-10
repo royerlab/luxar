@@ -223,12 +223,13 @@ describe('the two backends agree on every mode', () => {
 describe('the layers-panel contract', () => {
   it('is satisfied by both backends, at compile time AND by the runtime guard', () => {
     // Compile-time: these annotations are the assertion. `LuxarMaterial` used to
-    // extend `CameraAwareMaterial`, which made a mesh material — a perfectly valid
-    // leaf material with the full layer-control surface — unrepresentable in the
-    // panel, and would have pushed whoever wires the mesh row toward adding an empty
-    // `updateCameraParams` (a lie, and a per-frame cost per node). The panel never
-    // called that method and its own `isLuxarMaterial` guard never checked for it, so
-    // the requirement came off the interface instead.
+    // extend `CameraAwareMaterial`, which made a leaf material with the full
+    // layer-control surface but no camera uniforms unrepresentable in the panel. The
+    // panel never called that method and its own `isLuxarMaterial` guard never
+    // checked for it, so the requirement came off the interface instead. It stays
+    // off even though mesh has since become camera-aware (#1431): the panel drives
+    // appearance, not the camera, and re-coupling the two would make the next
+    // camera-less leaf material unrepresentable all over again.
     const glsl: LuxarMaterial = new MeshMaterial();
     const tsl: LuxarMaterial = new MeshTSLMaterial();
 

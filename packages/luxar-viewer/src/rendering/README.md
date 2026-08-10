@@ -253,11 +253,19 @@ Specialized shader material for volumetric Gaussian splatting with nD slicing su
 **Culling Strategy:**
 
 - **Unified near handling** (`perspectiveNearFade`, shared across all
-  three geometry types, visual + pick): perspective = 0 behind the
-  camera, smoothstep fade across `[uNearCull, 2·uNearCull]`, vertex
-  rejected below 0.01 and the surviving fade multiplied into amplitude;
+  four geometry types, visual + pick — the stage each one evaluates it in
+  is tabulated in `materials/_shared/README.md`): perspective = 0 behind
+  the camera, smoothstep fade across `[uNearCull, 2·uNearCull]`;
   ortho = fade 1 with NDC clipping as the sole cull authority.
-  Prevents white-screen artifacts when navigating inside datasets
+  Prevents white-screen artifacts when navigating inside datasets.
+  What each type does with the value differs, and the table is the
+  authority — gsplats and points reject the VERTEX below 0.01 and
+  multiply the survivor into amplitude; a mesh rejects per FRAGMENT at the
+  same 0.01 (because `opaque` always, and `normal` at opacity ≥ 0.99,
+  write depth) and either ramps its shaded RGB or folds the fade into
+  coverage depending on the mode; lines have no 0.01 reject at all — the
+  fade multiplies into the intensity chain and a fragment leaves through
+  the separate `max(rgb) < 1e-4` discard
 - **Screen-coverage fade**: unconditional amplitude fade toward the
   extent clamp (no hard-edged clamped rectangles, any sigma scale)
 
@@ -290,9 +298,12 @@ See `materials/mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
 - **A plain indexed `BufferGeometry`**, not an instanced quad — so there is no element
   texture, no `texelFetch` prologue, no `aSortedIndex` indirection and no buffer pool.
   Per-vertex data arrives in ordinary vertex attributes.
-- **Not camera-aware.** A mesh has no screen-space footprint to size, so there is no
-  resolution/FOV/near-cull uniform and no per-frame camera broadcast — the material
-  manager tracks it in `staticMaterials` (disposal only).
+- **Camera-aware for half the contract.** A mesh has no screen-space footprint to
+  size, so `fov` / `resolution` are ignored — but `uIsOrtho` / `uNearCull` are bound
+  and broadcast, because the shared `perspectiveNearFade` applies to a surface as
+  much as to a sprite. Mesh evaluates it PER FRAGMENT (a triangle spans depth) with a
+  per-fragment reject below 0.01; see the stage table in
+  `materials/_shared/README.md`.
 - **`opaque` by default**, unlike the siblings' `additive`: the only mode
   unconditionally correct without per-triangle depth sorting (§9 defers that), and what
   a surface should look like. The default is per geometry type

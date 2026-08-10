@@ -198,6 +198,16 @@ const SHADERS = [
   // mode switch is a uniform write. `mesh-pick-commutative` exercises the other arm
   // at RENDER time in the parity spec but generates byte-identical code, so it earns
   // no snapshot of its own — if it ever needs one, a build flag has crept back in.
+  //
+  // The five perspective near-fade entries — `mesh-near-fade`,
+  // `mesh-additive-near-fade`, `mesh-pick-near-fade` and the two
+  // `*-near-fade-reference` un-faded twins — are absent for the same reason: they
+  // differ from `mesh` / `mesh-additive` / `mesh-pick` only in `uIsOrtho` and
+  // `uNearCull`, both runtime uniforms, so they generate byte-identical code. (The
+  // near fade is therefore pinned textually by the `mesh`, `mesh-additive` and
+  // `mesh-pick` snapshots below, and by pixels in the parity spec's perspective
+  // entries — which is where the two FOLDS, RGB ramp vs coverage multiply, are told
+  // apart. A snapshot shows the line; only a rendered frame shows it landing.)
   'mesh',
   'mesh-additive',
   'mesh-max',

@@ -32,12 +32,14 @@ export interface LifecycleCtx {
   /**
    * Materials tracked for disposal that take NO camera broadcast.
    *
-   * Mesh is the first and so far only member: it draws real geometry, so it has no
-   * screen-space size to recompute from fov/resolution and therefore no
-   * `updateCameraParams`. Giving it an empty one purely to fit
-   * `registeredMaterials` would be a lie that also costs a per-frame call per node,
-   * so it gets its own registry instead — tracked for dispose and counted in the
-   * stats snapshot, but never iterated by the camera broadcast.
+   * The generic destination for anything `register()` finds without an
+   * `updateCameraParams`: counted in the stats snapshot, but never iterated by the
+   * camera broadcast — which is the point, since that loop calls
+   * `updateCameraParams` on every member. All four geometry types are camera-aware
+   * today (mesh joined them with the near fade, #1431), so the set is normally
+   * empty. Disposal is NOT what it is for — `register()` adds the same material to
+   * `ownedMaterials`, which the manager's teardown covers — so this must be cleared
+   * alongside the others purely to keep the stats count honest.
    */
   readonly staticMaterials: Set<THREE.Material>;
   readonly subscribedMaterials: WeakSet<THREE.Material>;

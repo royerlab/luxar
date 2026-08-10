@@ -2,16 +2,18 @@
  * Mesh material (GLSL3 / `THREE.ShaderMaterial`).
  *
  * The fourth member of the visual-material family, and the first one that shades.
- * Structurally simpler than its three siblings — no camera uniforms, no element
- * texture, no sorted-index slot — because a mesh needs none of the instanced-quad
- * machinery: its size *is* its geometry, so there is nothing to project a sprite
- * extent for and no per-element storage to index into.
+ * Structurally simpler than its three siblings — no element texture, no
+ * sorted-index slot — because a mesh needs none of the instanced-quad machinery:
+ * its size *is* its geometry, so there is nothing to project a sprite extent for
+ * and no per-element storage to index into.
  *
- * That absence is why this class deliberately does **not** implement
- * `CameraAwareMaterial`. The interface exists so `SceneManager` can broadcast
- * fov/resolution/ortho to materials that compute screen-space sizes; a mesh has no
- * screen-space size, so an empty `updateCameraParams` would be a lie that also
- * costs a per-frame call per node.
+ * It *is* a `CameraAwareMaterial`, but for only half of the contract's reason. The
+ * fov/resolution half is genuinely inapplicable (there is no screen-space size to
+ * recompute), so both are ignored; what mesh does need is the projection mode and
+ * the near-cull distance, because the shared `perspectiveNearFade` applies to a
+ * surface exactly as it does to a sprite — a triangle that clipped hard against the
+ * near plane while every other type faded would be the only popping geometry in the
+ * scene (#1431).
  *
  * It does implement `ColormapAwareMaterial`, which mesh needs in full: `scalars` +
  * `colormap` is a first-class authoring path for a surface (curvature, thickness,
@@ -30,6 +32,7 @@ import {
   resolveMeshOutput,
   syncMeshEmissionDefines,
 } from './appearance';
+import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import {
@@ -123,7 +126,10 @@ function meshDefines(
 }
 
 /** Mesh surface material — shaded, indexed triangles. */
-export class MeshMaterial extends THREE.ShaderMaterial implements ColormapAwareMaterial {
+export class MeshMaterial
+  extends THREE.ShaderMaterial
+  implements CameraAwareMaterial, ColormapAwareMaterial
+{
   constructor(materialConfig: MeshMaterialConfig = {}) {
     // Resolve up front: a `volumetric` mode inherited from an ancestor group must
     // not reach either the defines or the framebuffer state (§6.3).
@@ -146,6 +152,8 @@ export class MeshMaterial extends THREE.ShaderMaterial implements ColormapAwareM
         uAlphaCutoff: {
           value: clampAppearanceFraction(materialConfig.alphaCutoff, MESH_DEFAULTS.alphaCutoff),
         },
+        uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+        uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
         ...(materialConfig.colormapTexture
           ? {
               uColormapTex: { value: materialConfig.colormapTexture },
@@ -198,6 +206,27 @@ export class MeshMaterial extends THREE.ShaderMaterial implements ColormapAwareM
     // would silently switch a flat-shaded mesh to smooth (or read an unbound
     // `normal` attribute as (0,0,0) and shade the whole surface at `uAmbient`).
     this.userData.flatNormal = materialConfig.flatNormal === true;
+  }
+
+  /**
+   * Update the camera-dependent uniforms.
+   *
+   * `_fov` and `_resolution` are accepted and IGNORED: they exist so a material can
+   * size a screen-space sprite, and a mesh's size is its own geometry. Only the two
+   * near-fade inputs are consumed. Named with a leading underscore so the asymmetry
+   * is visible at the signature rather than buried in the body.
+   */
+  updateCameraParams(
+    _fov: number,
+    _resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    nearCull?: number
+  ): void {
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+
+    if (nearCull !== undefined) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
   }
 
   updateOpacity(opacity: number): void {
@@ -372,6 +401,12 @@ export class MeshMaterial extends THREE.ShaderMaterial implements ColormapAwareM
     // commit re-applies it.
     cloned.side = this.side;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // Camera state, carried live rather than left at the constructor defaults: a
+    // clone that reverted to perspective/0.1 would fade against the WRONG near
+    // plane until the next broadcast reached it — and under ortho, where the fade
+    // is the identity, it would fade at all.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     return cloned as this;
   }
 
