@@ -9,9 +9,7 @@
 
 import { TypeScriptFallback } from '../../wasm/typescript';
 import type { WasmModule } from '../../wasm/types';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { existsSync, readFileSync } from 'fs';
+import { tryLoadWasmArtifact, wasmArtifactExists, wasmJsPath } from '../helpers/wasm-artifact';
 
 // ============================================================================
 // Configuration
@@ -51,33 +49,25 @@ interface BenchmarkResult {
 let wasmModule: WasmModule | null = null;
 let tsModule: WasmModule;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const wasmJsPath = join(__dirname, '../../../public/wasm/luxar_wasm.js');
-const wasmBinaryPath = join(__dirname, '../../../public/wasm/luxar_wasm_bg.wasm');
-
 async function loadModules(): Promise<boolean> {
   // Initialize TypeScript fallback (always available)
   tsModule = new TypeScriptFallback();
 
   // Check if WASM files exist
-  if (!existsSync(wasmJsPath) || !existsSync(wasmBinaryPath)) {
+  if (!wasmArtifactExists()) {
     console.log('\x1b[33m[!] WASM module not found\x1b[0m');
     console.log(`    Expected at: ${wasmJsPath}`);
     console.log('    Build with: make build-wasm');
     return false;
   }
 
-  try {
-    const wasmBinary = readFileSync(wasmBinaryPath);
-    const wasm = await import(wasmJsPath);
-    wasm.initSync({ module: wasmBinary });
-    wasmModule = wasm as unknown as WasmModule;
-    return true;
-  } catch (error) {
+  // A load failure returns false and skips the run; a STALE build throws by
+  // name — benchmarking a build missing a kernel is meaningless (see
+  // tests/helpers/wasm-artifact.ts).
+  wasmModule = await tryLoadWasmArtifact((error) => {
     console.log('\x1b[31m[!] Failed to load WASM module:\x1b[0m', error);
-    return false;
-  }
+  });
+  return wasmModule !== null;
 }
 
 // ============================================================================
@@ -1253,4 +1243,15 @@ async function main(): Promise<void> {
   printSummary(allResults);
 }
 
-main().catch(console.error);
+// Exit non-zero on an unhandled failure: the staleness assertion in
+// loadModules() throws, and `catch(console.error)` alone would print it and
+// still exit 0 — so `make benchmark-wasm` would report success having
+// benchmarked nothing. (The artifact-ABSENT branch already exits 1.)
+//
+// `process.exitCode` rather than `process.exit(1)`: an immediate exit can
+// truncate the diagnosis we just printed to a pipe, and this script holds
+// nothing open, so the process ends right away anyway.
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
