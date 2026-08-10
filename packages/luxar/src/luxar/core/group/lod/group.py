@@ -1258,10 +1258,14 @@ def additive_level_stats(
         * ``method`` orders a REVEAL (:func:`is_reveal_additive_method`). A
           radial prefix is a *partial object at full brightness*, not a dim
           version of the whole, so the viewer's ``1/e(k)`` energy compensation
-          would blow the innermost shell out (~20× for a 5%-energy prefix) and
-          then dim it as the object completes — the exact inverse of growing in.
-          The compensation is gated on the BLENDING MODE, never on geometry
-          type, so authoring-time omission is the only place to stop it.
+          would blow the innermost shell out (up to 10× — ``ENERGY_FLOOR`` caps
+          the boost) and then dim it as the object completes — the exact inverse
+          of growing in. The compensation is gated on the BLENDING MODE, never on
+          geometry type, so authoring-time omission is the only place to stop it.
+          Measured: it reaches a leaf only via the viewer's ``kind=lod`` group
+          registry, so it bites inside a lod group and is inert on a bare leaf —
+          the rule stays unconditional because a bare ladder can be embedded in
+          one later.
 
         ``lod_method`` and the count fields are still stamped either way: they
         are provenance, and nothing keys brightness off them.

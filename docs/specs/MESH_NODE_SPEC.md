@@ -1663,6 +1663,17 @@ meaning — "this prefix is dim, compensate for it" — is a false statement abo
 surface. `energyCompensation` already returns exactly `1` for an absent `e`, leaving the
 leaf byte-identical. LOD **cross-fade** is gated on the same set and follows the same rule.
 
+**Measured scope of the hazard (2026-08-10).** The compensation is applied in exactly one
+place — `applyLodFade` (`scene/lod-fade.ts`), whose only caller is the `kind=lod` group
+registry (`scene/lod-group-registry.ts`). So the stamps are consulted for a ladder *inside*
+a lod group and are inert on a bare `stream`/`flat` leaf. Verified by rendering the same
+radial ladder twice, stamped and unstamped, under a throttled server: as a bare leaf the
+two are byte-identical frame for frame, while inside a `levels` group the stamped arm is
+**1.87× brighter in mean luma** (p99 luma 109 → 155) for as long as the ladder is
+incomplete, converging to identical once it completes. The rule is still unconditional,
+because a bare ladder is one `gsplat additive` — or one `annotate-quality` — away from
+sitting inside a lod group, and nothing would re-derive the suppression at that point.
+
 The rule is **enforced at write time**: `add_mesh` raises if `level_stats` or `lod_stats` is
 supplied (`_reject_energy_stamps` in `packages/luxar/src/luxar/core/group/adders/mesh.py`) — on key
 presence, deliberately broader than the energy fields themselves, since neither attribute has any

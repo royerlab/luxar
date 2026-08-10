@@ -63,6 +63,15 @@ AutoOrMethod = Literal[
 #: then dim it as the object completes — the inverse of growing in. Enforced at
 #: authoring time in :mod:`luxar.gsplats.lod.additive` and in
 #: :func:`luxar.core.group.lod.group.additive_level_stats`.
+#:
+#: MEASURED SCOPE (2026-08-10): the compensation is applied by ``applyLodFade``,
+#: whose only caller is the viewer's ``kind=lod`` group registry. So the stamps
+#: are read for a ladder that sits *inside* a lod group (``levels`` / ``adaptive``
+#: / ``overview``, all of which carry stream ladders by default) and are inert on
+#: a bare ``stream``/``flat`` leaf — a stamped and an unstamped bare leaf render
+#: byte-identically. The rule stays unconditional anyway, because a bare ladder
+#: is one ``gsplat additive`` (or one ``annotate-quality``) away from being
+#: embedded in a lod group, and nothing would re-derive the suppression then.
 REVEAL_METHODS: frozenset[str] = frozenset({"radial"})
 
 

@@ -155,9 +155,17 @@ Three consequences, each load-bearing:
   sub-LOD, `reference_energy` on the leaf), and this is enforced at authoring
   time. The viewer multiplies brightness by `1/e(k)` while a ladder is
   incomplete — correct for an approximation, backwards for a reveal, where an
-  inner shell holding 5% of the energy would be blown out ~20× and then *dim* as
-  the object completes. The compensation is gated on the blending mode and never
-  on geometry type, so omitting the stamps is the only place to stop it.
+  inner shell is blown out and then *dims* as the object completes. The boost is
+  capped at 10× by `ENERGY_FLOOR`. The compensation is gated on the blending mode
+  and never on geometry type, so omitting the stamps is the only place to stop it.
+  **Where it actually bites:** `applyLodFade` is the sole consumer and the
+  `kind=lod` group registry is its sole caller, so the stamps matter for a ladder
+  *inside* a lod group (`levels`/`adaptive`/`overview`, which carry stream ladders
+  by default) and are inert on a bare `stream`/`flat` leaf. Measured on a
+  throttled server: a bare leaf renders byte-identically stamped or not, while
+  inside a `levels` group the stamped arm is 1.87× brighter in mean luma until
+  the ladder completes. The rule is unconditional regardless, since `gsplat
+  additive` or `annotate-quality` can put a bare ladder inside a lod group later.
   Consequence to know about: cross-fade and the `e >= 0.6` early-upgrade release
   are therefore also inactive for a reveal, so shells hard-switch.
 

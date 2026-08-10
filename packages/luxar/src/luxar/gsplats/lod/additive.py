@@ -758,12 +758,16 @@ def _sublod_stats(
     gated on the BLENDING MODE and not on geometry type (``scene/lod-blend.ts``).
     That is right for a contribution-ordered prefix, which genuinely is a dimmer
     version of the whole, and backwards for a radial one, which is a PARTIAL
-    OBJECT AT FULL BRIGHTNESS: an inner shell holding 5% of the energy would be
-    brightened ~20x, blazing and then dimming as the object completes — the exact
-    inverse of growing outward. Omitting the stamp is the honest encoding, and
-    ``energyCompensation(undefined)`` returns exactly 1, so the leaf is
-    byte-identical. See MESH_NODE_SPEC §9.1, which states the rule for mesh; the
-    reasoning is geometry-agnostic.
+    OBJECT AT FULL BRIGHTNESS: an inner shell would be brightened (up to 10x —
+    ``ENERGY_FLOOR`` caps it), blazing and then dimming as the object completes —
+    the exact inverse of growing outward. Omitting the stamp is the honest
+    encoding, and ``energyCompensation(undefined)`` returns exactly 1, so the leaf
+    is byte-identical. Measured: the compensation reaches a leaf only through the
+    viewer's ``kind=lod`` group registry, so it bites for a ladder inside a lod
+    group (1.87x brighter in mean luma while incomplete) and is inert on a bare
+    leaf — but the rule stays unconditional, since ``gsplat additive`` can embed a
+    bare ladder in a lod group later. See MESH_NODE_SPEC §9.1, which states the
+    rule for mesh; the reasoning is geometry-agnostic.
     """
     stats: dict[str, Any] = {
         "lod_method": method,
