@@ -34,6 +34,7 @@ from ..node_common import (
     LINES_RESERVED_ATTRS,
     apply_default_render_attrs,
     prepare_transform_attrs,
+    record_forwarded_sort_order,
     validate_broadcast_color,
     validate_node_path,
     validate_render_attrs,
@@ -92,7 +93,23 @@ def write_lines(
     """Write lines data to Zarr with dual spatial indexing (see ``write_lines``).
 
     Returns the node metadata; the caller records it in the metadata cache.
+
+    Private forwarding flag ``_return_sort_order`` (opt-in): when truthy, the
+    returned metadata carries a ``"sort_order"`` key holding this node's
+    per-VERTEX spatial permutation (``ordering_data["vertex_sort_indices"]``, or
+    ``None`` when no spatial reordering was applied). Only
+    ``write_lines_multi_lod`` sets it — it needs each level's permutation to
+    build the ladder's union label CSR, and the permutation is not persisted on
+    disk. The key name matches the Points writer's so both multi-LOD writers
+    read one key. Opt-in so the flat path never parks a big index array in the
+    compiler's metadata cache.
     """
+    # Private forwarding flag: the multi-LOD writer needs this node's per-vertex
+    # spatial permutation to build the ladder's union label CSR (the permutation
+    # is not persisted on disk). Popped FIRST so it never reaches the attr
+    # validator or .zattrs.
+    return_sort_order = attrs.pop("_return_sort_order", False)
+
     from ....validation.base import (
         validate_colors_for_writing,
         validate_labels_for_writing,
@@ -407,6 +424,14 @@ def write_lines(
         metadata["segment_ordering"] = ordering_data["segment_ordering"]
     else:
         metadata["ordering"] = "none"
+
+    # Forward the per-vertex spatial permutation to a multi-LOD parent on
+    # request (``None`` means "no spatial reordering — identity").
+    record_forwarded_sort_order(
+        metadata,
+        return_sort_order,
+        ordering_data["vertex_sort_indices"] if ordering_data is not None else None,
+    )
 
     # Transform + nd_transform attrs were already normalized in the fail-fast
     # gate (step 0h) — prepare_transform_attrs is NOT idempotent (it

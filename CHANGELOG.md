@@ -6,6 +6,48 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A streaming ladder no longer loses its labels (#1422)
+
+`add_points("pts", …, labels=…, additive_lod=True)` wrote a scene whose labels were
+unreachable from anywhere. The labels went into the `additive_<i>` subgroups, but a
+ladder's subgroups are an implementation detail the viewer never surfaces as nodes —
+so picking looked for a CSR on the parent, found none, and never provisioned label
+picking at all. The ladder adders also never told the scene labels existed, so a
+scene whose only labelled node was a ladder got no `overlays/__hover_text` and hover
+was off entirely. Three independent reasons for the same silence.
+
+The ladder now writes ONE `label_offsets`/`label_bytes` pair on the parent node,
+which carries `has_labels`, and the subgroups carry none. Its index space is the
+concatenation of the levels in coarsest→finest order, each in its own stored
+(spatially reordered) order — the same on-disk space a flat labelled leaf already
+uses, just spanning the levels, which is the space that matters because the loader
+concatenates levels into one buffer. Recovering each level's permutation needed a
+private `_return_sort_order` flag on the geometry writers, since the spatial sort is
+computed per level and never persisted. Labels are all-or-nothing across a ladder: a
+partially-labelled one cannot produce a coherent index space and is refused.
+
+On Points, a fully-loaded 3D scene resolves exactly. Under an nD slice the committed
+buffer is compacted, so slots shift — the same shift #1421/#1425 removed for flat nodes
+with a visible-slot → on-disk-index map, which is deliberately not published across a
+ladder because each level's map is in that level's own space; extending it is the piece
+left (#1439). This also covers the `partition=`-outer + `additive_lod=`-inner
+composition: the CSR lands on each `part_<i>` ladder parent, which is the node the
+picker looks up since #1415/#1420. On Lines the CSR is per-vertex, matching the flat
+Lines writer, while the pick id is a per-segment storage slot; #1424 closed that
+granularity gap for FLAT nodes by resolving the picked segment's slot back to its start
+vertex row, but that chain runs through the very slot → on-disk map a ladder does not
+publish — so on a laddered Lines node the hover only lands on the right string when
+every element carries the same one, until #1439 carries the map across the levels.
+
+Separately, a wrong-length `labels` was silently accepted on the partition paths
+(Points, Lines and GSplats) and on the additive ladder (Points and Lines): the per-part
+slicer passes a mis-sized list through whole, so all parts got the *same* labels and
+part 1's tooltips were part 0's. The two substitutive paths did reject it, but only
+once the finest child was reached — minutes of gsplat reduce later, with the coarse
+levels already on disk and a partial `kind=lod` node left behind. All seven wrappers
+now check the full element count before they slice, leaving the plain-leaf gate order
+untouched.
+
 #### Mesh fades out near the camera, like the other three types (#1431)
 
 Points, Lines and GSplats all suppress geometry approaching the near plane through
@@ -387,7 +429,10 @@ node when an embedder `selection` listener exists, and that payload's `elementIn
 keeps reporting the storage slot, unchanged. It is also deliberately stripped across an
 additive LOD ladder: each sub-LOD is a different on-disk array with its own index space,
 so no single map is meaningful (the loader factory now also clears the label flags on
-each sub-LOD, so it is never built there); per-level label resolution is #1422. A
+each sub-LOD, so it is never built there). A ladder's labels are not per-level either:
+#1422 writes ONE union CSR on the ladder parent, spanning the levels, and offsetting
+each level's map by the preceding levels' on-disk counts to match that union space is
+what is left (#1439). A
 `kind=partition` points layer composes with the fix above (#1415): the handler now
 resolves labels against the hit `part_<i>` leaf rather than the outermost wrapper, and
 that leaf is both the node whose sliced CSR is read and the node this map is stamped on.
@@ -432,8 +477,10 @@ branch is unreachable and even an uncompacted labelled node allocates a full N-e
 map. It is likewise never published across an additive ladder — each sub-LOD is a
 distinct on-disk array, so no single map is meaningful; the loader factory clears the
 label flags on each synthesized `additive_<i>` node and the ladder concat strips the
-field belt-and-braces. Per-level label resolution is #1422. Lines (#1424) is fixed in
-the entry below.
+field belt-and-braces. A ladder's labels live in ONE union CSR on its parent since
+#1422 (a gsplat ladder carries none at all — no `labels` channel authors one), and
+carrying the map across the levels of a Points / Lines ladder is #1439. Lines (#1424)
+is fixed in the entry below.
 
 #### Hover labels index the right line vertex (#1424)
 
@@ -476,11 +523,13 @@ published for a node declaring neither `has_labels` nor `has_image_labels`, the 
 stamped onto the mesh in lockstep with `committedData` (and cleared with it), it is never
 built across an additive ladder — the loader factory clears both label flags on each
 synthesized `additive_<i>` node and the ladder concat strips the field belt-and-braces
-(per-level labels are #1422) — and every inconsistency fails closed to the raw slot
+(a laddered node's labels are one union CSR on its parent since #1422, and carrying the
+map across the levels of that union is #1439, so a laddered Lines node still resolves at
+the raw segment slot) — and every inconsistency fails closed to the raw slot
 rather than to a plausible-looking wrong answer, warning wherever the composer can tell
 the difference. All four geometry types now resolve hover labels through the one
-`resolveOnDiskElementId` seam; mesh needs no map of its own, since it loads whole and its
-`gl_VertexID` slot already is the on-disk row.
+`resolveOnDiskElementId` seam on a FLAT node; mesh needs no map of its own, since it
+loads whole and its `gl_VertexID` slot already is the on-disk row.
 
 #### The port probe now matches the bind it predicts
 

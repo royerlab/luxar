@@ -519,6 +519,45 @@ the parent's `level_stats` and inside each subgroup's `lod_stats` (alongside
   offset-adjusts on concatenation. Supports all four `line_type`
   variants (`segments` / `polyline` / `loop` / `indexed`).
 
+**Labels (Points / Lines):** per-element string labels are NOT stored per
+subgroup. No single level's array is what a pick index addresses, since the
+viewer's loader concatenates the levels it has loaded into one buffer — so the
+label CSR (`label_offsets` + `label_bytes`) lives on the **parent** node, which
+consequently carries `has_labels: true`, and the `additive_<i>` subgroups carry no
+label arrays and no `has_labels`. Index `k` of the parent CSR is the `k`-th
+element of the concatenation of `additive_<i>` in order (coarsest → finest), each
+level in its own stored (spatially reordered) order — the same on-disk index space
+a flat labelled leaf's CSR uses, just spanning the levels. Labels are
+all-or-nothing across a ladder: a partially-labelled ladder is rejected at write
+time.
+
+The viewer commits levels coarsest-first, so a fully-loaded ladder maps straight
+through — index `k` is committed slot `k`. The **committed buffer** is not in
+general a prefix of this union, though: the per-level loader compacts out elements
+culled by the current nD slice and fetches only the chunk ranges a query
+intersects, so slots shift. A labelled ladder therefore resolves at the raw
+committed slot — exact for a fully-loaded 3D scene (no per-element slice culling),
+and otherwise carrying the slot shift that issue #1421 / PR #1425 removed for
+**flat** nodes by publishing a visible-slot → on-disk-index map. That map is
+deliberately not published across a ladder (each level's map is in that level's own
+on-disk space, so the concatenation clears it); extending it — offsetting each
+level by the preceding levels' on-disk counts — is the remaining piece of work
+(issue #1439).
+
+Two further notes. Under the documented `partition=`-outer +
+`additive_lod=`-inner composition the CSR lands on each `part_<i>` ladder parent,
+which is exactly where the viewer looks it up (the hit leaf scene node — the
+outermost `kind=partition` wrapper is the reported path only), so that composition
+resolves too, with the same raw-committed-slot caveat. And for Lines the CSR is
+per-vertex, matching the flat Lines writer, while the viewer's Lines pick id is a
+per-segment storage slot. Issue #1424 bridged that granularity for **flat** Lines
+nodes — a labelled flat lines node resolves the picked segment's slot back to that
+segment's start vertex row in the stored ordering — but it does so through the same
+visible-slot → on-disk-index map no ladder publishes, so across a ladder the hover only
+lands on the right string when every element carries the same one (there is no
+broadcast label form — `labels` is always one entry per element), until #1439 carries
+that map over the levels.
+
 **Builder API (Python):**
 ```python
 # Same kwarg surface across all three leaf types.
@@ -1183,6 +1222,11 @@ label_i = utf8_decode(label_bytes[offsets[i] : offsets[i+1]])
 
 Empty strings are treated as null labels (no tooltip shown on hover). Labels are reordered to match spatial ordering if enabled.
 
+One exception to "the CSR sits on the node carrying the elements": a
+multi-additive-LOD Points / Lines node stores a single CSR on the **parent**,
+spanning its `additive_<i>` subgroups (which carry none) — see the **Labels**
+paragraph in the "Multi-additive LOD (progressive loading)" section above.
+
 #### Per-Element Image Labels (CSR-style)
 
 Optional per-element **image** labels for hover thumbnails, written via the
@@ -1228,8 +1272,8 @@ non-partitioned node both refer to the same node.
 
 Whether `{hover_index}` is the *on-disk* element index — the one the node's
 arrays and its label CSR are keyed by — depends on the geometry. It is the
-on-disk index for a Points, GSplats or Lines node that declares `has_labels` or
-`has_image_labels`, and for a Mesh always, since mesh picking reports the
+on-disk index for a **flat** Points, GSplats or Lines node that declares
+`has_labels` or `has_image_labels`, and for a Mesh always, since mesh picking reports the
 vertex's on-disk ordinal directly. **Lines** takes the longest route to get
 there: a line is drawn one instance per *segment* and picking reports that
 segment's slot, while the lines label CSR is written per *vertex*, so a labelled
@@ -1237,7 +1281,15 @@ lines node resolves the slot all the way back to the picked segment's start
 vertex in the stored ordering (#1424). A lines node with no labels publishes no
 such mapping and still reports the raw visible-segment slot, which after spatial
 range loading or an nD slice compacting invisible elements out is not an on-disk
-row at all.
+row at all. A multi-additive-LOD (laddered) Points or Lines node is the other
+case that publishes no mapping: its label CSR spans the levels and so lives on
+the parent, which does declare `has_labels`, but no slot → on-disk map is
+composed across a ladder — `{hover_index}` there is the raw committed slot. On
+Points that equals the union index for a fully-loaded, unsliced layer and shifts
+once culling or compaction is active; on Lines the raw slot is a per-*segment*
+one against the per-*vertex* union CSR, so it is wrong at the granularity
+whatever the slicing (issue #1439; see the **Labels** paragraph of the
+multi-additive-LOD section above).
 
 ### Compound Ordering
 

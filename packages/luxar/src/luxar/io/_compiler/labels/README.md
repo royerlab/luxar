@@ -45,6 +45,28 @@ Encode a sequence of strings (one per element) as UTF-8 and write the CSR pair:
 Sets `group.attrs["has_labels"] = True`. Raises `ValueError` if
 `len(labels) != n_elements`. Both arrays are chunked at 65536 elements.
 
+### `text_labels.write_ladder_union_labels_csr(group, level_labels, level_sort_orders, n_elements, compressor)`
+
+Write ONE CSR pair on the **parent** node of an additive-LOD ladder, describing
+the ladder's committed **union**. Concatenates each level's labels in that
+level's stored order (applying its `sort_order` when not `None`) and delegates to
+`write_labels_csr(group, union, n_elements, compressor, None)` — the union is
+already in final order, so no further permutation is applied.
+
+Raises `ValueError` if `level_labels` and `level_sort_orders` differ in length;
+a union/total mismatch is caught by `write_labels_csr`'s own length check.
+
+### `text_labels.validate_ladder_labels(levels, positions_key) -> bool`
+
+Pre-write gate for a ladder's labels, returning whether the ladder is labelled at
+all. **Pure** (reads only `levels`), so the multi-LOD writers call it BEFORE
+`require_group` — a rejected ladder must not leave an empty node behind. Enforces
+all-or-nothing presence across levels (the error names the first unlabelled level)
+and each level's label count against that level's own element count. The length
+check is skipped when any level's element array is not `(N, D)` — that fault
+belongs to the per-level writer's positions validator, which names it properly.
+`positions_key` is `"positions"` for Points and `"vertices"` for Lines.
+
 ### `image_labels.write_image_labels_csr(group, image_labels, n_elements, compressor, sort_order=None)`
 
 Encode per-element images as a CSR pair:
@@ -85,6 +107,55 @@ building the CSR arrays. The correct array depends on geometry type:
 | Points   | `ordering_data["sort_order"]` |
 | Lines    | `ordering_data["vertex_sort_indices"]` |
 | GSplats  | `ordering_data["sort_order"]` |
+
+### Additive-LOD ladders: one union CSR on the parent
+
+An additive ladder (`additive_lod=` on `add_points` / `add_lines`) stores its
+geometry in `additive_<i>/` subgroups, but the viewer's loader concatenates the
+levels it has loaded into a **single buffer** — no one level's array is what a
+pick index addresses. So the label CSR lives on the **parent** ladder node (which
+therefore carries `has_labels`) and the `additive_<i>` subgroups carry **no** label
+arrays at all.
+
+Index `k` of the parent CSR is the `k`-th element of the concatenation
+`additive_0 || additive_1 || …` (coarsest → finest), each level in its own
+**stored** (spatially reordered) order — the same on-disk index space a flat
+labelled leaf's CSR uses, just spanning the levels.
+`write_ladder_union_labels_csr` builds it; the multi-LOD writers recover each
+level's permutation via the private `_return_sort_order` forwarding flag on
+`write_points` / `write_lines` (the permutation is not persisted on disk).
+
+The viewer commits levels coarsest-first, so a fully-loaded ladder maps straight
+through — index `k` is committed slot `k`. The **committed buffer** is not in
+general a prefix of this union, though: the per-level loader compacts out elements
+culled by the current nD slice and fetches only the chunk ranges a query
+intersects, so slots shift. A labelled ladder therefore resolves at the raw
+committed slot — exact for a fully-loaded 3D scene (no per-element slice culling),
+and otherwise carrying the slot shift that issue #1421 / PR #1425 removed for
+**flat** nodes by publishing a visible-slot → on-disk-index map. That map is
+deliberately not published across a ladder (each level's map is in that level's own
+on-disk space, so the concatenation clears it); extending it — offsetting each
+level by the preceding levels' on-disk counts — is the remaining piece of work
+(issue #1439).
+
+Under the `partition=`-outer + `additive_lod=`-inner composition the CSR lands on
+each `part_<i>` ladder parent — which is exactly where the viewer looks. Since
+#1415 / PR #1420 the label lookup path is the hit LEAF scene node
+(`result.mainNode.name`) and a laddered part's scene node IS its ladder parent; the
+outermost `kind=partition` wrapper is the *reported* path only. So that composition
+resolves too, with the same raw-committed-slot caveat as an unpartitioned ladder.
+
+For Lines the CSR is per-**vertex**, matching the flat Lines writer, while the
+viewer's Lines pick id is a per-**segment** storage slot. Issue #1424 supplied the
+missing segment→vertex indirection for **flat** lines nodes — the picked segment's
+slot resolves back to that segment's start vertex row in the stored ordering — but
+through the same visible-slot → on-disk-index map no ladder publishes, so across a
+ladder the hover only lands on the right string when every element carries the same one
+(`labels` has no broadcast form — it is always one entry per element), until #1439
+carries that map over the levels.
+
+Labels are all-or-nothing across a ladder — a partially-labelled ladder cannot
+produce a correct union, so `validate_ladder_labels` rejects it.
 
 ## Usage
 
