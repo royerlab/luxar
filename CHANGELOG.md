@@ -6,6 +6,47 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
+
+The volumetric line primitive (#1426) gains its picking pass, so the flag now
+covers a complete interaction vertical: with `?linePrimitive=volumetric`, the
+line pick materials — GLSL and TSL alike — build a pick shader that rasterizes
+the SAME stadium stencil the visual pass draws (bisector-cut overhang,
+depth-tilt disc reach, coverage fade) and shades it with the visual shader's
+**peak capsule lane, unconditionally**. Picking wants the hotspot on the
+centerline regardless of the visual blending mode, and the peak formulation is
+exact for any sharpness β with none of the sum lanes' integral machinery — a
+pick buffer needs a brightness ordering, not radiometry. The output contract is
+unchanged from the screen-space pick shader (`nodeId`/split element id/
+brightness, brightness-as-depth), so nothing downstream of the pick buffer
+changes. End-on segments — the degenerate case the primitive exists to fix —
+now pick as the finite disc they render as, where the screen-space pick quad
+degenerates to a sliver.
+
+No call-site plumbing was needed: the pick material constructors resolve the
+primitive from the same `?linePrimitive=` session override the visual
+materials read, so the two can never disagree about which stencil they
+rasterize. With the flag off, both pick materials are byte-identical to
+before (pinned by unit test).
+
+The pick/visible footprint contract is pinned by a new parity-spec family on
+deliberately FAT fixtures (half-width ≈ 19 px, so a σ-level divergence moves
+the boundary several pixels instead of hiding in quantisation): the pick
+footprint must equal the peak-mode visual footprint EXACTLY up to a 1-px
+quantisation ribbon (and the end-on additive disc likewise), and must be a
+SUBSET of the side-on additive footprint — the sum family's separable
+radial·axial coverage keeps dim corner crescents past the endpoints that no
+capsule reaches, which is documented physics, while pickable-but-invisible is
+never allowed. Mutation-verified: a 20% pick-σ deflation (the visible-but-not-
+hoverable bug class) fails all three pairs at 244/156 off-ribbon pixels and
+2× the difference belt, against zero clean; a stencil-only inflation measured
+the reverse direction structurally bounded at < 2 px by the capsule's own
+brightness floor. Cross-backend parity gets four new pick fixtures
+(side-on / end-on / a straddling perspective end-on that is the only one
+building the TSL perspective pick graph / V-joint, the joint reaching the
+partner fetch and the ray-domain cut interval), all under the existing
+≤ 2.0 covered-pixel gate.
+
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 
 `add_points("g", positions_200, colors=colors_100, partition={"max_elements": 100})`

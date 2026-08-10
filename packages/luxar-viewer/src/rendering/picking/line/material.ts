@@ -11,11 +11,14 @@
 import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { LINE_PICK_SOURCE } from './shaders';
+import { VOLUMETRIC_LINE_PICK_SOURCE } from './shaders-volumetric';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
+import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 
-// Module-load assertion: the GLSL wrapper requires the GLSL source.
+// Module-load assertion: the GLSL wrapper requires the GLSL sources.
 const LINE_PICK_GLSL = requireWebGLSources(LINE_PICK_SOURCE);
+const LINE_PICK_VOLUMETRIC_GLSL = requireWebGLSources(VOLUMETRIC_LINE_PICK_SOURCE);
 
 export interface LinePickingMaterialConfig {
   nodeId: number;
@@ -27,10 +30,22 @@ export interface LinePickingMaterialConfig {
    * material's own omitted-config path.
    */
   join?: LineJoinStyle;
+  /**
+   * Line rendering primitive (#1352). Omitted ⇒ the `?linePrimitive=`
+   * session override, else the default — the SAME resolution the visual
+   * material performs, so the pick footprint always rasterizes the same
+   * stencil the eye sees without any call-site plumbing. Explicit values
+   * exist for harnesses (the parity page never runs bootstrap). BUILD-time,
+   * exactly like the visual material.
+   */
+  primitive?: LinePrimitive;
 }
 
 export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
   constructor(config: LinePickingMaterialConfig) {
+    // The primitive picks the shader-source pair (visual-material parity).
+    const primitive = resolveLinePrimitive(config.primitive);
+    const glsl = primitive === 'volumetric' ? LINE_PICK_VOLUMETRIC_GLSL : LINE_PICK_GLSL;
     super({
       uniforms: {
         // Line data texture — rebound by the commit's material sync
@@ -55,8 +70,8 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         // override precedence. Resolved the same way LineMaterial resolves it.
         uLineJoin: { value: resolveLineJoin(config.join) },
       },
-      vertexShader: LINE_PICK_GLSL.vertex,
-      fragmentShader: LINE_PICK_GLSL.fragment,
+      vertexShader: glsl.vertex,
+      fragmentShader: glsl.fragment,
       glslVersion: THREE.GLSL3,
       transparent: false,
       depthTest: true,
@@ -69,6 +84,10 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
       // matches the visual material and documents intent.
       forceSinglePass: true,
     });
+    // Which primitive this program was built for — clone() re-passes it
+    // (visual-material parity; already resolved, so the clone cannot drift
+    // if the session override were somehow re-installed).
+    this.userData.linePrimitive = primitive;
   }
 
   /**
@@ -79,7 +98,10 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
    * pixel-width scales) across explicitly.
    */
   clone(): this {
-    const cloned = new LinePickingMaterial({ nodeId: this.uniforms.uNodeId.value });
+    const cloned = new LinePickingMaterial({
+      nodeId: this.uniforms.uNodeId.value,
+      primitive: this.userData.linePrimitive as LinePrimitive | undefined,
+    });
     cloned.uniforms.uLineTex.value = this.uniforms.uLineTex.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
