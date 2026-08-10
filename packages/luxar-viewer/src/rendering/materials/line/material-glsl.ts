@@ -16,6 +16,10 @@
 
 import * as THREE from 'three';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shader-glsl';
+import {
+  VOLUMETRIC_LINE_VERTEX_SHADER,
+  VOLUMETRIC_LINE_FRAGMENT_SHADER,
+} from './shader-glsl-volumetric';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -29,11 +33,13 @@ import {
   getCompleteBlendingState,
   isVolumetricMode,
   normalModeDepthWrite,
+  usesPeakProjection,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 import { computeScalarRangeUniforms, scalarRangeUniformEntries } from '../_shared/scalar-range';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
+import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 
 // `isGammaOne` and `isNoGOG` both live in `../_shared/uniform-helpers`
 // (shared across all three geometry types). Re-exported here so
@@ -86,6 +92,16 @@ export interface LineMaterialConfig {
    * `types/line-join.ts` for the cost/fidelity ladder.
    */
   join?: LineJoinStyle;
+  /**
+   * Line rendering primitive (#1352). Omitted ⇒ the `?linePrimitive=`
+   * session override if one is set, else `DEFAULT_LINE_PRIMITIVE`. Explicit
+   * values exist for harnesses (the GLSL/TSL parity page never runs
+   * bootstrap, so it cannot rely on the session override). BUILD-time: the
+   * primitive selects the shader-source pair at construction and cannot be
+   * changed on a live material — the toggle is session-wide, so nothing
+   * ever needs to.
+   */
+  primitive?: LinePrimitive;
 }
 
 /**
@@ -125,6 +141,11 @@ export class LineMaterial
     const isOpaque = blendingMode === 'opaque';
     const isAdditive = blendingMode === 'additive';
     const gammaValue = clampGamma(materialConfig.gamma);
+    // The primitive picks the shader-source PAIR — the first genuine
+    // source selection in the codebase (every other variation is a define
+    // or a uniform). Resolved once at construction; see LineMaterialConfig.
+    const primitive = resolveLinePrimitive(materialConfig.primitive);
+    const isVolumetricPrimitive = primitive === 'volumetric';
 
     // Determine THREE.js blending mode
     // 'additive' and 'luminous' both use AdditiveBlending - only depthTest differs
@@ -189,8 +210,10 @@ export class LineMaterial
           : {}),
       },
 
-      vertexShader: LINE_VERTEX_SHADER,
-      fragmentShader: LINE_FRAGMENT_SHADER,
+      vertexShader: isVolumetricPrimitive ? VOLUMETRIC_LINE_VERTEX_SHADER : LINE_VERTEX_SHADER,
+      fragmentShader: isVolumetricPrimitive
+        ? VOLUMETRIC_LINE_FRAGMENT_SHADER
+        : LINE_FRAGMENT_SHADER,
 
       // Preprocessor defines. Variant `#define`s (e.g.
       // `LUXAR_GAMMA_ONE`) gate fragment-stage fast paths and are
@@ -201,6 +224,14 @@ export class LineMaterial
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
         ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
           ? { LUXAR_NO_GOG: '' }
+          : {}),
+        // Volumetric primitive only: peak (max/normal/opaque) vs sum
+        // (additive/luminous/volumetric) ray projection. Managed by
+        // applyBlendingMode alongside the other blending defines; the
+        // screen-space fragment has no such split, so the define is never
+        // stamped there (keeps its program cache keys unchanged).
+        ...(isVolumetricPrimitive && usesPeakProjection(blendingMode)
+          ? { LUXAR_PEAK_PROJECTION: '' }
           : {}),
       },
 
@@ -224,6 +255,10 @@ export class LineMaterial
       // pass per line layer.
       forceSinglePass: true,
     });
+
+    // Which primitive this program was built for — clone() re-passes it,
+    // and applyBlendingMode gates the peak/sum define lifecycle on it.
+    this.userData.linePrimitive = primitive;
 
     // Apply mode-specific blending state via the canonical method —
     // same path used by live mode updates from the layers panel.
@@ -434,6 +469,9 @@ export class LineMaterial
       depthTest: this.userData.depthTest ?? true,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
       scalarRange: this.userData.scalarRange ?? undefined,
+      // Must ride the CONSTRUCTOR: the primitive picked the shader-source
+      // pair at build time (see LineMaterialConfig.primitive).
+      primitive: this.userData.linePrimitive as LinePrimitive | undefined,
     });
 
     // Copy blend equation settings for custom blending (max mode)
@@ -515,6 +553,20 @@ export class LineMaterial
     } else if (!wantsVolumetric && hasVolumetric) {
       delete this.defines.LUXAR_VOLUMETRIC;
       definesChanged = true;
+    }
+    // Volumetric PRIMITIVE only (#1352): peak vs sum ray projection. The
+    // screen-space fragment has no such split — never stamp it there, so
+    // its program cache keys stay unchanged with the flag off.
+    if (this.userData.linePrimitive === 'volumetric') {
+      const wantsPeak = usesPeakProjection(mode);
+      const hasPeak = 'LUXAR_PEAK_PROJECTION' in this.defines;
+      if (wantsPeak && !hasPeak) {
+        this.defines.LUXAR_PEAK_PROJECTION = '';
+        definesChanged = true;
+      } else if (!wantsPeak && hasPeak) {
+        delete this.defines.LUXAR_PEAK_PROJECTION;
+        definesChanged = true;
+      }
     }
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;
