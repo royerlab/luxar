@@ -134,8 +134,13 @@ function hasRGBAColors(data: LoadedLinesData): boolean {
  * are visible to a user and worth stating: on a PARTIALLY CLIPPED segment the
  * reported start vertex can lie entirely outside the visible slice (what is
  * drawn starts at `p1 + t1·(p2 - p1)`, so with `t1 → 1` the visible geometry
- * sits at the far end), and a polyline's FINAL vertex is not reportable at all
- * because no segment starts at it.
+ * sits at the far end), and ANY vertex that is never a segment's start is not
+ * reportable at all. Which ones those are is set by the authored line type
+ * (`io/_ordering/lines.py::convert_to_indexed`): for `polyline` only the final
+ * vertex, for `loop` none, for `indexed` whatever subset the supplied indices
+ * never place first — and, the surprising case, for `segments` EVERY
+ * odd-numbered vertex, since its pairs are consecutive and disjoint
+ * (`(0,1), (2,3), …`), so half the label array is unreachable.
  *
  * Fails CLOSED (returns `undefined`, one warning) on any inconsistency: picking
  * then falls back to the raw slot, exactly as it behaved before this map

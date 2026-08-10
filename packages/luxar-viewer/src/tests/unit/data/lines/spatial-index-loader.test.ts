@@ -24,6 +24,7 @@ import type { SceneNode, ViewState } from '../../../../data';
 import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { measureLodBytes } from '../../../../data/loaders/progressive/slice-cache-helper';
 
 vi.mock('zarrita', () => ({
   registry: {},
@@ -733,6 +734,62 @@ describe('LinesSpatialIndexLoader', () => {
         }
       });
 
+      it('publishes bounds the S-cache measures and deep-copies (a flat typed array)', async () => {
+        // `LoadedLinesData.vertexRangeBounds` is a FLAT `Uint32Array` of
+        // `[start, end)` pairs rather than an `ElementIdRange[]` object array
+        // ENTIRELY because of the SliceCache helpers: they walk own TYPED-ARRAY
+        // properties only, so an object array would be billed 0 bytes by
+        // `measureLodBytes` (the LRU holding roughly twice the bytes its budget
+        // believes for a fragmented labelled slice) and carried into the stored
+        // snapshot BY REFERENCE by `cloneLodSnapshot`. Both halves are pinned
+        // here against a payload from the REAL loader, so a return to an object
+        // array fails this test — the docblocks in `types/lines.ts` and
+        // `data/lines/lines-spatial-index-loader.ts` rest on that.
+        const sliceCache = new SliceCache({ maxSize: 8 * 1024 * 1024 });
+        const labelled = new LinesSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof LinesSpatialIndexLoader>[0],
+          makeLabelledNode('has_labels'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          sliceCache
+        );
+        // A hidden (non-displayed) dimension is what makes a plain leaf
+        // cacheable at all — see the plain-leaf S-cache block above.
+        const cachedView: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 5],
+          tolerance: [0, 0, 0, 0.25],
+        };
+        try {
+          const first = await labelled.loadLines(cachedView);
+          const bounds = first.vertexRangeBounds!;
+          expect(ArrayBuffer.isView(bounds)).toBe(true);
+
+          // (a) MEASURED. The label flag is the only difference from the
+          // unlabelled fixture loader, so the byte delta between the two
+          // payloads is exactly the bounds array (2 ranges x 2 uint32).
+          const unlabelled = await bodyLoader.loadLines(cachedView);
+          expect(unlabelled.vertexRangeBounds).toBeUndefined();
+          expect(bounds.byteLength).toBe(16);
+          expect(measureLodBytes([first]) - measureLodBytes([unlabelled])).toBe(bounds.byteLength);
+          // …and those are the bytes the LRU charged for the stored snapshot.
+          expect(sliceCache.getStats().size).toBe(measureLodBytes([first]));
+
+          // (b) DEEP-COPIED. The revisit is served from the stored clone, so
+          // its bounds must be a DISTINCT buffer with equal contents; an object
+          // array would have been carried across by reference instead.
+          const revisit = await labelled.loadLines(cachedView);
+          const cloned = revisit.vertexRangeBounds!;
+          expect(cloned).not.toBe(bounds);
+          expect(cloned.buffer).not.toBe(bounds.buffer);
+          expect(Array.from(cloned)).toEqual(Array.from(bounds));
+        } finally {
+          labelled.dispose();
+        }
+      });
+
       it('publishes them on the accumulator-disabled FALLBACK path as well', async () => {
         // Both return sites must stamp the field: the accumulator path returns
         // a fresh `getData()` literal, the fallback path its own object literal.
@@ -744,9 +801,23 @@ describe('LinesSpatialIndexLoader', () => {
           // so the second load takes the allocating fallback branch.
           const viaAccumulator = await labelled.loadLines(viewState);
           expect(viaAccumulator.vertexRangeBounds).toHaveLength(4);
+          expect(labelled.getAccumulatorStats()).not.toBeNull();
 
           (labelled as unknown as { _accumulator: unknown })._accumulator = null;
+          // The poke is a private-field reach-in, so PROVE it disarmed the
+          // branch instead of trusting the field name: `getAccumulatorStats()`
+          // reads that same field and returns null only while it is null. A
+          // rename would leave the real accumulator in place (non-null here),
+          // and a lazy re-create during the load would show up as non-null
+          // after it — either way the load below would silently take the
+          // accumulator return site and this test would cover nothing.
+          expect(labelled.getAccumulatorStats()).toBeNull();
           const viaFallback = await labelled.loadLines(viewState);
+          expect(labelled.getAccumulatorStats()).toBeNull();
+          // Positive evidence the fallback ALLOCATED: the accumulator path
+          // hands back subarrays of its pooled buffers (identical across
+          // repeat loads), the fallback a freshly allocated one.
+          expect(viaFallback.positions.buffer).not.toBe(viaAccumulator.positions.buffer);
           expect(viaFallback.vertexRangeBounds).toBeInstanceOf(Uint32Array);
           expect(Array.from(viaFallback.vertexRangeBounds!)).toEqual([0, 51, 100, 151]);
         } finally {

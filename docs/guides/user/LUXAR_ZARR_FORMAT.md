@@ -745,8 +745,23 @@ per-vertex while the viewer picks whole *segments*, hover and selection on a
 lines node report the picked segment's **start** vertex. Two consequences follow
 from that convention: on a segment that the current slice clips only partially
 the reported start vertex may lie entirely outside the visible slab (what is
-drawn starts at the clipped position, not at the stored vertex), and the final
-vertex of a polyline is never reported at all, since no segment starts there.
+drawn starts at the clipped position, not at the stored vertex), and **any
+vertex that is never a segment's start is unreachable by hovering** — its label
+can never be shown.
+
+Which vertices those are depends on `original_line_type` (the segment pairs are
+built by `luxar.io._ordering.lines.convert_to_indexed`):
+
+- **`segments`** — the pairs are consecutive disjoint vertices `(0,1)`, `(2,3)`,
+  …, so **every odd-numbered vertex** (in authored order) is only ever an end:
+  half of the label array is unreachable. Author the label you want shown on the
+  even-numbered vertex of each pair.
+- **`polyline`** — the pairs are `(0,1)`, `(1,2)`, …, so only the final vertex is
+  unreachable.
+- **`loop`** — the last vertex connects back to the first, so every vertex starts
+  a segment and all labels are reachable.
+- **`indexed`** — whichever subset the supplied `indices` never place first,
+  plus any vertex no segment references at all.
 
 ### 5. Mesh Nodes
 
