@@ -102,7 +102,7 @@ const G = {
   INV_SQRT_PI: (1 / Math.sqrt(Math.PI)).toFixed(7), // 0.5641896
   INV_SQRT_2PI: (1 / Math.sqrt(2 * Math.PI)).toFixed(7), // 0.3989423
   QUARTER_SQRT2: (1 / (2 * Math.SQRT2)).toFixed(7), // 0.3535534
-  INV_T: (1 / T).toFixed(7), // 0.3295000 — q = sqrt(r2n)/T
+  INV_T: (1 / T).toFixed(7), // 0.3295051 — q = sqrt(r2n)/T
   // Texel-center-exact UV map for the sharpness radial LUT (#1352 PR-4):
   // u = (q·(W−1) + 0.5)/W lands q = 0 / q = 1 on the first/last texel
   // CENTER, so the row endpoints (S = 1 and S = 0) are read unfiltered.

@@ -12,7 +12,8 @@ Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,
 luminous, volumetric) rendered every line at β = 2 regardless of the per-vertex
 sharpness knob — the closed-form ray integral exists only for the Gaussian, and
 PR-2 documented the gap. The knob now works: the sum fragments' RADIAL factor is
-sampled from a shared 128×64 R16F LUT of `S(q, s)` — the shifted+normalized
+sampled from a shared 128×65 R16F LUT (the odd height puts the default knob
+exactly on the β = 2 row) of `S(q, s)` — the shifted+normalized
 untruncated Abel transform of the repo profile `exp(−K·rad^β)`, `β = 2^(6s−2)` —
 so the line-of-sight-integrated cross-section is the true general-β one. The
 AXIAL erf window deliberately stays β = 2 (a cap-local approximation, exact for
@@ -35,7 +36,7 @@ along-segment knob interpolation (`line-volprim-sharp-taper`), plus a
 mutation-verified physics test: the taper's half-max core is ≥2× wider at the
 hard end than the soft end (a LUT wired to a constant row reads ratio ≈ 1 and
 fails). The texture is a lazy singleton built on the first volumetric material
-(~16 KB, tens of ms); screen-space materials never trigger it.
+(~16 KB, ~90 ms); screen-space materials never trigger it.
 
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 

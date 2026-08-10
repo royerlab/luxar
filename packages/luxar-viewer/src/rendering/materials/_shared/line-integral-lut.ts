@@ -23,7 +23,10 @@
  *   transform of a Gaussian is a Gaussian of the same σ, so
  *   S(q, 0.5) = (exp(−K·q²) − C) / (1 − C) — byte-for-byte the expression
  *   the sum lanes used before. The fragment therefore ALWAYS samples the
- *   LUT: there is no analytic/LUT seam anywhere on the knob axis.
+ *   LUT: there is no analytic/LUT seam anywhere on the knob axis. This
+ *   is literal only because the knob grid CONTAINS s = 0.5 (see the
+ *   height constant): the default knob reads that row exactly instead of
+ *   interpolating its neighbours.
  * - **Compact support at q = 1.** The shift pins every row to 0 exactly at
  *   the stencil's truncation radius, so the vertex-stage stadium (radius
  *   T·σ_eff) covers the profile at every sharpness, and ClampToEdge
@@ -36,14 +39,14 @@
  *
  * ## Texture
  *
- * 128 × 64 (q linear × knob linear — the knob axis is log-β by
+ * 128 × 65 (q linear × knob linear — the knob axis is log-β by
  * construction), R16 float, linear filtering, clamp-to-edge, sampled at
  * texel centers: u = (q·(W−1) + 0.5)/W, v = (s·(H−1) + 0.5)/H. Half-float
  * linear filtering is CORE in WebGL2 (unlike 32F, which needs
  * OES_texture_float_linear) and r16float is filterable in WebGPU, so no
  * runtime capability fallback is needed on either supported backend.
- * Built lazily ONCE per session (~10⁷ integrand evaluations, tens of ms)
- * and cached — the colormap-textures pattern.
+ * Built lazily ONCE per session (~2×10⁶ integrand evaluations, ~90 ms
+ * measured in node) and cached — the colormap-textures pattern.
  *
  * This module is the SINGLE SOURCE for the LUT: the CPU reference
  * (`lineRadialProfile`), the texture builder, and the dimensions the two
@@ -59,8 +62,16 @@ import { FALLOFF_K } from './falloff';
 /** LUT width: the normalized-distance axis q ∈ [0, 1], sampled linearly. */
 export const LINE_RADIAL_LUT_WIDTH = 128;
 
-/** LUT height: the sharpness-KNOB axis s ∈ [0, 1], sampled linearly. */
-export const LINE_RADIAL_LUT_HEIGHT = 64;
+/**
+ * LUT height: the sharpness-KNOB axis s ∈ [0, 1], sampled linearly.
+ * DELIBERATELY ODD: the grid is `i/(H−1)`, and (H−1) must be even so the
+ * DEFAULT knob s = 0.5 lands exactly on a texel center (row 32) — that
+ * row is the analytic β = 2 radial, and sampling it exactly (not the
+ * average of the β ≈ 1.94 / 2.07 neighbours a 64-row grid interpolates)
+ * is what makes the no-seam contract literal. Bonus: 0.25 and 0.75 land
+ * on rows 16/48. Pinned by the filtered-at-s=0.5 unit test.
+ */
+export const LINE_RADIAL_LUT_HEIGHT = 65;
 
 /**
  * The shaders' sharpness-knob → super-Gaussian exponent map
@@ -76,11 +87,14 @@ export function lineSharpnessKnobToBeta(sharpKnob: number): number {
  * integral. DE handles both hard parts of this integrand family at once:
  * the u → 0 derivative CUSP at β < 1 (a plain compactified trapezoid
  * stalls at ~5e-3 there — measured) and the u ~ 10³ tails at small β.
- * n = 512 over x ∈ [−6, 6] is machine-precision across the whole knob
- * range (worst self-convergence 7e-9 at β = 16, ~1e-15 elsewhere) —
- * pinned against the analytic β = 2 row in the unit tests.
+ * n = 256 over x ∈ [−6, 6] is converged far past the texture's own
+ * half-float storage precision (~4.9e-4): worst self-convergence vs a
+ * 4096-node run is 3.2e-5 at β = 16 and ≤ 5e-15 everywhere else —
+ * pinned against the analytic β = 2 row in the unit tests. (512 nodes
+ * buys 7e-9 at β = 16 for double the build time; not worth it under
+ * 16-bit storage.)
  */
-const ABEL_QUADRATURE_NODES = 512;
+const ABEL_QUADRATURE_NODES = 256;
 const ABEL_QUADRATURE_XMAX = 6;
 
 /**
@@ -123,8 +137,8 @@ export function lineRadialProfile(q: number, sharpKnob: number): number {
  * texel-center UV map lands q = 0 / q = 1 / s = 0 / s = 1 exactly on the
  * first/last texel). Row-major, matching THREE.DataTexture layout.
  *
- * Parameterized dimensions so the tests can hold the shipped 64-row knob
- * axis against a denser rebuild (linear-interpolation adequacy).
+ * Parameterized dimensions so the tests can hold the shipped knob axis
+ * against a denser rebuild (linear-interpolation adequacy).
  */
 export function buildLineRadialLUTData(
   width: number = LINE_RADIAL_LUT_WIDTH,
@@ -149,7 +163,7 @@ let lutTexture: THREE.DataTexture | null = null;
 /**
  * Lazy singleton R16F LUT texture. Read-only after creation, shared by
  * every volumetric line material on both backends (the same one-instance
- * pattern as the colormap textures). Never disposed — it is one 16 KB
+ * pattern as the colormap textures). Never disposed — it is one ~16 KB
  * texture for the whole session.
  */
 export function getLineRadialLUTTexture(): THREE.DataTexture {

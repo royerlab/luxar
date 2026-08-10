@@ -389,7 +389,7 @@ void main() {
 
 	}
 
-	nodeVar34 = ( nodeUniform5 * vec3( vec2( ( ( sqrt( nodeVar32 ) * 0.3269308552868008 ) + 0.00390625 ), ( ( clamp( nodeVar25, 0.0, 1.0 ) * 0.984375 ) + 0.0078125 ) ), 1.0 ) ).xy;
+	nodeVar34 = ( nodeUniform5 * vec3( vec2( ( ( sqrt( nodeVar32 ) * 0.3269308552868008 ) + 0.00390625 ), ( ( clamp( nodeVar25, 0.0, 1.0 ) * 0.9846153846153847 ) + 0.007692307692307693 ) ), 1.0 ) ).xy;
 	nodeVar36 = bool( nodeUniform6 );
 
 	if ( nodeVar36 ) {

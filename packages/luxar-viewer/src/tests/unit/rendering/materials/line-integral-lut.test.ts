@@ -97,7 +97,7 @@ describe('buildLineRadialLUTData', () => {
     // The shipped LUT relies on the sampler's LINEAR filter between knob
     // rows. Hold every midpoint of the shipped grid against a rebuild at
     // double the knob resolution (whose odd rows sit exactly on those
-    // midpoints — 127 = 2·63 intervals share endpoints with 63).
+    // midpoints — the 2H−1 grid's even rows coincide with the H grid).
     const W = LINE_RADIAL_LUT_WIDTH;
     const dense = buildLineRadialLUTData(W, 2 * LINE_RADIAL_LUT_HEIGHT - 1);
     let worst = 0;
@@ -113,7 +113,7 @@ describe('buildLineRadialLUTData', () => {
 });
 
 describe('getLineRadialLUTTexture', () => {
-  it('is a cached 128×64 R16F linear-filtered clamp-to-edge singleton', () => {
+  it('is a cached 128×65 R16F linear-filtered clamp-to-edge singleton', () => {
     const tex = getLineRadialLUTTexture();
     expect(getLineRadialLUTTexture()).toBe(tex);
     expect(tex.image.width).toBe(LINE_RADIAL_LUT_WIDTH);
@@ -136,5 +136,41 @@ describe('getLineRadialLUTTexture', () => {
     }
     // Values live in [0, 1]: half-float grid spacing tops out at 2^-11.
     expect(worst).toBeLessThan(5e-4);
+  });
+
+  it('GPU-filtered sampling at the DEFAULT knob reads the analytic beta = 2 radial (the no-seam contract)', () => {
+    // Emulates exactly what the shaders + sampler do at s = 0.5 — v-axis
+    // texel coordinate, bilinear row blend, u-axis blend — over the STORED
+    // half-float values. This is the regression guard for the 64-row trap:
+    // an even (H−1) grid has no s = 0.5 row, the sampler averages the
+    // beta ~ 1.94 / 2.07 neighbours, and this test fails on the structural
+    // assertion below before the numeric one drifts.
+    const H = LINE_RADIAL_LUT_HEIGHT;
+    const W = LINE_RADIAL_LUT_WIDTH;
+    expect(((H - 1) * 0.5) % 1, 'the knob grid must CONTAIN s = 0.5').toBe(0);
+    const tex = getLineRadialLUTTexture();
+    const stored = tex.image.data as Uint16Array;
+    const at = (row: number, col: number): number =>
+      THREE.DataUtils.fromHalfFloat(stored[row * W + col]);
+    // v = (0.5·(H−1) + 0.5)/H → texel coordinate v·H − 0.5 = 0.5·(H−1).
+    const rowCoord = 0.5 * (H - 1);
+    const r0 = Math.min(Math.floor(rowCoord), H - 2);
+    const rf = rowCoord - r0;
+    let worst = 0;
+    for (let i = 0; i <= 256; i++) {
+      const q = i / 256;
+      const colCoord = q * (W - 1); // u·W − 0.5 with u = (q·(W−1) + 0.5)/W
+      const c0 = Math.min(Math.floor(colCoord), W - 2);
+      const cf = colCoord - c0;
+      const sampleRow = (r: number): number => at(r, c0) * (1 - cf) + at(r, c0 + 1) * cf;
+      const filtered = sampleRow(r0) * (1 - rf) + sampleRow(r0 + 1) * rf;
+      const analytic =
+        Math.max(Math.exp(-FALLOFF_K * q * q) - FALLOFF_FLOOR, 0) / (1 - FALLOFF_FLOOR);
+      worst = Math.max(worst, Math.abs(filtered - analytic));
+    }
+    // Budget: half-float storage (~4.9e-4) + q-axis linear interp of the
+    // Gaussian row (~7e-5). A 64-row grid reads ~1.8e-4 EXTRA from the
+    // row blend and, more importantly, trips the structural assert above.
+    expect(worst).toBeLessThan(8e-4);
   });
 });
