@@ -22,7 +22,7 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 | `shader-tsl.ts`             | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
 | `shader-glsl-volumetric.ts` | `VOLUMETRIC_LINE_VERTEX_SHADER` + `VOLUMETRIC_LINE_FRAGMENT_SHADER` + `VOLUMETRIC_LINE_SOURCE` — the volumetric primitive's GLSL pair (see the section below).                                                                         |
 | `shader-tsl-volumetric.ts`  | `volumetricLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the volumetric pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                |
-| `ray-integral.ts`  | The #1352 volumetric-line ray integral (`lineRayIntegralRef` / `lineRayIntegralPoly`), the peak-mode capsule profile, the CPU ray/segment geometry, and their GLSL/TSL twins. Pure math — no shader consumes it yet                    |
+| `ray-integral.ts`           | The #1352 volumetric-line ray integral (`lineRayIntegralRef` / `lineRayIntegralPoly`), the peak-mode capsule profile, the CPU ray/segment geometry, and their GLSL/TSL twins. Pure math — no shader consumes it yet                    |
 
 ## Rendering model in one paragraph
 
