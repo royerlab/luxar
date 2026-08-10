@@ -95,7 +95,11 @@ def add_gsplats_impl(
         # branch, as the Points and Lines adders do. Checked after the branch it
         # was refused only from inside ``part_0``, leaving the store holding a
         # childless ``kind=partition`` group where the plain-leaf path writes
-        # nothing at all.
+        # nothing at all. This also moves it above ``resolve_auto_partition`` and
+        # ``_validate_data_dimensions``, so it takes precedence over a dimension
+        # mismatch on the FLAT path too — which is exactly the precedence the two
+        # siblings already have, and the point of the move is that all three
+        # adders answer this the same way.
         if colors is not None and attrs.get("colormap") is not None:
             raise ValueError(
                 "Cannot specify both 'colors' and 'colormap'. Use one or the other."
@@ -253,10 +257,7 @@ def add_gsplats_partition_wrapper_impl(
     # labels/colors/amplitudes (part 1's tooltips would be part 0's). GSplats
     # have no additive/substitutive wrapper here (gsplat LOD goes through
     # GSplatData, already length-consistent), so this is the only split path.
-    validate_gsplats_channels_before_split(
-        ctr_arr, amplitudes, chol_arr, colors, labels
-    )
-
+    #
     # Two per-splat parameters have a broadcast form whose OWN length can collide
     # with the splat count, so classify both up front rather than letting
     # `slice_optional_array`'s length test gather them: a uniform RGB(A)
@@ -265,8 +266,14 @@ def add_gsplats_partition_wrapper_impl(
     # Parts are disjoint here, so the gathered slice never has a legal length and
     # the symptom is a REFUSED legal input (see compositing.is_broadcast_color),
     # not a silent mis-write.
+    #
+    # The Cholesky verdict comes BACK from the gate rather than being recomputed:
+    # `validate_gsplat_inputs` already decided it, and a second copy of the rule
+    # here is the drift this whole gate exists to prevent.
+    uniform_cholesky = validate_gsplats_channels_before_split(
+        ctr_arr, amplitudes, chol_arr, colors=colors, labels=labels
+    )
     uniform_color = is_broadcast_color(colors)
-    uniform_cholesky = chol_arr.ndim == 1
 
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}

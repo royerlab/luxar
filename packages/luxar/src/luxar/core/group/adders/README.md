@@ -189,8 +189,9 @@ the flat path does — otherwise a ladder-only scene would get no hover overlay.
   `validate_points_channels_before_split`,
   `validate_lines_channels_before_split`,
   `validate_line_indices_before_split`,
-  `validate_gsplats_channels_before_split` (each folds in
-  `validate_labels_before_split`)
+  `validate_gsplats_channels_before_split` (labels ride along last — via the
+  shared writer sweep for points/lines, via `validate_labels_before_split` for
+  gsplats)
 - `dim_order` — `apply_dim_order_positions`, `apply_dim_order_cholesky`
 - `lod.points`, `lod.lines` — additive-LOD level builders and polyline
   identification

@@ -187,14 +187,17 @@ def validate_labels_before_split(labels: Any, n_elements: int) -> None:
     because a level's own length may coincidentally match. So the full-count check
     has to happen upstream of the split.
 
-    Call this as the FIRST statement of a wrapper impl that slices ``labels``
-    (the partition / additive-LOD / substitutive-LOD wrappers on Points and
-    Lines, plus the GSplats partition wrapper) — entering a wrapper is exactly
-    "a split is about to happen". Deliberately NOT called from the top of the
-    leaf adders: the plain-leaf path validates in the writer, and hoisting this
-    above ``_validate_data_dimensions`` and the writer's channel gates would
-    change which error a multi-fault call reports. Same reasoning, and the same
-    house rule, as ``adders/mesh.py::_validate_partition_sources``.
+    No wrapper impl calls this directly any more: it is reached from
+    :func:`validate_gsplats_channels_before_split`, which is the one geometry
+    whose channel validator does not cover labels. Points and Lines get the
+    equivalent check from the writer sweeps their gates delegate to
+    (``validate_labels_for_writing``, last in the flat order). Whichever door, the
+    call belongs to a wrapper's pre-split gate — entering a wrapper is exactly "a
+    split is about to happen" — and deliberately NOT to the top of a leaf adder:
+    the plain-leaf path validates in the writer, and hoisting the check above
+    ``_validate_data_dimensions`` there would change which error a multi-fault
+    call reports. Same reasoning, and the same house rule, as
+    ``adders/mesh.py::_validate_partition_sources``.
 
     No-op when ``labels`` is ``None``.
 
@@ -240,10 +243,15 @@ def is_broadcast_color(colors: Any) -> bool:
     its parts SHARE vertices, so two parts can each take a valid 3-of-4 slice
     (see the rationale in ``adders/mesh.py``). Same rule, both places.
 
-    A per-element list of triples fails the component test (its entries are
-    sequences, not numbers) and is gathered normally, as are numpy colors of any
-    shape — the writer refuses a 1-D numpy color outright, so only a list/tuple
-    can be the broadcast form.
+    Only a list/tuple can be the broadcast form at all, which is why numpy colors
+    of every shape classify as ``False`` here (the writer refuses a 1-D numpy
+    color outright and wants ``(1, c)``). A list of triples classifies as
+    ``False`` too, because its entries are sequences rather than numbers — but it
+    is not thereby "gathered normally": a list/tuple ``colors`` is ALWAYS the
+    broadcast form to the writer, so ``[[1.0, 0.0, 0.0]] * 200`` is refused on
+    both paths ("Uniform color must have 3 (RGB) or 4 (RGBA) components, got
+    200"), and a 3-long list of triples is refused for its components ("component
+    0 must be a finite number"). Per-element colors are an ndarray.
     """
     if not isinstance(colors, (list, tuple)) or len(colors) not in (3, 4):
         return False
@@ -274,8 +282,13 @@ def validate_points_channels_before_split(
     scalars → labels), just against the source count. Sharing one
     implementation is deliberate — a channel added to the writer's gate is
     covered here the same day, so this gate cannot drift from what the child
-    write accepts. Every legal broadcast form the flat path accepts is therefore
-    accepted here too (a scalar radius, a ``(1, c)`` colors row, an RGB triple).
+    write accepts. Every legal broadcast form the flat path accepts therefore
+    passes THIS GATE too (a scalar radius, a ``(1, c)`` colors row, an RGB
+    triple). Passing the gate is not the same as reaching disk on every path:
+    under ``substitutive_lod=`` a broadcast ``colors`` — tuple or ``(1, 3)`` row —
+    is separately refused downstream by the gsplat lift, which bakes the coarse
+    levels from per-element RGB. That refusal predates this gate and is tracked in
+    #1444; per-element ``colors`` is unaffected.
 
     The CHANNEL verdict is identical with and without a wrapper. Note the gate
     runs ABOVE the positions / dimension / attr checks on the split paths, so a
@@ -393,9 +406,10 @@ def validate_gsplats_channels_before_split(
     centers: np.ndarray,
     amplitudes: Any,
     cholesky_factors: np.ndarray,
+    *,
     colors: Any = None,
     labels: Any = None,
-) -> None:
+) -> bool:
     """Run the flat GSplats write gate over the source arrays, pre-split.
 
     The GSplats twin of :func:`validate_points_channels_before_split`. The whole
@@ -413,6 +427,13 @@ def validate_gsplats_channels_before_split(
             uniform RGB(A) list/tuple.
         labels: One string per splat.
 
+    Returns:
+        ``cholesky_is_uniform`` — whether ``cholesky_factors`` is the uniform
+        ``(k,)`` form, straight from the validator that already decided it. The
+        caller needs this to skip slicing that array, and recomputing the rule at
+        the call site would be one more copy of exactly the kind of duplication
+        this gate exists to remove.
+
     Raises:
         ValueError: If the trio's shapes/values are not a legal per-splat or
             broadcast combination for ``len(centers)`` splats.
@@ -420,10 +441,11 @@ def validate_gsplats_channels_before_split(
     """
     from ...io._compiler.gsplat_assembly import validate_gsplat_inputs
 
-    (*_normalized, n_splats, _n_dims, _uniform) = validate_gsplat_inputs(
+    (*_normalized, n_splats, _n_dims, cholesky_is_uniform) = validate_gsplat_inputs(
         centers, amplitudes, cholesky_factors, colors
     )
     validate_labels_before_split(labels, n_splats)
+    return bool(cholesky_is_uniform)
 
 
 def position_bounds_from_array(positions: np.ndarray) -> Dict[str, List[float]]:

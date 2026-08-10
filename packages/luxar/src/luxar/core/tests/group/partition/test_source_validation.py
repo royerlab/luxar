@@ -1,53 +1,43 @@
 """Per-element channels are validated against the SOURCE count, pre-split (#1437).
 
-``slice_optional_array`` passes a value through UNCHANGED when its leading length
-does not match the element count — that is how a broadcast RGB triple or a scalar
-radius reaches every part. A per-element array of the WRONG length takes the same
-branch, so every part receives the whole unsliced array; and when a part's own
-element count happens to equal that array's length, the part's writer accepts it.
-The write then succeeds with values paired to the wrong elements.
+``slice_optional_array`` deliberately passes a value through UNCHANGED when its
+leading length does not match the element count — that is how a broadcast RGB
+triple or a scalar radius reaches every part. A per-element array of the WRONG
+length takes the same branch, so every part receives the whole unsliced array;
+and when a part's own element count happens to equal that array's length, the
+part's writer accepts it. The write then succeeds with values paired to the wrong
+elements.
 
-Every wrong-length case below is paired with a plain-leaf control asserting the
-flat path rejects the identical input, so the tests pin PARITY (a given input
-fails the same way with and without ``partition=``) rather than merely "it
-raises". #1422 closed this for ``labels``; these cover the rest.
+Every wrong-length case below asserts PARITY in the strong sense: the same input
+is run with and without the wrapper, and the split path must raise the same
+exception TYPE with a byte-identical message. That is assertable because both
+paths now run the same validator (see ``assert_same_refusal``), and it is what
+pins the property the fix is for — a substring match on the channel name would
+survive a wording divergence, and ``match="colors"`` would even be satisfied by
+the unrelated colors/colormap conflict. #1422 closed this for ``labels``; these
+cover the rest.
+
+The LOD wrappers live in ``tests/group/lod/test_source_validation.py``.
 """
 
 from __future__ import annotations
+
+from typing import Any, Dict, List
 
 import numpy as np
 import pytest
 import zarr
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.io.reader import LuxarScene
 
-
-def _make_3d_dims() -> Dimensions:
-    return Dimensions(
-        [
-            Dimension("X", display=True),
-            Dimension("Y", display=True),
-            Dimension("Z", display=True),
-        ]
-    )
-
-
-def _positions(n: int, seed: int) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    return (rng.random((n, 3)) * 100.0).astype(np.float32)
-
-
-def _cholesky(n: int) -> np.ndarray:
-    return np.tile(np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32), (n, 1))
-
-
-def _scene(tmp_path, filename: str):
-    path = str(tmp_path / filename)
-    compiler = LuxarZarrCompiler(path)
-    scene = compiler.create_scene(dimensions=_make_3d_dims())
-    return compiler, scene, path
-
+from ..conftest import (
+    assert_same_refusal,
+    assert_uniform,
+    cholesky_rows,
+    open_scene,
+    random_positions,
+    refusal,
+)
 
 # 200 elements split at max_elements=100 gives exactly two parts of 100
 # (measured), so a 100-long channel matches every part's own count and only a
@@ -55,138 +45,165 @@ def _scene(tmp_path, filename: str):
 _N = 200
 _HALF = 100
 
-# (channel name, wrong-length value, error-message fragment)
+# (channel name, wrong-length value)
 _POINTS_CASES = [
-    ("colors", np.zeros((_HALF, 3), dtype=np.float32), "colors"),
-    ("radii", np.full(_HALF, 0.5, dtype=np.float32), "radii"),
-    ("sharpness", np.full(_HALF, 0.5, dtype=np.float32), "sharpness"),
-    ("scalars", np.linspace(0, 1, _HALF).astype(np.float32), "scalars"),
+    ("colors", np.zeros((_HALF, 3), dtype=np.float32)),
+    ("radii", np.full(_HALF, 0.5, dtype=np.float32)),
+    ("sharpness", np.full(_HALF, 0.5, dtype=np.float32)),
+    ("scalars", np.linspace(0, 1, _HALF).astype(np.float32)),
 ]
 
 _LINES_CASES = [
-    ("widths", np.full(_HALF, 0.2, dtype=np.float32), "widths"),
-    ("colors", np.zeros((_HALF, 3), dtype=np.float32), "colors"),
-    ("sharpness", np.full(_HALF, 0.5, dtype=np.float32), "sharpness"),
-    ("scalars", np.linspace(0, 1, _HALF).astype(np.float32), "scalars"),
+    ("widths", np.full(_HALF, 0.2, dtype=np.float32)),
+    ("colors", np.zeros((_HALF, 3), dtype=np.float32)),
+    ("sharpness", np.full(_HALF, 0.5, dtype=np.float32)),
+    ("scalars", np.linspace(0, 1, _HALF).astype(np.float32)),
 ]
+
+_GSPLAT_CASES = [
+    ("amplitudes", np.full(_HALF, 1.0, dtype=np.float32)),
+    ("cholesky_factors", cholesky_rows(_HALF)),
+    ("colors", np.zeros((_HALF, 3), dtype=np.float32)),
+]
+
+
+def _points_kwargs(channel: str, value: Any) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {}
+    if channel == "scalars":
+        kwargs["colormap"] = "viridis"
+    # Assigned last and explicitly, never as a duplicate dict-literal key: a
+    # reordered literal would silently stop overriding the default and the case
+    # would test nothing.
+    kwargs[channel] = value
+    return kwargs
+
+
+def _lines_kwargs(channel: str, value: Any) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {"widths": 0.2}
+    if channel == "scalars":
+        kwargs["colormap"] = "viridis"
+    kwargs[channel] = value
+    return kwargs
+
+
+def _gsplat_kwargs(channel: str, value: Any) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "amplitudes": 1.0,
+        "cholesky_factors": cholesky_rows(_N),
+    }
+    kwargs[channel] = value
+    return kwargs
+
+
+def _part_names(path: str, node: str) -> List[str]:
+    store = zarr.open_group(path, mode="r")
+    assert store[node].attrs["kind"] == "partition"
+    return sorted(store[node].group_keys())
 
 
 class TestPointsPartitionSourceValidation:
-    @pytest.mark.parametrize("channel,value,message", _POINTS_CASES)
-    def test_wrong_length_channel_raises(self, tmp_path, channel, value, message):
-        compiler, scene, _ = _scene(tmp_path, f"points_{channel}.luxar.zarr")
-        kwargs = {channel: value}
-        if channel == "scalars":
-            kwargs["colormap"] = "viridis"
+    @pytest.mark.parametrize("channel,value", _POINTS_CASES)
+    def test_wrong_length_channel_is_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any, channel: str, value: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, f"points_{channel}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"points_flat_{channel}.luxar.zarr")
+        positions = random_positions(_N, seed=11)
 
-        with pytest.raises(ValueError, match=message):
-            scene.add_points(
-                "p",
-                _positions(_N, seed=11),
-                partition={"max_elements": _HALF},
-                **kwargs,
+        flat = refusal(
+            lambda: flat_scene.add_points(
+                "p", positions, **_points_kwargs(channel, value)
             )
+        )
+        split = refusal(
+            lambda: scene.add_points(
+                "p",
+                positions,
+                partition={"max_elements": _HALF},
+                **_points_kwargs(channel, value),
+            )
+        )
 
+        assert_same_refusal(flat, split)
+        assert channel in str(split)
         assert "p" not in compiler.store
-
-    @pytest.mark.parametrize("channel,value,message", _POINTS_CASES)
-    def test_flat_path_rejects_the_same_input(self, tmp_path, channel, value, message):
-        """The parity control: identical input, no ``partition=``."""
-        _, scene, _ = _scene(tmp_path, f"points_flat_{channel}.luxar.zarr")
-        kwargs = {channel: value}
-        if channel == "scalars":
-            kwargs["colormap"] = "viridis"
-
-        with pytest.raises(ValueError, match=message):
-            scene.add_points("p", _positions(_N, seed=11), **kwargs)
 
 
 class TestLinesPartitionSourceValidation:
-    @pytest.mark.parametrize("channel,value,message", _LINES_CASES)
-    def test_wrong_length_channel_raises(self, tmp_path, channel, value, message):
-        compiler, scene, _ = _scene(tmp_path, f"lines_{channel}.luxar.zarr")
-        kwargs = {"widths": 0.2, channel: value}
-        if channel == "scalars":
-            kwargs["colormap"] = "viridis"
+    @pytest.mark.parametrize("channel,value", _LINES_CASES)
+    def test_wrong_length_channel_is_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any, channel: str, value: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, f"lines_{channel}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"lines_flat_{channel}.luxar.zarr")
+        vertices = random_positions(_N, seed=12)
 
-        with pytest.raises(ValueError, match=message):
-            scene.add_lines(
+        flat = refusal(
+            lambda: flat_scene.add_lines(
                 "line",
-                _positions(_N, seed=12),
+                vertices,
+                line_type="segments",
+                **_lines_kwargs(channel, value),
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
                 line_type="segments",
                 partition={"max_elements": _HALF},
-                **kwargs,
+                **_lines_kwargs(channel, value),
             )
+        )
 
+        assert_same_refusal(flat, split)
+        assert channel in str(split)
         assert "line" not in compiler.store
-
-    @pytest.mark.parametrize("channel,value,message", _LINES_CASES)
-    def test_flat_path_rejects_the_same_input(self, tmp_path, channel, value, message):
-        _, scene, _ = _scene(tmp_path, f"lines_flat_{channel}.luxar.zarr")
-        kwargs = {"widths": 0.2, channel: value}
-        if channel == "scalars":
-            kwargs["colormap"] = "viridis"
-
-        with pytest.raises(ValueError, match=message):
-            scene.add_lines(
-                "line", _positions(_N, seed=12), line_type="segments", **kwargs
-            )
-
-
-_GSPLAT_CASES = [
-    ("amplitudes", np.full(_HALF, 1.0, dtype=np.float32), "[Aa]mplitudes"),
-    ("cholesky_factors", _cholesky(_HALF), "Cholesky"),
-    ("colors", np.zeros((_HALF, 3), dtype=np.float32), "colors"),
-]
 
 
 class TestGSplatsPartitionSourceValidation:
-    @pytest.mark.parametrize("channel,value,message", _GSPLAT_CASES)
-    def test_wrong_length_channel_raises(self, tmp_path, channel, value, message):
-        compiler, scene, _ = _scene(tmp_path, f"gsplats_{channel}.luxar.zarr")
-        kwargs = {
-            "amplitudes": 1.0,
-            "cholesky_factors": _cholesky(_N),
-            channel: value,
-        }
+    @pytest.mark.parametrize("channel,value", _GSPLAT_CASES)
+    def test_wrong_length_channel_is_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any, channel: str, value: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, f"gsplats_{channel}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"gsplats_flat_{channel}.luxar.zarr")
+        centers = random_positions(_N, seed=13)
 
-        with pytest.raises(ValueError, match=message):
-            scene.add_gsplats(
-                "g",
-                centers=_positions(_N, seed=13),
-                partition={"max_elements": _HALF},
-                **kwargs,
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g", centers=centers, **_gsplat_kwargs(channel, value)
             )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                partition={"max_elements": _HALF},
+                **_gsplat_kwargs(channel, value),
+            )
+        )
 
+        assert_same_refusal(flat, split)
         assert "g" not in compiler.store
 
-    @pytest.mark.parametrize("channel,value,message", _GSPLAT_CASES)
-    def test_flat_path_rejects_the_same_input(self, tmp_path, channel, value, message):
-        _, scene, _ = _scene(tmp_path, f"gsplats_flat_{channel}.luxar.zarr")
-        kwargs = {
-            "amplitudes": 1.0,
-            "cholesky_factors": _cholesky(_N),
-            channel: value,
-        }
-
-        with pytest.raises(ValueError, match=message):
-            scene.add_gsplats("g", centers=_positions(_N, seed=13), **kwargs)
-
-    def test_colors_plus_colormap_leaves_no_partial_wrapper(self, tmp_path):
+    def test_colors_plus_colormap_leaves_no_partial_wrapper(
+        self, tmp_path: Any
+    ) -> None:
         """The exclusion is checked ABOVE the partition branch, like the siblings.
 
         Checked after it, the refusal came from inside ``part_0`` and left the
         store holding ``g`` as a childless ``kind=partition`` group; the flat path
         refuses the same call and writes nothing.
         """
-        compiler, scene, _ = _scene(tmp_path, "gsplats_colormap_clash.luxar.zarr")
+        compiler, scene, _ = open_scene(tmp_path, "gsplats_colormap_clash.luxar.zarr")
 
         with pytest.raises(ValueError, match="both 'colors' and 'colormap'"):
             scene.add_gsplats(
                 "g",
-                centers=_positions(_N, seed=14),
+                centers=random_positions(_N, seed=14),
                 amplitudes=1.0,
-                cholesky_factors=_cholesky(_N),
+                cholesky_factors=cholesky_rows(_N),
                 colors=np.zeros((_N, 3), dtype=np.float32),
                 colormap="viridis",
                 partition={"max_elements": _HALF},
@@ -199,104 +216,83 @@ class TestGSplatsPartitionSourceValidation:
 # the flat writer refuses, and the split paths' topology builder would reshape it
 # into 12 edges the author never wound.
 _N_IDX = 24
+_N_EDGES = 12
 _BAD_LAYOUT = np.arange(_N_IDX, dtype=np.uint32).reshape(8, 3)
 _ODD_FLAT = np.arange(_N_IDX - 1, dtype=np.uint32)
 _INDEX_CASES = [
-    ("bad_layout", _BAD_LAYOUT, "flat \\(2E,\\) array or an \\(E, 2\\) array"),
-    ("odd_flat", _ODD_FLAT, "even element count"),
+    ("bad_layout", _BAD_LAYOUT),
+    ("odd_flat", _ODD_FLAT),
 ]
-_INDEX_SPLITS = [
-    ("partition", {"partition": {"max_elements": 6}}),
-    ("additive", {"additive_lod": {"n_lods": 3}}),
-    ("substitutive", {"substitutive_lod": True}),
+_LEGAL_LAYOUTS = [
+    ("pairs", np.arange(_N_IDX, dtype=np.uint32).reshape(-1, 2)),
+    ("flat", np.arange(_N_IDX, dtype=np.uint32)),
 ]
 
 
-class TestLinesIndicesSourceValidation:
+class TestLinesIndicesPartitionValidation:
     """``indices`` is the same bug class one channel over (#1437 follow-up).
 
     ``identify_polylines`` checks dtype and bounds and then reshapes to pairs, so
     a malformed edge list was reinterpreted rather than refused. Topology is
     validated FIRST now, before the channels, exactly as mesh validates ``faces``
-    before any per-vertex channel.
+    before any per-vertex channel. The additive / substitutive halves of this are
+    in the lod/ sibling file.
     """
 
-    @pytest.mark.parametrize("case,indices,message", _INDEX_CASES)
-    @pytest.mark.parametrize("split,split_kwargs", _INDEX_SPLITS)
-    def test_malformed_indices_raise_on_every_split_path(
-        self, tmp_path, case, indices, message, split, split_kwargs
-    ):
-        compiler, scene, _ = _scene(tmp_path, f"idx_{split}_{case}.luxar.zarr")
+    @pytest.mark.parametrize("case,indices", _INDEX_CASES)
+    def test_malformed_indices_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any, case: str, indices: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, f"idx_part_{case}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"idx_flat_{case}.luxar.zarr")
+        vertices = random_positions(_N_IDX, seed=15)
 
-        with pytest.raises(ValueError, match=message):
-            scene.add_lines(
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line", vertices, widths=0.2, indices=indices, line_type="indexed"
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
                 "line",
-                _positions(_N_IDX, seed=15),
+                vertices,
                 widths=0.2,
                 indices=indices,
                 line_type="indexed",
-                **split_kwargs,
+                partition={"max_elements": 6},
             )
+        )
 
-        # Nothing on disk: the substitutive path used to reach ``child_3`` with
-        # its coarse levels already written.
+        assert_same_refusal(flat, split)
         assert "line" not in compiler.store
 
-    @pytest.mark.parametrize("case,indices,message", _INDEX_CASES)
-    def test_flat_path_rejects_the_same_indices(self, tmp_path, case, indices, message):
-        _, scene, _ = _scene(tmp_path, f"idx_flat_{case}.luxar.zarr")
+    @pytest.mark.parametrize("layout,indices", _LEGAL_LAYOUTS)
+    def test_legal_layouts_still_partition_with_every_edge_intact(
+        self, tmp_path: Any, layout: str, indices: Any
+    ) -> None:
+        """The control: both documented layouts partition, and keep 12 edges.
 
-        with pytest.raises(ValueError, match=message):
-            scene.add_lines(
-                "line",
-                _positions(_N_IDX, seed=15),
-                widths=0.2,
-                indices=indices,
-                line_type="indexed",
-            )
-
-    @pytest.mark.parametrize(
-        "layout,indices",
-        [
-            ("pairs", np.arange(_N_IDX, dtype=np.uint32).reshape(-1, 2)),
-            ("flat", np.arange(_N_IDX, dtype=np.uint32)),
-        ],
-    )
-    @pytest.mark.parametrize("split,split_kwargs", _INDEX_SPLITS[:2])
-    def test_legal_layouts_still_split(
-        self, tmp_path, layout, indices, split, split_kwargs
-    ):
-        """The control: both documented layouts still partition / ladder fine."""
-        compiler, scene, path = _scene(tmp_path, f"idx_ok_{split}_{layout}.luxar.zarr")
+        Edge count is the assertion that matters — the bug this gate exists for
+        is an ``(E, 3)`` array reinterpreted as ``3E/2`` edges the author never
+        wound, which a mere "the node exists" check cannot see (nor can it see
+        the node collapsing to a flat leaf).
+        """
+        compiler, scene, path = open_scene(tmp_path, f"idx_ok_part_{layout}.luxar.zarr")
         scene.add_lines(
             "line",
-            _positions(_N_IDX, seed=16),
+            random_positions(_N_IDX, seed=16),
             widths=0.2,
             indices=indices,
             line_type="indexed",
-            **split_kwargs,
+            partition={"max_elements": 6},
         )
         compiler.finalize()
 
-        assert "line" in zarr.open_group(path, mode="r")
-
-
-def _part_names(path: str, node: str) -> list[str]:
-    store = zarr.open_group(path, mode="r")
-    assert store[node].attrs["kind"] == "partition"
-    return sorted(store[node].group_keys())
-
-
-def _assert_uniform(actual, expected, atol: float = 5e-3) -> None:
-    """Every row/value of a decoded broadcast channel equals ``expected``.
-
-    The decoder expands a stored broadcast to full length on some channels and
-    keeps the ``(1, c)`` / ``(1,)`` row on others, so the expectation is stated
-    per element rather than by shape.
-    """
-    arr = np.asarray(actual, dtype=np.float64)
-    want = np.asarray(expected, dtype=np.float64)
-    np.testing.assert_allclose(arr, np.broadcast_to(want, arr.shape), atol=atol)
+        parts = _part_names(path, "line")
+        assert len(parts) > 1
+        store = zarr.open_group(path, mode="r")
+        total_segments = sum(int(store["line"][p].attrs["n_segments"]) for p in parts)
+        assert total_segments == _N_EDGES
 
 
 class TestLegalBroadcastFormsStillReachEveryPart:
@@ -309,11 +305,47 @@ class TestLegalBroadcastFormsStillReachEveryPart:
     it pins that they landed on the right elements rather than only "no raise".
     """
 
-    def test_points_scalar_and_broadcast_channels(self, tmp_path):
-        compiler, scene, path = _scene(tmp_path, "points_broadcast.luxar.zarr")
+    def test_per_element_channel_stays_paired_with_its_own_element(
+        self, tmp_path: Any
+    ) -> None:
+        """Regression control for the headline property: right-length, DISTINCT values.
+
+        Every other assertion here uses a uniform value, where mis-pairing is
+        unobservable by construction. Here each point's colour IS its position
+        (scaled), so reading a part back and comparing colour against the stored
+        position asserts the pairing directly — parts are spatially permuted, so
+        this is a join on the data rather than on the row order. Passes on main
+        too: it guards the property the gate protects, it does not reproduce the
+        bug.
+        """
+        compiler, scene, path = open_scene(tmp_path, "points_paired.luxar.zarr")
+        positions = random_positions(_N, seed=25)
+        colors = (positions / 100.0).astype(np.float32)
+        scene.add_points(
+            "p", positions, colors=colors, partition={"max_elements": _HALF}
+        )
+        compiler.finalize()
+
+        parts = _part_names(path, "p")
+        assert len(parts) == 2
+        reader = LuxarScene.load(path)
+        seen = 0
+        for part in parts:
+            data = reader.get_points(f"p/{part}")
+            seen += data.positions.shape[0]
+            # uint8 colour quantization is the only slack: 1/255 ≈ 0.004.
+            np.testing.assert_allclose(
+                np.asarray(data.colors, dtype=np.float64),
+                np.asarray(data.positions, dtype=np.float64) / 100.0,
+                atol=6e-3,
+            )
+        assert seen == _N
+
+    def test_points_scalar_and_broadcast_channels(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "points_broadcast.luxar.zarr")
         scene.add_points(
             "p",
-            _positions(_N, seed=21),
+            random_positions(_N, seed=21),
             colors=np.array([[1.0, 0.0, 0.0]], dtype=np.float32),  # (1, 3) row
             radii=0.5,  # scalar
             sharpness=0.8,  # scalar
@@ -328,10 +360,10 @@ class TestLegalBroadcastFormsStillReachEveryPart:
             data = reader.get_points(f"p/{part}")
             assert data.positions.shape[0] == _HALF
             # The (1, c) rows broadcast: every point of every part is pure red.
-            _assert_uniform(data.colors, [1.0, 0.0, 0.0])
-            _assert_uniform(data.radii, 0.5)
+            assert_uniform(data.colors, [1.0, 0.0, 0.0], _HALF)
+            assert_uniform(data.radii, 0.5, _HALF)
 
-    def test_points_rgb_triple_on_a_three_point_node(self, tmp_path):
+    def test_points_rgb_triple_on_a_three_point_node(self, tmp_path: Any) -> None:
         """The count collision: 3 points, a 3-component uniform RGB.
 
         Without the broadcast classification the triple satisfies
@@ -340,7 +372,7 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         slice of them (a list RGB is refused outright by the part's writer; a
         tuple RGB reaches it as a bogus 1-element color array).
         """
-        compiler, scene, path = _scene(tmp_path, "points_rgb3.luxar.zarr")
+        compiler, scene, path = open_scene(tmp_path, "points_rgb3.luxar.zarr")
         positions = np.array(
             [[0.0, 0.0, 0.0], [50.0, 0.0, 0.0], [100.0, 0.0, 0.0]], dtype=np.float32
         )
@@ -352,12 +384,15 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         parts = _part_names(path, "p")
         assert len(parts) > 1
         reader = LuxarScene.load(path)
+        seen = 0
         for part in parts:
             data = reader.get_points(f"p/{part}")
-            _assert_uniform(data.colors, [0.25, 0.5, 1.0])
+            seen += data.positions.shape[0]
+            assert_uniform(data.colors, [0.25, 0.5, 1.0], data.positions.shape[0])
+        assert seen == 3
 
-    def test_points_rgba_quadruple_on_a_four_point_node(self, tmp_path):
-        compiler, scene, path = _scene(tmp_path, "points_rgba4.luxar.zarr")
+    def test_points_rgba_quadruple_on_a_four_point_node(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "points_rgba4.luxar.zarr")
         positions = np.array(
             [
                 [0.0, 0.0, 0.0],
@@ -378,19 +413,22 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         parts = _part_names(path, "p")
         assert len(parts) > 1
         reader = LuxarScene.load(path)
+        seen = 0
         for part in parts:
             data = reader.get_points(f"p/{part}")
+            seen += data.positions.shape[0]
             assert data.colors.shape[-1] == 4
-            _assert_uniform(data.colors, [0.25, 0.5, 1.0, 0.5])
+            assert_uniform(data.colors, [0.25, 0.5, 1.0, 0.5], data.positions.shape[0])
+        assert seen == 4
 
-    def test_points_one_element_broadcast_arrays(self, tmp_path):
+    def test_points_one_element_broadcast_arrays(self, tmp_path: Any) -> None:
         """A 1-element node with ``(1,)`` broadcast arrays.
 
         The other side of the collision: here the broadcast length and the
         element count agree, so slicing IS the right answer and must keep
         working (one part, no split fires).
         """
-        compiler, scene, path = _scene(tmp_path, "points_one.luxar.zarr")
+        compiler, scene, path = open_scene(tmp_path, "points_one.luxar.zarr")
         scene.add_points(
             "p",
             np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
@@ -402,14 +440,15 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         compiler.finalize()
 
         data = LuxarScene.load(path).get_points("p")
-        _assert_uniform(data.colors, [0.0, 1.0, 0.0])
-        _assert_uniform(data.radii, 0.7)
+        assert data.positions.shape[0] == 1
+        assert_uniform(data.colors, [0.0, 1.0, 0.0], 1)
+        assert_uniform(data.radii, 0.7, 1)
 
-    def test_lines_scalar_width_and_uniform_color(self, tmp_path):
-        compiler, scene, path = _scene(tmp_path, "lines_broadcast.luxar.zarr")
+    def test_lines_scalar_width_and_uniform_color(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lines_broadcast.luxar.zarr")
         scene.add_lines(
             "line",
-            _positions(_N, seed=22),
+            random_positions(_N, seed=22),
             widths=0.3,  # scalar
             colors=(0.25, 0.5, 1.0),  # uniform RGB
             sharpness=0.7,  # scalar
@@ -424,16 +463,16 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         for part in parts:
             data = reader.get_lines(f"line/{part}")
             assert data.vertices.shape[0] == _HALF
-            _assert_uniform(data.colors, [0.25, 0.5, 1.0])
-            _assert_uniform(data.widths, 0.3)
+            assert_uniform(data.colors, [0.25, 0.5, 1.0], _HALF)
+            assert_uniform(data.widths, 0.3, _HALF)
 
-    def test_lines_rgba_quadruple_on_a_four_vertex_node(self, tmp_path):
+    def test_lines_rgba_quadruple_on_a_four_vertex_node(self, tmp_path: Any) -> None:
         """The Lines count collision: 4 vertices, a 4-component uniform RGBA.
 
         Two 2-vertex segments, one per part, so the RGBA tuple's own length
         matches the vertex count and ``slice_optional_array`` gathered it.
         """
-        compiler, scene, path = _scene(tmp_path, "lines_rgba4.luxar.zarr")
+        compiler, scene, path = open_scene(tmp_path, "lines_rgba4.luxar.zarr")
         vertices = np.array(
             [
                 [0.0, 0.0, 0.0],
@@ -456,16 +495,19 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         parts = _part_names(path, "line")
         assert len(parts) > 1
         reader = LuxarScene.load(path)
+        seen = 0
         for part in parts:
-            colors = reader.get_lines(f"line/{part}").colors
-            assert colors.shape[-1] == 4
-            _assert_uniform(colors, [0.25, 0.5, 1.0, 0.5])
+            data = reader.get_lines(f"line/{part}")
+            seen += data.vertices.shape[0]
+            assert data.colors.shape[-1] == 4
+            assert_uniform(data.colors, [0.25, 0.5, 1.0, 0.5], data.vertices.shape[0])
+        assert seen == 4
 
-    def test_lines_broadcast_width_array(self, tmp_path):
-        compiler, scene, path = _scene(tmp_path, "lines_width1.luxar.zarr")
+    def test_lines_broadcast_width_array(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lines_width1.luxar.zarr")
         scene.add_lines(
             "line",
-            _positions(_N, seed=23),
+            random_positions(_N, seed=23),
             widths=np.array([0.25], dtype=np.float32),  # (1,) broadcast
             line_type="segments",
             partition={"max_elements": _HALF},
@@ -476,9 +518,11 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         assert len(parts) == 2
         reader = LuxarScene.load(path)
         for part in parts:
-            _assert_uniform(reader.get_lines(f"line/{part}").widths, 0.25)
+            data = reader.get_lines(f"line/{part}")
+            assert data.vertices.shape[0] == _HALF
+            assert_uniform(data.widths, 0.25, _HALF)
 
-    def test_gsplats_uniform_cholesky_on_a_six_splat_node(self, tmp_path):
+    def test_gsplats_uniform_cholesky_on_a_six_splat_node(self, tmp_path: Any) -> None:
         """The other count collision: 6 splats, a uniform ``(6,)`` Cholesky.
 
         For 3-D data ``k = D(D+1)/2 = 6``, so the uniform form's own length
@@ -486,7 +530,7 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         were per-splat — each part then getting a slice of the six Cholesky
         COMPONENTS as its per-splat rows.
         """
-        compiler, scene, path = _scene(tmp_path, "gsplats_uniform_chol.luxar.zarr")
+        compiler, scene, path = open_scene(tmp_path, "gsplats_uniform_chol.luxar.zarr")
         centers = np.array(
             [
                 [0.0, 0.0, 0.0],
@@ -514,15 +558,18 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         seen = 0
         for part in parts:
             data = reader.get_gsplats(f"g/{part}")
-            seen += data.centers.shape[0]
-            # Every splat in every part carries the authored uniform factor.
-            for row in np.asarray(data.cholesky_factors).reshape(-1, 6):
+            n_splats = data.centers.shape[0]
+            seen += n_splats
+            # Every splat in every part must carry the authored uniform factor.
+            chol = np.asarray(data.cholesky_factors).reshape(-1, 6)
+            assert chol.shape[0] in (1, n_splats)
+            for row in chol:
                 np.testing.assert_allclose(row, uniform, rtol=1e-3, atol=1e-3)
-            _assert_uniform(data.amplitudes, 1.0)
+            assert_uniform(data.amplitudes, 1.0, n_splats)
         assert seen == 6
 
-    def test_gsplats_rgb_triple_on_a_three_splat_node(self, tmp_path):
-        compiler, scene, path = _scene(tmp_path, "gsplats_rgb3.luxar.zarr")
+    def test_gsplats_rgb_triple_on_a_three_splat_node(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "gsplats_rgb3.luxar.zarr")
         centers = np.array(
             [[0.0, 0.0, 0.0], [50.0, 0.0, 0.0], [100.0, 0.0, 0.0]], dtype=np.float32
         )
@@ -530,7 +577,7 @@ class TestLegalBroadcastFormsStillReachEveryPart:
             "g",
             centers=centers,
             amplitudes=1.0,
-            cholesky_factors=_cholesky(3),
+            cholesky_factors=cholesky_rows(3),
             colors=(0.25, 0.5, 1.0),
             partition={"max_elements": 1},
         )
@@ -539,16 +586,19 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         parts = _part_names(path, "g")
         assert len(parts) > 1
         reader = LuxarScene.load(path)
+        seen = 0
         for part in parts:
-            colors = reader.get_gsplats(f"g/{part}").colors
-            _assert_uniform(colors, [0.25, 0.5, 1.0])
+            data = reader.get_gsplats(f"g/{part}")
+            seen += data.centers.shape[0]
+            assert_uniform(data.colors, [0.25, 0.5, 1.0], data.centers.shape[0])
+        assert seen == 3
 
-    def test_points_colormap_name_with_per_point_scalars(self, tmp_path):
+    def test_points_colormap_name_with_per_point_scalars(self, tmp_path: Any) -> None:
         """A colormap NAME is an attr, not a channel — it rides to every part."""
-        compiler, scene, path = _scene(tmp_path, "points_colormap.luxar.zarr")
+        compiler, scene, path = open_scene(tmp_path, "points_colormap.luxar.zarr")
         scene.add_points(
             "p",
-            _positions(_N, seed=24),
+            random_positions(_N, seed=24),
             scalars=np.linspace(0.0, 1.0, _N).astype(np.float32),
             colormap="viridis",
             partition={"max_elements": _HALF},

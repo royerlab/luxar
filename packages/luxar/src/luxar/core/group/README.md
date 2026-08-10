@@ -154,27 +154,37 @@ LOD wrapper builders:
   a wrong-length `labels` against the FULL element count before a partition / LOD
   decomposition. Needed precisely because `slice_optional_array` passes a mis-sized
   list through unchanged, which would hand every part / level the same unsliced
-  list and write labels into the wrong slots. Called as the first statement of each
-  wrapper impl that slices labels (Points and Lines partition / additive / substitutive
-  wrappers, plus the GSplats partition wrapper) — never from the top of a leaf adder,
-  so the plain-leaf gate order stays exactly as it was.
+  list and write labels into the wrong slots. No wrapper impl calls it directly
+  any more — it is reached from `validate_gsplats_channels_before_split`, the one
+  geometry whose channel validator has no labels channel; Points and Lines get
+  the same check from the writer sweep their gates delegate to. Either way it
+  belongs to a wrapper's pre-split gate and never to the top of a leaf adder, so
+  the plain-leaf gate order stays exactly as it was.
 - `validate_points_channels_before_split(n_points, colors=…, radii=…, sharpness=…,
   scalars=…, labels=…)`, `validate_lines_channels_before_split(n_vertices, widths=…,
   …)`, `validate_gsplats_channels_before_split(centers, amplitudes,
-  cholesky_factors, colors, labels)` — the same pre-split gate for EVERY other
-  per-element channel, not just labels. Each one CALLS its geometry's writer-side
-  sweep (`geometry_writers.points.validate_points_channels`,
+  cholesky_factors, colors=…, labels=…)` — the same pre-split gate for EVERY
+  other per-element channel, not just labels. Each one CALLS its geometry's
+  writer-side sweep (`geometry_writers.points.validate_points_channels`,
   `geometry_writers.lines.validate_lines_channels`,
   `gsplat_assembly.validate_gsplat_inputs`) against the SOURCE element count
   rather than restating the rules, so the gate cannot drift from what the child
   write accepts. What that buys is a per-element CHANNEL verdict identical with
-  and without `partition=` / `additive_lod=` / `substitutive_lod=`. The gate runs
+  and without `partition=` / `additive_lod=` / `substitutive_lod=` — identical
+  exception type and message, which the tests assert byte-for-byte. The gate runs
   ABOVE the positions / dimension / attr checks on the split paths, so a call
   that also trips one of those reports the channel fault first here and the
   positions/attr fault on the plain-leaf path — both refuse, neither writes.
   Same placement rule as the labels guard (first statement of the wrapper impl,
-  never a leaf adder); they fold the labels check in last, which is where the
-  flat gate has it.
+  never a leaf adder). Labels come last, as in the flat order: for Points and
+  Lines via `validate_labels_for_writing` inside the shared writer sweep, for
+  GSplats via `validate_labels_before_split` (whose validator has no labels
+  channel). The GSplats gate also RETURNS the `cholesky_is_uniform` flag its
+  validator already computed, so the wrapper does not restate that rule either.
+  Every legal broadcast form the flat path accepts passes the GATE; reaching disk
+  is a separate matter on one path — a broadcast `colors` under
+  `substitutive_lod=` is refused downstream by the gsplat lift, which needs
+  per-element RGB to bake the coarse levels (pre-existing, tracked in #1444).
 - `validate_line_indices_before_split(indices, n_vertices, line_type)` — the
   TOPOLOGY half of the Lines gate, and it runs first (mesh validates `faces`
   before any channel for the same reason). Calls the writer's shared
