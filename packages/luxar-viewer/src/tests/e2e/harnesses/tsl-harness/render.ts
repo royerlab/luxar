@@ -1,9 +1,10 @@
 /**
  * Render executors for the TSL ↔ GLSL parity harness: `renderGLSL`
  * drives the GLSL3 `ShaderMaterial` path through `THREE.WebGLRenderer`;
- * `renderTSL` drives the NodeMaterial path through
- * `WebGPURenderer({ forceWebGL: true })` and captures the generated
- * shader strings for the codegen-snapshot spec.
+ * `renderTSL` drives the NodeMaterial path through `WebGPURenderer` —
+ * forced onto the WebGL backend by default (real WebGPU opt-in via
+ * `{ native: true }`) — and captures the generated shader strings for
+ * the codegen-snapshot spec.
  *
  * @module tests/e2e/harnesses/tsl-harness/render
  */
@@ -95,9 +96,9 @@ export function renderGLSL(shaderName: string): Uint8Array {
 }
 
 /**
- * Render the TSL path of a registered shader via
- * `WebGPURenderer({ forceWebGL: true })` and return both the readback
- * pixels and the generated GLSL strings.
+ * Render the TSL path of a registered shader via `WebGPURenderer`
+ * (WebGL backend by default; real WebGPU with `{ native: true }`) and
+ * return both the readback pixels and the generated shader strings.
  *
  * Capturing the GLSL strings requires walking the `WebGLBackend`'s
  * pipeline cache after the render completes — there's no public
@@ -123,11 +124,12 @@ export async function renderTSL(
   // execution) instead of the WebGL backend — the pixel-equivalence probe
   // for browsers that have `navigator.gpu` (system Chrome; Playwright's
   // bundled Chromium usually does not). Callers must check availability
-  // first: with `native` and no adapter, renderer.init() rejects. NOTE:
-  // the native readback is Y-FLIPPED relative to the WebGL paths'
+  // first: with `native` and no adapter, renderer.init() rejects. The raw
+  // native readback is Y-FLIPPED relative to the WebGL paths', so the flip
+  // is applied below before returning — both modes hand back the same
+  // bottom-up row convention and compare directly against renderGLSL
   // (verified 2026-08 on Apple Metal 3, where every line-volprim-* fixture
-  // matched its GLSL render EXACTLY — mean-covered diff 0.000 — after the
-  // flip); compare against renderGLSL with a row flip.
+  // matched its GLSL render EXACTLY — mean-covered diff 0.000).
   if (opts.native && !('gpu' in navigator)) {
     throw new Error('native WebGPU requested but navigator.gpu is unavailable');
   }
@@ -203,6 +205,19 @@ export async function renderTSL(
   // The renderer returns its own typed array — copy into Uint8Array so
   // the rest of the harness treats both paths uniformly.
   const pixels = new Uint8Array(readback.buffer.slice(0));
+  if (opts.native) {
+    // Normalize the native readback to the WebGL bottom-up row order
+    // (see the note above `renderer` construction).
+    const rowBytes = HARNESS_SIZE * 4;
+    const tmp = new Uint8Array(rowBytes);
+    for (let y = 0; y < HARNESS_SIZE >> 1; y++) {
+      const top = y * rowBytes;
+      const bot = (HARNESS_SIZE - 1 - y) * rowBytes;
+      tmp.set(pixels.subarray(top, top + rowBytes));
+      pixels.copyWithin(top, bot, bot + rowBytes);
+      pixels.set(tmp, bot);
+    }
+  }
 
   const vertexShader = capturedRef.value?.vertex ?? '';
   const fragmentShader = capturedRef.value?.fragment ?? '';

@@ -17,7 +17,8 @@
  * - `erf.ts` — shared-math erf polynomial (1 entry)
  * - `line-ray-integral.ts` — shared-math #1352 ray integral (1 entry)
  * - `render.ts` — the `renderGLSL` / `renderTSL` executors
- * - `index.ts` — merges the families into the 91-entry `SHADER_REGISTRY`
+ * - `index.ts` — merges the families into `SHADER_REGISTRY` (use
+ *   `listShaders()` for the live entry count — hardcoded totals drift)
  *
  * Why a dedicated page rather than reusing the main viewer:
  * - Construction order is explicit and minimal — no app/state machine
