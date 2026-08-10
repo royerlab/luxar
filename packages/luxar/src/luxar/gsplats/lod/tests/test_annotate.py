@@ -562,3 +562,93 @@ def test_annotate_is_idempotent(levels_store: Path) -> None:
     assert _collect_quality_attrs(levels_store) == first
     hash_second = zarr.open_group(str(levels_store), mode="r").attrs["content_hash"]
     assert hash_second == hash_first
+
+
+# ── reveal ladders must never be energy-stamped, by ANY writer ──────────────
+
+
+def _radial_store(tmp_path: Path, method: str = "radial") -> Path:
+    """A `stream` ladder ordered by ``method``, on a ball so radial is meaningful."""
+    rng = np.random.default_rng(0)
+    n = 300
+    d = rng.standard_normal((n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+    r = 50.0 * rng.random(n) ** (1 / 3)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, 0] = chol[:, 2] = chol[:, 5] = 1.5
+    data = GSplatData(
+        centers=(d * r[:, None]).astype(np.float32),
+        amplitudes=(0.2 + rng.random(n)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    out = tmp_path / f"{method}.gsplats.zarr"
+    build_recipe(
+        data, "stream", RecipeParams(n_lods=4, additive_method=method, seed=0)
+    ).save(out)
+    return out
+
+
+def _stamp_counts(path: Path) -> "tuple[int, int, bool]":
+    root = zarr.open(str(path), mode="r")
+    n = int(root.attrs.get("n_additive_sublods", 1))
+    stamped = sum(
+        "energy_fraction_cum"
+        in dict(root[f"additive_{i}"].attrs.get("lod_stats", {}) or {})
+        for i in range(n)
+    )
+    has_w = "reference_energy" in dict(root.attrs.get("level_stats", {}) or {})
+    return stamped, n, has_w
+
+
+def test_annotate_does_not_energy_stamp_a_reveal_ladder(tmp_path: Path) -> None:
+    """`annotate-quality` must not re-arm the 1/e(k) brightening on a reveal.
+
+    This module's contract is to mirror the build path exactly, and the build path
+    omits energy stamps for a reveal ordering — a radial prefix is a partial object
+    at FULL brightness, so `1/e(k)` would blow out the innermost shell and then dim
+    it as the object completes. Before this was guarded, annotating a radial store
+    stamped every sub-LOD and added `reference_energy`, silently undoing the whole
+    point of the ordering.
+    """
+    store = _radial_store(tmp_path)
+    assert _stamp_counts(store) == (0, 4, False), "the BUILD must leave it unstamped"
+
+    annotate_quality_store(store, device="cpu")
+    stamped, n, has_w = _stamp_counts(store)
+    assert stamped == 0, f"annotate stamped {stamped}/{n} sub-LODs of a reveal ladder"
+    assert not has_w, "annotate added the paired reference_energy to a reveal ladder"
+
+
+def test_annotate_repairs_a_wrongly_stamped_reveal_ladder(tmp_path: Path) -> None:
+    """Erase, don't merely skip — a store stamped by an older build gets repaired.
+
+    Mirrors the posture the zero-energy path already takes.
+    """
+    store = _radial_store(tmp_path)
+    root = zarr.open(str(store), mode="a")
+    n = int(root.attrs["n_additive_sublods"])
+    for i in range(n):
+        sub = root[f"additive_{i}"]
+        stats = dict(sub.attrs.get("lod_stats", {}) or {})
+        stats["energy_fraction_cum"] = 0.5
+        sub.attrs["lod_stats"] = stats
+    root.attrs["level_stats"] = {"reference_energy": 123.0}
+    assert _stamp_counts(store) == (n, n, True), "fixture must start corrupted"
+
+    annotate_quality_store(store, device="cpu")
+    assert _stamp_counts(store) == (0, n, False), "annotate did not repair the store"
+
+
+def test_annotate_still_stamps_a_non_reveal_ladder(tmp_path: Path) -> None:
+    """SENSITIVITY CONTROL for the two tests above.
+
+    Same builder, same shape, an energy-ordered method — which MUST be stamped.
+    Without this, both tests above would pass if annotate stopped stamping at all.
+    """
+    store = _radial_store(tmp_path, method="self_energy")
+    _strip_quality_attrs(store)
+    annotate_quality_store(store, device="cpu")
+
+    stamped, n, has_w = _stamp_counts(store)
+    assert stamped == n, f"only {stamped}/{n} sub-LODs stamped on an energy ladder"
+    assert has_w

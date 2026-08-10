@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import zarr
 
+from luxar.utils.lod_methods import is_reveal_method
+
 __all__ = [
     "AnnotateReport",
     "LeafStamp",
@@ -164,6 +166,21 @@ def _merge_attr_dict(
     group.attrs[key] = merged
 
 
+def _ladder_is_reveal(sub_groups: List[zarr.Group]) -> bool:
+    """Whether this ladder was ordered by a REVEAL method, read from its own stamps.
+
+    The ordering method is recorded per sub-LOD as ``lod_stats.lod_method``, which
+    is provenance a reveal DOES carry (only the energy keys are omitted) — so the
+    store itself says whether it may be energy-stamped. Any sub-LOD reporting a
+    reveal method is enough: a ladder has one ordering.
+    """
+    for sub in sub_groups:
+        stats = sub.attrs.get("lod_stats", {})
+        if isinstance(stats, dict) and is_reveal_method(str(stats.get("lod_method"))):
+            return True
+    return False
+
+
 def _remove_attr_key(group: zarr.Group, key: str, name: str, *, dry_run: bool) -> None:
     """Remove ``name`` from the ``group.attrs[key]`` dict, keeping other keys.
 
@@ -183,6 +200,55 @@ def _remove_attr_key(group: zarr.Group, key: str, name: str, *, dry_run: bool) -
 
 def _child_count(group: zarr.Group, prefix: str) -> int:
     return sum(1 for name in group if str(name).startswith(prefix))
+
+
+def _resolve_e_cum(
+    sub_groups: List[zarr.Group],
+    raw_energies: List[float],
+    total_raw: float,
+    n_total: int,
+) -> Optional[List[Optional[float]]]:
+    """Per-sub-LOD cumulative energy fractions, or ``None`` to stamp nothing.
+
+    Extracted from :func:`_annotate_leaf` to keep it under the C901 ratchet —
+    the decision is now four-way (reveal / positive energy / empty leaf / zero
+    effective energy) and each arm mirrors a specific build-path behaviour.
+
+    ``None`` makes the caller ERASE any existing stamp rather than merely skip
+    writing, so a store wrongly stamped by an earlier build is repaired.
+    """
+    if _ladder_is_reveal(sub_groups):
+        # A REVEAL ladder (`-m radial`) is authored with NO energy stamps: the
+        # viewer brightens an incomplete ladder by 1/e(k), which is backwards for
+        # a partial object rendered at full brightness. This module's contract is
+        # to mirror the build path exactly, and the build path omits them — so
+        # stamping here would silently re-arm the very compensation the reveal
+        # exists to avoid. Verified: before this guard, `annotate-quality` on a
+        # radial store stamped 6/6 sub-LODs and added `reference_energy`.
+        #
+        # `e_cum = None` also makes the loop below ERASE any stale stamp, so a
+        # store wrongly annotated by an earlier build is repaired rather than
+        # merely left alone — the same repair posture the zero-energy path uses.
+        e_cum = None
+    elif total_raw > 0.0:
+        cum = np.cumsum(raw_energies)
+        # Per sub-LOD cumulative fraction. Mirror the build (additive.py's
+        # `if np.isfinite(e_frac)`): a legacy inf amplitude/Cholesky gives
+        # total_raw=inf and c/total_raw=nan, where the build SKIPS the stamp —
+        # so mark a non-finite fraction with None (no stamp), NOT the 0.0 that
+        # `min(1, max(0, nan))` would fabricate.
+        fracs = [float(c / total_raw) for c in cum]
+        e_cum = [(min(1.0, max(0.0, f)) if np.isfinite(f) else None) for f in fracs]
+    elif n_total == 0:
+        # Genuinely empty leaf: the build stamps a trivial e(k)=1.0 (additive.py
+        # n==0 branch); mirror it so annotate reproduces the build byte-for-byte.
+        e_cum = [1.0] * len(sub_groups)
+    else:
+        # Nonempty but zero effective energy (e.g. a fully transparent RGBA
+        # leaf, α≡0): the build path only writes energy_fraction_cum when
+        # energy_total > 0, so stamp NOTHING here to match it exactly.
+        e_cum = None
+    return e_cum
 
 
 def _annotate_leaf(
@@ -216,25 +282,7 @@ def _annotate_leaf(
 
     total_raw = float(sum(raw_energies))
     n_total = int(sum(counts))
-    e_cum: Optional[List[Optional[float]]]
-    if total_raw > 0.0:
-        cum = np.cumsum(raw_energies)
-        # Per sub-LOD cumulative fraction. Mirror the build (additive.py's
-        # `if np.isfinite(e_frac)`): a legacy inf amplitude/Cholesky gives
-        # total_raw=inf and c/total_raw=nan, where the build SKIPS the stamp —
-        # so mark a non-finite fraction with None (no stamp), NOT the 0.0 that
-        # `min(1, max(0, nan))` would fabricate.
-        fracs = [float(c / total_raw) for c in cum]
-        e_cum = [(min(1.0, max(0.0, f)) if np.isfinite(f) else None) for f in fracs]
-    elif n_total == 0:
-        # Genuinely empty leaf: the build stamps a trivial e(k)=1.0 (additive.py
-        # n==0 branch); mirror it so annotate reproduces the build byte-for-byte.
-        e_cum = [1.0] * len(sub_groups)
-    else:
-        # Nonempty but zero effective energy (e.g. a fully transparent RGBA
-        # leaf, α≡0): the build path only writes energy_fraction_cum when
-        # energy_total > 0, so stamp NOTHING here to match it exactly.
-        e_cum = None
+    e_cum = _resolve_e_cum(sub_groups, raw_energies, total_raw, n_total)
     reference_energy = total_raw * math.pi ** (ndim / 2.0) if ndim else 0.0
     if not math.isfinite(reference_energy):
         # A legacy store with an inf amplitude/diagonal: the build resets w to
@@ -262,7 +310,15 @@ def _annotate_leaf(
     # make_substitutive_lod), which the e-only pass cannot compute — keep
     # setdefault semantics there (the with_quality pass overwrites it with
     # the correct group value).
-    if is_lod_child:
+    if e_cum is None and _ladder_is_reveal(sub_groups):
+        # Both-or-neither: the sub-LODs above carry no `energy_fraction_cum`, so
+        # the leaf must carry no `reference_energy` either — a weight with nothing
+        # to weight is a half-written stamp, and the viewer's display gate poisons
+        # the whole subtree aggregate on a half-stamped leaf. Erase rather than
+        # skip, so a store wrongly annotated earlier is repaired.
+        _remove_attr_key(group, "level_stats", "reference_energy", dry_run=dry_run)
+        write_w = False
+    elif is_lod_child:
         existing = group.attrs.get("level_stats", {})
         write_w = not (isinstance(existing, dict) and "reference_energy" in existing)
     else:

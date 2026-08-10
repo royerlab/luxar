@@ -894,6 +894,52 @@ REVEAL_ADDITIVE_METHODS: frozenset[str] = REVEAL_METHODS
 is_reveal_additive_method = is_reveal_method
 
 
+def _resolve_score_dims(pts_all: NDArray, spatial_dims: Optional[List[int]]) -> NDArray:
+    """Validate an explicit ``spatial_dims``, or derive it from non-zero extent.
+
+    Extracted from :func:`radial_element_score` to keep it under the C901
+    ratchet; validate-or-derive is one concern and reads better named.
+
+    The explicit branch is validated HERE and not only in
+    :func:`resolve_additive_axis`, because ``compute_additive_order_points`` /
+    ``_lines`` are public entry points that bypass the resolver entirely. Each
+    rejected case silently produced a WRONG ordering rather than an error: a
+    negative index ALIASES to another column via numpy indexing, a repeat
+    DOUBLE-COUNTS that axis in the distance, and an empty list scores every
+    element 0.0 — degrading the ordering to input order with no indication.
+    """
+    if spatial_dims is None:
+        mins_all = pts_all.min(axis=0)
+        maxs_all = pts_all.max(axis=0)
+        dims = np.flatnonzero(maxs_all - mins_all > 0.0).astype(np.intp)
+        # A single-position input has no extent on any axis. Fall back to every
+        # axis rather than to an empty selection, which would score every element
+        # 0.0 and silently degrade the ordering to input order.
+        if dims.size == 0:
+            dims = np.arange(pts_all.shape[1], dtype=np.intp)
+        return dims
+
+    dims = np.asarray(spatial_dims, dtype=np.intp)
+    if dims.size == 0:
+        raise ValueError("spatial_dims must not be empty")
+    if int(dims.min()) < 0:
+        raise ValueError(
+            f"spatial_dims must be non-negative (a negative index would alias "
+            f"to another column); got {list(spatial_dims)}"
+        )
+    if np.unique(dims).size != dims.size:
+        raise ValueError(
+            f"spatial_dims must not repeat an axis (a repeat would count it "
+            f"twice in the distance); got {list(spatial_dims)}"
+        )
+    if int(dims.max()) >= pts_all.shape[1]:
+        raise ValueError(
+            f"spatial_dims {list(spatial_dims)} out of range for coords with "
+            f"{pts_all.shape[1]} columns"
+        )
+    return dims
+
+
 def radial_element_score(
     coords: NDArray,
     centre: Optional[List[float]] = None,
@@ -925,23 +971,17 @@ def radial_element_score(
     pts_all = np.asarray(coords, dtype=np.float64)
     if pts_all.ndim != 2:
         raise ValueError(f"coords must be 2-D (N, d); got shape {pts_all.shape}")
-    if spatial_dims is not None:
-        dims = np.asarray(spatial_dims, dtype=np.intp)
-        if dims.size and int(dims.max()) >= pts_all.shape[1]:
-            raise ValueError(
-                f"spatial_dims {list(spatial_dims)} out of range for coords with "
-                f"{pts_all.shape[1]} columns"
-            )
-    else:
-        mins_all = pts_all.min(axis=0)
-        maxs_all = pts_all.max(axis=0)
-        dims = np.flatnonzero(maxs_all - mins_all > 0.0).astype(np.intp)
-        # A single-position input has no extent on any axis. Fall back to every
-        # axis rather than to an empty selection, which would score every element
-        # 0.0 and silently degrade the ordering to input order.
-        if dims.size == 0:
-            dims = np.arange(pts_all.shape[1], dtype=np.intp)
-
+    if pts_all.shape[0] == 0:
+        # The bbox reductions below have no identity on an empty axis, and the
+        # bare numpy message names neither the argument nor this function. Both
+        # element callers return early at n == 0, so this only guards a direct
+        # caller of this (public) helper.
+        return np.empty(0, dtype=np.float64)
+    if pts_all.shape[1] == 0:
+        # No columns means no distance to measure; every score would be 0.0 and
+        # the ordering would silently degrade to input order.
+        raise ValueError("coords must have at least one column; got shape (N, 0)")
+    dims = _resolve_score_dims(pts_all, spatial_dims)
     pts = pts_all[:, dims]
     if centre is None:
         origin = (pts.min(axis=0) + pts.max(axis=0)) / 2.0

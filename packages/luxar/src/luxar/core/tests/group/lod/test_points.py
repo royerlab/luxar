@@ -175,6 +175,53 @@ class TestRadialOrderPoints:
         with pytest.raises(ValueError, match="out of range"):
             compute_additive_order_points(self._PTS, method="radial", spatial_dims=[9])
 
+    @pytest.mark.parametrize(
+        ("dims", "match"),
+        [
+            ([], "must not be empty"),
+            ([-1], "non-negative"),
+            ([0, 0], "must not repeat"),
+        ],
+        ids=["empty", "negative", "duplicate"],
+    )
+    def test_malformed_spatial_dims_raise_rather_than_misorder(
+        self, dims: list[int], match: str
+    ) -> None:
+        """Each of these silently produced a WRONG ordering before being caught.
+
+        `resolve_additive_axis` rejects all three, but this entry point is public
+        and bypasses the resolver, so the innermost scorer has to reject them too:
+        a negative index ALIASES to another column via numpy indexing, a repeat
+        DOUBLE-COUNTS that axis in the distance, and an empty list scores every
+        element 0.0 — degrading the ordering to input order with no indication.
+        """
+        with pytest.raises(ValueError, match=match):
+            compute_additive_order_points(self._PTS, method="radial", spatial_dims=dims)
+
+    def test_scorer_on_empty_input_returns_empty(self) -> None:
+        """Direct scorer call at N=0 — the bbox reductions have no identity there.
+
+        Both element callers return early at n == 0, so this guards only a direct
+        caller of the public helper; the bare numpy error named neither the
+        argument nor the function.
+        """
+        from luxar.core.group.lod.group import radial_element_score
+
+        out = radial_element_score(np.zeros((0, 3), dtype=np.float32))
+        assert out.shape == (0,)
+
+    def test_scorer_rejects_zero_column_coords(self) -> None:
+        """No columns means no distance; all-zero scores would silently no-op.
+
+        This guard had no test at first, and a later refactor of the surrounding
+        block dropped it without anything going red — which is exactly why it has
+        one now.
+        """
+        from luxar.core.group.lod.group import radial_element_score
+
+        with pytest.raises(ValueError, match="at least one column"):
+            radial_element_score(np.zeros((4, 0), dtype=np.float32))
+
     def test_wrong_length_centre_raises(self) -> None:
         with pytest.raises(ValueError, match="one coordinate per spatial axis"):
             compute_additive_order_points(

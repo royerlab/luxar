@@ -129,8 +129,8 @@ one list instead of hand-copying it — they previously held two literal tuples 
 no consistency test, and the copies had already diverged.
 
 **Key Names:**
-- `ADDITIVE_METHODS` / `ADDITIVE_CHOICES`: the implemented orderings, and the same set plus the size-adaptive `auto` sentinel accepted at the API/CLI boundary
-- `ADDITIVE_CHOICES_HELP`: `auto|greedy|…` rendered for `--method` help strings, so help text cannot fall out of date
+- `GSPLAT_ADDITIVE_METHODS` / `GSPLAT_ADDITIVE_CHOICES`: the implemented GSPLAT orderings, and the same set plus the size-adaptive `auto` sentinel accepted at the API/CLI boundary. Prefixed because the ELEMENT-side registry (`core/group/lod/group.py::ADDITIVE_METHODS`) is a different list — only `random` and `radial` overlap — and both are used as `if method not in ...` gates, so an unprefixed collision would let a wrong import silently accept or reject the wrong methods
+- `GSPLAT_ADDITIVE_CHOICES_HELP`: `auto|greedy|…` rendered for `--method` help strings, so help text cannot fall out of date
 - `MethodName` / `AutoOrMethod`: the `Literal` types, re-exported from `gsplats.lod.additive` for its existing importers
 - `REVEAL_METHODS` / `is_reveal_method()`: which orderings are a *reveal* (currently `radial`) rather than a contribution ranking. A reveal's ladder must carry no energy stamps, because the viewer brightens an incomplete ladder by `1/e(k)` — right for an approximation, backwards for a partial object rendered at full brightness. Shared by the gsplat ladder and `core.group.lod.group.additive_level_stats` so the rule is written once for all geometries.
 
