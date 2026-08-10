@@ -149,21 +149,19 @@ def compute_additive_order_points(
         perm = np.argsort(-score, kind="stable").astype(np.intp)
         return perm, []
 
-    if method == "spatial-uniform":
+    if method in ("spatial-uniform", "poisson-disk"):
+        # One branch for both samplers, sharing the d >= 3 guard their grids
+        # need — mirroring the Lines equivalent, which has always been shaped
+        # this way. (Two branches with a copy-pasted guard each is what pushed
+        # this function past the C901 ratchet when `radial` was added.)
         if positions.shape[1] < 3:
             raise ValueError(
-                "spatial-uniform ordering needs positions with d >= 3; "
+                f"{method} ordering needs positions with d >= 3; "
                 f"got shape {positions.shape}"
             )
+        if method == "poisson-disk":
+            return poisson_disk_order(positions, n_lods, seed=seed or 0)
         return stratified_grid_order(positions, n_lods)
-
-    if method == "poisson-disk":
-        if positions.shape[1] < 3:
-            raise ValueError(
-                "poisson-disk ordering needs positions with d >= 3; "
-                f"got shape {positions.shape}"
-            )
-        return poisson_disk_order(positions, n_lods, seed=seed or 0)
 
     if method == "radial":
         # ASCENDING, unlike `salience` above: the score is a DISTANCE, so the

@@ -25,7 +25,7 @@ from typing import Literal
 #: Ordering methods the additive (prefix-sum) axis implements, in the order they
 #: are presented to users. ``auto`` is deliberately absent — it is a resolution
 #: sentinel, not an implementation, and only some surfaces accept it.
-ADDITIVE_METHODS: tuple[str, ...] = (
+GSPLAT_ADDITIVE_METHODS: tuple[str, ...] = (
     "greedy",
     "self_energy",
     "mass",
@@ -38,11 +38,11 @@ ADDITIVE_METHODS: tuple[str, ...] = (
 #: Accepted at the API/CLI boundary: the implementations plus the size-adaptive
 #: ``auto`` sentinel resolved by
 #: :func:`luxar.gsplats.lod.additive.resolve_additive_method`.
-ADDITIVE_CHOICES: tuple[str, ...] = ("auto", *ADDITIVE_METHODS)
+GSPLAT_ADDITIVE_CHOICES: tuple[str, ...] = ("auto", *GSPLAT_ADDITIVE_METHODS)
 
 #: Rendered into ``--method`` help strings so they cannot fall out of date the
 #: way the five hand-written ones did.
-ADDITIVE_CHOICES_HELP: str = "|".join(ADDITIVE_CHOICES)
+GSPLAT_ADDITIVE_CHOICES_HELP: str = "|".join(GSPLAT_ADDITIVE_CHOICES)
 
 #: A resolved method — no ``auto``.
 MethodName = Literal[

@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
-from luxar.utils.lod_methods import ADDITIVE_CHOICES_HELP
+from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from .fit_utils import (
     FitPipelineCtx,
@@ -197,7 +197,7 @@ def run_fit_volume(
         None,
         "-m",
         "--additive-method",
-        help=f"[--recipe stream] {ADDITIVE_CHOICES_HELP}. auto (the default) is "
+        help=f"[--recipe stream] {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
         "greedy ((1-1/e)-optimal) at small N, self_energy (cheap O(N log N)) "
         "for large parts. radial reveals outward from the bbox centre.",
         rich_help_panel="Per-part LOD",

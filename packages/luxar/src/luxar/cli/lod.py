@@ -20,7 +20,7 @@ from typing import Any, Optional
 import typer
 from arbol import aprint, asection
 
-from luxar.utils.lod_methods import ADDITIVE_CHOICES_HELP
+from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 # Shared recipe/streaming validation surface — moved to
 # gsplat_ops/recipe_shared.py (consumed by six gsplat_ops modules);
@@ -132,6 +132,87 @@ def _resolve_encoding(mode: str) -> Any:
         ) from None
 
 
+def _parse_reveal_centre(spec: Optional[str]) -> Optional["list[float]"]:
+    """Parse ``--reveal-centre`` — a comma-separated shell centre, or ``None``."""
+    if spec is None:
+        return None
+    try:
+        parsed = [float(t) for t in spec.split(",") if t.strip() != ""]
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"--reveal-centre must be comma-separated numbers; got {spec!r}"
+        ) from e
+    if not parsed:
+        raise typer.BadParameter("--reveal-centre must list >=1 coordinate")
+    return parsed
+
+
+def _parse_reveal_spatial_dims(spec: Optional[str], ndim: int) -> Optional["list[int]"]:
+    """Parse ``--spatial-dims`` — the columns the shell distance spans, or ``None``.
+
+    De-duplicates and sorts, mirroring ``--coarsen-dims``, and bounds-checks each
+    index against the dataset's own ``ndim`` so a typo is caught before any work.
+    """
+    if spec is None:
+        return None
+    try:
+        parsed = sorted({int(t) for t in spec.split(",") if t.strip() != ""})
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"--spatial-dims must be comma-separated integers; got {spec!r}"
+        ) from e
+    if not parsed:
+        raise typer.BadParameter("--spatial-dims must list >=1 index")
+    for i in parsed:
+        if i < 0 or i >= ndim:
+            raise typer.BadParameter(
+                f"--spatial-dims index {i} out of range for {ndim}D data"
+            )
+    return parsed
+
+
+def _parse_reveal_knobs(
+    reveal_centre: Optional[str],
+    spatial_dims: Optional[str],
+    method_norm: Optional[str],
+    ndim: int,
+) -> "tuple[Optional[list[float]], Optional[list[int]]]":
+    """Parse and validate ``--reveal-centre`` / ``--spatial-dims``.
+
+    Extracted from :func:`lod_recipe`, which is already the most complex function
+    in this module; inlining this validation pushed it further past the C901
+    ratchet. Everything it needs is passed in, so it stays independently testable.
+
+    Both knobs apply only to the ``radial`` ordering, and passing either under
+    another method is an ERROR rather than a silent no-op: a user who types
+    ``--reveal-centre`` with the default ``auto`` wants a reveal, and would
+    otherwise get an energy-ordered ladder with nothing to indicate the flag was
+    dropped.
+    """
+    if (reveal_centre is not None or spatial_dims is not None) and (
+        method_norm != "radial"
+    ):
+        bad = "--reveal-centre" if reveal_centre is not None else "--spatial-dims"
+        raise typer.BadParameter(
+            f"{bad} only applies to the radial ordering; pass "
+            f"-m radial (got -m {method_norm})."
+        )
+
+    parsed_centre = _parse_reveal_centre(reveal_centre)
+    parsed_dims = _parse_reveal_spatial_dims(spatial_dims, ndim)
+
+    # The centre carries one coordinate per axis the distance is measured over,
+    # so its length must match --spatial-dims when both are given. Checked here
+    # rather than deep in the scorer so the error names the flags the user typed.
+    if parsed_centre is not None and parsed_dims is not None:
+        if len(parsed_centre) != len(parsed_dims):
+            raise typer.BadParameter(
+                f"--reveal-centre has {len(parsed_centre)} coordinates but "
+                f"--spatial-dims lists {len(parsed_dims)} axes; they must match."
+            )
+    return parsed_centre, parsed_dims
+
+
 def register_lod_command(app: typer.Typer) -> None:
     """Attach the unified ``lod`` command to the ``gsplat`` Typer app."""
     app.command("lod")(lod_recipe)
@@ -159,7 +240,7 @@ def lod_recipe(
         None,
         "--method",
         "-m",
-        help=f"Additive ordering: {ADDITIVE_CHOICES_HELP}. auto (the default) is "
+        help=f"Additive ordering: {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
         "greedy at small N, self_energy for large N to avoid greedy's "
         "O(N·nnz·logN) blowup. radial orders concentric shells around the "
         "bbox centre, so a streaming prefix grows outward from the middle "
@@ -689,63 +770,9 @@ def lod_recipe(
                     f"~{_MULTISCALE_CAP_TARGET:,}); pass -K to override"
                 )
 
-            # Reveal knobs (-m radial). Rejected for any other ordering rather
-            # than silently ignored: a user who passes --reveal-centre with the
-            # default `auto` method wants a reveal and would otherwise get an
-            # energy-ordered ladder with no indication anything was dropped.
-            parsed_reveal_centre: Optional[list[float]] = None
-            parsed_spatial_dims: Optional[list[int]] = None
-            if (reveal_centre is not None or spatial_dims is not None) and (
-                method_norm != "radial"
-            ):
-                bad = (
-                    "--reveal-centre" if reveal_centre is not None else "--spatial-dims"
-                )
-                raise typer.BadParameter(
-                    f"{bad} only applies to the radial ordering; pass "
-                    f"-m radial (got -m {method_norm})."
-                )
-            if reveal_centre is not None:
-                try:
-                    parsed_reveal_centre = [
-                        float(t) for t in reveal_centre.split(",") if t.strip() != ""
-                    ]
-                except ValueError as e:
-                    raise typer.BadParameter(
-                        f"--reveal-centre must be comma-separated numbers; "
-                        f"got {reveal_centre!r}"
-                    ) from e
-                if not parsed_reveal_centre:
-                    raise typer.BadParameter("--reveal-centre must list >=1 coordinate")
-            if spatial_dims is not None:
-                try:
-                    parsed_spatial_dims = sorted(
-                        {int(t) for t in spatial_dims.split(",") if t.strip() != ""}
-                    )
-                except ValueError as e:
-                    raise typer.BadParameter(
-                        f"--spatial-dims must be comma-separated integers; "
-                        f"got {spatial_dims!r}"
-                    ) from e
-                if not parsed_spatial_dims:
-                    raise typer.BadParameter("--spatial-dims must list >=1 index")
-                for i in parsed_spatial_dims:
-                    if i < 0 or i >= data.ndim:
-                        raise typer.BadParameter(
-                            f"--spatial-dims index {i} out of range for "
-                            f"{data.ndim}D data"
-                        )
-            # The centre carries one coordinate per axis the distance is measured
-            # over, so its length must match --spatial-dims when both are given.
-            # Checked here rather than deep in the scorer so the error names the
-            # flags the user typed.
-            if parsed_reveal_centre is not None and parsed_spatial_dims is not None:
-                if len(parsed_reveal_centre) != len(parsed_spatial_dims):
-                    raise typer.BadParameter(
-                        f"--reveal-centre has {len(parsed_reveal_centre)} "
-                        f"coordinates but --spatial-dims lists "
-                        f"{len(parsed_spatial_dims)} axes; they must match."
-                    )
+            parsed_reveal_centre, parsed_spatial_dims = _parse_reveal_knobs(
+                reveal_centre, spatial_dims, method_norm, data.ndim
+            )
 
             # Barrier dims for substitutive coarsening. Standalone gsplats carry
             # no display metadata, so this path takes explicit column indices and

@@ -955,6 +955,53 @@ def radial_element_score(
     return np.asarray(np.linalg.norm(pts - origin, axis=1), dtype=np.float64)
 
 
+def _pop_reveal_knobs(
+    kwargs: Dict[str, Any], method: str
+) -> tuple[Optional[List[float]], Optional[List[int]]]:
+    """Pop and validate the ``radial``-only shell-geometry keys from a spec dict.
+
+    Extracted from :func:`resolve_additive_axis` to keep that function under the
+    C901 ratchet — its validation is branchy (two optional keys, four shape rules,
+    one cross-check) and self-contained.
+
+    Validated at RESOLVE time rather than write time, for the same reason as
+    ``counts``: under a substitutive ladder the wrapper group already exists on
+    disk before its children are written, so a late raise leaves a partial group
+    behind.
+
+    Mutates ``kwargs`` (pops the two keys) so the caller's leftover-keys check
+    still catches genuinely unknown names.
+    """
+    reveal_centre = kwargs.pop("reveal_centre", None)
+    if reveal_centre is not None:
+        reveal_centre = [float(c) for c in reveal_centre]
+        if not reveal_centre:
+            raise ValueError("reveal_centre must not be empty")
+
+    spatial_dims = kwargs.pop("spatial_dims", None)
+    if spatial_dims is not None:
+        spatial_dims = [int(d) for d in spatial_dims]
+        if not spatial_dims:
+            raise ValueError("spatial_dims must not be empty")
+        if len(set(spatial_dims)) != len(spatial_dims):
+            raise ValueError(
+                f"spatial_dims must not repeat an axis; got {spatial_dims}"
+            )
+        if any(d < 0 for d in spatial_dims):
+            raise ValueError(f"spatial_dims must be non-negative; got {spatial_dims}")
+
+    if (reveal_centre is not None or spatial_dims is not None) and not (
+        is_reveal_additive_method(method)
+    ):
+        # Silently ignoring these would look like the centre had been honoured.
+        raise ValueError(
+            "additive_lod: 'reveal_centre' / 'spatial_dims' apply only to a "
+            f"reveal ordering ({' / '.join(sorted(REVEAL_ADDITIVE_METHODS))}); "
+            f"got method={method!r}"
+        )
+    return reveal_centre, spatial_dims
+
+
 def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
     """Normalize the ``additive_lod=`` kwarg into a spec dict (or ``None``).
 
@@ -1027,35 +1074,7 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
             f"salience_kind must be 'size' or 'energy'; got {salience_kind!r}"
         )
 
-    # Shell geometry for method="radial" only. Validated here rather than at
-    # write time for the same reason as `counts` above: under a substitutive
-    # ladder the wrapper group exists on disk before its children are written,
-    # so a late raise leaves a partial group behind.
-    reveal_centre = kwargs.pop("reveal_centre", None)
-    if reveal_centre is not None:
-        reveal_centre = [float(c) for c in reveal_centre]
-        if not reveal_centre:
-            raise ValueError("reveal_centre must not be empty")
-    spatial_dims = kwargs.pop("spatial_dims", None)
-    if spatial_dims is not None:
-        spatial_dims = [int(d) for d in spatial_dims]
-        if not spatial_dims:
-            raise ValueError("spatial_dims must not be empty")
-        if len(set(spatial_dims)) != len(spatial_dims):
-            raise ValueError(
-                f"spatial_dims must not repeat an axis; got {spatial_dims}"
-            )
-        if any(d < 0 for d in spatial_dims):
-            raise ValueError(f"spatial_dims must be non-negative; got {spatial_dims}")
-    if (reveal_centre is not None or spatial_dims is not None) and not (
-        is_reveal_additive_method(method)
-    ):
-        # Silently ignoring these would look like the centre had been honoured.
-        raise ValueError(
-            "additive_lod: 'reveal_centre' / 'spatial_dims' apply only to a "
-            f"reveal ordering ({' / '.join(sorted(REVEAL_ADDITIVE_METHODS))}); "
-            f"got method={method!r}"
-        )
+    reveal_centre, spatial_dims = _pop_reveal_knobs(kwargs, method)
 
     if kwargs:
         raise ValueError(

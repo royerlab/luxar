@@ -19,7 +19,7 @@ from typing import Any, Mapping, Optional
 import typer
 from arbol import aprint
 
-from luxar.utils.lod_methods import ADDITIVE_CHOICES
+from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES
 
 #: Valid ordering methods for the additive (prefix-sum) axis.
 #:
@@ -33,7 +33,7 @@ from luxar.utils.lod_methods import ADDITIVE_CHOICES
 #: :mod:`luxar.gsplats.lod.additive`, which owns the implementation: importing
 #: anything under ``luxar.gsplats`` executes its ``__init__`` (~1.3 s measured),
 #: which would nearly triple ``luxar --help``.
-VALID_ADDITIVE_METHODS: tuple[str, ...] = ADDITIVE_CHOICES
+VALID_ADDITIVE_METHODS: tuple[str, ...] = GSPLAT_ADDITIVE_CHOICES
 
 # Valid substitutive partition algorithms.
 VALID_SUBSTITUTIVE_METHODS = (

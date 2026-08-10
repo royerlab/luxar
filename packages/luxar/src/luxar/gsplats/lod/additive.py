@@ -60,7 +60,7 @@ from luxar.utils.lod_breakpoints import (
 from luxar.utils.lod_breakpoints import (
     streaming_chunk_splats as streaming_chunk_splats,
 )
-from luxar.utils.lod_methods import ADDITIVE_CHOICES, ADDITIVE_METHODS
+from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES, GSPLAT_ADDITIVE_METHODS
 from luxar.utils.lod_methods import AutoOrMethod as AutoOrMethod
 from luxar.utils.lod_methods import MethodName as MethodName
 from luxar.utils.lod_methods import is_reveal_method as _is_reveal_method
@@ -70,8 +70,8 @@ from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 # without importing this package (`luxar/gsplats/__init__.py` costs ~1.3 s, which
 # would nearly triple `luxar --help`). Re-exported under the historical names —
 # `MethodName` / `AutoOrMethod` are imported from here by `pyramid` and `recipes`.
-_VALID_METHODS: tuple[str, ...] = ADDITIVE_METHODS
-_VALID_CHOICES: tuple[str, ...] = ADDITIVE_CHOICES
+_VALID_METHODS: tuple[str, ...] = GSPLAT_ADDITIVE_METHODS
+_VALID_CHOICES: tuple[str, ...] = GSPLAT_ADDITIVE_CHOICES
 
 #: ``method="auto"`` resolves to ``greedy`` (the Minoux 1978 lazy-greedy
 #: submodular selection in :func:`_lazy_greedy` — provably (1-1/e)-optimal at
@@ -712,6 +712,53 @@ def _energy_fraction_cuts_from_cumulative(
     return cuts
 
 
+def _sublod_stats(
+    *,
+    method: str,
+    level: int,
+    kind: str,
+    prev: int,
+    end: int,
+    energy_cum: np.ndarray,
+    energy_total: float,
+    breakpoints: BreakpointSpec,
+) -> dict[str, Any]:
+    """Per-sub-LOD ``lod_stats`` for one rung of an additive ladder.
+
+    Extracted from :func:`make_additive_lod`'s build loop, which the energy-stamp
+    guard pushed past the C901 ratchet — and a 30-line stats block nested in a
+    loop inside an already-long function reads better named anyway.
+
+    ``radial`` is a REVEAL, so it carries **no** energy stamps. The viewer
+    multiplies a leaf's brightness by ``1/e(k)`` while a ladder is incomplete,
+    gated on the BLENDING MODE and not on geometry type (``scene/lod-blend.ts``).
+    That is right for a contribution-ordered prefix, which genuinely is a dimmer
+    version of the whole, and backwards for a radial one, which is a PARTIAL
+    OBJECT AT FULL BRIGHTNESS: an inner shell holding 5% of the energy would be
+    brightened ~20x, blazing and then dimming as the object completes — the exact
+    inverse of growing outward. Omitting the stamp is the honest encoding, and
+    ``energyCompensation(undefined)`` returns exactly 1, so the leaf is
+    byte-identical. See MESH_NODE_SPEC §9.1, which states the rule for mesh; the
+    reasoning is geometry-agnostic.
+    """
+    stats: dict[str, Any] = {
+        "lod_method": method,
+        "lod_level": level,
+        "lod_breakpoints_kind": kind,
+        "lod_n_splats": int(end - prev),
+        "lod_cumulative_n": end,
+    }
+    if energy_total > 0.0 and not _is_reveal_method(method):
+        e_frac = float(energy_cum[end - 1] / energy_total)
+        if np.isfinite(e_frac):
+            stats["energy_fraction_cum"] = min(1.0, max(0.0, e_frac))
+    if kind == "stream":
+        # Provenance: the bandwidth-derived first-chunk size, otherwise only
+        # recoverable by re-parsing the breakpoints string.
+        stats["lod_stream_chunk_splats"] = int(str(breakpoints)[len("stream:") :])
+    return stats
+
+
 def make_additive_lod(
     data: GSplatData,
     n_lods: int = 4,
@@ -906,35 +953,16 @@ def make_additive_lod(
             end = int(end)
             if end <= prev:
                 continue
-            lod_stats: dict[str, Any] = {
-                "lod_method": method,
-                "lod_level": level,
-                "lod_breakpoints_kind": kind,
-                "lod_n_splats": int(end - prev),
-                "lod_cumulative_n": end,
-            }
-            # `radial` is a REVEAL, so it carries no energy stamps. The viewer
-            # multiplies a leaf's brightness by 1/e(k) while a ladder is
-            # incomplete, gated on the BLENDING MODE and not on geometry type
-            # (`scene/lod-fade.ts`). That is right for a contribution-ordered
-            # prefix, which genuinely is a dimmer version of the whole, and
-            # backwards for a radial one, which is a PARTIAL OBJECT AT FULL
-            # BRIGHTNESS: an inner shell holding 5% of the energy would be
-            # brightened ~20x, blazing and then dimming as the object completes —
-            # the exact inverse of growing outward. Omitting the stamp is the
-            # honest encoding, and `energyCompensation(undefined)` returns
-            # exactly 1, so the leaf is byte-identical. See MESH_NODE_SPEC §9.1,
-            # which states the rule for mesh; the reasoning is geometry-agnostic.
-            if energy_total > 0.0 and not _is_reveal_method(method):
-                e_frac = float(energy_cum[end - 1] / energy_total)
-                if np.isfinite(e_frac):
-                    lod_stats["energy_fraction_cum"] = min(1.0, max(0.0, e_frac))
-            if kind == "stream":
-                # Provenance: the bandwidth-derived first-chunk size, otherwise
-                # only recoverable by re-parsing the breakpoints string.
-                lod_stats["lod_stream_chunk_splats"] = int(
-                    str(breakpoints)[len("stream:") :]
-                )
+            lod_stats = _sublod_stats(
+                method=method,
+                level=level,
+                kind=kind,
+                prev=prev,
+                end=end,
+                energy_cum=energy_cum,
+                energy_total=energy_total,
+                breakpoints=breakpoints,
+            )
             new_sublods.append(
                 AdditiveSubLOD(
                     centers=centers_full[prev:end].astype(np.float32, copy=False),
