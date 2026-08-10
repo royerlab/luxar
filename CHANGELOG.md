@@ -21,9 +21,12 @@ an infinite rod — the trade recorded in the #1352 plan). Peak modes were alrea
 exact and are untouched.
 
 Two properties carry the design. The β = 2 row of the LUT equals the former
-analytic radial IDENTICALLY (the Abel transform of a Gaussian is a Gaussian), so
-the fragments sample the LUT unconditionally — there is no analytic/LUT seam
-anywhere on the knob axis, and default-sharpness scenes cannot move. And every
+analytic radial as a function (the Abel transform of a Gaussian is a Gaussian),
+so the fragments sample the LUT unconditionally — there is no analytic/LUT seam
+anywhere on the knob axis. Rendered default-sharpness values go through R16F
+storage + bilinear filtering, so they match the old in-shader evaluation within
+the half-float budget (≤ 8e-4, test-pinned — at most one 8-bit quantization step
+near a rounding threshold), not byte-exactly. And every
 row is pinned to exactly 0 at q = 1, so the vertex stencil's truncation radius
 covers the profile at every sharpness. The CPU reference
 (`_shared/line-integral-lut.ts`) integrates by tanh-sinh quadrature —

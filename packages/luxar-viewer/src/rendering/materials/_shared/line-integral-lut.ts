@@ -19,14 +19,20 @@
  * `exp(−K·rad^β)`, shifted to hit exactly 0 at q = 1 and normalized to
  * exactly 1 at q = 0. Two properties are load-bearing:
  *
- * - **The β = 2 row is the analytic radial IDENTICALLY.** The Abel
+ * - **The β = 2 row is the analytic radial, as a function.** The Abel
  *   transform of a Gaussian is a Gaussian of the same σ, so
- *   S(q, 0.5) = (exp(−K·q²) − C) / (1 − C) — byte-for-byte the expression
- *   the sum lanes used before. The fragment therefore ALWAYS samples the
- *   LUT: there is no analytic/LUT seam anywhere on the knob axis. This
- *   is literal only because the knob grid CONTAINS s = 0.5 (see the
- *   height constant): the default knob reads that row exactly instead of
- *   interpolating its neighbours.
+ *   S(q, 0.5) = (exp(−K·q²) − C) / (1 − C) — the same expression the sum
+ *   lanes used before. The fragment therefore ALWAYS samples the LUT:
+ *   there is no analytic/LUT seam anywhere on the knob axis. The identity
+ *   is a FUNCTION-level one (and holds only because the knob grid
+ *   CONTAINS s = 0.5 — see the height constant — so the default knob
+ *   reads that row exactly instead of interpolating its neighbours);
+ *   RENDERED default-sharpness values additionally pass through R16F
+ *   storage and bilinear filtering, so they agree with the old in-shader
+ *   analytic evaluation only within the half-float budget (~4.9e-4
+ *   stored; ≤ 8e-4 end-to-end, pinned by the filtered-sampling unit
+ *   test) — enough to move an 8-bit channel by one quantization step
+ *   near a rounding threshold, i.e. approximation, not pixel identity.
  * - **Compact support at q = 1.** The shift pins every row to 0 exactly at
  *   the stencil's truncation radius, so the vertex-stage stadium (radius
  *   T·σ_eff) covers the profile at every sharpness, and ClampToEdge
