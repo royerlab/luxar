@@ -80,12 +80,15 @@ export interface SelectionPayload {
    * start endpoint is the one reported. A multi-additive-LOD (laddered) Points
    * or Lines node is the exception among labelled nodes: its label CSR spans
    * the levels and so declares `has_labels` on the ladder parent (#1422), but
-   * no map is composed across a ladder, so it reports the raw committed slot —
-   * equal to the union index only on a fully-loaded, unsliced layer (#1439).
-   * Otherwise it is the element's slot in the buffer that reached the GPU,
-   * which after spatial range loading or nD
-   * compaction is NOT the on-disk index — and on an unlabelled Lines node it
-   * is a per-segment slot against a per-vertex CSR whatever the slicing. See
+   * no map is composed across a ladder, so it reports the raw committed slot.
+   * On POINTS that equals the union index on a fully-loaded, unsliced layer
+   * and shifts under culling or compaction; on LINES the raw slot is a
+   * per-segment one against the per-vertex union CSR, so it is wrong at the
+   * granularity whatever the slicing (#1439). Otherwise it is the element's
+   * slot in the buffer that reached the GPU, which after spatial range loading
+   * or nD compaction is NOT the on-disk index — and on an unlabelled Lines
+   * node it is a per-segment slot in what is a per-vertex element space
+   * whatever the slicing. See
    * `rendering/picking/picking-system/element-id-map.ts`.
    */
   elementIndex: number;

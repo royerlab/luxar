@@ -1283,9 +1283,12 @@ range loading or an nD slice compacting invisible elements out is not an on-disk
 row at all. A multi-additive-LOD (laddered) Points or Lines node is the other
 case that publishes no mapping: its label CSR spans the levels and so lives on
 the parent, which does declare `has_labels`, but no slot → on-disk map is
-composed across a ladder — `{hover_index}` there is the raw committed slot, which
-equals the union index only for a fully-loaded, unsliced layer (issue #1439; see
-the **Labels** paragraph of the multi-additive-LOD section above).
+composed across a ladder — `{hover_index}` there is the raw committed slot. On
+Points that equals the union index for a fully-loaded, unsliced layer and shifts
+once culling or compaction is active; on Lines the raw slot is a per-*segment*
+one against the per-*vertex* union CSR, so it is wrong at the granularity
+whatever the slicing (issue #1439; see the **Labels** paragraph of the
+multi-additive-LOD section above).
 
 ### Compound Ordering
 

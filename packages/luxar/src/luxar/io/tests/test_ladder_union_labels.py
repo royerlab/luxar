@@ -16,7 +16,8 @@ Tests cover:
 - A per-level label/element count mismatch is rejected
 - A malformed level array still reports the GEOMETRY fault, not a label one
 - A rejected ladder leaves no partial node behind (fail-fast gate)
-- A wrong-length ``labels`` raises instead of silently mislabelling every level
+- A wrong-length ``labels`` raises instead of silently mislabelling every level,
+  at every one of the seven ``validate_labels_before_split`` call sites
 - ``partition=``-outer + ``additive_lod=``-inner puts the union on each part
 """
 
@@ -303,9 +304,14 @@ class TestWrongLengthLabelsRejectedBeforeSplit:
     without the up-front guard each part/level receives the same unsliced list and
     the write SUCCEEDS with labels in the wrong slots.
 
-    Every input here is chosen so the per-level/per-part length checks CANNOT
-    catch it on their own — each level's own element count equals the label
-    count, so only a check against the FULL count rejects it.
+    Every partition / additive-ladder input here is chosen so the per-level/per-part
+    length checks CANNOT catch it on their own — each level's own element count
+    equals the label count, so only a check against the FULL count rejects it. The
+    two substitutive wrappers are the one shape where that cannot happen (their
+    finest ``kind=lod`` child always carries the FULL element set, so a downstream
+    check does reject), and they are pinned by WHERE the write fails instead: the
+    guard runs above ``add_lod_group``, so a rejected call leaves nothing on disk
+    rather than a ``kind=lod`` node whose coarse levels are already written.
     """
 
     def test_points_ladder_wrong_length_labels_raises(self, tmp_path):
@@ -376,6 +382,108 @@ class TestWrongLengthLabelsRejectedBeforeSplit:
                 labels=[f"s{i}" for i in range(100)],
                 partition={"max_elements": 100},
             )
+
+    def test_points_partition_wrong_length_labels_raises(self, tmp_path):
+        """The Points twin of the GSplats partition case.
+
+        Without the guard both ``part_0`` and ``part_1`` (100 points each) are
+        written with the SAME 100 labels — measured: each part's decoded CSR
+        starts ``a0, a1, a10``.
+        """
+        path = str(tmp_path / "wrong_points_partition.luxar.zarr")
+        positions = _random_positions(200, seed=84)
+
+        with pytest.raises(ValueError, match=r"must match element count \(200\)"):
+            compiler = LuxarZarrCompiler(path)
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            scene.add_points(
+                "p",
+                positions,
+                # 100 labels for 200 points. The median BSP splits these exactly
+                # 100/100 (measured), so every part's own length check accepts the
+                # unsliced list and only the full-count guard rejects it.
+                labels=[f"a{i}" for i in range(100)],
+                partition={"max_elements": 100},
+            )
+
+    def test_lines_partition_wrong_length_labels_raises(self, tmp_path):
+        """The Lines partition case — labels are per-VERTEX, sliced per part.
+
+        ``slice_optional_array`` is called with the part's VERTEX indices and the
+        full vertex count, so the same pass-through trap applies one currency
+        over; without the guard both parts get labels ``v0 … v99`` (measured).
+        """
+        path = str(tmp_path / "wrong_lines_partition.luxar.zarr")
+        vertices = _random_positions(200, seed=85)
+
+        with pytest.raises(ValueError, match=r"must match element count \(200\)"):
+            compiler = LuxarZarrCompiler(path)
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            scene.add_lines(
+                "l",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                # 100 labels for 200 VERTICES. The polyline-centroid BSP puts 50
+                # of the 100 two-vertex segments in each part (measured: 100
+                # vertices each), so the per-part per-vertex check accepts.
+                labels=[f"v{i}" for i in range(100)],
+                partition={"max_elements": 100},
+            )
+
+    def test_points_substitutive_wrong_length_labels_raises(self, tmp_path):
+        """The Points substitutive wrapper — pinned by WHERE it fails.
+
+        Its finest ``kind=lod`` child carries all N points, so the wrong length is
+        caught downstream too; what the guard buys is failing above
+        ``add_lod_group``, before the lift + gsplat reduce has written anything.
+        Removing it is measurable: the error then surfaces from ``child_3`` with
+        the three coarse gsplat children already on disk, leaving a partial
+        ``kind=lod`` node behind — which the store assertion below catches.
+        """
+        path = str(tmp_path / "wrong_points_sub.luxar.zarr")
+        positions = _random_positions(400, seed=86)
+
+        compiler = LuxarZarrCompiler(path)
+        scene = compiler.create_scene(dimensions=_make_3d_dims())
+
+        # 200 labels for 400 points, and enough points for the reduce to actually
+        # synthesise coarse levels (a degenerate input falls back to a flat node).
+        with pytest.raises(ValueError, match=r"must match element count \(400\)"):
+            scene.add_points(
+                "p",
+                positions,
+                labels=[f"a{i}" for i in range(200)],
+                substitutive_lod=True,
+            )
+
+        assert "p" not in compiler.store
+
+    def test_lines_substitutive_wrong_length_labels_raises(self, tmp_path):
+        """The Lines substitutive wrapper, the twin of the Points one.
+
+        Same fail-fast contract, per-VERTEX: the guard counts ``len(vert_arr)``,
+        and without it the bead lift writes the coarse gsplat levels before
+        ``child_3`` rejects the list, stranding a partial ``kind=lod`` node.
+        """
+        path = str(tmp_path / "wrong_lines_sub.luxar.zarr")
+        vertices = _random_positions(400, seed=87)
+
+        compiler = LuxarZarrCompiler(path)
+        scene = compiler.create_scene(dimensions=_make_3d_dims())
+
+        with pytest.raises(ValueError, match=r"must match element count \(400\)"):
+            scene.add_lines(
+                "l",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                # 200 labels for 400 vertices.
+                labels=[f"v{i}" for i in range(200)],
+                substitutive_lod=True,
+            )
+
+        assert "l" not in compiler.store
 
 
 class TestLinesLadderUnionLabels:
