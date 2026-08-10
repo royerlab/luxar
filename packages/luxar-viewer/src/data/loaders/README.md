@@ -297,6 +297,14 @@ narrowly-scoped helpers each spatial-index loader composes:
   both diverge from the on-disk index the same two ways (range loading +
   visibility compaction). Returns `undefined` on the identity case and
   fail-closed on inconsistent inputs, so callers fall back to the raw slot.
+  Lines uses it for ONE link of a longer chain
+  (`data/scene-loader/process/data-processor-lines.ts`): its labels are
+  per-vertex, so this helper maps loaded-local vertex → on-disk vertex, and the
+  processor prepends visible-segment-slot → loaded-segment-row → start-vertex on
+  top. The visible-segment sequence itself is deliberately NOT fed in as
+  `keptConcatIndices` — segment rows are spatially permuted and consecutive
+  segments of a polyline share vertices, so it is neither ascending nor
+  duplicate-free and the strict-ascent guard would fail it closed.
 - **`spatial-query/prefetch-ranges.ts`** — `prefetchRangesIntoCache(arrays, ranges)`:
   shared cache-warming read for the three loaders' `prefetchChunks`.
   Fires a `get()` per (array × range) and discards the result. Deliberately

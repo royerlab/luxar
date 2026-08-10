@@ -194,9 +194,12 @@ def write_ladder_union_labels_csr(
     an unpartitioned ladder.
 
     For **Lines** the CSR is per-VERTEX (matching the flat Lines writer), while
-    the viewer's Lines pick id is a per-SEGMENT storage slot — so in practice only
-    a broadcast (one-string-per-node) label set resolves on Lines today. Per-vertex
-    Lines label addressing is issue #1424.
+    the viewer's Lines pick id is a per-SEGMENT storage slot. Issue #1424 bridged
+    that granularity for FLAT lines nodes — the picked segment's slot resolves back
+    to that segment's START vertex row in the stored ordering — but it does so
+    through the same visible-slot -> on-disk-index map no ladder publishes, so
+    across a ladder only a broadcast (one-string-per-node) label set resolves until
+    #1439 carries that map over the levels.
 
     Args:
         group: The PARENT ladder zarr group (not a subgroup).

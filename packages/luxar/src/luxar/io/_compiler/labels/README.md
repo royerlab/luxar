@@ -146,9 +146,12 @@ outermost `kind=partition` wrapper is the *reported* path only. So that composit
 resolves too, with the same raw-committed-slot caveat as an unpartitioned ladder.
 
 For Lines the CSR is per-**vertex**, matching the flat Lines writer, while the
-viewer's Lines pick id is a per-**segment** storage slot with no segment→vertex
-indirection — so in practice only a broadcast (one-string-per-node) label set
-resolves on Lines today. Per-vertex Lines label addressing is issue #1424.
+viewer's Lines pick id is a per-**segment** storage slot. Issue #1424 supplied the
+missing segment→vertex indirection for **flat** lines nodes — the picked segment's
+slot resolves back to that segment's start vertex row in the stored ordering — but
+through the same visible-slot → on-disk-index map no ladder publishes, so across a
+ladder only a broadcast (one-string-per-node) label set resolves until #1439 carries
+that map over the levels.
 
 Labels are all-or-nothing across a ladder — a partially-labelled ladder cannot
 produce a correct union, so `validate_ladder_labels` rejects it.

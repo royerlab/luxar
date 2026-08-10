@@ -24,6 +24,7 @@ import type { SceneNode, ViewState } from '../../../../data';
 import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { measureLodBytes } from '../../../../data/loaders/progressive/slice-cache-helper';
 
 vi.mock('zarrita', () => ({
   registry: {},
@@ -669,6 +670,159 @@ describe('LinesSpatialIndexLoader', () => {
 
         const result = await bodyLoader.loadLines(viewState);
         expect(result.ndim).toBe(3);
+      });
+    });
+
+    // ────────────────────────────────────────────────────────────────
+    // Issue #1424: the on-disk VERTEX range bounds (index space A) are the
+    // loader's half of the slot → on-disk map picking resolves per-vertex
+    // labels through. Gated on the node declaring a label CSR, exactly like
+    // the Points / GSplats twins.
+    describe('vertexRangeBounds publication (picking element IDs)', () => {
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      };
+
+      /** A copy of the body fixture's node with one label flag flipped on. */
+      function makeLabelledNode(flag: 'has_labels' | 'has_image_labels'): SceneNode {
+        const base = makeLinesNode();
+        return { ...base, attrs: { ...base.attrs, [flag]: true } } as SceneNode;
+      }
+
+      function makeLabelledLoader(flag: 'has_labels' | 'has_image_labels') {
+        return new LinesSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof LinesSpatialIndexLoader>[0],
+          makeLabelledNode(flag)
+        );
+      }
+
+      it('omits vertexRangeBounds for a node with no label CSR', async () => {
+        const result = await bodyLoader.loadLines(viewState);
+        expect(result.vertexRangeBounds).toBeUndefined();
+      });
+
+      it('publishes the merged on-disk vertex ranges for a has_labels node', async () => {
+        // The body fixture's spatial query returns segment ranges [0,50) and
+        // [100,150), and each segment r references vertices (r, r+1) — so the
+        // loaded vertex set is [0,51) ∪ [100,151), a genuinely multi-range,
+        // NON-zero-anchored space. This is exactly the shape that makes the
+        // raw pick slot the wrong answer.
+        const labelled = makeLabelledLoader('has_labels');
+        try {
+          const result = await labelled.loadLines(viewState);
+          // FLAT `[start0, end0, start1, end1]` pairs in a `Uint32Array` — the
+          // shape the slice cache measures and deep-copies (see
+          // `LoadedLinesData.vertexRangeBounds`).
+          expect(result.vertexRangeBounds).toBeInstanceOf(Uint32Array);
+          expect(Array.from(result.vertexRangeBounds!)).toEqual([0, 51, 100, 151]);
+          // The ranges describe the loaded vertex arrays exactly.
+          expect(result.vertexCount).toBe(102);
+        } finally {
+          labelled.dispose();
+        }
+      });
+
+      it('publishes them for a has_image_labels node too', async () => {
+        const labelled = makeLabelledLoader('has_image_labels');
+        try {
+          const result = await labelled.loadLines(viewState);
+          expect(result.vertexRangeBounds).toHaveLength(4); // 2 ranges x 2 bounds
+        } finally {
+          labelled.dispose();
+        }
+      });
+
+      it('publishes bounds the S-cache measures and deep-copies (a flat typed array)', async () => {
+        // `LoadedLinesData.vertexRangeBounds` is a FLAT `Uint32Array` of
+        // `[start, end)` pairs rather than an `ElementIdRange[]` object array
+        // ENTIRELY because of the SliceCache helpers: they walk own TYPED-ARRAY
+        // properties only, so an object array would be billed 0 bytes by
+        // `measureLodBytes` (the LRU holding roughly twice the bytes its budget
+        // believes for a fragmented labelled slice) and carried into the stored
+        // snapshot BY REFERENCE by `cloneLodSnapshot`. Both halves are pinned
+        // here against a payload from the REAL loader, so a return to an object
+        // array fails this test — the docblocks in `types/lines.ts` and
+        // `data/lines/lines-spatial-index-loader.ts` rest on that.
+        const sliceCache = new SliceCache({ maxSize: 8 * 1024 * 1024 });
+        const labelled = new LinesSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof LinesSpatialIndexLoader>[0],
+          makeLabelledNode('has_labels'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          sliceCache
+        );
+        // A hidden (non-displayed) dimension is what makes a plain leaf
+        // cacheable at all — see the plain-leaf S-cache block above.
+        const cachedView: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 5],
+          tolerance: [0, 0, 0, 0.25],
+        };
+        try {
+          const first = await labelled.loadLines(cachedView);
+          const bounds = first.vertexRangeBounds!;
+          expect(ArrayBuffer.isView(bounds)).toBe(true);
+
+          // (a) MEASURED. The label flag is the only difference from the
+          // unlabelled fixture loader, so the byte delta between the two
+          // payloads is exactly the bounds array (2 ranges x 2 uint32).
+          const unlabelled = await bodyLoader.loadLines(cachedView);
+          expect(unlabelled.vertexRangeBounds).toBeUndefined();
+          expect(bounds.byteLength).toBe(16);
+          expect(measureLodBytes([first]) - measureLodBytes([unlabelled])).toBe(bounds.byteLength);
+          // …and those are the bytes the LRU charged for the stored snapshot.
+          expect(sliceCache.getStats().size).toBe(measureLodBytes([first]));
+
+          // (b) DEEP-COPIED. The revisit is served from the stored clone, so
+          // its bounds must be a DISTINCT buffer with equal contents; an object
+          // array would have been carried across by reference instead.
+          const revisit = await labelled.loadLines(cachedView);
+          const cloned = revisit.vertexRangeBounds!;
+          expect(cloned).not.toBe(bounds);
+          expect(cloned.buffer).not.toBe(bounds.buffer);
+          expect(Array.from(cloned)).toEqual(Array.from(bounds));
+        } finally {
+          labelled.dispose();
+        }
+      });
+
+      it('publishes them on the accumulator-disabled FALLBACK path as well', async () => {
+        // Both return sites must stamp the field: the accumulator path returns
+        // a fresh `getData()` literal, the fallback path its own object literal.
+        // Dropping either leaves picking silently on the raw-slot fallback for
+        // half the configurations.
+        const labelled = makeLabelledLoader('has_labels');
+        try {
+          // First load initializes (and creates the accumulator); then drop it
+          // so the second load takes the allocating fallback branch.
+          const viaAccumulator = await labelled.loadLines(viewState);
+          expect(viaAccumulator.vertexRangeBounds).toHaveLength(4);
+          expect(labelled.getAccumulatorStats()).not.toBeNull();
+
+          (labelled as unknown as { _accumulator: unknown })._accumulator = null;
+          // The poke is a private-field reach-in, so PROVE it disarmed the
+          // branch instead of trusting the field name: `getAccumulatorStats()`
+          // reads that same field and returns null only while it is null. A
+          // rename would leave the real accumulator in place (non-null here),
+          // and a lazy re-create during the load would show up as non-null
+          // after it — either way the load below would silently take the
+          // accumulator return site and this test would cover nothing.
+          expect(labelled.getAccumulatorStats()).toBeNull();
+          const viaFallback = await labelled.loadLines(viewState);
+          expect(labelled.getAccumulatorStats()).toBeNull();
+          // Positive evidence the fallback ALLOCATED: the accumulator path
+          // hands back subarrays of its pooled buffers (identical across
+          // repeat loads), the fallback a freshly allocated one.
+          expect(viaFallback.positions.buffer).not.toBe(viaAccumulator.positions.buffer);
+          expect(viaFallback.vertexRangeBounds).toBeInstanceOf(Uint32Array);
+          expect(Array.from(viaFallback.vertexRangeBounds!)).toEqual([0, 51, 100, 151]);
+        } finally {
+          labelled.dispose();
+        }
       });
     });
 

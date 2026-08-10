@@ -125,14 +125,18 @@ app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hit
 ```
 
 > **Note on `selection`:** fires with the element under the cursor (or `null`
-> when the hover clears) on any dataset. Subscribe **before** the dataset loads
-> (i.e. before `init()` / `switchDataset()`) — the GPU picking pipeline is
-> provisioned at load time only when a listener exists, so picking stays
-> zero-cost for pages that never consume it. Hover-driven; click-to-select is
-> a planned follow-up. `nodeName` is the user-facing layer (the outermost
-> `kind=partition` wrapper when there is one), while `elementIndex` is local to
-> the leaf actually hit — index it against `hitNodeName`, which equals
-> `nodeName` when the node is not partitioned.
+> when the hover clears) on any dataset. What `elementIndex` counts is
+> per-node — see `SelectionPayload` for the exact contract: a labelled node
+> reports an on-disk index (for a labelled **lines** node, the picked
+> segment's start-vertex row), while an unlabelled one reports the
+> visible-buffer slot. Subscribe **before** the dataset loads (i.e. before
+> `init()` / `switchDataset()`) — the GPU picking pipeline is provisioned at
+> load time only when a listener exists, so picking stays zero-cost for pages
+> that never consume it. Hover-driven; click-to-select is a planned follow-up.
+> `nodeName` is the user-facing layer (the outermost `kind=partition` wrapper
+> when there is one), while `elementIndex` is local to the leaf actually hit —
+> index it against `hitNodeName`, which equals `nodeName` when the node is not
+> partitioned.
 
 ### What's NOT supported in v1
 
@@ -694,6 +698,8 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
 - `?perf-timestamp` — Enable WebGPU timestamp-query profiling for performance tests
 - `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to `[0.25, native]`) and lock adaptive resolution off
+- `?lineJoin=<none|miter>` — Force the line join style for the session, overriding each node's authored `join` attribute
+- `?linePrimitive=<screen-space|volumetric>` — Select the line rendering primitive for the session (#1352): `volumetric` draws each segment as its true 3D density (exact end-on, bisector-cut joints — the stencil truncates the miter past a 90° turn); default `screen-space`
 - `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded
 - `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari)
 

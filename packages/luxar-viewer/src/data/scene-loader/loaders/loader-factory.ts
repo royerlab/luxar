@@ -404,6 +404,19 @@ export async function createProgressiveLinesLoader(
         offset: parentEffectiveAttrs.offset,
         blending_mode: parentEffectiveAttrs.blending_mode,
         extend_to_all: node.attrs.extend_to_all,
+        // A ladder's label CSR lives on the PARENT node, per-VERTEX and spanning
+        // the levels in `additive_<i>` order (#1422), and that is also the only
+        // path the pick path ever resolves labels against — a sub-LOD carries no
+        // CSR of its own, so no reader can key by a sub-LOD's on-disk index.
+        // Clearing the flags here keeps the spatial-index loader from publishing
+        // per-level `vertexRangeBounds` — and the projection from composing a
+        // per-level segment-slot → on-disk start-vertex map (#1424's chain) —
+        // that the ladder concat then has to discard. Extending that map ACROSS
+        // the ladder (offsetting each level by the preceding levels' on-disk
+        // VERTEX counts, which is exactly the parent CSR's index space) is what
+        // would let a sliced ladder hover correctly — #1439.
+        has_labels: false,
+        has_image_labels: false,
       },
       hasSpatialIndex: false,
       children: [],

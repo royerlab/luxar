@@ -18,7 +18,9 @@
  *   spatial-index loaders and the mesh whole-node loader.
  * - **chunk-bounds-loader.ts** — zarr chunk-bounds probe (layer below spatial-query).
  * - **element-ids.ts** — slot → on-disk element index map composition, shared
- *   by the Points and GSplats projections (picking's label lookup).
+ *   by the Points, GSplats and Lines projections (picking's label lookup). For
+ *   Lines it supplies only the local→on-disk vertex link of a longer chain; see
+ *   `data/scene-loader/process/data-processor-lines.ts`.
  * - **loader-metrics.ts**, **monitor-events.ts**, **once-init.ts**,
  *   **extend-to-all-preflight.ts** — small cross-cutting helpers used by every
  *   spatial loader.

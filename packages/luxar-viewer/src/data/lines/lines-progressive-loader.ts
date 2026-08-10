@@ -55,7 +55,24 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     };
   }
   if (parts.length === 1) {
-    return parts[0];
+    // GUARD (belt-and-braces): a ladder payload must never publish the on-disk
+    // VERTEX range bounds. `parts[0]` is a SUB-LOD (`additive_0`), so its ranges
+    // describe THAT level's on-disk vertex space, not the parent node's — and
+    // `parts.length === 1` is not "unladdered": this loader only exists for
+    // `n_additive_sublods` nodes, so it is the first-paint state of EVERY
+    // ladder. Passing them through would make hover report an additive_0 vertex
+    // row while only LOD 0 is resident and the raw slot once a second level
+    // lands. `createProgressiveLinesLoader` now also clears `has_labels` /
+    // `has_image_labels` on each sub-LOD's attrs, so the ranges are normally
+    // never published at all; this keeps the invariant true whatever attrs a
+    // sub-LOD carries. (A ladder's labels are ONE per-vertex union CSR on the
+    // parent since #1422; composing a map across the levels of that union is
+    // #1439, so until then a laddered lines node hovers at the raw slot.)
+    const only = parts[0];
+    if (only.vertexRangeBounds === undefined) return only;
+    const stripped: LoadedLinesData = { ...only };
+    delete stripped.vertexRangeBounds;
+    return stripped;
   }
 
   const ndim = parts[0].ndim;
@@ -182,6 +199,9 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     segmentOffset += part.segmentCount;
   }
 
+  // No `vertexRangeBounds`: the concat interleaves several levels' on-disk vertex
+  // spaces into one buffer, so no single ascending on-disk range list describes
+  // it (same reason the single-part branch above strips them).
   const result: LoadedLinesData = {
     positions,
     segments,

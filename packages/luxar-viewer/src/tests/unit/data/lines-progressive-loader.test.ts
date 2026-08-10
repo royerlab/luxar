@@ -1219,3 +1219,52 @@ describe('LinesProgressiveLoader — RGBA color layout (colorK stride, volumetri
     expect(result.colors?.length).toBe(30 * 4);
   });
 });
+
+describe('LinesProgressiveLoader — vertexRangeBounds are never published (issue #1424)', () => {
+  // A ladder payload must NEVER carry the on-disk VERTEX range bounds: each part is a
+  // sub-LOD (`additive_<i>`) whose vertices live in their own on-disk space, while the
+  // labels those bounds would serve are ONE per-vertex union CSR on the parent
+  // (#1422) keyed by the concatenation of those spaces. The single-part
+  // branch is the FIRST-PAINT state of every ladder, not an "unladdered node",
+  // so passing `parts[0]` through verbatim would make hover report an
+  // additive_0 vertex row until a second level lands and then silently switch
+  // to the raw slot. Mirrors the points twin.
+  function labelledLod(vertexCount: number, segmentCount: number, firstOnDisk: number) {
+    const data = makeLodData(vertexCount, segmentCount, 3, { color: 'uint8' });
+    data.vertexRangeBounds = new Uint32Array([firstOnDisk, firstOnDisk + vertexCount]);
+    return data;
+  }
+
+  it('strips the sub-LOD ranges on the single-part passthrough', async () => {
+    const lod0 = labelledLod(10, 5, 2048);
+    const a = makeSubLoader(lod0);
+    const loader = new LinesProgressiveLoader(
+      [a] as unknown as LinesSpatialIndexLoader[],
+      1,
+      '/lines'
+    );
+    const result = await loader.loadLines(baseViewState);
+    expect(result.vertexCount).toBe(10);
+    expect(result.vertexRangeBounds).toBeUndefined();
+    // Non-destructive: the strip is a copy, so the sub-LOD's OWN payload must
+    // still carry its intact ranges (a `delete only.vertexRangeBounds` refactor
+    // would corrupt the level the accumulator still owns).
+    expect(Array.from(lod0.vertexRangeBounds!)).toEqual([2048, 2058]);
+  });
+
+  // FENCE, not evidence of the fix: the multi-part branch always built a fresh
+  // literal that never named `vertexRangeBounds`, so this passed before the change
+  // too. It exists so a future "helpfully concatenate them" edit breaks a test.
+  it('does not concatenate ranges across levels (regression fence)', async () => {
+    const a = makeSubLoader(labelledLod(20, 10, 2048));
+    const b = makeSubLoader(labelledLod(10, 5, 4096));
+    const loader = new LinesProgressiveLoader(
+      [a, b] as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines'
+    );
+    const result = await loader.loadLines(baseViewState);
+    expect(result.vertexCount).toBe(30);
+    expect(result.vertexRangeBounds).toBeUndefined();
+  });
+});

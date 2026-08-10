@@ -23,6 +23,7 @@ import { readUrlParams, type UrlParams } from '../config/url-params';
 import { initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { setLineJoinOverride } from '../types/line-join';
+import { setLinePrimitiveOverride } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
 import { showError, clearError } from '../ui/error-overlay';
 import { showToast } from '../ui/toast';
@@ -124,6 +125,13 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // default — in force. Precedence: `?lineJoin=` > authored `join` attribute >
   // DEFAULT_LINE_JOIN. See types/line-join.ts.
   setLineJoinOverride(urlParams.lineJoin);
+
+  // Install the session-wide line primitive selection (issue #1352) with the
+  // same before-any-material-is-built ordering constraint — BOTH backends
+  // bake the primitive at material build time (the GLSL factory picks a
+  // shader-source pair, the TSL factory a graph). `null` means the built-in
+  // default. See types/line-primitive.ts.
+  setLinePrimitiveOverride(urlParams.linePrimitive);
 
   if (patchConsole) {
     consoleInterceptor.patch();

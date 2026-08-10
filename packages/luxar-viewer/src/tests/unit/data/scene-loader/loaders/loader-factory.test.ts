@@ -330,9 +330,11 @@ describe('createProgressivePointsLoader', () => {
   });
 
   it('clears the label flags on each sub-LOD node, overriding the stored attrs', async () => {
-    // `write_points_multi_lod` stamps `has_labels` on EVERY `additive_<i>`
-    // group, but the pick path only resolves labels against the PARENT path —
-    // so a truthy flag here would make `projectPointsTo3D` build a per-level
+    // Since #1422 `write_points_multi_lod` stamps the label flags (and the
+    // union CSR) on the ladder PARENT and leaves every `additive_<i>` group
+    // bare, which is also the only path the pick path resolves labels against.
+    // The clearing here is therefore defensive against any attrs a sub-LOD may
+    // carry — a truthy flag would make `projectPointsTo3D` build a per-level
     // slot → on-disk map that the ladder concat then throws away (#1421).
     // mockImplementationOnce (not mockImplementation) so the default stub is
     // restored for the following tests.
@@ -405,6 +407,36 @@ describe('createProgressiveLinesLoader', () => {
     await createProgressiveLinesLoader(node, 1, parentEffectiveAttrs, deps);
     expect(linesCtorArgs[0][2]).toBe(deps.arrayRefRegistry);
     expect(linesCtorArgs[0][3]).toBe(deps.zarrStore);
+  });
+
+  it('clears the label flags on each sub-LOD node, overriding the stored attrs', async () => {
+    // Since #1422 `write_lines_multi_lod` stamps the label flags (and the
+    // per-vertex union CSR) on the ladder PARENT and leaves every
+    // `additive_<i>` group bare, which is also the only path the pick path
+    // resolves labels against. The clearing here is therefore defensive against
+    // any attrs a sub-LOD may carry — a truthy flag would make the
+    // spatial-index loader publish per-level `vertexRangeBounds` and the
+    // projection compose a per-level slot → on-disk map that the ladder concat
+    // then throws away (#1424). mockImplementationOnce
+    // (not mockImplementation) so the default stub is restored for the
+    // following tests.
+    zarrOpenMock.mockImplementationOnce((async () => ({
+      attrs: { foo: 'bar', has_labels: true, has_image_labels: true },
+    })) as never);
+
+    await createProgressiveLinesLoader(
+      makeNode('/l', 'lines'),
+      1,
+      {} as SceneNode['attrs'],
+      makeDeps()
+    );
+
+    const lodNode = linesCtorArgs[0][1] as SceneNode;
+    // Non-label attrs still spread through from the store…
+    expect((lodNode.attrs as { foo?: string }).foo).toBe('bar');
+    // …but the two label flags are overridden, not merely absent.
+    expect(lodNode.attrs.has_labels).toBe(false);
+    expect(lodNode.attrs.has_image_labels).toBe(false);
   });
 });
 // The energy-table (quality stamps) plumbing: each additive_<i> subgroup's

@@ -229,6 +229,39 @@ export interface LoadedLinesData {
 
   /** Dimensionality for interpreting vertices array */
   ndim: number;
+
+  /**
+   * The ascending, pairwise-disjoint ON-DISK VERTEX ranges that the loaded
+   * per-vertex arrays — `positions`, `widths`, `colors`, `sharpness`,
+   * `scalars` — concatenate, FLATTENED as
+   * `[start0, end0, start1, end1, …]`: each range is a half-open
+   * `[start, end)` pair, so the array's length is always even and
+   * `length / 2` is the range count. This is index space **A** in the lines
+   * picking chain (see `rendering/picking/picking-system/element-id-map.ts`):
+   * line labels are PER-VERTEX and their CSR is keyed by the on-disk *sorted*
+   * vertex row, so these ranges are the second half of the slot → on-disk map
+   * picking resolves labels through (`data/loaders/element-ids.ts`).
+   *
+   * A FLAT `Uint32Array` rather than an object array precisely because this
+   * payload is cached: `data/loaders/progressive/slice-cache-helper.ts` bills
+   * only own typed-array properties, so an object array would be retained by
+   * the LRU at a billed 0 bytes (a fragmented labelled slice — the loader logs a
+   * fragmentation "efficiency" diagnostic, so high range counts are expected —
+   * could hold roughly twice the bytes the budget believes), and
+   * `cloneLodSnapshot` would pass the very same mutable objects into the stored
+   * snapshot by reference. A typed array is measured and deep-copied for free,
+   * and costs ~6x fewer retained bytes per range.
+   *
+   * Note this is a VERTEX space, not the segment space `SegmentRange` names:
+   * `LinesSpatialIndexLoader` queries visible SEGMENT ranges, then derives the
+   * vertex ranges those segments reference and loads only those.
+   *
+   * Published ONLY when the node declares a per-element label CSR
+   * (`has_labels` / `has_image_labels`): nothing else reads the map, and the
+   * field would otherwise ride along in every SliceCache snapshot for free.
+   * Absent ⇒ no map is composed and picking falls back to the raw slot.
+   */
+  vertexRangeBounds?: Uint32Array;
 }
 
 /**
@@ -347,6 +380,25 @@ export interface ProcessedLinesData {
    * structured clone.
    */
   bounds?: LinesProjectionBounds;
+
+  /**
+   * Slot → ON-DISK element index map for per-element label lookups (M,),
+   * composed at projection time by `data-processor-lines.ts`.
+   *
+   * Indexed by the VISIBLE SEGMENT slot the lines pick shader reports (the
+   * line-texture texel row); the value is the on-disk *sorted VERTEX* row of
+   * that segment's **START** vertex, because line labels are per-vertex and
+   * their CSR is keyed by that row. A segment has two endpoints and the pick id
+   * is a `flat` vertex-stage varying, so exactly one of them can be reported —
+   * see the convention note in `data-processor-lines.ts`.
+   *
+   * Absent ⇒ identity / unavailable: picking falls back to the raw slot. That
+   * happens for a node with no label CSR (no `vertexRangeBounds` published), and
+   * whenever the composition inputs were inconsistent (fail closed). The commit
+   * stamps it onto the MESH (`types/committed-data::setElementIdMap`), never
+   * onto the loaded payload — that payload may be a SliceCache-owned snapshot.
+   */
+  elementIds?: Uint32Array;
 }
 
 // ============================================================================

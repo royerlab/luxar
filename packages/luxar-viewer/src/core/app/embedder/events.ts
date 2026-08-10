@@ -72,13 +72,20 @@ export interface SelectionPayload {
    * This is the ON-DISK element index (the one the leaf's arrays and its
    * label CSR are keyed by) wherever the node can resolve one — through a
    * published slot → on-disk map, or trivially where the identity already
-   * holds and no map is published. Today: a Points or GSplats node
+   * holds and no map is published. Today: a FLAT Points, GSplats or Lines node
    * declaring `has_labels` / `has_image_labels`, and Mesh, whose
-   * `gl_VertexID` already is the on-disk ordinal. Otherwise it is the
-   * element's slot in the buffer that reached the GPU, which after
-   * spatial range loading or nD compaction is NOT the on-disk index — and
-   * on Lines it is a per-segment slot against a per-vertex CSR whatever
-   * the slicing. See
+   * `gl_VertexID` already is the on-disk ordinal. For a LINES node that
+   * on-disk index is the picked segment's START vertex, not a segment index:
+   * line labels are per-vertex, and a segment carries a single pick id, so its
+   * start endpoint is the one reported. A multi-additive-LOD (laddered) Points
+   * or Lines node is the exception among labelled nodes: its label CSR spans
+   * the levels and so declares `has_labels` on the ladder parent (#1422), but
+   * no map is composed across a ladder, so it reports the raw committed slot —
+   * equal to the union index only on a fully-loaded, unsliced layer (#1439).
+   * Otherwise it is the element's slot in the buffer that reached the GPU,
+   * which after spatial range loading or nD
+   * compaction is NOT the on-disk index — and on an unlabelled Lines node it
+   * is a per-segment slot against a per-vertex CSR whatever the slicing. See
    * `rendering/picking/picking-system/element-id-map.ts`.
    */
   elementIndex: number;

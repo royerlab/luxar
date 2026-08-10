@@ -14,6 +14,7 @@ import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.encoding import ArrayDecoder
 
 
 def _make_3d_dims():
@@ -136,6 +137,128 @@ class TestLabelCSRRoundTrip:
 
         decoded = _decode_labels_from_zarr(path, "ln")
         assert decoded == labels
+
+    def test_lines_labels_and_segments_share_the_vertex_permutation(self, tmp_path):
+        """Stored ``segments`` index the SORTED vertex rows the label CSR is keyed by.
+
+        This is the premise the viewer's hover-label chain for lines rests on
+        (issue #1424): a picked segment's stored start index is used directly as
+        a row of the per-vertex label CSR. Two writes must agree for that to be
+        true — ``_ordering/lines.py`` remaps the segment entries through
+        ``argsort(vertex_sort_indices)``, and ``geometry_writers/lines.py`` hands
+        the FORWARD ``vertex_sort_indices`` to ``write_labels_csr`` as
+        ``sort_order``. Neither direction was pinned: the sibling
+        ``test_labels_on_lines`` builds with ``enable_spatial_index=False``, where
+        the permutation is the identity, and the Points spatial-ordering label
+        test only compares multisets, which any permutation satisfies.
+
+        The vertex identity is carried by POSITION here, not by index, so the
+        check never re-derives the permutation from the thing under test. The two
+        counterfactuals (permutation dropped, permutation inverted) are computed
+        explicitly and asserted to break the same check, so this test cannot
+        silently stop discriminating.
+        """
+        path = str(tmp_path / "ordered_lines.luxar.zarr")
+        # A deliberately non-monotone integer-grid path: unit-spaced coordinates
+        # survive any coordinate quantization unambiguously, and the zig-zag is
+        # what makes the spatial (Hilbert) vertex order a real shuffle.
+        vertices = np.array(
+            [
+                [0, 0, 0],
+                [7, 1, 0],
+                [1, 6, 2],
+                [6, 6, 6],
+                [0, 3, 7],
+                [4, 0, 4],
+                [7, 7, 1],
+                [2, 2, 5],
+                [5, 4, 0],
+                [3, 7, 3],
+            ],
+            dtype=np.float32,
+        )
+        n = len(vertices)
+        widths = np.full(n, 0.1, dtype=np.float32)
+        # Label i names the ORIGINAL vertex, so a decoded label identifies which
+        # input vertex a stored row holds.
+        labels = [f"v{i}" for i in range(n)]
+
+        with LuxarZarrCompiler(path, enable_spatial_index=True) as compiler:
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            node = scene.add_lines(
+                "ln", vertices, widths=widths, labels=labels, line_type="polyline"
+            )
+            assert node.has_labels is True
+
+        store = zarr.open_group(path, mode="r")
+        group = store["ln"]
+        # COORDINATE arrays are quantized on disk (linear_perchannel_u16 under
+        # AUTO), so go through the canonical decoder rather than the raw uint16.
+        stored_vertices = (
+            ArrayDecoder().decode(group["vertices"], store).astype(np.float64)
+        )
+        stored_segments = np.asarray(ArrayDecoder().decode(group["segments"], store))
+        stored_segments = stored_segments.reshape(-1, 2)
+        decoded = _decode_labels_from_zarr(path, "ln")
+        assert len(decoded) == n
+
+        # Recover "which original vertex is stored at row j" from POSITION alone.
+        # Unit-spaced grid coordinates make the nearest input vertex unique.
+        perm = []
+        for row in range(n):
+            distances = np.linalg.norm(vertices - stored_vertices[row], axis=1)
+            nearest = int(np.argmin(distances))
+            assert distances[nearest] < 0.25, (
+                f"stored vertex row {row} matches no input vertex "
+                f"(closest distance {distances[nearest]})"
+            )
+            perm.append(nearest)
+        assert sorted(perm) == list(range(n)), "stored rows are not a permutation"
+
+        # The fixture must actually exercise a permutation, and one that is not
+        # its own inverse — otherwise dropping or inverting it would be
+        # undetectable. If a future ordering change makes this identity or an
+        # involution, pick different coordinates rather than deleting the check.
+        identity = list(range(n))
+        assert perm != identity, "spatial ordering left the vertices in input order"
+        assert [perm[perm[i]] for i in identity] != identity, (
+            "the vertex permutation is its own inverse, so this test could not "
+            "detect an inverted permutation"
+        )
+
+        # THE PREMISE: for every stored segment row, the label at the stored
+        # start index belongs to the vertex that segment actually starts at.
+        for row, (start, end) in enumerate(stored_segments):
+            assert decoded[int(start)] == f"v{perm[int(start)]}", (
+                f"segment row {row}: label at stored start index {start} is "
+                f"{decoded[int(start)]!r}, but that row holds input vertex "
+                f"{perm[int(start)]}"
+            )
+            assert decoded[int(end)] == f"v{perm[int(end)]}"
+
+        # Segment topology survived the remap: a polyline over the input joins
+        # consecutive INPUT vertices, so every stored pair must decode to one.
+        input_pairs = {(i, i + 1) for i in range(n - 1)}
+        decoded_pairs = {
+            (perm[int(start)], perm[int(end)]) for start, end in stored_segments
+        }
+        assert decoded_pairs == input_pairs
+
+        # Counterfactual 1 — permutation DROPPED (labels written in input order).
+        dropped = labels
+        assert any(
+            dropped[int(start)] != f"v{perm[int(start)]}"
+            for start, _ in stored_segments
+        ), "a dropped label permutation would still pass the check above"
+
+        # Counterfactual 2 — permutation INVERTED (labels gathered by the
+        # inverse of vertex_sort_indices instead of the forward order).
+        inverse = np.argsort(np.asarray(perm))
+        inverted = [labels[int(i)] for i in inverse]
+        assert any(
+            inverted[int(start)] != f"v{perm[int(start)]}"
+            for start, _ in stored_segments
+        ), "an inverted label permutation would still pass the check above"
 
 
 class TestHoverOverlayAutoInjection:

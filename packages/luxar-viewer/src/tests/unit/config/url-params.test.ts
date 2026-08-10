@@ -31,6 +31,7 @@ describe('readUrlParams', () => {
       cacheBudgetMB: null,
       dpr: null,
       lineJoin: null,
+      linePrimitive: null,
     });
   });
 
@@ -90,6 +91,18 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?lineJoin=').lineJoin).toBeNull();
     expect(readUrlParams('?lineJoin').lineJoin).toBeNull();
     expect(readUrlParams('').lineJoin).toBeNull();
+  });
+
+  it('parses linePrimitive, rejecting unknown values as "no override"', () => {
+    expect(readUrlParams('?linePrimitive=screen-space').linePrimitive).toBe('screen-space');
+    expect(readUrlParams('?linePrimitive=volumetric').linePrimitive).toBe('volumetric');
+    // Case- and whitespace-insensitive, like the other enum params.
+    expect(readUrlParams('?linePrimitive=VOLUMETRIC').linePrimitive).toBe('volumetric');
+    // Unrecognised values must never silently select a primitive.
+    expect(readUrlParams('?linePrimitive=quads').linePrimitive).toBeNull();
+    expect(readUrlParams('?linePrimitive=').linePrimitive).toBeNull();
+    expect(readUrlParams('?linePrimitive').linePrimitive).toBeNull();
+    expect(readUrlParams('').linePrimitive).toBeNull();
   });
 
   it('parses gpuBudgetMB, accepting 0 (disable) and rejecting negatives', () => {
