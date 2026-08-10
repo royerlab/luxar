@@ -3,8 +3,9 @@
  *
  * Mirrors the GLSL wrapper one-for-one — same constructor signature, same
  * `setPickMode` / `setPickSide` / `updateOpacityUniform` / `updateAlphaCutoff`
- * surface, same `MeshPickAwareMaterial` contract, and deliberately NOT a
- * `CameraAwareMaterial` (a mesh has no screen-space footprint to size).
+ * surface, same `MeshPickAwareMaterial` contract, and the same half-consumed
+ * `CameraAwareMaterial` one (fov/resolution ignored, the near fade's two inputs
+ * taken).
  *
  * **Uniform plumbing.** This class owns one `UniformNode` per shader input. The
  * public `uniforms` record exposes each node as an `IUniform`-shaped
@@ -28,10 +29,14 @@ import { meshPickWebGPUFactory } from './pick.tsl';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { MESH_DEFAULTS, clampAppearanceFraction } from '../../materials/mesh/appearance';
 import { resolveMeshPickModeState, type MeshPickAwareMaterial } from './pick-mode';
+import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import type { BlendingMode } from '../../../types/blending';
 import type { MeshPickingMaterialConfig } from './material';
 
-export class MeshPickingTSLMaterial extends NodeMaterial implements MeshPickAwareMaterial {
+export class MeshPickingTSLMaterial
+  extends NodeMaterial
+  implements CameraAwareMaterial, MeshPickAwareMaterial
+{
   uniforms: Record<string, THREE.IUniform>;
 
   private tslNodes: {
@@ -40,6 +45,8 @@ export class MeshPickingTSLMaterial extends NodeMaterial implements MeshPickAwar
     uAlphaCutoff: TSLNode;
     uAlphaCutout: TSLNode;
     uSurfaceDepth: TSLNode;
+    uIsOrtho: TSLNode;
+    uNearCull: TSLNode;
   };
 
   constructor(config: MeshPickingMaterialConfig) {
@@ -55,6 +62,10 @@ export class MeshPickingTSLMaterial extends NodeMaterial implements MeshPickAwar
       // governs only the window before the first one.
       uAlphaCutout: uniform(1),
       uSurfaceDepth: uniform(1),
+      // 0 = perspective; 0.1 matches the GLSL twin's default and is overridden per
+      // scene by `updateCameraParams`.
+      uIsOrtho: uniform(0),
+      uNearCull: uniform(0.1),
     };
 
     this.uniforms = {
@@ -63,6 +74,8 @@ export class MeshPickingTSLMaterial extends NodeMaterial implements MeshPickAwar
       uAlphaCutoff: proxyIUniform(this.tslNodes.uAlphaCutoff),
       uAlphaCutout: proxyIUniform(this.tslNodes.uAlphaCutout),
       uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
     };
 
     this.toneMapped = false;
@@ -73,6 +86,23 @@ export class MeshPickingTSLMaterial extends NodeMaterial implements MeshPickAwar
     this.forceSinglePass = true;
 
     meshPickWebGPUFactory(this.tslNodes, this);
+  }
+
+  /**
+   * @see MeshPickingMaterial.updateCameraParams — `_fov` / `_resolution` ignored,
+   * the near fade's two inputs consumed. Both are runtime uniforms, so there is
+   * nothing to rebuild (this wrapper has no rebuild path at all).
+   */
+  updateCameraParams(
+    _fov: number,
+    _resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    nearCull?: number
+  ): void {
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    if (nearCull !== undefined) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
   }
 
   /** @see MeshPickingMaterial.setPickMode */
@@ -117,6 +147,10 @@ export class MeshPickingTSLMaterial extends NodeMaterial implements MeshPickAwar
     });
     cloned.uniforms.uAlphaCutout.value = this.uniforms.uAlphaCutout.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    // Camera state too — see the GLSL twin: the constructor defaults would fade
+    // against the wrong near plane, and would fade at all under ortho.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     // The epoch's culling must ride along: a clone taken on an undecidable frame
     // would otherwise revert to FrontSide and drop half the pickable surface until
     // the next commit re-applied it.

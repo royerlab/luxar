@@ -24,9 +24,11 @@ Three differences from the point/line/gsplat pick materials, all from
   `luxarElementIdSplit()`. A face ordinal would be renumbered on every slice change, since only
   the index buffer is rewritten; a vertex ordinal is invariant, and it indexes the per-vertex
   label CSR directly.
-- **Not camera-aware.** A mesh has no screen-space footprint to size, so there is no
-  resolution/FOV/near-cull uniform and no camera broadcast — matching the visual mesh material,
-  which the material manager routes to `staticMaterials` for the same reason.
+- **Camera-aware for half the usual reason.** A mesh has no screen-space footprint to size, so
+  there is no resolution/FOV uniform — but `uIsOrtho` / `uNearCull` are bound and the material
+  joins the camera broadcast, because the pick pass has to reproduce the visual near fade or a
+  surface fading out of view would stay fully pickable. Matching the visual mesh material, which
+  is camera-aware for exactly the same half.
 - **`side` is synced from the visual material** rather than pinned to `DoubleSide`. The siblings'
   quads are view-facing; a mesh's back faces may be culled on screen, and a pick pass that
   rasterized them anyway would make an invisible interior face both pickable and

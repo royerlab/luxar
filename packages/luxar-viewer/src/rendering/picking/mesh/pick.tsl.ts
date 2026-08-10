@@ -7,7 +7,9 @@
  *   - G: elementId LOW 16 bits (= the VERTEX ordinal — mesh has no ordering
  *     attribute to indirect through, §6.5)
  *   - B: brightness = the coverage `vAlpha * uOpacity`, or 1.0 for a cutout
- *     survivor (which the visual shader draws fully opaque)
+ *     survivor (which the visual shader draws fully opaque), times the shared
+ *     perspective near fade — so pick salience tracks visible salience right up
+ *     to the near plane, and a fragment below the 0.01 reject is discarded
  *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot carry the
  *     whole index exactly — see `luxarElementIdSplit`)
  *
@@ -46,6 +48,7 @@ import {
   float,
   int,
   clamp as _clamp,
+  max as _max,
   depth,
   vertexIndex,
   modelViewMatrix,
@@ -54,7 +57,11 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeAlpha, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import {
+  sanitizeAlpha,
+  perspectiveNearFadeTSL,
+  type TSLNode,
+} from '../../materials/_shared/tsl-helpers';
 import { MESH_DEFAULTS } from '../../materials/mesh/appearance';
 
 // Type-erased builder aliases — same rationale as the visual mesh factory: TSLNode
@@ -64,11 +71,13 @@ import { MESH_DEFAULTS } from '../../materials/mesh/appearance';
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
 const clamp: (v: TSLNode, lo: TSLNode, hi: TSLNode) => TSLNode = _clamp as TSLNode;
+const max: (a: TSLNode, b: TSLNode) => TSLNode = _max as TSLNode;
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same pattern as
- * `LinePickTSLNodes` / `GSplatPickTSLNodes` — and far shorter, because a mesh has
- * no screen-space footprint to size and therefore no camera uniforms at all.
+ * `LinePickTSLNodes` / `GSplatPickTSLNodes` — and shorter, because a mesh has no
+ * screen-space footprint to size: of the camera inputs it takes only the two the
+ * near fade needs, and no resolution or focal length.
  */
 export interface MeshPickTSLNodes {
   readonly uNodeId: TSLNode;
@@ -84,6 +93,14 @@ export interface MeshPickTSLNodes {
    * `opaque`/`normal` surface modes). Mirrors the GLSL `uSurfaceDepth`.
    */
   readonly uSurfaceDepth: TSLNode;
+  /**
+   * Near-fade projection selector: 0 = perspective, 1 = orthographic (identity).
+   * A runtime uniform, so this graph takes `perspectiveNearFadeTSL` rather than
+   * the compile-time-ortho variant — the ortho toggle must not rebuild it.
+   */
+  readonly uIsOrtho: TSLNode;
+  /** Near-fade start distance, world units (scene-relative). */
+  readonly uNearCull: TSLNode;
 }
 
 /**
@@ -108,6 +125,8 @@ export function meshPickWebGPUFactory(
   const uAlphaCutoff = nodes.uAlphaCutoff;
   const uAlphaCutout = nodes.uAlphaCutout;
   const uSurfaceDepth = nodes.uSurfaceDepth;
+  const uIsOrtho = nodes.uIsOrtho;
+  const uNearCull = nodes.uNearCull;
 
   // ---- Varyings ----
   // Flat for the two ids (see the module doc — mandatory, not stylistic); smooth
@@ -124,13 +143,19 @@ export function meshPickWebGPUFactory(
     vec2(float(elementIdLo), float(elementIdHi))
   ).setInterpolation('flat');
   const vAlpha: TSLNode = varying(float(1.0));
+  // View-space depth for the fragment-stage near fade. Just the z, not the whole
+  // view position the visual factory carries — that one is differentiated for the
+  // flat-normal fallback, and the pick pass has no shading to do.
+  const vViewZ: TSLNode = varying(float(0.0));
 
   const vertexBody = Fn(() => {
     // Sanitized identically to the visual pair: alpha is the whole coverage term
     // for a mesh, and a NaN would survive into the cutout comparison as a fragment
     // that never discards — pickable where the visual has a hole.
     vAlpha.assign(sanitizeAlpha(aColor.w));
-    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(positionGeometry, 1.0)));
+    const mvPos: TSLNode = modelViewMatrix.mul(vec4(positionGeometry, 1.0)).toVar();
+    vViewZ.assign(mvPos.z);
+    return cameraProjectionMatrix.mul(mvPos);
   });
 
   const clipPos: TSLNode = vertexBody();
@@ -145,14 +170,28 @@ export function meshPickWebGPUFactory(
   const coverageShared = Fn(() => vAlpha.mul(uOpacity)).once();
   const coverage: TSLNode = coverageShared().toVar('meshPickCoverage');
   const cutoutOn: TSLNode = int(uAlphaCutout).equal(int(1));
+  // Same fade, same 1e-20 degenerate-smoothstep floor and same 0.01 reject as the
+  // visual graph — pick coverage must keep matching visible coverage as the camera
+  // flies into the surface. Per FRAGMENT, because a triangle spans depth.
+  const nearFadeShared = Fn(() =>
+    perspectiveNearFadeTSL(uIsOrtho, vViewZ, max(uNearCull, float(1e-20)))
+  ).once();
+  const nearFade: TSLNode = nearFadeShared().toVar('meshPickNearFade');
   // Survivors of the cutout are FULLY OPAQUE on screen (the visual shader emits
   // `vec4(rgb, 1.0)` for them), so their pick brightness must be 1.0 too. Carrying
   // the pre-cutout coverage through instead would under-weight a solid mesh in the
   // cross-node brightness vote purely because its author wrote 0.6 into a channel
   // the visual output ignores.
-  const brightness: TSLNode = clamp(cutoutOn.select(float(1.0), coverage), 0.0, 1.0).toVar(
-    'meshPickBrightness'
-  );
+  //
+  // The fade multiplies AFTER that select, so it reaches both arms once: the cutout
+  // arm's visual twin ramps its shaded RGB by the same factor, and the commutative
+  // arm's carries it in the coverage. Folding it into `coverage` instead would move
+  // the cutout comparison below and dissolve the holes open as the camera neared.
+  const brightness: TSLNode = clamp(
+    cutoutOn.select(float(1.0), coverage).mul(nearFade),
+    0.0,
+    1.0
+  ).toVar('meshPickBrightness');
 
   const colorNode = Fn(() => {
     // The cutout is a runtime-uniform branch, not a build flag — one `mesh-pick`
@@ -160,6 +199,11 @@ export function meshPickWebGPUFactory(
     // the shared chain, following the line/gsplat pick precedent; a discarded
     // fragment writes neither colour nor depth, so the placement is safe either
     // way, but keeping the shared value a pure expression is not.
+    //
+    // The near reject is ordered FIRST, matching the GLSL twin, so both backends
+    // decline a faded fragment for the same reason; either way it writes neither
+    // the id nor depth.
+    Discard(nearFade.lessThan(0.01));
     Discard(cutoutOn.and(coverage.lessThan(uAlphaCutoff)));
     return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
   });
@@ -217,5 +261,9 @@ export function buildMeshPickTSLNodesFromUniforms(
     // is not in.
     uAlphaCutout: uniform((uniforms.uAlphaCutout?.value as number) ?? 1),
     uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 1),
+    // 0 = perspective, and 0.1 is the near-cull default every wrapper constructs
+    // with (overridden per scene by updateCameraParams).
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
   };
 }

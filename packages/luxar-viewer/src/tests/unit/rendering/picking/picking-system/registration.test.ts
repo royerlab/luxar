@@ -111,11 +111,13 @@ describe('unregisterAllPickMaterials', () => {
     expect(materialManager.getCacheStats().totalRegistered).toBe(baseline - 2);
   });
 
-  it('unregisters a non-camera-aware pick material (mesh pick, in staticMaterials)', () => {
-    // Plain material without the camera-aware tag stands in for the mesh pick
-    // material: register() routes it into staticMaterials (no
-    // updateCameraParams). It must STILL be unregistered — otherwise it leaks
-    // across every context-restore cycle (issue #1284).
+  it('unregisters a pick material with no camera uniforms (staticMaterials)', () => {
+    // Plain material without the camera-aware tag: register() routes it into
+    // staticMaterials (no updateCameraParams). It must STILL be unregistered —
+    // otherwise it leaks across every context-restore cycle (issue #1284). All four
+    // pick materials are camera-aware today (mesh joined them with the near fade,
+    // #1431), so this stands for the dispatch rather than for a specific type; the
+    // point is that `unregisterAllPickMaterials` must not gate on the guard.
     const plain = new THREE.MeshBasicMaterial();
     materialManager.register(plain);
     const baseline = materialManager.getCacheStats().totalRegistered;

@@ -45,6 +45,55 @@ passes a mis-sized list through whole, so all parts got the *same* labels and pa
 tooltips were part 0's. Each wrapper now checks the full element count before it
 slices, leaving the plain-leaf gate order untouched.
 
+#### Mesh fades out near the camera, like the other three types (#1431)
+
+Points, Lines and GSplats all suppress geometry approaching the near plane through
+the shared `perspectiveNearFade` — 0 behind the camera, a smoothstep across
+`[nearCull, 2·nearCull]`, 1.0 under ortho — in both their visual and their picking
+shaders. Mesh had none of it, so flying into a surface clipped it hard against the
+near plane instead of fading it out. It now carries the same fade, in all four of
+its shaders.
+
+The stage differs, and is forced rather than chosen: points and gsplats evaluate the
+fade per VERTEX, which is exact because an instanced quad has one center depth. A
+triangle spans depth, so mesh evaluates it per FRAGMENT off the `vViewPos` varying
+the shade term already carries — a per-vertex value would smear the ramp across a
+large triangle. The `< 0.01` reject applies in every blending mode, not just the
+translucent ones: `opaque` always writes depth and `normal` does at opacity ≥ 0.99,
+so a fully-faded fragment left rasterizing would occlude everything behind it. Under
+`opaque` the emission is `vec4(rgb, 1.0)` and there is no alpha to fade, so the fade
+ramps the shaded RGB instead; every other mode folds it into the coverage, which is also how `max` picks
+it up in its premultiply. Worth knowing about that first case: in `opaque` the
+surface DARKENS toward black across the band rather than dissolving, and only the
+0.01 reject removes it. The band sits 0.1–0.2% of the scene diagonal in front of the
+eye and is about 0.1% thick; the deterministic alternative — letting the fade move
+the cutout comparison — would open the surface's authored holes as the camera closed
+in, and a stochastic dithered reject was declined because a non-deterministic
+fragment would cost the parity harness its exact-factor lock. So the darkening is the
+accepted trade. A mesh that needs a true dissolve wants `normal`. The pick pass folds
+the fade into `brightness` the way the point and gsplat pick shaders do, so a surface
+fading out of view stops being fully pickable.
+
+Most of the diff is plumbing rather than shader: all four mesh material wrappers
+became `CameraAwareMaterial`s and joined the material manager's camera broadcast.
+They consume only half the contract — `isOrtho` and `nearCull`; a mesh still has no
+screen-space size to recompute from fov/resolution — and both are runtime uniforms,
+so an ortho toggle is a uniform write rather than a recompile. `staticMaterials`
+stays as the generic destination for a `register()`ed material with no camera
+uniforms; it simply no longer has mesh as its resident.
+
+One documentation correction falls out. The near-plane floor derivation on
+`MAX_NEAR_FAR_RATIO` called mesh "the one type the floor can clip", because it was —
+it had no fade at all, so the floor could clip it at full brightness. With the same
+fade at the same 0.01 reject and the same `1.0589 · nearCull` headroom, mesh joins
+points and gsplats in the exactly-lossless group. The same pass tightened what that
+derivation claims for LINES, which had been swept in with them: a line does not
+reject on the fade, it only multiplies it into the intensity chain (its discard is a
+separate `max(rgb) < 1e-4` test on the colour, which the fade never enters), so the
+floor can still take a line fragment at up to 1% of its authored contribution. That
+residual predates #1431, is not what sets the constant, and is now written down
+instead of rounded to "lossless".
+
 #### Volumetric line primitive behind `?linePrimitive=` (#1352, part 1)
 
 Lines gain a second rendering primitive, session-selected by

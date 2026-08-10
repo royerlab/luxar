@@ -131,8 +131,10 @@ export interface GSplatMaterialProperties {
  *   coverage term in every mode it supports, so there is nothing to gate;
  * - no `radiusScale` / `truncationRadius` — both normalize a per-element extent,
  *   and a triangle's extent is its own vertices;
- * - no camera surface at all (see `LuxarMeshMaterial`): a mesh's size IS its
- *   geometry, so there is no screen-space extent to recompute per camera change;
+ * - only HALF a camera surface (see `LuxarMeshMaterial`): a mesh's size IS its
+ *   geometry, so there is no screen-space extent to recompute per camera change and
+ *   `updateCameraParams` ignores fov/resolution — but it does consume `isOrtho` /
+ *   `nearCull`, because the shared near fade applies to a surface too (#1431);
  * - `blendingMode` defaults to `'opaque'`, not `'additive'` — the only mode
  *   unconditionally correct without per-triangle depth sorting (§6.3);
  * - `flatNormal` is new: mesh is the first shaded type, and the stored-normal vs

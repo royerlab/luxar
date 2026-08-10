@@ -42,16 +42,16 @@ vi.mock('../../../../rendering/material-manager', () => ({
       userData: {},
       updateCameraParams: vi.fn(),
     }),
-    // Mesh materials are per node like the rest. Note the absent
-    // `updateCameraParams`: a mesh draws real geometry, so it has no screen-space
-    // size and is deliberately not camera-aware — the stub mirrors that rather than
-    // padding the shape.
+    // Mesh materials are per node like the rest, and camera-aware like the rest
+    // since #1431 — of the contract they consume only `isOrtho` / `nearCull`, for
+    // the near fade; there is still no screen-space size to recompute.
     getMeshMaterial: vi.fn(() => ({
       uniforms: {},
       userData: {},
       defines: {},
       side: 0,
       needsUpdate: false,
+      updateCameraParams: vi.fn(),
       updateFlatNormal: vi.fn(),
       updateColormapTexture: vi.fn(),
       updateScalarRange: vi.fn(),

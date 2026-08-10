@@ -44,16 +44,17 @@ so the per-frame `ensure()` re-walks the graph each frame (see the
   circumscribed sphere is not exotic — it is just "zoomed in", because
   the sphere is 1.73x the half-side of a cube.
 
-  The bound is lossless for Points / Lines / GSplats, not a tradeoff:
-  their shaders already discard anything closer than
-  `nearCull = 1e-3 * diagonal` (`perspectiveNearFade`), and the floor
-  stays inside that reject band with ~21% headroom over the binding
+  The bound is lossless for Points / GSplats / Mesh and within 1% for
+  Lines, not a tradeoff: every shader fades out anything closer than
+  `nearCull = 1e-3 * diagonal` (`perspectiveNearFade`) — the first three
+  reject on it outright, lines only multiply it in — and the floor
+  stays inside that band with ~21% headroom over the binding
   constraint — enforced by a property test, not asserted by a comment.
   The full derivation of the constant, and why it sits above the
   minimum-viable value rather than at it, lives on
   `MAX_NEAR_FAR_RATIO`; it is not restated here, so there is one place
-  to change. Mesh has no near fade in either backend and is the one type
-  the floor can clip.
+  to change. Mesh was the one exception until #1431 gave it the same
+  fade at the same 0.01 reject.
   Under PERSPECTIVE, `MIN_NEAR_RADIUS_FACTOR` is dominated everywhere
   except a zero-radius sphere (where it yields `MIN_NEAR_PLANE`, keeping
   the degenerate-frustum guard tripping instead of NaN-ing); under ortho

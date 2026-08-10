@@ -86,10 +86,11 @@ export type LuxarPointMaterial = PointMaterial | PointTSLMaterial;
 export type LuxarLineMaterial = LineMaterial | LineTSLMaterial;
 export type LuxarGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
 /**
- * Same union shape as its three siblings, with one member of the shared surface
- * absent on purpose: no `updateCameraParams`. A mesh has no screen-space size to
- * recompute, so it is not camera-aware and does not join the camera broadcast — see
- * `LifecycleCtx.staticMaterials`.
+ * Same union shape as its three siblings, including `updateCameraParams` — though a
+ * mesh consumes only half of it. There is no screen-space size to recompute from
+ * fov/resolution, but the projection mode and near-cull distance drive the shared
+ * near fade, which applies to a surface exactly as it does to a sprite. So mesh
+ * joins the camera broadcast like everything else.
  */
 export type LuxarMeshMaterial = MeshMaterial | MeshTSLMaterial;
 
@@ -102,10 +103,10 @@ export type LuxarPointPickingMaterial = PointPickingMaterial | PointPickingTSLMa
 export type LuxarLinePickingMaterial = LinePickingMaterial | LinePickingTSLMaterial;
 export type LuxarGSplatPickingMaterial = GSplatPickingMaterial | GSplatPickingTSLMaterial;
 /**
- * Like its three siblings, minus `updateCameraParams` — the mesh pick pass has no
- * screen-space footprint to size, so it is not camera-aware and joins
- * `staticMaterials` rather than the camera broadcast, exactly as the visual mesh
- * material does.
+ * Like its three siblings, including `updateCameraParams` — the mesh pick pass has
+ * no screen-space footprint to size, but it does have to reproduce the visual near
+ * fade, so it takes the same two camera inputs and joins the same broadcast,
+ * exactly as the visual mesh material does.
  */
 export type LuxarMeshPickingMaterial = MeshPickingMaterial | MeshPickingTSLMaterial;
 
@@ -158,26 +159,35 @@ export class MaterialManager {
   /**
    * Materials that entered through `register()` rather than a manager
    * factory (per-node point/line/gsplat/mesh materials live in
-   * `registeredMaterials` / `staticMaterials` only).
+   * `registeredMaterials` only).
    *
    * Examples: GPU-picking materials and colormap clones. These need
    * manager-level disposal — and global camera uniforms when they are
    * camera-aware — but are tracked separately for leak diagnostics.
    *
    * Typed as plain `THREE.Material` because `register()` accepts one: a
-   * non-camera-aware entry (a mesh colormap clone) belongs in the leak
-   * diagnostic exactly as much as a camera-aware one, so this set must
-   * span both rather than silently omitting half of them.
+   * non-camera-aware entry belongs in the leak diagnostic exactly as much
+   * as a camera-aware one, so this set must span both rather than silently
+   * omitting half of them.
    */
   private ownedMaterials = new Set<THREE.Material>();
   /**
-   * Per-node materials that are tracked for disposal but take NO camera broadcast.
+   * Materials that are tracked for disposal but take NO camera broadcast.
    *
-   * Mesh materials only, and structurally so: a mesh draws real geometry, so it has
-   * no screen-space extent to recompute from fov/resolution and therefore no
-   * `updateCameraParams`. Adding an empty one just to fit `registeredMaterials`
-   * would be a lie that also costs a per-frame call per node — see
-   * {@link LifecycleCtx.staticMaterials}.
+   * The generic fallback for anything without `updateCameraParams`: {@link register}
+   * dispatches on `isCameraAwareMaterial` and lands the rest here. All four geometry
+   * types (mesh included, since #1431 gave it the near fade) are camera-aware today,
+   * so nothing from the `getXMaterial` factories reaches this set.
+   *
+   * It is NOT what keeps such a material from leaking: `register()` adds to
+   * `ownedMaterials` on the same path, and {@link dispose} unions that in. Two jobs
+   * are left, and both are real. It is the destination that is *not* the camera
+   * broadcast — `updateCameraParams` iterates `registeredMaterials`, so a material
+   * with no `updateCameraParams` has to land somewhere else or the broadcast would
+   * throw on it. And it is a term in the stats snapshot: `totalRegistered` is
+   * `registeredMaterials.size + staticMaterials.size`, so a non-camera-aware entry
+   * shows up in the leak diagnostic instead of vanishing from it.
+   * See {@link LifecycleCtx.staticMaterials}.
    */
   private staticMaterials = new Set<THREE.Material>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians (or frustumHeight for ortho)
@@ -363,12 +373,13 @@ export class MaterialManager {
    * `applyMeshSide`). Sharing would let one node's shading model and face-sidedness
    * follow another's.
    *
-   * Deliberately does NOT enter `registeredMaterials`: a mesh has no screen-space
-   * size, so it has no `updateCameraParams` to broadcast to. It is tracked in
-   * `staticMaterials` instead, which keeps disposal and the stats counters honest
-   * without a per-frame no-op call per node. There is no `meshMaterialCache`
-   * either: no type has a material cache — every material is per-node, so
-   * `getCacheStats()` reports only registry size and create-time, never a cache
+   * Enters `registeredMaterials` and takes the camera broadcast like its three
+   * siblings. It consumes only half of it — there is no screen-space size to
+   * recompute from fov/resolution — but the projection mode and near-cull distance
+   * drive the shared near fade (#1431), and a mesh left out of the broadcast would
+   * fade against the constructor's 0.1 default instead of the scene's. There is no
+   * `meshMaterialCache`: no type has a material cache — every material is per-node,
+   * so `getCacheStats()` reports only registry size and create-time, never a cache
    * size.
    *
    * Dispatches to `MeshTSLMaterial` when the active renderer reports
@@ -392,8 +403,14 @@ export class MaterialManager {
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;
 
-    this.staticMaterials.add(material);
+    this.registeredMaterials.add(material);
     subscribeToDispose(material, this.lifecycleCtx);
+    material.updateCameraParams(
+      this.currentFov,
+      this.currentResolution,
+      this.currentIsOrtho,
+      this.currentNearCull
+    );
 
     log.info(Modules.RENDERER, `Created per-node mesh material (${backend})`);
     return material;
@@ -462,8 +479,8 @@ export class MaterialManager {
    * Takes a plain `THREE.Material` and DISPATCHES on the capability rather than
    * demanding it, which is the same `isCameraAwareMaterial` pattern the picking
    * system already uses. A camera-aware material joins the broadcast registry and
-   * receives the current camera state immediately; one without a screen-space extent
-   * (a mesh material, whose size IS its geometry) is tracked for disposal only.
+   * receives the current camera state immediately; one that reads no camera uniform
+   * at all is tracked for disposal only.
    *
    * Dispatching here rather than at the call site is deliberate: it leaves ONE public
    * entry point that cannot be called wrongly. Requiring `& CameraAwareMaterial`
@@ -474,7 +491,8 @@ export class MaterialManager {
   register(material: THREE.Material): void {
     subscribeToDispose(material, this.lifecycleCtx);
     if (!isCameraAwareMaterial(material)) {
-      // No screen-space size to recompute — see `staticMaterials`.
+      // Reads no camera uniform at all — tracked for disposal only. See
+      // `staticMaterials`.
       this.staticMaterials.add(material);
       this.ownedMaterials.add(material);
       return;
@@ -503,14 +521,18 @@ export class MaterialManager {
 
   /** Dispose all managed materials. */
   dispose(): void {
-    // Union of both registries so an ownedMaterials-only entry (e.g. a
-    // register()-entered material) can't leak its GPU program at
-    // teardown.
+    // Two entry paths, and `registeredMaterials` only covers one of them: the four
+    // `getXMaterial` factories add there and nowhere else, so it is load-bearing.
+    // Everything that arrives through `register()` instead lands in
+    // `ownedMaterials` — and, when it is not camera-aware, ALSO in
+    // `staticMaterials`. So those last two are two overlapping views of the same
+    // path and either one alone would already complete the cover; both are spread
+    // because the redundancy is free and neither set exists for teardown's sake in
+    // the first place (see their field docs). What must never be dropped is a whole
+    // PATH: `registeredMaterials`, or both of the other two.
     const materials = new Set<THREE.Material>([
       ...this.registeredMaterials,
       ...this.ownedMaterials,
-      // Mesh materials live only here (no camera broadcast), so omitting this set
-      // would leak their GPU programs at teardown.
       ...this.staticMaterials,
     ]);
     this.registeredMaterials.clear();

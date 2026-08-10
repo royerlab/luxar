@@ -27,6 +27,7 @@ import { config } from '../../../../../config';
 import { POINT_VERTEX_SHADER } from '../../../../../rendering/materials/point/shader-glsl';
 import { GSPLAT_VERTEX_SHADER } from '../../../../../rendering/materials/gsplat/shader-glsl';
 import { LINE_FRAGMENT_SHADER } from '../../../../../rendering/materials/line/shader-glsl';
+import { MESH_FRAGMENT_SHADER } from '../../../../../rendering/materials/mesh/shader-glsl';
 import { GLSL_NEAR_FADE_FUNCTIONS } from '../../../../../rendering/materials/_shared/glsl-lib';
 
 import { fadeRejectHeadroom, NEAR_FADE_REJECT, smoothstep } from './_near-fade-model';
@@ -387,8 +388,9 @@ describe('bounds-math', () => {
 
     // The losslessness half of the derivation is a claim about the SHADERS,
     // not about this module: "everything the floor clips was already being
-    // suppressed by the point / line / gsplat near fade". The arithmetic below
-    // models that fade — a `smoothstep` over [nearCull, 2*nearCull] with a
+    // suppressed by the near fade" — of all FOUR geometry types since #1431
+    // gave mesh the same fade. The arithmetic below models that fade — a
+    // `smoothstep` over [nearCull, 2*nearCull] with a
     // reject at 0.01 — and arithmetic cannot notice the shaders changing under
     // it. So pin the premises against the real sources; without this the
     // derivation tests stay green while the thing they model has moved.
@@ -413,6 +415,14 @@ describe('bounds-math', () => {
       expect(LINE_FRAGMENT_SHADER).toMatch(
         /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*vViewZ\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
       );
+      // ...and mesh, also per-fragment (a triangle spans depth), but WITH the
+      // 0.01 reject: it writes depth in `opaque` / `normal`, so a faded-out
+      // fragment left rasterizing would occlude whatever is behind it. This
+      // pair is what makes the derivation cover the fourth type.
+      expect(MESH_FRAGMENT_SHADER).toMatch(
+        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*vViewPos\.z\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
+      );
+      expect(MESH_FRAGMENT_SHADER).toMatch(new RegExp(`nearFade\\s*${reject}`));
     });
 
     // The two constraints that pin MAX_NEAR_FAR_RATIO, as executable arithmetic
@@ -512,12 +522,14 @@ describe('bounds-math', () => {
       expect(nearPlaneFloor(0, 0)).toBe(MIN_NEAR_PLANE);
     });
 
-    it('stays below the nearCull threshold that already hides points/lines/gsplats', () => {
+    it('stays below the nearCull threshold that already hides every geometry type', () => {
       // `perspectiveNearFade` (materials/_shared/glsl-lib.ts) returns 0 at
-      // -viewZ <= nearCull = 1e-3 * diagonal, and the point/line/gsplat
-      // vertex shaders reject the vertex there. A floor at or below nearCull
-      // is therefore provably lossless for those three geometry types --
-      // this is the upper-bound half of the MAX_NEAR_FAR_RATIO derivation.
+      // -viewZ <= nearCull = 1e-3 * diagonal, and every geometry type is
+      // suppressed there: points/gsplats reject the vertex, mesh rejects the
+      // fragment, and lines multiply the fade into their intensity chain so
+      // the contribution reaches ~0 over the same band. A floor at or below
+      // nearCull is therefore provably lossless for all four -- this is the
+      // upper-bound half of the MAX_NEAR_FAR_RATIO derivation.
       for (const diagonal of [0.01, 1, 100, 1e5]) {
         const R = 0.5 * diagonal * SPHERE_SAFETY_EXPANSION;
         const nearCull = diagonal * NEAR_CULL_DIAGONAL_FACTOR;
