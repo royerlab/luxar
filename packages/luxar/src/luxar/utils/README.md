@@ -123,7 +123,7 @@ The additive-LOD **ordering-method registry** — the single source of truth for
 which orderings exist. Sibling of `lod_breakpoints.py` and here for the same
 reason: the implementation lives in `luxar.gsplats.lod.additive`, but the CLI
 needs the list too, and importing anything under `luxar.gsplats` executes that
-package's `__init__` (~1.3 s measured), which would nearly triple `luxar --help`.
+package's `__init__`, which adds ~600 ms on top of the CLI's own ~250 ms import — a 3.4x multiplier on `luxar --help`, stable over 3 runs.
 A stdlib-only leaf module is free to import from either side, so the two can share
 one list instead of hand-copying it — they previously held two literal tuples with
 no consistency test, and the copies had already diverged.

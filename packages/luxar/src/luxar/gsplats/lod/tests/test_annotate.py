@@ -654,6 +654,75 @@ def test_annotate_still_stamps_a_non_reveal_ladder(tmp_path: Path) -> None:
     assert has_w
 
 
+def test_partitioned_radial_centres_each_part_on_itself_by_default(
+    tmp_path: Path,
+) -> None:
+    """A DECISION, pinned: `tiles -m radial` self-centres each part by default.
+
+    The ladder is built per part, so without an explicit centre each part reveals
+    from its OWN bbox middle — N independent local reveals, not one object growing
+    from its centre. That is useful (each visible, frustum-culled tile paints its
+    own middle first) and surprising, so it is documented in the module README and
+    pinned here: if someone changes the default, this test should make them do it
+    deliberately.
+
+    Passing `reveal_centre` switches to one coherent global reveal, which the
+    second half asserts.
+    """
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.tree import iter_leaves
+
+    rng = np.random.default_rng(0)
+    n = 800
+    d = rng.standard_normal((n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+    r = 50.0 * rng.random(n) ** (1 / 3)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, 0] = chol[:, 2] = chol[:, 5] = 1.5
+    data = GSplatData(
+        centers=(d * r[:, None]).astype(np.float32),
+        amplitudes=(0.2 + rng.random(n)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+
+    def first_shell_gap(centre: "list[float] | None") -> "tuple[float, float]":
+        """(mean dist of each part's first shell to its OWN centre, to the GLOBAL)."""
+        out = tmp_path / f"tiles_{centre is not None}.gsplats.zarr"
+        params = RecipeParams(
+            n_lods=3,
+            additive_method="radial",
+            max_elements=250,
+            seed=0,
+            reveal_centre=centre,
+        )
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        write_gsplats_tree(out, build_recipe(data, "tiles", params))
+        node, _ = load_gsplat_node(out, include_stats=False)
+        own, glob = [], []
+        parts = [
+            [np.asarray(s.centers, dtype=np.float64) for s in leaf.additive_sublods]
+            for leaf in iter_leaves(node)
+        ]
+        assert len(parts) > 1, "fixture must actually partition"
+        allc = np.concatenate([a for p in parts for a in p])
+        gc = (allc.min(axis=0) + allc.max(axis=0)) / 2.0
+        for p in parts:
+            pall = np.concatenate(p)
+            pc = (pall.min(axis=0) + pall.max(axis=0)) / 2.0
+            own.append(float(np.linalg.norm(p[0] - pc, axis=1).mean()))
+            glob.append(float(np.linalg.norm(p[0] - gc, axis=1).mean()))
+        return sum(own) / len(own), sum(glob) / len(glob)
+
+    own_default, glob_default = first_shell_gap(None)
+    own_pinned, glob_pinned = first_shell_gap([0.0, 0.0, 0.0])
+
+    # Default: first shells hug their OWN part centre, not the global one.
+    assert own_default < glob_default, (own_default, glob_default)
+    # Pinned: the global centre becomes the closer one — the ordering really moved.
+    assert glob_pinned < glob_default, (glob_pinned, glob_default)
+
+
 def test_with_quality_does_not_re_add_the_weight_to_a_reveal_level(
     tmp_path: Path,
 ) -> None:

@@ -71,6 +71,7 @@ from luxar.gsplats.tree import (
     GSplatPartition,
     iter_leaves,
 )
+from luxar.utils.lod_methods import is_reveal_method
 
 #: The recipe vocabulary, ordered by dataset scale.
 RecipeName = Literal[
@@ -504,7 +505,17 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         # weighted-quality aggregation.
         cap_stats = capped.substitutive_levels[-1].stats
         leaf_stats = coarse_leaf.meta.setdefault("stats", {})
-        for key in ("quality", "reference_energy"):
+        # Not `reference_energy` on a REVEAL ladder: `_ladder_for_part` above
+        # deliberately left the cap with no per-rung `energy_fraction_cum`, and w
+        # is the weight for exactly those fractions — re-attaching it here would
+        # put back the half-written pair `make_additive_lod` just removed. Q is a
+        # standalone readout and still goes on.
+        keys = (
+            ("quality",)
+            if _is_reveal_ladder(coarse_leaf)
+            else ("quality", "reference_energy")
+        )
+        for key in keys:
             if key in cap_stats:
                 leaf_stats[key] = cap_stats[key]
         # The fine parts ARE the group's finest content: quality 1.0 by
@@ -532,6 +543,20 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     coarse_leaf.meta["coverage_fraction"] = coarse_cov
     fine_partition.meta["coverage_fraction"] = fine_cov
     return group
+
+
+def _is_reveal_ladder(node: GSplatNode) -> bool:
+    """Was ``node``'s additive ladder built by a REVEAL ordering?
+
+    Read off the ladder's own ``lod_method`` provenance (which a reveal DOES
+    carry — only the energy keys are omitted) rather than off
+    ``params.additive_method``, which may still be the unresolved ``auto``.
+    """
+    sublods = getattr(node, "additive_sublods", None) or []
+    return any(
+        is_reveal_method(str((getattr(sub, "stats", None) or {}).get("lod_method")))
+        for sub in sublods
+    )
 
 
 def _ladder_for_part(

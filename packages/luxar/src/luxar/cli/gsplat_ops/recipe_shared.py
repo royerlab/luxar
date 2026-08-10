@@ -31,8 +31,8 @@ from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES
 #:
 #: The registry deliberately lives under ``utils`` rather than in
 #: :mod:`luxar.gsplats.lod.additive`, which owns the implementation: importing
-#: anything under ``luxar.gsplats`` executes its ``__init__`` (~1.3 s measured),
-#: which would nearly triple ``luxar --help``.
+#: anything under ``luxar.gsplats`` executes its ``__init__``, which adds ~600 ms
+#: on top of the CLI's own ~250 ms import — a 3.4x multiplier on ``luxar --help``.
 VALID_ADDITIVE_METHODS: tuple[str, ...] = GSPLAT_ADDITIVE_CHOICES
 
 # Valid substitutive partition algorithms.

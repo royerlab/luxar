@@ -345,6 +345,69 @@ class TestMakeAdditiveLodPoints:
 # ────────────────────────────────────────────────────────────────────────
 
 
+class TestResolveRevealKnobs:
+    """The RESOLVER's validation of ``reveal_centre`` / ``spatial_dims``.
+
+    This is the outer half of a deliberate defense-in-depth pair — the resolver
+    rejects early (before any group is written, which matters because a
+    substitutive wrapper group exists on disk before its children) and the scorer
+    rejects again for direct callers that bypass the resolver. A coverage run
+    showed this half had NO test, so the "defense in depth" claim was only half
+    true.
+    """
+
+    def test_valid_radial_spec_returns_both_knobs(self) -> None:
+        spec = resolve_additive_axis_points(
+            {"method": "radial", "reveal_centre": [1, 2, 3], "spatial_dims": [0, 1, 2]}
+        )
+        assert spec is not None
+        assert spec["reveal_centre"] == [1.0, 2.0, 3.0]
+        assert spec["spatial_dims"] == [0, 1, 2]
+        assert all(isinstance(c, float) for c in spec["reveal_centre"])
+        assert all(isinstance(d, int) for d in spec["spatial_dims"])
+
+    def test_defaults_are_none_and_present(self) -> None:
+        """Absent knobs must still be PRESENT as None — a consumer reading
+        ``spec["reveal_centre"]`` must not care which branch produced the dict."""
+        for spec in (
+            resolve_additive_axis_points(True),
+            resolve_additive_axis_points({"method": "radial"}),
+        ):
+            assert spec is not None
+            assert spec["reveal_centre"] is None
+            assert spec["spatial_dims"] is None
+
+    @pytest.mark.parametrize(
+        ("spec", "match"),
+        [
+            ({"method": "radial", "reveal_centre": []}, "must not be empty"),
+            ({"method": "radial", "spatial_dims": []}, "must not be empty"),
+            ({"method": "radial", "spatial_dims": [0, 0]}, "must not repeat"),
+            ({"method": "radial", "spatial_dims": [-1]}, "non-negative"),
+            ({"method": "random", "reveal_centre": [0.0]}, "only to a\n? *reveal"),
+            ({"method": "random", "spatial_dims": [0]}, "only to a\n? *reveal"),
+        ],
+        ids=[
+            "empty-centre",
+            "empty-dims",
+            "duplicate-dims",
+            "negative-dims",
+            "centre-without-radial",
+            "dims-without-radial",
+        ],
+    )
+    def test_malformed_reveal_spec_raises(self, spec: dict, match: str) -> None:
+        with pytest.raises(ValueError, match=match):
+            resolve_additive_axis_points(spec)
+
+    def test_unknown_key_still_reported_after_popping_reveal_keys(self) -> None:
+        """The reveal keys are POPPED, so the leftover-keys check must still fire
+        for a genuinely unknown name (a mutation that popped too much would hide
+        typos)."""
+        with pytest.raises(ValueError, match="unrecognized keys"):
+            resolve_additive_axis_points({"method": "radial", "revealCentre": [0.0]})
+
+
 class TestResolveAdditiveAxisPoints:
     def test_none_is_noop(self) -> None:
         assert resolve_additive_axis_points(None) is None
