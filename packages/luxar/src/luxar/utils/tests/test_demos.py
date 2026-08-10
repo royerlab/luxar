@@ -499,3 +499,60 @@ class TestCacheStaleness:
         out = demos.load_precomputed_gsplats("gsplats_x", ["x.gsplats.zarr.zip"])
         # Refreshed from source and loaded (would raise on the stale bytes).
         assert out is not None and out[0].n_splats == n
+
+
+# ───────────────────── derived demo ports (launch_viewer) ─────────────────────
+class TestDemoPorts:
+    """Stable per-dataset ports so demos never contend for 8000/5173."""
+
+    def test_deterministic_and_in_range(self) -> None:
+        from luxar.utils.demos import demo_ports
+
+        data, viewer = demo_ports("global_rivers_earth.luxar.zarr")
+        assert (data, viewer) == demo_ports("global_rivers_earth.luxar.zarr")
+        # Path components don't matter — only the dataset name does, so the
+        # same demo maps to the same URL from any output directory.
+        assert (data, viewer) == demo_ports(
+            Path("/somewhere/else/global_rivers_earth.luxar.zarr")
+        )
+        assert 8001 <= data <= 8499
+        assert 5200 <= viewer <= 5698
+        # Never the bare `luxar serve` defaults.
+        assert data != 8000 and viewer != 5173
+
+    def test_different_demos_spread(self) -> None:
+        from luxar.utils.demos import demo_ports
+
+        names = [f"demo_{i}.luxar.zarr" for i in range(24)]
+        assert len({demo_ports(n) for n in names}) > 20
+
+    def test_serve_command_appends_derived_ports(self) -> None:
+        from luxar.utils.demos import _serve_command, demo_ports
+
+        data, viewer = demo_ports("x.luxar.zarr")
+        cmd = _serve_command("x.luxar.zarr", open_browser=True, serve_args=None)
+        assert cmd[-1] == "--open"
+        assert ["--port", str(data)] == cmd[cmd.index("--port") :][:2]
+        assert ["--viewer-port", str(viewer)] == cmd[cmd.index("--viewer-port") :][:2]
+
+    def test_serve_command_respects_pinned_ports(self) -> None:
+        from luxar.utils.demos import _serve_command
+
+        cmd = _serve_command(
+            "x.luxar.zarr",
+            open_browser=False,
+            serve_args=["--port", "9000"],
+        )
+        # The explicit pin survives and no second --port is appended.
+        assert cmd.count("--port") == 1
+        assert cmd[cmd.index("--port") + 1] == "9000"
+        assert "--viewer-port" in cmd  # unpinned half still derived
+
+        cmd = _serve_command(
+            "x.luxar.zarr",
+            open_browser=False,
+            serve_args=["--viewer-port=6000"],
+        )
+        assert not any(a == "--viewer-port" for a in cmd[cmd.index("--viewer") :][1:])
+        assert "--viewer-port=6000" in cmd
+        assert "--port" in cmd  # unpinned half still derived

@@ -6,6 +6,21 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Demos serve on per-dataset derived ports, not 8000/5173
+
+Every demo used to contend for the same default ports, so with several demos
+(or several agents) on one machine, whichever came second silently shifted to
+8001/5174 — and a browser tab left over from demo A could later front demo
+B's server at the very same URL, showing the wrong scene with full
+confidence. `launch_viewer` now derives a stable `(data, viewer)` port pair
+from the dataset's file name (`demo_ports`, ranges 8001–8499 / 5200–5698,
+disjoint from the bare `luxar serve` defaults): different demos never share a
+URL, re-running the same demo lands on the same URL, and concurrent
+agents/demos stop colliding entirely. A demo passing an explicit `--port` /
+`--viewer-port` through `serve_args` keeps full control, and `pick_port`
+still resolves the rare same-slot hash collision by shifting up with its
+usual warning.
+
 #### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
 
 The volumetric line primitive (#1426) gains its picking pass, so the flag now
