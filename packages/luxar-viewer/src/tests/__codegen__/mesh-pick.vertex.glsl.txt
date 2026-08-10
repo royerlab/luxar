@@ -39,7 +39,9 @@ layout( std140 ) uniform object {
 	float nodeUniform3;
 	float nodeUniform4;
 	float nodeUniform5;
-	mat4 nodeUniform9;
+	float nodeUniform6;
+	float nodeUniform7;
+	mat4 nodeUniform10;
 };
 
 layout( std140 ) uniform render {
@@ -53,8 +55,9 @@ layout( std140 ) uniform render {
 
 // varyings
 out float nodeVarying0;
-flat  out float nodeVarying1;
-flat  out vec2 nodeVarying2;
+out float nodeVarying1;
+flat  out float nodeVarying2;
+flat  out vec2 nodeVarying3;
 out vec4 v_clipSpace;
 
 
@@ -64,11 +67,12 @@ layout( location = 1 ) in vec3 position;
 
 
 // vars
-int nodeVar1;
-vec2 nodeVar2;
-float nodeVar6;
+int nodeVar4;
+vec2 nodeVar5;
+float nodeVar9;
 mat4 modelViewMatrix;
-vec4 nodeVar7;
+vec4 nodeVar10;
+vec4 nodeVar11;
 
 // codes
 
@@ -81,29 +85,32 @@ void main() {
 	// flow
 	// code
 
+	nodeVarying1 = 0.0;
 	nodeVarying0 = 1.0;
-	nodeVarying1 = nodeUniform3;
-	nodeVar1 = ( int( uint( gl_VertexID ) ) / 65536 );
-	nodeVar2 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar1 * 65536 ) ) ), float( nodeVar1 ) );
-	nodeVarying2 = nodeVar2;
+	nodeVarying2 = nodeUniform5;
+	nodeVar4 = ( int( uint( gl_VertexID ) ) / 65536 );
+	nodeVar5 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar4 * 65536 ) ) ), float( nodeVar4 ) );
+	nodeVarying3 = nodeVar5;
 
 	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
 
-		nodeVar6 = min( max( color.w, 0.0 ), 1.0 );
+		nodeVar9 = min( max( color.w, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar6 = 1.0;
+		nodeVar9 = 1.0;
 
 	}
 
-	nodeVarying0 = nodeVar6;
-	modelViewMatrix = ( cameraViewMatrix * nodeUniform9 );
-	nodeVar7 = ( cameraProjectionMatrix * ( modelViewMatrix * vec4( position, 1.0 ) ) );
-	v_clipSpace = nodeVar7;
+	nodeVarying0 = nodeVar9;
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform10 );
+	nodeVar10 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	nodeVarying1 = nodeVar10.z;
+	nodeVar11 = ( cameraProjectionMatrix * nodeVar10 );
+	v_clipSpace = nodeVar11;
 
 	// result
-	gl_Position = nodeVar7;
+	gl_Position = nodeVar11;
 
 	gl_PointSize = 1.0;
 

@@ -542,7 +542,7 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 
 - Always-optimal Z-buffer precision as camera moves
 - **Direction-independent clipping** -- no sharp jumps at bounding box edges
-- Near plane drops to the floor as camera enters the scene, but no further: `MAX_NEAR_FAR_RATIO = 1200` caps the near/far ratio so 24-bit depth stays usable (an unbounded ratio z-fights, and pops while orbiting). The cap sits below the `nearCull` depth at which Points/Lines/GSplats already vanish, so it costs those types nothing
+- Near plane drops to the floor as camera enters the scene, but no further: `MAX_NEAR_FAR_RATIO = 1200` caps the near/far ratio so 24-bit depth stays usable (an unbounded ratio z-fights, and pops while orbiting). The cap sits below the `nearCull` depth at which all four geometry types have already faded out: Points/GSplats/Mesh are rejected outright below the shared 0.01 threshold, so it costs those three nothing, and a line is attenuated to under 1% of its authored contribution (its own discard is a separate colour test the fade never enters)
 - Eliminates need for manual clipping adjustment
 - Perfect for exploring large-scale scenes from any viewpoint
 

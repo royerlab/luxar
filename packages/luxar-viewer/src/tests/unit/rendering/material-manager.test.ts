@@ -327,7 +327,7 @@ describe('MaterialManager', () => {
   // GLOBAL UPDATES
   // =========================================================================
 
-  describe('getMeshMaterial — tracked for disposal, never camera-broadcast', () => {
+  describe('getMeshMaterial — camera-broadcast like its three siblings', () => {
     const meshProps = {
       blendingMode: 'opaque' as const,
       opacity: 1.0,
@@ -336,23 +336,30 @@ describe('MaterialManager', () => {
       offset: 0.0,
     };
 
-    it('counts in the stats but receives no camera update', () => {
-      // A mesh draws real geometry, so it has no screen-space extent to recompute.
-      // It must still be COUNTED (a leak in mesh materials has to be as visible as
-      // one in the other three) while staying out of the per-frame broadcast.
+    it('counts in the stats AND receives the current camera params at creation', () => {
+      // A mesh consumes only half the contract — there is no screen-space extent to
+      // recompute from fov/resolution — but the other half drives the near fade, and
+      // a mesh created after the camera settled must not be left fading against the
+      // constructor's 0.1 default. Asserted through the uniforms rather than a call
+      // spy, so it stays true of however the call is made.
+      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.42);
       const mesh = manager.getMeshMaterial(meshProps);
       expect(manager.getCacheStats().totalRegistered).toBe(1);
-      expect(
-        (mesh as unknown as { updateCameraParams?: unknown }).updateCameraParams
-      ).toBeUndefined();
-      // The broadcast must not throw on a registry that contains a mesh material.
-      expect(() => manager.updateCameraParams(1.0, new THREE.Vector2(800, 600))).not.toThrow();
+      expect(mesh.uniforms.uIsOrtho.value).toBe(1);
+      expect(mesh.uniforms.uNearCull.value).toBe(0.42);
     });
 
-    it('is disposed by manager.dispose() — the set is in the teardown union', () => {
-      // Mesh materials live ONLY in `staticMaterials`, so omitting that set from the
-      // dispose union would leak their GPU programs at teardown with nothing to
-      // notice it.
+    it('keeps tracking the broadcast after creation', () => {
+      const mesh = manager.getMeshMaterial(meshProps);
+      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.25);
+      expect(mesh.uniforms.uIsOrtho.value).toBe(0);
+      expect(mesh.uniforms.uNearCull.value).toBe(0.25);
+    });
+
+    it('is disposed by manager.dispose(), which also empties the registries', () => {
+      // Mesh reaches teardown through `registeredMaterials` now that it is
+      // camera-aware — it is no longer a `staticMaterials` resident, so this is the
+      // ordinary factory-material path rather than a statement about that set.
       const mesh = manager.getMeshMaterial(meshProps);
       manager.dispose();
       expect(mesh.dispose).toHaveBeenCalled();
@@ -361,19 +368,32 @@ describe('MaterialManager', () => {
   });
 
   describe('register — dispatches on camera-awareness rather than demanding it', () => {
-    it('tracks a NON-camera-aware material without calling updateCameraParams', () => {
+    it('tracks a material with NO camera uniforms without calling updateCameraParams', () => {
       // The layers panel clones a leaf material on first interaction and registers the
-      // clone. A mesh clone has no `updateCameraParams`, so a `register` that assumed
-      // the method would throw at exactly that moment — the panel's first click on a
-      // mesh layer. Dispatching inside the manager keeps one entry point that cannot
-      // be called wrongly.
-      const meshClone = new MeshMaterial({ opacity: 0.5 });
-      expect(() => manager.register(meshClone)).not.toThrow();
+      // clone, and `register` takes a plain `THREE.Material` — so a clone with no
+      // `updateCameraParams` must not make it throw at exactly that moment. All four
+      // geometry types are camera-aware today (mesh joined them with the near fade),
+      // so the stand-in here is a bare material; the dispatch is what is under test,
+      // and it keeps one entry point that cannot be called wrongly.
+      const bare = new THREE.ShaderMaterial({ uniforms: {} });
+      expect(() => manager.register(bare)).not.toThrow();
       const stats = manager.getCacheStats();
       expect(stats.ownedMaterials, 'a non-camera-aware entry still counts as owned').toBe(1);
       expect(stats.totalRegistered).toBe(1);
       // And it survives the broadcast, which must skip it.
       expect(() => manager.updateCameraParams(1.0, new THREE.Vector2(800, 600))).not.toThrow();
+    });
+
+    it('camera-updates a registered mesh clone immediately', () => {
+      // The layers-panel clone path for a mesh specifically: now that mesh is
+      // camera-aware, `register` must route it into the broadcast rather than the
+      // disposal-only set, or a clone taken mid-session would fade against the
+      // constructor default until the next camera move.
+      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.37);
+      const meshClone = new MeshMaterial({ opacity: 0.5 });
+      expect(meshClone.uniforms.uNearCull.value).toBe(0.1);
+      manager.register(meshClone);
+      expect(meshClone.uniforms.uNearCull.value).toBe(0.37);
     });
 
     it('still camera-updates a camera-aware registration immediately', () => {
@@ -389,12 +409,31 @@ describe('MaterialManager', () => {
     });
 
     it('unregisters a non-camera-aware material too — register/unregister must pair', () => {
-      const meshClone = new MeshMaterial({ opacity: 0.5 });
-      manager.register(meshClone);
-      manager.unregister(meshClone);
+      const bare = new THREE.ShaderMaterial({ uniforms: {} });
+      manager.register(bare);
+      manager.unregister(bare);
       const stats = manager.getCacheStats();
       expect(stats.ownedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(0);
+    });
+
+    it('disposes a non-camera-aware registration at teardown', () => {
+      // The `register()` half of `dispose()`'s registry union, which nothing else in
+      // this file reaches: every other material here is a factory material or a
+      // camera-aware clone, and both of those are torn down through
+      // `registeredMaterials`. A bare one is in `ownedMaterials` and (being
+      // non-camera-aware) `staticMaterials`, and in neither of the other sets — so
+      // reduce the union to `registeredMaterials` alone and this is the test that
+      // goes red. Verified by doing exactly that. It does NOT catch dropping just
+      // one of the two, because they overlap on this material by construction.
+      const bare = new THREE.ShaderMaterial({ uniforms: {} });
+      manager.register(bare);
+      expect(manager.getCacheStats().totalRegistered).toBe(1);
+      manager.dispose();
+      expect(bare.dispose).toHaveBeenCalled();
+      const stats = manager.getCacheStats();
+      expect(stats.totalRegistered).toBe(0);
+      expect(stats.ownedMaterials).toBe(0);
     });
   });
 

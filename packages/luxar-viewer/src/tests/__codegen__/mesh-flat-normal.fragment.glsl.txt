@@ -47,7 +47,9 @@ layout( std140 ) uniform object {
 	float nodeUniform5;
 	float nodeUniform6;
 	float nodeUniform7;
-	mat4 nodeUniform9;
+	float nodeUniform8;
+	float nodeUniform9;
+	mat4 nodeUniform11;
 };
 
 
@@ -66,8 +68,12 @@ float nodeVar4;
 vec3 nodeVar6;
 vec3 nodeVar7;
 float nodeVar8;
+float nodeVar9;
+float nodeVar10;
+float nodeVar11;
+float nodeVar12;
 vec4 Output;
-vec4 nodeVar9;
+vec4 nodeVar13;
 
 // codes
 
@@ -95,19 +101,51 @@ void main() {
 	nodeVar7 = ( pow( nodeVar6, vec3( nodeUniform4 ) ) * vec3( nodeVar4 ) );
 	nodeVar8 = ( nodeVarying1 * nodeUniform5 );
 
-	if ( ( nodeVar8 < nodeUniform6 ) ) {
+	if ( ( int( nodeUniform6 ) == 1 ) ) {
+
+		nodeVar9 = 1.0;
+
+	} else {
+
+
+		if ( ( nodeVarying2.z >= 0.0 ) ) {
+
+			nodeVar10 = 0.0;
+
+		} else {
+
+			nodeVar11 = max( nodeUniform7, 1e-20 );
+			nodeVar10 = smoothstep( nodeVar11, ( nodeVar11 * 2.0 ), ( - nodeVarying2.z ) );
+
+		}
+
+		nodeVar9 = nodeVar10;
+
+	}
+
+	nodeVar12 = nodeVar9;
+
+	if ( ( nodeVar12 < 0.01 ) ) {
 
 		discard;
 
 
 	}
 
-	DiffuseColor = vec4( nodeVar7, 1.0 );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform7 );
-	nodeVar9 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar9;
+
+	if ( ( nodeVar8 < nodeUniform8 ) ) {
+
+		discard;
+
+
+	}
+
+	DiffuseColor = vec4( ( nodeVar7 * vec3( nodeVar12 ) ), 1.0 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform9 );
+	nodeVar13 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar13;
 
 	// result
-	fragColor = nodeVar9;
+	fragColor = nodeVar13;
 
 }

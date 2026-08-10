@@ -1,12 +1,12 @@
 /**
  * Slot → on-disk element index map composition, shared by the geometry
- * producers (Points projection, GSplats projection).
+ * producers (Points projection, GSplats projection, Lines projection).
  *
  * A pick shader reports where an element sits in the buffer uploaded to the
  * GPU — its **storage slot**. The per-element label CSR (`label_offsets` /
  * `label_bytes`) is keyed by the element's **on-disk index**. The two spaces
  * diverge whenever the visible buffer is a proper, reordered, or compacted
- * subset of the on-disk one, and every geometry gets there the same two ways:
+ * subset of the on-disk one, and there are three causes across the geometries:
  *
  *  1. **Range loading** — the spatial index yields only the visible ranges
  *     (ascending, disjoint, half-open `[start, end)`) and the loader
@@ -15,10 +15,20 @@
  *  2. **Visibility compaction** — a per-element cull (zero effective radius for
  *     Points, hidden-dim attenuation for GSplats) drops elements in place,
  *     renumbering everything after the first removal.
+ *  3. **Granularity** (Lines only) — the pick shader reports a visible SEGMENT
+ *     slot while line labels are per-VERTEX, so no offset correction alone can
+ *     bridge the two spaces.
  *
- * Both reduce to the same composition: `ranges` + the ascending concat indices
- * that survived the cull ⇒ the on-disk index per slot. That composition lives
- * here so the two producers cannot drift.
+ * The first two reduce to the same composition: `ranges` + the ascending concat
+ * indices that survived the cull ⇒ the on-disk index per slot. That composition
+ * lives here so the producers cannot drift. Lines uses this helper for just ONE
+ * link of its longer chain — loaded-local vertex → on-disk vertex, i.e. `ranges`
+ * with no kept list — and walks the segment→vertex hops itself: its
+ * slot → segment-row → vertex sequence must NOT be passed as
+ * `keptConcatIndices`, because segment rows are spatially permuted and
+ * consecutive segments of a polyline share a vertex, so the sequence is neither
+ * monotone nor unique and the strict-ascent guard below would (correctly) reject
+ * it. See `data/scene-loader/process/data-processor-lines.ts`.
  *
  * @module data/loaders/element-ids
  */

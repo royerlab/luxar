@@ -1414,6 +1414,20 @@ describe('PointsProgressiveLoader — ladder elementIds composition (issue #1439
     expect(result.elementIds).toBeUndefined();
   });
 
+  it('lets an EMPTY level flag elementIdsUnavailable without vetoing the map', async () => {
+    // A level culled to zero by the current slice writes nothing into the union
+    // map, so its missing map cannot corrupt a slot — the other levels' maps
+    // must still be composed.
+    const empty = makeLodData(0, 3, { color: 'uint8' });
+    empty.elementIdsUnavailable = true;
+    const result = await makeLoader(
+      [gappedLod([3, 9]), empty, gappedLod([4])],
+      [0, 100, 350]
+    ).loadPoints(baseViewState);
+    expect(result.pointCount).toBe(3);
+    expect(Array.from(result.elementIds!)).toEqual([3, 9, 354]);
+  });
+
   it('fails closed when the SINGLE part flags elementIdsUnavailable', async () => {
     // The map it does carry is in nobody's index space; passing the payload
     // through would publish it as if it were the parent's.

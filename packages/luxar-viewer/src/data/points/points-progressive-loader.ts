@@ -64,12 +64,17 @@ import { log, Modules, LogEmoji } from '../../utils/log';
  * `elementIdsUnavailable`: its slots mean nothing, identity is not a legal
  * substitute, and the whole union map is refused.
  *
- * Returns `undefined` — hover then falls back to the raw slot — when the
- * identity holds across the whole ladder (no level published a map AND every
- * resident level is complete, so slot === union on-disk index; the common
- * fully-loaded unsliced case stays allocation-free, matching flat Points), or
- * when the inputs are inconsistent. Inconsistency FAILS CLOSED rather than
- * throwing: this feeds the hover path.
+ * Returns `undefined` when the identity holds across the whole ladder (no level
+ * published a map AND every resident level is complete, so slot === union
+ * on-disk index; the common fully-loaded unsliced case stays allocation-free,
+ * matching flat Points), or when the inputs are inconsistent.
+ *
+ * REFUSING IS NOT SUPPRESSION. With no map, `resolveOnDiskElementId` returns the
+ * raw slot, and on a sliced ladder that slot is itself a wrong CSR row — there
+ * is no "no answer" channel on the hover path. What refusing buys is narrower
+ * and exact: the id is never one this function COMPOSED out of levels it knows
+ * are inconsistent, so the result is no worse than the pre-#1439 behaviour. It
+ * also never throws — this feeds hover.
  */
 function buildLadderElementIdMap(
   parts: LoadedPointsData[],
@@ -89,7 +94,10 @@ function buildLadderElementIdMap(
   let running = 0;
   for (const [i, part] of parts.entries()) {
     const ids = part.elementIds;
-    if (part.elementIdsUnavailable === true) {
+    // An EMPTY level writes nothing into the union map, so its missing map
+    // cannot corrupt a single slot — it must not veto the other levels' (a
+    // ladder level culled to zero by the current slice is ordinary).
+    if (part.pointCount > 0 && part.elementIdsUnavailable === true) {
       warn(
         `Progressive Points: level ${i} could not build a slot → on-disk map (its slots are ` +
           'not on-disk indices) — picking labels fall back to the visible-buffer slot.'
@@ -176,8 +184,10 @@ function concatenatePointsData(
     const offsetOk = levelOffsets !== null && levelOffsets.length >= 1 && levelOffsets[0] === 0;
     // A level that WANTED a map and failed to build one is NOT the identity:
     // its slots are not on-disk indices, so it must not pass through as if
-    // they were. Same fail-closed treatment as a length mismatch.
-    const unusable = only.elementIdsUnavailable === true;
+    // they were. Same fail-closed treatment as a length mismatch. An EMPTY
+    // level has no slots to be wrong about, so it is exempt (as in
+    // `buildLadderElementIdMap`).
+    const unusable = only.pointCount > 0 && only.elementIdsUnavailable === true;
     const lengthBad = only.elementIds !== undefined && only.elementIds.length !== only.pointCount;
     if (offsetOk && (unusable || lengthBad)) {
       warn(

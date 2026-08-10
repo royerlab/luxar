@@ -48,6 +48,21 @@ worker dispatcher kernel in-process. `projection.ts` here exports only
   contiguous vertex ranges so each attribute array (positions,
   widths, colors, sharpness, scalars) is fetched with one zarr read
   per range.
+- **Labelled nodes publish their on-disk vertex ranges.** A node declaring
+  `has_labels` / `has_image_labels` gets `LoadedLinesData.vertexRangeBounds` — the
+  ascending, disjoint ON-DISK vertex ranges the loaded per-vertex arrays
+  concatenate, flattened as `[start0, end0, start1, end1, …]` in a `Uint32Array`
+  so the SliceCache measures and deep-copies them like any other per-vertex
+  array (an object array would be billed 0 bytes and shared by reference). They are one link of the slot → on-disk map picking resolves
+  per-vertex labels through (issue #1424; the full chain is documented in
+  `data/scene-loader/process/data-processor-lines.ts` and
+  `rendering/picking/picking-system/element-id-map.ts`). Gated because nothing
+  else reads them and they otherwise ride along in every SliceCache snapshot.
+  A ladder never publishes them: `createProgressiveLinesLoader` clears both
+  label flags on each synthesized `additive_<i>` node, and
+  `concatenateLinesData` strips the field defensively — a sub-LOD's ranges
+  describe that level's own on-disk space, not the parent's (per-level labels
+  are #1422).
 - **Progressive concatenation remaps segment indices.** When
   `LinesProgressiveLoader` concatenates per-LOD `LoadedLinesData`, each
   subgroup's `segments` array indexes its _own local_ vertex buffer, so

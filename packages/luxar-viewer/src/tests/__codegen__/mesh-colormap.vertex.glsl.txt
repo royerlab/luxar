@@ -45,15 +45,17 @@ layout( std140 ) uniform object {
 	float nodeUniform4;
 	float nodeUniform5;
 	float nodeUniform6;
-	mat4 nodeUniform8;
-	mat3 nodeUniform10;
-	float nodeUniform11;
-	float nodeUniform12;
+	float nodeUniform7;
+	float nodeUniform8;
+	mat4 nodeUniform10;
+	mat3 nodeUniform12;
 	float nodeUniform13;
-	uint nodeUniform14;
-	mat3 nodeUniform15;
+	float nodeUniform14;
+	float nodeUniform15;
+	uint nodeUniform16;
+	mat3 nodeUniform17;
 };
-uniform sampler2D nodeUniform9;
+uniform sampler2D nodeUniform11;
 
 // varyings
 out vec3 nodeVarying0;
@@ -74,14 +76,14 @@ vec3 nodeVar0;
 vec3 nodeVar4;
 vec3 nodeVar11;
 mat4 modelViewMatrix;
-vec4 nodeVar16;
-vec2 nodeVar17;
-vec2 nodeVar18;
-bool nodeVar19;
-vec2 nodeVar20;
-vec4 nodeVar21;
-float nodeVar22;
-vec4 nodeVar23;
+vec4 nodeVar20;
+vec2 nodeVar21;
+vec2 nodeVar22;
+bool nodeVar23;
+vec2 nodeVar24;
+vec4 nodeVar25;
+float nodeVar26;
+vec4 nodeVar27;
 
 // codes
 
@@ -101,42 +103,42 @@ void main() {
 	nodeVar11 = vec3( 0.0, 0.0, 0.0 );
 	nodeVarying0 = nodeVar11;
 	nodeVarying1 = 1.0;
-	modelViewMatrix = ( cameraViewMatrix * nodeUniform8 );
-	nodeVar16 = ( modelViewMatrix * vec4( position, 1.0 ) );
-	nodeVar17 = ( nodeUniform10 * vec3( vec2( pow( clamp( ( ( aScalar - nodeUniform11 ) * nodeUniform12 ), 0.0, 1.0 ), nodeUniform13 ), 0.5 ), 1.0 ) ).xy;
-	nodeVar19 = bool( nodeUniform14 );
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform10 );
+	nodeVar20 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	nodeVar21 = ( nodeUniform12 * vec3( vec2( pow( clamp( ( ( aScalar - nodeUniform13 ) * nodeUniform14 ), 0.0, 1.0 ), nodeUniform15 ), 0.5 ), 1.0 ) ).xy;
+	nodeVar23 = bool( nodeUniform16 );
 
-	if ( nodeVar19 ) {
+	if ( nodeVar23 ) {
 
-		nodeVar20 = nodeVar17;
-		nodeVar18 = vec2( nodeVar20.x, 1.0 - nodeVar20.y );
+		nodeVar24 = nodeVar21;
+		nodeVar22 = vec2( nodeVar24.x, 1.0 - nodeVar24.y );
 
 	} else {
 
-		nodeVar18 = nodeVar17;
+		nodeVar22 = nodeVar21;
 
 	}
 
-	nodeVar21 = texture( nodeUniform9, nodeVar18 );
-	nodeVarying0 = nodeVar21.xyz;
+	nodeVar25 = texture( nodeUniform11, nodeVar22 );
+	nodeVarying0 = nodeVar25.xyz;
 
 	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
 
-		nodeVar22 = min( max( color.w, 0.0 ), 1.0 );
+		nodeVar26 = min( max( color.w, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar22 = 1.0;
+		nodeVar26 = 1.0;
 
 	}
 
-	nodeVarying1 = nodeVar22;
-	nodeVarying2 = nodeVar16.xyz;
-	nodeVarying3 = ( cameraViewMatrix * vec4( ( nodeUniform15 * normal ), 0.0 ) ).xyz;
-	nodeVar23 = ( cameraProjectionMatrix * nodeVar16 );
+	nodeVarying1 = nodeVar26;
+	nodeVarying2 = nodeVar20.xyz;
+	nodeVarying3 = ( cameraViewMatrix * vec4( ( nodeUniform17 * normal ), 0.0 ) ).xyz;
+	nodeVar27 = ( cameraProjectionMatrix * nodeVar20 );
 
 	// result
-	gl_Position = nodeVar23;
+	gl_Position = nodeVar27;
 
 	gl_PointSize = 1.0;
 

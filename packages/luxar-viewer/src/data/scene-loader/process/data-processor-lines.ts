@@ -29,7 +29,8 @@
 import * as THREE from 'three';
 import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
 import { isLinesUserData } from '../../../types/lines';
-import { assertColorLayout, computeTolerance } from '../../loaders';
+import { assertColorLayout, buildElementIdMap, computeTolerance } from '../../loaders';
+import type { ElementIdRange } from '../../loaders/element-ids';
 import { EXTEND_TO_ALL_TOLERANCE } from '../view-state/extend-tolerance';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
@@ -87,6 +88,11 @@ function buildLinesParams(
     },
     ndim: data.ndim,
     segmentCount: data.segmentCount,
+    // Ask the projection to record which loaded segment row each emitted slot
+    // came from (issue #1424) only when there is a map to build — i.e. when the
+    // loader published the on-disk vertex ranges for a label-carrying node.
+    // Mirrors the gsplats processor's `emitSourceIndices` gate.
+    emitSourceIndices: data.vertexRangeBounds !== undefined,
   };
 }
 
@@ -96,11 +102,203 @@ function hasRGBAColors(data: LoadedLinesData): boolean {
 }
 
 /**
+ * Compose the lines picking map: visible segment SLOT → on-disk sorted VERTEX
+ * row (issue #1424). Four index spaces are involved, and the chain walks all of
+ * them:
+ *
+ *  - **A** on-disk (sorted) VERTEX row — what the per-vertex label CSR is keyed
+ *    by. `io/_ordering/lines.py` rewrites the stored segment entries through
+ *    `argsort(vertex_sort_indices)` (original index → sorted row), while
+ *    `io/_compiler/labels/text_labels.py` gathers the label strings by the
+ *    FORWARD `vertex_sort_indices` (sorted row → original index). Those are
+ *    duals, which is exactly why the two land in the same space: a stored
+ *    segment entry indexes the label CSR directly.
+ *  - **C** loaded-local VERTEX index — what `remapSegmentIndices` wrote into
+ *    `LoadedLinesData.segments`, i.e. a row of `positions` / `widths`.
+ *  - **D** loaded SEGMENT row — row `r` of `segments`, holding two **C** values
+ *    at `[2r]`, `[2r + 1]`.
+ *  - **E** visible SEGMENT slot — what the pick shader reports (the
+ *    `ProcessedLinesData` array index == the line-texture texel row).
+ *
+ * `sourceSegmentIndices` (from the projection) is E → D; `segments` is D → C;
+ * `buildElementIdMap(vertexRangeBounds, null, …)` is C → A. Composing them is
+ * the whole fix: indexing the label CSR with the raw slot **E** is wrong twice
+ * over — wrong granularity (segment vs vertex) and wrong index space (visible
+ * vs on-disk).
+ *
+ * **The START vertex is the one reported.** A segment has two endpoints, but the
+ * pick id is a `flat` vertex-stage varying (`rendering/picking/line/shaders.ts`,
+ * `pick.tsl.ts`), so the fragment stage cannot choose the nearer endpoint
+ * without the shader emitting two ids and a barycentric split. Reporting the
+ * start endpoint consistently is the honest single-id answer. Two consequences
+ * are visible to a user and worth stating: on a PARTIALLY CLIPPED segment the
+ * reported start vertex can lie entirely outside the visible slice (what is
+ * drawn starts at `p1 + t1·(p2 - p1)`, so with `t1 → 1` the visible geometry
+ * sits at the far end), and ANY vertex that is never a segment's start is not
+ * reportable at all. Which ones those are is set by the authored line type
+ * (`io/_ordering/lines.py::convert_to_indexed`): for `polyline` only the final
+ * vertex, for `loop` none, for `indexed` whatever subset the supplied indices
+ * never place first — and, the surprising case, for `segments` EVERY
+ * odd-numbered vertex, since its pairs are consecutive and disjoint
+ * (`(0,1), (2,3), …`), so half the label array is unreachable.
+ *
+ * Fails CLOSED (returns `undefined`, one warning) on any inconsistency: picking
+ * then falls back to the raw slot, exactly as it behaved before this map
+ * existed. Be exact about what that buys, because "fails closed" here does NOT
+ * mean "no answer": on a LABELLED node the raw slot is still a segment number
+ * handed to a per-vertex CSR, so a rejection degrades to the pre-#1424
+ * wrong-but-plausible label rather than suppressing it. What it does avoid is
+ * inventing a NEW wrong answer out of inputs already known to be inconsistent.
+ * Actually suppressing the lookup would need an "unresolved" state threaded
+ * through `resolveOnDiskElementId`, `PickResult.elementId` and
+ * `SelectionPayload.elementIndex` — the identity-fallback convention Points
+ * (#1421) and GSplats (#1423) already landed on, so changing it is a
+ * four-geometry job, not a lines-local one (and a sentinel id would leak
+ * garbage into the embedder's `elementIndex`). The shapes that actually reach
+ * these branches are a broken build or inputs `validateLineSegmentReferences`
+ * throws on upstream first.
+ */
+function composeLinesElementIds(
+  data: LoadedLinesData,
+  sourceSegmentIndices: Uint32Array | undefined,
+  visibleSegmentCount: number
+): Uint32Array | undefined {
+  const bounds = data.vertexRangeBounds;
+  if (bounds === undefined) return undefined;
+  // Shape check on the flat `[start0, end0, …]` pair layout. An odd length is
+  // malformed by construction, and the arithmetic below would silently read
+  // `undefined` for the missing `end` — so reject it explicitly rather than
+  // leaning on the NaN the subtraction would produce.
+  if (bounds.length % 2 !== 0) {
+    log.warning(
+      Modules.LINES_LOADER,
+      'Lines element-ID map skipped: the vertex range bounds have an odd length ' +
+        `(${bounds.length}); they must be [start, end) pairs. Picking labels fall ` +
+        'back to the visible-buffer slot.'
+    );
+    return undefined;
+  }
+  if (visibleSegmentCount <= 0) return undefined; // no slots to map
+  if (sourceSegmentIndices === undefined || sourceSegmentIndices.length !== visibleSegmentCount) {
+    // EXACT length, not "at least": the projection publishes a table that
+    // describes precisely the visible stream (`workers/data-worker/projection/
+    // lines.ts` sizes it `visibleCount` and only publishes it when its own set-bit
+    // count agrees), so a longer table is not a superset to read a prefix of — it
+    // is an UNCOMPACTED `segmentCount`-long table from a producer that ignored the
+    // clip, and a `>=` check would accept it and map every slot `s` to segment row
+    // `s`: exactly the wrong-but-plausible answer this map exists to prevent.
+    // Every other guard here is an exact-match rejection for the same reason.
+    //
+    // Deliberately does not assert what the projection did: the table is also
+    // dropped when the clip kernel's visibility mask and returned count
+    // disagree, and that case logs its own warning at the detection site in
+    // `workers/data-worker/projection/lines.ts`.
+    log.warning(
+      Modules.LINES_LOADER,
+      'Lines element-ID map skipped: no usable source segment indices for ' +
+        `${visibleSegmentCount} visible segments (got ${
+          sourceSegmentIndices?.length ?? 'none'
+        }). Picking labels fall back to the visible-buffer slot.`
+    );
+    return undefined;
+  }
+
+  // The ranges must describe EXACTLY the loaded vertices before the C → A link
+  // means anything, so assert the total up front. This is also what keeps the
+  // two identity conditions from disagreeing: `buildElementIdMap` takes its
+  // identity fast path BEFORE its own count guard, so a single `[0, k)` range
+  // with `k !== vertexCount` returned `undefined` with nothing logged, and the
+  // "already warned" bail below was a lie.
+  let rangeTotal = 0;
+  for (let i = 0; i < bounds.length; i += 2) rangeTotal += bounds[i + 1] - bounds[i];
+  if (rangeTotal !== data.vertexCount) {
+    log.warning(
+      Modules.LINES_LOADER,
+      `Lines element-ID map skipped: the vertex ranges cover ${rangeTotal} vertices ` +
+        `but ${data.vertexCount} were loaded. Picking labels fall back to the ` +
+        'visible-buffer slot.'
+    );
+    return undefined;
+  }
+
+  // C → A. With the total asserted above, "one range anchored at 0" is now
+  // EXACTLY `buildElementIdMap`'s own identity condition (a total of
+  // `vertexCount` from a single range starting at 0 forces `end ===
+  // vertexCount`), so the two can no longer diverge: on that shape the local
+  // index IS the on-disk row, and any other `undefined` from the composer is a
+  // genuine rejection it warned about.
+  const identityCA = bounds.length === 2 && bounds[0] === 0;
+  let localToGlobal: Uint32Array | undefined;
+  if (!identityCA) {
+    // The object array materializes HERE and nowhere else: `buildElementIdMap`
+    // takes `readonly ElementIdRange[]`, and it stays the shared composer
+    // precisely for its guards. Nothing cached ever sees these objects — the
+    // payload keeps the flat typed array.
+    const ranges: ElementIdRange[] = new Array<ElementIdRange>(bounds.length / 2);
+    for (let i = 0; i < bounds.length; i += 2) {
+      ranges[i / 2] = { start: bounds[i], end: bounds[i + 1] };
+    }
+    localToGlobal = buildElementIdMap(ranges, null, data.vertexCount, Modules.LINES_LOADER);
+    if (localToGlobal === undefined) return undefined; // already warned
+  }
+
+  const out = new Uint32Array(visibleSegmentCount);
+  for (let s = 0; s < visibleSegmentCount; s++) {
+    const r = sourceSegmentIndices[s]; // E → D
+    // Both limits matter. `r >= segmentCount` catches a row past the loaded
+    // segments; the `segments.length` half catches a SHORT `segments` array,
+    // where `data.segments[2 * r]` would be `undefined` — and `undefined >=
+    // vertexCount` is FALSE, so the vertex guard below would wave it through and
+    // `out[s]` would store a wrong-but-plausible 0. A NaN/undefined comparison
+    // cannot be relied on to fail closed, which is why the explicit length check
+    // is the correct form. (Unreachable today only because
+    // `validateLineSegmentReferences` throws upstream first.)
+    if (r >= data.segmentCount || 2 * r + 1 >= data.segments.length) {
+      log.warning(
+        Modules.LINES_LOADER,
+        `Lines element-ID map skipped: source segment row ${r} is outside the ` +
+          `${data.segmentCount} loaded segments (${data.segments.length} segment ` +
+          'entries). Picking labels fall back to the visible-buffer slot.'
+      );
+      return undefined;
+    }
+    // D → C (start vertex). Note this reads `data.segments`' CONTENTS after the
+    // awaited projection: on a cold plain-leaf load that array aliases
+    // `LinesDataAccumulator`'s reused buffer, which `loadLinesInternal` refills IN
+    // PLACE. Safe only because no second load can be in flight against it —
+    // `SceneLoader.updateView` is single-flight, `SlicePrefetcher` uses shadow
+    // loaders with their own accumulators, and a slice-cache hit returns a clone
+    // (the same aliasing `setCommittedData` already retains). Loosen the
+    // single-flight assumption and this needs a snapshot first.
+    const c = data.segments[2 * r];
+    // Bounds-checked for BOTH C → A branches. On the identity branch `c` is
+    // written straight through as an on-disk row, so an out-of-range segment
+    // entry would surface exactly the wrong-but-plausible label this map exists
+    // to remove. `vertexCount` is the right limit either way — `localToGlobal`,
+    // when it is built at all, is precisely that long.
+    if (c >= data.vertexCount) {
+      log.warning(
+        Modules.LINES_LOADER,
+        `Lines element-ID map skipped: local vertex index ${c} is outside the ` +
+          `${data.vertexCount} loaded vertices. Picking labels fall back to the ` +
+          'visible-buffer slot.'
+      );
+      return undefined;
+    }
+    out[s] = localToGlobal === undefined ? c : localToGlobal[c]; // C → A
+  }
+  return out;
+}
+
+/**
  * Map a dispatcher result (worker or in-process) to `ProcessedLinesData`.
+ *
+ * Takes the LOADED payload (not just derived booleans) because the picking map
+ * composition below reads `segments` / `vertexRangeBounds` / `vertexCount` off it.
  *
  * The worker returns an empty `startScalars` when input scalars were
  * null; the loader treats absent source scalars as the "no colormap"
- * signal. We pass `hasSourceScalars` (truthiness of `data.scalars`) so
+ * signal. Scalar presence is read off `data.scalars` (truthiness) so
  * undefined and null inputs are handled uniformly — and presence
  * follows the SOURCE alone, not the visible count: at a slice with 0
  * visible segments the worker's scalar arrays are empty but the node
@@ -113,10 +311,10 @@ function hasRGBAColors(data: LoadedLinesData): boolean {
  */
 function toProcessedLines(
   result: Awaited<ReturnType<typeof projectLinesInProcess>>,
-  hasSourceScalars: boolean,
-  hasSourceAlpha: boolean
+  data: LoadedLinesData
 ): ProcessedLinesData {
-  const hasScalars = hasSourceScalars;
+  const hasScalars = !!data.scalars;
+  const hasSourceAlpha = hasRGBAColors(data);
   return {
     startPositions: result.startPositions,
     endPositions: result.endPositions,
@@ -140,6 +338,13 @@ function toProcessedLines(
     // Fused-scan cull metadata (AABB + max width) — lets computeLineBounds
     // skip its O(N) main-thread scan per commit (see types/lines.ts).
     bounds: result.bounds,
+    // Visible slot → on-disk START-vertex row, for per-vertex label lookups
+    // on hover (see composeLinesElementIds).
+    elementIds: composeLinesElementIds(
+      data,
+      result.sourceSegmentIndices,
+      result.visibleSegmentCount
+    ),
   };
 }
 
@@ -196,7 +401,7 @@ export async function projectLinesTo3DUsingWorker(
       );
     }
 
-    return toProcessedLines(workerResult, !!data.scalars, hasRGBAColors(data));
+    return toProcessedLines(workerResult, data);
   } catch (error) {
     // Dataset-switch abort: don't burn CPU on stale in-process work.
     if (error instanceof Error && error.name === 'WorkerAbortError') {
@@ -218,11 +423,7 @@ export async function projectLinesTo3DUsingWorker(
       'No worker available, falling back to in-process lines projection:',
       error
     );
-    return toProcessedLines(
-      await projectLinesInProcess(params),
-      !!data.scalars,
-      hasRGBAColors(data)
-    );
+    return toProcessedLines(await projectLinesInProcess(params), data);
   }
 }
 
@@ -283,8 +484,7 @@ export async function processLinesData(
     // dispatcher in-process rather than a separate main-thread copy.
     return toProcessedLines(
       await projectLinesInProcess(buildLinesParams(data, viewState, tolerance)),
-      !!data.scalars,
-      hasRGBAColors(data)
+      data
     );
   };
 

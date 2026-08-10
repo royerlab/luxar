@@ -50,6 +50,7 @@ import {
   projectLinesTo3DUsingWorker,
 } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { LoadedLinesData } from '../../../../types/lines';
+import { log } from '../../../../utils/log';
 import { WorkerTimeoutError, WorkerUnavailableError } from '../../../../workers/worker-pool/errors';
 
 /**
@@ -354,6 +355,241 @@ describe('processLinesData', () => {
       viewState: { tolerance: number[] };
     };
     expect(params.viewState.tolerance[3]).toBe(1e10);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// Issue #1424: slot → on-disk START-vertex composition. Four spaces:
+//   E visible segment slot → D loaded segment row → C loaded-local vertex
+//   → A on-disk sorted vertex row (what the per-vertex label CSR is keyed by).
+describe('processLinesData — elementIds composition (picking labels)', () => {
+  const viewState = {
+    displayDims: [0, 1, 2],
+    slicePosition: [0, 0, 0],
+    tolerance: [0, 0, 0],
+  };
+
+  /**
+   * Three loaded segments over six loaded vertices whose on-disk (space A)
+   * rows are 5, 6, 100, 101, 102, 103 — i.e. a two-range, NON-zero-anchored
+   * vertex space. Segment row r joins local vertices (2r, 2r+1).
+   */
+  function makeRangedData(vertexRangeBounds: number[] | undefined): LoadedLinesData {
+    return {
+      positions: new Float32Array(6 * 3),
+      segments: new Uint32Array([0, 1, 2, 3, 4, 5]),
+      widths: new Float32Array(6),
+      colors: null,
+      sharpness: null,
+      scalars: undefined,
+      segmentCount: 3,
+      vertexCount: 6,
+      ndim: 3,
+      // FLAT `[start0, end0, …]` pairs — the shape the loader publishes and the
+      // slice cache can measure (see `LoadedLinesData.vertexRangeBounds`).
+      ...(vertexRangeBounds ? { vertexRangeBounds: new Uint32Array(vertexRangeBounds) } : {}),
+    };
+  }
+
+  /** Dispatcher result for 2 visible segments coming from rows 0 and 2. */
+  function makeClippedResult(sourceSegmentIndices?: Uint32Array) {
+    return {
+      ...makeDispatcherLinesResult(2),
+      ...(sourceSegmentIndices ? { sourceSegmentIndices } : {}),
+    };
+  }
+
+  async function run(data: LoadedLinesData) {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const staged = await processLinesData('/lines', data, viewState, root, 1);
+    if (!staged || staged.noop) throw new Error('expected a geometry staged commit');
+    return staged;
+  }
+
+  it('composes E → D → C → A, so the naive slot answer is provably not what is reported', async () => {
+    // Segment row 1 was clipped away, so visible slot 1 comes from row 2 —
+    // and each row's START vertex maps through the two on-disk ranges:
+    //   slot 0 → row 0 → local vertex 0 → on-disk 5
+    //   slot 1 → row 2 → local vertex 4 → on-disk 102
+    // Without the fix the pick path reports the raw slots [0, 1]; BOTH values
+    // here differ from that, so this test fails on a reverted fix rather than
+    // coincidentally agreeing.
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 2])));
+    const staged = await run(makeRangedData([5, 7, 100, 104]));
+
+    expect(staged.processed.elementIds).toBeInstanceOf(Uint32Array);
+    expect(Array.from(staged.processed.elementIds!)).toEqual([5, 102]);
+
+    // The projection was asked for the E → D table in the first place.
+    const params = mockBuildInstanceBuffers.mock.calls[0][0] as { emitSourceIndices?: boolean };
+    expect(params.emitSourceIndices).toBe(true);
+  });
+
+  it('still walks E → D → C on the IDENTITY C → A range (slot is never the answer for lines)', async () => {
+    // One range anchored at 0 covering every loaded vertex ⇒ local index IS the
+    // on-disk row, so `buildElementIdMap` returns nothing. The map must still
+    // exist: the segment-vs-vertex granularity mismatch alone makes the slot
+    // wrong.
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 2])));
+    const staged = await run(makeRangedData([0, 6]));
+    expect(Array.from(staged.processed.elementIds!)).toEqual([0, 4]);
+  });
+
+  it('leaves elementIds undefined (and asks for no table) when the node publishes no vertexRangeBounds', async () => {
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 2])));
+    const staged = await run(makeRangedData(undefined));
+    expect(staged.processed.elementIds).toBeUndefined();
+    const params = mockBuildInstanceBuffers.mock.calls[0][0] as { emitSourceIndices?: boolean };
+    expect(params.emitSourceIndices).toBe(false);
+  });
+
+  it('fails CLOSED when the projection returned no sourceSegmentIndices', async () => {
+    // A stale prebuilt worker bundle, or a dispatcher that ignored the flag:
+    // fall back to the raw slot rather than mapping every slot through row 0.
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(undefined));
+    const staged = await run(makeRangedData([5, 7, 100, 104]));
+    expect(staged.processed.elementIds).toBeUndefined();
+  });
+
+  it('fails CLOSED on an UNCOMPACTED (over-long) source segment table', async () => {
+    // The projection sizes the table to the VISIBLE stream exactly, so a table
+    // as long as the LOADED segment count is a producer that never applied the
+    // clip. An "at least this long" guard would accept it and read a prefix,
+    // mapping slot s → segment row s: with these ranges that yields the
+    // plausible-looking [5, 100] instead of nothing. Exact-length only.
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 1, 2])));
+    const staged = await run(makeRangedData([5, 7, 100, 104]));
+    expect(staged.processed.elementIds).toBeUndefined();
+  });
+
+  it('fails CLOSED when a source segment row is out of range', async () => {
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 9])));
+    const staged = await run(makeRangedData([5, 7, 100, 104]));
+    expect(staged.processed.elementIds).toBeUndefined();
+  });
+
+  it('fails CLOSED when the vertex ranges do not describe the loaded vertex count', async () => {
+    // The composer rejects a range total that disagrees with the count; the
+    // lines chain must not paper over that with a partial map.
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 2])));
+    const staged = await run(makeRangedData([5, 8]));
+    expect(staged.processed.elementIds).toBeUndefined();
+  });
+
+  it('WARNS on a zero-anchored range total that misses the loaded vertex count', async () => {
+    // The undiagnosable shape: `buildElementIdMap` takes its identity fast path
+    // BEFORE its own count guard, so `[{0, 3})` over 6 loaded vertices returned
+    // `undefined` with nothing logged, and the lines composer's "already warned"
+    // bail was a lie. The range total is now asserted here, up front.
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 2])));
+      const staged = await run(makeRangedData([0, 3]));
+      expect(staged.processed.elementIds).toBeUndefined();
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(warning.mock.calls[0][1]).toContain('vertex ranges cover 3 vertices but 6');
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('fails CLOSED on the IDENTITY C → A path when a segment entry exceeds the loaded vertices', async () => {
+    // The identity branch writes the local vertex index straight through as an
+    // on-disk row, so it needs the same bounds check the mapped branch has —
+    // otherwise a corrupt `segments` entry becomes exactly the
+    // wrong-but-plausible label this map exists to eliminate.
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 2])));
+    const staged = await run({
+      ...makeRangedData([0, 6]),
+      // Segment row 2 starts at vertex 99, past the 6 loaded vertices.
+      segments: new Uint32Array([0, 1, 2, 3, 99, 5]),
+    });
+    expect(staged.processed.elementIds).toBeUndefined();
+  });
+
+  it('fails CLOSED (with a warning) on an ODD-length vertexRangeBounds array', async () => {
+    // The flat form is `[start, end)` PAIRS, so an odd length is malformed by
+    // construction and the missing `end` would be read as `undefined`. Rejected
+    // explicitly rather than left to the NaN the subtraction would produce.
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 2])));
+      const staged = await run(makeRangedData([5, 7, 100]));
+      expect(staged.processed.elementIds).toBeUndefined();
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(warning.mock.calls[0][1]).toContain('odd length');
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('fails CLOSED when the segments array is SHORTER than the referenced row', async () => {
+    // `segments[2 * r]` on a short array is `undefined`, and `undefined >=
+    // vertexCount` is FALSE — so without an explicit length check the vertex
+    // guard waves it through and slot 1 silently stores on-disk row 0. Both
+    // C → A branches are exposed; this covers the mapped (non-identity) one.
+    mockBuildInstanceBuffers.mockReturnValue(makeClippedResult(new Uint32Array([0, 2])));
+    const staged = await run({
+      ...makeRangedData([5, 7, 100, 104]),
+      // Declares 3 segments but only carries rows 0 and 1.
+      segments: new Uint32Array([0, 1, 2, 3]),
+    });
+    expect(staged.processed.elementIds).toBeUndefined();
+  });
+
+  it('leaves elementIds undefined at a zero-visible-segment slice (no slots to map)', async () => {
+    mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(0));
+    const staged = await run(makeRangedData([5, 7, 100, 104]));
+    expect(staged.processed.elementIds).toBeUndefined();
+  });
+
+  it('composes the SAME E → D → C → A answer through the WORKER path', async () => {
+    // Every other composition test sits at `segmentCount: 3`, i.e. below the
+    // `segmentCount > 1000` worker threshold, so it only ever exercises the
+    // in-process dispatcher. The worker RPC carries `emitSourceIndices` in its
+    // params and `sourceSegmentIndices` back in its result; pin both, mocking
+    // only the worker pool (the composer itself is the real one).
+    //
+    // 2000 loaded segments over 4000 loaded vertices, segment r joining local
+    // vertices (2r, 2r + 1), across two on-disk ranges [5, 7) and [100, 4098):
+    //   slot 0 → row 0 → local vertex 0 → on-disk 5
+    //   slot 1 → row 2 → local vertex 4 → on-disk 102
+    // — the same pair the in-process composition test asserts.
+    const segmentCount = 2000;
+    const data: LoadedLinesData = {
+      positions: new Float32Array(4000 * 3),
+      segments: Uint32Array.from({ length: 4000 }, (_v, i) => i),
+      widths: new Float32Array(4000),
+      colors: null,
+      sharpness: null,
+      scalars: undefined,
+      segmentCount,
+      vertexCount: 4000,
+      ndim: 3,
+      vertexRangeBounds: new Uint32Array([5, 7, 100, 4098]),
+    };
+
+    const projectLinesTo3D = vi.fn(async (_params: unknown) =>
+      makeClippedResult(new Uint32Array([0, 2]))
+    );
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectLinesTo3D })),
+    });
+
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const staged = await processLinesData('/lines', data, viewState, root, 1);
+    if (!staged || staged.noop) throw new Error('expected a geometry staged commit');
+
+    // (a) the worker was the one that ran, and it was asked for the table.
+    expect(projectLinesTo3D).toHaveBeenCalledTimes(1);
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
+    const params = projectLinesTo3D.mock.calls[0][0] as { emitSourceIndices?: boolean };
+    expect(params.emitSourceIndices).toBe(true);
+
+    // (b) the returned table composes to the on-disk START-vertex rows.
+    expect(Array.from(staged.processed.elementIds!)).toEqual([5, 102]);
   });
 });
 

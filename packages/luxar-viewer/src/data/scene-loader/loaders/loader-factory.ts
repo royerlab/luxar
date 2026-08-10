@@ -338,8 +338,9 @@ export async function createProgressivePointsLoader(
     node.attrs.has_labels === true || node.attrs.has_image_labels === true;
   // Exclusive prefix sum of the on-disk counts: `levelOffsets[i]` is where
   // level `i` starts inside the parent's union CSR index space (so [0] === 0).
-  // Only meaningful when the parent declares labels; fail CLOSED (null → hover
-  // falls back to the raw slot) rather than composing into wrong rows.
+  // Only meaningful when the parent declares labels; on anything unusable stay
+  // null (hover then reports the raw slot — no better than before #1439, but
+  // never an id composed into someone else's CSR row).
   let levelOffsets: number[] | null = null;
   if (parentDeclaresLabels) {
     const usable = onDiskCounts.every((n) => n !== undefined && Number.isSafeInteger(n) && n >= 0);
@@ -469,6 +470,18 @@ export async function createProgressiveLinesLoader(
         offset: parentEffectiveAttrs.offset,
         blending_mode: parentEffectiveAttrs.blending_mode,
         extend_to_all: node.attrs.extend_to_all,
+        // A sub-LOD's label CSR lives on `additive_<i>` but the pick path only
+        // ever resolves labels against the PARENT node's path, so no reader can
+        // key by a sub-LOD's on-disk index. Clearing the flags here keeps the
+        // spatial-index loader from publishing per-level `vertexRangeBounds` — and
+        // the projection from composing a per-level slot → on-disk map — that
+        // the ladder concat then has to discard. (The parent's own missing
+        // `has_labels` is #1422.) These two keys therefore CONTRADICT the store:
+        // whoever implements per-level labels must decide whether a level has a
+        // CSR from the real `lodGroup.attrs` / the `additive_<i>` group itself,
+        // never from this synthesized node.
+        has_labels: false,
+        has_image_labels: false,
       },
       hasSpatialIndex: false,
       children: [],

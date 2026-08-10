@@ -125,23 +125,30 @@ export interface PickResultHandlerPorts {
  *   the parent node instead carries ONE union CSR keyed by
  *   `additive_0 || additive_1 || …`, the parent path DOES index the
  *   committed buffer, because for Points the loader composes the levels'
- *   slot → on-disk maps into that union space (#1439). Lines ladders
- *   additionally wait on #1424; gsplat ladders carry no labels; and
+ *   slot → on-disk maps into that union space (#1439). A Lines ladder is
+ *   still out — #1424 gave lines the per-node segment→vertex chain, but
+ *   nothing composes a ladder's LEVELS — and gsplat ladders carry no
+ *   labels at all; and
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
- *   arrives already resolved wherever the node can resolve one — Points
- *   and GSplats both do, for a node declaring `has_labels` /
+ *   arrives already resolved wherever the node can resolve one — Points,
+ *   GSplats and Lines all do, for a node declaring `has_labels` /
  *   `has_image_labels`, through a published slot → on-disk map or
  *   trivially where the identity already holds and no map is published,
  *   and Mesh needs none because its `gl_VertexID` already IS the on-disk
  *   vertex ordinal (see
  *   `rendering/picking/picking-system/element-id-map.ts`, which does the
- *   translation at the single `PickResult` construction site). Lines
- *   never resolves: it reports a per-*segment* slot while its label CSR
- *   is per *vertex*, so the id misses its row even on a fully loaded,
- *   unsliced layer, and chunk culling or compaction shifts it further
- *   (#1424). A Points or GSplats node declaring no labels likewise keeps
- *   the raw storage slot — no CSR to miss, but an embedder reading
- *   `SelectionPayload.elementIndex` there is reading a slot.
+ *   translation at the single `PickResult` construction site). For a
+ *   LINES node the resolved value is the picked segment's **start**
+ *   vertex row in the on-disk (spatially sorted) VERTEX ordering, not a
+ *   segment row: line labels are per-vertex, and a segment carries a
+ *   single `flat` pick id, so exactly one of its two endpoints can be
+ *   reported and by convention it is the start (#1424). An *unlabelled*
+ *   lines node still reports the raw visible-segment slot, which is
+ *   neither an on-disk row nor even the right granularity for a
+ *   per-vertex CSR. A Points or GSplats node declaring no labels
+ *   likewise keeps the raw storage slot — no CSR to miss, but an
+ *   embedder reading `SelectionPayload.elementIndex` there is reading a
+ *   slot.
  * - `null` result → clear hover (`updateHoverContent(null)`); no loader calls.
  * - Non-null result → fetch label + image URL in parallel; emit a
  *   payload only when at least one is truthy. An empty-string label

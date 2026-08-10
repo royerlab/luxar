@@ -17,6 +17,23 @@
  * shows the TSL side's `/ 65536` and `- hi * 65536`, and a unit test round-trips the
  * split against `voteWinner`'s recombination.
  *
+ * ## Five entries render under PERSPECTIVE
+ *
+ * Every other entry uses the shared ORTHOGRAPHIC default camera, under which
+ * `perspectiveNearFade` is the identity — so the near fade would ship with no
+ * rendered parity coverage at all. `mesh-near-fade`, `mesh-additive-near-fade` and
+ * `mesh-pick-near-fade` override `buildCamera` with the perspective
+ * `buildBehindCamera` and pick a `uNearCull` that puts the whole quad at a partial
+ * fade; the arithmetic is on `NEAR_FADE_UNIFORMS` below.
+ *
+ * The two `*-near-fade-reference` entries render under the SAME perspective camera
+ * with the fade switched off (`uIsOrtho: 1`), and exist because the anti-vacuity
+ * half of the parity test needs an un-faded frame of the *same surface points*. The
+ * ortho default camera cannot supply one: its frame is 2.0 wide at z = 0 against the
+ * perspective frame's 2·tan(30°) = 1.155, so pixel (i, j) is a different point on the
+ * quad in the two framings and the "exactly 0.15625 ×" comparison would be measuring
+ * that mismatch as well as the fade.
+ *
  * ## The fixture is a tilted-normal quad, on purpose
  *
  * Two triangles in the z = 0 plane, but with per-corner normals fanned outward
@@ -48,7 +65,7 @@ import {
   buildMeshPickTSLNodesFromUniforms,
 } from '../../../../rendering/picking/mesh/pick.tsl';
 import type { RegistryEntry } from './types';
-import { buildColormapTexture } from './shared';
+import { buildBehindCamera, buildColormapTexture } from './shared';
 
 /** Quad corners in the z = 0 plane, filling the ortho camera's [-1, 1] frame. */
 const QUAD_POSITIONS = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);
@@ -121,8 +138,48 @@ const buildMeshObject =
     return mesh;
   };
 
+/**
+ * Near-fade inputs for the ORTHO default camera (`buildDefaultCamera`).
+ *
+ * `uIsOrtho: 1` is the honest value for that camera, and it is also what keeps
+ * every pre-existing entry's pixels unchanged: `perspectiveNearFade` returns 1.0
+ * under ortho, so `uNearCull` is inert here.
+ */
+const ORTHO_FADE_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.1 } as const;
+
+/**
+ * Near-fade inputs for the PERSPECTIVE `buildBehindCamera` entries below.
+ *
+ * That camera sits at z = 1 looking down −Z and the quad is in the z = 0 plane, so
+ * every fragment has `viewZ = -1` exactly. With `uNearCull = 0.8` the fade is
+ * `smoothstep(0.8, 1.6, 1.0) = 3t² − 2t³` at `t = 0.25` — **0.15625**: partial (so
+ * a backend that dropped the fade renders visibly brighter), well clear of the 0.01
+ * reject (so it is not silently testing the discard instead), and constant across
+ * the quad (so the two backends must agree to the last bit).
+ */
+const NEAR_FADE_UNIFORMS = { uIsOrtho: 0, uNearCull: 0.8 } as const;
+
+/**
+ * The un-faded reference for the perspective entries: the SAME `uNearCull`, the SAME
+ * camera, only `uIsOrtho` flipped — so `perspectiveNearFade` returns 1.0 and every
+ * other term of the fragment is untouched. Dividing one frame by the other therefore
+ * isolates the fade and nothing else.
+ *
+ * `uIsOrtho: 1` under a PERSPECTIVE camera is deliberately mismatched. The uniform is
+ * read by exactly one thing — the fade — so it is the switch that turns the fade off
+ * without moving a pixel of framing, which is the whole job here. It also buys the
+ * harness its first non-vacuous coverage of mesh's ortho branch: every ortho-camera
+ * entry sets `uIsOrtho: 1` too, but there the quad sits at viewZ = -1 against a
+ * `uNearCull` of 0.1, so BOTH branches return 1.0 and the flag proves nothing. Here
+ * the two branches differ by 0.15625 vs 1.0.
+ */
+const UNFADED_REFERENCE_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.8 } as const;
+
 /** Uniforms mirroring the production `MeshMaterial` constructor. */
-function meshUniforms(withColormap = false): Record<string, THREE.IUniform> {
+function meshUniforms(
+  withColormap = false,
+  fade: { uIsOrtho: number; uNearCull: number } = ORTHO_FADE_UNIFORMS
+): Record<string, THREE.IUniform> {
   return {
     uOpacity: { value: 1.0 },
     uInvGamma: { value: 1.0 / 2.2 },
@@ -131,6 +188,8 @@ function meshUniforms(withColormap = false): Record<string, THREE.IUniform> {
     uAmbient: { value: MESH_DEFAULTS.ambient },
     uShadeExponent: { value: MESH_DEFAULTS.shadeExponent },
     uAlphaCutoff: { value: MESH_DEFAULTS.alphaCutoff },
+    uIsOrtho: { value: fade.uIsOrtho },
+    uNearCull: { value: fade.uNearCull },
     ...(withColormap
       ? {
           uColormapTex: { value: buildColormapTexture() },
@@ -151,13 +210,18 @@ function meshUniforms(withColormap = false): Record<string, THREE.IUniform> {
  * @param surfaceMode `true` = the `opaque` default (cutout on, real depth);
  *   `false` = a commutative mode (no cutout, brightness-as-depth).
  */
-function meshPickUniforms(surfaceMode: boolean): Record<string, THREE.IUniform> {
+function meshPickUniforms(
+  surfaceMode: boolean,
+  fade: { uIsOrtho: number; uNearCull: number } = ORTHO_FADE_UNIFORMS
+): Record<string, THREE.IUniform> {
   return {
     uNodeId: { value: 1 },
     uOpacity: { value: 1.0 },
     uAlphaCutoff: { value: MESH_DEFAULTS.alphaCutoff },
     uAlphaCutout: { value: surfaceMode ? 1 : 0 },
     uSurfaceDepth: { value: surfaceMode ? 1 : 0 },
+    uIsOrtho: { value: fade.uIsOrtho },
+    uNearCull: { value: fade.uNearCull },
   };
 }
 
@@ -278,5 +342,85 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
         buildMeshPickTSLNodesFromUniforms(uniforms)
       ) as unknown as THREE.Material,
     buildMesh: buildMeshObject(),
+  },
+  // The near fade under PERSPECTIVE, in the `opaque` default — the one mode where
+  // the fade ramps the shaded RGB rather than the coverage, because its output
+  // alpha is the constant 1.0 and there is no alpha left to fade. Every fragment of
+  // the quad sits at viewZ = -1, so the fade is a uniform 0.15625 (see
+  // NEAR_FADE_UNIFORMS for the arithmetic) and the two backends must agree exactly.
+  //
+  // Deliberately NOT in the codegen snapshot list: `uIsOrtho` is a runtime uniform,
+  // so this generates the shader `mesh` already snapshots and a second copy would
+  // only duplicate one. What it adds is the rendered proof — same reasoning as
+  // `mesh-pick-commutative`.
+  'mesh-near-fade': {
+    source: MESH_SOURCE,
+    buildUniforms: () => meshUniforms(false, NEAR_FADE_UNIFORMS),
+    buildDefines: () => ({ LUXAR_MESH_ALPHA_CUTOUT: '' }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque' }),
+    buildMesh: buildMeshObject(),
+    buildCamera: buildBehindCamera,
+  },
+  // The un-faded twin of the entry above: same camera, same uNearCull, `uIsOrtho`
+  // flipped to 1 so the fade is the identity. This is what the parity spec divides
+  // against — the ortho-camera `mesh` entry would be a DIFFERENT crop of the quad,
+  // so its pixel (32, 32) is not the same surface point. Out of the codegen list for
+  // the same runtime-uniform reason as `mesh-near-fade`.
+  'mesh-near-fade-reference': {
+    source: MESH_SOURCE,
+    buildUniforms: () => meshUniforms(false, UNFADED_REFERENCE_UNIFORMS),
+    buildDefines: () => ({ LUXAR_MESH_ALPHA_CUTOUT: '' }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque' }),
+    buildMesh: buildMeshObject(),
+    buildCamera: buildBehindCamera,
+  },
+  // The OTHER fade fold, and the one `mesh-near-fade` structurally cannot reach: with
+  // no cutout the fade multiplies into COVERAGE (`a *= nearFade`) and leaves the
+  // shaded RGB alone — the arm `additive` / `luminous` / `normal` all take, and the
+  // one `max` inherits through its premultiply. Rendering it is the only proof that
+  // fold is wired: the codegen snapshot shows the line, but a snapshot cannot tell a
+  // multiply into alpha from a multiply into nothing.
+  //
+  // Out of the codegen list, same reasoning as `mesh-pick-commutative`: `uIsOrtho` is
+  // a runtime uniform, so this generates the shader `mesh-additive` already snapshots.
+  'mesh-additive-near-fade': {
+    source: MESH_SOURCE,
+    buildUniforms: () => meshUniforms(false, NEAR_FADE_UNIFORMS),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'additive' }),
+    buildMesh: buildMeshObject(),
+    buildCamera: buildBehindCamera,
+  },
+  // Its un-faded reference, on the same terms as `mesh-near-fade-reference`.
+  'mesh-additive-near-fade-reference': {
+    source: MESH_SOURCE,
+    buildUniforms: () => meshUniforms(false, UNFADED_REFERENCE_UNIFORMS),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'additive' }),
+    buildMesh: buildMeshObject(),
+    buildCamera: buildBehindCamera,
+  },
+  // The same fade on the PICK pass, which folds it into `brightness` instead. Pick
+  // coverage has to track visible coverage as the camera closes in, or a surface
+  // the user can barely see stays fully pickable. Same runtime-uniform argument for
+  // staying out of the codegen list.
+  //
+  // This one renders a UNIFORM frame, and legitimately: the quad overfills the
+  // perspective frame; the node id is a per-node constant and the element id, though
+  // a per-VERTEX ordinal (`gl_VertexID`, flat), lands on the same byte for both
+  // triangles of this 4-vertex quad — the harness target is RGBA8, so any non-zero
+  // ordinal clamps to 255 and the high half is 0 throughout; and the cutout arm's
+  // brightness is the constant 1.0 before the fade scales it — 4096 pixels of the
+  // same RGBA. So the parity spec cannot use its `assertBothRendered` helper here
+  // (whose "did anything render?" proxy is "some pixel differs from pixel 0"); it
+  // pins the centre pixel against the un-faded `mesh-pick` instead, and then that
+  // every other pixel equals the centre.
+  'mesh-pick-near-fade': {
+    source: MESH_PICK_SOURCE,
+    buildUniforms: () => meshPickUniforms(true, NEAR_FADE_UNIFORMS),
+    buildTSLMaterial: (uniforms) =>
+      meshPickWebGPUFactory(
+        buildMeshPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildMeshObject(),
+    buildCamera: buildBehindCamera,
   },
 };

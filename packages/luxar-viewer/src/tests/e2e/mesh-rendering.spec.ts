@@ -27,6 +27,7 @@ import {
   getLuxarState,
   getWebGLErrors,
   getElementPixelStats,
+  captureCanvasRGBA,
   renderOnce,
 } from './helpers';
 
@@ -252,5 +253,160 @@ test.describe('Mesh rendering', () => {
     // channel, which is what a NaN or an uninitialised varying tends to produce.
     const { r, g, b } = stats.brightest;
     expect(Math.max(r, g, b), 'nothing bright enough to be a lit surface').toBeGreaterThan(60);
+  });
+
+  test('flying into a mesh fades it out smoothly instead of clipping (#1431)', async ({ page }) => {
+    // Mesh was the one geometry type with no `perspectiveNearFade`: a triangle
+    // clipped hard against the near plane while the other three faded. This pins the
+    // fixed behaviour where it is observable — in composited pixels, through the
+    // production material, on a mesh that came out of the writer.
+    //
+    // The approach fly-in is driven by SCALING `uNearCull` rather than by moving the
+    // camera, and that is a measurement decision rather than a shortcut. The fade is
+    // a function of `-viewZ / nearCull` alone, so scaling `nearCull` by s is exactly
+    // equivalent to dividing every view depth by s — i.e. to a dolly. What it avoids
+    // is everything a positional dolly would confound the measurement WITH: the band
+    // is only 0.1% of the scene diagonal wide (`nearCull = 1e-3 · diagonal`), so a
+    // dolly would have to be placed to sub-thousandth precision, would fight the
+    // near-plane floor (`far / MAX_NEAR_FAR_RATIO`, the same order of magnitude at
+    // that range), and would change the mesh's screen COVERAGE at every step — so a
+    // frame-mean would be tracking framing, not fade. Here the geometry, the framing
+    // and the shade term are pixel-identical between steps and the fade is the only
+    // variable.
+    //
+    // `?dpr=1` is load-bearing, not tidiness: adaptive DPR resizes the drawing
+    // buffer whenever it re-times a frame, every resize runs
+    // `updateMaterialsForCurrentCamera()`, and that rebroadcast overwrites
+    // `uNearCull` with the scene's real value — one un-faded frame in the middle of
+    // the sweep. Pinning the ratio is what the param is for (see `?dpr=` in
+    // `config/url-params.ts`); without it this test fails roughly four runs in five.
+    await page.goto(`/?src=${MESH}&debug&dpr=1`);
+    await waitForLuxarReady(page);
+    await waitForMeshCommitted(page, 4);
+    await renderOnce(page);
+
+    // Distance from the camera to the orbit target: the scale the sweep is expressed
+    // in, so it needs no knowledge of the fixture's world units. `controls` is the
+    // ControlsManager, which owns the concrete orbit/fly/ortho controls and exposes
+    // the pivot through `getFocusTarget()` — there is no `.target` on it.
+    const targetDistance = await page.evaluate(() => {
+      const debug = (
+        window as unknown as {
+          __luxarDebug: {
+            camera: { position: { distanceTo(v: unknown): number } };
+            controls: { getFocusTarget(): unknown };
+          };
+        }
+      ).__luxarDebug;
+      return debug.camera.position.distanceTo(debug.controls.getFocusTarget());
+    });
+    expect(targetDistance).toBeGreaterThan(0);
+
+    /**
+     * Write `uNearCull` on every MESH material in the scene. Identified by
+     * `uAmbient` — the shade floor no other geometry type has — so this cannot
+     * silently start driving a point/line/gsplat material instead.
+     *
+     * Safe to write directly only because the DPR is pinned: the manager rebroadcasts
+     * on resize, load, or an ortho zoom change, and with adaptive DPR live the first
+     * of those fires on its own mid-sweep (see the `?dpr=1` note above).
+     */
+    const setNearCull = async (value: number): Promise<number> =>
+      page.evaluate((v) => {
+        const debug = (
+          window as unknown as {
+            __luxarDebug: { scene: { traverse(cb: (o: unknown) => void): void } };
+          }
+        ).__luxarDebug;
+        let touched = 0;
+        debug.scene.traverse((object) => {
+          const material = (object as { material?: unknown }).material;
+          for (const m of Array.isArray(material) ? material : [material]) {
+            const uniforms = (m as { uniforms?: Record<string, { value: unknown }> } | undefined)
+              ?.uniforms;
+            if (!uniforms?.uNearCull || !uniforms.uAmbient) continue;
+            uniforms.uNearCull.value = v;
+            touched++;
+          }
+        });
+        return touched;
+      }, value);
+
+    const meanChannel = async (): Promise<number> => {
+      const frame = await captureCanvasRGBA(page);
+      let sum = 0;
+      for (let i = 0; i < frame.rgba.length; i += 4) {
+        sum += frame.rgba[i] + frame.rgba[i + 1] + frame.rgba[i + 2];
+      }
+      return sum / ((frame.rgba.length / 4) * 3);
+    };
+
+    // 0.4 → 1.2 × the target distance, in steps of 0.05. At 0.4 the whole surface
+    // still sits beyond the band's outer edge (`2 · nearCull`) and the fade is a flat
+    // 1.0; by 1.2 every fragment is inside the reject region and the mesh is gone.
+    //
+    // The step is HALF what it was. At 0.1 the transition spanned few enough samples
+    // that one of them carried 34.5% of the whole drop — real headroom under the 50%
+    // bound below, but not much, and that bound is the assertion separating a
+    // smoothstep from a hard clip. Halving the step roughly doubles the samples across
+    // the ramp and brings the largest single one down to 18.7% (measured; the full
+    // per-step table is in the NO-POP comment below).
+    const factors = Array.from({ length: 17 }, (_, i) => Number((0.4 + i * 0.05).toFixed(2)));
+    const means: number[] = [];
+    for (const f of factors) {
+      const touched = await setNearCull(f * targetDistance);
+      expect(touched, 'no mesh material carries a uNearCull uniform').toBeGreaterThan(0);
+      await renderOnce(page);
+      means.push(await meanChannel());
+    }
+
+    const total = means[0] - means[means.length - 1];
+    const trace = means.map((m) => m.toFixed(2)).join(' → ');
+    // The two assertions that fail without the fade, and the reason the first is a
+    // FRACTION of the starting brightness rather than an absolute delta. Neutralizing
+    // `nearFade` to a constant 1.0 in the fragment stage — the whole of the pre-fix
+    // behaviour, since the shader then never reads `uNearCull` — was re-measured on
+    // this sweep and leaves 21.87 of the starting 23.13 on screen across every step.
+    // So an absolute bound like "> 1.0" PASSES on a build with no fade at all: the
+    // 1.26 that moves there is unrelated drift, not the fade. Both literals are one
+    // machine's numbers; what is portable is the shape — a fade-free build's total is
+    // a rounding error next to the starting brightness, and a real fade's is most
+    // of it.
+    expect(
+      total,
+      `the mesh did not dim as the near-cull band swept over it: ${trace}`
+    ).toBeGreaterThan(0.5 * means[0]);
+    expect(
+      means[means.length - 1],
+      `the fully-faded frame should be essentially black: ${trace}`
+    ).toBeLessThan(0.1 * means[0]);
+
+    for (let i = 1; i < means.length; i++) {
+      // MONOTONE: a fade that brightened anywhere would mean the ramp is not a
+      // function of depth. The 0.25/255 slack absorbs AA and compositing dither.
+      expect(means[i], `step ${factors[i]} brightened: ${trace}`).toBeLessThanOrEqual(
+        means[i - 1] + 0.25
+      );
+      // NO POP: a hard clip is one step that takes the whole drop, so no single
+      // step of a real fade may take half of it.
+      //
+      // What the sweep actually measures (deterministic here — three repeats of
+      // the trace above were byte-identical), as a percentage of the 22.46 total:
+      //
+      //   0.3 2.2 11.4 9.4 13.8 17.5 18.7 15.8 1.4 0.9 2.9 3.5 1.8 0.4 0.0 0.0
+      //
+      // So the largest single step is 18.7% and the ramp is spread over about
+      // eight of them. Read the same sweep at the old 0.05→0.1 step (every other
+      // sample) and the largest becomes 34.5% — real headroom under the bound, but
+      // close enough that a modest change in fixture or framing could push a
+      // legitimately smooth fade over it. That is why the step was halved, and it
+      // is also the honest reading of this bound: it rejects a CLIP, not every
+      // sharp-ish ramp. The drop is genuinely front-loaded — four adjacent steps
+      // carry 66% of it — because a smoothstep's slope peaks at the band centre.
+      expect(
+        means[i - 1] - means[i],
+        `step ${factors[i]} is a POP, not a fade — it took ${(((means[i - 1] - means[i]) / total) * 100).toFixed(0)}% of the whole drop: ${trace}`
+      ).toBeLessThan(0.5 * total);
+    }
   });
 });
