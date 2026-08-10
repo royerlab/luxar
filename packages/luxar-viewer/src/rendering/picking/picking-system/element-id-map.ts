@@ -90,7 +90,7 @@
  *    fails closed to the raw slot on any inconsistency.
  *  - **Lines additive ladders** — still out. The per-node indirection above
  *    exists now, but nothing composes the LEVELS: `lines-progressive-loader.ts`
- *    has no counterpart to the Points ladder offsetting below, and a level's
+ *    has no counterpart to the Points ladder offsetting above, and a level's
  *    `vertexRangeBounds` are in that level's own vertex space.
  *  - **GSplat additive ladders** — nothing to compose: the authoring path has
  *    no `labels` channel for a gsplat ladder, so no level of one carries

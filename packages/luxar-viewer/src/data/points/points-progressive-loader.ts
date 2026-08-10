@@ -205,9 +205,10 @@ function concatenatePointsData(
     // stays correct as further levels land because the multi-part branch below
     // composes them.
     //
-    // WITHOUT `levelOffsets` the parent declares no CSR any reader could key by,
-    // so the GUARD applies (belt-and-braces): that payload must never publish a
-    // slot → on-disk map. Not because `parts[0]`'s map is in the wrong space — it
+    // WITHOUT `levelOffsets` (no parent CSR, or a failed cross-check) there is
+    // no union index space any reader could key by, so the GUARD applies
+    // (belt-and-braces): that payload must never publish a slot → on-disk map.
+    // Not because `parts[0]`'s map is in the wrong space — it
     // is not, it is the union's prefix, so passing it through would in fact
     // resolve correctly while it is the only committed level. It is that a
     // tooltip which is right at first paint and silently degrades to the raw slot

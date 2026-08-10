@@ -394,6 +394,11 @@ describe('createProgressivePointsLoader', () => {
   });
 
   it('propagates a has_image_labels-only parent (the other half of the gate)', async () => {
+    // Defensive: pins the `has_image_labels` half of the reader's
+    // `parentDeclaresLabels` gate. No producer can currently write this shape —
+    // `add_points` refuses to build a ladder when `image_labels` is set (it
+    // falls through to a single leaf with a warning) and
+    // `write_points_multi_lod` has no image-labels channel at all.
     const node = makeNode('/p', 'points');
     node.attrs = { has_image_labels: true };
     zarrOpenMock

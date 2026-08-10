@@ -136,7 +136,8 @@ level `i` by the preceding levels' on-disk counts, so a labelled Points ladder
 resolves exactly under an nD slice too (issue #1439) — falling back to the raw
 committed slot only where the levels' own metadata is inconsistent. For **Lines**
 no map is composed across the levels, so a laddered lines node still resolves at
-the raw committed slot (exact for a fully-loaded 3D scene, shifted otherwise).
+the raw committed slot — a per-**segment** one against the per-**vertex** union
+CSR, and so the wrong row whatever the slicing (not merely shifted).
 
 Under the `partition=`-outer + `additive_lod=`-inner composition the CSR lands on
 each `part_<i>` ladder parent — which is exactly where the viewer looks. Since

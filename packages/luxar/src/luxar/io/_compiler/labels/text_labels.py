@@ -183,8 +183,9 @@ def write_ladder_union_labels_csr(
     Points ladder resolves exactly under an nD slice too (issue #1439) — falling
     back to the RAW committed slot only where the levels' own metadata is
     inconsistent. For LINES no map is composed across the levels, so a laddered
-    lines node still resolves at the RAW committed slot: exact for a fully-loaded
-    3D scene (no per-element slice culling), shifted otherwise.
+    lines node still resolves at the RAW committed slot — a per-SEGMENT one
+    against the per-VERTEX union CSR, and so the wrong row whatever the slicing
+    (not merely shifted).
 
     Under the ``partition=``-outer + ``additive_lod=``-inner composition the CSR
     lands on each ``part_<i>`` ladder parent, which is exactly where the viewer
