@@ -17,6 +17,7 @@ Tests cover:
 - A malformed level array still reports the GEOMETRY fault, not a label one
 - A rejected ladder leaves no partial node behind (fail-fast gate)
 - A wrong-length ``labels`` raises instead of silently mislabelling every level
+- ``partition=``-outer + ``additive_lod=``-inner puts the union on each part
 """
 
 from typing import List
@@ -240,6 +241,58 @@ class TestPointsLadderUnionLabels:
 
         # No empty 'ladder' group may be left behind by the rejected write.
         assert "ladder" not in compiler.store
+
+    def test_partition_of_ladder_puts_the_union_on_each_part(self, tmp_path):
+        """``partition=``-outer + ``additive_lod=``-inner: one union per part.
+
+        The composition the format doc singles out. ``partition=`` forwards
+        ``additive_lod=`` into every part, so each ``part_<i>`` is itself a
+        ladder parent — and since #1415 that parent IS the node the picker looks
+        labels up on (the outermost ``kind=partition`` wrapper is the reported
+        path only, and carries no CSR). So the union has to land on each part,
+        not on the wrapper, and the parts' unions together must account for
+        every input label exactly once.
+        """
+        path = str(tmp_path / "part_ladder.luxar.zarr")
+        n_points = 600
+        positions = _random_positions(n_points, seed=91)
+        labels = [f"p{i}" for i in range(n_points)]
+
+        compiler = LuxarZarrCompiler(path)
+        scene = compiler.create_scene(dimensions=_make_3d_dims())
+        scene.add_points(
+            "lad",
+            positions,
+            labels=labels,
+            partition={"max_elements": 150},
+            additive_lod=True,
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        wrapper = store["lad"]
+        assert wrapper.attrs["kind"] == "partition"
+        # The wrapper is a bare group — no CSR, no has_labels (#1415).
+        assert "label_offsets" not in wrapper
+        assert "has_labels" not in dict(wrapper.attrs)
+
+        part_names = sorted(k for k in wrapper.group_keys() if k.startswith("part_"))
+        assert len(part_names) > 1
+
+        seen: List[str] = []
+        for part_name in part_names:
+            part = wrapper[part_name]
+            n_sublods = int(part.attrs["n_additive_sublods"])
+            # Otherwise this would only be testing the flat per-part path.
+            assert n_sublods > 1
+            assert part.attrs["has_labels"] is True
+            decoded = decode_labels(part)
+            assert len(decoded) == int(part.attrs["n_points"])
+            seen.extend(decoded)
+            for i in range(n_sublods):
+                assert "label_offsets" not in part[f"additive_{i}"]
+
+        assert sorted(seen) == sorted(labels)
 
 
 class TestWrongLengthLabelsRejectedBeforeSplit:
