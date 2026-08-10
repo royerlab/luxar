@@ -2564,6 +2564,60 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeGreaterThan(2.0);
   });
 
+  test('line-volprim-sharp-hard: rendered profile matches the CPU Abel model per-row (#1352 PR-4)', async ({
+    page,
+  }) => {
+    // MODEL-REFERENCED, not cross-backend: parity and the footprint pairs
+    // compare the two shaders to EACH OTHER, so a UV-mapping error made
+    // identically on both backends (e.g. dropping the half-texel bias on
+    // both) is invisible to them. This test holds the GLSL render against
+    // `lineRadialProfile` — the same quadrature the texture is built from
+    // — breaking that symmetry; TSL is covered transitively through the
+    // parity loop. Per-row over the center column, normalized to the
+    // column max (cancels aaComp/F/uOpacity, which are row-constant
+    // side-on). Mutation-calibrated: clean reads 0.0028 worst; dropping
+    // LUT_U_BIAS (a half-texel q shift) reads 0.0123 — the 0.007 gate
+    // sits 2.5x above noise and 1.8x below the smallest known mutation.
+    // The model must use sigma_eff (the 3D variance floor at this
+    // fixture's pixel size), not sigma — with plain sigma the clean
+    // deviation triples and the gate loses its margin.
+    await bootHarness(page);
+    const pixels = await runGLSL(page, 'line-volprim-sharp-hard');
+    const { lineRadialProfile } =
+      await import('../../rendering/materials/_shared/line-integral-lut');
+    const { GAUSSIAN_EQUIVALENT_TRUNCATION } =
+      await import('../../rendering/materials/_shared/falloff');
+    const { LINE_SIGMA_PER_WIDTH, LINE_STENCIL_DILATION } =
+      await import('../../rendering/materials/_shared/line-volumetric');
+    // Fixture geometry: width 0.3, ortho scale 64 (32 px per world unit),
+    // 64 px viewport — the segment's center line sits between rows 31/32.
+    const sigma = LINE_SIGMA_PER_WIDTH * 0.3;
+    const pxSize = 2 / 64;
+    const sigmaEff = Math.sqrt(sigma * sigma + LINE_STENCIL_DILATION * pxSize * pxSize);
+    const tSigPx = GAUSSIAN_EQUIVALENT_TRUNCATION * sigmaEff * 32;
+    const col = 32;
+    const bg = pixels.slice(0, 4);
+    const measured: Array<{ row: number; alpha: number }> = [];
+    for (let row = 0; row < 64; row++) {
+      const i = (row * 64 + col) * 4;
+      const covered =
+        pixels[i] !== bg[0] ||
+        pixels[i + 1] !== bg[1] ||
+        pixels[i + 2] !== bg[2] ||
+        pixels[i + 3] !== bg[3];
+      if (covered) measured.push({ row, alpha: pixels[i + 3] });
+    }
+    expect(measured.length, 'covered rows in the center column').toBeGreaterThan(30);
+    const colMax = Math.max(...measured.map((m) => m.alpha));
+    let worst = 0;
+    for (const { row, alpha } of measured) {
+      const q = Math.abs(row - 31.5) / tSigPx;
+      const model = q <= 1 ? lineRadialProfile(q, 1.0) : 0;
+      worst = Math.max(worst, Math.abs(alpha / colMax - model));
+    }
+    expect(worst, 'per-row |rendered/colMax − S(q, knob=1)|').toBeLessThan(0.007);
+  });
+
   test('line-volprim-nearclip-joint: MAX cross-backend divergence stays at noise level', async ({
     page,
   }) => {
