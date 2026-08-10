@@ -17,7 +17,9 @@ Tests cover:
 - A malformed level array still reports the GEOMETRY fault, not a label one
 - A rejected ladder leaves no partial node behind (fail-fast gate)
 - A wrong-length ``labels`` raises instead of silently mislabelling every level,
-  at every one of the seven ``validate_labels_before_split`` call sites
+  at every one of the seven wrapper pre-split gates (Points and Lines reach the
+  labels check through the shared writer sweep their gate delegates to; GSplats
+  through ``validate_labels_before_split``)
 - ``partition=``-outer + ``additive_lod=``-inner puts the union on each part
 """
 
