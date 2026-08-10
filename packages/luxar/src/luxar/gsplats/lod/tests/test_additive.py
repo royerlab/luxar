@@ -656,3 +656,108 @@ def test_sibling_aware_stream_breakpoints_helper() -> None:
     assert saw("energy:0.5,1.0", 512, 4) == "energy:0.5,1.0"
     # Malformed stream payloads pass through for the validator to reject.
     assert saw("stream:abc", 512, 4) == "stream:abc"
+
+
+# ── radial (concentric-shell reveal) ordering ──────────────────────────
+
+
+def _ray_gsplat(radii: np.ndarray, ndim: int = 3, offset: float = 0.0) -> GSplatData:
+    """Splats along one axis at the given radii, optionally re-origined.
+
+    A ray rather than a sphere keeps the expected order unambiguous: distance
+    from the set's own bbox centre is monotone in ``radii``.
+    """
+    n = radii.size
+    centers = np.zeros((n, ndim), dtype=np.float32)
+    centers[:, 0] = radii
+    centers += np.float32(offset)
+    tril = ndim * (ndim + 1) // 2
+    chol = np.zeros((n, tril), dtype=np.float32)
+    diag_idx = np.cumsum(np.arange(1, ndim + 1)) - 1
+    chol[:, diag_idx] = 0.4
+    return GSplatData(
+        centers=centers,
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+
+def test_radial_orders_innermost_first():
+    """Prefixes grow OUTWARD: the ordering is ascending in distance."""
+    # Shuffled input, so a pass cannot come from input order alone.
+    radii = np.array([5.0, 1.0, 4.0, 2.0, 3.0], dtype=np.float32)
+    data = _ray_gsplat(radii)
+
+    order = compute_additive_order(data, method="radial")
+
+    # Centred on the ray's own midpoint (r=3), so distance is |r - 3|.
+    assert radii[order[0]] == pytest.approx(3.0)
+    assert sorted(radii[order[1:3]]) == pytest.approx([2.0, 4.0])
+    assert sorted(radii[order[3:]]) == pytest.approx([1.0, 5.0])
+
+
+def test_radial_centre_defaults_to_bbox_not_scene_origin():
+    """A far-from-origin set reveals from ITS OWN middle, not from a corner."""
+    radii = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+    here = _ray_gsplat(radii)
+    far = _ray_gsplat(radii, offset=1000.0)
+
+    # The 1000-unit translation is irrelevant because the centre travels with
+    # the data. Under a scene-origin default the far set would instead reveal
+    # strictly left-to-right.
+    assert np.array_equal(
+        compute_additive_order(here, method="radial"),
+        compute_additive_order(far, method="radial"),
+    )
+
+
+def test_radial_explicit_centre_overrides_the_bbox():
+    """An explicit centre re-aims the shells."""
+    radii = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+    data = _ray_gsplat(radii)
+
+    order = compute_additive_order(data, method="radial", reveal_centre=[1.0, 0.0, 0.0])
+
+    # Aimed at the near end, so it reveals strictly outward from r=1.
+    assert list(radii[order]) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0])
+
+
+def test_radial_ignores_a_zero_variance_time_axis():
+    """A stacked-time axis must not become a shell dimension.
+
+    Two timepoints of the same 3D ray. The centre is r=2, so BOTH timepoints of
+    r=2 sit at distance 0 and must come first; had the degenerate 4th axis
+    entered the distance, the t=1 copy would be at distance 1 and be displaced
+    by the t=0 copies of r=1 / r=3.
+    """
+    radii = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    n = radii.size
+    centers = np.zeros((2 * n, 4), dtype=np.float32)
+    centers[:n, 0] = radii
+    centers[n:, 0] = radii
+    centers[n:, 3] = 1.0  # timepoint 1
+    chol = np.zeros((2 * n, 10), dtype=np.float32)
+    diag_idx = np.cumsum(np.arange(1, 5)) - 1
+    chol[:, diag_idx] = 0.4
+    chol[:, diag_idx[3]] = 0.0  # degenerate time axis
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(2 * n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+    order = compute_additive_order(data, method="radial")
+    ranked_r = centers[order, 0]
+    ranked_t = centers[order, 3]
+
+    assert list(ranked_r[:2]) == pytest.approx([2.0, 2.0])
+    assert sorted(ranked_t[:2]) == pytest.approx([0.0, 1.0])
+    # The rest is the distance-1 shell: both timepoints of r=1 and r=3. They
+    # TIE, so their relative order is input order — deliberately not asserted.
+    assert sorted(ranked_r[2:]) == pytest.approx([1.0, 1.0, 3.0, 3.0])
+
+
+def test_radial_rejects_a_mis_shaped_centre():
+    data = _ray_gsplat(np.array([1.0, 2.0], dtype=np.float32))
+    with pytest.raises(ValueError, match="one coordinate per spatial axis"):
+        compute_additive_order(data, method="radial", reveal_centre=[0.0, 0.0])

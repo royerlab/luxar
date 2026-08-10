@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import numpy as np
@@ -61,7 +62,9 @@ from luxar.utils.lod_breakpoints import (
 )
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
-MethodName = Literal["greedy", "self_energy", "mass", "amplitude", "spectral", "random"]
+MethodName = Literal[
+    "greedy", "self_energy", "mass", "amplitude", "spectral", "random", "radial"
+]
 _VALID_METHODS = (
     "greedy",
     "self_energy",
@@ -69,12 +72,13 @@ _VALID_METHODS = (
     "amplitude",
     "spectral",
     "random",
+    "radial",
 )
 
 #: ``method`` accepted at the API/CLI boundary, including the size-adaptive
 #: ``"auto"`` sentinel resolved by :func:`resolve_additive_method`.
 AutoOrMethod = Literal[
-    "auto", "greedy", "self_energy", "mass", "amplitude", "spectral", "random"
+    "auto", "greedy", "self_energy", "mass", "amplitude", "spectral", "random", "radial"
 ]
 _VALID_CHOICES: tuple[str, ...] = ("auto", *_VALID_METHODS)
 
@@ -431,6 +435,46 @@ def _residual_energy_curve(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _radial_score(
+    data: GSplatData,
+    centre: Sequence[float] | None = None,
+    spatial_dims: Sequence[int] | None = None,
+) -> np.ndarray:
+    """Distance of each splat from ``centre``, over the SPATIAL axes only.
+
+    The ordering key for ``method="radial"`` — the concentric-shell reveal. This
+    is a presentation choice, not an error metric: it exists so a streaming
+    additive ladder visibly grows outward from the middle of the object rather
+    than filling in by contribution (which reads as confetti).
+
+    ``centre`` defaults to the **bounding-box centre of the spatial axes**, not
+    the scene origin: a dataset sitting far from the origin would otherwise
+    reveal from one corner instead of growing from its own middle.
+
+    ``spatial_dims`` defaults to :meth:`GSplatData._nondegenerate_axes` — the
+    shared "axis with real covariance extent" rule. That matters here: a stacked
+    time or channel axis has zero variance, and including it would make the
+    shells expand through TIME as well as space (every timepoint of the innermost
+    shell before any of the next), which is not a reveal.
+    """
+    dims = (
+        np.asarray(spatial_dims, dtype=np.intp)
+        if spatial_dims is not None
+        else data._nondegenerate_axes()
+    )
+    pts = np.asarray(data.centers, dtype=np.float64)[:, dims]
+    if centre is None:
+        origin = (pts.min(axis=0) + pts.max(axis=0)) / 2.0
+    else:
+        origin = np.asarray(centre, dtype=np.float64)
+        if origin.shape != (len(dims),):
+            raise ValueError(
+                f"reveal_centre must have one coordinate per spatial axis "
+                f"{tuple(int(d) for d in dims)}; got shape {origin.shape}"
+            )
+    return np.asarray(np.linalg.norm(pts - origin, axis=1), dtype=np.float64)
+
+
 def compute_additive_order(
     data: GSplatData,
     method: AutoOrMethod = "auto",
@@ -438,6 +482,8 @@ def compute_additive_order(
     truncation_sigmas: float = 3.0,
     max_n_dense: int = 2_000,
     seed: int | None = None,
+    reveal_centre: Sequence[float] | None = None,
+    spatial_dims: Sequence[int] | None = None,
 ) -> np.ndarray:
     """Compute an additive ordering permutation for the splats in ``data``.
 
@@ -448,7 +494,7 @@ def compute_additive_order(
         flattened concatenation across LODs.
     method : str
         One of ``auto``, ``greedy``, ``self_energy``, ``mass``,
-        ``amplitude``, ``spectral``, ``random``.  ``auto`` (the default)
+        ``amplitude``, ``spectral``, ``random``, ``radial``.  ``auto`` (the default)
         resolves to ``greedy`` at small N and ``self_energy`` above
         :data:`_AUTO_ADDITIVE_MAX_N` — see :func:`resolve_additive_method`.
         See module docstring for details.
@@ -461,6 +507,14 @@ def compute_additive_order(
         use lazy-greedy.  Default 2000 (per supp doc §4.3).
     seed : int, optional
         Random seed for ``method='random'``.
+    reveal_centre : sequence of float, optional
+        Centre of the shells for ``method='radial'``. Defaults to the spatial
+        bounding-box centre — NOT the scene origin, so a dataset far from the
+        origin still grows from its own middle. One coordinate per spatial axis.
+    spatial_dims : sequence of int, optional
+        Centre columns the radial distance is measured over. Defaults to the
+        non-degenerate (real-extent) axes, which excludes a stacked time or
+        channel axis. Ignored by every other method.
 
     Returns
     -------
@@ -479,6 +533,16 @@ def compute_additive_order(
     # Resolve the size-adaptive sentinel ONCE, before any (expensive) Gram
     # build, so every downstream branch sees a concrete method.
     method = resolve_additive_method(method, N)
+
+    if method == "radial":
+        # ASCENDING, unlike every other method here: the score is a DISTANCE, so
+        # the smallest is revealed first and the prefixes grow outward as
+        # concentric shells. Every other branch sorts `-score` because its score
+        # is a contribution to maximize.
+        return np.argsort(
+            _radial_score(data, centre=reveal_centre, spatial_dims=spatial_dims),
+            kind="stable",
+        ).astype(np.int64)
 
     if method == "random":
         rng = np.random.default_rng(seed)
