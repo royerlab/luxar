@@ -257,7 +257,7 @@
       14
     ],
     "packages/luxar/src/luxar/demos/demo_lsystem_forest.py::interpret": [
-      15
+      12
     ],
     "packages/luxar/src/luxar/demos/demo_lsystem_forest.py::poisson_disk_sampling": [
       13
@@ -533,13 +533,13 @@
       12
     ],
     "packages/luxar/src/luxar/io/_compiler/geometry_writers/lines.py::write_lines": [
-      40
+      28
     ],
     "packages/luxar/src/luxar/io/_compiler/geometry_writers/mesh.py::write_mesh": [
       12
     ],
     "packages/luxar/src/luxar/io/_compiler/geometry_writers/points.py::write_points": [
-      31
+      24
     ],
     "packages/luxar/src/luxar/io/_compiler/gsplat_assembly.py::apply_gsplat_group_attrs": [
       11

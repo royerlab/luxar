@@ -185,15 +185,55 @@ def test_lsystem_turtle_reuses_branch_hub() -> None:
         rules={},
         randomness=0.0,
     )
-    vertices, widths, colors, sharpness, edges, _leaves = forest.create_tree(
+    vertices, edges, edge_depths, vertex_depths = forest.derive_tree(
         lsystem,
         iterations=0,
-        add_leaves=False,
+        seed=7,
     )
-    _assert_indexed_geometry(vertices, edges, widths, colors, sharpness)
+    _assert_indexed_geometry(vertices, edges, vertex_depths)
+    assert len(edge_depths) == len(edges)
 
     degree = np.bincount(edges.reshape(-1), minlength=len(vertices))
     assert int(degree.max()) == 3, "the pushed/popped branch point was duplicated"
+
+
+def test_lsystem_stochastic_expansion_is_seeded_and_normalized() -> None:
+    """Stochastic productions sample deterministically from the seeded rng."""
+    lsystem = forest.LSystem(
+        axiom="X",
+        rules={"X": [(0.5, "F[+X]"), (0.5, "F[-X]")]},
+        randomness=0.0,
+    )
+    a = lsystem.expand(6, np.random.default_rng(11))
+    b = lsystem.expand(6, np.random.default_rng(11))
+    c = lsystem.expand(6, np.random.default_rng(12))
+    assert a == b, "same seed must reproduce the same derivation"
+    assert a != c, "different seeds should (overwhelmingly) diverge"
+    assert set(a) <= set("F[]+-X")
+
+
+def test_lsystem_tropism_bends_branches_not_the_trunk() -> None:
+    """Tropism applies only at branching depth >= 1: trunks stay straight."""
+    straight = forest.LSystem(axiom="FFFF[+FFFF]", rules={}, randomness=0.0)
+    drooped = forest.LSystem(
+        axiom="FFFF[+FFFF]",
+        rules={},
+        randomness=0.0,
+        tropism=(0.0, 0.0, -1.0),
+        tropism_strength=0.4,
+    )
+    v_straight, e_straight, _, _ = forest.derive_tree(straight, iterations=0, seed=1)
+    v_drooped, e_drooped, d_drooped, _ = forest.derive_tree(
+        drooped, iterations=0, seed=1
+    )
+    assert np.array_equal(e_straight, e_drooped)
+    # Trunk vertices (introduced at depth 0) are identical...
+    trunk = v_straight[:5]
+    np.testing.assert_allclose(v_drooped[:5], trunk, atol=1e-6)
+    # ...while the branch tip ends up strictly lower under gravity droop.
+    tip_straight = v_straight[e_straight[d_drooped >= 1][-1, 1]]
+    tip_drooped = v_drooped[e_drooped[d_drooped >= 1][-1, 1]]
+    assert tip_drooped[2] < tip_straight[2]
 
 
 class _RecordingScene:

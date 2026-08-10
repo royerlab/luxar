@@ -173,11 +173,6 @@ EXEMPT: dict[str, Exemption] = {
         "BSP tiles of a kind=partition wrapper that is itself layer=True — the "
         "wrapper is where the compositing attrs live (see the comment there).",
     ),
-    "demo_lsystem_forest.py": Exemption(
-        frozenset({"f'tree_{i:04d}'"}),
-        frozenset({"'trees'"}),
-        "Hundreds of per-tree Lines nodes under the layer=True `trees` group.",
-    ),
     "demo_gsplats_lod_embryo_line.py": Exemption(
         frozenset({"'lod'"}),
         frozenset({"'embryo_line'"}),
@@ -695,9 +690,9 @@ class TestTheExemptionsThemselves:
         """The group an exemption leans on must still be added with ``layer=True``.
 
         Without this the exemption is self-certifying: deleting ``layer=True``
-        from ``demo_lsystem_forest``'s ``trees`` group takes every tree node out
-        of the panel — the exact regression #1362 fixed — while the per-call rule
-        stays happy because the trees are exempt.
+        from ``demo_gsplats_lod_embryo_line``'s ``embryo_line`` group takes every
+        copy of the ladder out of the panel — the exact regression class #1362
+        fixed — while the per-call rule stays happy because the copies are exempt.
         """
         for name, exemption in EXEMPT.items():
             tree = _parse(_exempt_module(name))
@@ -714,12 +709,13 @@ class TestTheExemptionsThemselves:
             )
 
 
-#: Demos whose geometry reaches the panel only through a container group, and
-#: that are cheap enough to actually BUILD here (no download, no GPU). The
-#: static rules above check that the group is added with ``layer=True``; only
-#: writing the store proves the nodes are still PARENTED to it — re-pointing
-#: ``_add_frame_ruler(frame_section, …)`` back at ``scene`` would empty the
-#: layer while every static check stayed green.
+#: Demos cheap enough to actually BUILD here (no download, no GPU) whose
+#: written store is worth walking: either the geometry reaches the panel only
+#: through a container group (nd_transforms — the static rules check the group
+#: is ``layer=True``, but only writing the store proves the nodes are still
+#: PARENTED to it), or the demo writes many node kinds across several adders
+#: (the forest: mesh + per-species lines + gsplats + points, each of which
+#: must carry its own ``layer=True``).
 BUILDABLE_COMPOSITE_DEMOS = ("demo_nd_transforms.py", "demo_lsystem_forest.py")
 
 
@@ -731,8 +727,8 @@ def _build_composite_scene(module_name: str, output: Path) -> None:
     else:
         from .. import demo_lsystem_forest
 
-        # Smallest forest that still exercises the group: a couple of trees
-        # with enough expansion to survive the degenerate-rules skip.
+        # Smallest forest that still writes every node type: a few trees at
+        # the lowest derivation depth that keeps at least one segment.
         demo_lsystem_forest.generate_forest(output, iterations=2, n_trees=4)
 
 
