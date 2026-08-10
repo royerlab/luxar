@@ -203,18 +203,21 @@ export function minNearForRadius(expandedRadius: number): number {
  *    NOTE this assumes the orbit target is at the sphere CENTRE. Panned onto a
  *    bbox corner (`0.952 · R`) the general form `(dist + R)/C < 1.905e-3 · R`
  *    tightens, and for the last ~2% of the zoom-in range the floor overtakes
- *    `minDistance`. Only mesh is affected — the other three types are inside
- *    the fade's reject region throughout that band by construction — so this
- *    does not move C.
- *  - **C ≥ 992, stay lossless for Points / Lines / GSplats.** All three
- *    already suppress anything closer than `nearCull = 1e-3 · diagonal`
- *    via `perspectiveNearFade` (`materials/_shared/glsl-lib.ts`), though
- *    by two different mechanisms worth knowing before trusting this:
- *    Points and GSplats REJECT the vertex when the fade drops below 0.01
- *    (both backends); Lines instead cull only when BOTH endpoints are
+ *    `minDistance`. All four types are inside the fade-suppressed region
+ *    throughout that band by construction, so nothing visible is lost there
+ *    and this does not move C.
+ *  - **C ≥ 992, stay lossless for all four geometry types.** Every one of
+ *    them already suppresses anything closer than `nearCull = 1e-3 ·
+ *    diagonal` via `perspectiveNearFade` (`materials/_shared/glsl-lib.ts`),
+ *    though by three different mechanisms worth knowing before trusting
+ *    this: Points and GSplats REJECT the vertex when the fade drops below
+ *    0.01 (both backends); Lines instead cull only when BOTH endpoints are
  *    near, clip a half-near segment onto the `nearCull` plane, and apply
- *    the fade PER-FRAGMENT as a multiply. Either way the fade is what
- *    governs, and it is under 0.01 below `1.0589 · nearCull` (the root of
+ *    the fade PER-FRAGMENT as a multiply with no reject of its own (their
+ *    discard is a separate `max(rgb) < 1e-4` test); Mesh applies it
+ *    PER-FRAGMENT too (a triangle spans depth) but WITH a discard at the same
+ *    0.01, because it writes depth (#1431). Whichever mechanism, the fade is
+ *    what governs, and it is under 0.01 below `1.0589 · nearCull` (the root of
  *    `smoothstep(1, 2, x) = 0.01`, solved rather than eyeballed in
  *    `tests/.../clipping/_near-fade-model.ts`).
  *
@@ -239,10 +242,11 @@ export function minNearForRadius(expandedRadius: number): number {
  * companion test pins the crossover as strictly worse than the surface, and
  * the arithmetic test asserts the constant survives that 10% `nearCull`
  * tightening — so a future change to `nearCull`, to the fade band, or to this
- * constant fails there. (Mesh has
- * no near fade in either backend — verified in the GLSL and TSL sources — so
- * it is the one type the floor can clip; no value of C avoids that while
- * still bounding the ratio.)
+ * constant fails there. (Mesh used to be the one exception — it had no near fade
+ * in either backend, so the floor could clip it visibly. Since #1431 it carries
+ * the same fade with the same 0.01 reject and the same `1.0589 · nearCull`
+ * headroom, so the losslessness argument above covers all four types and the
+ * floor clips nothing the eye would have seen under perspective.)
  *
  * The losslessness argument assumes `nearCull` and this floor are derived from
  * the SAME bounds, which holds on the metadata and per-frame paths. It can
@@ -250,8 +254,9 @@ export function minNearForRadius(expandedRadius: number): number {
  * never populates, so the materials keep `_nearCull`'s 0.1 default while
  * `autoAdjustFromBounds` derives its sphere from `Box3.setFromObject`. On a
  * large metadata-less scene the floor can then exceed `nearCull` and clip
- * points/lines/gsplats the fade would have drawn. Compiled Luxar scenes always
- * carry `position_bounds`, so this is not reachable through the normal loader.
+ * geometry of any of the four types that the fade would have drawn. Compiled
+ * Luxar scenes always carry `position_bounds`, so this is not reachable through
+ * the normal loader.
  *
  * Measured payoff at the reported pose (R = 52.5, dist = 8.5, far = 61):
  * the floor rises 1.05e-4 → 0.0508 and depth quantization improves

@@ -43,7 +43,7 @@ picking/
 │   └── shaders.ts
 │
 ├── mesh/                        # idem for meshes, plus two files no sibling needs:
-│   ├── material.ts              #   NOT camera-aware; `side` synced from the visual
+│   ├── material.ts              #   near-fade uniforms only; `side` synced from the visual
 │   ├── material-tsl.ts          #   material; element id from gl_VertexID
 │   ├── pick.tsl.ts
 │   ├── shaders.ts
@@ -55,7 +55,7 @@ picking/
 
 ## Per-geometry picking parity
 
-Each geometry has one GLSL wrapper and one TSL wrapper. The first three implement the shared `CameraAwareMaterial` contract from `../materials/_shared/camera-aware-material.ts`; **mesh deliberately does not** — it has no screen-space footprint to size, so there is nothing for a camera broadcast to update (`material-manager.ts` routes it to `staticMaterials` instead, exactly as it does the visual mesh material). The TSL wrapper owns the `UniformNode`s and exposes them through `proxyIUniform` so `material.uniforms.uX.value = …` writes land directly on the node — symmetric with the visual `PointTSLMaterial` / `LineTSLMaterial` / `GSplatTSLMaterial` plumbing.
+Each geometry has one GLSL wrapper and one TSL wrapper, and all four implement the shared `CameraAwareMaterial` contract from `../materials/_shared/camera-aware-material.ts`. **Mesh consumes only half of it** — it has no screen-space footprint to size, so `fov` / `resolution` are ignored, but `isOrtho` / `nearCull` drive the shared near fade its fragment stage evaluates (see the stage table in `../materials/_shared/README.md`), exactly as on the visual mesh material. The TSL wrapper owns the `UniformNode`s and exposes them through `proxyIUniform` so `material.uniforms.uX.value = …` writes land directly on the node — symmetric with the visual `PointTSLMaterial` / `LineTSLMaterial` / `GSplatTSLMaterial` plumbing.
 
 | Geometry | GLSL wrapper            | TSL wrapper                | TSL factory          | Pick footprint vs visual                                    |
 | -------- | ----------------------- | -------------------------- | -------------------- | ----------------------------------------------------------- |

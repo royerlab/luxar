@@ -18,10 +18,12 @@
  *    slice change, since §5.4 rewrites only the index buffer. A vertex ordinal is
  *    invariant across slices, which is why it is the chosen granularity — and it
  *    indexes the per-vertex label CSR (§3.2) directly.
- * 3. **No quad expansion and no camera uniforms.** A mesh has no screen-space
- *    footprint to size, so this pair binds neither `uResolution` nor `uIsOrtho`
- *    and the wrapper is deliberately not a `CameraAwareMaterial` — matching the
- *    visual mesh material.
+ * 3. **No quad expansion, and only half the camera uniforms.** A mesh has no
+ *    screen-space footprint to size, so this pair binds no `uResolution` and no
+ *    focal length. It does bind `uIsOrtho` + `uNearCull` and the wrapper IS a
+ *    `CameraAwareMaterial` — matching the visual mesh material, whose near fade
+ *    the pick coverage has to reproduce or a fading surface would stay fully
+ *    pickable (#1431).
  *
  * Both mode-dependent behaviours are **runtime uniforms, not defines**, so
  * `mesh-pick` stays a single codegen variant and a blending-mode switch from the
@@ -59,7 +61,11 @@
  */
 
 import type { ShaderSource } from '../../materials/_shared/shader-source';
-import { GLSL_SANITIZE_FUNCTIONS, GLSL_ELEMENT_ID_SPLIT } from '../../materials/_shared/glsl-lib';
+import {
+  GLSL_SANITIZE_FUNCTIONS,
+  GLSL_ELEMENT_ID_SPLIT,
+  GLSL_NEAR_FADE_FUNCTIONS,
+} from '../../materials/_shared/glsl-lib';
 import { meshPickWebGPUFactory, buildMeshPickTSLNodesFromUniforms } from './pick.tsl';
 
 /**
@@ -77,6 +83,11 @@ import { meshPickWebGPUFactory, buildMeshPickTSLNodesFromUniforms } from './pick
  * The two id varyings are `flat` — see the provoking-vertex note on the fragment
  * stage. `vAlpha` is smoothly interpolated, exactly as in the visual shader, so the
  * cutout hole in the pick pass has the same shape as the one on screen.
+ *
+ * `vViewZ` carries the view-space depth the fragment stage's near fade needs. Just
+ * the z, not the whole `vec3` the visual pair carries — the visual stage
+ * differentiates its `vViewPos` for the flat-normal fallback, and the pick pass has
+ * no shading to do.
  */
 export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -93,6 +104,10 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp float vNodeId;
     flat out highp vec2 vElementId;
     out mediump float vAlpha;
+    // VIEW-space depth for the fragment stage's near fade. highp: it is compared
+    // against a scene-relative uNearCull that can be ~1e-3 of the scene diagonal,
+    // which mediump cannot resolve on a large scene.
+    out highp float vViewZ;
 
     void main() {
       vNodeId = uNodeId;
@@ -104,7 +119,9 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
       // term for a mesh, and a NaN would survive into the cutout comparison as a
       // fragment that never discards — pickable where the visual has a hole.
       vAlpha = sanitizeAlpha(color.a);
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      vViewZ = mvPosition.z;
+      gl_Position = projectionMatrix * mvPosition;
     }
   `;
 
@@ -140,16 +157,30 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
  * Without the identical `a < uAlphaCutoff` discard, a hole the user can see
  * through would still rasterize here at true surface depth — becoming pickable
  * AND depth-occluding picks of the nodes visible through it.
+ *
+ * The near fade is here for exactly the same reason, and is evaluated PER FRAGMENT
+ * to match the visual pair (a triangle spans depth). It folds into `brightness`,
+ * the way the point and gsplat pick shaders fold theirs, so pick salience tracks
+ * visible salience; and a fragment below the 0.01 reject is discarded, so it writes
+ * neither the id nor depth.
  */
 export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
+    ${GLSL_NEAR_FADE_FUNCTIONS}
+
     flat in highp float vNodeId;
     flat in highp vec2 vElementId;
     in mediump float vAlpha;
+    in highp float vViewZ;
 
     uniform mediump float uOpacity;
     uniform mediump float uAlphaCutoff;
+    // Near-fade inputs, mirroring the visual material's pair: 0 = perspective,
+    // 1 = orthographic (fade is the identity there), and the scene-relative fade
+    // start in world units.
+    uniform int uIsOrtho;
+    uniform float uNearCull;
     // 1 = 'opaque': apply the visual shader's hard cutout. Runtime uniform, not a
     // define — a layers-panel mode switch must not recompile the pick program.
     uniform int uAlphaCutout;
@@ -168,6 +199,13 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
       // opacity — NOT \`intensity * uOpacity\` like the emissive types.
       mediump float a = vAlpha * uOpacity;
 
+      // Same fade, same 1e-20 degenerate-smoothstep floor and same 0.01 reject as
+      // the visual shader — pick coverage must keep matching visible coverage as
+      // the camera flies into the surface. Rejected before anything is written, so
+      // a faded-out fragment contributes neither an id nor depth.
+      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20));
+      if (nearFade < 0.01) discard;
+
       if (uAlphaCutout == 1) {
         if (a < uAlphaCutoff) discard;
         // Survivors of the cutout are FULLY OPAQUE on screen — the visual shader
@@ -178,7 +216,13 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
         a = 1.0;
       }
 
-      mediump float brightness = clamp(a, 0.0, 1.0);
+      // The fade folds in HERE rather than into \`a\` above, so it reaches both
+      // arms with one multiply: the cutout arm has already replaced \`a\` with the
+      // constant 1.0 (its visual twin ramps the shaded RGB by the same factor),
+      // and the commutative arm carries the coverage the visual twin faded.
+      // Folding earlier would instead move the cutout comparison and dissolve the
+      // holes open as the camera approached.
+      mediump float brightness = clamp(a * nearFade, 0.0, 1.0);
 
       fragColor = vec4(vNodeId, vElementId.x, brightness, vElementId.y);
       // Pick depth convention, synced from the MAIN material's blending mode by

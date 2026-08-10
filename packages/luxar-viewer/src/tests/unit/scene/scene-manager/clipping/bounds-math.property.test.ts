@@ -138,13 +138,18 @@ describe('bounds-math properties', () => {
     // Upper-bound half of the MAX_NEAR_FAR_RATIO derivation, stated as the
     // thing that actually matters: whenever the FLOOR is what sets `near`,
     // everything the near plane clips was already being discarded by the
-    // point / line / gsplat vertex shaders, so raising the floor cannot hide
-    // geometry those three types would have drawn. That is what makes the
-    // ratio bound lossless rather than a quality tradeoff.
+    // shaders of all four geometry types, so raising the floor cannot hide
+    // geometry any of them would have drawn. That is what makes the ratio
+    // bound lossless rather than a quality tradeoff.
     //
-    // Those shaders multiply by `perspectiveNearFade` (see
-    // `materials/_shared/glsl-lib.ts`) and reject the vertex when it drops
-    // below 0.01. The fade is monotone in view depth, so asserting
+    // Those shaders all multiply by `perspectiveNearFade` (see
+    // `materials/_shared/glsl-lib.ts`), which is below 0.01 over the same band
+    // for every type. Three of them turn that into an outright reject --
+    // points and gsplats per VERTEX, mesh per FRAGMENT. Lines do not reject on
+    // the fade at all: they multiply it into the intensity chain, so their
+    // contribution goes to ~0 across the band instead (their own discard is a
+    // separate `max(rgb) < 1e-4` test). Either way nothing visible survives
+    // there, and the fade is monotone in view depth, so asserting
     // fade(near) <= 0.01 covers every depth the frustum clips.
     //
     // NOTE the margin here is genuinely thin, and asymmetric on purpose:

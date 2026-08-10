@@ -10,10 +10,12 @@
  * Two deliberate divergences from the sibling pick wrappers, both following the
  * visual mesh material rather than the pick convention:
  *
- * 1. **Not a `CameraAwareMaterial`.** A mesh has no screen-space footprint to size,
- *    so there is no resolution/FOV/near-cull uniform to broadcast. The material
- *    manager routes it to `staticMaterials`, which is tracked for disposal and takes
- *    no camera broadcast.
+ * 1. **A `CameraAwareMaterial` for only half the usual reason.** A mesh has no
+ *    screen-space footprint to size, so `fov` and `resolution` are ignored; what it
+ *    does consume is `uIsOrtho` + `uNearCull`, because the pick pass has to
+ *    reproduce the visual near fade or a fading surface would stay fully pickable
+ *    (#1431). Registering it therefore routes it into the camera broadcast, exactly
+ *    as the visual mesh material.
  * 2. **`side` is synced from the visual material**, not pinned to `DoubleSide`.
  *    The other three pick materials can hardcode `DoubleSide` because their quads
  *    are view-facing; a mesh's back faces may be culled on screen, and a pick
@@ -28,6 +30,7 @@ import { MESH_PICK_SOURCE } from './shaders';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 import { MESH_DEFAULTS, clampAppearanceFraction } from '../../materials/mesh/appearance';
 import { resolveMeshPickModeState, type MeshPickAwareMaterial } from './pick-mode';
+import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import type { BlendingMode } from '../../../types/blending';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
@@ -41,7 +44,10 @@ export interface MeshPickingMaterialConfig {
   alphaCutoff?: number;
 }
 
-export class MeshPickingMaterial extends THREE.ShaderMaterial implements MeshPickAwareMaterial {
+export class MeshPickingMaterial
+  extends THREE.ShaderMaterial
+  implements CameraAwareMaterial, MeshPickAwareMaterial
+{
   constructor(config: MeshPickingMaterialConfig) {
     super({
       uniforms: {
@@ -57,6 +63,8 @@ export class MeshPickingMaterial extends THREE.ShaderMaterial implements MeshPic
         // the first one.
         uAlphaCutout: { value: 1 },
         uSurfaceDepth: { value: 1 },
+        uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+        uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
       },
       vertexShader: MESH_PICK_GLSL.vertex,
       fragmentShader: MESH_PICK_GLSL.fragment,
@@ -73,6 +81,26 @@ export class MeshPickingMaterial extends THREE.ShaderMaterial implements MeshPic
       // trips — but say so explicitly, matching the sibling wrappers.
       forceSinglePass: true,
     });
+  }
+
+  /**
+   * Update the camera-dependent uniforms.
+   *
+   * `_fov` / `_resolution` are accepted and IGNORED — a mesh has no screen-space
+   * footprint to size. Only the near fade's two inputs are consumed, and they must
+   * be kept identical to the visual material's or pick coverage would stop matching
+   * visible coverage near the camera. Mirrors `MeshMaterial.updateCameraParams`.
+   */
+  updateCameraParams(
+    _fov: number,
+    _resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    nearCull?: number
+  ): void {
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    if (nearCull !== undefined) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
   }
 
   /**
@@ -132,6 +160,11 @@ export class MeshPickingMaterial extends THREE.ShaderMaterial implements MeshPic
     });
     cloned.uniforms.uAlphaCutout.value = this.uniforms.uAlphaCutout.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    // Camera state too: a clone left at the perspective/0.1 defaults would fade its
+    // pick coverage against the wrong near plane — and under ortho, where the fade
+    // is the identity, would fade at all.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     // The epoch's culling must ride along: a clone taken on an undecidable frame
     // would otherwise revert to FrontSide and drop half the pickable surface until
     // the next commit re-applied it.

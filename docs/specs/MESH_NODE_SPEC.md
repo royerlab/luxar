@@ -867,6 +867,76 @@ model is deliberately minimal and light-free:
   PR would make the diff unreviewable. Lifting the tail is worth a separate follow-up once there are
   four copies to justify it.
 
+- **Perspective near fade — the shared `perspectiveNearFade`, evaluated PER FRAGMENT.** The other
+  three types already suppress geometry approaching the near plane with the one helper in
+  `materials/_shared/glsl-lib.ts` / `tsl-helpers.ts` (0 behind the camera, `smoothstep` across
+  `[nearCull, 2·nearCull]`, 1.0 under ortho), in both their visual and their pick shaders. Mesh
+  does the same, so a surface fades out as the camera flies into it instead of clipping hard —
+  the last near-plane asymmetry between the four types.
+
+  The **stage** differs from the sibling types and is forced, not chosen. Points and gsplats
+  evaluate the fade per VERTEX, which is exact because an instanced quad has one center depth. A
+  triangle spans depth, so a per-vertex value would interpolate the *ramp* across the face and a
+  large triangle straddling the band would smear a linear gradient over the smoothstep. Mesh
+  therefore evaluates it in the fragment stage, off the `vViewPos` varying the shade term already
+  carries:
+
+  ```glsl
+  float nearFade = perspectiveNearFade(uIsOrtho, vViewPos.z, max(uNearCull, 1e-20));
+  if (nearFade < 0.01) discard;   // every mode — see below
+  ```
+
+  Three consequences worth stating:
+
+  - The `< 0.01` reject applies in **every** blending mode, not just the translucent ones.
+    A mesh may WRITE depth — `opaque` always does, and `normal` does at opacity ≥ 0.99
+    (`rendering/blending-state.ts::normalModeDepthWrite`, which mesh feeds its real opacity) — and
+    a fully-faded but still-rasterized fragment would then sit in the depth buffer occluding
+    everything behind it while contributing nothing visible. Unconditional rather than gated on
+    that predicate: gating would buy a runtime uniform in order to save a `discard`.
+  - Under `opaque` the emission is `vec4(shadedColor, 1.0)` — there is no alpha to fade — so the
+    fade ramps the **shaded RGB** instead: `vec4(shadedColor * nearFade, 1.0)`. Every other mode
+    folds it into the coverage `a` before the emission branch, exactly as points and lines do,
+    which is also how `max`'s RGB premultiply picks it up. The cutout comparison itself reads the
+    **unfaded** coverage: the fade is a distance effect, not an authored mask, and letting it move
+    the comparison would dissolve the holes open as the camera approached.
+
+    So in `opaque` — the mesh default — the near fade **darkens rather than dissolves**, and that
+    is an accepted trade rather than an oversight. The fragment keeps writing depth and keeps
+    emitting alpha 1.0, so over a non-black background the near shell goes visibly BLACK for the
+    width of the band before the `< 0.01` reject removes it; over a black background it reads as a
+    dissolve. Every other mode dissolves properly, via coverage. Two things make the trade the
+    right one. The band is `[nearCull, 2·nearCull]` with `nearCull = 1e-3 · diagonal`, so the
+    darkened shell *sits* 0.1–0.2% of the scene diagonal in front of the eye and is ~0.1% thick — a
+    distance a real approach crosses in a frame or two. And each alternative is worse in its own
+    way. The only DETERMINISTIC way to dissolve — moving the cutout comparison onto the faded
+    coverage (`a * nearFade < uAlphaCutoff`) — was rejected above for a stronger reason than the
+    fade: it would let a distance effect rewrite an authored mask, opening the surface's holes as
+    the camera closed in. A **stochastic** reject (`discard` when `nearFade < hash(gl_FragCoord.xy)`)
+    would dissolve an order-independent depth-writing surface properly and without touching the
+    mask; it is declined rather than overlooked, because it costs a hash plus a codegen variant and
+    because a non-deterministic fragment would downgrade the parity harness's exact-factor lock
+    (`mesh-near-fade` is pinned at precisely `0.15625 ×` its un-faded reference, per pixel) to a
+    coverage-fraction test. Keeping only the `< 0.01` reject and dropping the RGB ramp is the fourth
+    option, and is the hard near-plane clip this section exists to remove. An order-independent
+    depth-writing mode drawn without per-triangle sorting (§6.3) has no honest partial coverage to
+    fade; the answer for a user who wants a dissolve is `normal`. The viewer answers the same
+    structural question identically elsewhere: `scene/lod-fade.ts`'s `BLENDABLE_MODES` is
+    `additive`/`luminous`/`volumetric` only, so an `opaque`/`normal`/`max` layer keeps a hard LOD
+    swap rather than a cross-fade, on the same premise that a mode with no linear opacity knob does
+    not get a fake one.
+  - `uIsOrtho` and `uNearCull` are the two camera inputs mesh consumes, which is why all four mesh
+    material wrappers implement `CameraAwareMaterial` and join the material manager's camera
+    broadcast — ignoring `fov` and `resolution`, which size a screen-space sprite a mesh does not
+    have. Both are **runtime uniforms**, so an ortho-mode toggle is a uniform write and never
+    recompiles a mesh program (the TSL graphs therefore take `perspectiveNearFadeTSL`, not the
+    compile-time-ortho `…StaticTSL` variant the line graphs use).
+
+  Under ORTHO the fade returns 1.0 for mesh exactly as for the other three, so nothing changes
+  there; NDC near/far clipping stays the sole cull authority. The per-type stage table lives in
+  `rendering/materials/_shared/README.md`, and the near-plane floor derivation that depends on it
+  in `scene/scene-manager/clipping/bounds-math.ts`.
+
 ### 6.3 Blending and depth
 
 v1 supports `opaque`, `normal`, `additive`, `luminous`, and `max`.
@@ -1069,6 +1139,16 @@ translucent modes `a` is the `brightness` coverage term the readback already vot
 branch** in the single pick fragment (keyed on the blending mode, like the `uSurfaceDepth` split above),
 **not** a separate `#define` — so `mesh-pick` stays a single snapshot variant and §6.4's count is
 unchanged.
+
+**The near fade must match too.** For the same reason the cutout must: the pick pass reproduces the
+visual shader's `perspectiveNearFade` per fragment, off a `vViewZ` varying the pick vertex stage adds
+(just the z — the visual stage's whole `vViewPos` exists to be differentiated for the flat-normal
+fallback, which the pick pass has none of). It folds into `brightness` the way the point and gsplat
+pick shaders fold theirs, so pick salience tracks visible salience, and a fragment below the same 0.01
+threshold is discarded so it writes neither an id nor depth. Without it a surface the user can barely
+see would stay fully pickable and keep depth-occluding the nodes behind it. This is what makes the
+mesh pick materials `CameraAwareMaterial`s — `uIsOrtho` / `uNearCull` only; there is still no
+`uResolution` and no focal length, since a mesh has no screen-space footprint to size.
 
 **Stability.** §5.4 rewrites only the index buffer per slice (`compact_visible_faces`) and never remaps
 vertex attributes ("No vertex compaction"). A face ordinal would be renumbered on every slice change; a
@@ -1722,6 +1802,18 @@ The A/B also **corrected an overstatement** in the §6.2 notes, which is the mor
 (The earlier edge-on-only `flat_patch` could not have shown this either way: `N.z ≈ 0` there, and flipping the sign of ~0 leaves `wrap = clamp(0 · 0.5 + 0.5) = 0.5` unchanged. That is why the fixture needed the face-on node.)
 
 Still arguments rather than measurements: the provoking-vertex convention and the surface-depth VALUE, both because reading the pick buffer's ids and depth from outside the app is not cheaply reachable |
+
+**Post-Phase-6: the near-plane fade (#1431).** The Phase 6 audit above swept the "all three geometry
+types" claims and left the two that were genuinely about volumetric physics and chunk-bounds queries.
+It missed a third asymmetry that was real: mesh had no `perspectiveNearFade` in either backend, so a
+triangle clipped hard against the near plane while the other three faded out. That is now closed —
+§6.2 for the visual pair, §6.5 for the pick pair — and the change reaches further than the shaders:
+all four mesh material wrappers became `CameraAwareMaterial`s (consuming `isOrtho` / `nearCull` and
+ignoring `fov` / `resolution`), mesh joined the material manager's camera broadcast, and the
+near-plane floor derivation in `scene/scene-manager/clipping/bounds-math.ts` — which called mesh "the
+one type the floor can clip" — now holds for all four. Parity is covered by the harness's two
+perspective entries (`mesh-near-fade`, `mesh-pick-near-fade`); the ORTHO default camera every other
+entry uses makes the fade the identity, which is why those two exist.
 
 Phase 0 landed alone, with no mesh code, so any regression it caused would have been unambiguous.
 Phase 1 (the Python writable side) landed next, as #1220; Phase 2 (the cull kernels) was independent

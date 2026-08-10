@@ -2242,6 +2242,224 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     }
   });
 
+  test('mesh near fade: parity under perspective, on the visual AND the pick pass', async ({
+    page,
+  }) => {
+    // The five mesh entries that render under a PERSPECTIVE camera. Every other one
+    // uses the ortho default, where `perspectiveNearFade` returns 1.0 — so without
+    // these the fade would ship with no rendered cross-backend coverage.
+    //
+    // The quad sits entirely at viewZ = -1 and `uNearCull` is 0.8, so the fade is a
+    // uniform smoothstep(0.8, 1.6, 1.0) = 0.15625 across the whole surface. It has to
+    // land on the same pixels in both backends, and it reaches the output three
+    // different ways — all three are covered here:
+    //   `mesh-near-fade`           `opaque`: ramps the SHADED RGB (alpha is 1.0, so
+    //                              there is no coverage left to fade)
+    //   `mesh-additive-near-fade`  every non-cutout mode: `a *= nearFade`, so RGB is
+    //                              untouched and the COVERAGE carries the fade
+    //   `mesh-pick-near-fade`      the pick pass: folded into `brightness`
+    //
+    // Each is checked twice over: GLSL against TSL (parity), and each backend's faded
+    // frame against an UN-faded frame at the exact factor 0.15625 (anti-vacuity). The
+    // second half is the one that matters — parity alone would pass just as happily
+    // against two backends that BOTH ignored the fade.
+    //
+    // The two visual references are the `*-near-fade-reference` entries: same camera,
+    // same `uNearCull`, `uIsOrtho` flipped to 1 so the fade is the identity. Using the
+    // ortho-camera `mesh` / `mesh-additive` entries instead would compare across two
+    // framings — the ortho frame is 2.0 wide at z = 0 against the perspective frame's
+    // 2·tan(30°) = 1.155 — so pixel (i, j) would be a different point on the quad in
+    // each and the residual would carry that mismatch as well as the fade. With a
+    // matched reference every one of the 4096 pixels is the same surface point in both
+    // frames, so the comparison runs over the WHOLE frame rather than one pixel.
+    await bootHarness(page);
+
+    /** The fade every `*-near-fade` entry is built to produce; see `NEAR_FADE_UNIFORMS`. */
+    const FADE = 0.15625;
+    /**
+     * Frame width of the harness target. A local mirror of `HARNESS_SIZE` in
+     * `harnesses/tsl-harness/render.ts` rather than an import — that module pulls in
+     * three and the whole registry, which is browser-side code — and `pixelAt` asserts
+     * the buffer against it, so the two cannot drift silently.
+     */
+    const HARNESS_SIZE = 64;
+    /** RGBA at (x, y) of a `HARNESS_SIZE` frame. */
+    const pixelAt = (px: number[], x: number, y: number): number[] => {
+      expect(px.length, 'harness frame is not HARNESS_SIZE² RGBA').toBe(
+        HARNESS_SIZE * HARNESS_SIZE * 4
+      );
+      const o = (y * HARNESS_SIZE + x) * 4;
+      return px.slice(o, o + 4);
+    };
+    /**
+     * The middle of the frame — pixel-centre NDC (0.015625, 0.015625), so very nearly
+     * but not exactly the quad's centre. Nothing below depends on it being exact: the
+     * two visual comparisons run over the whole frame against a matched reference, and
+     * the pick one reads only framing-independent channels.
+     */
+    const CENTRE: [number, number] = [HARNESS_SIZE / 2, HARNESS_SIZE / 2];
+    /**
+     * Largest `|faded[c] − reference[c] · factor|` over a whole frame, plus where it
+     * occurred — so a failure names a pixel instead of just a number.
+     */
+    const worstScaled = (
+      faded: number[],
+      reference: number[],
+      c: number,
+      factor: number
+    ): { residual: number; at: number; faded: number; reference: number } => {
+      let worst = { residual: -1, at: -1, faded: -1, reference: -1 };
+      for (let i = 0; i < faded.length; i += 4) {
+        const residual = Math.abs(faded[i + c] - reference[i + c] * factor);
+        if (residual > worst.residual) {
+          worst = { residual, at: i / 4, faded: faded[i + c], reference: reference[i + c] };
+        }
+      }
+      return worst;
+    };
+
+    for (const backend of ['glsl', 'tsl'] as const) {
+      const run = async (name: string): Promise<number[]> =>
+        backend === 'glsl' ? runGLSL(page, name) : (await runTSL(page, name)).pixels;
+
+      // ---- Visual pass, `opaque`: the fade ramps the SHADED RGB (`opaque` emits
+      // alpha 1.0, so there is no alpha left to fade). Linear bytes — the harness
+      // reads back from a plain RGBA8 render target, with no output transform — so
+      // the ramp is visible as a plain multiply on the stored value.
+      const unfadedFrame = await run('mesh-near-fade-reference');
+      const fadedFrame = await run('mesh-near-fade');
+      const unfaded = pixelAt(unfadedFrame, ...CENTRE);
+      // The reference must be a lit surface, or every residual below is 0 vacuously.
+      expect(
+        Math.max(unfaded[0], unfaded[1], unfaded[2]),
+        `${backend}: the un-faded reference frame is dark at its centre [${unfaded}] — ` +
+          'nothing rendered, so the fade residuals below prove nothing'
+      ).toBeGreaterThan(60);
+      for (let c = 0; c < 3; c++) {
+        // ±1: the un-faded reference is itself a rounded byte, so the scaled
+        // expectation carries up to half a byte of quantization either way.
+        const w = worstScaled(fadedFrame, unfadedFrame, c, FADE);
+        expect(
+          w.residual,
+          `${backend}: mesh-near-fade channel ${c} is ${w.faded} at pixel ${w.at}, expected ` +
+            `${Math.round(w.reference * FADE)} = ${FADE} x the un-faded ${w.reference} — the ` +
+            'near fade is not reaching the visual fragment at the expected strength'
+        ).toBeLessThanOrEqual(1);
+      }
+
+      // ---- Visual pass, the NON-cutout fold. `additive` (and with it `luminous` /
+      // `normal` / `max`, which share the branch) multiplies the fade into COVERAGE
+      // and leaves the shaded RGB alone. Two separate claims, and both matter: RGB
+      // must be byte-identical to the reference — the same program with one uniform
+      // changed, and that uniform feeds nothing but the fade — while alpha carries
+      // the whole 0.15625. A build that faded RGB here, or that faded nothing, fails
+      // one of the two.
+      const unfadedAdd = await run('mesh-additive-near-fade-reference');
+      const fadedAdd = await run('mesh-additive-near-fade');
+      const unfadedAddCentre = pixelAt(unfadedAdd, ...CENTRE);
+      expect(
+        unfadedAddCentre[3],
+        `${backend}: the un-faded additive reference has no coverage at its centre ` +
+          `[${unfadedAddCentre}] — there is nothing for the fade to scale`
+      ).toBeGreaterThan(60);
+      for (let c = 0; c < 3; c++) {
+        const w = worstScaled(fadedAdd, unfadedAdd, c, 1.0);
+        expect(
+          w.residual,
+          `${backend}: mesh-additive-near-fade channel ${c} moved from ${w.reference} to ` +
+            `${w.faded} at pixel ${w.at} — outside the cutout the fade belongs in the ` +
+            'coverage only, and this build put it in the shaded RGB too'
+        ).toBe(0);
+      }
+      const wAlpha = worstScaled(fadedAdd, unfadedAdd, 3, FADE);
+      expect(
+        wAlpha.residual,
+        `${backend}: mesh-additive-near-fade coverage is ${wAlpha.faded} at pixel ` +
+          `${wAlpha.at}, expected ${Math.round(wAlpha.reference * FADE)} = ${FADE} x the ` +
+          `un-faded ${wAlpha.reference} — the \`a *= nearFade\` fold is not reaching the ` +
+          'four non-cutout blending modes'
+      ).toBeLessThanOrEqual(1);
+
+      // ---- Pick pass: the fade folds into `brightness` (B) and must leave the two
+      // id channels and the high half untouched, or a faded surface would be picked
+      // as a different element.
+      //
+      // This one compares against the ORTHO-camera `mesh-pick`, and unlike the visual
+      // pair that is sound: in the cutout arm every channel it reads is framing-
+      // independent. The two id channels are per-node constants, and the shader
+      // REPLACES the interpolated coverage with the constant 1.0 for cutout survivors
+      // (`a = 1.0`) before the fade scales it — so the un-faded brightness is 255 at
+      // any pixel of any camera, and no reference entry of its own is needed.
+      const unfadedPick = pixelAt(await run('mesh-pick'), ...CENTRE);
+      const fadedPick = pixelAt(await run('mesh-pick-near-fade'), ...CENTRE);
+      expect(
+        [fadedPick[0], fadedPick[1], fadedPick[3]],
+        `${backend}: the near fade moved a pick ID channel`
+      ).toEqual([unfadedPick[0], unfadedPick[1], unfadedPick[3]]);
+      expect(
+        Math.abs(fadedPick[2] - unfadedPick[2] * FADE),
+        `${backend}: mesh-pick-near-fade brightness is ${fadedPick[2]}, expected ` +
+          `${Math.round(unfadedPick[2] * FADE)} = ${FADE} x the un-faded ${unfadedPick[2]} — ` +
+          'pick salience has stopped tracking visible salience near the camera'
+      ).toBeLessThanOrEqual(1);
+    }
+
+    // ---- GLSL ↔ TSL, whole frame.
+    const glslVisual = await runGLSL(page, 'mesh-near-fade');
+    const tslVisual = (await runTSL(page, 'mesh-near-fade')).pixels;
+    assertBothRendered(glslVisual, tslVisual, 'mesh-near-fade');
+    expect(
+      meanAbsDiff(glslVisual, tslVisual),
+      'mesh-near-fade parity, mean abs diff on the 0-255 scale'
+    ).toBeLessThan(2.0);
+
+    const glslAdd = await runGLSL(page, 'mesh-additive-near-fade');
+    const tslAdd = (await runTSL(page, 'mesh-additive-near-fade')).pixels;
+    assertBothRendered(glslAdd, tslAdd, 'mesh-additive-near-fade');
+    expect(
+      meanAbsDiff(glslAdd, tslAdd),
+      'mesh-additive-near-fade parity, mean abs diff on the 0-255 scale'
+    ).toBeLessThan(2.0);
+
+    const glslPick = await runGLSL(page, 'mesh-pick-near-fade');
+    const tslPick = (await runTSL(page, 'mesh-pick-near-fade')).pixels;
+    // `assertBothRendered` is deliberately NOT used on this one. Its "did anything
+    // render?" proxy is "some pixel differs from pixel 0", and this frame is a single
+    // RGBA value repeated 4096 times — legitimately, by construction: the quad
+    // overfills the perspective frame, the two id channels are per-node constants,
+    // and the cutout arm's brightness is the constant 1.0 before the fade scales it.
+    // The honest replacement is the pair above plus the check below: the centre pixel
+    // is pinned to the un-faded entry's id channels and its scaled brightness (so it
+    // is a real surface fragment, not the clear colour), and EVERY other pixel must
+    // then equal it — so nothing was culled and the fade is flat across a quad whose
+    // fragments all sit at the same viewZ.
+    //
+    // "Every pixel" holds on a MARGIN worth knowing about, because the fixture camera
+    // is shared. `buildBehindCamera`'s 60° fov crops the quad to |x|,|y| <= tan(30°),
+    // and the fixture's one low-alpha corner (v3 = 0.25, the other three 1.0) leaves
+    // the extreme visible corner at vAlpha ≈ 0.574 — 0.567 in the limit at the exact
+    // frame corner — against `MESH_DEFAULTS.alphaCutoff` of 0.5. Widen that camera to
+    // 70° and the same corner interpolates to 0.475, the cutout starts discarding
+    // there, and this assertion fails for a reason that has nothing to do with the
+    // near fade. If `buildBehindCamera` ever has to change, re-derive it here first.
+    const expectedPick = [...pixelAt(glslPick, ...CENTRE)];
+    for (const [name, buf] of [
+      ['glsl', glslPick],
+      ['tsl', tslPick],
+    ] as const) {
+      let off = 0;
+      for (let i = 0; i < buf.length; i += 4) {
+        for (let c = 0; c < 4; c++) if (buf[i + c] !== expectedPick[c]) off++;
+      }
+      expect(
+        off,
+        `${name}: ${off} channels of mesh-pick-near-fade differ from its own centre ` +
+          `pixel [${expectedPick}] — either part of the quad did not rasterize, or the ` +
+          'fade came out depth-varying where every fragment sits at the same viewZ'
+      ).toBe(0);
+    }
+  });
+
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);
 
