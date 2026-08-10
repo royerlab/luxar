@@ -48,6 +48,7 @@ from .group import (
     DEFAULT_MESH_SUBSTITUTIVE_METHOD,
     DEFAULT_SUBSTITUTIVE_K,
     DEFAULT_SUBSTITUTIVE_LEVELS,
+    MAX_COVERAGE_FRACTION,
     MESH_SUBSTITUTIVE_METHODS,
     _assert_strict_ascending,
     _validate_coarsen_dims_spec,
@@ -100,12 +101,17 @@ def _validate_coverage_fractions_spec(value: Any) -> Optional[List[float]]:
 
     ``None`` passes through as ``None`` (the ladder derives its own thresholds from
     the per-level element counts). Anything else must be a non-empty,
-    strictly-ascending sequence of values in ``[0, 1]``, coarsest→finest — the same
+    strictly-ascending sequence of values in ``[0, MAX_COVERAGE_FRACTION]``,
+    coarsest→finest — the same
     contract :func:`luxar.core.group.lod.group.resolve_substitutive_axis` enforces
     for the lifting geometries, and named after its ``_validate_coarsen_dims_spec``
-    peer. The LENGTH is not checked here: it must match the ladder that actually
-    got written, which is only known once levels that could not reduce the surface
-    have been dropped, so the adder's wrapper checks it.
+    peer. The upper bound is NOT ``1.0``: a mesh ladder under a hand-built
+    ``kind=partition`` DERIVES a finest of exactly
+    :data:`~luxar.core.group.lod.group.MAX_COVERAGE_FRACTION` via
+    ``derive_coverage_fractions``, so an author must be able to write the same
+    ladder by hand. The LENGTH is not checked here: it must match the ladder that
+    actually got written, which is only known once levels that could not reduce the
+    surface have been dropped, so the adder's wrapper checks it.
     """
     if value is None:
         return None
@@ -113,15 +119,20 @@ def _validate_coverage_fractions_spec(value: Any) -> Optional[List[float]]:
     if not explicit_coverage:
         raise ValueError(
             "substitutive_lod=dict(coverage_fractions=...) must be non-empty "
-            "(one strictly-ascending value in [0, 1] per LOD level)"
+            f"(one strictly-ascending value in [0, {MAX_COVERAGE_FRACTION:g}] "
+            "per LOD level)"
         )
     _assert_strict_ascending(
         explicit_coverage, "substitutive_lod=dict(coverage_fractions=...)"
     )
-    if explicit_coverage[0] < 0.0 or explicit_coverage[-1] > 1.0:
+    if explicit_coverage[0] < 0.0 or explicit_coverage[-1] > MAX_COVERAGE_FRACTION:
         raise ValueError(
             "substitutive_lod=dict(coverage_fractions=...): values must lie in "
-            f"[0, 1] (coarsest→finest); got {explicit_coverage}"
+            f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
+            f"{explicit_coverage}. The upper bound is 1/FILL_FACTOR — the "
+            "coverage metric a screen-filling object produces; 1.0 is a "
+            "whole-object ladder's finest anchor (~a quarter of the viewport "
+            "diagonal)."
         )
     return explicit_coverage
 

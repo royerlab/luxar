@@ -1827,3 +1827,60 @@ def test_meta_less_one_part_partition_rederives_the_whole_object_anchor(
     )
     # And the round trip is still a no-op, as it is for real tilings.
     assert _covs(stamped) == pytest.approx(_covs(scrubbed))
+
+
+def test_one_part_partition_nested_in_a_tiling_keeps_the_tile_anchor(
+    tmp_path: Path,
+) -> None:
+    """A one-part partition INSIDE a real tiling must not drop the outer binding.
+
+    The one-part exclusion only ever ADDS a binding, never removes one: ``part_1``
+    below is a lone-part wrapper, but it still sits inside ONE tile of a >=2-part
+    partition, so the meta-less ladder underneath it keeps the fills-screen
+    anchor. Overwriting the incoming flag instead of OR-ing it in would hand that
+    ladder the whole-object 1.0 — and would put the writer out of step with
+    ``graft_gsplat_node``, its scene-side mirror.
+    """
+    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+    def _leaf(n: int, seed: int) -> GSplatLeaf:
+        rng = np.random.default_rng(seed)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = rng.uniform(0.5, 2.0, size=(n, 3))
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=rng.uniform(0, 50, (n, 3)).astype(np.float32),
+                    amplitudes=rng.uniform(0.1, 1, (n,)).astype(np.float32),
+                    cholesky_factors=chol,
+                )
+            ]
+        )
+
+    # Outer = a genuine 2-part tiling. part_1 = a one-part wrapper holding a
+    # meta-less coarse→fine ladder, so nothing authored beats the fallback.
+    tree = GSplatPartition(
+        children=[
+            _leaf(40, 0),
+            GSplatPartition(
+                children=[GSplatLodGroup(children=[_leaf(25, 1), _leaf(100, 2)])]
+            ),
+        ]
+    )
+
+    out = tmp_path / "nested_one_part.gsplats.zarr"
+    write_gsplats_tree(out, tree, ordering="none")
+
+    ladder = zarr.open_group(str(out), mode="r")["part_1"]["part_0"]
+    covs = [
+        float(ladder[k].attrs["coverage_fraction"])
+        for k in sorted(ladder.group_keys(), key=lambda s: int(s.split("_")[1]))
+    ]
+    assert covs[0] == 0.0
+    assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION), (
+        f"nested one-part wrapper gave {covs}; the outer >=2-part tiling still "
+        "binds this ladder, so the finest must be MAX_COVERAGE_FRACTION"
+    )
