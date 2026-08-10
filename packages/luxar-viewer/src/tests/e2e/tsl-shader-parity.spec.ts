@@ -2505,6 +2505,13 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-volprim-nearclip-joint',
     'line-volprim-sharp-hard',
     'line-volprim-sharp-taper',
+    'line-volprim-fat-sideon',
+    'line-volprim-fat-endon',
+    'line-volprim-fat-peak',
+    'line-volprim-pick-sideon',
+    'line-volprim-pick-endon',
+    'line-volprim-pick-persp',
+    'line-volprim-pick-joint',
   ] as const) {
     test(`${variant}: volumetric line primitive parity across backends`, async ({ page }) => {
       await bootHarness(page);
@@ -2705,5 +2712,225 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(centre, 'end-on centre at least matches the side-on core').toBeGreaterThanOrEqual(
       px(sideon, 32, 32)
     );
+  });
+
+  // Pick/visible FOOTPRINT AGREEMENT (#1352 PR-3): the volumetric pick
+  // pass rasterizes the same stadium stencil as the visual pass and its
+  // capsule truncates at the same T·σ_eff cell boundary, so — per pair —
+  //   'exact':  the two coverage masks must coincide up to the 1-px
+  //             quantisation ribbon. Holds against the PEAK-mode visual
+  //             fixture (the very capsule the pick pass mirrors), and
+  //             end-on against the additive one too (both families cover
+  //             the same disc there).
+  //   'subset': pick ⊆ visible, off-ribbon. The additive side-on visual
+  //             footprint is separable radial·axial coverage — a rounded
+  //             rectangle whose dim corner crescents beyond the endpoints
+  //             (< ~10% brightness shoulders) no capsule reaches. Those
+  //             corners are visible-but-unpickable by design (documented
+  //             physics); the invariant that must never break is the
+  //             other direction — nothing may be PICKABLE where nothing
+  //             is visible.
+  // A pick pass that cannot be hovered where the eye sees the line (or
+  // vice versa) is the bug class this pins. Full coverage masks
+  // (strictly stronger than a sparse probe grid) plus a 9×9 probe-grid
+  // statement away from the 1-px rasterisation boundary band.
+  //
+  // Geometry is deliberately FAT (drawn half-width ≈ 19 px, see
+  // FOOTPRINT_STYLE in the harness) so a σ-level divergence moves the
+  // boundary by several pixels — at the default ~3 px half-width a 20%
+  // error hides inside the quantisation ribbon.
+  //
+  // MUTATION-VERIFIED (2026-08): deflating the pick fragment's σ by 20%
+  // (sigma * 0.8 in shaders-volumetric.ts — the pick-blind-spot class:
+  // visible but not hoverable) fails all three pairs loudly: 244
+  // off-ribbon (exact/peak), symDiff 0.30 vs the 0.15 belt (subset), 156
+  // off-ribbon (exact/end-on) — against 0 / ~0.05 / 0 clean. The reverse
+  // direction (pickable-but-invisible) was probed with a vertex-stencil
+  // inflation (axial 0.77R → 2.5R): it CANNOT produce an off-ribbon leak,
+  // because the capsule's own brightness floor caps the overhang at
+  // < 2 px past the visible edge — the stencil and the floor bound each
+  // other. Any fragment-side divergence that could leak further is the
+  // same capsule divergence the exact/peak pair detects at full strength.
+  for (const [visualName, pickName, agreement] of [
+    ['line-volprim-fat-peak', 'line-volprim-pick-sideon', 'exact'],
+    ['line-volprim-fat-sideon', 'line-volprim-pick-sideon', 'subset'],
+    ['line-volprim-fat-endon', 'line-volprim-pick-endon', 'exact'],
+    // The V joint vs the max-mode visual V: same geometry, same capsule
+    // family, same bisector cuts — the one pair that puts the CUT ends
+    // (the ray-domain [tLo, tHi] interval) under the footprint contract.
+    // A pick-side cut divergence flips whole half-spaces, so ribbon
+    // sensitivity does not depend on fat geometry here.
+    ['line-volprim-peak', 'line-volprim-pick-joint', 'exact'],
+  ] as const) {
+    test(`${pickName}: pick footprint agrees with ${visualName} (${agreement})`, async ({
+      page,
+    }) => {
+      await bootHarness(page);
+      const visual = await runGLSL(page, visualName);
+      const pick = await runGLSL(page, pickName);
+
+      // Coverage = "differs from this image's own background" (the
+      // corner pixel), the same convention as the harness's covered-pixel
+      // metric — the renderer pins the alpha plane, so a fixed-channel
+      // threshold would read the whole frame as covered.
+      const size = 64;
+      const maskOf = (p: number[]) => {
+        const mask: boolean[] = [];
+        for (let i = 0; i < size * size; i++) {
+          let diff = 0;
+          for (let c = 0; c < 4; c++) {
+            diff = Math.max(diff, Math.abs(p[i * 4 + c] - p[c]));
+          }
+          mask.push(diff > 2);
+        }
+        return mask;
+      };
+      const visMask = maskOf(visual);
+      const pickMask = maskOf(pick);
+      // Two gates. RIBBON RULE (the sharp one): every disagreeing pixel
+      // must lie within 1 px (chebyshev) of a coverage boundary of one of
+      // the masks — the sum radial floor and the peak capsule floor are
+      // the same T·σ_eff contour, so honest disagreement can only be the
+      // quantisation ribbon where the two profiles round to zero at
+      // slightly different radii. A shifted or shrunken pick footprint
+      // puts disagreements deep in a mask interior and fails immediately.
+      // The fraction gate is a belt on top (clean measurements: ~0.05
+      // side-on, ~0.03 end-on, on the fat geometry).
+      const boundary = (mask: boolean[], x: number, y: number) => {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+            if (mask[ny * size + nx] !== mask[y * size + x]) return true;
+          }
+        }
+        return false;
+      };
+      let union = 0;
+      let symDiff = 0;
+      let offRibbon = 0;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = y * size + x;
+          if (visMask[i] || pickMask[i]) union++;
+          if (visMask[i] !== pickMask[i]) {
+            symDiff++;
+            // 'subset': only pickable-but-invisible counts as a defect;
+            // 'exact': any off-ribbon disagreement does.
+            const counts = agreement === 'exact' || (pickMask[i] && !visMask[i]);
+            if (counts && !boundary(visMask, x, y) && !boundary(pickMask, x, y)) offRibbon++;
+          }
+        }
+      }
+      expect(union, 'footprints must be non-vacuous').toBeGreaterThan(400);
+      expect(
+        offRibbon,
+        `${offRibbon} disagreeing pixels sit OFF the 1-px boundary ribbon ` +
+          '(a shifted/shrunken pick footprint, not quantisation)'
+      ).toBe(0);
+      expect(
+        symDiff / union,
+        `pick/visible footprint symmetric difference (${symDiff}/${union} px)`
+      ).toBeLessThan(0.15);
+
+      // 9×9 probe grid over the union's bounding box: every probe more
+      // than 1 px from a coverage boundary must agree exactly.
+      let x0 = size;
+      let x1 = 0;
+      let y0 = size;
+      let y1 = 0;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          if (visMask[y * size + x] || pickMask[y * size + x]) {
+            x0 = Math.min(x0, x);
+            x1 = Math.max(x1, x);
+            y0 = Math.min(y0, y);
+            y1 = Math.max(y1, y);
+          }
+        }
+      }
+      let probed = 0;
+      let disagreed = 0;
+      for (let gy = 0; gy < 9; gy++) {
+        for (let gx = 0; gx < 9; gx++) {
+          const x = Math.round(x0 + ((x1 - x0) * gx) / 8);
+          const y = Math.round(y0 + ((y1 - y0) * gy) / 8);
+          if (boundary(visMask, x, y) || boundary(pickMask, x, y)) continue;
+          probed++;
+          const vis = visMask[y * size + x];
+          const pk = pickMask[y * size + x];
+          // Same defect rule as the mask gate: 'subset' tolerates
+          // visible-but-unpickable (the documented corner crescents).
+          if (vis !== pk && (agreement === 'exact' || (pk && !vis))) disagreed++;
+        }
+      }
+      expect(probed, 'interior probes must exist').toBeGreaterThan(20);
+      expect(disagreed, `${disagreed}/${probed} interior probes disagree`).toBe(0);
+
+      // Pick ID contract on the covered core: R carries nodeId (42, which
+      // clamps to 255 in this RGBA8 readback) and G the element id's low
+      // half — 0 for slot 0, and slot 1's raw 1.0 also saturates to 255
+      // here, so the joint pair reads G ∈ {0, 255} with BOTH values
+      // required (each leg pickable under its own id). A footprint that
+      // agrees but decodes the wrong element would still be a broken pick.
+      const expectedSlots = pickName === 'line-volprim-pick-joint' ? [0, 255] : [0];
+      const seenSlots = new Set<number>();
+      let core = 0;
+      for (let i = 0; i < size * size; i++) {
+        if (pick[i * 4 + 2] > 64) {
+          core++;
+          expect(pick[i * 4], 'covered pick pixel must carry the node id').toBe(255);
+          const g = pick[i * 4 + 1];
+          expect(expectedSlots, 'covered pick pixel carries a known element slot').toContain(g);
+          seenSlots.add(g);
+        }
+      }
+      expect(core, 'a bright pick core must exist').toBeGreaterThan(10);
+      expect(
+        [...seenSlots].sort((a, b) => a - b),
+        'every expected slot must be picked'
+      ).toEqual(expectedSlots);
+    });
+  }
+
+  test('line-volprim-pick-joint: the bisector cut assigns each half-space to its own segment id', async ({
+    page,
+  }) => {
+    // The one property no other test can see when it breaks on BOTH
+    // backends at once: the pick pass's ray-domain cut interval. Dropping
+    // the cuts leaks each leg's round cap into the partner's half-space —
+    // cross-backend parity stays green if both backends drop it, and the
+    // footprint pair stays green because the leak hides inside the
+    // partner's own coverage. The element id cannot hide: under the
+    // peak-cut fixture's geometry the bisector plane is pixel column 32,
+    // so covered pixels at x ≥ 34 must decode to slot 1 (G saturates to
+    // 255) and x ≤ 30 to slot 0 — on each backend independently.
+    // MUTATION-VERIFIED: hardA/hardB forced false in the pick fragment
+    // must fail this test (wrong-slot pixels appear across the plane).
+    await bootHarness(page);
+    for (const backend of ['glsl', 'tsl'] as const) {
+      const p =
+        backend === 'glsl'
+          ? await runGLSL(page, 'line-volprim-pick-joint')
+          : (await runTSL(page, 'line-volprim-pick-joint')).pixels;
+      let wrong = 0;
+      let checked = 0;
+      for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+          const i = (y * 64 + x) * 4;
+          if (p[i + 2] <= 8) continue; // uncovered / dim
+          if (x >= 34) {
+            checked++;
+            if (p[i + 1] !== 255) wrong++;
+          } else if (x <= 30) {
+            checked++;
+            if (p[i + 1] !== 0) wrong++;
+          }
+        }
+      }
+      expect(checked, `${backend}: covered pixels on both sides`).toBeGreaterThan(100);
+      expect(wrong, `${backend}: pixels decoding to the WRONG segment across the cut`).toBe(0);
+    }
   });
 });
