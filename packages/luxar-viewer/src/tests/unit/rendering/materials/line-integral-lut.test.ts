@@ -93,7 +93,7 @@ describe('buildLineRadialLUTData', () => {
     expect(worst).toBeLessThan(1e-3);
   });
 
-  it('64 knob rows resolve the knob axis: linear interpolation vs a 128-row rebuild < 1e-2', () => {
+  it('65 knob rows resolve the knob axis: linear interpolation vs a 129-row rebuild < 1e-2', () => {
     // The shipped LUT relies on the sampler's LINEAR filter between knob
     // rows. Hold every midpoint of the shipped grid against a rebuild at
     // double the knob resolution (whose odd rows sit exactly on those

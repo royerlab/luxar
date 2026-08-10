@@ -85,9 +85,12 @@ export const LINE_RADIAL_LUT_WIDTH = 128;
 export const LINE_RADIAL_LUT_HEIGHT = 65;
 
 /**
- * The shaders' sharpness-knob → super-Gaussian exponent map
- * (`beta = exp2(6·s − 2)`: s = 0 → 0.25, s = 0.5 → 2, s = 1 → 16).
- * Exported so the LUT builder and the peak lanes can never disagree.
+ * The sharpness-knob → super-Gaussian exponent map
+ * (`beta = exp2(6·s − 2)`: s = 0 → 0.25, s = 0.5 → 2, s = 1 → 16) — the
+ * CPU mirror of the map the shaders inline (GLSL
+ * `exp2(6.0 * sharp - 2.0)`, TSL `pow`-built): the single source for the
+ * LUT builder and the tests, but nothing binds the shader strings to it —
+ * the parity fixtures at the knob extremes are what keep them agreeing.
  */
 export function lineSharpnessKnobToBeta(sharpKnob: number): number {
   return Math.pow(2, 6 * sharpKnob - 2);
@@ -106,6 +109,10 @@ export function lineSharpnessKnobToBeta(sharpKnob: number): number {
  * 16-bit storage.)
  */
 const ABEL_QUADRATURE_NODES = 256;
+// Do NOT raise past ~6: the DE substitution overflows float64 — beyond
+// x ≈ 6.8 the weight (π/2)·cosh(x)·u overflows alongside the integrand's
+// underflow-to-0, and 0 · Infinity = NaN poisons every row (xmax = 8
+// returns NaN). Truncation at 6 is already ≤ 1e-15 relative.
 const ABEL_QUADRATURE_XMAX = 6;
 
 /**

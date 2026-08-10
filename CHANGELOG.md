@@ -15,7 +15,9 @@ PR-2 documented the gap. The knob now works: the sum fragments' RADIAL factor is
 sampled from a shared 128×65 R16F LUT (the odd height puts the default knob
 exactly on the β = 2 row) of `S(q, s)` — the shifted+normalized
 untruncated Abel transform of the repo profile `exp(−K·rad^β)`, `β = 2^(6s−2)` —
-so the line-of-sight-integrated cross-section is the true general-β one. The
+so the line-of-sight-integrated cross-section has the true general-β SHAPE
+(every row stays normalized to 1 at q = 0 — deliberately: the side-on core
+matches the screen-space quad at any knob, the A/B calibration anchor). The
 AXIAL erf window deliberately stays β = 2 (a cap-local approximation, exact for
 an infinite rod — the trade recorded in the #1352 plan). Peak modes were already
 exact and are untouched.
