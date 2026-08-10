@@ -204,8 +204,8 @@ export function minNearForRadius(expandedRadius: number): number {
  *    bbox corner (`0.952 · R`) the general form `(dist + R)/C < 1.905e-3 · R`
  *    tightens, and for the last ~2% of the zoom-in range the floor overtakes
  *    `minDistance`. All four types are inside the fade-suppressed region
- *    throughout that band by construction, so nothing visible is lost there
- *    and this does not move C.
+ *    throughout that band by construction, so at most the sub-1% line residual
+ *    described in the next bullet is lost there, and this does not move C.
  *  - **C ≥ 992, keep everything the floor clips inside the near fade, for all
  *    four geometry types.** Every one of them already suppresses anything
  *    closer than `nearCull = 1e-3 · diagonal` via `perspectiveNearFade`
