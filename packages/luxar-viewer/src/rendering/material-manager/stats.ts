@@ -18,7 +18,7 @@
 export interface StatsCtx {
   readonly ownedMaterials: Set<unknown>;
   readonly registeredMaterials: Set<unknown>;
-  /** Tracked-for-disposal materials that take no camera broadcast (mesh). */
+  /** Tracked-for-disposal materials that take no camera broadcast. */
   readonly staticMaterials: Set<unknown>;
   readonly totalCreateMs: number;
   readonly createCount: number;
@@ -29,9 +29,10 @@ export function getCacheStats(ctx: StatsCtx) {
   return {
     ownedMaterials: ctx.ownedMaterials.size,
     /**
-     * Every material the manager is tracking, camera-aware or not — so a leak in
-     * mesh materials is as visible here as one in the other three types. Materials
-     * in `staticMaterials` are counted but never receive `updateCameraParams`.
+     * Every material the manager is tracking, camera-aware or not — so a leak in a
+     * registry-only material is as visible here as one in the four geometry types.
+     * Materials in `staticMaterials` are counted but never receive
+     * `updateCameraParams`.
      */
     totalRegistered: ctx.registeredMaterials.size + ctx.staticMaterials.size,
     /**

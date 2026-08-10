@@ -10,6 +10,9 @@
  *   - per-node Gain/Offset/Gamma, with the same `gammaOne` / `noGOG` fast paths the
  *     sibling factories carry
  *   - per-vertex alpha as the sole coverage term, emitted per blending mode
+ *   - the shared perspective near fade, evaluated PER FRAGMENT off `vViewPos`
+ *     (a triangle spans depth, so a per-vertex value would smear the ramp across
+ *     the face) — the twin of the GLSL fragment stage's `perspectiveNearFade`
  *
  * Unlike the three sibling factories there is no element texture, no
  * `aSortedIndex` indirection and no quad expansion: `position`/`normal` are
@@ -55,7 +58,7 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeAlpha, type TSLNode } from '../_shared/tsl-helpers';
+import { sanitizeAlpha, perspectiveNearFadeTSL, type TSLNode } from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 import {
@@ -141,6 +144,15 @@ export interface MeshTSLNodes {
   readonly uShadeExponent: TSLNode;
   /** Cutout threshold; read only when the graph was built in `opaque` mode. */
   readonly uAlphaCutoff: TSLNode;
+  /**
+   * Projection selector for the near fade: 0 = perspective, 1 = orthographic
+   * (where the fade is the identity). A runtime UNIFORM, not a build flag —
+   * which is why this graph uses `perspectiveNearFadeTSL` and not the
+   * compile-time-ortho `…StaticTSL` variant the line graphs take.
+   */
+  readonly uIsOrtho: TSLNode;
+  /** Near-fade start distance, world units (scene-relative; see the fragment). */
+  readonly uNearCull: TSLNode;
   /** Set only when colormap mode is active. */
   readonly uColormapTex?: TSLNode;
   readonly uScalarMin?: TSLNode;
@@ -167,6 +179,8 @@ export function meshWebGPUFactory(
   const uAmbient = nodes.uAmbient;
   const uShadeExponent = nodes.uShadeExponent;
   const uAlphaCutoff = nodes.uAlphaCutoff;
+  const uIsOrtho = nodes.uIsOrtho;
+  const uNearCull = nodes.uNearCull;
   if (config.useColormap) {
     if (!nodes.uColormapTex || !nodes.uScalarMin || !nodes.uScalarScale) {
       throw new Error(
@@ -339,19 +353,51 @@ export function meshWebGPUFactory(
     // coverage is just per-vertex alpha times node opacity.
     const a: TSLNode = vAlpha.mul(uOpacity).toVar();
 
+    // Perspective near fade, PER FRAGMENT — a triangle spans depth, so a
+    // per-vertex value would interpolate the RAMP across the face and smear the
+    // smoothstep over a large triangle. The runtime-uniform variant, matching
+    // point/gsplat: mesh's ortho flag is a uniform, not a build flag. The 1e-20
+    // floor only guards the degenerate smoothstep when uNearCull is exactly 0;
+    // an absolute floor would override the scene-relative value on a tiny-unit
+    // scene. GLSL twin: shader-glsl.ts.
+    const nearFade: TSLNode = perspectiveNearFadeTSL(
+      uIsOrtho,
+      vViewPos.z,
+      max(uNearCull, float(1e-20))
+    ).toVar();
+    // Rejected in EVERY mode at the siblings' 0.01 threshold. Not optional in the
+    // depth-writing ones: 'opaque' always writes depth and 'normal' does at opacity
+    // >= 0.99 (normalModeDepthWrite), so a fully-faded but still-rasterized fragment
+    // would occlude everything behind it. Unconditional rather than gated on that
+    // predicate, which would buy a runtime uniform to save a discard. The cost is
+    // early-z, which the four non-cutout variants kept until now — any discard
+    // forfeits it. Paid knowingly, same as the GLSL twin.
+    Discard(nearFade.lessThan(0.01));
+
     if (alphaCutout) {
       // 'opaque' (the mesh default): a hard, ORDER-INDEPENDENT cutout. Smooth
       // partial transparency is self-contradictory in a depth-writing mode drawn
       // without per-triangle sorting (§6.3), so authored alpha means masks/holes.
+      //
+      // The cutout compares the UNFADED coverage — the fade is a distance effect,
+      // not an authored mask, and letting it move the comparison would dissolve
+      // the holes open as the camera approached. This mode emits alpha 1.0, so
+      // there is no alpha left to fade: the fade ramps the SHADED RGB instead —
+      // i.e. the surface darkens toward black over the band rather than
+      // dissolving, and only the reject above removes it (see README.md).
       Discard(a.lessThan(uAlphaCutoff));
-      return vec4(shadedColor, float(1.0));
+      return vec4(shadedColor.mul(nearFade), float(1.0));
     }
+    // Every non-cutout mode folds the fade into COVERAGE, exactly as the
+    // point/line graphs do — which is also how 'max' picks it up in its RGB
+    // premultiply for free.
+    const faded: TSLNode = a.mul(nearFade).toVar();
     if (premultiplyRGB) {
       // 'max': MaxEquation + OneFactor/OneFactor does not weight source RGB by
       // alpha at composite, so premultiply by coverage here.
-      return vec4(shadedColor.mul(a), a);
+      return vec4(shadedColor.mul(faded), faded);
     }
-    return vec4(shadedColor, a);
+    return vec4(shadedColor, faded);
   });
 
   const material = outMaterial ?? new NodeMaterial();
@@ -399,6 +445,10 @@ export function buildMeshTSLNodesFromUniforms(
       (uniforms.uShadeExponent?.value as number) ?? MESH_DEFAULTS.shadeExponent
     ),
     uAlphaCutoff: uniform((uniforms.uAlphaCutoff?.value as number) ?? MESH_DEFAULTS.alphaCutoff),
+    // 0 = perspective, and 0.1 is the same near-cull default the sibling
+    // materials construct with (overridden per scene by updateCameraParams).
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
   };
   if (!config.useColormap) return base;
   return {

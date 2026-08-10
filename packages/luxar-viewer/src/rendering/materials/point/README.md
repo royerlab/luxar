@@ -110,7 +110,9 @@ camera changes update **only** the precomputed scalar uniforms, not the shader.
 - `uNearCull` + the shared `perspectiveNearFade` helper: behind-camera fade 0,
   smooth `[nearCull, 2·nearCull]` fade under perspective (reject < 0.01,
   `vNearFade` multiplied into alpha), fade ≡ 1 under ortho where NDC clipping
-  is the sole cull authority — unified with the line + gsplat shaders.
+  is the sole cull authority — unified with the line, gsplat and mesh shaders
+  (mesh joined with #1431; it evaluates the same helper per FRAGMENT, since a
+  triangle spans depth — see the stage table in `../_shared/README.md`).
 
 `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` broadcasts to
 every registered material via the `CameraAwareMaterial` interface, so a single

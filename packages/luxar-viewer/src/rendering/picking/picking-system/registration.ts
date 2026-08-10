@@ -51,11 +51,10 @@ export function disposePickMaterial(mesh: THREE.Mesh): void {
  *
  * Calls `unregister` unconditionally on every non-null pick material.
  * `materialManager.unregister` drops the material from ALL registries and is
- * idempotent, so it is safe for both camera-aware entries (points/lines/gsplats,
- * in `registeredMaterials`) and non-camera-aware ones (the mesh pick material,
- * which has no `updateCameraParams` and lives in `staticMaterials`). Gating on
- * `isCameraAwareMaterial` here would silently skip mesh pick materials and leak
- * them across every context-restore cycle.
+ * idempotent, so it is safe for camera-aware entries (all four pick materials, in
+ * `registeredMaterials`) and for anything that ever lands in `staticMaterials`
+ * instead. Gating on `isCameraAwareMaterial` here would silently skip the latter
+ * and leak it across every context-restore cycle.
  */
 export function unregisterAllPickMaterials(nodeMap: ReadonlyMap<number, PickNodeEntry>): void {
   for (const entry of nodeMap.values()) {

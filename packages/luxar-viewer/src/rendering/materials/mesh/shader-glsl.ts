@@ -35,7 +35,7 @@
  * @module rendering/materials/mesh/shader-glsl
  */
 
-import { GLSL_SANITIZE_FUNCTIONS } from '../_shared/glsl-lib';
+import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
 import { MESH_NORMAL_EPS_SQ } from './appearance';
 import type { ShaderSource } from '../_shared/shader-source';
 import { meshWebGPUFactory, buildMeshTSLNodesFromUniforms } from './shader-tsl';
@@ -152,9 +152,21 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
  *    flipping it would *reintroduce* exactly that inverted shade, worst precisely at
  *    the degenerate vertices the guard is there to rescue. So the exemption is per
  *    FRAGMENT, not per variant.
+ *
+ * ## The near fade is evaluated here, not in the vertex stage
+ *
+ * The three sibling types evaluate `perspectiveNearFade` per VERTEX (points/gsplats)
+ * or partly so (lines clip the segment in the vertex stage), because an instanced
+ * quad has one center depth and a per-vertex value is exact for the whole sprite. A
+ * triangle is not a sprite: it spans depth, so a per-vertex fade would interpolate
+ * the RAMP across the face and a large triangle straddling the fade band would
+ * render a linear smear instead of the smoothstep. Hence the fade is computed here,
+ * off the existing `vViewPos` varying.
  */
 export const MESH_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+
+    ${GLSL_NEAR_FADE_FUNCTIONS}
 
     uniform mediump float uOpacity;
     uniform mediump float uInvGamma;   // Pre-computed 1/gamma
@@ -165,6 +177,11 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
     uniform mediump float uShadeExponent;  // wrap-term contrast
     // Cutout threshold, read only under LUXAR_MESH_ALPHA_CUTOUT.
     uniform mediump float uAlphaCutoff;
+    // Near-fade inputs, the same pair the three siblings carry: 0 = perspective,
+    // 1 = orthographic (where the fade is the identity), and the scene-relative
+    // fade start in world units.
+    uniform int uIsOrtho;
+    uniform float uNearCull;
 
     in mediump vec3 vColor;
     in mediump float vAlpha;
@@ -253,13 +270,51 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       // opacity. NOT \`intensity * uOpacity\` like the emissive types.
       mediump float a = vAlpha * uOpacity;
 
+      // Perspective near fade, PER FRAGMENT (see the module doc for why not per
+      // vertex). uNearCull is scene-bounds-scaled (diagonal * 0.001); the 1e-20
+      // floor only guards the degenerate smoothstep (edge0 == edge1) when
+      // uNearCull is exactly 0 — an ABSOLUTE floor here would override the
+      // scene-relative value and fade out a whole tiny-unit scene, as it did on
+      // the sibling shaders. Kept at the file's highp default rather than
+      // mediump like the appearance uniforms: only the RESULT is in [0, 1], and
+      // the depths being compared are not (same as the line shader's twin).
+      float nearFade = perspectiveNearFade(uIsOrtho, vViewPos.z, max(uNearCull, 1e-20));
+      // Rejected in EVERY mode, at the siblings' 0.01 threshold. Not optional in
+      // the depth-writing ones: 'opaque' always writes depth and 'normal' does at
+      // opacity >= 0.99 (blending-state.ts::normalModeDepthWrite, which mesh feeds
+      // its real opacity), so a fully-faded-but-still-rasterized fragment would
+      // occlude everything behind it while contributing nothing visible. The
+      // unconditional form is the cheap one anyway: the alternative is a runtime
+      // uniform for a branch that only ever saves a discard. The cost is early-z: the four
+      // non-cutout variants had no discard at all before this, and any discard
+      // forfeits it. Paid knowingly — the same trade the mesh pick fragment makes
+      // for gl_FragDepth — because a wrong depth buffer is not recoverable and a
+      // lost early-z is only slower.
+      if (nearFade < 0.01) discard;
+
+      #ifndef LUXAR_MESH_ALPHA_CUTOUT
+      // Every non-cutout mode folds the fade into COVERAGE, exactly as the
+      // point/line shaders do — which is also how 'max' picks it up in its RGB
+      // premultiply below for free.
+      a *= nearFade;
+      #endif
+
       #ifdef LUXAR_MESH_ALPHA_CUTOUT
       // 'opaque' (the mesh default): a hard, ORDER-INDEPENDENT cutout. Smooth
       // partial transparency would be self-contradictory in a depth-writing mode
       // drawn without per-triangle sorting (§6.3), so authored alpha means masks
       // and holes here. Survivors are fully opaque and write depth normally.
+      //
+      // The cutout compares the UNFADED coverage: the fade is a distance effect,
+      // not an authored mask, and letting it move the comparison would dissolve
+      // the cutout's holes open as the camera approached. This mode emits alpha
+      // 1.0, so there is no alpha left to fade — the fade ramps the SHADED RGB
+      // instead. Note what that means: the surface DARKENS toward black over the
+      // band rather than dissolving, and only the reject above removes it. Over a
+      // black background the two look the same; over a lit one they do not. The
+      // trade, and why the alternative is worse, is written up in README.md.
       if (a < uAlphaCutoff) discard;
-      fragColor = vec4(shadedColor, 1.0);
+      fragColor = vec4(shadedColor * nearFade, 1.0);
       #elif defined(LUXAR_MAX_RGB_CONTRIBUTION)
       // 'max': MaxEquation + OneFactor/OneFactor does NOT weight source RGB by
       // alpha at composite, so premultiply by coverage here — otherwise a

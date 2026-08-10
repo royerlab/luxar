@@ -3,9 +3,10 @@
  * `MAX_NEAR_FAR_RATIO`'s losslessness derivation.
  *
  * That derivation is a claim about the SHADERS ("everything the near-plane
- * floor clips was already suppressed by the point / line / gsplat near fade"),
- * so the arithmetic testing it has to model `perspectiveNearFade`. Keeping the
- * model in one place means `bounds-math.test.ts` and
+ * floor clips was already suppressed by the near fade", now true of all four
+ * geometry types), so the arithmetic testing it has to model
+ * `perspectiveNearFade`. Keeping the model in one place means
+ * `bounds-math.test.ts` and
  * `bounds-math.property.test.ts` cannot drift apart — and
  * `bounds-math.test.ts` grep-locks the model against the real GLSL sources, so
  * neither can drift away from the shaders either.
@@ -16,8 +17,8 @@
 
 /**
  * The fade value below which the point and gsplat vertex shaders discard the
- * vertex (lines instead multiply the fade in per-fragment, reaching ~0 over
- * the same band).
+ * vertex, and the mesh fragment shader discards the fragment (lines instead
+ * only multiply the fade in per-fragment, reaching ~0 over the same band).
  */
 export const NEAR_FADE_REJECT = 0.01;
 
@@ -29,8 +30,8 @@ export function smoothstep(e0: number, e1: number, x: number): number {
 
 /**
  * `x / nearCull` at which `smoothstep(nearCull, 2*nearCull, x)` reaches
- * `reject` — the top of the band inside which the three emissive geometry
- * types are already suppressed.
+ * `reject` — the top of the band inside which every geometry type is already
+ * suppressed.
  *
  * Solved numerically rather than written down as a literal, so retuning the
  * reject threshold moves the derived constraint instead of quietly

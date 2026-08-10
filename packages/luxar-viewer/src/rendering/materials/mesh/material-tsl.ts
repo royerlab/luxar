@@ -3,8 +3,9 @@
  *
  * Mirrors the GLSL wrapper one-for-one — same `MeshMaterialConfig`, same update
  * methods, same `applyBlendingMode` + `clone` semantics, same
- * `ColormapAwareMaterial` surface — so `MaterialManager.getMeshMaterial` is a
- * drop-in swap and no caller sees the divergence.
+ * `CameraAwareMaterial` / `ColormapAwareMaterial` surface — so
+ * `MaterialManager.getMeshMaterial` is a drop-in swap and no caller sees the
+ * divergence.
  *
  * **Uniform plumbing.** This class owns one persistent `UniformNode` per shader
  * input in `tslNodes`, and the public `uniforms` record exposes each as an
@@ -16,7 +17,11 @@
  * the colormap path, the gamma/GOG fast paths, the flat-normal variant and the
  * emission shape, so each of those changes the *shape* of the graph and rebuilds.
  * Everything else — opacity, intensity, offset, ambient, shade exponent, alpha
- * cutoff, scalar range — is a plain runtime uniform and never rebuilds.
+ * cutoff, scalar range, and the two near-fade inputs — is a plain runtime uniform
+ * and never rebuilds. The near fade in particular must NOT be a build flag: the
+ * ortho-mode toggle would otherwise recompile every mesh graph in the scene, which
+ * is why this graph takes `perspectiveNearFadeTSL` rather than the
+ * compile-time-ortho variant the line graphs use.
  *
  * @module rendering/materials/mesh/material-tsl
  */
@@ -34,6 +39,7 @@ import {
   syncMeshEmissionDefines,
 } from './appearance';
 import type { MeshMaterialConfig } from './material-glsl';
+import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import {
@@ -62,13 +68,18 @@ interface MeshMaterialTSLNodeTable {
   uAmbient: TSLNode;
   uShadeExponent: TSLNode;
   uAlphaCutoff: TSLNode;
+  uIsOrtho: TSLNode;
+  uNearCull: TSLNode;
   uColormapTex?: TSLNode;
   uScalarMin?: TSLNode;
   uScalarScale?: TSLNode;
 }
 
 /** Mesh surface material rendered via TSL / NodeMaterial. */
-export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMaterial {
+export class MeshTSLMaterial
+  extends NodeMaterial
+  implements CameraAwareMaterial, ColormapAwareMaterial
+{
   /** Public uniforms table, same shape as `MeshMaterial.uniforms`. */
   uniforms: Record<string, THREE.IUniform>;
 
@@ -101,6 +112,10 @@ export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMateri
       uAlphaCutoff: uniform(
         clampAppearanceFraction(materialConfig.alphaCutoff, MESH_DEFAULTS.alphaCutoff)
       ),
+      // 0 = perspective; 0.1 matches the GLSL twin's constructor default and is
+      // overridden per scene by `updateCameraParams`.
+      uIsOrtho: uniform(0),
+      uNearCull: uniform(0.1),
     };
 
     this.uniforms = {
@@ -111,6 +126,8 @@ export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMateri
       uAmbient: proxyIUniform(this.tslNodes.uAmbient),
       uShadeExponent: proxyIUniform(this.tslNodes.uShadeExponent),
       uAlphaCutoff: proxyIUniform(this.tslNodes.uAlphaCutoff),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
     };
 
     // Colormap uniforms are added lazily — see `rebuildColormapNodes`.
@@ -212,6 +229,23 @@ export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMateri
       this.userData.depthTest = this._explicitDepthTest;
     }
     this.needsUpdate = true;
+  }
+
+  /**
+   * @see MeshMaterial.updateCameraParams — `_fov` / `_resolution` are accepted and
+   * ignored (a mesh has no screen-space size); only the two near-fade inputs are
+   * consumed. Both are plain runtime uniforms, so this never rebuilds the graph.
+   */
+  updateCameraParams(
+    _fov: number,
+    _resolution: THREE.Vector2,
+    isOrtho: boolean = false,
+    nearCull?: number
+  ): void {
+    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    if (nearCull !== undefined) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
   }
 
   updateOpacity(opacity: number): void {
@@ -368,6 +402,11 @@ export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMateri
     // `side` is epoch state, not config — carry the live value (see the GLSL twin).
     cloned.side = this.side;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // Camera state rides along for the same reason it does on the GLSL twin: a
+    // clone left at the perspective/0.1 defaults would fade against the wrong near
+    // plane — and under ortho, where the fade is the identity, would fade at all.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     return cloned as this;
   }
 

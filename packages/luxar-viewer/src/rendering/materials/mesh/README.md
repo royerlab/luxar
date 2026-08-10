@@ -78,6 +78,48 @@ the parity harness (which compiles TSL _to GLSL_) could never see it. Since `V`
 is `(0, 0, 1)`, "faces the viewer" is exactly `z >= 0`, so one sign flip makes
 the fallback convention-independent.
 
+## The near fade, and what it does in `opaque` (#1431)
+
+Mesh evaluates the shared `perspectiveNearFade` **per fragment** — a triangle
+spans depth, so a per-vertex value would interpolate the ramp across the face —
+and rejects below 0.01 in every blending mode. The stage table for all four
+geometry types is in `../_shared/README.md`.
+
+**In the default `opaque` mode the fade darkens rather than dissolves, and that
+is accepted rather than overlooked.** `opaque` emits `vec4(rgb, 1.0)`: there is
+no alpha left to fade, so the fade ramps the shaded RGB instead. Over a black
+background that reads as a dissolve; over a lit one the near shell goes visibly
+**black** for the width of the band before the 0.01 reject removes it. Every
+other mode folds the fade into coverage and dissolves properly.
+
+Two things keep it a non-issue in practice. The band is
+`[nearCull, 2·nearCull]` with `nearCull = 1e-3 · scene diagonal`, so the
+darkening sits 0.1–0.2% of the scene diagonal in front of the eye and is about
+0.1% thick — a distance the camera crosses in a frame or two of any real
+approach. And the alternatives are each worse in their own way. The only way to
+dissolve here that keeps the fragment DETERMINISTIC is to let the fade move the
+cutout comparison (`a * nearFade < uAlphaCutoff`), which would dissolve the
+surface's authored holes OPEN as the camera closed in — a distance effect
+rewriting an authored mask, and non-monotone besides. A stochastic reject
+(`discard` when `nearFade < hash(gl_FragCoord.xy)`) would dissolve properly
+without touching the mask, which is the standard trick for exactly this
+situation, and it is declined rather than overlooked: it costs a hash plus a
+codegen variant, and a non-deterministic fragment would turn the parity
+harness's exact-factor lock (`mesh-near-fade` is asserted at precisely
+`0.15625 ×` its un-faded reference, per pixel) into a much weaker
+coverage-fraction test. Dropping the RGB ramp and keeping only the `< 0.01`
+reject is the fourth option, and is simply the hard clip this change set out to
+remove. Partial transparency is self-contradictory in a depth-writing mode drawn
+without per-triangle sorting (§6.3), so `opaque` has no honest coverage to fade;
+the fix, if this ever needs one, is to select `normal`.
+
+This is the same structural question `scene/lod-fade.ts` answers, and it answers
+it the same way: its `BLENDABLE_MODES` is `additive`/`luminous`/`volumetric`
+only, so an `opaque`/`normal`/`max` layer keeps a HARD LOD swap rather than a
+cross-fade — a mode with no linear opacity knob does not get a fake one. The
+near fade differs only in that it must still do _something_ at the near plane,
+so it ramps the one channel it honestly can.
+
 ## Variants
 
 | Define / config flag         | Effect                                                                        |
@@ -102,7 +144,7 @@ re-applied per epoch by `applyMeshShading` because its
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Default blending mode is `opaque`, not `additive`           | The only mode unconditionally correct without per-triangle depth sorting (§6.3), and what a surface should look like. Applied **viewer-side** in `create-mesh-node.ts`; stamping it in the writer would override an ancestor group's mode. |
 | `volumetric` degrades to `opaque` with a warning            | Emission–absorption integrates over a path length through a medium, and a triangle is zero-thickness. A warning rather than a failure, because the mode can be **inherited** from an ancestor the mesh knows nothing about.                |
-| No `CameraAwareMaterial`                                    | A mesh has no screen-space size to recompute. An empty `updateCameraParams` would be a lie that also costs a per-frame call per node.                                                                                                      |
+| `CameraAwareMaterial`, half-consumed                        | `fov` / `resolution` are ignored — a mesh has no screen-space size to recompute — but `isOrtho` / `nearCull` are read, because the shared near fade applies to a surface too. See the stage table in `../_shared/README.md`.               |
 | No `uAbsorption` / `uHasElementAlpha`                       | Both exist solely to serve the volumetric mode.                                                                                                                                                                                            |
 | No `radiusScale` / `truncationRadius`                       | Both normalize a per-element extent; a triangle's extent is its own vertices.                                                                                                                                                              |
 | Coverage is `vAlpha * uOpacity`, not `intensity * uOpacity` | Mesh has no per-element intensity/amplitude/falloff scalar (§2.2).                                                                                                                                                                         |

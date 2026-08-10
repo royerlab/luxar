@@ -14,12 +14,15 @@ the same public update surface (`updateOpacity`, `updateGamma`,
 `ShaderSource` registry entry. The cross-cutting helpers live one level down in
 `_shared/`.
 
-`CameraAwareMaterial` is the one contract only **three** of the four implement:
-Point / Line / GSplat compute a screen-space sprite extent and need
-fov/resolution/ortho broadcast to them every time the camera changes. A mesh's
-size _is_ its geometry, so it has nothing to recompute — it deliberately has no
-`updateCameraParams` and is tracked in the manager's `staticMaterials` registry
-instead of the camera-broadcast one.
+`CameraAwareMaterial` is the one contract all four implement, but mesh takes only
+**half** of it: Point / Line / GSplat compute a screen-space sprite extent and
+need fov/resolution/ortho broadcast to them every time the camera changes, while
+a mesh's size _is_ its geometry, so it ignores fov/resolution and consumes only
+`isOrtho`/`nearCull` — the two inputs of the shared near fade, which applies to a
+surface exactly as it does to a sprite (#1431). All four therefore live in the
+manager's camera-broadcast `registeredMaterials`; `staticMaterials` survives only
+as the fallback for a non-camera-aware `register()` caller, which no geometry
+material is any more.
 
 The dual-backend pattern is the load-bearing structural choice: `WebGLRenderer`
 dispatches the GLSL3 strings via `THREE.ShaderMaterial`; `WebGPURenderer`
