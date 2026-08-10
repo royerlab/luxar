@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from luxar.core.group.compositing import (
+    is_broadcast_color,
     position_bounds_from_array,
     slice_optional_array,
 )
@@ -73,6 +74,57 @@ class TestSliceOptionalArray:
         idx = np.array([3, 2], dtype=np.intp)
         out = slice_optional_array(value, idx, n_elements=4)
         np.testing.assert_array_equal(out, [4.0, 3.0])
+
+
+class TestIsBroadcastColor:
+    """The classifier that keeps a uniform RGB(A) out of the per-element slicer.
+
+    Its whole job is a TYPE/SHAPE decision, so the edges worth pinning are the
+    ones where "3 or 4 numbers" is ambiguous: a bool is an ``int`` subclass, a
+    numpy scalar is not a Python one, and a 1-D ndarray colour looks the same
+    length as a legal tuple.
+    """
+
+    @pytest.mark.parametrize(
+        "colors",
+        [
+            (0.25, 0.5, 1.0),
+            [0.25, 0.5, 1.0],
+            (0.25, 0.5, 1.0, 0.5),
+            [0, 128, 255],
+            # bool IS an int subclass, so (True, False, True) reads as a colour.
+            # Deliberate: the writer's broadcast validator accepts it too, so
+            # classifying it here keeps the two paths agreeing.
+            (True, False, True),
+            (np.float32(0.25), np.float32(0.5), np.float32(1.0)),
+            (np.uint8(64), np.uint8(128), np.uint8(255)),
+        ],
+    )
+    def test_uniform_sequences_are_broadcast(self, colors) -> None:
+        assert is_broadcast_color(colors) is True
+
+    @pytest.mark.parametrize(
+        "colors",
+        [
+            None,
+            "viridis",
+            0.5,
+            (0.25, 0.5),  # length 2
+            (0.1, 0.2, 0.3, 0.4, 0.5),  # length 5
+            (),
+            # Per-element data of every shape: entries that are themselves
+            # sequences fail the component test.
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            # A numpy colour is never the broadcast form — the writer refuses a
+            # 1-D ndarray outright and wants (1, c) instead.
+            np.array([0.25, 0.5, 1.0], dtype=np.float32),
+            np.array([[0.25, 0.5, 1.0]], dtype=np.float32),
+            np.zeros((3, 3), dtype=np.float32),
+        ],
+    )
+    def test_everything_else_is_not_broadcast(self, colors) -> None:
+        assert is_broadcast_color(colors) is False
 
 
 class TestPositionBoundsFromArray:

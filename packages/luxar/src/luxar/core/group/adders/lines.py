@@ -26,10 +26,12 @@ from arbol import aprint
 from ...lines import Lines
 from ..compositing import (
     COMPOSITING_ATTRS,
+    is_broadcast_color,
     position_bounds_from_array,
     slice_optional_array,
     sync_custom_colormap_attr,
-    validate_labels_before_split,
+    validate_line_indices_before_split,
+    validate_lines_channels_before_split,
 )
 from ..dim_order import apply_dim_order_positions
 from ..partition import reject_mismatched_partition_parent
@@ -145,6 +147,10 @@ def add_lines_impl(
 
             substitutive_spec = resolve_substitutive_axis_lines(substitutive_lod)
             if substitutive_spec is not None:
+                # Topology first (see validate_line_indices_before_split): the
+                # finest child is written LAST, so a malformed edge list was
+                # refused only after the coarse levels were already on disk.
+                validate_line_indices_before_split(indices, n_vertices, line_type)
                 return add_lines_substitutive_lod_wrapper_impl(
                     group,
                     name=name,
@@ -224,6 +230,11 @@ def add_lines_impl(
                     "image_labels is not supported alongside partition=. "
                     "Decompose the data manually or omit image_labels."
                 )
+
+            # Topology first, and BEFORE identify_polylines: it checks only
+            # dtype and bounds and then reshapes to pairs, so a malformed edge
+            # list is silently reinterpreted there (or dies on a raw reshape).
+            validate_line_indices_before_split(indices, n_vertices, line_type)
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
@@ -321,6 +332,9 @@ def add_lines_impl(
 
             additive_spec = resolve_additive_axis_lines(additive_lod)
             if additive_spec is not None:
+                # Topology first, and BEFORE make_additive_lod_lines — same
+                # reshape hazard as the partition branch above.
+                validate_line_indices_before_split(indices, n_vertices, line_type)
                 widths_arr = (
                     widths
                     if isinstance(widths, np.ndarray) and widths.shape == (n_vertices,)
@@ -540,11 +554,23 @@ def add_lines_partition_wrapper_impl(
     the single-polyline granularity and there's nothing to partition. We
     refuse the partition in that case with a clear error.
     """
-    # Entering a wrapper IS "a split is about to happen": from here on `labels`
-    # is sliced per part (per-VERTEX for Lines), and `slice_optional_array`
-    # passes a wrong-length list through whole. Scoped to the split paths so the
+    # Entering a wrapper IS "a split is about to happen": from here on every
+    # per-VERTEX channel is sliced per part, and `slice_optional_array` passes a
+    # wrong-length value through whole. Scoped to the split paths so the
     # plain-leaf gate order is untouched.
-    validate_labels_before_split(labels, n_vertices)
+    validate_lines_channels_before_split(
+        n_vertices,
+        widths=widths,
+        colors=colors,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
+
+    # A uniform RGB(A) list/tuple is the one leaf parameter whose OWN length can
+    # collide with the vertex count, so classify it up front instead of letting
+    # the length test gather it (see compositing.is_broadcast_color).
+    uniform_color = is_broadcast_color(colors)
 
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -618,7 +644,11 @@ def add_lines_partition_wrapper_impl(
             if (not isinstance(widths, np.ndarray)) or widths.shape != (n_vertices,)
             else widths[part_vertex_idx]
         )
-        part_colors = slice_optional_array(colors, part_vertex_idx, n_vertices)
+        part_colors = (
+            colors
+            if uniform_color
+            else slice_optional_array(colors, part_vertex_idx, n_vertices)
+        )
         part_sharpness = slice_optional_array(sharpness, part_vertex_idx, n_vertices)
         part_scalars = slice_optional_array(scalars, part_vertex_idx, n_vertices)
         part_labels = slice_optional_array(labels, part_vertex_idx, n_vertices)
@@ -710,10 +740,18 @@ def add_lines_multi_lod_wrapper_impl(
     ``counts`` and the ``*_for_energy`` arrays only feed the ladder's quality
     stamps — see the Points twin for what the viewer does with them.
     """
-    # See add_lines_partition_wrapper_impl: `labels` is about to be sliced per
-    # level, and a per-level length check cannot catch a wrong-length list whose
-    # length happens to match some level's vertex count.
-    validate_labels_before_split(labels, n_vertices)
+    # See add_lines_partition_wrapper_impl: every per-vertex channel is about to
+    # be sliced per level, and a per-level length check cannot catch a
+    # wrong-length value whose length happens to match some level's vertex count.
+    validate_lines_channels_before_split(
+        n_vertices,
+        widths=widths,
+        colors=colors,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
+    uniform_color = is_broadcast_color(colors)
 
     scene = group._find_scene()
     writer = group._require_scene_writer(scene)
@@ -796,7 +834,9 @@ def add_lines_multi_lod_wrapper_impl(
             {
                 "vertices": vert_arr[vertex_index_arr].astype(np.float32),
                 "widths": slice_optional_array(widths, vertex_index_arr, n_vertices),
-                "colors": slice_optional_array(colors, vertex_index_arr, n_vertices),
+                "colors": colors
+                if uniform_color
+                else slice_optional_array(colors, vertex_index_arr, n_vertices),
                 "sharpness": slice_optional_array(
                     sharpness, vertex_index_arr, n_vertices
                 ),
@@ -872,9 +912,17 @@ def add_lines_substitutive_lod_wrapper_impl(
     :func:`add_points_substitutive_lod_wrapper_impl`.
     """
     # Before the lift: the coarse levels cost a full gsplat reduce, and the
-    # finest child may itself be laddered (which slices `labels`), so a
-    # wrong-length list must fail here rather than minutes later.
-    validate_labels_before_split(labels, len(vert_arr))
+    # finest child (written LAST, after every coarse level is already on disk) is
+    # where a wrong-length channel would otherwise be caught — stranding a
+    # partial kind=lod group. Fail here instead, before anything is written.
+    validate_lines_channels_before_split(
+        int(vert_arr.shape[0]),
+        widths=widths,
+        colors=colors,
+        sharpness=sharpness,
+        scalars=scalars,
+        labels=labels,
+    )
 
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
     from ..lod.group import (
