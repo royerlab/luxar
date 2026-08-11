@@ -52,6 +52,10 @@ This module hosts:
   kinds, which walks down through nested specialized groups to determine what
   geometry type the user sees this layer as, and ``compute_lod_display_type``
   which derives an LOD group's ``display_type`` from its finest child.
+* ``resolve_ladder_extend_to_all`` — the additive-LOD wrappers' shared
+  ``extend_to_all`` resolution, applied right before the multi-LOD writer call
+  (the wrappers do not recurse through a leaf adder, so nothing else expands
+  the ``"all"`` sentinel for them).
 """
 
 from __future__ import annotations
@@ -66,6 +70,8 @@ from ....typing_utils.geometry_capabilities import require_lod_display_type
 from ....validation.types import validate_truncation_radius
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from ...node import Node
 
 
@@ -1115,6 +1121,49 @@ def default_composed_additive_lod() -> Dict[str, Any]:
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
     )
     return {"method": "random", "counts": f"stream:{chunk}", "seed": 0}
+
+
+def resolve_ladder_extend_to_all(
+    scene: Any,
+    extend_to_all: Any,
+    positions: "np.ndarray",
+    data_type: str,
+) -> Optional[List[str]]:
+    """Resolve a multi-LOD wrapper's ``extend_to_all`` for the writer call.
+
+    Unlike the partition wrapper, the additive-LOD wrappers do not recurse
+    through a leaf adder, so nothing else resolves the ``"all"`` sentinel for
+    them — and the multi-LOD writers stamp the value VERBATIM onto the parent
+    group AND every ``additive_<i>/`` sub-LOD, so an unresolved sentinel would
+    reach disk where the viewer expects a list of dimension names.
+
+    ``None`` is passed through untouched rather than resolved. That preserves
+    the ladder path's behaviour of emitting no single-value advisory at all:
+    resolving unconditionally would ADD a first one, fired once per BSP part
+    under ``partition=`` + ``additive_lod=``, advising extension on a dim the
+    layer is meant to be sliced by, and mis-attributed by ``stacklevel`` to
+    ``Group.add_points`` / ``Group.add_lines`` rather than the user's line.
+    Note this diverges from the sibling sole-resolver
+    ``gsplats_pipeline/lod_dispatch.py``, which is unguarded and does warn.
+
+    Args:
+        scene: The scene owning the dimension definitions.
+        extend_to_all: The raw authoring value (``None`` / ``"all"`` / a list).
+        positions: The node's full (N, D) position array — only read for the
+            single-value candidate analysis, which the ``None`` guard skips.
+        data_type: Geometry label used in the advisory text ("points"/"lines").
+
+    Returns:
+        The resolved dimension names, or ``None`` when nothing was requested.
+    """
+    if extend_to_all is None:
+        return None
+    final_extend_dims: List[str] = scene._resolve_extend_to_all(
+        extend_to_all, positions, data_type
+    )
+    if final_extend_dims:
+        aprint(f"  📡 Extending visibility across: {final_extend_dims}")
+    return final_extend_dims
 
 
 def compose_additive_under_substitutive(

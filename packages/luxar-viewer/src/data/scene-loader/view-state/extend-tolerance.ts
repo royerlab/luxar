@@ -27,6 +27,33 @@ export function hasOwnProperties(obj: Record<string, unknown>): boolean {
 }
 
 /**
+ * Coerce a raw `extend_to_all` zarr attr into a list of dimension names.
+ *
+ * The on-disk contract is a list of dimension NAMES: the `"all"` sentinel
+ * accepted by the Python authoring API is resolved to concrete names before
+ * it is written. A store that still carries something else (an old file, a
+ * producer bug) must not take down the node's view-state derivation, so
+ * anything that is not an array of strings degrades to "not extended".
+ *
+ * The `"all"` sentinel is deliberately NOT re-implemented here: the displayed
+ * dimension set is mutable at runtime, so "every non-displayed dim" would not
+ * mean at view time what it meant at author time.
+ *
+ * SILENT by design: `deriveNodeViewState` calls this on every view-state
+ * update cycle, so a warning here would repeat once per scrub. The caller
+ * that runs ONCE per node per scene load (`nodes/build-scene-graph.ts`) does
+ * the logging by comparing the raw attr against the normalized result.
+ *
+ * @param raw - The `extend_to_all` attr value, straight from the store.
+ * @returns The dimension names to extend; `[]` when there is nothing usable.
+ */
+export function normalizeExtendDims(raw: unknown): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((entry): entry is string => typeof entry === 'string');
+}
+
+/**
  * Validate that every dimension name in `extendDims` matches a
  * dimension's `.name` field in `dimensionMetadata`. Throws with a
  * comma-joined list of invalid names + the list of valid ones —

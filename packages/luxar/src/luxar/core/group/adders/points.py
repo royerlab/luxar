@@ -539,7 +539,11 @@ def add_points_multi_lod_wrapper_impl(
     # same inputs the ordering used, so summing it per level reproduces the
     # ladder's cumulative curve exactly — no need to thread it out of the
     # builder (whose List[level] return shape many tests depend on).
-    from ..lod.group import additive_level_stats, breakpoints_kind_of
+    from ..lod.group import (
+        additive_level_stats,
+        breakpoints_kind_of,
+        resolve_ladder_extend_to_all,
+    )
     from ..lod.points import compute_points_energy
 
     energy = compute_points_energy(
@@ -593,10 +597,20 @@ def add_points_multi_lod_wrapper_impl(
         f"(method={method!r}, sizes={[int(L.size) for L in levels]})"
     )
 
+    # Nothing else resolves the ``"all"`` sentinel on this branch (unlike the
+    # partition wrapper, we do not recurse through the leaf adder) and the
+    # writer stamps the value VERBATIM onto the parent group AND every
+    # ``additive_<i>/`` sub-LOD — see ``resolve_ladder_extend_to_all`` for why
+    # ``None`` stays unresolved. Must stay an explicit kwarg: in ``attrs`` it
+    # would collide.
+    final_extend_dims = resolve_ladder_extend_to_all(
+        scene, extend_to_all, pos_arr, "points"
+    )
+
     metadata = writer.write_points_multi_lod(
         path,
         level_slices,
-        extend_to_all=extend_to_all,
+        extend_to_all=final_extend_dims,
         **attrs,
     )
 
