@@ -351,6 +351,10 @@ export class LayersPanel {
       ariaLabel:
         kind === 'header' ? 'Layers panel actions' : `Layer actions for ${layer?.name ?? ''}`,
       items,
+      // Explicit: a mouse right-click does not focus the row/eye first, so
+      // the utility's activeElement default would return focus somewhere
+      // unrelated on the mouse path.
+      restoreFocus: opener,
       onClose: () => {
         opener?.setAttribute('aria-expanded', 'false');
         this.contextMenuClose = null;
@@ -633,6 +637,17 @@ export class LayersPanel {
     this.panelEl = null;
     this.listEl = null;
     this.noMatchesEl = null;
+    // Filter state must not survive a dataset swap: initFromScene() routes
+    // through here, and a stale filterText would silently hide the NEW
+    // scene's rows behind a blank input.
+    this.filterText = '';
+    this.filterWrapEl = null;
+    this.filterInputEl = null;
+    // An open context menu is mounted on the viewer container (outside the
+    // panel just removed) and its captured actions point at the old scene —
+    // close it on the reload path too, not only in dispose().
+    this.contextMenuClose?.();
+    this.contextMenuClose = null;
   }
 
   // ─── DOM Construction ──────────────────────────────────
@@ -689,14 +704,22 @@ export class LayersPanel {
       this.applyRowFilter();
     });
     this.events.on(filterInput, 'keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
       // Escape with a query clears it and stays; an empty Escape falls
       // through to the panel-coordinator (closes the panel) as before.
-      if ((e as KeyboardEvent).key === 'Escape' && filterInput.value) {
+      if (key === 'Escape' && filterInput.value) {
         e.stopPropagation();
         filterInput.value = '';
         this.filterText = '';
         this.applyRowFilter();
+        return;
       }
+      // Contain ordinary typing (the help filter's convention). The built-in
+      // dispatcher already ignores shortcuts while a text input has focus
+      // (context-manager → isTypingInInput), so this is belt-and-braces for
+      // document-level listeners outside it (host pages, embeds). Tab keeps
+      // bubbling for focus traversal; empty Escape falls through above.
+      if (key !== 'Escape' && key !== 'Tab') e.stopPropagation();
     });
     filterWrap.appendChild(filterIcon);
     filterWrap.appendChild(filterInput);
@@ -1104,13 +1127,26 @@ export class LayersPanel {
         else if (e.shiftKey) mode = 'range';
         this.state.select(layer.path, mode);
       } else if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') {
-        // Keyboard parity for the right-click menu, anchored at the row.
+        // Keyboard parity for the right-click menu. Route by the FOCUSED
+        // element, matching the mouse path: the eye button advertises its
+        // own aria-haspopup, so menu keys on it must open the eye menu,
+        // not the row's.
         e.preventDefault();
         const live = this.state.getLayer(layer.path);
         if (!live) return;
         if (!live.selected) this.state.select(layer.path, 'single');
-        const r = row.getBoundingClientRect();
-        this.openLayerContextMenu('row', layer.path, r.left + 12, r.bottom - 4, row);
+        const eye = (e.target as HTMLElement | null)?.closest?.(
+          '.luxar-layer-row__eye'
+        ) as HTMLElement | null;
+        const anchor = eye ?? row;
+        const r = anchor.getBoundingClientRect();
+        this.openLayerContextMenu(
+          eye ? 'eye' : 'row',
+          layer.path,
+          r.left + 12,
+          r.bottom - 4,
+          anchor
+        );
       }
     });
 

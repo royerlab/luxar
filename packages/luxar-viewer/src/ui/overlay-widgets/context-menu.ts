@@ -44,6 +44,13 @@ export interface ContextMenuOptions {
   items: ContextMenuItem[];
   /** Called exactly once, after the menu is torn down (any close path). */
   onClose?: () => void;
+  /**
+   * Element to return focus to on close. Defaults to the element focused at
+   * open time — right for the keyboard path, but a mouse right-click does
+   * not reliably focus its target first, so a caller with a known opener
+   * should pass it explicitly.
+   */
+  restoreFocus?: HTMLElement | null;
 }
 
 const MARGIN = 8;
@@ -60,7 +67,7 @@ export function openContextMenu(opts: ContextMenuOptions): () => void {
 
   const events = new EventGroup();
   const container = getViewerContainer();
-  const previouslyFocused = document.activeElement as HTMLElement | null;
+  const previouslyFocused = opts.restoreFocus ?? (document.activeElement as HTMLElement | null);
   let submenuEl: HTMLElement | null = null;
   let closed = false;
 

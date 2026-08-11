@@ -140,6 +140,26 @@ describe('openContextMenu', () => {
     expect(menuEl()!.style.maxHeight).toBe(`${window.innerHeight - 16}px`);
   });
 
+  it('an explicit restoreFocus target wins over the activeElement default', () => {
+    // The mouse path: right-click does not focus its target first, so the
+    // caller passes the opener explicitly and close() must focus IT, not
+    // whatever happened to hold focus when the menu opened.
+    const bystander = document.createElement('button');
+    const opener = document.createElement('button');
+    document.body.append(bystander, opener);
+    bystander.focus();
+
+    const closeMenu = openContextMenu({
+      x: 10,
+      y: 10,
+      ariaLabel: 'Menu',
+      items: [{ label: 'X' }],
+      restoreFocus: opener,
+    });
+    closeMenu();
+    expect(document.activeElement).toBe(opener);
+  });
+
   it('opening a second menu closes the first; close restores focus', () => {
     const outside = document.createElement('button');
     document.body.appendChild(outside);
