@@ -343,10 +343,23 @@ right cut rather than a convenient one:
    suppress anything.
 2. **Vertex duplication stays far below the unwelded worst case.** Each level
    re-indexes its own vertices, so a boundary vertex is stored once per level that
-   touches it. Concentric shells share a closed boundary curve, so duplication
-   scales with that curve; a random order duplicates nearly every interior vertex.
-   Measured on a 288-triangle plane at 4 levels: **1.66 for the reveal vs 2.95 for
-   a random order of the same faces**.
+   touches it. A connected patch has ONE boundary curve, so duplication scales with
+   that curve; a random order duplicates nearly every interior vertex. Measured at
+   4 levels, reveal vs random over the same faces: 288-face plane **1.66 vs 2.95**,
+   320-face icosphere **2.67 vs 3.31**, 1280-face icosphere **1.69 vs 3.25**.
+
+**How the ordering earns that.** It is not `argsort(radius)`. A radius sort keeps a
+prefix connected on a convex blob and fails on a closed surface — the shape this
+library actually targets — because every centroid sits at nearly the same radius, so
+the order is decided by noise spread over the whole shell. Measured edge-connected
+components of each cumulative prefix under a plain radius sort, `n_lods=4`: `20 / 20
+/ 1 / 1` on a 1280-face icosphere, i.e. a half-loaded sphere as twenty patches of
+lace. `compute_additive_order_mesh` therefore grows **best-first through face
+adjacency**, keyed on radius: the frontier only admits a face touching one already
+admitted, so every prefix is a connected patch on any topology, and the radius key
+is what makes it a reveal rather than an arbitrary flood. It degenerates to the
+radius sort exactly on the convex case the sort already handled. Cost, stated: a
+Python heap loop, order a second per 100k faces, at authoring time only.
 
 Neither axis composes with the other or with `partition=` yet — each pairing is
 refused by name in `adders/mesh.py`, where Points and Lines compose both. Labels

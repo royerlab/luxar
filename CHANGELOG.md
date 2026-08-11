@@ -31,10 +31,22 @@ reach a mesh ladder and blow out its innermost shell before dimming it as the
 surface completes. The adder's existing energy-stamp guard is unchanged and
 still refuses *hand-supplied* `level_stats` / `lod_stats`; only its message
 needed correcting. **Vertex duplication stays modest**: each level re-indexes
-its own vertices (`luxar.mesh.split.split_mesh_by_faces`), and concentric
-shells share a closed boundary curve, so the cost scales with that curve —
-measured 1.66x on a 288-triangle plane at 4 levels, against 2.95x for a random
-order of the same faces.
+its own vertices (`luxar.mesh.split.split_mesh_by_faces`), and a connected patch
+has one boundary curve, so the cost scales with that curve — measured at 4
+levels, reveal vs a random order of the same faces: 1.66x vs 2.95x on a
+288-face plane, 2.67x vs 3.31x on a 320-face icosphere, 1.69x vs 3.25x at 1280.
+
+The ordering grows **best-first through face adjacency**, keyed on radius from
+the reveal centre, rather than sorting by radius. That distinction is the
+feature: a radius sort keeps a prefix connected on a convex blob and fails on a
+closed surface — the isosurfaces and segmentation boundaries this geometry type
+targets — because every face centroid sits at nearly the same radius, so the
+order is decided by noise spread over the whole shell. A 1280-face icosphere
+came out as 20 disconnected patches at both 25% and 50% loaded: lace over the
+whole sphere, which is the failure mode the reveal-only restriction exists to
+avoid. Growing through shared edges makes contiguity structural on any topology,
+and it is what earns the duplication numbers above — under the radius sort the
+same spheres measured 2.81x and 2.17x, close to random.
 
 The new writer `write_mesh_multi_lod` is the one place the four ladders differ
 in kind: it writes **no union label CSR** and refuses a level carrying

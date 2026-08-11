@@ -1643,8 +1643,19 @@ SAMPLE of the same object. A random half of a mesh's triangles is not a coarser 
 is confetti — so for mesh, "reveal" is not a mode, it is the only thing a prefix can honestly
 be. Two things fall out of that, each independently worth the restriction: the energy stamps
 below cannot arise (every reveal method is excluded from them), and vertex duplication at the
-level boundaries stays far off the 3x unwelded ceiling a scattered order approaches
-(measured 1.66 vs 2.95 on a 288-triangle plane at 4 levels).
+level boundaries stays far off the 3x unwelded ceiling a scattered order approaches.
+
+The ordering is **best-first growth through face adjacency**, keyed on radius from the reveal
+centre — not a radius sort. A radius sort delivers the contiguity claim on a convex blob and
+breaks it on a closed surface, which is what §Target data names: every centroid sits at nearly
+the same radius, so the order is decided by noise over the whole shell. Measured edge-connected
+components of each cumulative prefix, `n_lods=4`, under a plain radius sort: `20 / 20 / 1 / 1`
+on a 1280-face icosphere. Growing through shared edges makes it structural — the frontier only
+admits a face touching one already admitted — so every prefix is one connected patch on a
+sphere, a torus or a non-convex dumbbell, and the duplication argument gets its single boundary
+curve. Measured at 4 levels, reveal vs random over the same faces: 288-face plane 1.66 vs 2.95,
+320-face icosphere 2.67 vs 3.31, 1280-face icosphere 1.69 vs 3.25 (2.81 / 2.17 for the reveal
+under the radius sort — the connectivity fix is what moved them).
 
 Authoring landed with `add_mesh(additive_lod=…)` and `write_mesh_multi_lod`; the viewer's
 progressive mesh loader is the second half, and until it lands

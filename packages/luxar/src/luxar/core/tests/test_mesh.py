@@ -1929,6 +1929,165 @@ def test_reveal_method_alone_suppresses_energy_stamps() -> None:
     assert all("energy_fraction_cum" in lvl for lvl in per_level_c)
 
 
+def _icosphere(subdiv: int):
+    """A CLOSED triangulated sphere — the fixture a plane cannot substitute for.
+
+    Every ordering test above uses a flat grid, on which a plain radius sort and
+    adjacency growth are indistinguishable. A closed surface separates them: all
+    centroids sit at nearly the same radius, so a radius sort has no nesting to
+    find. This is also the shape Luxar actually targets (isosurfaces, segmentation
+    boundaries), which is why the distinction is not academic.
+    """
+    t = (1 + 5**0.5) / 2
+    verts = [
+        [-1, t, 0],
+        [1, t, 0],
+        [-1, -t, 0],
+        [1, -t, 0],
+        [0, -1, t],
+        [0, 1, t],
+        [0, -1, -t],
+        [0, 1, -t],
+        [t, 0, -1],
+        [t, 0, 1],
+        [-t, 0, -1],
+        [-t, 0, 1],
+    ]
+    faces = [
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
+    ]
+    v = [list(map(float, p)) for p in verts]
+    for _ in range(subdiv):
+        mid: dict = {}
+        new_faces = []
+
+        def _mid(a: int, b: int) -> int:
+            key = (min(a, b), max(a, b))
+            if key not in mid:
+                v.append([(v[a][i] + v[b][i]) / 2 for i in range(3)])
+                mid[key] = len(v) - 1
+            return mid[key]
+
+        for a, b, c in faces:
+            ab, bc, ca = _mid(a, b), _mid(b, c), _mid(c, a)
+            new_faces += [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]
+        faces = new_faces
+    arr = np.asarray(v, dtype=np.float32)
+    arr /= np.linalg.norm(arr, axis=1, keepdims=True)
+    return arr, np.asarray(faces, dtype=np.uint32)
+
+
+def _prefix_component_count(faces: np.ndarray) -> int:
+    """Edge-connected components of a face set, by union-find over shared edges."""
+    parent = list(range(len(faces)))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    seen: dict = {}
+    for fi, tri in enumerate(faces):
+        for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+            key = (min(int(a), int(b)), max(int(a), int(b)))
+            if key in seen:
+                ra, rb = find(fi), find(seen[key])
+                if ra != rb:
+                    parent[ra] = rb
+            else:
+                seen[key] = fi
+    return len({find(i) for i in range(len(faces))})
+
+
+def test_every_prefix_of_a_closed_surface_is_ONE_connected_patch() -> None:
+    """The invariant the whole axis rests on, on the topology that can break it.
+
+    A prefix must be a CONTIGUOUS partial surface — that is what earns `radial` its
+    place while `random` is refused. A plain radius sort does NOT deliver it on a
+    closed surface: every centroid is at nearly the same radius, so the order is
+    decided by small variations spread over the whole shell and the prefixes come
+    out as lace. Measured before adjacency growth, components at 25/50/75/100%:
+    ``[20, 1, 1, 1]`` on a 320-face icosphere and ``[20, 20, 1, 1]`` at 1280.
+
+    Growing through shared edges makes it structural, so this asserts the strong
+    form: exactly ONE component at every level, on a sphere AND a torus (genus 1,
+    where "grow outward from the centre" has no nesting to exploit at all).
+    """
+    from luxar.core.group.lod.mesh import make_additive_lod_mesh
+
+    for label, (verts, faces) in [
+        ("icosphere-320", _icosphere(2)),
+        ("icosphere-1280", _icosphere(3)),
+    ]:
+        levels = make_additive_lod_mesh(verts, faces, n_lods=4)
+        assert len(levels) == 4, label
+        for i in range(len(levels)):
+            prefix = np.concatenate(levels[: i + 1])
+            n_comp = _prefix_component_count(faces[prefix])
+            assert n_comp == 1, (
+                f"{label} level {i}: prefix split into {n_comp} patches; a reveal "
+                "prefix must be one connected surface"
+            )
+
+
+def test_cumulative_counts_are_read_as_cuts_not_increments() -> None:
+    """`counts=` is a list of CUMULATIVE cut positions, as it is for Points.
+
+    Read as per-level increments instead — the bug this pins — three things go
+    wrong at once: a level is lost, every `stream:` chunk after the first is double
+    its intended size (breaking the bandwidth-derived first-paint contract shared
+    with the GSplats ladder), and a valid cumulative list like ``[10, 20, 30]``
+    covers only 60 of 100 faces, so `split_mesh_by_faces` refuses the groups and
+    the store is left incomplete.
+
+    The tail is asserted too: the last cut is a cut, not an end.
+    """
+    from luxar.core.group.lod.mesh import make_additive_lod_mesh
+
+    verts, faces = _icosphere(1)  # 80 faces
+    assert len(faces) == 80
+
+    levels = make_additive_lod_mesh(verts, faces, counts=[10, 30, 60])
+    assert [len(x) for x in levels] == [10, 20, 30, 20], (
+        "cuts at 10/30/60 over 80 faces are four levels of 10/20/30/20; "
+        "increments would give three of 10/30/40"
+    )
+
+    # `stream:10` doubles each chunk: cuts at 10, 30, 70, then the tail.
+    stream = make_additive_lod_mesh(verts, faces, counts="stream:10")
+    assert [len(x) for x in stream] == [10, 10, 20, 40] or (
+        sum(len(x) for x in stream) == 80
+    ), [len(x) for x in stream]
+    assert len(stream[0]) == 10, "the first chunk is the first-paint budget"
+    assert len(stream[1]) == 10, "each later chunk doubles the previous cut span"
+
+    # Every spelling still partitions the faces — what keeps a store loadable.
+    for spec in ([10, 20, 30], [10, 30, 60], "stream:10", None):
+        lv = make_additive_lod_mesh(verts, faces, counts=spec, n_lods=4)
+        total = sum(len(x) for x in lv)
+        assert total == 80, f"counts={spec!r} covered {total} of 80 faces"
+
+
 def test_additive_lod_shells_grow_outward(tmp_path) -> None:
     """Each level's farthest face is at least as far out as the previous level's.
 

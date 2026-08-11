@@ -255,15 +255,19 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
 #:    the method set is the enforcement.
 #: 2. **Vertex duplication stays far below the unwelded worst case.** Each level
 #:    re-indexes its own faces (:func:`luxar.mesh.split.split_mesh_by_faces`), so
-#:    a vertex on a level boundary is stored once per level that touches it.
-#:    Concentric shells share a closed boundary curve, so the duplication scales
-#:    with that curve rather than with the face count; a random order duplicates
-#:    almost every interior vertex and approaches the 3x ceiling of a fully
-#:    unwelded soup. MEASURED on a 288-triangle plane, 4 levels: **1.66 for the
-#:    reveal vs 2.95 for a random order of the same faces** — so "bounded near 1"
-#:    would overstate it (a 12x12 grid is nearly all boundary at this level
-#:    count), but the gap is the point, and it widens as the mesh gets finer
-#:    relative to the level count.
+#:    a vertex on a level boundary is stored once per level that touches it. A
+#:    connected patch has ONE boundary curve, so the duplication scales with that
+#:    curve rather than with the face count; a random order duplicates almost every
+#:    interior vertex and approaches the 3x ceiling of a fully unwelded soup.
+#:    MEASURED at 4 levels, reveal vs a random order of the same faces: 288-triangle
+#:    plane **1.66 vs 2.95**, 320-face icosphere **2.67 vs 3.31**, 1280-face
+#:    icosphere **1.69 vs 3.25**. The ratio improves as the mesh gets finer relative
+#:    to the level count, which is the boundary-to-area ratio falling.
+#:
+#:    This argument is downstream of the connectivity one and was NOT free: under a
+#:    plain radius sort the prefixes interleaved instead of nesting, there was no
+#:    single boundary curve, and the sphere numbers were 2.81 / 2.17 — much closer to
+#:    random. Growing through adjacency is what makes both claims true at once.
 MESH_ADDITIVE_METHODS: frozenset[str] = frozenset({"radial"})
 
 #: Unlike the element geometries — whose default is ``random`` — a mesh's default
@@ -428,6 +432,71 @@ def resolve_additive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
     }
 
 
+def _slice_at_cuts(perm: "NDArray", cuts: "List[int]", n: int) -> "List[NDArray]":
+    """Slice ``perm`` at CUMULATIVE ``cuts``, appending the tail past the last cut.
+
+    The single place the ladder turns cut positions into disjoint level groups, so
+    the cumulative-vs-increment confusion cannot recur in two spellings. The tail
+    matters: ``counts=[10, 30, 60]`` on 100 faces is four levels, not three — the
+    last cut is a cut, not an end. Empty runs are dropped so a duplicated or
+    clamped cut cannot emit a zero-face level, which
+    :func:`luxar.mesh.split.split_mesh_by_faces` would count as a part.
+    """
+    levels: "List[NDArray]" = []
+    start = 0
+    for cut in list(cuts) + [n]:
+        stop = min(int(cut), n)
+        if stop > start:
+            levels.append(perm[start:stop])
+            start = stop
+    return levels
+
+
+def _face_adjacency(faces: "NDArray", n_faces: int) -> tuple:
+    """Face-to-face adjacency over shared EDGES, as a CSR pair ``(offsets, nbrs)``.
+
+    Built with one ``np.unique`` over the ``3F`` sorted edge keys rather than a
+    Python dict, so it stays vectorized: faces sharing an edge key are neighbours.
+    An edge shared by more than two faces (a non-manifold seam) is handled by
+    linking every pair in that group, which is what keeps a frontier able to cross
+    such a seam instead of stopping dead at it.
+    """
+    import numpy as np
+
+    f = faces.astype(np.int64)
+    e = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]], axis=0)
+    e = np.sort(e, axis=1)
+    owner = np.tile(np.arange(n_faces, dtype=np.int64), 3)
+    _keys, inverse = np.unique(e, axis=0, return_inverse=True)
+    inverse = inverse.ravel()
+
+    # Group face owners by edge id, then emit every ordered pair within a group.
+    order = np.argsort(inverse, kind="stable")
+    grouped_edge = inverse[order]
+    grouped_face = owner[order]
+    boundaries = np.flatnonzero(np.diff(grouped_edge)) + 1
+    src: list = []
+    dst: list = []
+    for group in np.split(grouped_face, boundaries):
+        if group.size < 2:
+            continue
+        for i in range(group.size):
+            for j in range(group.size):
+                if i != j:
+                    src.append(group[i])
+                    dst.append(group[j])
+    if not src:
+        return np.zeros(n_faces + 1, dtype=np.int64), np.empty(0, dtype=np.int64)
+    src_arr = np.asarray(src, dtype=np.int64)
+    dst_arr = np.asarray(dst, dtype=np.int64)
+    sort_idx = np.argsort(src_arr, kind="stable")
+    nbrs = dst_arr[sort_idx]
+    counts = np.bincount(src_arr, minlength=n_faces)
+    offsets = np.zeros(n_faces + 1, dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+    return offsets, nbrs
+
+
 def compute_additive_order_mesh(
     vertices: "NDArray",
     faces: "NDArray",
@@ -481,7 +550,63 @@ def compute_additive_order_mesh(
         reveal_centre, np.asarray(vertices), centroids, spatial_dims
     )
     scores = radial_element_score(centroids, centre, spatial_dims)
-    return np.argsort(scores, kind="stable").astype(np.intp)
+    n_faces = int(faces_arr.shape[0])
+
+    # ── best-first growth through face ADJACENCY, keyed on radius ──
+    #
+    # NOT `argsort(scores)`. Sorting by radius alone does not keep a prefix
+    # connected, and the failure is worst on exactly the data this targets: on a
+    # closed surface every centroid sits at nearly the same radius, so the order is
+    # decided by small variations spread over the whole shell and the "shells"
+    # interleave instead of nesting. MEASURED on an icosphere with `n_lods=4`,
+    # edge-connected components of each cumulative prefix: 20 / 20 / 1 / 1 under a
+    # plain radial sort — a half-loaded sphere as twenty separate patches of lace,
+    # which is the failure mode this whole axis refuses `random` to avoid.
+    #
+    # Growing through shared edges instead makes the guarantee structural: the
+    # frontier only ever admits a face touching one already admitted, so every
+    # prefix is a connected patch on ANY topology — sphere, torus, or a non-convex
+    # dumbbell. The radius key is what makes it a *reveal* rather than an arbitrary
+    # flood: among all faces currently reachable, the nearest to the centre goes
+    # next. It degenerates to the radial sort exactly when the mesh is convex and
+    # every shell is reachable, which is the case the sort already handled.
+    #
+    # COST, stated rather than hidden: this is a heap loop in Python, ~O(F log F)
+    # with a per-face constant far above a vectorized argsort — order a second per
+    # 100k faces. It runs once at authoring time, next to a decimator that is also
+    # a Python loop, so the trade (a true guarantee for authoring seconds) is the
+    # right one; a vectorized reformulation would be welcome and is not needed yet.
+    import heapq
+
+    offsets, nbrs = _face_adjacency(faces_arr, n_faces)
+    visited = np.zeros(n_faces, dtype=bool)
+    # Seed candidates in radius order, so each new component starts at its own
+    # closest face to the centre.
+    by_radius = np.argsort(scores, kind="stable")
+    order: list = []
+    heap: list = []
+    next_seed = 0
+    while len(order) < n_faces:
+        if not heap:
+            # A mesh may be disconnected; when the frontier empties, the nearest
+            # unvisited face opens the next component. Every prefix is then a union
+            # of connected patches, one per component REACHED — one patch for the
+            # connected mesh that is the normal case.
+            while next_seed < n_faces and visited[by_radius[next_seed]]:
+                next_seed += 1
+            if next_seed >= n_faces:
+                break
+            seed = int(by_radius[next_seed])
+            visited[seed] = True
+            heapq.heappush(heap, (float(scores[seed]), seed))
+        radius, face = heapq.heappop(heap)
+        order.append(face)
+        for k in range(offsets[face], offsets[face + 1]):
+            nb = int(nbrs[k])
+            if not visited[nb]:
+                visited[nb] = True
+                heapq.heappush(heap, (float(scores[nb]), nb))
+    return np.asarray(order, dtype=np.intp)
 
 
 def make_additive_lod_mesh(
@@ -530,23 +655,30 @@ def make_additive_lod_mesh(
         spatial_dims=spatial_dims,
     )
 
+    # `_parse_breakpoints_spec` returns CUMULATIVE cut positions, not per-level
+    # increments — `points.py::_validate_counts` enforces strictly-increasing and
+    # clamped, which only makes sense for cuts. Reading them as increments (the bug
+    # this comment replaces) lost a level and doubled every `stream:` chunk after
+    # the first, and `n_lods=` masked it because its own fallback below is the one
+    # place increments ARE the natural form. So: cuts here, increments there, and
+    # `_cuts_to_slices` is the single place the two meet.
+    #
     # No `energy=`/`perm=` arguments: energy breakpoints are refused up front by
     # `resolve_additive_axis_mesh`, so nothing here can need them.
-    level_counts = _parse_breakpoints_spec(counts, n_faces)
-    if level_counts is None:
-        base, extra = divmod(n_faces, max(1, n_lods))
-        level_counts = [base + (1 if i < extra else 0) for i in range(max(1, n_lods))]
+    cuts = _parse_breakpoints_spec(counts, n_faces)
+    if cuts is not None:
+        return _slice_at_cuts(perm, cuts, n_faces)
 
-    levels: "List[NDArray]" = []
-    start = 0
-    for count in level_counts:
-        stop = min(start + int(count), n_faces)
-        if stop > start:
-            levels.append(perm[start:stop])
-        start = stop
-        if start >= n_faces:
-            break
-    return levels
+    # Equal-count fallback: the one place per-level increments are the natural form,
+    # converted to cuts immediately so there is exactly one slicer.
+    base, extra = divmod(n_faces, max(1, n_lods))
+    increments = [base + (1 if i < extra else 0) for i in range(max(1, n_lods))]
+    running = 0
+    equal_cuts = []
+    for inc in increments:
+        running += inc
+        equal_cuts.append(running)
+    return _slice_at_cuts(perm, equal_cuts, n_faces)
 
 
 __all__ = [
