@@ -38,6 +38,7 @@ import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
+  CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
@@ -250,26 +251,31 @@ export function capsuleLinePickWebGPUFactory(
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.lessThan(-1e-3), () => {
               cutA.assign(nLoc);
-              const rpFarA: TSLNode = clamp(
-                isOrtho
-                  ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                  : pFarWidth
-                      .mul(uPerspectiveLineScale)
-                      .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                      .div(pFarDepth),
-                CAPSULE_MIN_RADIUS_PX,
-                uMaxLinePixelWidth
-              ).toVar();
-              const deficitA: TSLNode = clamp(
-                float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))),
-                0.0,
-                1.0
-              ).toVar();
-              // Congruence gate (see _shared/line-capsule.ts).
-              If(deficitA.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
-                vJointA.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarA));
+              // Width gate (see _shared/line-capsule.ts).
+              If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX), () => {
+                const rpFarA: TSLNode = clamp(
+                  isOrtho
+                    ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                    : pFarWidth
+                        .mul(uPerspectiveLineScale)
+                        .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                        .div(pFarDepth),
+                  CAPSULE_MIN_RADIUS_PX,
+                  uMaxLinePixelWidth
+                ).toVar();
+                const deficitA: TSLNode = clamp(
+                  float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))),
+                  0.0,
+                  1.0
+                ).toVar();
+                // Congruence gate (see _shared/line-capsule.ts).
+                If(deficitA.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
+                  vJointA.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarA));
+                });
+                extA.assign(max(abs(nLoc.y), deficitA).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
+              }).Else(() => {
+                extA.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
               });
-              extA.assign(max(abs(nLoc.y), deficitA).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
             });
           }).Else(() => {
             // Near-hairpin: the bisector is degenerate — plain round cap.
@@ -294,25 +300,30 @@ export function capsuleLinePickWebGPUFactory(
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.greaterThan(1e-3), () => {
               cutB.assign(nLoc);
-              const rpFarB: TSLNode = clamp(
-                isOrtho
-                  ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                  : pFarWidth
-                      .mul(uPerspectiveLineScale)
-                      .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                      .div(pFarDepth),
-                CAPSULE_MIN_RADIUS_PX,
-                uMaxLinePixelWidth
-              ).toVar();
-              const deficitB: TSLNode = clamp(
-                float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))),
-                0.0,
-                1.0
-              ).toVar();
-              If(deficitB.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
-                vJointB.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarB));
+              // Width gate (see _shared/line-capsule.ts).
+              If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX), () => {
+                const rpFarB: TSLNode = clamp(
+                  isOrtho
+                    ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                    : pFarWidth
+                        .mul(uPerspectiveLineScale)
+                        .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                        .div(pFarDepth),
+                  CAPSULE_MIN_RADIUS_PX,
+                  uMaxLinePixelWidth
+                ).toVar();
+                const deficitB: TSLNode = clamp(
+                  float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))),
+                  0.0,
+                  1.0
+                ).toVar();
+                If(deficitB.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
+                  vJointB.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarB));
+                });
+                extB.assign(max(abs(nLoc.y), deficitB).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
+              }).Else(() => {
+                extB.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
               });
-              extB.assign(max(abs(nLoc.y), deficitB).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
             });
           }).Else(() => {
             // Near-hairpin (see end A).

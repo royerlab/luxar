@@ -78,6 +78,14 @@ export const CAPSULE_STENCIL_APRON_PX = 0.5;
 export const CAPSULE_JOINT_DEFICIT_GATE = 0.02;
 
 /**
+ * Width gate for the joint packet: below this stencil half-width (px) the
+ * joint disc is a few pixels and a deficit is invisible, so the vertex
+ * stage skips the packet math entirely (hairline scenes pay nothing for
+ * the deficit rule — its cost stays confined to visibly wide joints).
+ */
+export const CAPSULE_JOINT_PACKET_MIN_RADIUS_PX = 4.0;
+
+/**
  * Sharpness-knob → profile exponent map: `n = 2^(3 − 4s)`. In `(1 − p²)^n`
  * space SMALLER exponents are boxier, so the map runs opposite to the
  * gaussian-family β: s = 0 → n = 8 (spiky), s = 0.5 → n = 2 (the default

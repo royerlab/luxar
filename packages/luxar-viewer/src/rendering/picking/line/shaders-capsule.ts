@@ -27,6 +27,7 @@ import { buildLinePickTSLNodesFromUniforms } from './pick.tsl';
 import { capsuleLinePickWebGPUFactory } from './pick-capsule.tsl';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
+  CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
@@ -36,6 +37,7 @@ const G = {
   RADIUS_FACTOR: CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7),
   MIN_RADIUS: CAPSULE_MIN_RADIUS_PX.toFixed(1),
   DEFICIT_GATE: CAPSULE_JOINT_DEFICIT_GATE.toFixed(2),
+  PACKET_MIN_R: CAPSULE_JOINT_PACKET_MIN_RADIUS_PX.toFixed(1),
   APRON: CAPSULE_STENCIL_APRON_PX.toFixed(1),
 };
 
@@ -204,19 +206,25 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x < -1e-3) {
                 cutA = nLoc;
-                float wFarA = farA.w;
-                float rpFarA;
-                if (uIsOrtho == 1) {
-                  rpFarA = wFarA * uOrthoLineScale * ${G.RADIUS_FACTOR};
+                // Width gate (see _shared/line-capsule.ts): hairline joints
+                // skip the packet math — a deficit there is sub-pixel.
+                if (rMax > ${G.PACKET_MIN_R}) {
+                  float wFarA = farA.w;
+                  float rpFarA;
+                  if (uIsOrtho == 1) {
+                    rpFarA = wFarA * uOrthoLineScale * ${G.RADIUS_FACTOR};
+                  } else {
+                    rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
+                  }
+                  rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
+                  float deficitA = clamp(1.0 - rpFarA / max(rA, 1e-4), 0.0, 1.0);
+                  if (deficitA > ${G.DEFICIT_GATE}) {
+                    vJointA = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarA);
+                  }
+                  extA = max(abs(nLoc.y), deficitA) * rMax + ${G.APRON};
                 } else {
-                  rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
+                  extA = abs(nLoc.y) * rMax + ${G.APRON};
                 }
-                rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                float deficitA = clamp(1.0 - rpFarA / max(rA, 1e-4), 0.0, 1.0);
-                if (deficitA > ${G.DEFICIT_GATE}) {
-                  vJointA = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarA);
-                }
-                extA = max(abs(nLoc.y), deficitA) * rMax + ${G.APRON};
               }
             } else {
               // Near-hairpin: the bisector is degenerate — plain round cap
@@ -247,19 +255,23 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x > 1e-3) {
                 cutB = nLoc;
-                float wFarB = farB.w;
-                float rpFarB;
-                if (uIsOrtho == 1) {
-                  rpFarB = wFarB * uOrthoLineScale * ${G.RADIUS_FACTOR};
+                if (rMax > ${G.PACKET_MIN_R}) {
+                  float wFarB = farB.w;
+                  float rpFarB;
+                  if (uIsOrtho == 1) {
+                    rpFarB = wFarB * uOrthoLineScale * ${G.RADIUS_FACTOR};
+                  } else {
+                    rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
+                  }
+                  rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
+                  float deficitB = clamp(1.0 - rpFarB / max(rB, 1e-4), 0.0, 1.0);
+                  if (deficitB > ${G.DEFICIT_GATE}) {
+                    vJointB = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarB);
+                  }
+                  extB = max(abs(nLoc.y), deficitB) * rMax + ${G.APRON};
                 } else {
-                  rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
+                  extB = abs(nLoc.y) * rMax + ${G.APRON};
                 }
-                rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                float deficitB = clamp(1.0 - rpFarB / max(rB, 1e-4), 0.0, 1.0);
-                if (deficitB > ${G.DEFICIT_GATE}) {
-                  vJointB = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarB);
-                }
-                extB = max(abs(nLoc.y), deficitB) * rMax + ${G.APRON};
               }
             } else {
               // Near-hairpin (see end A).

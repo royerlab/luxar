@@ -652,17 +652,29 @@ void main() {
 					if ( ( nodeVar155.x < -0.001 ) ) {
 
 						nodeVar115 = nodeVar155;
-						nodeVar156 = clamp( ( ( ( nodeVar121 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar122 ), 1.5, nodeUniform25 );
-						nodeVar157 = clamp( ( 1.0 - ( nodeVar156 / max( nodeVar102, 0.0001 ) ) ), 0.0, 1.0 );
 
-						if ( ( nodeVar157 > 0.02 ) ) {
+						if ( ( nodeVar114 > 4.0 ) ) {
 
-							nodeVarying0 = vec4( dot( nodeVar151, nodeVar112 ), dot( nodeVar151, nodeVar113 ), nodeVar150, nodeVar156 );
+							nodeVar156 = clamp( ( ( ( nodeVar121 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar122 ), 1.5, nodeUniform25 );
+							nodeVar157 = clamp( ( 1.0 - ( nodeVar156 / max( nodeVar102, 0.0001 ) ) ), 0.0, 1.0 );
+
+							if ( ( nodeVar157 > 0.02 ) ) {
+
+								nodeVarying0 = vec4( dot( nodeVar151, nodeVar112 ), dot( nodeVar151, nodeVar113 ), nodeVar150, nodeVar156 );
+
+
+							}
+
+							nodeVar117 = ( ( max( abs( nodeVar155.y ), nodeVar157 ) * nodeVar114 ) + 0.5 );
+
+
+						} else {
+
+							nodeVar117 = ( ( abs( nodeVar155.y ) * nodeVar114 ) + 0.5 );
 
 
 						}
 
-						nodeVar117 = ( ( max( abs( nodeVar155.y ), nodeVar157 ) * nodeVar114 ) + 0.5 );
 
 
 					}
@@ -809,17 +821,29 @@ void main() {
 					if ( ( nodeVar190.x > 0.001 ) ) {
 
 						nodeVar116 = nodeVar190;
-						nodeVar191 = clamp( ( ( ( nodeVar121 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar122 ), 1.5, nodeUniform25 );
-						nodeVar192 = clamp( ( 1.0 - ( nodeVar191 / max( nodeVar103, 0.0001 ) ) ), 0.0, 1.0 );
 
-						if ( ( nodeVar192 > 0.02 ) ) {
+						if ( ( nodeVar114 > 4.0 ) ) {
 
-							nodeVarying1 = vec4( dot( nodeVar186, nodeVar112 ), dot( nodeVar186, nodeVar113 ), nodeVar185, nodeVar191 );
+							nodeVar191 = clamp( ( ( ( nodeVar121 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar122 ), 1.5, nodeUniform25 );
+							nodeVar192 = clamp( ( 1.0 - ( nodeVar191 / max( nodeVar103, 0.0001 ) ) ), 0.0, 1.0 );
+
+							if ( ( nodeVar192 > 0.02 ) ) {
+
+								nodeVarying1 = vec4( dot( nodeVar186, nodeVar112 ), dot( nodeVar186, nodeVar113 ), nodeVar185, nodeVar191 );
+
+
+							}
+
+							nodeVar118 = ( ( max( abs( nodeVar190.y ), nodeVar192 ) * nodeVar114 ) + 0.5 );
+
+
+						} else {
+
+							nodeVar118 = ( ( abs( nodeVar190.y ) * nodeVar114 ) + 0.5 );
 
 
 						}
 
-						nodeVar118 = ( ( max( abs( nodeVar190.y ), nodeVar192 ) * nodeVar114 ) + 0.5 );
 
 
 					}
