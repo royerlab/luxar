@@ -129,6 +129,30 @@ const SCENARIOS: ScenarioSpec[] = [
   },
 ];
 
+/**
+ * Scenario subset filter: comma-separated scenario ids in
+ * `LUXAR_PERF_SCENARIO_FILTER` restrict the run to those scenarios (an
+ * empty/unset value runs all of them). This is what makes a fast
+ * measurement loop possible — a single-scenario arm finishes in minutes
+ * instead of the full matrix — and the id list is validated so a typo
+ * fails loudly instead of silently measuring nothing.
+ */
+const SCENARIO_FILTER = (process.env.LUXAR_PERF_SCENARIO_FILTER ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+for (const id of SCENARIO_FILTER) {
+  if (!SCENARIOS.some((s) => s.id === id)) {
+    throw new Error(
+      `LUXAR_PERF_SCENARIO_FILTER names unknown scenario '${id}'. ` +
+        `Known ids: ${SCENARIOS.map((s) => s.id).join(', ')}`
+    );
+  }
+}
+const ACTIVE_SCENARIOS = SCENARIO_FILTER.length
+  ? SCENARIOS.filter((s) => SCENARIO_FILTER.includes(s.id))
+  : SCENARIOS;
+
 const BACKENDS = ['webgl', 'webgpu'] as const;
 type Backend = (typeof BACKENDS)[number];
 
@@ -288,6 +312,11 @@ async function measureScenario(
     primitive === 'default' ? scn.label : `${scn.label} [linePrimitive=${primitive}]`;
   const primitiveParam = primitive === 'default' ? '' : `&linePrimitive=${primitive}`;
   const notes: string[] = [];
+  // `&dpr=1` pins the device-pixel ratio: without it AdaptiveDPR runs its
+  // probe/adjust cycle DURING the sample window, so the two arms of an A/B
+  // render at different (and shifting) resolutions — measured live in the
+  // G1 gate, where it invalidated a whole run. A perf bench must measure
+  // the primitive, not the adaptive controller.
   // `?perf-timestamp` opts WebGPURenderer into `{trackTimestamp: true}`
   // so we can read per-frame GPU duration via
   // `renderer.resolveTimestampsAsync('render')` below. On WebGL or on a
@@ -301,8 +330,8 @@ async function measureScenario(
   // measureScenario try/catch upstream.
   const navUrl =
     scn.type === 'zarr'
-      ? `/?src=${scn.url}&renderer=${backend}&debug&perf-timestamp${primitiveParam}`
-      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perf-timestamp${primitiveParam}`;
+      ? `/?src=${scn.url}&renderer=${backend}&debug&perf-timestamp&dpr=1${primitiveParam}`
+      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perf-timestamp&dpr=1${primitiveParam}`;
   await page.goto(navUrl, { timeout: 300_000 });
   await waitForLuxarReady(page, 120_000);
 
@@ -647,7 +676,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   // end, i.e. it loses the WHOLE run rather than one row, so the budget
   // has to grow with the primitive axis instead of staying fixed.
   test.setTimeout(
-    Math.max(900_000, 90_000 * SCENARIOS.length * BACKENDS.length * LINE_PRIMITIVES.length)
+    Math.max(900_000, 90_000 * ACTIVE_SCENARIOS.length * BACKENDS.length * LINE_PRIMITIVES.length)
   );
 
   const sha = currentCommitSha();
@@ -655,7 +684,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   fs.mkdirSync(outDir, { recursive: true });
 
   const scenarios: ScenarioResult[] = [];
-  for (const scn of SCENARIOS) {
+  for (const scn of ACTIVE_SCENARIOS) {
     // Synthetic scenarios still need the bootstrap zarr to be
     // reachable so the viewer can initialise before injection.
     const probeUrl = scn.type === 'zarr' ? scn.url : scn.bootstrapUrl;
@@ -785,7 +814,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   const successfulIds = new Set(
     scenarios.filter((s) => !s.skipped && s.frameMs !== null).map((s) => s.scenarioId)
   );
-  const failedArms = SCENARIOS.flatMap((scn) =>
+  const failedArms = ACTIVE_SCENARIOS.flatMap((scn) =>
     LINE_PRIMITIVES.map((primitive) => ({ scn, id: armId(scn.id, primitive) }))
   ).filter(({ scn, id }) => {
     if (successfulIds.has(id)) return false;
