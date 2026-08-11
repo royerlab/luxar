@@ -12,6 +12,7 @@ import { DirectoryNavigator, type DirectoryEntry } from '../data';
 import { escapeHtml } from '../utils/escape-html';
 import { extractBaseUrl, extractPath } from './dataset-browser/url-utils';
 import { BROWSER_ICONS } from './dataset-browser/icons';
+import { trapFocus } from './help-overlay/focus-trap';
 import { log, Modules } from '../utils/log';
 import { showToast } from './toast';
 
@@ -115,6 +116,9 @@ export class DatasetBrowser {
   /** One-shot: focus the filter field after the first successful listing render. */
   private initialFocusDone = false;
 
+  /** Teardown for the modal focus trap (Tab must not escape behind the scrim). */
+  private untrapFocus?: () => void;
+
   constructor(config: DatasetBrowserConfig) {
     this.container = config.container;
     this.onDatasetSelect = config.onDatasetSelect;
@@ -168,6 +172,9 @@ export class DatasetBrowser {
     this.navigator = new DirectoryNavigator(baseUrl);
     this.scrim = this.createScrim();
     this.panel = this.createPanel();
+    // Modal focus containment: the panel is aria-modal with a scrim, so Tab
+    // must cycle inside it rather than escaping to the rail behind.
+    this.untrapFocus = trapFocus(this.panel);
 
     // Start navigation at the determined path
     this.navigate(initialPath);
@@ -774,7 +781,13 @@ export class DatasetBrowser {
     if (!this.initialFocusDone && total > 0) {
       this.initialFocusDone = true;
       const active = document.activeElement;
-      const focusUnclaimed = !active || active === document.body || active === this.panel;
+      // "Unclaimed" includes the close button: the modal focus trap parks
+      // initial focus there on open, and handing it to the filter when the
+      // first listing arrives is the intended flow. A user who deliberately
+      // focused something else (a breadcrumb, a row) keeps their focus.
+      const closeBtn = this.panel.querySelector('.luxar-dataset-browser__close-btn');
+      const focusUnclaimed =
+        !active || active === document.body || active === this.panel || active === closeBtn;
       if (focusUnclaimed) {
         const searchInput = this.panel.querySelector(
           '#luxar-dataset-browser-search'
@@ -863,6 +876,7 @@ export class DatasetBrowser {
     // close discards its result rather than firing `onDatasetSelect`
     // for a path the user backed out of.
     this.navigationGeneration++;
+    this.untrapFocus?.();
     if (this.onClose) {
       this.onClose();
     }
