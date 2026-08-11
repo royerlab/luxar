@@ -1,0 +1,236 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform object {
+	mat4 nodeUniform1;
+	float nodeUniform2;
+	float nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	float nodeUniform8;
+	float nodeUniform9;
+	mat3 nodeUniform11;
+	uint nodeUniform12;
+	mat3 nodeUniform13;
+	uint nodeUniform14;
+	mat3 nodeUniform15;
+	uint nodeUniform16;
+	mat3 nodeUniform17;
+	uint nodeUniform18;
+	mat3 nodeUniform19;
+	uint nodeUniform20;
+	mat3 nodeUniform21;
+	uint nodeUniform22;
+	vec2 nodeUniform24;
+	float nodeUniform25;
+	float nodeUniform26;
+	mat3 nodeUniform27;
+	uint nodeUniform28;
+	mat3 nodeUniform29;
+	uint nodeUniform30;
+	mat3 nodeUniform31;
+	uint nodeUniform32;
+	mat3 nodeUniform33;
+	uint nodeUniform34;
+};
+
+
+// varyings
+in vec2 nodeVarying0;
+flat  in vec3 nodeVarying1;
+flat  in vec2 nodeVarying2;
+flat  in vec2 nodeVarying3;
+in float nodeVarying4;
+in float nodeVarying5;
+in float nodeVarying6;
+in float nodeVarying7;
+in vec3 nodeVarying8;
+
+
+// vars
+vec4 DiffuseColor;
+float nodeVar0;
+float nodeVar1;
+float nodeVar2;
+float nodeVar3;
+float nodeVar4;
+float nodeVar5;
+float nodeVar6;
+float nodeVar7;
+float nodeVar8;
+float nodeVar9;
+float nodeVar10;
+float nodeVar11;
+float nodeVar12;
+float nodeVar13;
+vec3 nodeVar14;
+vec3 nodeVar15;
+float nodeVar16;
+vec3 nodeVar17;
+float nodeVar18;
+float nodeVar19;
+float nodeVar20;
+float nodeVar21;
+float nodeVar22;
+float nodeVar23;
+float nodeVar24;
+float nodeVar25;
+float nodeVar26;
+vec4 Output;
+vec4 nodeVar27;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+	nodeVar0 = nodeVarying0.x;
+	nodeVar1 = nodeVarying0.y;
+
+	if ( ( ( nodeVarying1.y > 0.5 ) && ( ( ( nodeVarying2.x * nodeVar0 ) + ( nodeVarying2.y * nodeVar1 ) ) > 0.0 ) ) ) {
+
+		discard;
+
+
+	}
+
+
+	if ( ( ( nodeVarying1.z > 0.5 ) && ( ( ( nodeVarying3.x * ( nodeVar0 - nodeVarying1.x ) ) + ( nodeVarying3.y * nodeVar1 ) ) > 0.0 ) ) ) {
+
+		discard;
+
+
+	}
+
+
+	if ( ( nodeVarying1.y > 0.5 ) ) {
+
+		nodeVar2 = 0.0;
+
+	} else {
+
+		nodeVar2 = ( - nodeVar0 );
+
+	}
+
+	nodeVar3 = nodeVar2;
+
+	if ( ( nodeVarying1.z > 0.5 ) ) {
+
+		nodeVar4 = 0.0;
+
+	} else {
+
+		nodeVar4 = ( nodeVar0 - nodeVarying1.x );
+
+	}
+
+	nodeVar5 = nodeVar4;
+	nodeVar6 = max( max( nodeVar3, nodeVar5 ), 0.0 );
+	nodeVar7 = ( ( ( nodeVar1 * nodeVar1 ) + ( nodeVar6 * nodeVar6 ) ) * nodeVarying4 );
+	nodeVar8 = ( 1.0 - nodeVar7 );
+
+	if ( ( nodeVar8 <= 0.0 ) ) {
+
+		discard;
+
+
+	}
+
+	nodeVar9 = ( nodeVar8 * nodeVar8 );
+	nodeVar10 = pow( nodeVar8, exp2( ( 3.0 - ( nodeVarying7 * 4.0 ) ) ) );
+
+	if ( ( abs( ( nodeVarying7 - 0.5 ) ) < 0.001 ) ) {
+
+		nodeVar11 = nodeVar9;
+
+	} else {
+
+		nodeVar11 = nodeVar10;
+
+	}
+
+	nodeVar12 = nodeVar11;
+	nodeVar13 = ( nodeVar12 * nodeVarying5 );
+	nodeVar14 = nodeVarying8;
+	nodeVar15 = max( ( ( nodeVar14 * vec3( nodeUniform2 ) ) + vec3( nodeUniform3 ) ), vec3( 0.0, 0.0, 0.0 ) );
+	nodeVar16 = max( nodeVar15.x, max( nodeVar15.y, nodeVar15.z ) );
+	nodeVar17 = pow( nodeVar15, vec3( nodeUniform4 ) );
+	nodeVar18 = ( nodeVar13 * nodeUniform5 );
+	nodeVar19 = ( - log( ( 1.0 - min( nodeVarying6, 0.998046875 ) ) ) );
+	nodeVar20 = ( nodeVar18 * mix( 1.0, nodeVar19, nodeUniform6 ) );
+	nodeVar21 = ( nodeUniform7 * nodeVar20 );
+
+	if ( ( ( nodeVar16 < 0.0001 ) && ( nodeVar21 < 0.0001 ) ) ) {
+
+		discard;
+
+
+	}
+
+	nodeVar22 = ( 1.0 - exp( ( - nodeVar21 ) ) );
+	nodeVar23 = ( ( 1.0 - ( nodeVar21 * 0.5 ) ) + ( ( nodeVar21 * nodeVar21 ) / 6.0 ) );
+	nodeVar24 = ( nodeVar22 / max( nodeVar21, 1e-20 ) );
+
+	if ( ( nodeVar21 < 0.001 ) ) {
+
+		nodeVar25 = nodeVar23;
+
+	} else {
+
+		nodeVar25 = nodeVar24;
+
+	}
+
+	nodeVar26 = nodeVar25;
+	DiffuseColor = vec4( ( ( nodeVar17 * vec3( nodeVar20 ) ) * vec3( nodeVar26 ) ), nodeVar22 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform8 );
+	nodeVar27 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar27;
+
+	// result
+	fragColor = nodeVar27;
+
+}

@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shader-glsl';
+import { CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_FRAGMENT_SHADER } from './shader-glsl-capsule';
 import {
   VOLUMETRIC_LINE_VERTEX_SHADER,
   VOLUMETRIC_LINE_FRAGMENT_SHADER,
@@ -147,6 +148,7 @@ export class LineMaterial
     // or a uniform). Resolved once at construction; see LineMaterialConfig.
     const primitive = resolveLinePrimitive(materialConfig.primitive);
     const isVolumetricPrimitive = primitive === 'volumetric';
+    const isCapsulePrimitive = primitive === 'capsule';
 
     // Determine THREE.js blending mode
     // 'additive' and 'luminous' both use AdditiveBlending - only depthTest differs
@@ -216,10 +218,16 @@ export class LineMaterial
         ...(isVolumetricPrimitive ? { uLineRadialLUT: { value: getLineRadialLUTTexture() } } : {}),
       },
 
-      vertexShader: isVolumetricPrimitive ? VOLUMETRIC_LINE_VERTEX_SHADER : LINE_VERTEX_SHADER,
-      fragmentShader: isVolumetricPrimitive
-        ? VOLUMETRIC_LINE_FRAGMENT_SHADER
-        : LINE_FRAGMENT_SHADER,
+      vertexShader: isCapsulePrimitive
+        ? CAPSULE_LINE_VERTEX_SHADER
+        : isVolumetricPrimitive
+          ? VOLUMETRIC_LINE_VERTEX_SHADER
+          : LINE_VERTEX_SHADER,
+      fragmentShader: isCapsulePrimitive
+        ? CAPSULE_LINE_FRAGMENT_SHADER
+        : isVolumetricPrimitive
+          ? VOLUMETRIC_LINE_FRAGMENT_SHADER
+          : LINE_FRAGMENT_SHADER,
 
       // Preprocessor defines. Variant `#define`s (e.g.
       // `LUXAR_GAMMA_ONE`) gate fragment-stage fast paths and are

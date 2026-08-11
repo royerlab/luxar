@@ -20,6 +20,7 @@ import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { linePickWebGPUFactory, type LinePickTSLConfig } from './pick.tsl';
 import { volumetricLinePickWebGPUFactory } from './pick-volumetric.tsl';
+import { capsuleLinePickWebGPUFactory } from './pick-capsule.tsl';
 import type { LineJoinStyle } from '../../../types/line-join';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
@@ -123,7 +124,9 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     const primitive = resolveLinePrimitive(
       this.userData.linePrimitive as LinePrimitive | undefined
     );
-    if (primitive === 'volumetric') {
+    if (primitive === 'capsule') {
+      capsuleLinePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
+    } else if (primitive === 'volumetric') {
       volumetricLinePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
     } else {
       linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);

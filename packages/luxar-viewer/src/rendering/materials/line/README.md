@@ -22,6 +22,8 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 | `shader-tsl.ts`             | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
 | `shader-glsl-volumetric.ts` | `VOLUMETRIC_LINE_VERTEX_SHADER` + `VOLUMETRIC_LINE_FRAGMENT_SHADER` + `VOLUMETRIC_LINE_SOURCE` — the volumetric primitive's GLSL pair (see the section below).                                                                         |
 | `shader-tsl-volumetric.ts`  | `volumetricLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the volumetric pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                |
+| `shader-glsl-capsule.ts`    | `CAPSULE_LINE_VERTEX_SHADER` + `CAPSULE_LINE_FRAGMENT_SHADER` + `CAPSULE_LINE_SOURCE` — the capsule primitive's GLSL pair (see the section below).                                                                                     |
+| `shader-tsl-capsule.ts`     | `capsuleLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the capsule pair; same `LineTSLNodes`/`LineTSLConfig` contract as the other two factories.                                                                       |
 | `ray-integral.ts`           | The #1352 volumetric-line ray integral (`lineRayIntegralRef` / `lineRayIntegralPoly`), the peak-mode capsule profile, the CPU ray/segment geometry, and their GLSL/TSL twins. Pure math — no shader consumes it yet                    |
 
 ## Rendering model in one paragraph
@@ -371,6 +373,61 @@ calibration) they agree. Consolidating them — one module, one CPU reference,
 one set of shader builders — belongs to the next slice of #1352, not here,
 because folding it in now would rewrite lanes that have already been
 quadrature-pinned against `line-volumetric-integral.test.ts`.
+
+## Capsule primitive (`?linePrimitive=capsule`, #1352)
+
+The third primitive, built after the G1 gate measured the volumetric
+primitive 2.7–5× the quad's frame cost: a deliberately relaxed model that
+keeps the volumetric primitive's two behavioural wins — direction-stable
+near-axial rendering (an end-on segment is a round disc, never a flickering
+sliver) and seamless bisector-cut joins — at quad-class cost (measured
+1.04–1.11× the quad on the 10M-segment worst case, parity at vsync
+elsewhere).
+
+The model: each fragment shades a gaussian-like profile of the **2D
+point-to-segment distance in pixel space**. The vertex stage emits
+stencil-LOCAL coordinates (`vLocal = (axial px, perpendicular px)` plus the
+segment's pixel length), so the fragment's distance² is
+`y² + max(0, −x, x−L)²` — no projection, no sqrt, no transcendentals. The
+profile is the compact quartic bump `(1 − p²)^n` with `p = distance/radius`
+and the sharpness map `n = 2^(3 − 4·sharpness)` (smaller exponent = boxier);
+the drawn radius is the 2σ support of the quad's Gaussian-equivalent σ
+(`CAPSULE_RADIUS_PER_QUAD_HALFWIDTH` — all constants single-sourced in
+`_shared/line-capsule.ts`, which also carries the CPU reference profile the
+unit tests pin).
+
+Three exactness relaxations are deliberate, licensed by the #1352 relaxed
+spec ("not physics-exact; no pathological near-axial drawing; gaussian-like
+profile; approximate math fine"):
+
+1. **2D, not 3D.** The distance is measured in screen space, so the profile
+   is a screen-space quantity like the quad's — there is no view-ray
+   integral and no per-fragment camera-space solve. End-on stability comes
+   from the distance field itself (a point's field is radial).
+2. **One profile for all blending modes.** The capsule is peak-shaped by
+   construction; there is no peak/sum lane split and
+   `LUXAR_PEAK_PROJECTION` is never stamped. The blending-mode tails
+   (volumetric τ map, max premultiply, colormap, NO_GOG, gamma) are cribbed
+   from the quad fragment unchanged.
+3. **Compact support.** The quartic hits exact zero at the rim (the 2σ
+   trim), so there is no truncation constant and no shifted-Gaussian
+   renormalization.
+
+Interior polyline joints reuse the volumetric primitive's partner machinery
+(the joint-code partner slot; `compute_joint_codes` stays load-bearing):
+each end with a partner gets a **2D bisector cut** — the half-plane whose
+normal is `normalize(q̂ − m̂)` in pixel space — which tiles exactly
+(the partner's normal is the exact negation). Turns sharper than 120°
+(`CAPSULE_FOLD_CAP_MAX_COS`) fall back to a round cap instead of the
+chopped cut, but only when the end's radius exceeds 3 px on screen
+(`CAPSULE_FOLD_CAP_MIN_RADIUS_PX`) — at hairline widths the notch a cut
+leaves is subpixel and the cap would only add fill.
+
+Picking follows the toggle (same dispatch as volumetric): the capsule pick
+shaders run the same stencil, cuts, and fold rule as the visual pair so the
+pick footprint tracks the pixels exactly (see `../../picking/line/README.md`).
+The primitive is BUILD-time, like the other two: it selects the source pair /
+TSL factory at material construction and never changes on a live material.
 
 ## Geometry and storage layout
 
