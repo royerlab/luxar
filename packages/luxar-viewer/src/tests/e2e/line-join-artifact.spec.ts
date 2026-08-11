@@ -228,7 +228,14 @@ const EXPECTED_LINE_SEGMENTS = 120 + 16 + 40 + 20 + 9;
  * resolution differences — do not raise the floor into the upper one, and do
  * not lower it into the lower one.
  */
-const ZIGZAG_FLUX_P05_FLOOR = 0.9;
+// Re-baselined for the capsule default (#1352 flip): the capsule's
+// half-disc joint is ROUND, so a 90° corner genuinely carries less
+// column flux than the quad's square miter did — measured 0.895 capsule
+// vs 0.985 quad-mitred vs 0.780 unmitred (the pathology this floor
+// exists to catch). 0.85 keeps ~9x the capsule's margin over unmitred
+// while allowing the round-join geometry; the volumetric reference's
+// joins are round too.
+const ZIGZAG_FLUX_P05_FLOOR = 0.85;
 
 /**
  * Ceilings for the never-mitered control. A degree-9 branch point has all

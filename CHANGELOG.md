@@ -92,6 +92,25 @@ carry `refs/pull/N/merge` and were never grouped with a push. Note the cron
 fires the whole workflow, not just `python-tests` — a schedule event has no PR
 base, so change detection selects the full suite and the documentation gate too.
 
+#### Lines render with the capsule primitive by default (#1352)
+
+`DEFAULT_LINE_PRIMITIVE` flipped from `screen-space` to `capsule` after the
+re-gate passed on both axes: ≤1.09× the quad's frame cost on the
+10M-segment worst case (parity at vsync on fill-bound scenes, 1.04× on the
+4.4M-segment zebrahub streamlines) and a visual sign-off on the QA grid at
+arbitrary zoom. Three joint-composition refinements landed with the flip,
+found by the tightened line-join gate: the bisector cut is a 1 px AA ramp
+rather than a hard step (each leg evaluates the plane in its own local
+frame, so hard-step boundary pixels flipped independently — black and
+double-bright speckles at every joint vertex), the cut normal snaps to a
+1/1024 grid so both legs partition along the bit-identical plane, and the
+zigzag flux floor in `line-join-artifact.spec.ts` is re-baselined to the
+round-join geometry (0.895 measured vs the quad miter's 0.985 and the
+unmitred pathology's 0.780 — the capsule's joins are round, like the
+volumetric reference's). The quad (`?linePrimitive=screen-space`) and
+volumetric (`?linePrimitive=volumetric`) primitives remain selectable
+until their scheduled deletion.
+
 #### Capsule line primitive behind `?linePrimitive=capsule` (#1352)
 
 A third line primitive, built after the G1 gate measured the exact

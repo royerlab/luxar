@@ -62,14 +62,14 @@ describe('types/line-primitive', () => {
   });
 
   it('resolves explicit > session override > default', () => {
-    expect(DEFAULT_LINE_PRIMITIVE).toBe('screen-space');
-    expect(resolveLinePrimitive()).toBe('screen-space');
+    expect(DEFAULT_LINE_PRIMITIVE).toBe('capsule');
+    expect(resolveLinePrimitive()).toBe('capsule');
     setLinePrimitiveOverride('volumetric');
     expect(resolveLinePrimitive()).toBe('volumetric');
     // Explicit (harness) argument bypasses the session override.
     expect(resolveLinePrimitive('screen-space')).toBe('screen-space');
     setLinePrimitiveOverride(null);
-    expect(resolveLinePrimitive()).toBe('screen-space');
+    expect(resolveLinePrimitive()).toBe('capsule');
   });
 
   it('keeps the allowed-values list and the type in sync', () => {
@@ -78,11 +78,18 @@ describe('types/line-primitive', () => {
 });
 
 describe('LineMaterial primitive selection (GLSL)', () => {
-  it('defaults to the screen-space pair, byte-identical to the pre-toggle build', () => {
+  it('defaults to the CAPSULE pair (the #1352 flip)', () => {
     const m = new LineMaterial();
+    expect(m.vertexShader).toBe(CAPSULE_LINE_VERTEX_SHADER);
+    expect(m.fragmentShader).toBe(CAPSULE_LINE_FRAGMENT_SHADER);
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(false);
+    m.dispose();
+  });
+
+  it('the screen-space pair is still selectable explicitly (pre-deletion)', () => {
+    const m = new LineMaterial({ primitive: 'screen-space' });
     expect(m.vertexShader).toBe(LINE_VERTEX_SHADER);
     expect(m.fragmentShader).toBe(LINE_FRAGMENT_SHADER);
-    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(false);
     m.dispose();
   });
 
@@ -211,11 +218,21 @@ describe('LineMaterial primitive selection (GLSL)', () => {
 });
 
 describe('LinePickingMaterial primitive selection (#1352 PR-3)', () => {
-  it('defaults to the screen-space pick pair, byte-identical to the pre-toggle build', async () => {
+  it('defaults to the CAPSULE pick pair (the #1352 flip)', async () => {
+    const { LinePickingMaterial } = await import('../../../../rendering/picking/line/material');
+    const { CAPSULE_LINE_PICK_VERTEX_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER } =
+      await import('../../../../rendering/picking/line/shaders-capsule');
+    const m = new LinePickingMaterial({ nodeId: 7 });
+    expect(m.vertexShader).toBe(CAPSULE_LINE_PICK_VERTEX_SHADER);
+    expect(m.fragmentShader).toBe(CAPSULE_LINE_PICK_FRAGMENT_SHADER);
+    m.dispose();
+  });
+
+  it('the screen-space pick pair is still selectable explicitly (pre-deletion)', async () => {
     const { LinePickingMaterial } = await import('../../../../rendering/picking/line/material');
     const { LINE_PICK_VERTEX_SHADER, LINE_PICK_FRAGMENT_SHADER } =
       await import('../../../../rendering/picking/line/shaders');
-    const m = new LinePickingMaterial({ nodeId: 7 });
+    const m = new LinePickingMaterial({ nodeId: 7, primitive: 'screen-space' });
     expect(m.vertexShader).toBe(LINE_PICK_VERTEX_SHADER);
     expect(m.fragmentShader).toBe(LINE_PICK_FRAGMENT_SHADER);
     m.dispose();
@@ -303,7 +320,7 @@ describe('LinePickingMaterial primitive selection (#1352 PR-3)', () => {
     expect(quadFactory).not.toHaveBeenCalled();
 
     volFactory.mockClear();
-    const quad = new LinePickingTSLMaterial({ nodeId: 7 });
+    const quad = new LinePickingTSLMaterial({ nodeId: 7, primitive: 'screen-space' });
     expect(quadFactory).toHaveBeenCalledTimes(1);
     expect(volFactory).not.toHaveBeenCalled();
 
