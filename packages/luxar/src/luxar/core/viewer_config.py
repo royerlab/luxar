@@ -304,6 +304,11 @@ class ViewerConfig:
     # Camera
     camera: Optional[CameraConfig] = None
 
+    # Scene identity — shown as the browser tab title (document.title) so
+    # several open viewer tabs are tellable apart. Falls back to the ?title=
+    # URL parameter `luxar serve --open` derives from the dataset file name.
+    title: Optional[str] = None
+
     # Scene appearance
     background_color: Optional[str] = None
 
@@ -407,6 +412,12 @@ class ViewerConfig:
         """Validate configuration values. Raises ValueError on invalid values."""
         # Camera validation is handled by CameraConfig.__post_init__
 
+        if self.title is not None:
+            if not isinstance(self.title, str) or not self.title.strip():
+                raise ValueError(
+                    f"title must be a non-empty string, got {self.title!r}"
+                )
+
         if self.background_color is not None:
             _validate_hex_color(self.background_color)
 
@@ -458,6 +469,7 @@ class ViewerConfig:
 
     # -- Simple field names for sparse serialization --
     _SIMPLE_FIELDS = [
+        "title",
         "background_color",
         "tone_mapping",
         "exposure",

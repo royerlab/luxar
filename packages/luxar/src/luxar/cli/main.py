@@ -53,7 +53,9 @@ from .serving import (
 )
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
+    append_title_param,
     check_viewer_built,
+    dataset_title,
     ensure_viewer_built,
     pick_port,
     wait_for_server,
@@ -309,6 +311,7 @@ def serve(
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
                     args=(host, actual_viewer_port, data_url, False, cors_origin),
+                    kwargs={"title": dataset_title(serve_path)},
                     daemon=True,
                 )
                 viewer_thread.start()
@@ -317,10 +320,11 @@ def serve(
                 else:
                     aprint("⚠️  Viewer server did not become ready.")
         else:
-            aprint(
-                f"📊 Viewer URL: http://localhost:{viewer_port}/"
-                f"?src=http://{host}:{actual_port}"
+            hint_url = append_title_param(
+                f"http://localhost:{viewer_port}/?src=http://{host}:{actual_port}",
+                dataset_title(serve_path),
             )
+            aprint(f"📊 Viewer URL: {hint_url}")
 
         # Open browser if requested
         if open_browser:
@@ -330,7 +334,10 @@ def serve(
                 aprint("⚠️  Viewer not served; skipping --open.")
             else:
                 data_url = f"http://{host}:{actual_port}"
-                viewer_url = f"http://{host}:{actual_viewer_port}/?src={data_url}"
+                viewer_url = append_title_param(
+                    f"http://{host}:{actual_viewer_port}/?src={data_url}",
+                    dataset_title(serve_path),
+                )
                 open_browser_func(viewer_url)
 
         # Wrap the complete ASGI app with network simulation (if enabled)
@@ -464,7 +471,14 @@ def viewer(
             raise typer.Exit(1)
 
         # Serve viewer
-        _serve_viewer(host, actual_viewer_port, data_url, open_browser, cors_origin)
+        _serve_viewer(
+            host,
+            actual_viewer_port,
+            data_url,
+            open_browser,
+            cors_origin,
+            title=dataset_title(data),
+        )
 
     except typer.Exit:
         raise
