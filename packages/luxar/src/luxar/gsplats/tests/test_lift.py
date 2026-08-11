@@ -388,8 +388,10 @@ def test_lines_scalars_interpolate_then_lut():
 
 
 def test_rgba_colors_rejected():
-    # gsplats carry no alpha — (N, 4) RGBA must fail loudly at lift time, not
-    # silently emit a 4-channel "colour" the writer mishandles.
+    # PER-ELEMENT (N, 4) RGBA must fail loudly at lift time (gsplats do carry
+    # per-splat alpha, but the substitutive merge is untested on a VARYING one —
+    # only the uniform form is admitted, see the #1444 block below), not silently
+    # emit a 4-channel "colour" the writer mishandles.
     pos = np.zeros((2, 3), np.float32)
     rgba = np.array([[1.0, 0.0, 0.0, 0.5], [0.0, 1.0, 0.0, 0.5]], np.float32)
     with pytest.raises(ValueError, match="RGB"):

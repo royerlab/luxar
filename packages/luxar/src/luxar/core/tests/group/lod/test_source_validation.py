@@ -98,7 +98,7 @@ def _lines_kwargs(channel: str, value: Any) -> Dict[str, Any]:
     return kwargs
 
 
-#: The uniform colour forms the flat path accepts, all four of which the
+#: The uniform colour forms the flat path accepts, every one of which the
 #: substitutive wrappers used to refuse downstream in the gsplat lift (#1444),
 #: each paired with the row EVERY level must end up carrying — alpha included,
 #: because gsplats carry per-splat alpha and all three shaders scale intensity
@@ -117,17 +117,22 @@ _BROADCAST_COLORS = [
         np.array([(*_BROADCAST_RGB, _BROADCAST_ALPHA)], dtype=np.float32),
         (*_BROADCAST_RGB, _BROADCAST_ALPHA),
     ),
-    (  # opaque RGBA — the clamp endpoint, see _assert_coarse_levels_carry_color
+    (  # opaque RGBA — the clamped end, see _assert_coarse_levels_carry_color
         (*_BROADCAST_RGB, 1.0),
         (*_BROADCAST_RGB, 1.0),
+    ),
+    (  # near-opaque RGBA — clamped too, 1.0 is not the only affected value
+        (*_BROADCAST_RGB, 0.999),
+        (*_BROADCAST_RGB, 0.999),
     ),
 ]
 
 #: Tolerance for the coarse-level colour check. The merge round-trips a
-#: per-splat alpha through optical depth, whose ``ALPHA_CLAMP = 511/512`` caps an
-#: opaque input: alpha 1.0 comes back as 0.998046875 on every coarse level
-#: (measured), a 1.95e-3 step the finest child does not have. This tolerance
-#: admits exactly that and nothing looser.
+#: per-splat alpha through optical depth, whose ``ALPHA_CLAMP = 511/512 ≈
+#: 0.998047`` caps EVERY authored alpha above it — not just 1.0: both 1.0 and
+#: 0.999 come back as 0.998046875 on every coarse level (measured), at most a
+#: 1.95e-3 step the finest child does not have. Alpha at or below 511/512
+#: round-trips exactly. This tolerance admits that step and nothing looser.
 _ALPHA_CLAMP_ATOL = 2.5e-3
 
 #: Colours whose dtype the leaf write refuses (COLOR arrays are floating, uint8
@@ -151,7 +156,8 @@ def _assert_coarse_levels_carry_color(
     check, not a "some colour was written" one — and it covers the alpha column,
     whose loss would be a brightness jump at the LOD seam rather than a refusal.
     Equality is to within :data:`_ALPHA_CLAMP_ATOL`, the merge's optical-depth
-    clamp at the opaque endpoint; RGB and every alpha below 1 are exact.
+    clamp at the near-opaque end; RGB and every alpha at or below ``511/512``
+    are exact.
     """
     assert coarse, "no coarse gsplat levels were written"
     for child in coarse:

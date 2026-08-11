@@ -31,10 +31,12 @@ render-light rescale exist to keep flat. A **per-element** `(N, 4)` RGBA stays
 refused by the lift (shape alone cannot tell a constant alpha from a varying
 one, and the substitutive merge is untested on the latter); the 4-column
 allowance applies only to a colour the lift itself expanded from the uniform
-form. (The one inexactness is the opaque endpoint: the merge round-trips alpha
-through optical depth, whose `ALPHA_CLAMP = 511/512` turns an authored 1.0 into
-0.998 on the coarse levels — a 0.2% step, pinned by a test.) Value semantics
-mirror the leaf writer's: a list/tuple's components are taken at face value (an
+form. (The one inexactness is the near-opaque end: the merge round-trips alpha
+through optical depth, whose `ALPHA_CLAMP = 511/512 ≈ 0.998047` caps every
+authored alpha above it — 1.0, and 0.999 as well — at 0.998047 on the coarse
+levels, at most a 0.2% step; alpha ≤ 511/512 round-trips exactly. Both ends of
+that interval are pinned by tests.) Value semantics mirror the leaf writer's: a
+list/tuple's components are taken at face value (an
 integer tuple is never divided by 255, matching `write_colors`), while an array
 keeps the dtype rule — and colour arrays are now held to the dtypes the leaf
 accepts (floating, uint8, uint16) before the lift builds anything. Normalising
