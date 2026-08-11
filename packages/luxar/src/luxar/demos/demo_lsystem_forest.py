@@ -111,9 +111,11 @@ GROWTH_STAGES = ("Seedling", "Sprout", "Sapling", "Young", "Mature", "Ancient")
 
 #: Iteration offset of each stage relative to a species' final iteration
 #: count. Adjacent stages may share a derivation depth (differentiated by
-#: the maturity scaling below); the last two both derive at FULL depth so a
-#: stage-offset tree still shows a dense crown at the final growth slot.
-#: With geometric segment growth the stage SUM is ~2.3x the final stage.
+#: the maturity scaling below); the last two both derive at FULL depth so
+#: the late stages read as densely crowned. Staggered trees reach the final
+#: stage too — see :func:`_effective_stage`, which delays development
+#: without truncating the endpoint. With geometric segment growth the
+#: stage SUM is ~2.3x the final stage.
 STAGE_ITER_OFFSETS = (-3, -3, -2, -1, 0, 0)
 
 #: Maturity in [0, 1] per stage: scales segment lengths and widths so a
@@ -129,7 +131,7 @@ STACKED_AXIS_SIGMA = 1e-6
 
 #: Bump when the generation logic changes in a way that must invalidate
 #: cached bundles (also passed as `version=` to :func:`cache_computed`).
-SCENE_VERSION = 8
+SCENE_VERSION = 9
 
 
 def _maturity_length_scale(m: float) -> float:
@@ -1414,6 +1416,23 @@ def _append_tree_foliage(
         out.n_splats += m
 
 
+def _effective_stage(growth: int, stage_offset: int) -> int:
+    """A staggered tree's own stage at global growth slot ``growth``.
+
+    The stagger delays development WITHOUT truncating the endpoint: a
+    delayed tree starts late, lags through the middle slots, and catches up
+    to reach the SAME final stage in the last slot (young trees grow fast).
+    A plain ``growth - offset`` clamp would leave offset trees permanently
+    short of the final stage — at the authored "ancient" poster slice most
+    of the forest would never actually be ancient.
+    """
+    last = N_STAGES - 1
+    if stage_offset <= 0:
+        return int(np.clip(growth, 0, last))
+    scaled = (growth - stage_offset) * last / (last - stage_offset)
+    return int(np.clip(round(scaled), 0, last))
+
+
 def _build_tree(
     plan: TreePlan,
     species_out: SpeciesArrays,
@@ -1426,7 +1445,7 @@ def _build_tree(
 
     derivations: dict[int, tuple[np.ndarray, ...]] = {}
     for growth in range(N_STAGES):
-        effective_stage = int(np.clip(growth - plan.stage_offset, 0, N_STAGES - 1))
+        effective_stage = _effective_stage(growth, plan.stage_offset)
         iterations = max(1, final_iterations + STAGE_ITER_OFFSETS[effective_stage])
         if iterations not in derivations:
             derivations[iterations] = derive_tree(plan.lsystem, iterations, plan.seed)
@@ -1451,7 +1470,10 @@ def _build_tree(
         )
 
         max_depth = int(edge_depths.max())
-        if max_depth >= 2 and iterations >= 2:
+        # Depth >= 1 (not 2): the palm's fronds all live at branch depth 1 —
+        # `C` opens a single bracket level and `P -> F&P` nests no further —
+        # so a deeper gate would leave palms bare in every season.
+        if max_depth >= 1 and iterations >= 2:
             local_tips, local_dirs = _tip_anchors(
                 vertices, edges, edge_depths, max_depth
             )

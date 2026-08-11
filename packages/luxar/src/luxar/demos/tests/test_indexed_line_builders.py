@@ -291,6 +291,56 @@ def test_forest_foliage_cholesky_packs_the_5d_tril_layout() -> None:
         np.testing.assert_allclose(np.sqrt(eigenvalues.min()), sigma_perp[k], atol=1e-6)
 
 
+def test_forest_stagger_delays_development_but_converges() -> None:
+    """A staggered tree lags through the middle slots yet ends ancient.
+
+    A plain ``growth - offset`` clamp leaves offset trees permanently short
+    of the final stage — most of the forest would never be ancient in the
+    authored ancient poster slice.
+    """
+    last = forest.N_STAGES - 1
+    for offset in (0, 1, 2):
+        stages = [forest._effective_stage(g, offset) for g in range(forest.N_STAGES)]
+        assert stages[0] == 0, (offset, stages)
+        assert stages[-1] == last, f"offset {offset} never reaches ancient: {stages}"
+        assert all(b >= a for a, b in zip(stages, stages[1:])), (offset, stages)
+        if offset:
+            assert sum(stages) < sum(range(forest.N_STAGES)), (
+                f"offset {offset} does not actually delay development"
+            )
+
+
+def test_forest_palm_grows_foliage() -> None:
+    """Palm fronds live at branch depth 1; the foliage gate must accept them.
+
+    A ``max_depth >= 2`` gate silently leaves palms bare in every season —
+    the composite layer test only proves SOME species produced gsplats.
+    """
+    palm_index = next(i for i, s in enumerate(forest.SPECIES) if s.key == "palm")
+    palm = forest.SPECIES[palm_index]
+    plan = forest.TreePlan(
+        index=0,
+        species_index=palm_index,
+        x=0.0,
+        y=0.0,
+        z=0.0,
+        seed=5,
+        scale=1.0,
+        rotation=0.0,
+        stage_offset=0,
+        tint_shift=np.zeros(3, dtype=np.float32),
+        brightness=1.0,
+        lsystem=palm.lsystem,
+    )
+    lines_out = forest.SpeciesArrays()
+    foliage_out = forest.FoliageArrays()
+    forest._build_tree(
+        plan, lines_out, foliage_out, final_iterations=4 + palm.iter_bonus
+    )
+    assert foliage_out.n_splats > 0, "palm grew no foliage splats"
+    assert all("Palm" in label for _, label in foliage_out.label_runs)
+
+
 def test_lsystem_growth_stages_keep_existing_branch_orientations() -> None:
     """Re-deriving a tree one iteration deeper must not re-roll its angles.
 
