@@ -180,7 +180,11 @@
 [data-theme='liquid-glass'] .luxar-gui__input:focus,
 [data-theme='liquid-glass'] .luxar-gui__input--number:focus {
   background: rgba(255, 255, 255, 0.12);
-  border-color: var(--luxar-success);
+  /* Focus colour is the theme's decision (blue here), not the component's —
+     same token the base rule now uses. This override only exists for the
+     glass background, but it also re-declares the border, so it has to
+     follow. */
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /* GUI select - more transparent */
@@ -195,7 +199,7 @@
 
 [data-theme='liquid-glass'] .luxar-gui__select:focus {
   background-color: rgba(255, 255, 255, 0.12);
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /* <select> option colors are centralised in styles/components/select-menu.css
@@ -345,7 +349,7 @@
 [data-theme='liquid-glass'] .luxar-dataset-browser__manual-entry-input:focus,
 [data-theme='liquid-glass'] .luxar-dataset-browser__search-input:focus {
   background: rgba(255, 255, 255, 0.1);
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /* Search bar divider */
@@ -431,7 +435,7 @@
 
 [data-theme='liquid-glass'] .luxar-layers-panel__select:focus {
   background-color: rgba(255, 255, 255, 0.12);
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /* Slider track - subtle (matches GUI slider) */
@@ -447,4 +451,16 @@
 /* Type badge - more transparent */
 [data-theme='liquid-glass'] .luxar-layer-row__badge {
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* ==========================================================================
+   RECORDING INDICATOR
+   ========================================================================== */
+
+/* The REC pill floats over the live canvas and is NOT a .luxar-glass-surface,
+   so it gets none of the ::after dark tint. In this theme --luxar-bg-secondary
+   is a translucent WHITE, which would leave white text sitting on a bright
+   scene at ~1:1 contrast. Paint the same dark tint the glass surfaces use. */
+[data-theme='liquid-glass'] .luxar-recording-indicator {
+  background: rgba(0, 0, 0, 0.55);
 }

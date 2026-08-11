@@ -485,8 +485,8 @@ test('theme switching updates all CSS variables', async ({ page }) => {
   const frostedBg = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary')
   );
-  // Frosted glass uses rgba(255, 255, 255, 0.15) for subtle glass tint
-  expect(frostedBg.trim()).toBe('rgba(255, 255, 255, 0.15)');
+  // Frosted glass tints the blur DARK so text stays readable over a bright scene
+  expect(frostedBg.trim()).toBe('rgba(28, 30, 36, 0.5)');
 
   // Test liquid-glass theme
   await page.goto('/?theme=liquid-glass&debug&dpr=1');

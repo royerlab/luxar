@@ -51,7 +51,10 @@ export const liquidGlassTheme: Theme = {
       warning: 'rgba(255, 149, 0, 1)', // Orange
       error: 'rgba(255, 59, 48, 1)', // Red
       info: 'rgba(0, 122, 255, 1)', // Blue
-      highlight: 'rgba(88, 86, 214, 1)', // Purple
+      // The brand interactive accent — same bright blue as the dark theme.
+      // (Was indigo rgba(88,86,214,1), ~1.6:1 contrast on dark glass panels
+      // — active chips, ZARR badges, and the wordmark were barely legible.)
+      highlight: 'rgba(0, 160, 255, 1)',
     },
     interactive: {
       // Light interactive states for glass
