@@ -18,10 +18,17 @@ the unrelated colors/colormap conflict. #1422 closed this for ``labels``; these
 cover the rest.
 
 The LOD wrappers live in ``tests/group/lod/test_source_validation.py``.
+
+The last section covers the SCENE-DIMENSION COUNT gate (#1446) for the partition
+wrapper: the count check sat BELOW the partition branch, so a mismatched-ndim call
+was refused only from inside ``part_0`` — blaming a child the caller never wrote
+and leaving ``kind=partition`` on disk with no children, where the flat path
+writes nothing at all. The LOD half of that gate is in the lod/ sibling.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, List
 
 import numpy as np
@@ -33,7 +40,11 @@ from luxar.io.reader import LuxarScene
 from ..conftest import (
     assert_same_refusal,
     assert_uniform,
+    bad_ndim_positions,
     cholesky_rows,
+    cholesky_rows_nd,
+    count_range_warnings,
+    open_ranged_scene,
     open_scene,
     random_positions,
     refusal,
@@ -609,3 +620,230 @@ class TestLegalBroadcastFormsStillReachEveryPart:
         for part in store["p"].group_keys():
             assert store["p"][part].attrs["colormap"] == "viridis"
             assert store["p"][part]["scalars"].shape[0] == _HALF
+
+
+# ---------------------------------------------------------------------------
+# Scene-dimension COUNT, pre-split (#1446)
+# ---------------------------------------------------------------------------
+
+_DIM_N = 400
+_DIM_HALF = 200
+
+
+class TestPointsPartitionDimensionCount:
+    def test_mismatched_ndim_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        """Pre-fix: refused, but as ``part_0`` and with ``p`` already on disk.
+
+        ``assert_same_refusal`` fails first pre-fix (the message named ``part_0``
+        and that part's own row count). The store assertion after it is an
+        independent check on the other half of the same bug — pre-fix ``p`` is in
+        the store, as a childless ``kind=partition`` group.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "points_part_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "points_part_ndim_flat.luxar.zarr")
+        positions = bad_ndim_positions(_DIM_N, seed=71)
+
+        flat = refusal(lambda: flat_scene.add_points("p", positions))
+        split = refusal(
+            lambda: scene.add_points(
+                "p", positions, partition={"max_elements": _DIM_HALF}
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "4 columns" in str(split)
+        assert "p" not in compiler.store
+
+    def test_width_outranks_a_malformed_partition_spec(self, tmp_path: Any) -> None:
+        """The deliberate precedence change the hoist forces, pinned.
+
+        The ``partition=`` spec is validated INSIDE the branch, so before #1446 a
+        call that got both the spec and the column count wrong heard about the
+        spec; the count check now sits above the branch, so the width answers
+        first. Both refuse and neither writes — only the message differs — but
+        the ordering follows from where the check had to go, so state it here
+        rather than let a reader discover it from a surprising message.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "points_part_two_faults.luxar.zarr")
+        positions = bad_ndim_positions(_DIM_N, seed=75)
+
+        split = refusal(
+            lambda: scene.add_points("p", positions, partition={"rule": "bogus"})
+        )
+
+        assert "4 columns" in str(split)
+        assert "bogus" not in str(split)
+        assert "p" not in compiler.store
+
+
+class TestLinesPartitionDimensionCount:
+    def test_mismatched_ndim_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        """The Lines twin of the Points case above; same two assertions."""
+        compiler, scene, _ = open_scene(tmp_path, "lines_part_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lines_part_ndim_flat.luxar.zarr")
+        vertices = bad_ndim_positions(_DIM_N, seed=72)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line", vertices, widths=0.2, line_type="segments"
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                partition={"max_elements": _DIM_HALF},
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "4 columns" in str(split)
+        assert "line" not in compiler.store
+
+
+class TestGSplatsPartitionDimensionCount:
+    def test_mismatched_ndim_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        """The GSplats twin of the Points case above; same two assertions."""
+        compiler, scene, _ = open_scene(tmp_path, "gsplats_part_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "gsplats_part_ndim_flat.luxar.zarr")
+        centers = bad_ndim_positions(_DIM_N, seed=73)
+        # 10-wide Cholesky rows: the packed width belongs to the CENTERS' width,
+        # so a 6-wide row would make the writer complain about the wrong thing.
+        chol = cholesky_rows_nd(_DIM_N, 4)
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g", centers=centers, amplitudes=1.0, cholesky_factors=chol
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=1.0,
+                cholesky_factors=chol,
+                partition={"max_elements": _DIM_HALF},
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "4 columns" in str(split)
+        assert "g" not in compiler.store
+
+
+class TestPartitionRangeWarningsAreNotMultipliedByTheHoist:
+    """The control: only the COUNT half of the validator was hoisted.
+
+    Hoisting the whole ``validate_data_dimensions`` above the partition branch
+    would have added one out-of-range ``UserWarning`` per dimension for the SOURCE
+    array on top of the once-per-part it already fires — three extra here. The
+    count is asserted against the parts actually written, so it stays exact
+    without being a bare literal. ``warnings.catch_warnings`` rather than
+    ``pytest.warns``, matching the lod/ sibling control.
+    """
+
+    def test_points_partition_warns_once_per_dimension_per_part(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_ranged_scene(
+            tmp_path, "points_part_warn.luxar.zarr"
+        )
+        positions = random_positions(_DIM_N, seed=74)  # spans [0, 100), range (0, 10)
+
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            scene.add_points("p", positions, partition={"max_elements": _DIM_HALF})
+        compiler.finalize()
+
+        parts = _part_names(path, "p")
+        assert len(parts) > 1
+        assert count_range_warnings(records) == 3 * len(parts)
+
+
+def _nested_partition_tree(ndim: int) -> Any:
+    """A ``kind=partition`` root of two leaves — deliberately NOT matrix-shaped.
+
+    ``add_gsplats_from_file`` sends every MATRIX-shaped tree (a bare leaf, an
+    additive ladder, or a ``kind=lod`` of leaves) down
+    ``add_gsplats_from_data_impl``, so only a genuinely nested tree like this one
+    reaches ``graft_gsplat_node`` — which is the door that used to strand.
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+
+    def leaf(n: int, seed: int) -> Any:
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=bad_ndim_positions(n, seed=seed, ndim=ndim),
+                    amplitudes=np.ones(n, dtype=np.float32),
+                    cholesky_factors=cholesky_rows_nd(n, ndim),
+                )
+            ]
+        )
+
+    return GSplatPartition(children=[leaf(8, 91), leaf(6, 92)], max_elements=8)
+
+
+class TestGraftedFileDimensionCount:
+    """The file door of the same gate (#1446): a stored tree, not an in-memory one.
+
+    Measured before this check existed: ``Could not add gsplats 'part_0':
+    Dimension mismatch for 'part_0': …`` with the target name already on disk as a
+    childless ``kind=partition`` group. The graft applies no ``dim_order`` (it
+    refuses the kwarg outright), so the stored width must already be the scene's,
+    and both container node types reject mixed-``ndim`` children at construction —
+    which is why one leaf's centers can answer for the whole subtree.
+    """
+
+    def test_a_nested_tree_of_the_wrong_width_leaves_no_childless_wrapper(
+        self, tmp_path: Any
+    ) -> None:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import is_matrix_shaped
+
+        node = _nested_partition_tree(4)
+        # The premise of the whole case: a matrix-shaped tree would take the
+        # already-covered data path instead, and the test would prove nothing
+        # about the graft.
+        assert not is_matrix_shaped(node)
+        file_path = str(tmp_path / "nested.gsplats.zarr")
+        write_gsplats_tree(file_path, node)
+
+        compiler, scene, _ = open_scene(tmp_path, "graft_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "graft_ndim_flat.luxar.zarr")
+        leaf_sub = next(iter(node.children)).additive_sublods[0]
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=leaf_sub.centers,
+                amplitudes=leaf_sub.amplitudes,
+                cholesky_factors=leaf_sub.cholesky_factors,
+            )
+        )
+        split = refusal(lambda: scene.add_gsplats_from_file("g", file_path))
+
+        # Byte-identical to a direct add_gsplats of the same array — the graft
+        # blamed ``part_0`` before, so this is what catches a regression.
+        assert_same_refusal(flat, split)
+        assert "part_0" not in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_matching_width_still_grafts(self, tmp_path: Any) -> None:
+        """Non-vacuity control: the same shape at the scene's width still lands."""
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        node = _nested_partition_tree(3)
+        file_path = str(tmp_path / "nested_ok.gsplats.zarr")
+        write_gsplats_tree(file_path, node)
+
+        compiler, scene, path = open_scene(tmp_path, "graft_ok.luxar.zarr")
+        scene.add_gsplats_from_file("g", file_path)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "partition"
+        assert len(list(store["g"].group_keys())) == 2

@@ -136,6 +136,19 @@ def add_lines_impl(
                 "'scalars' requires a 'colormap' attribute to map values to colors."
             )
 
+        # Scene-dimension COUNT check — same placement and same reasons as in
+        # ``add_points_impl``: above the substitutive/partition/additive branches
+        # (so a mismatch is refused against the caller's own array and name,
+        # before any wrapper group exists), after ``apply_dim_order_positions``
+        # (which decides the final column count), and below the colours gate (so
+        # a bad colours/colormap combination keeps precedence). Only the count
+        # half is hoisted — the per-dimension range ``UserWarning`` stays in the
+        # flat write below, so its count is unchanged (once per dimension per
+        # written leaf; none under an additive ladder) rather than gaining one
+        # more firing here for the source array. Do not move it back below the
+        # branches.
+        scene._validate_dimension_count(vert_arr, name, data_type="vertices")
+
         # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
         # segment lifted to isotropic "bead" Gaussians, then reduced by the
         # gsplat substitutive pipeline) under a kind=lod Group whose finest

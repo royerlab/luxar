@@ -172,9 +172,12 @@ LOD wrapper builders:
   write accepts. What that buys is a per-element CHANNEL verdict identical with
   and without `partition=` / `additive_lod=` / `substitutive_lod=` — identical
   exception type and message, which the tests assert byte-for-byte. The gate runs
-  ABOVE the positions / dimension / attr checks on the split paths, so a call
-  that also trips one of those reports the channel fault first here and the
-  positions/attr fault on the plain-leaf path — both refuse, neither writes.
+  ABOVE the positions / attr checks on the split paths, so a call that also trips
+  one of those reports the channel fault first here and the positions/attr fault
+  on the plain-leaf path — both refuse, neither writes. The scene-DIMENSION count
+  is the exception: since #1446 the adders check it above their split branches, so
+  it precedes this gate on both paths and a mismatched column count is reported
+  first either way.
   Same placement rule as the labels guard (first statement of the wrapper impl,
   never a leaf adder). Labels come last, as in the flat order: for Points and
   Lines via `validate_labels_for_writing` inside the shared writer sweep, for
