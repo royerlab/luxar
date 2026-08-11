@@ -73,6 +73,7 @@ vi.mock('zarrita', () => ({
 }));
 
 import { bootstrapStandalone } from '../../../core/bootstrap';
+import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
 import type { UrlParams } from '../../../config/url-params';
 import {
@@ -157,6 +158,39 @@ describe('bootstrapStandalone', () => {
           urlParams: { ...EMPTY_PARAMS, title: 'Rivers of Earth' },
         });
         expect(document.title).toBe('Rivers of Earth');
+      } finally {
+        document.title = original;
+      }
+    });
+
+    it('falls back to the ?src= store name when no ?title= is given', async () => {
+      // The state a switched-then-reloaded tab (or a link shared from one)
+      // comes back in: `buildDataSourceBrowserUrl` dropped the stale ?title=,
+      // so the store name in ?src= is all that is left to name the tab.
+      const original = document.title;
+      try {
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: {
+            ...EMPTY_PARAMS,
+            src: 'http://127.0.0.1:8000/global_rivers.luxar.zarr',
+          },
+        });
+        expect(document.title).toBe('global_rivers');
+
+        // Probe the restore target, then check that a bare data-server root
+        // (whose last path segment is a host:port) names no store and hands
+        // the page title back rather than inventing a nonsense name.
+        setDocumentTitle('probe');
+        setDocumentTitle(null);
+        const pageTitle = document.title;
+        setDocumentTitle('Stale Scene');
+
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: { ...EMPTY_PARAMS, src: 'http://127.0.0.1:8000' },
+        });
+        expect(document.title).toBe(pageTitle);
       } finally {
         document.title = original;
       }

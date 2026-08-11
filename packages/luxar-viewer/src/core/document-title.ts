@@ -8,7 +8,8 @@
  * dataset the server started with and is dropped from the address bar by
  * `buildDataSourceBrowserUrl`; an authored title names the scene being
  * replaced), so something has to remember what the tab was called before the
- * first override.
+ * first override — and hand it back when the viewer is disposed, since
+ * `document.title` belongs to the host page, not to us.
  */
 
 /**
@@ -45,7 +46,9 @@ export function setDocumentTitle(title: string | null | undefined): void {
  *
  * The browser-side twin of `luxar.cli.utils.dataset_title`, which is what
  * spells `?title=` for the initially served dataset. This one covers what the
- * server cannot: the dataset the user picks in the viewer's own browser modal.
+ * server cannot: the dataset the user picks in the viewer's own browser modal,
+ * and the store a URL still names in `?src=` after the stale `?title=` has
+ * been dropped (a reloaded or shared post-switch link).
  * It is deliberately stricter — the server knows it was handed a dataset path,
  * whereas here an unrecognized name is better left to the page title.
  */

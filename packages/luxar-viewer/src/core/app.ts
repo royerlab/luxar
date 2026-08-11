@@ -874,6 +874,13 @@ export class LuxarApp {
     // teardown throws partway through.
     this.isInitialized = false;
 
+    // Hand the page its own <title> back. The viewer overwrites document.title
+    // with the scene's name, which is a mutation of a host-page global: an
+    // embedder that removes the viewer would otherwise be left titled after a
+    // scene that no longer exists. Restored BEFORE the teardown pipeline so a
+    // step that throws partway can't strand it.
+    setDocumentTitle(null);
+
     runDisposePipeline({
       events: this.events,
       pickingEvents: this.pickingEvents,

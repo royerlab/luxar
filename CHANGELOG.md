@@ -39,7 +39,12 @@ for free. Switching datasets inside the viewer drops `?title=` from the
 address bar and retitles the tab after the dataset you switched to (falling
 back to the page title when the URL names no store): both the URL parameter
 and an authored title name the scene you just left, so leaving either in
-place is exactly the stale tab this set out to fix.
+place is exactly the stale tab this set out to fix. A tab reloaded after such
+a switch (or a link shared from it) carries no `?title=` any more, so the
+viewer falls back to the store name in `?src=`. `document.title` belongs to
+the host page, so `LuxarApp.dispose()` hands the page's own `<title>` back —
+an embedder that removes the viewer is not left named after a torn-down
+scene.
 
 #### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
 

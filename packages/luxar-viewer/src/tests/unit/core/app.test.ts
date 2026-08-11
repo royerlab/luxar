@@ -658,6 +658,36 @@ describe('LuxarApp', () => {
       expect(mockCleanupUI).toHaveBeenCalled();
     });
 
+    it('gives the page its own title back', () => {
+      // document.title is a host-page global: an embedder that removes the
+      // viewer must not be left with a tab named after a torn-down scene.
+      // Probe for the restore target — earlier tests in this file overwrite
+      // the title too, so the module's one-shot page-title capture may
+      // already have happened.
+      setDocumentTitle('probe');
+      setDocumentTitle(null);
+      const pageTitle = document.title;
+
+      setDocumentTitle('Rivers of Earth');
+      app.dispose();
+
+      expect(document.title).toBe(pageTitle);
+    });
+
+    it('restores the title even when a teardown step throws', () => {
+      setDocumentTitle('probe');
+      setDocumentTitle(null);
+      const pageTitle = document.title;
+
+      setDocumentTitle('Rivers of Earth');
+      mockSceneManager.dispose.mockImplementation(() => {
+        throw new Error('Dispose failed');
+      });
+
+      expect(() => app.dispose()).not.toThrow();
+      expect(document.title).toBe(pageTitle);
+    });
+
     it('should remove beforeunload listener', () => {
       app.dispose();
 

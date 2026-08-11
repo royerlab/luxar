@@ -399,7 +399,9 @@ parameter, which serve-family commands (`luxar serve --viewer`,
 `luxar demo run`) derive from the dataset's file name — so every tab names
 the scene it shows instead of a row of identical "Luxar Player" tabs.
 Switching datasets inside the viewer retitles the tab after the dataset you
-switched to (both of the other two name the scene you just left).
+switched to (both of the other two name the scene you just left). With no
+`?title=` at all, the viewer derives the name from the store `?src=` points
+at — which is what keeps a reloaded or shared post-switch link named.
 
 ### Available Configuration Categories
 

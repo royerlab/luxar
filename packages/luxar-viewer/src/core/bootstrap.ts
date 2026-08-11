@@ -17,7 +17,7 @@
  */
 
 import { LuxarApp, type LuxarAppOptions } from './app';
-import { setDocumentTitle } from './document-title';
+import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
@@ -140,7 +140,15 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // stale-tab trap's accomplice. An authored `viewer_config.title` overrides
   // this at scene load (see core/app/viewer-config/apply-state.ts), and a
   // dataset switch drops it again (see core/document-title.ts).
-  setDocumentTitle(urlParams.title);
+  //
+  // With no `?title=`, fall back to the name `?src=` itself carries. That is
+  // the state a switched-then-reloaded tab (or a link shared from one) comes
+  // back in: `buildDataSourceBrowserUrl` drops the stale `?title=` on a
+  // switch, so without this the tab would revert to the generic page title
+  // while showing a perfectly well-named store.
+  setDocumentTitle(
+    urlParams.title ?? (urlParams.src ? dataSourceDocumentTitle(urlParams.src) : null)
+  );
 
   if (patchConsole) {
     consoleInterceptor.patch();
