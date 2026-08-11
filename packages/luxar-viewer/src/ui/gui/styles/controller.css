@@ -105,7 +105,7 @@
   width: 14px;
   height: 14px;
   border-radius: var(--luxar-radius-full);
-  background: var(--luxar-success);
+  background: var(--luxar-highlight);
   cursor: grab;
   transition: var(--luxar-transition-fast);
   box-shadow: var(--luxar-shadow-sm);
@@ -113,9 +113,9 @@
 }
 
 .luxar-gui__slider::-webkit-slider-thumb:hover {
-  background: var(--luxar-success);
+  background: var(--luxar-highlight);
   transform: scale(1.15);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--luxar-success) 40%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--luxar-highlight) 40%, transparent);
 }
 
 .luxar-gui__slider::-webkit-slider-thumb:active {
@@ -135,7 +135,7 @@
   width: 14px;
   height: 14px;
   border-radius: var(--luxar-radius-full);
-  background: var(--luxar-success);
+  background: var(--luxar-highlight);
   cursor: grab;
   border: 2px solid var(--luxar-border-default);
   transition: var(--luxar-transition-fast);
@@ -143,9 +143,9 @@
 }
 
 .luxar-gui__slider::-moz-range-thumb:hover {
-  background: var(--luxar-success);
+  background: var(--luxar-highlight);
   transform: scale(1.15);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--luxar-success) 40%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--luxar-highlight) 40%, transparent);
 }
 
 .luxar-gui__slider::-moz-range-thumb:active {
@@ -173,7 +173,7 @@
 .luxar-gui__input:focus {
   outline: none;
   background: rgba(0, 0, 0, 0.3);
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /**
@@ -184,7 +184,7 @@
   flex: 0 0 52px;
   width: 52px;
   background: rgba(0, 0, 0, 0.2);
-  color: var(--luxar-success);
+  color: var(--luxar-text-primary);
   font-family: var(--luxar-font-mono);
   text-align: right;
   font-weight: 400;
@@ -204,7 +204,7 @@
 .luxar-gui__input--number:focus {
   outline: none;
   background: rgba(0, 0, 0, 0.3);
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /* Hide spinner buttons - they interfere with text alignment */
@@ -236,7 +236,7 @@
   margin: 0;
   margin-right: var(--luxar-spacing-2);
   vertical-align: middle;
-  accent-color: var(--luxar-success);
+  accent-color: var(--luxar-highlight);
   cursor: pointer;
 }
 
@@ -266,7 +266,7 @@
 .luxar-gui__select:focus {
   outline: none;
   background-color: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--luxar-success);
+  border: 1px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /* <select> option colors are centralised in styles/components/select-menu.css
@@ -303,7 +303,7 @@
  */
 [data-theme='light'] .luxar-gui__input--number {
   background: rgba(0, 0, 0, 0.05);
-  color: var(--luxar-success);
+  color: var(--luxar-text-primary);
 }
 
 [data-theme='light'] .luxar-gui__input--number:hover {

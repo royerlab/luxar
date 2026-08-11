@@ -451,8 +451,74 @@
   outline-offset: 1px;
 }
 
+/* ========== Panel header (shared recipe) ==========
+   THE header treatment for every panel (UI Design Guide §7.3): title row
+   with the standard rhythm (6px to the rule, 10px to the content) closed
+   by the same border-default hairline as the panel's own frame — one
+   material, no per-panel emphasis variants. Panels add `luxar-panel-header`
+   alongside their BEM class; structural extras (own horizontal padding,
+   drag cursors) stay per-panel. */
+.luxar-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: var(--luxar-spacing-3);
+  margin-bottom: var(--luxar-spacing-5);
+  border-bottom: 1px solid var(--luxar-border-default);
+}
+
+/* ========== Panel close button (shared recipe) ==========
+   THE close affordance for every panel header (UI Design Guide §7.3):
+   28×28 grid-centered hit target, radius-md, muted → primary with a
+   neutral hover fill, 15px stroke ✕ (rail icon contract). Panels add
+   `luxar-panel-close` alongside their BEM class; per-panel CSS should
+   not restate any of this. */
+.luxar-panel-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--luxar-text-muted);
+  border-radius: var(--luxar-radius-md);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-panel-close:hover {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover);
+}
+
+.luxar-panel-close:focus-visible {
+  /* Fallback is mandatory: ThemeBorderColors.focus is optional, and an
+     unresolvable var() makes the whole declaration invalid at computed-value
+     time — outline-style would fall back to `none` and, being the more
+     specific rule, suppress the ring reset.css draws. Same spelling as
+     reset.css / control-rail.css. */
+  outline: 2px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  outline-offset: 1px;
+}
+
+.luxar-panel-close svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* ========== Reduced Motion ========== */
 @media (prefers-reduced-motion: reduce) {
+  .luxar-panel-close {
+    transition: none;
+  }
+
   .luxar-animate-fade-in {
     animation: none !important;
     opacity: 1 !important;

@@ -13,9 +13,12 @@
   top: var(--luxar-spacing-10);
   right: var(--luxar-spacing-10);
 
-  /* Sizing */
+  /* Sizing + layout: flex column so the pinned header and the scrolling
+     body share the 82vh bound. */
   width: 400px;
   max-height: 82vh;
+  display: flex;
+  flex-direction: column;
 
   /* Theming — shared surface recipe with the control rail: crisp hairline
      (border-default) + large soft corners (radius-lg). */
@@ -46,9 +49,11 @@
  * Contains header, content, and footer - handles all scrolling
  */
 .luxar-help-overlay__scroll {
-  padding: var(--luxar-spacing-8);
+  /* Top padding comes from the pinned header's margin, not this wrapper. */
+  padding: 0 var(--luxar-spacing-8) var(--luxar-spacing-8);
   overflow-y: auto;
-  max-height: 82vh;
+  flex: 1;
+  min-height: 0;
 
   /* Quiet scrollbar — neutral, not accent-colored. */
   scrollbar-width: thin;
@@ -69,38 +74,19 @@
 }
 
 /* Header */
-.luxar-help-overlay__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--luxar-spacing-5);
-  border-bottom: 1px solid var(--luxar-border-strong);
-  padding-bottom: var(--luxar-spacing-3);
-}
-
 .luxar-help-overlay__title {
   margin: 0;
   font-size: var(--luxar-text-lg);
   font-weight: var(--luxar-font-bold);
 }
 
-.luxar-help-overlay__close-btn {
-  background: none;
-  border: none;
-  color: var(--luxar-text-muted);
-  font-size: var(--luxar-text-3xl);
-  cursor: pointer;
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--luxar-transition-fast);
-}
-
-.luxar-help-overlay__close-btn:hover {
-  color: var(--luxar-text-primary);
+/* Pinned header — structural extras only (recipe from .luxar-panel-header):
+   it sits outside the scroll wrapper, so it carries its own outer padding. */
+.luxar-help-overlay__header {
+  flex-shrink: 0;
+  padding-top: var(--luxar-spacing-8);
+  padding-right: var(--luxar-spacing-8);
+  padding-left: var(--luxar-spacing-8);
 }
 
 /* Sections */

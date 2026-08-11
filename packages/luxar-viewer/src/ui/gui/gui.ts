@@ -93,7 +93,7 @@ export class GUI extends Folder {
 
     // Header element (contains title and optional close button)
     const header = document.createElement('div');
-    header.className = 'luxar-gui__header';
+    header.className = 'luxar-gui__header luxar-panel-header';
 
     // Title element
     const title = document.createElement('div');
@@ -104,8 +104,10 @@ export class GUI extends Folder {
     // Close button (only if onClose callback is provided)
     if (this.guiOptions.onClose) {
       const closeBtn = document.createElement('button');
-      closeBtn.className = 'luxar-gui__close-btn';
-      closeBtn.textContent = '×';
+      closeBtn.className = 'luxar-gui__close-btn luxar-panel-close';
+      // Stroke ✕ in the rail icon contract (was the text glyph '×').
+      closeBtn.innerHTML =
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
       closeBtn.setAttribute('aria-label', 'Close panel');
       if (this.guiOptions.closeButtonTitle) {
         closeBtn.title = this.guiOptions.closeButtonTitle;

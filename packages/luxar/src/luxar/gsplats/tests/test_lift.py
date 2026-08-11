@@ -384,12 +384,34 @@ def test_lines_scalars_interpolate_then_lut():
     assert np.linalg.norm(c[-1] - lut[255]) < np.linalg.norm(c[-1] - lut[0])
 
 
+def test_lines_scalars_nonfinite_does_not_poison_the_lut_range():
+    # The colormap range comes from the FINITE vertex scalars only. Pre-fix a
+    # single non-finite vertex set vmin/vmax to NaN/Inf, and every bead index
+    # came out garbage: -Inf/NaN raised `IndexError: index -92233...` from the
+    # LUT gather, +Inf silently collapsed the whole tube to LUT[0]. The scene
+    # API refuses non-finite scalars upstream; a direct caller does not.
+    verts = np.array([[0, 0, 0], [10, 0, 0], [10, 10, 0]], np.float32)
+    for bad in (np.nan, np.inf, -np.inf):
+        data = lift_lines_to_gsplats(
+            verts,
+            1.0,
+            line_type="polyline",
+            scalars=np.array([0.0, 1.0, bad], np.float32),
+            colormap="viridis",
+        )
+        colors = np.asarray(data.flattened().colors, np.float64)
+        # The two finite vertices still span the map, so the beads between them
+        # must NOT all share one colour (the +Inf collapse) — and nothing raised.
+        assert len(np.unique(colors, axis=0)) > 1, f"scalars with {bad} lost the ramp"
+
+
 # ── lift hardening (colours, degenerate inputs, bead budget) ────────────────
 
 
 def test_rgba_colors_rejected():
-    # gsplats carry no alpha — (N, 4) RGBA must fail loudly at lift time, not
-    # silently emit a 4-channel "colour" the writer mishandles.
+    # gsplats DO carry per-splat alpha; what the lift refuses is a VARYING one —
+    # the substitutive merge is untested on it, and shape alone cannot tell it
+    # from a constant. Only the uniform form (below) may carry an alpha column.
     pos = np.zeros((2, 3), np.float32)
     rgba = np.array([[1.0, 0.0, 0.0, 0.5], [0.0, 1.0, 0.0, 0.5]], np.float32)
     with pytest.raises(ValueError, match="RGB"):
@@ -397,6 +419,225 @@ def test_rgba_colors_rejected():
     # 1-D grayscale is equally invalid (no channel axis).
     with pytest.raises(ValueError, match="RGB"):
         lift_points_to_gsplats(pos, 1.0, colors=np.array([0.5, 0.5], np.float32))
+
+
+# ── uniform (broadcast) colours (#1444) ─────────────────────────────────────
+
+#: The RGB every uniform form below carries; the RGBA forms append this alpha,
+#: which the lift KEEPS (gsplats carry per-splat alpha, and every shader scales
+#: intensity by it — dropping it would make a coarse level 1/alpha too bright).
+_UNIFORM_RGB = (0.25, 0.5, 1.0)
+_UNIFORM_ALPHA = 0.5
+
+_UNIFORM_FORMS = [
+    (_UNIFORM_RGB, _UNIFORM_RGB),  # RGB tuple
+    (list(_UNIFORM_RGB), _UNIFORM_RGB),  # RGB list
+    (np.array([_UNIFORM_RGB], np.float32), _UNIFORM_RGB),  # (1, 3) row
+    ((*_UNIFORM_RGB, _UNIFORM_ALPHA), (*_UNIFORM_RGB, _UNIFORM_ALPHA)),  # RGBA tuple
+    (  # (1, 4) row
+        np.array([(*_UNIFORM_RGB, _UNIFORM_ALPHA)], np.float32),
+        (*_UNIFORM_RGB, _UNIFORM_ALPHA),
+    ),
+]
+
+
+@pytest.mark.parametrize("colors,want", _UNIFORM_FORMS)
+def test_points_uniform_color_broadcast_to_every_splat(colors, want):
+    # A uniform colour is a legal, documented form on the flat path, and the one
+    # case a coarse LOD level can honour trivially — the lift must broadcast it
+    # rather than refuse it (#1444). A uniform ALPHA rides along: gsplats carry
+    # it, and losing it would brighten every coarse level by 1/alpha.
+    pos = np.zeros((40, 3), np.float32)
+    c = np.asarray(lift_points_to_gsplats(pos, 1.0, colors=colors).flattened().colors)
+    assert c.shape == (40, len(want))
+    np.testing.assert_allclose(c, np.broadcast_to(want, c.shape), atol=1e-6)
+
+
+@pytest.mark.parametrize("colors,want", _UNIFORM_FORMS)
+def test_points_uniform_color_survives_the_zero_radius_drop(colors, want):
+    # The zero-radius mask indexes `colors` per point, so the expansion MUST
+    # happen before it — masking a bare 3/4-component row would corrupt it.
+    pos = np.arange(12, dtype=np.float32).reshape(4, 3)
+    radii = np.array([1.0, 0.0, 2.0, 0.0], np.float32)  # keep rows 0 and 2
+    data = lift_points_to_gsplats(pos, radii, colors=colors)
+    assert data.n_splats == 2
+    c = np.asarray(data.flattened().colors)
+    assert c.shape == (2, len(want))
+    np.testing.assert_allclose(c, np.broadcast_to(want, c.shape), atol=1e-6)
+
+
+def test_per_element_rgba_still_refused_even_when_every_row_is_equal():
+    # The 4th column is admitted for the UNIFORM form only — the substitutive
+    # merge is untested on a varying alpha, and shape alone cannot tell a
+    # constant (N, 4) from a varying one, so per-element RGBA stays refused.
+    pos = np.zeros((5, 3), np.float32)
+    rgba = np.tile([*_UNIFORM_RGB, _UNIFORM_ALPHA], (5, 1)).astype(np.float32)
+    with pytest.raises(ValueError, match="per-element"):
+        lift_points_to_gsplats(pos, 1.0, colors=rgba)
+    verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    with pytest.raises(ValueError, match="per-element"):
+        lift_lines_to_gsplats(
+            verts,
+            1.0,
+            line_type="segments",
+            colors=np.tile([*_UNIFORM_RGB, _UNIFORM_ALPHA], (2, 1)).astype(np.float32),
+        )
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.uint32, np.int8, np.bool_])
+@pytest.mark.parametrize("per_element", [False, True])
+def test_colors_of_a_dtype_the_leaf_refuses_raise_before_anything_is_written(
+    dtype, per_element
+):
+    # Normalising these would divide by the wrong iinfo max (a near-black coarse
+    # level) and the ENCODER would only refuse them at the finest child — after
+    # the coarse levels are already on disk. Refuse at lift time instead, for
+    # the uniform ROW and the per-element ARRAY alike.
+    n = 4
+    rows = n if per_element else 1
+    colors = np.ones((rows, 3), dtype=dtype)
+    pos = np.zeros((n, 3), np.float32)
+    with pytest.raises(ValueError, match="dtype"):
+        lift_points_to_gsplats(pos, 1.0, colors=colors)
+    verts = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], np.float32)
+    with pytest.raises(ValueError, match="dtype"):
+        lift_lines_to_gsplats(verts, 1.0, line_type="segments", colors=colors)
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.float32, np.float64])
+def test_colors_of_a_dtype_the_leaf_accepts_are_unaffected(dtype):
+    # The control for the guard above: every dtype the leaf writes must still
+    # lift, per-element and uniform, and integer widths still normalise to [0, 1].
+    n = 4
+    top = float(np.iinfo(dtype).max) if np.issubdtype(dtype, np.integer) else 1.0
+    per_element = np.full((n, 3), top, dtype=dtype)
+    c = np.asarray(
+        lift_points_to_gsplats(np.zeros((n, 3), np.float32), 1.0, per_element)
+        .flattened()
+        .colors
+    )
+    np.testing.assert_allclose(c, np.ones((n, 3)), atol=1e-6)
+    row = np.full((1, 3), top, dtype=dtype)
+    c_row = np.asarray(
+        lift_points_to_gsplats(np.zeros((n, 3), np.float32), 1.0, row)
+        .flattened()
+        .colors
+    )
+    np.testing.assert_allclose(c_row, np.ones((n, 3)), atol=1e-6)
+
+
+def test_broadcast_colors_stay_row_major():
+    # Layout hygiene, not a reproduced bug: a 0-stride broadcast view under the
+    # default astype(order="K") comes out channel-major (Fortran) for this one
+    # input class, where every other lift input is C-contiguous. Nothing
+    # downstream was observed to mind; pinning it costs nothing.
+    pos = np.zeros((40, 3), np.float32)
+    c = np.asarray(
+        lift_points_to_gsplats(pos, 1.0, colors=(0.25, 0.5, 1.0, 0.5))
+        .flattened()
+        .colors
+    )
+    assert c.flags["C_CONTIGUOUS"]
+
+
+def test_uniform_int_tuple_is_face_value_but_uint8_row_is_normalized():
+    # Value semantics mirror the leaf writer: a list/tuple's components are taken
+    # at FACE value (write_colors classifies HDR by value, it never divides by
+    # 255), while an ARRAY row keeps the dtype rule (uint8 means 0..255).
+    pos = np.zeros((3, 3), np.float32)
+    c_tuple = np.asarray(
+        lift_points_to_gsplats(pos, 1.0, colors=(255, 0, 0)).flattened().colors
+    )
+    np.testing.assert_allclose(c_tuple, np.broadcast_to([255.0, 0.0, 0.0], (3, 3)))
+    c_row = np.asarray(
+        lift_points_to_gsplats(pos, 1.0, colors=np.array([[255, 0, 0]], np.uint8))
+        .flattened()
+        .colors
+    )
+    np.testing.assert_allclose(c_row, np.broadcast_to([1.0, 0.0, 0.0], (3, 3)))
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+def test_uniform_integer_rgba_row_normalizes_the_alpha_too(dtype):
+    # The one place the alpha column meets the integer dtype normalisation: it
+    # must be scaled like the RGB, not left at 128 (an "HDR" opacity).
+    top = float(np.iinfo(dtype).max)
+    row = np.array([[top, 0, 0, top / 2]], dtype=dtype)
+    c = np.asarray(
+        lift_points_to_gsplats(np.zeros((4, 3), np.float32), 1.0, row)
+        .flattened()
+        .colors
+    )
+    assert c.shape == (4, 4)
+    np.testing.assert_allclose(
+        c, np.broadcast_to([1.0, 0.0, 0.0, 0.5], (4, 4)), atol=2e-3
+    )
+
+
+@pytest.mark.parametrize("line_type", ["segments", "polyline", "loop", "indexed"])
+def test_lines_uniform_rgba_on_every_line_type(line_type):
+    # The rule is documented for all line types, not just `segments` (which is
+    # the only one the other colour tests exercise).
+    verts = np.array([[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]], np.float32)
+    indices = np.array([[0, 1], [2, 3]], np.intp) if line_type == "indexed" else None
+    want = (*_UNIFORM_RGB, _UNIFORM_ALPHA)
+    data = lift_lines_to_gsplats(
+        verts, 1.0, line_type=line_type, indices=indices, colors=want
+    )
+    c = np.asarray(data.flattened().colors)
+    assert c.shape == (data.n_splats, 4)
+    np.testing.assert_allclose(c, np.broadcast_to(want, c.shape), atol=1e-6)
+
+
+def test_one_bead_line_does_not_relaunder_per_element_rgba_as_uniform():
+    # A segment far shorter than its width yields exactly ONE bead, so the
+    # per-bead colour array is (1, 4) — which a second uniformity classification
+    # would read as the uniform form and admit, averaging two DIFFERENT alphas
+    # into a value neither vertex has. Uniformity is decided once, per vertex.
+    verts = np.array([[0, 0, 0], [0.001, 0, 0]], np.float32)
+    varying = np.array([[0.2, 0.4, 0.6, 0.3], [0.2, 0.4, 0.6, 0.9]], np.float32)
+    with pytest.raises(ValueError, match="per-element"):
+        lift_lines_to_gsplats(verts, 10.0, line_type="segments", colors=varying)
+    # ... while a genuinely uniform RGBA on the same one-bead line still lifts.
+    want = (*_UNIFORM_RGB, _UNIFORM_ALPHA)
+    data = lift_lines_to_gsplats(verts, 10.0, line_type="segments", colors=want)
+    assert data.n_splats == 1
+    np.testing.assert_allclose(np.asarray(data.flattened().colors), [want], atol=1e-6)
+
+
+def test_uniform_predicate_mirrors_is_broadcast_color():
+    # The helper's list/tuple admission test is a hand-copied mirror of
+    # core.group.compositing.is_broadcast_color (importing it would invert the
+    # core -> gsplats layering). This is the drift guard for that copy.
+    from luxar.core.group.compositing import is_broadcast_color
+    from luxar.gsplats.lift import _expand_uniform_colors
+
+    cases = [
+        (1.0, 0.0, 0.0),  # RGB tuple
+        [1.0, 0.0, 0.0, 0.5],  # RGBA list
+        [np.float32(1), np.float32(0), np.float32(0)],  # numpy scalars
+        (1.0, 0.0),  # too few components
+        (1.0, 0.0, 0.0, 0.5, 0.5),  # too many
+        [[1.0, 0.0, 0.0]] * 3,  # list of triples (entries are not numbers)
+        ["a", "b", "c"],  # non-numeric
+    ]
+    for colors in cases:
+        _, expanded = _expand_uniform_colors(colors, 4)
+        assert expanded is is_broadcast_color(colors), f"drift on {colors!r}"
+
+
+@pytest.mark.parametrize("colors,want", _UNIFORM_FORMS)
+def test_lines_uniform_color_broadcast_to_every_bead(colors, want):
+    # Pre-fix this gathered the colour's COMPONENTS as if they were vertex rows
+    # (a bare IndexError at scale, silent garbage on a 2-vertex segment). The
+    # alpha survives the per-bead interpolation too (a constant interpolates to
+    # itself), which is what lets the inner point lift accept 4 columns.
+    verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
+    data = lift_lines_to_gsplats(verts, 1.0, line_type="segments", colors=colors)
+    c = np.asarray(data.flattened().colors)
+    assert data.n_splats > 1  # a real bead string, not a single bead
+    assert c.shape == (data.n_splats, len(want))
+    np.testing.assert_allclose(c, np.broadcast_to(want, c.shape), atol=1e-6)
 
 
 def test_lift_points_degenerate_drops_matching_colours():
