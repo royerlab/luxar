@@ -118,6 +118,26 @@ def add_points_impl(
                 "'scalars' requires a 'colormap' attribute to map values to colors."
             )
 
+        # Scene-dimension COUNT check — deliberately here, above the
+        # substitutive/partition/additive branches and below the colours gate.
+        # Below the branches (where the full ``_validate_data_dimensions`` still
+        # sits) the split paths never saw it: an additive ladder happily wrote
+        # ``additive_<i>`` nodes whose column count contradicted the scene, and a
+        # partition/substitutive wrapper refused only from inside ``part_0`` /
+        # ``child_0``, stranding a childless wrapper group the flat path would
+        # never have created. It must run AFTER ``apply_dim_order_positions``
+        # (that is what fixes the final column count) and BEFORE any wrapper
+        # group is written — do not move it back down. Only the count half is
+        # hoisted: the per-dimension range ``UserWarning`` stays in the flat
+        # write below, so its count is exactly what it was — once per dimension
+        # per WRITTEN LEAF on the partition/substitutive paths, and none at all
+        # under an additive ladder, whose writer never validates (a pre-existing
+        # gap, pinned by a control test) — instead of gaining one more firing
+        # here for the source array. Below the colours gate so a bad colours/colormap
+        # combination keeps precedence over a dimension mismatch (all three
+        # adders answer this the same way).
+        scene._validate_dimension_count(pos_arr, name, data_type="positions")
+
         # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
         # point lifted to an isotropic Gaussian, then reduced by the gsplat
         # substitutive pipeline) under a kind=lod Group whose finest child is the
