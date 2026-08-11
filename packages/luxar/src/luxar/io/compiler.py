@@ -1123,6 +1123,60 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if extend_to_all:
             group.attrs["extend_to_all"] = extend_to_all
 
+        # The parent must DESCRIBE the surface, not merely count it.
+        #
+        # A ladder's parent IS the node: it is what the scene graph lists, what the
+        # viewer constructs the drawable from, and what the Layers panel reads —
+        # the `additive_<i>` subgroups are pruned from the graph entirely. So it
+        # needs the same descriptive attrs a flat `write_mesh` stamps. Every level
+        # is a face-partition of ONE source mesh written through that same
+        # function, so these are level-invariant and level 0 is authoritative.
+        #
+        # This is stamped from the level metadata rather than left to the caller
+        # because omitting it is invisible to a round-trip test and loud on screen.
+        # The viewer fixes a mesh geometry's ATTRIBUTE SET once, at node creation,
+        # from `has_normals` / `has_scalars` on the parent — it may never add an
+        # attribute to a live geometry, because the WebGPU backend bakes the vertex
+        # layout into its pipeline at first draw. A parent without `has_normals`
+        # therefore binds no `normal` attribute, the levels' normals can never
+        # reach the GPU however many arrive, and the node renders faceted and
+        # forced double-sided (no winding frame to decide against) right beside an
+        # identical unladdered mesh that renders smooth and single-sided. Measured
+        # in the viewer, not reasoned about.
+        for key in (
+            "ndim",
+            "has_normals",
+            "normal_dims",
+            "has_colors",
+            "has_scalars",
+            "shading",
+            "double_sided",
+            "ordering",
+        ):
+            if key in level_metas[0]:
+                group.attrs[key] = level_metas[0][key]
+
+        # The colour/scalar windows, taken as the UNION over the levels.
+        #
+        # Today every level inherits the authored global window, so the union equals
+        # any one level's and this is a no-op. It is written as a union anyway
+        # because that is the reading that stays correct if a level ever measures
+        # its own: copying level 0's would then set the node's colormap from
+        # whatever data landed in the innermost shell, and the surface would
+        # recolour as the reveal completed. Costs one attrs read per level, once,
+        # at authoring time.
+        for key in ("color_data_range", "scalar_data_range"):
+            ranges = [
+                self.store.require_group(f"{path}/additive_{i}").attrs.get(key)
+                for i in range(n_levels)
+            ]
+            present = [r for r in ranges if r is not None]
+            if present:
+                group.attrs[key] = [
+                    min(float(r[0]) for r in present),
+                    max(float(r[1]) for r in present),
+                ]
+
         # Aggregate the parent's bbox into scene-bounds once (every level write
         # above was told to skip it).
         self._update_scene_bounds(global_bounds)

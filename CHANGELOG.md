@@ -48,6 +48,17 @@ avoid. Growing through shared edges makes contiguity structural on any topology,
 and it is what earns the duplication numbers above — under the radius sort the
 same spheres measured 2.81x and 2.17x, close to random.
 
+The ladder's parent group carries the same DESCRIPTIVE attrs a flat mesh write
+stamps — `ndim`, `has_normals` / `normal_dims`, `has_colors`, `has_scalars`,
+`shading`, `double_sided`, `ordering`, and the colour/scalar window as a union
+over the levels — not merely the totals and `n_additive_sublods`. The parent IS
+the node (the `additive_<i>` subgroups are pruned from the scene graph), and a
+reader fixes a mesh's vertex-attribute set once, from those flags. Found by
+rendering an authored ladder rather than by reading the store: without
+`has_normals` on the parent the levels' normals could never reach the GPU, and
+the surface drew faceted and forced double-sided beside an identical unladdered
+mesh that drew smooth.
+
 The new writer `write_mesh_multi_lod` is the one place the four ladders differ
 in kind: it writes **no union label CSR** and refuses a level carrying
 `labels`. Its three siblings put one CSR on the parent spanning the levels,

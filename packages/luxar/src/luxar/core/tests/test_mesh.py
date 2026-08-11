@@ -1835,6 +1835,105 @@ def test_additive_lod_writes_a_ladder_of_face_shells(tmp_path) -> None:
     assert int(parent.attrs["n_vertices"]) > 0
 
 
+def test_the_ladder_parent_DESCRIBES_the_surface_not_just_its_size(tmp_path) -> None:
+    """A ladder's parent must carry the same descriptive attrs a flat mesh does.
+
+    The parent IS the node: the `additive_<i>` subgroups are pruned from the scene
+    graph entirely, so the parent is what a reader lists, builds a drawable from
+    and reads appearance off. A parent that carried only counts would still round
+    trip perfectly here and still be wrong on screen — the viewer fixes a mesh
+    geometry's ATTRIBUTE SET once, at node creation, from `has_normals` /
+    `has_scalars`, and may never add one to a live geometry afterwards. Without
+    `has_normals` on the parent the levels' normals can never reach the GPU
+    however many arrive, and the surface renders faceted and forced double-sided
+    (no winding frame) beside an identical unladdered mesh that renders smooth.
+    That is how this was found: rendered, not reasoned about.
+
+    Asserted against a FLAT write of the same mesh rather than a hand-copied key
+    list, so a new descriptive attr on `write_mesh` fails here until the ladder
+    carries it too.
+    """
+    store, vertices, faces = _write_ladder(tmp_path, additive_lod={"n_lods": 3})
+    flat_store = tmp_path / "flat.luxar.zarr"
+    with LuxarZarrCompiler(str(flat_store)) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh("surf", vertices, faces)
+
+    parent = zarr.open_group(str(store), mode="r")["surf"]
+    flat = zarr.open_group(str(flat_store), mode="r")["surf"]
+
+    for key in (
+        "ndim",
+        "has_normals",
+        "has_colors",
+        "has_scalars",
+        "shading",
+        "double_sided",
+        "ordering",
+    ):
+        assert key in parent.attrs, f"ladder parent is missing {key!r}"
+        assert parent.attrs[key] == flat.attrs[key], (
+            f"{key!r}: ladder parent says {parent.attrs[key]!r}, a flat write of "
+            f"the same mesh says {flat.attrs[key]!r}"
+        )
+
+
+def test_the_ladder_parent_carries_the_normal_frame_and_the_union_colour_window(
+    tmp_path,
+) -> None:
+    """`normal_dims` reaches the parent, and the colour window spans EVERY level.
+
+    Two separate claims, both invisible to a level-only check:
+
+    * `normal_dims` names the axis triple the stored normals describe. Its absence
+      leaves the viewer unable to decide projected winding at all, so an authored
+      single-sided mesh silently renders double-sided.
+    * the colour/scalar window must span the WHOLE surface. Today every level
+      inherits the authored global range, so the parent's union is equal to any
+      level's and this asserts exactly that. The union is kept on the writer side
+      as the safe reading rather than as an observable one: if a level ever
+      measured its own window, copying level 0's would set the node's colormap
+      from whatever landed in the innermost shell and the surface would recolour
+      as the reveal completed.
+    """
+    vertices, faces = _grid_mesh(13)
+    normals = np.tile(np.array([[0.0, 0.0, 1.0]], dtype=np.float32), (len(vertices), 1))
+    # A range no single level can span on its own: distinct per-vertex scalars.
+    scalars = np.arange(len(vertices), dtype=np.float32)
+    store = tmp_path / "framed.luxar.zarr"
+    with LuxarZarrCompiler(str(store)) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(
+            "surf",
+            vertices,
+            faces,
+            normals=normals,
+            normal_dims=[0, 1, 2],
+            scalars=scalars,
+            colormap="viridis",
+            additive_lod={"n_lods": 2},
+        )
+
+    parent = zarr.open_group(str(store), mode="r")["surf"]
+    assert parent.attrs["has_normals"] is True
+    assert list(parent.attrs["normal_dims"]) == [0, 1, 2]
+
+    n_levels = int(parent.attrs["n_additive_sublods"])
+    level_ranges = [
+        parent[f"additive_{i}"].attrs.get("scalar_data_range") for i in range(n_levels)
+    ]
+    present = [r for r in level_ranges if r is not None]
+    if present:
+        parent_range = parent.attrs["scalar_data_range"]
+        assert parent_range[0] == pytest.approx(min(r[0] for r in present))
+        assert parent_range[1] == pytest.approx(max(r[1] for r in present))
+        # No level may reach outside the parent's window — the containment half,
+        # which is what a reader actually depends on.
+        for level_range in present:
+            assert level_range[0] >= parent_range[0] - 1e-6
+            assert level_range[1] <= parent_range[1] + 1e-6
+
+
 def test_additive_lod_carries_provenance_stamps_but_no_energy(tmp_path) -> None:
     """Spec §9.1: a mesh reveal ladder must carry NO energy stamps, end to end.
 
