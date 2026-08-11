@@ -15,7 +15,8 @@
      (border-default) + tokenised radius/type (small transient badge → radius-md). */
   border-radius: var(--luxar-radius-md, 8px);
   font-size: var(--luxar-text-lg, 14px);
-  z-index: 10000;
+  /* Notifications sit above every viewer layer, tooltips included. */
+  z-index: calc(var(--luxar-z-tooltip) + 1000);
   transition: opacity 0.3s ease;
   pointer-events: none;
   background-color: var(--luxar-bg-secondary, rgba(0, 0, 0, 0.8));

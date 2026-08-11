@@ -26,7 +26,9 @@
   border-radius: var(--luxar-radius-lg);
   font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-md);
-  z-index: 150;
+  /* Above in-canvas widgets (z-base), deliberately below every panel layer
+     (z-dropdown) so the console never covers interactive controls. */
+  z-index: calc(var(--luxar-z-base) + 50);
   backdrop-filter: var(--luxar-blur-md);
   box-shadow: var(--luxar-shadow-lg);
 
@@ -239,12 +241,12 @@
 
 .luxar-console-message-warn {
   color: var(--luxar-warning);
-  background: rgba(255, 193, 7, 0.1);
+  background: color-mix(in srgb, var(--luxar-warning) 10%, transparent);
 }
 
 .luxar-console-message-error {
   color: var(--luxar-error);
-  background: rgba(244, 67, 54, 0.1);
+  background: color-mix(in srgb, var(--luxar-error) 10%, transparent);
 }
 
 .luxar-console-message-debug {
