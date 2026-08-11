@@ -588,6 +588,14 @@ class Group(Node):
         per level (in coarsest→finest order, named ``child_<i>``) and
         returns it; otherwise it returns a single :class:`GSplats` node.
 
+        ``labels`` / ``image_labels`` may not be passed when the resolved result
+        is multi-substitutive: every level is its own set of merged
+        representative splats with its own count, so no single list has a
+        per-element correspondence to carry. Pass ``lod_group=False`` to label
+        the collapsed finest level, or build the ``kind="lod"`` group yourself
+        with :meth:`add_lod_group` and give each child its own labels. An
+        explicit ``labels=None`` means "no labels" and is accepted everywhere.
+
         ``coverage_fraction`` may only be passed in ``**attrs`` when the
         result is single-substitutive AND the parent is itself a
         ``kind="lod"`` ``Group`` (the child is a leaf of an enclosing
@@ -667,6 +675,16 @@ class Group(Node):
         child per substitutive level); pass ``lod_group=False`` to
         collapse to the finest level instead (see
         ``add_gsplats_from_data`` for the convention).
+
+        ``labels`` / ``image_labels`` are accepted only when the file is a single
+        leaf with NO additive ladder. Any multi-LEAF result — an auto-lowered
+        pyramid, or a grafted multi-part ``kind=lod`` / ``kind=partition``
+        subtree — refuses them, because each leaf holds its own set of splats
+        (see ``add_gsplats_from_data``). A single LADDERED leaf (``gsplat lod
+        --recipe stream``, or the one-part output of ``--recipe tiles`` on a
+        small dataset — a plain ``gsplat fit`` writes a FLAT leaf, which labels
+        fine) is refused too, because the additive writer has no labels channel —
+        ``gsplat flatten`` collapses the ladder if you need the labels.
 
         Args:
             name: Name of the gsplats node
