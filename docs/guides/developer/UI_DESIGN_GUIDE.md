@@ -49,10 +49,9 @@ needed. Seven principles govern every surface:
 The reference implementations of this language are the **control rail**
 (`src/ui/control-rail.ts` + `src/styles/components/control-rail.css`), the
 **data-loading monitor** (`src/styles/components/data-loading-monitor.css`,
-whose end-of-file "Refinement layer" block is the original manifesto), and the
-**help overlay**. The dataset browser joins them when #1472 lands; today it
-still carries pre-guide emoji and chrome (§15), so read it as debt, not as a
-model.
+whose end-of-file "Refinement layer" block is the original manifesto), the
+**help overlay**, and — for the modal tier specifically — the **dataset
+browser** (`src/ui/dataset-browser.ts` + `styles/components/dataset-browser.css`).
 
 ---
 
@@ -69,7 +68,9 @@ model.
 | Liquid-glass SVG filter | `src/themes/glass-filters.ts` (its `defaultGlassParams` are authoritative — CSS comments describing them have historically gone stale) |
 | Rail/panel icons | `src/ui/control-rail/icons.ts` (`RAIL_ICONS`) |
 | Monitor icons | `src/ui/data-loading-monitor/templates.ts` (`MONITOR_ICONS`) |
-| Dataset-browser icons | `src/ui/dataset-browser/icons.ts` (`BROWSER_ICONS`) — **pending #1472**; the module is not in the tree yet |
+| Dataset-browser icons | `src/ui/dataset-browser/icons.ts` (`BROWSER_ICONS`) |
+| Shared panel header/close recipes | `src/styles/base/utilities.css` (`.luxar-panel-header`, `.luxar-panel-close`) |
+| Modal focus trap | `src/ui/help-overlay/focus-trap.ts` (`trapFocus`) — shared by help overlay and error overlay |
 | Native `<select>` chrome | `src/styles/components/select-menu.css` — the single place `<option>` colors may be styled |
 
 Two CSS entry points (see `src/styles/README.md`):
@@ -210,20 +211,19 @@ Key color differences:
 
 | | dark | light | frosted-glass | liquid-glass |
 | --- | --- | --- | --- | --- |
-| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(255,255,255,0.12)` — a 12% white tint; becomes a dark frost in #1480 (pending) | `rgba(255,255,255,0.15)` |
-| `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(88,86,214,1)` (indigo) | `rgba(88,86,214,1)` (indigo) |
+| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(28,30,36,0.65)` — a **dark frost** (contrast floor, see below) | `rgba(255,255,255,0.15)` + a dark `::after` |
+| `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(0,160,255,1)` (= `#00a0ff`) | `rgba(0,160,255,1)` (= `#00a0ff`) |
 | `border.focus` | green `rgba(76,175,80,0.5)` | green | **blue** `rgba(0,122,255,0.6)` | **blue** `rgba(0,122,255,0.5)` |
 | `interactive.*` base | white alpha | black alpha | white alpha | bluish-gray `rgba(120,120,128,…)` |
 | `menu.background` | `#1e1e1e` | `#ffffff` | `#1a1a1a` (opaque!) | `#1a1a1a` (opaque!) |
 
 Design consequences:
 
-- **The accent hue is not constant across themes.** `highlight` is the bright
-  brand blue in dark, a darker blue in light for contrast on white, and still
-  an indigo `rgba(88,86,214,1)` in both glass themes — dark enough that it
-  barely separates from a dark glass panel (~1.6:1 once #1480's dark frost
-  lands). #1480 unifies all of them on the brand blue (pending); until it
-  does, never rely on the accent reading as blue.
+- **The accent is the brand blue in three of four themes.** `highlight` is
+  `#00a0ff` in dark, frosted-glass and liquid-glass, and a darker `#0277bd` in
+  light — the correct contrast direction on white. It is still a *token*, not a
+  constant: never hardcode the hex, and never rely on a specific luminance
+  (the light-theme value is much darker than the other three).
 - **Never assume the focus ring is green** — it is green in dark/light and
   blue in the glass themes. Always use `--luxar-border-focus` /
   `--luxar-interactive-focus`; never hardcode a green.
@@ -231,13 +231,17 @@ Design consequences:
   are unitless multipliers and theme-dependent.
 - Anything using `box-shadow: var(--luxar-shadow-lg)` silently gains an inner
   glow in liquid-glass; that is intended.
-- Frosted-glass panels become a **dark frost** in #1480 (pending): the tint
-  must guarantee text contrast over ANY scene, so the panel background moves
-  to a ~65% dark layer under the blur (worst-case bright backdrop ≈ 4.4:1
-  against text-primary) — the same contrast-protection role liquid-glass's
-  dark `::after` already plays. Today it is still a 12% white tint, which is
-  exactly the bright-scene contrast problem #1480 fixes. Never lighten the
-  glass panel tints without re-checking bright-scene contrast.
+- **Frosted-glass panels are a dark frost, and that is a contrast floor.** The
+  panel tint must keep text legible over ANY scene, so `bg.secondary` is a ~65%
+  dark layer under the blur — the same contrast-protection role liquid-glass's
+  dark `::after` plays. Composited over the worst case (a pure-white scene) the
+  panel lands near `#6b6d71`, which gives roughly **4.9:1 against
+  `text-primary`** (clears WCAG AA 4.5:1 for the 13px body text), **~3.7:1
+  against `text-secondary`** and **~2.5:1 against `text-muted`**. So: body copy
+  and any load-bearing value go in `text-primary`; `secondary`/`muted` are for
+  labels, hints and idle icons that are not the only carrier of meaning (§12).
+  Never lighten a glass panel tint without re-running that worst-case
+  composite.
 - Blur tokens differ radically per theme by design: frosted-glass IS its blur;
   liquid-glass barely blurs because refraction + tint do the work.
 
@@ -328,7 +332,7 @@ intended, authoritative direction (existing violations are cataloged in §15).
 
 | Color | Meaning | Correct uses |
 | --- | --- | --- |
-| `--luxar-highlight` | **Interactive accent**: active, selected, current | Rail active button (20% `color-mix` fill + 3px left pip), active chips/segments (`22%` fill + `50%` border mix), "current item" rings, type badges (the dataset browser's file-type chip is still solid `--luxar-success` — §15.1) |
+| `--luxar-highlight` | **Interactive accent**: active, selected, current | Rail active button (20% `color-mix` fill + 3px left pip), active chips/segments (`22%` fill + `50%` border mix), "current item" rings, type badges (the dataset browser's file-type chip: 10% fill + 40% border mix + full-accent text) |
 | `--luxar-success` | Semantically **good/healthy** + the house motif | Status ticks (§8.3), healthy metrics, LOADED state, cache-hit-good; focus rings *via the focus tokens only* |
 | `--luxar-warning` / `--luxar-error` / `--luxar-info` | Their names | Alarms and information only. `info` additionally marks the layers-panel selection |
 | `--luxar-interactive-*` | Neutral fills | Resting/hover/pressed backgrounds of ALL controls — hover feedback is a neutral fill change, not a color change |
@@ -345,10 +349,10 @@ Rules:
    buttons are reserved for singular primary actions.
 3. **No identity tints.** Geometry-type counts, node names, layer rows are
    neutral. State (0 → dimmed) may change brightness, not hue.
-4. **Green is not "interactive".** Historical green sliders/inputs/scrollbars
-   are drift (§15). New controls: neutral fills + highlight accent; the only
-   sanctioned greens are semantics, the tick motif, and the theme-owned focus
-   tokens.
+4. **Green is not "interactive".** Sliders, checkboxes, input focus borders and
+   scrollbars were all green historically; they are now neutral + highlight, and
+   nothing should go back. The only sanctioned greens are semantics (healthy /
+   LOADED / good), the tick motif, and the theme-owned focus tokens.
 5. **Scrollbars are quiet**: `scrollbar-color: var(--luxar-border-strong)
    transparent`, 6px webkit width, transparent track, `radius-full` thumb —
    never accent-colored.
@@ -390,8 +394,7 @@ font-size:       var(--luxar-text-base);                 /* 13px */
 
 ### 7.2 Modals
 
-Modals additionally get (the dataset browser is the intended reference, but
-#1472 is what gives it the scrim and the entry pop — today it has neither):
+Modals additionally get (the dataset browser is the reference):
 
 - A **scrim**: sibling element, `position: fixed; inset: 0;
   background: var(--luxar-bg-overlay); z-index: calc(var(--luxar-z-modal) - 1)`,
@@ -400,16 +403,39 @@ Modals additionally get (the dataset browser is the intended reference, but
 - Transform-only entry pop on the panel (§10.2).
 - `role="dialog"`, `aria-modal="true"`, `aria-labelledby` pointing at the
   title element. Escape closes (wired through the InputHandler).
+- **Focus management, all three parts.** `aria-modal="true"` only *asserts* to
+  assistive tech that the rest of the page is unavailable; it does not stop Tab
+  from walking behind the panel, and neither does a scrim. So a modal must
+  (1) place initial focus inside itself on open, (2) contain Tab/Shift+Tab, and
+  (3) return focus to the opener on close. Use the shared
+  `trapFocus(container)` (`src/ui/help-overlay/focus-trap.ts`) — it does all
+  three, and its returned cleanup releases the listener and restores focus.
+  Don't hand-roll another. An asynchronously-arriving initial focus (the
+  dataset browser focuses its filter field only once the listing resolves) must
+  check the user hasn't focused something else first (§12).
 
 ### 7.3 Headers
 
-The shared header recipe: flex row, `justify-content: space-between`,
-`border-bottom: 1px solid var(--luxar-border-default|strong)`, title at
-`--luxar-text-lg`/`--luxar-font-bold` (or the §8.3 tick-motif micro-header for
-quiet-instrument surfaces), and a 30px square close button —
-`background: none; border: none; color: var(--luxar-text-muted)` hovering to
-`text-primary` (+ `interactive-hover` fill on newer surfaces). New surfaces
-should prefer a **stroke-SVG ✕** over the text `×` glyph.
+The header row and its close button are **two shared classes in
+`styles/base/utilities.css`**, not per-panel CSS. Add them alongside the
+panel's own BEM class and do not restate what they declare:
+
+- `.luxar-panel-header` — flex row, `space-between`, 6px down to the hairline
+  rule (`border-bottom: 1px solid var(--luxar-border-default)`), 10px from the
+  rule to the content. One material: no per-panel `border-strong` emphasis
+  variants. Genuinely structural extras (a panel's own horizontal padding, a
+  drag cursor) stay per-panel.
+- `.luxar-panel-close` — 28×28 `display: grid; place-items: center`,
+  `radius-md`, `text-muted` → `text-primary` with an `interactive-hover` fill,
+  a **15px stroke ✕** (the §9.1 rail icon contract — never the text `×`
+  glyph), a `:focus-visible` ring, and a reduced-motion guard.
+
+Titles are `--luxar-text-lg`/`--luxar-font-bold`, or the §8.3 tick-motif
+micro-header for quiet-instrument surfaces.
+
+Adopters: help overlay, layers panel, GUI, debug console, monitor. The dataset
+browser predates the extraction and still spells both out in its own file with
+matching values (§15.1) — copy the classes, not that file's header block.
 
 ### 7.4 Scroll containers
 
@@ -448,9 +474,18 @@ The rail is the canonical interactive surface; its patterns generalize:
   chip-tips upward.
 - **Popover/flyout arrows are real children** (§5.1.1): 12×12 rotated square
   painted `--luxar-bg-secondary` with two hairline borders.
-- **Left-docked panels** open at `left: 78px` beside the rail (an `!important`
-  override of inline positioning — sanctioned, see §15.3; the draggable debug
-  console gets the same default *without* `!important` so dragging still wins).
+- **One rail gutter: `left: 73px`.** Docked panels, popovers/flyouts and the
+  first-run hint all share it — it is the popovers' own computed left edge (the
+  rail box including its border, plus their 10px gap), so whichever surface is
+  open its left edge lands in exactly the same place. Docked panels get it as
+  an `!important` override of inline positioning
+  (sanctioned, see §15.1); the draggable debug console gets the same default
+  *without* `!important` so dragging still wins.
+- **The rail's left dock is exclusive** — Rendering, Layers and Recording all
+  open at that one position, so activating any of them from the rail (or
+  opening a rail popover) closes the others rather than stacking. Keyboard
+  shortcuts (R/L/T) deliberately bypass this, so panels can still be stacked
+  on purpose. A new rail-anchored surface must join this handshake.
 
 ### 7.6 GUI controller rows (custom GUI library, `src/ui/gui/`)
 
@@ -460,7 +495,9 @@ ellipsis; widgets fill the rest. Sliders: 3px track in `interactive-default`,
 14px round thumb; number inputs: 52px, mono, right-aligned, spinners stripped;
 checkboxes 16px via `accent-color`; buttons full-width `interactive-default` +
 hairline. Folders indent children by 12px behind a `border-subtle` left rule.
-(Current thumb/value greens are drift — §15.)
+Thumbs and `accent-color` are `--luxar-highlight`; the mono values are
+`text-primary` (instrument voice, not an accent); focus goes through
+`--luxar-border-focus`.
 
 ---
 
@@ -496,14 +533,14 @@ Three-rank hierarchy (from the monitor's refinement layer):
    `::before`: `width: 3px; height: 10px; border-radius: 1px;
    background: var(--luxar-success); opacity: 0.55`. Optionally a 13px stroke
    icon. (Dialog titles may scale this up to `--luxar-text-base` with a
-   3×12px tick — pending #1472, which brings the dataset browser's.)
+   3×12px tick — the dataset browser's title is the shipped example.)
 2. **Metric label** — 10px / 600 / `letter-spacing: 0.08em` /
    `--luxar-text-muted` (usually uppercase).
 3. **Tertiary/summary label** — `medium` weight, `--luxar-text-disabled`.
 
-Letter-spacing is always **em-based** — `0.06em` for the micro-header,
-`0.08em` for metric labels, and `0.02em`–`0.05em` for the monitor's tighter
-ranks; the older `0.3px`/`0.5px` values in layers-panel/monitor are drift.
+Letter-spacing is always **em-based**, never `px` — `0.06em` for the
+micro-header (`0.09em` where a dialog title scales it up), `0.08em` for metric
+labels, and `0.02em`–`0.05em` for the monitor's tighter ranks.
 
 ### 8.4 `<kbd>` chips
 
@@ -539,8 +576,8 @@ stroke-linecap: round;
 stroke-linejoin: round;
 ```
 
-Sets: `RAIL_ICONS` (`src/ui/control-rail/icons.ts`), joined by `BROWSER_ICONS`
-(`src/ui/dataset-browser/icons.ts`) once #1472 lands. New icons: draw on the
+Sets: `RAIL_ICONS` (`src/ui/control-rail/icons.ts`) and `BROWSER_ICONS`
+(`src/ui/dataset-browser/icons.ts`). New icons: draw on the
 24-grid with ~2px optical margins, single stroke weight, no fills (a filled
 dot ≤2.5px radius is acceptable as an accent), and check the existing sets
 first to avoid glyph collisions (e.g. fullscreen deliberately avoids corner
@@ -554,11 +591,13 @@ brackets because "fit" owns them).
 
 ### 9.3 Rendered size ladder
 
-`28px` hero glyphs (error dialog, cache-disabled empty state) · `19px` rail
-buttons · `18px` chips · `16px` scene-identity banner (§15.3) · `15px`
-GUI/layers rows · `13px` section titles & micon default · `12px` tabs/inline
-and scene-graph node glyphs · `9px` compact alerts (plus a `17px` list-row
-rung pending #1472). Icons at ≤13px may carry `opacity: 0.75–0.9` at rest.
+`32px`/`28px`/`26px` hero glyphs (empty states, error dialog, the monitor's
+all-clear) · `19px` rail buttons · `18px` chips · `17px` list rows · `16px`
+scene-identity banner (§15.1) · `15px` GUI/layers rows and the shared
+`.luxar-panel-close` ✕ · `14px` inline affordances (the breadcrumb edit
+pencil) · `13px` section titles & micon default · `12px` tabs/inline and
+scene-graph node glyphs · `9px` compact alerts. Icons at ≤13px may carry
+`opacity: 0.75–0.9` at rest.
 
 ---
 
@@ -580,7 +619,7 @@ ease`) over `all` in hot paths (long lists).
   widgets): opacity fades are fine. **The toast is not one of them** — it
   carries `luxar-glass-surface` (`ui/toast.ts:17`), so §5.1.3 governs its
   root: a new transient of that shape fades an inner wrapper or moves with
-  transform. The shipped toast fades its own root; that is drift (§15.3), not
+  transform. The shipped toast fades its own root; that is drift (§15.4), not
   the pattern to copy.
 - The rail collapse/expand animates `opacity 0.3s ease` alongside
   `transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1)`. The rail is the sanctioned
@@ -611,8 +650,8 @@ Every animation and transition a component introduces must be disabled under
 | Surface | Placement |
 | --- | --- |
 | Control rail | Left edge, vertically centered, `left: 12px` |
-| Left-docked panels (GUI, rendering/recording, layers, debug console) | `left: 78px` beside the rail; debug console draggable |
-| Rail popovers/flyouts | `left: calc(100% + 10px)` off the rail, arrow pointing back |
+| Left-docked panels (GUI, rendering/recording, layers, debug console) | `left: 73px` beside the rail, one at a time (§7.5); debug console draggable |
+| Rail popovers/flyouts | `left: calc(100% + 10px)` off the rail (= the same 73px gutter), arrow pointing back |
 | Dimension sliders | Bottom-center, 80% width, max 800px |
 | Toast | Bottom-center, transient |
 | Scene-identity banner | Top-center, `top: 12px`, standing (not transient) |
@@ -670,6 +709,9 @@ Further requirements:
 - Keyboard: Escape closes the topmost surface; lists support
   ArrowUp/Down/Home/End with `preventDefault()` even at the boundaries;
   a filter field hands off to its list via ArrowDown.
+- **Modal surfaces trap and restore focus** — initial focus inside, Tab
+  contained, focus returned to the opener on close, via the shared `trapFocus`
+  (§7.2). `aria-modal` and a scrim do neither on their own.
 - Never steal focus asynchronously: an auto-focus that fires after an await
   must first check the user hasn't focused something else.
 - Reduced motion per §10.4. Color is never the only signal (pair with dimming,
@@ -708,7 +750,8 @@ Further requirements:
    design) + `overflow: visible` + inner `__scroll` wrapper if it scrolls.
 2. Correct tier: panel / modal (+scrim) / popover / badge (§7.1 table) with
    token z-index.
-3. Header per §7.3; quiet-instrument surfaces use the tick micro-header.
+3. Header per §7.3 — add `.luxar-panel-header` + `.luxar-panel-close` rather
+   than restating them; quiet-instrument surfaces use the tick micro-header.
 4. All values tokens; spacing keys double-checked (§3.3 half-pixel trap).
 5. Accent usage per §6 (highlight = interactive; green = semantic/tick/focus
    tokens only; `color-mix` tints, not solids).
@@ -718,7 +761,8 @@ Further requirements:
    `prefers-reduced-motion` guard (§10).
 9. States: rest/hover/active/focus-visible/disabled all defined (§12);
    component-level `:focus-visible` ring present.
-10. A11y roles/labels/live-regions per §12; Escape wired; arrow keys in lists.
+10. A11y roles/labels/live-regions per §12; Escape wired; arrow keys in lists;
+    a modal traps focus and restores it to the opener (`trapFocus`, §7.2).
 11. No new `<option>` styling outside `select-menu.css`; no pseudo-elements on
     the glass root; no opacity animation on the glass root (§5.1).
 12. Both glass themes eyeballed (default theme is frosted-glass; liquid-glass
@@ -733,41 +777,15 @@ Further requirements:
 
 The following existing code contradicts this guide. It is listed so nobody
 mistakes it for precedent; migrate opportunistically when touching these
-files. (Inventory verified 2026-08-11.) A four-tranche modernization campaign
-addresses most of it — #1476 a11y, #1478 token hygiene, #1479 emoji→icons,
-#1480 accent migration. **#1476 and #1479 have landed**, so their entries are
-already deleted below; **#1478 and #1480 are still open, as is #1472 (the
-dataset browser), so everything that remains here is live on this branch.**
-Each entry is annotated with the PR that will close it; delete the entry as
-that PR merges.
+files. (Inventory verified 2026-08-11.) A modernization campaign closed most of
+it: #1476 (a11y), #1479 (emoji→stroke icons), #1472 (the dataset browser) and
+#1480 (accent migration + the shared panel recipes) have all landed, so their
+entries are deleted below — **green-as-interactive and emoji-in-the-DOM are
+gone from the tree entirely.** #1478 (token hygiene) is the one tranche still
+open. Everything below is live on `main`; each entry names the PR that will
+close it where one exists, and the entry goes away as that PR merges.
 
-### 15.1 Green-as-interactive (§6.4 violations) — pending #1480
-
-- GUI library: slider thumbs, number-input text, checkbox `accent-color`,
-  select focus borders, scrollbar thumb (`ui/gui/styles/gui.css`,
-  `controller.css`).
-- Layers panel: sliders, values, scrollbar (`layers-panel.css`).
-- Dimension sliders: green runs through the whole file (~20 `--luxar-success`
-  sites — slider fill, active/hover borders, labels), and the context-menu
-  hover pairs solid `--luxar-success` with literal `white`
-  (`dimension-sliders.css`).
-- Dataset browser: the file-type badge is a solid `--luxar-success` fill with
-  literal `white` text and no justifying comment (§6.6) —
-  `dataset-browser.css` `__badge`.
-- Error dialog: green headings on an informational guidance block inside an
-  *error* surface (`error-dialog.css`).
-- Monitor: active tab tinted success rather than highlight
-  (`data-loading-monitor.css`).
-
-### 15.2 Emoji still in the DOM (§9 violations) — pending #1472
-
-- Dataset browser `🌌📁📄` (`ui/dataset-browser.ts`) — the last emoji left in
-  the tree; #1472 replaces them with stroke `BROWSER_ICONS`.
-
-(#1479 already converted the monitor templates and the error overlay to
-stroke SVG, and dropped the per-type scene-graph name tints with them.)
-
-### 15.3 Hardcoded values / phantom tokens — largely pending #1478 / #1480
+### 15.1 Hardcoded values / phantom tokens — largely pending #1478
 
 - `colormap-legend.css` references the **non-existent** `--luxar-radius-xs`
   (falls back to its literal).
@@ -778,8 +796,15 @@ stroke SVG, and dropped the per-type scene-graph name tints with them.)
   design (their magnitude beats unknown third-party host UI — documented in
   the file header), and small local stacking indexes (`1/2/10` inside a
   positioned parent) are not layer tokens.
-- Recording panel indicator/confirm dialog bypasses the surface recipe
-  entirely (raw rgba/blur/radius) — the largest single drift.
+- The recording **stop-confirm** dialog (`recording-panel.css`) is on the
+  surface tokens now but still isn't a `luxar-glass-surface`, blurs with a raw
+  `blur(2px)` instead of a blur token, spaces itself in raw px, and carries a
+  literal `rgba(255,255,255,0.98)` light-theme background. (The REC indicator
+  pill itself is on the badge variant of the recipe — that half is done.)
+- The dataset browser restates `.luxar-panel-header` / `.luxar-panel-close`
+  (§7.3) in its own file instead of adding the shared classes. The values
+  match, so this is duplication rather than a visual break; fold it in when
+  next touching that file.
 - The scene-identity banner (`ui/scene-identity-banner.ts`) styles itself
   entirely from inline `style.cssText` rather than a
   `styles/components/*.css` file on the surface recipe: raw `rgba()`
@@ -795,23 +820,26 @@ stroke SVG, and dropped the per-type scene-graph name tints with them.)
   debug-console warn/error tints, monitor hairlines and the
   `rgba(120,170,255,…)` kind-badge/active-level blue, error-dialog
   spinner chrome, `color: white` in overlay-layer and dimension-sliders.
-- Legacy px letter-spacing (`0.3px`/`0.5px`) and the tick-less legacy
-  `.luxar-section-title` recipe in monitor/layers CSS.
+- The tick-less legacy `.luxar-section-title` recipe in
+  `data-loading-monitor.css` (§8.3 rank 1 is the current one).
 
-### 15.4 Accessibility gaps — pending #1472
+### 15.2 Accessibility gaps
 
-- `dataset-browser.css` is the last stylesheet with no
-  `@media (prefers-reduced-motion: reduce)` block, so its five transitions
-  ignore the preference (§10.4) — closed by #1472.
+- **No modal in the tree contains focus except via `trapFocus`, and the dataset
+  browser doesn't use it.** The help overlay and error overlay do (§7.2); the
+  dataset browser places initial focus on its filter field but leaves Tab free
+  to walk out behind the panel, and does not restore focus to the opener on
+  close. Its `aria-modal="true"` therefore over-promises. Wiring `trapFocus`
+  into `open()`/`close()` is the fix.
 
-(#1476 closed the rest: the embed-safe `.luxar-glass-surface :focus-visible`
-baseline (§12.4), the GUI slider's missing ring, the help overlay's
-`!important` outline suppression, and the reduced-motion gaps in the GUI
-library, layers panel, toast, debug console and overlay fade. The GUI
-input/select focus *is* visible, but switches the border to
-`--luxar-success` — that green is §15.1's, not an a11y gap.)
+(#1476 closed the ring/reduced-motion gaps — the embed-safe
+`.luxar-glass-surface :focus-visible` baseline (§12.4), the GUI slider's missing
+ring, the help overlay's `!important` outline suppression, and the
+reduced-motion gaps in the GUI library, layers panel, toast, debug console and
+overlay fade — and #1472 added the dataset browser's reduced-motion block, the
+last stylesheet that lacked one.)
 
-### 15.5 Divergent contracts (tolerated, bounded)
+### 15.3 Divergent contracts (tolerated, bounded)
 
 - Two icon contracts exist by design (§9.1 rail vs §9.2 monitor micro) — do
   not invent a third.
@@ -819,11 +847,11 @@ input/select focus *is* visible, but switches the border to
   `ALERT_ICON` const rather than an `icons.ts` module (§13). Fine for a
   single glyph; a second one there means promoting it to a module.
   (`scene-identity-banner.ts` already carries two in a module-local `ICONS`
-  record — the case that rule is about; see §15.3.)
+  record — the case that rule is about; see §15.1.)
 - Layers-panel selection uses `--luxar-info`; everything else uses
   `--luxar-highlight`. New selection UIs use highlight.
 
-### 15.6 Glass-constraint violations (§5.1)
+### 15.4 Glass-constraint violations (§5.1)
 
 - The toast fades `opacity` on its own `luxar-glass-surface` root
   (`toast.css` `transition: opacity 0.3s ease`, driven by

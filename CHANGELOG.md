@@ -6,6 +6,32 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### A written ground truth for the viewer's visual design
+
+The viewer's design language — the "quiet instrument" — lived in people's heads
+and in a handful of exemplary files (the control rail, the data-loading
+monitor's end-of-file "Refinement layer" block). Everything else was
+reconstructed by reading whichever panel happened to be nearby, which is how a
+green scrollbar and a solid-green "interactive" slider became precedent.
+
+`docs/guides/developer/UI_DESIGN_GUIDE.md` writes it down and declares itself
+authoritative: the 87 design tokens and their traps (the spacing key is *half*
+the pixel value; `--luxar-blur-*` values are complete `blur()` functions; there
+is no `--luxar-radius-xs`), what differs between the four themes, the
+glass-surface system and the five hard constraints that break a theme when
+violated, colour semantics (`highlight` is interactive, green is *healthy*), the
+surface/header/scroll recipes, typography, the two icon contracts, motion,
+placement, interaction states and a11y, naming, and a checklist for a new
+surface.
+
+Section 15 is a verified inventory of the code that still contradicts the guide,
+so nobody mistakes debt for a pattern. The four modernization tranches it
+catalogued have since landed — a11y hardening (#1476), emoji→stroke icons
+(#1479), the dataset browser (#1472) and the accent migration plus the shared
+panel-header/close recipes (#1480) — so what remains is token hygiene, the
+recording stop-confirm dialog, the scene-identity banner's inline styles, the
+toast's opacity fade on a glass root, and one modal that doesn't yet trap focus.
+
 #### Domain-scoped CI: a language suite runs only when that language changed
 
 Every pull request used to run every suite. A one-line TypeScript change paid

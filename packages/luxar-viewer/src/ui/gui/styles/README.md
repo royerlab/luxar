@@ -11,8 +11,10 @@ system (`--luxar-bg-*`, `--luxar-text-*`, `--luxar-spacing-*`, etc.), so
 theme changes are picked up automatically for all four themes (`dark`,
 `light`, `frosted-glass`, `liquid-glass`); the `[data-theme='light']`
 selectors here only cover the cases needing a per-theme override. No
-`!important` anywhere. The green accents and the raw `rgba(0, 0, 0, …)` fills
-in `gui.css`/`controller.css` are known drift — see the
+`!important` anywhere. Slider thumbs and `accent-color` use
+`--luxar-highlight`, focus goes through `--luxar-border-focus`, and the mono
+values are `text-primary`; the raw `rgba(0, 0, 0, …)` control fills in
+`controller.css` are known drift — see the
 [UI Design Guide](../../../../../../docs/guides/developer/UI_DESIGN_GUIDE.md)
 §6/§15.1.
 
