@@ -236,7 +236,10 @@ running demo — even one forgotten in another terminal — and free its ports.
   entries, never returns the caller's own process group. Falls back to
   `proc_table()` when `ps` is missing, so the identity check that keeps a
   recycled pgid alive-and-innocent never silently disappears
-- `stop_run()`: Tear one run's process group down via `terminate_process_group`
+- `stop_run()`: Tear one run's process group down via `terminate_process_group`,
+  re-validating the group at kill time; returns False without signalling
+  anything off POSIX, where a recorded pid cannot be checked before a hard
+  terminate
 - `describe_port_holder()`: Best-effort "port N is held by demo 'X'" hint
   for `pick_port`'s busy-port warning
 

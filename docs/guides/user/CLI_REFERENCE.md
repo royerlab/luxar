@@ -67,7 +67,9 @@ scene. It finds runs via the registry `demo run` maintains (plus a
 process-table sweep for strays), lists them, asks for confirmation (`-y` to
 skip), and tears each one down with the same SIGINT → SIGTERM → SIGKILL
 escalation Ctrl-C uses. `luxar demo stop <key>` stops just one demo;
-`--dry-run` only lists.
+`--dry-run` only lists. On platforms without POSIX process groups it lists the
+recorded runs and prints the command to stop each by hand rather than signalling
+a pid it cannot first verify still belongs to the demo.
 
 ## `luxar gsplat`
 

@@ -1115,3 +1115,22 @@ class TestDemoStop:
         # The manual-cleanup hint names the SURVIVOR's pgid, not the first run's.
         assert "kill -9 -222" in result.stdout
         assert "kill -9 -111" not in result.stdout
+
+    def test_manual_hint_matches_the_platform(self, runner, monkeypatch) -> None:
+        """Without process groups, `kill -9 -<pgid>` is not a runnable command.
+
+        That is the whole listing off POSIX: `stop_run` refuses to signal a pid
+        it cannot verify, so every run surfaces here and the hint is the only
+        way out.
+        """
+        from luxar.cli import demo_commands
+
+        monkeypatch.setattr(demo_commands, "can_kill_process_groups", lambda: False)
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "discover_runs", lambda **kw: self._fake_runs()
+        )
+        monkeypatch.setattr(demo_commands.demo_runs, "stop_run", lambda r: False)
+        result = runner.invoke(app, ["demo", "stop", "-y"])
+        assert result.exit_code == 1
+        assert "taskkill /F /T /PID 111" in result.stdout
+        assert "kill -9" not in result.stdout

@@ -22,7 +22,7 @@ from arbol import aprint
 from ..demos import registry
 from ..demos.registry import DemoInfo
 from ..utils import demo_runs
-from ..utils.process import run_child_process
+from ..utils.process import can_kill_process_groups, run_child_process
 from .utils import format_memory_size
 
 app_demo = typer.Typer(
@@ -387,6 +387,19 @@ def _translate_sweep_keys(runs: list["demo_runs.DemoRun"]) -> list["demo_runs.De
     return runs
 
 
+def _manual_stop_hint(run: "demo_runs.DemoRun") -> str:
+    """Command the user can run by hand for a demo we could not stop.
+
+    Off POSIX ``demo stop`` never signals anything (there is no way to check a
+    recorded pid still belongs to the demo before a hard terminate, see
+    ``demo_runs.stop_run``), so the hint has to be the local one — a
+    `kill -9 -<pgid>` there is advice that cannot even be typed.
+    """
+    if can_kill_process_groups():
+        return f"kill -9 -{run.pgid}"
+    return f"taskkill /F /T /PID {run.pgid}"
+
+
 def _stop_all(runs: list["demo_runs.DemoRun"]) -> list["demo_runs.DemoRun"]:
     """Kill every run's process group; returns the runs that survived."""
     survivors: list[demo_runs.DemoRun] = []
@@ -446,7 +459,7 @@ def demo_stop(
     survivors = _stop_all(runs)
     if survivors:
         names = ", ".join(r.key for r in survivors)
-        hints = "; ".join(f"kill -9 -{r.pgid}" for r in survivors)
+        hints = "; ".join(_manual_stop_hint(r) for r in survivors)
         aprint(f"⚠️  {len(survivors)} still running: {names} — try `{hints}`.")
         raise typer.Exit(1)
     aprint("✅ All demos stopped; their ports are free again.")

@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import signal
 import subprocess  # nosec B404  # fixed argv (ps/lsof), never shell, parsed
 import sys
 import time
@@ -303,8 +302,9 @@ def _entry_still_live(run: DemoRun, snapshot: list[tuple[int, int, str]]) -> boo
     recycled pgid). Without one, POSIX can at least ask whether the group
     survives. Off POSIX there is no probe at all — ``os.kill(pid, 0)``
     TERMINATES its target on Windows rather than testing it — so an entry
-    naming an owner pid is kept for ``stop_run`` to act on, and only one that
-    names nobody is dropped.
+    naming an owner pid is kept for the listing to report (unverified, and
+    :func:`stop_run` refuses to signal it), and only one that names nobody is
+    dropped.
     """
     if snapshot:
         return _group_has_luxar_process(run.pgid, snapshot)
@@ -374,6 +374,15 @@ def stop_run(run: DemoRun) -> bool:
     sit for minutes between discovery and this call, long enough for the demo
     to exit and (in principle) its group id to be recycled by an innocent
     process — which must not inherit the death sentence.
+
+    Off POSIX nothing is signalled at all. There are no process groups to
+    fingerprint there, and no way to even ASK whether a recorded pid is still
+    the demo: on Windows ``os.kill(pid, 0)`` is a hard ``TerminateProcess``,
+    not a probe. Meanwhile a registry entry outlives a reboot or a hard-killed
+    owner, and pids get recycled freely — so signalling one blind would
+    eventually terminate whatever innocent process inherited the number. The
+    run is reported as not stopped instead (``demo stop`` then prints the
+    manual command), and its entry is kept so the listing keeps naming it.
     """
     if can_kill_process_groups():
         snapshot = _ps_snapshot()
@@ -383,24 +392,6 @@ def stop_run(run: DemoRun) -> bool:
             unregister_run(run.path)
             return True
         gone = terminate_process_group(run.pgid)
-    elif run.pid:
-        # Windows degrade: no process groups, so only single PIDs can be
-        # signalled — and there `os.kill` is a hard TerminateProcess, not a
-        # request. Aim it at the DEMO process (the pid `on_spawn` recorded,
-        # spelled `pgid` because that is what it is on POSIX), never at the
-        # `demo run` owner: terminating the owner would kill the one process
-        # whose teardown could clean up, leaving the demo itself — the heavy
-        # one, holding the memory and the GPU — running. The owner then exits
-        # by itself, exactly as on the group path. A `luxar serve` grandchild
-        # can still survive this — reaching a whole tree there needs a job
-        # object — so the port may stay held until it is closed by hand.
-        try:
-            os.kill(run.pgid, signal.SIGTERM)
-            gone = True
-        except ProcessLookupError:
-            gone = True  # already dead: prune the stale entry
-        except OSError:
-            gone = False
     else:
         gone = False
     if gone:

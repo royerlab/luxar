@@ -454,16 +454,17 @@ def test_ps_snapshot_falls_back_to_proc_when_ps_is_missing(monkeypatch) -> None:
     assert mine[0][1] == os.getpgrp()
 
 
-def test_non_posix_keeps_registry_and_stops_the_demo_not_its_owner(
+def test_non_posix_lists_runs_but_never_signals_an_unverifiable_pid(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Off-POSIX there are no process groups — discovery must still work.
+    """Off-POSIX there are no process groups — discovery must still work…
 
-    Pruning every entry there would both hide running demos and delete the
-    registry that `stop_run`'s single-pid fallback needs. And that fallback
-    must signal the DEMO, not the `demo run` owner: `os.kill` on Windows is a
-    hard terminate, so killing the owner would only remove the process whose
-    teardown could clean up and leave the demo itself running.
+    …but nothing may be signalled. There is no way to check a recorded pid is
+    still the demo before acting on it (`os.kill(pid, 0)` on Windows is a hard
+    terminate, not a probe), and a registry entry outlives a reboot or a
+    hard-killed owner — so a blind signal would eventually terminate whatever
+    innocent process recycled the number. `demo stop` reports the run as not
+    stopped (and prints the manual command) and keeps the entry.
     """
     monkeypatch.setattr(demo_runs, "can_kill_process_groups", lambda: False)
     monkeypatch.setattr(demo_runs, "_ps_snapshot", list)
@@ -478,10 +479,9 @@ def test_non_posix_keeps_registry_and_stops_the_demo_not_its_owner(
     monkeypatch.setattr(
         demo_runs.os, "kill", lambda pid, sig: signalled.append((pid, sig))
     )
-    assert stop_run(runs[0]) is True
-    assert signalled == [(4242, demo_runs.signal.SIGTERM)]
-    assert os.getpid() not in [pid for pid, _sig in signalled]
-    assert not path.exists()
+    assert stop_run(runs[0]) is False
+    assert signalled == []  # neither the demo nor the owner is touched
+    assert path.exists()  # the record survives for the next listing
 
 
 def test_non_posix_prunes_an_entry_with_no_owner_pid(

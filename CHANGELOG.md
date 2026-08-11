@@ -204,6 +204,12 @@ on one machine, and "stop everything" must never take a colleague's live
 server down unseen. The `pick_port` "port busy" warning now also names a
 luxar-owned squatter ("Port 8042 is held by demo 'X' (PID N) — run
 `luxar demo stop` to clear it"), so the port shift explains itself.
+Stopping is POSIX-only on purpose: without process groups there is no way to
+ask whether a recorded pid is still the demo before signalling it (on Windows
+`os.kill(pid, 0)` is itself a hard terminate), and a pidfile outlives a reboot,
+so a blind signal would eventually kill whatever innocent process recycled that
+number. There the runs are listed with the command to stop them by hand
+instead.
 Teardown also stops waiting out a corpse: a child that has exited but has not
 been reaped yet still answers `killpg`, which used to hold the whole signal
 ladder open, so an interrupted `demo run` sat there for the full grace period
