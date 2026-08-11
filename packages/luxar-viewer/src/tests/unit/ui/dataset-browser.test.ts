@@ -362,6 +362,55 @@ describe('DatasetBrowser', () => {
       expect(onDatasetSelect).not.toHaveBeenCalled();
     });
 
+    it('does NOT select paths where .zarr is a mere substring (navigates instead)', async () => {
+      // `.zarr` must terminate the last path segment; `archives.zarr-backup`
+      // and `foo.zarr.zip` are ordinary names, not datasets.
+      for (const value of ['archives.zarr-backup', 'foo.zarr.zip', 'my.zarrs/dir']) {
+        vi.clearAllMocks();
+        document.body.innerHTML = '';
+        container = makeContainer();
+        navigateMock.mockResolvedValueOnce(defaultNavigateResult());
+        getFullUrlMock.mockImplementation((path: string) => `http://example.com/${path}`);
+
+        new DatasetBrowser({ container, onDatasetSelect, onClose });
+        await vi.waitFor(() => {
+          expect(container.querySelector('#luxar-dataset-browser-path-edit')).not.toBeNull();
+        });
+
+        (container.querySelector('#luxar-dataset-browser-path-edit') as HTMLButtonElement).click();
+        navigateMock.mockClear();
+        navigateMock.mockResolvedValue(defaultNavigateResult({ currentPath: value }));
+
+        const input = container.querySelector(
+          '.luxar-dataset-browser__path-input'
+        ) as HTMLInputElement;
+        input.value = value;
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+        expect(onDatasetSelect).not.toHaveBeenCalled();
+        expect(navigateMock).toHaveBeenCalledWith(value);
+      }
+    });
+
+    it('selects a .zarr path with a trailing slash', async () => {
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult());
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('#luxar-dataset-browser-path-edit')).not.toBeNull();
+      });
+
+      (container.querySelector('#luxar-dataset-browser-path-edit') as HTMLButtonElement).click();
+      const input = container.querySelector(
+        '.luxar-dataset-browser__path-input'
+      ) as HTMLInputElement;
+      input.value = 'sub/sample.zarr/';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+      expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/sub/sample.zarr/');
+      expect(onClose).toHaveBeenCalled();
+    });
+
     it('Escape restores the breadcrumb trail without closing the dialog', async () => {
       navigateMock.mockResolvedValueOnce(
         defaultNavigateResult({ currentPath: 'data', entries: [] })
@@ -413,6 +462,64 @@ describe('DatasetBrowser', () => {
 
       items[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
       expect(document.activeElement).toBe(items[0]);
+    });
+
+    it('prevents the default action at list boundaries (no scroll bleed)', async () => {
+      const entries: DirectoryEntry[] = [
+        { name: 'a.zarr', path: 'a.zarr', type: 'zarr' },
+        { name: 'b.zarr', path: 'b.zarr', type: 'zarr' },
+      ];
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelectorAll('.luxar-dataset-browser__file-item').length).toBe(2);
+      });
+
+      const items = Array.from(
+        container.querySelectorAll<HTMLElement>('.luxar-dataset-browser__file-item')
+      );
+      items[0].focus();
+      // ArrowUp on the FIRST row: focus stays, but the event must still be
+      // swallowed so it doesn't scroll the content area.
+      const up = new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true });
+      items[0].dispatchEvent(up);
+      expect(up.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(items[0]);
+
+      const down = new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        bubbles: true,
+        cancelable: true,
+      });
+      items[1].focus();
+      items[1].dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(items[1]);
+    });
+
+    it('the async first listing does not steal focus the user already placed', async () => {
+      // Slow listing: the user focuses the close button while it loads; the
+      // one-shot filter auto-focus must yield instead of yanking focus away.
+      let resolveNavigate: (v: unknown) => void = () => {};
+      navigateMock.mockReturnValueOnce(new Promise((res) => (resolveNavigate = res)));
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      const closeBtn = container.querySelector(
+        '.luxar-dataset-browser__close-btn'
+      ) as HTMLButtonElement;
+      closeBtn.focus();
+
+      resolveNavigate(
+        defaultNavigateResult({
+          entries: [{ name: 'a.zarr', path: 'a.zarr', type: 'zarr' }],
+        })
+      );
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+
+      expect(document.activeElement).toBe(closeBtn);
     });
   });
 

@@ -515,7 +515,16 @@ export class DatasetBrowser {
     input.select();
   }
 
-  /** Commit the inline path editor's value (see {@link openPathEditor}). */
+  /**
+   * Commit the inline path editor's value (see {@link openPathEditor}).
+   *
+   * Full URLs are selected as-is (parity with the manual-entry form). A
+   * relative path is selected only when it deliberately names a `.zarr`
+   * directory — i.e. its last path segment ends with `.zarr` (trailing
+   * slashes ignored). A mere `.zarr` substring (`archives.zarr-backup`,
+   * `foo.zarr.zip`) is NOT a dataset; those navigate instead, and
+   * `navigate()` still auto-selects if the server reports a real zarr.
+   */
   private commitPathEditor(raw: string): void {
     const path = raw.trim();
     if (!path) {
@@ -523,7 +532,8 @@ export class DatasetBrowser {
       return;
     }
     const isFullUrl = path.startsWith('http://') || path.startsWith('https://');
-    if (isFullUrl || path.includes('.zarr')) {
+    const endsWithZarr = path.replace(/\/+$/, '').endsWith('.zarr');
+    if (isFullUrl || endsWithZarr) {
       const fullUrl = isFullUrl ? path : this.navigator.getFullUrl(path);
       safeFireSelect(this.onDatasetSelect, fullUrl);
       this.close();
@@ -637,19 +647,23 @@ export class DatasetBrowser {
     list.onkeydown = (e) => {
       const target = e.target as HTMLElement;
       if (!target.classList.contains('luxar-dataset-browser__file-item')) return;
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') {
+        return;
+      }
+      // Swallow the default for every handled key — even at the list
+      // boundaries where focus doesn't move — so ArrowUp on the first row
+      // (or ArrowDown on the last) doesn't scroll the content area.
+      e.preventDefault();
       const items = Array.from(
         list.querySelectorAll<HTMLElement>('.luxar-dataset-browser__file-item')
       );
       const index = items.indexOf(target);
-      let next = -1;
+      let next = index;
       if (e.key === 'ArrowDown') next = Math.min(index + 1, items.length - 1);
       else if (e.key === 'ArrowUp') next = Math.max(index - 1, 0);
       else if (e.key === 'Home') next = 0;
       else if (e.key === 'End') next = items.length - 1;
-      if (next >= 0 && next !== index) {
-        e.preventDefault();
-        items[next].focus();
-      }
+      if (next !== index) items[next].focus();
     };
 
     sorted.forEach((entry) => {
@@ -753,13 +767,20 @@ export class DatasetBrowser {
 
     // First successful listing: hand focus to the filter field so typing
     // narrows immediately (ArrowDown moves into the list). One-shot so
-    // later re-renders never steal focus mid-interaction.
+    // later re-renders never steal focus mid-interaction — and only when
+    // focus is still unclaimed (body or the panel shell): the listing
+    // arrives asynchronously, and a user who already focused the close
+    // button or a breadcrumb must not have focus yanked away.
     if (!this.initialFocusDone && total > 0) {
       this.initialFocusDone = true;
-      const searchInput = this.panel.querySelector(
-        '#luxar-dataset-browser-search'
-      ) as HTMLInputElement | null;
-      searchInput?.focus();
+      const active = document.activeElement;
+      const focusUnclaimed = !active || active === document.body || active === this.panel;
+      if (focusUnclaimed) {
+        const searchInput = this.panel.querySelector(
+          '#luxar-dataset-browser-search'
+        ) as HTMLInputElement | null;
+        searchInput?.focus();
+      }
     }
   }
 
