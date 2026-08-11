@@ -131,7 +131,7 @@ The authoritative list is the directory itself — run
 | **viewer-initialization.spec.ts** | Viewer startup without data |
 | **visual-regression.spec.ts** | Screenshot comparison |
 | **webgl-errors.spec.ts** | WebGL error detection |
-| **webgpu-native-smoke.spec.ts** | Native-WebGPU smoke (auto-skips without a real WebGPU adapter) |
+| **webgpu-native-smoke.spec.ts** | WebGPU smoke; native-only tests auto-skip without a real WebGPU adapter |
 | **worker-wasm-integration.spec.ts** | Worker + WASM integration |
 | **y-orientation.spec.ts** | `renderToImageData()` Y-orientation parity across WebGL/WebGPU backends |
 
