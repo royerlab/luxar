@@ -17,6 +17,7 @@
  */
 
 import { LuxarApp, type LuxarAppOptions } from './app';
+import { setDocumentTitle } from './document-title';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
@@ -137,10 +138,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // --open` derives `?title=` from the dataset file name, so several open
   // viewer tabs stop being an indistinguishable row of "Luxar Player" — the
   // stale-tab trap's accomplice. An authored `viewer_config.title` overrides
-  // this at scene load (see core/app/viewer-config/apply-state.ts).
-  if (urlParams.title) {
-    document.title = urlParams.title;
-  }
+  // this at scene load (see core/app/viewer-config/apply-state.ts), and a
+  // dataset switch drops it again (see core/document-title.ts).
+  setDocumentTitle(urlParams.title);
 
   if (patchConsole) {
     consoleInterceptor.patch();

@@ -122,6 +122,9 @@ vi.stubGlobal('document', {
   removeEventListener: mockRemoveEventListener,
   body: {},
   hidden: false,
+  // A real document always has a string here; the tab-title helpers read it
+  // back before overwriting it.
+  title: '',
 });
 
 // Mock fetch for dataset detection
@@ -140,6 +143,7 @@ import { clearError as mockClearError } from '../../../ui/error-overlay';
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
+import { setDocumentTitle } from '../../../core/document-title';
 
 describe('LuxarApp', () => {
   let app: LuxarApp;
@@ -1151,6 +1155,31 @@ describe('LuxarApp', () => {
       await app.switchDataset('http://example.com/other.zarr');
 
       expect(onLoaded).toHaveBeenCalledWith({ src: 'http://example.com/other.zarr' });
+    });
+
+    it('re-titles the browser tab for the dataset being switched to', async () => {
+      // Whatever named the tab belongs to the outgoing scene: `?title=` names
+      // the dataset the server started with, an authored title names the scene
+      // being torn down. Either one left in place advertises a scene the tab
+      // no longer shows.
+      // Establish the page-title target the helper restores to. Earlier tests
+      // in this file switch datasets too, so the module's one-shot capture of
+      // the page title may already have happened — probe it instead of
+      // assuming a pristine document.
+      setDocumentTitle('probe');
+      setDocumentTitle(null);
+      const pageTitle = document.title;
+
+      await app.init({ canvas: mockCanvas, src: SRC });
+      setDocumentTitle('Previous Scene');
+
+      await app.switchDataset('http://example.com/global_rivers.luxar.zarr');
+      expect(document.title).toBe('global_rivers');
+
+      // A src that names no store falls back to the page's own title rather
+      // than keeping the last scene's name.
+      await app.switchDataset('http://example.com:8000');
+      expect(document.title).toBe(pageTitle);
     });
 
     it('emits dataset-error and rejects when a load fails', async () => {

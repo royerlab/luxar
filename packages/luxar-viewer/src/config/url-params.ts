@@ -385,6 +385,8 @@ function normalizeSrcForUrl(src: string): string {
  * `title` is the one parameter that does NOT survive: it names the dataset
  * the server started with, so carrying it onto a different `src` would make
  * a shared or reloaded URL title the tab after a scene it no longer shows.
+ * The live tab is retitled for the incoming dataset at the same moment —
+ * see `core/document-title.ts`.
  */
 export function buildDataSourceBrowserUrl(src: string, location: BrowserUrlLocation): string {
   const params = new URLSearchParams(location.search);

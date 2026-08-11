@@ -35,8 +35,11 @@ viewer uses the new `?title=` URL parameter, which serve-family commands
 derive from the dataset's file name (`dataset_title`, compound suffixes like
 `.luxar.zarr` stripped, including archive-wrapped ones like
 `.gsplats.zarr.zip`). Zero demo edits required — all 80 demos get named tabs
-for free. `?title=` is dropped from the address bar when you switch datasets
-in the viewer, since it names the scene the server started with.
+for free. Switching datasets inside the viewer drops `?title=` from the
+address bar and retitles the tab after the dataset you switched to (falling
+back to the page title when the URL names no store): both the URL parameter
+and an authored title name the scene you just left, so leaving either in
+place is exactly the stale tab this set out to fix.
 
 #### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
 
