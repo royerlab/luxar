@@ -1275,8 +1275,8 @@ export class DataLoadingMonitor {
         <div class="luxar-data-monitor__header">
           <div class="luxar-data-monitor__title">Data Loading Monitor</div>
           <div class="luxar-data-monitor__controls">
-            <button class="luxar-data-monitor__btn luxar-data-monitor__close-btn" data-action="minimize" title="Minimize">—</button>
-            <button class="luxar-data-monitor__btn luxar-data-monitor__close-btn" data-action="hide" title="Close">×</button>
+            <button class="luxar-panel-close" data-action="minimize" title="Minimize" aria-label="Minimize the data monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>
+            <button class="luxar-panel-close" data-action="hide" title="Close" aria-label="Close the data monitor"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></button>
           </div>
         </div>
 

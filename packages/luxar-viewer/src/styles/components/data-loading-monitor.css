@@ -112,28 +112,6 @@
   align-items: center;
 }
 
-.luxar-data-monitor__btn {
-  background: none;
-  border: none;
-  color: var(--luxar-text-muted);
-  cursor: pointer;
-  padding: var(--luxar-spacing-2);
-  font-size: var(--luxar-text-md);
-  transition: var(--luxar-transition-fast);
-}
-
-.luxar-data-monitor__btn:hover {
-  color: var(--luxar-text-primary);
-}
-
-.luxar-data-monitor__close-btn {
-  font-size: var(--luxar-text-3xl);
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
 /* ========== Tabs ========== */
 

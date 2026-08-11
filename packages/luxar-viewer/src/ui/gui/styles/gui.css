@@ -103,25 +103,6 @@
 /**
  * GUI Close Button
  */
-.luxar-gui__close-btn {
-  background: none;
-  border: none;
-  color: var(--luxar-text-muted);
-  font-size: var(--luxar-text-3xl);
-  cursor: pointer;
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--luxar-transition-fast);
-}
-
-.luxar-gui__close-btn:hover {
-  color: var(--luxar-text-primary);
-}
-
 /**
  * Children Container
  */
@@ -147,15 +128,3 @@
 }
 
 /* Glass themes - see src/styles/themes/{frosted,liquid}-glass.css */
-
-/* Stroke ✕ glyph (rail icon contract) — replaces the old text '×'. */
-.luxar-gui__close-btn svg {
-  width: 14px;
-  height: 14px;
-  display: block;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}

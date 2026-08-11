@@ -438,8 +438,53 @@
   z-index: var(--luxar-z-tooltip);
 }
 
+/* ========== Panel close button (shared recipe) ==========
+   THE close affordance for every panel header (UI Design Guide §7.3):
+   28×28 grid-centered hit target, radius-md, muted → primary with a
+   neutral hover fill, 15px stroke ✕ (rail icon contract). Panels add
+   `luxar-panel-close` alongside their BEM class; per-panel CSS should
+   not restate any of this. */
+.luxar-panel-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--luxar-text-muted);
+  border-radius: var(--luxar-radius-md);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-panel-close:hover {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover);
+}
+
+.luxar-panel-close:focus-visible {
+  outline: 2px solid var(--luxar-border-focus);
+  outline-offset: 1px;
+}
+
+.luxar-panel-close svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* ========== Reduced Motion ========== */
 @media (prefers-reduced-motion: reduce) {
+  .luxar-panel-close {
+    transition: none;
+  }
+
   .luxar-animate-fade-in {
     animation: none !important;
     opacity: 1 !important;

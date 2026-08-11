@@ -62,25 +62,6 @@
   margin: 0;
 }
 
-.luxar-layers-panel__close {
-  background: none;
-  border: none;
-  color: var(--luxar-text-muted);
-  font-size: var(--luxar-text-3xl);
-  cursor: pointer;
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--luxar-transition-fast);
-}
-
-.luxar-layers-panel__close:hover {
-  color: var(--luxar-text-primary);
-}
-
 /* ========== Layer List ========== */
 
 .luxar-layers-panel__list {
@@ -450,15 +431,3 @@
 
 /* light-theme <select> option/optgroup colors now come from --luxar-menu-*
    via styles/components/select-menu.css. */
-
-/* Stroke ✕ glyph (rail icon contract) — replaces the old text '×'. */
-.luxar-layers-panel__close svg {
-  width: 14px;
-  height: 14px;
-  display: block;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
