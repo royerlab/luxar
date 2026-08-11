@@ -102,6 +102,11 @@ export function canonicalJson(value: unknown): string | undefined {
  * base search params onto every key it fetches, so the store does the same)
  * and a fragment is dropped instead of swallowing the appended path. Falls
  * back to plain concatenation for anything `URL` cannot parse.
+ *
+ * Trailing slashes are trimmed off the PATHNAME only. Trimming them off the
+ * raw string instead would eat the last character of a credential that
+ * happens to end in `/` (`?token=abc/`), sending the probe somewhere the
+ * store never goes.
  */
 function buildAttrsUrl(datasetUrl: string): string {
   try {
@@ -110,7 +115,7 @@ function buildAttrsUrl(datasetUrl: string): string {
     url.hash = '';
     return url.toString();
   } catch {
-    return `${datasetUrl}/.zattrs`;
+    return `${datasetUrl.replace(/\/+$/, '')}/.zattrs`;
   }
 }
 
@@ -178,7 +183,12 @@ export class SceneIdentityWatchdog {
   };
 
   constructor(opts: SceneIdentityWatchdogOptions) {
-    this.url = opts.datasetUrl.replace(/\/+$/, '');
+    // Kept verbatim: the caller hands us the same normalized URL the zarr
+    // store was opened with, and the probe must address exactly what the
+    // store reads. `buildAttrsUrl` trims trailing slashes off the pathname,
+    // which is the only place they mean "directory" — a raw-string trim here
+    // would instead truncate a credential ending in `/`.
+    this.url = opts.datasetUrl;
     this.attrsUrl = buildAttrsUrl(this.url);
     this.expectedHash = opts.expectedContentHash;
     this.expectedAttrsJson = opts.expectedAttrsJson ?? null;

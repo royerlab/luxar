@@ -113,10 +113,17 @@ describe('SceneIdentityWatchdog', () => {
     await probeUrl('https://host/scene.zarr?token=abc');
     await probeUrl('https://host/scene.zarr/?token=abc');
     await probeUrl('https://host/scene.zarr#frag');
+    // A credential whose last character is a literal `/`. The zarr store
+    // sends the query verbatim, so the probe has to as well: trimming the
+    // raw string would authenticate as a different, truncated credential,
+    // get itself refused, and raise a spurious "server unreachable" over a
+    // scene that is loading perfectly well.
+    await probeUrl('https://host/scene.zarr?token=abc/');
     expect(urls).toEqual([
       'https://host/scene.zarr/.zattrs?token=abc',
       'https://host/scene.zarr/.zattrs?token=abc',
       'https://host/scene.zarr/.zattrs',
+      'https://host/scene.zarr/.zattrs?token=abc/',
     ]);
   });
 
