@@ -39,6 +39,8 @@ core/
 ├── bootstrap.ts                     # Pre-init sequence (theme, console patch,
 │                                    #   codec warm, debug surface) + the standalone
 │                                    #   factory `bootstrapStandalone()`
+├── document-title.ts                # Browser tab title: authored `viewer_config.title`
+│                                    #   > `?title=` > the page's own `<title>`
 ├── app.ts                           # `LuxarApp` — the core embed surface
 │                                    #   (`init` / `switchDataset` / `dispose`)
 │                                    # ~600 LOC of orchestration glue: every method is
