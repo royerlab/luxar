@@ -164,6 +164,8 @@ additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
 | `--bytes-per-splat` | measured/estimated | override the on-wire bytes/splat for `--target-ms` sizing |
 | `--truncation-sigmas` | 3.0 | Mahalanobis cutoff for greedy |
 | `--max-n-dense` | 2000 | greedy dense-Gram threshold |
+| `--reveal-centre` | dataset bbox centre | `-m radial` only: comma-separated shell centre, one coordinate per measured axis. On a partitioned recipe the default centres each part on itself — pass this to grow the whole object from one point |
+| `--spatial-dims` | non-degenerate axes | `-m radial` only: comma-separated centre-column indices the shell distance spans (order pairs with `--reveal-centre`); the default keeps a stacked time/channel axis out of the shells |
 
 ### `luxar gsplat additive <in> <out>` — ladder every leaf of an existing tree
 Structure-preserving per-leaf additive laddering: substitutive `kind=lod`

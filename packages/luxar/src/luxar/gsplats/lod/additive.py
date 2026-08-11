@@ -454,7 +454,9 @@ def _radial_score(
     rejected case silently produced a WRONG ordering instead of an error — a
     negative index ALIASES to another column under numpy indexing, a repeat
     DOUBLE-COUNTS that axis in the distance, and an empty selection scores every
-    splat 0.0, degrading the ladder to input order with nothing to show it.
+    splat 0.0, degrading the ladder to input order with nothing to show it. A
+    non-finite ``centre`` coordinate is rejected for the same reason: it makes
+    every distance NaN/inf, which a stable argsort leaves in input order.
     """
     if spatial_dims is None:
         dims = data._nondegenerate_axes()
@@ -486,6 +488,15 @@ def _radial_score(
             raise ValueError(
                 f"reveal_centre must have one coordinate per spatial axis "
                 f"{tuple(int(d) for d in dims)}; got shape {origin.shape}"
+            )
+        if not bool(np.all(np.isfinite(origin))):
+            # Same class as an empty `spatial_dims`: every distance comes back
+            # non-finite, they all compare equal under a stable argsort, and the
+            # ladder silently degrades to input order instead of revealing.
+            raise ValueError(
+                "reveal_centre must be finite (a NaN/inf coordinate makes every "
+                "distance non-finite, degrading the ladder to input order); got "
+                f"{[float(c) for c in origin]}"
             )
     return np.asarray(np.linalg.norm(pts - origin, axis=1), dtype=np.float64)
 

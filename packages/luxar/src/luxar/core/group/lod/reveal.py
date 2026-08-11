@@ -18,6 +18,7 @@ MESH_NODE_SPEC §9.1, whose reasoning is geometry-agnostic.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -98,8 +99,11 @@ def _resolve_score_dims(pts_all: NDArray, spatial_dims: Optional[List[int]]) -> 
     bypass the resolver entirely. Each
     rejected case silently produced a WRONG ordering rather than an error: a
     negative index ALIASES to another column via numpy indexing, a repeat
-    DOUBLE-COUNTS that axis in the distance, and an empty list scores every
-    element 0.0 — degrading the ordering to input order with no indication.
+    DOUBLE-COUNTS that axis in the distance, an empty list scores every
+    element 0.0 — degrading the ordering to input order with no indication —
+    and a NESTED sequence makes ``pts_all[:, dims]`` 3-D, so the score comes
+    back ``(N, k)`` and ``argsort`` returns a per-row permutation rather than
+    an ordering of the elements.
     """
     if spatial_dims is None:
         mins_all = pts_all.min(axis=0)
@@ -113,6 +117,12 @@ def _resolve_score_dims(pts_all: NDArray, spatial_dims: Optional[List[int]]) -> 
         return dims
 
     dims = np.asarray(spatial_dims, dtype=np.intp)
+    if dims.ndim != 1:
+        raise ValueError(
+            f"spatial_dims must be a 1-D sequence of column indices (a nested "
+            f"one makes the score 2-D and the permutation malformed); got shape "
+            f"{dims.shape}"
+        )
     if dims.size == 0:
         raise ValueError("spatial_dims must not be empty")
     if int(dims.min()) < 0:
@@ -191,6 +201,15 @@ def radial_element_score(
                 f"reveal_centre must have one coordinate per spatial axis "
                 f"{[int(d) for d in dims]}; got {len(origin)}"
             )
+        if not bool(np.all(np.isfinite(origin))):
+            # Same class as an empty `spatial_dims`: every distance comes back
+            # non-finite, they all compare equal under a stable argsort, and the
+            # ladder silently degrades to input order instead of revealing.
+            raise ValueError(
+                f"reveal_centre must be finite (a NaN/inf coordinate makes every "
+                f"distance non-finite, degrading the ordering to input order); "
+                f"got {[float(c) for c in origin]}"
+            )
     return np.asarray(np.linalg.norm(pts - origin, axis=1), dtype=np.float64)
 
 
@@ -217,6 +236,16 @@ def pop_reveal_knobs(
         reveal_centre = [float(c) for c in reveal_centre]
         if not reveal_centre:
             raise ValueError("reveal_centre must not be empty")
+        if not all(math.isfinite(c) for c in reveal_centre):
+            # Checked HERE and not only in the scorer for the same reason as the
+            # rest of this function: under a substitutive ladder the wrapper group
+            # is on disk before the scorer ever runs, so a late raise leaves a
+            # partial group behind.
+            raise ValueError(
+                f"reveal_centre must be finite (a NaN/inf coordinate makes every "
+                f"distance non-finite, degrading the ordering to input order); "
+                f"got {reveal_centre}"
+            )
 
     spatial_dims = kwargs.pop("spatial_dims", None)
     if spatial_dims is not None:

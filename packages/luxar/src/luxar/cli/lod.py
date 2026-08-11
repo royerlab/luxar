@@ -13,6 +13,7 @@ it replaced the historical ``lod additive`` / ``lod substitutive`` /
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -148,14 +149,23 @@ def _parse_reveal_centre(spec: Optional[str]) -> Optional["list[float]"]:
         ) from e
     if not parsed:
         raise typer.BadParameter("--reveal-centre must list >=1 coordinate")
+    if not all(math.isfinite(c) for c in parsed):
+        # `float("nan")` / `float("inf")` parse happily. Every distance would then
+        # be non-finite, all comparing equal under the stable sort, so the ladder
+        # would come out in input order with nothing to say the centre was junk.
+        raise typer.BadParameter(
+            f"--reveal-centre must be finite numbers; got {spec!r}"
+        )
     return parsed
 
 
 def _parse_reveal_spatial_dims(spec: Optional[str], ndim: int) -> Optional["list[int]"]:
     """Parse ``--spatial-dims`` — the columns the shell distance spans, or ``None``.
 
-    De-duplicates and sorts, mirroring ``--coarsen-dims``, and bounds-checks each
-    index against the dataset's own ``ndim`` so a typo is caught before any work.
+    Keeps the listed ORDER and rejects a repeat (see the comment below: the order
+    pairs with ``--reveal-centre``, deliberately unlike ``--coarsen-dims``), and
+    bounds-checks each index against the dataset's own ``ndim`` so a typo is
+    caught before any work.
     """
     if spec is None:
         return None

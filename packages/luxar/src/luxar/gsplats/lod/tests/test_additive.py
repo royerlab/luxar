@@ -769,6 +769,21 @@ def test_radial_rejects_a_mis_shaped_centre():
         compute_additive_order(data, method="radial", reveal_centre=[0.0, 0.0])
 
 
+@pytest.mark.parametrize(
+    "bad", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"]
+)
+def test_radial_rejects_a_non_finite_centre(bad: float) -> None:
+    """Same class as an empty `spatial_dims`: a silent no-op, not a reveal.
+
+    Every distance comes back non-finite, they all compare equal under the stable
+    argsort, and the ladder is emitted in INPUT order with nothing to indicate the
+    centre was junk.
+    """
+    data = _make_random_gsplat(n=8, ndim=3, seed=4)
+    with pytest.raises(ValueError, match="must be finite"):
+        compute_additive_order(data, method="radial", reveal_centre=[bad, 0.0, 0.0])
+
+
 def _sublod_stats(laddered: GSplatData) -> list[dict]:
     """`lod_stats` of every additive sub-LOD of the (single) substitutive level."""
     return [dict(s.stats) for s in laddered.substitutive_levels[0].additive_sublods]

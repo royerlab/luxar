@@ -3452,6 +3452,21 @@ class TestLODCommand:
         assert _parse_reveal_spatial_dims("2,0", 3) == [2, 0]
         assert _parse_reveal_spatial_dims("0,2", 3) == [0, 2]
 
+    @pytest.mark.parametrize(
+        "spec", ["nan,0,0", "inf,0,0", "0,-inf,0"], ids=["nan", "inf", "-inf"]
+    )
+    def test_reveal_centre_rejects_non_finite_coordinates(self, spec: str) -> None:
+        """`float("nan")` parses happily, so this needed an explicit check.
+
+        With a non-finite centre every distance is non-finite; they all compare
+        equal under the stable argsort, so the ladder comes out in input order and
+        the user gets no reveal and no error.
+        """
+        from luxar.cli.lod import _parse_reveal_centre
+
+        with pytest.raises(typer.BadParameter, match="finite"):
+            _parse_reveal_centre(spec)
+
     def test_spatial_dims_rejects_duplicates(self) -> None:
         """A duplicate was silently collapsed by `set()`; it now errors, because a
         repeat would count that axis twice in the distance."""
