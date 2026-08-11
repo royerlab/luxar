@@ -42,7 +42,10 @@ export const frostedGlassTheme: Theme = {
       warning: 'rgba(255, 149, 0, 1)', // Modern orange
       error: 'rgba(255, 59, 48, 1)', // Modern red
       info: 'rgba(0, 122, 255, 1)', // Modern blue
-      highlight: 'rgba(88, 86, 214, 1)', // Modern purple
+      // The brand interactive accent — same bright blue as the dark theme.
+      // (Was indigo rgba(88,86,214,1), ~1.6:1 contrast on dark glass panels
+      // — active chips, ZARR badges, and the wordmark were barely legible.)
+      highlight: 'rgba(0, 160, 255, 1)',
     },
     interactive: {
       // Subtle interactive states with glassmorphism
