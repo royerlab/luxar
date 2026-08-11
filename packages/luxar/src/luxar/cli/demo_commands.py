@@ -12,6 +12,7 @@ import importlib
 import os
 import shlex
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -20,11 +21,15 @@ from arbol import aprint
 
 from ..demos import registry
 from ..demos.registry import DemoInfo
-from ..utils.process import run_child_process
+from ..utils import demo_runs
+from ..utils.process import can_kill_process_groups, run_child_process
 from .utils import format_memory_size
 
 app_demo = typer.Typer(
-    help="Run and manage Luxar's bundled demos (list / info / run / deps / cache).",
+    help=(
+        "Run and manage Luxar's bundled demos "
+        "(list / info / run / stop / deps / cache)."
+    ),
     no_args_is_help=False,
 )
 cache_app = typer.Typer(help="Inspect and clear demo download/compute caches.")
@@ -137,6 +142,7 @@ def _print_table(demos: list[DemoInfo]) -> None:
     aprint("Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>")
     aprint("Caches:   luxar demo cache list        Clear:    luxar demo cache clear …")
     aprint("Deps:     luxar demo deps              Install:  luxar demo deps --install")
+    aprint("Stop:     luxar demo stop              (kills running demos, frees ports)")
 
 
 def _resolve_or_exit(key_or_index: str) -> DemoInfo:
@@ -148,6 +154,26 @@ def _resolve_or_exit(key_or_index: str) -> DemoInfo:
     except registry.DemoMetaError as e:
         aprint(f"❌ Broken demo metadata: {e}")
         raise typer.Exit(1) from e
+
+
+def _run_registered_demo(key: str, cmd: list[str], label: str) -> int:
+    """Run a demo subprocess with a `luxar demo stop` registry entry around it.
+
+    The entry is written the instant the group is spawned (via ``on_spawn``,
+    where the child PID *is* the new pgid) and removed on every exit path, so
+    the registry only ever names groups that outlived their owner — exactly
+    the forgotten/orphaned runs ``demo stop`` exists to clear.
+    """
+    entry: list[Optional[Path]] = [None]
+
+    def _register(pid: int) -> None:
+        """``on_spawn`` hook: record the just-created demo process group."""
+        entry[0] = demo_runs.register_run(key, pid)
+
+    try:
+        return run_child_process(cmd, label=label, on_spawn=_register)
+    finally:
+        demo_runs.unregister_run(entry[0])
 
 
 # ─────────────────────────────── callback ────────────────────────────────────
@@ -242,7 +268,7 @@ def demo_run(
     # which then tears the whole subtree down deterministically (SIGINT →
     # SIGTERM → SIGKILL). Without this, a hung uvicorn is orphaned on its port.
     # run_child_process also maps signal death to 128+N (raw -N truncates).
-    code = run_child_process(cmd, label=f"demo '{info.key}'")
+    code = _run_registered_demo(info.key, cmd, label=f"demo '{info.key}'")
     if code != 0:
         raise typer.Exit(code)
 
@@ -305,8 +331,8 @@ def demo_run_all(
         # Default isolate_group=True: --no-serve demos spawn no server, but
         # group isolation still gives a clean Ctrl-C (only this batch runner
         # gets SIGINT) and a deterministic per-demo teardown.
-        code = run_child_process(
-            [sys.executable, "-m", d.module, "--no-serve"], label=d.key
+        code = _run_registered_demo(
+            d.key, [sys.executable, "-m", d.module, "--no-serve"], label=d.key
         )
         if code == 130:
             # 130 is our Ctrl-C convention (run_child_process maps SIGINT and a
@@ -326,6 +352,117 @@ def demo_run_all(
     if failed:
         aprint(f"   failed: {', '.join(failed)}")
         raise typer.Exit(1)
+
+
+# ──────────────────────────────── stop ───────────────────────────────────────
+def _run_age(started: float) -> str:
+    """Compact "how long has this been running" label for the stop listing."""
+    if not started:
+        return "unknown age"
+    seconds = max(0.0, time.time() - started)
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    if seconds < 90 * 60:
+        return f"{seconds / 60:.0f}m"
+    return f"{seconds / 3600:.1f}h"
+
+
+def _translate_sweep_keys(runs: list["demo_runs.DemoRun"]) -> list["demo_runs.DemoRun"]:
+    """Rewrite swept runs' module suffixes into real demo keys, in place.
+
+    Swept runs carry the demo MODULE suffix, which is not always the demo key
+    (demo_4d_fractals.py declares key "fractals_4d"). Translate through the
+    demo table so display and ``stop <key>`` filtering use real keys; a broken
+    table must not stop ``demo stop`` from working, so fall back to the suffix.
+    """
+    try:
+        stem_to_key = {
+            d.module.rsplit(".", 1)[-1]: d.key for d in registry.iter_demos()
+        }
+    except registry.DemoMetaError:
+        stem_to_key = {}
+    for r in runs:
+        if r.source == "sweep":
+            r.key = stem_to_key.get(f"demo_{r.key}", r.key)
+    return runs
+
+
+def _manual_stop_hint(run: "demo_runs.DemoRun") -> str:
+    """Command the user can run by hand for a demo we could not stop.
+
+    Off POSIX ``demo stop`` never signals anything (there is no way to check a
+    recorded pid still belongs to the demo before a hard terminate, see
+    ``demo_runs.stop_run``), so the hint has to be the local one — a
+    `kill -9 -<pgid>` there is advice that cannot even be typed.
+    """
+    if can_kill_process_groups():
+        return f"kill -9 -{run.pgid}"
+    return f"taskkill /F /T /PID {run.pgid}"
+
+
+def _stop_all(runs: list["demo_runs.DemoRun"]) -> list["demo_runs.DemoRun"]:
+    """Kill every run's process group; returns the runs that survived."""
+    survivors: list[demo_runs.DemoRun] = []
+    for r in runs:
+        if demo_runs.stop_run(r):
+            aprint(f"   ✅ stopped {r.key}")
+        else:
+            survivors.append(r)
+            aprint(f"   ❌ could not stop {r.key} (pgid {r.pgid})")
+    return survivors
+
+
+@app_demo.command("stop")
+def demo_stop(
+    key: Optional[str] = typer.Argument(
+        None, help="Stop only this demo key/index (default: every running demo)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="List running demos; stop nothing."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
+) -> None:
+    """Stop running demos and free their ports (and memory, and GPU).
+
+    Finds every live demo — via the registry ``demo run`` maintains, plus a
+    process-table sweep for strays with no registry entry — and tears each
+    one's process group down with the same SIGINT → SIGTERM → SIGKILL
+    escalation Ctrl-C uses. The go-to fix when a new demo warns "port busy"
+    because an earlier one is still running in a forgotten terminal.
+    """
+    only = _resolve_or_exit(key).key if key else None
+    runs = _translate_sweep_keys(demo_runs.discover_runs())
+    if only is not None:
+        runs = [r for r in runs if r.key == only]
+    if not runs:
+        target = f"demo '{only}'" if only else "demos"
+        aprint(f"✅ No running {target} found.")
+        raise typer.Exit(0)
+
+    noun = "demo" if len(runs) == 1 else "demos"
+    aprint(f"🛑 [Luxar] {len(runs)} running {noun}:")
+    for r in runs:
+        origin = "" if r.source == "registry" else "  (found by process sweep)"
+        aprint(f"   {r.key:<32} pgid {r.pgid:<7} {_run_age(r.started):>11}{origin}")
+    if dry_run:
+        aprint("\n(--dry-run: nothing stopped)")
+        raise typer.Exit(0)
+    # Several agents/people may run demos on this machine concurrently, and
+    # "stop everything" would take a colleague's live server down with yours —
+    # so the listing above always gets a confirmation, like `cache clear`.
+    if not yes and not typer.confirm("\nStop these?"):
+        aprint("Aborted.")
+        raise typer.Exit(0)
+
+    survivors = _stop_all(runs)
+    if survivors:
+        names = ", ".join(r.key for r in survivors)
+        hints = "; ".join(_manual_stop_hint(r) for r in survivors)
+        aprint(f"⚠️  {len(survivors)} still running: {names} — try `{hints}`.")
+        raise typer.Exit(1)
+    aprint("✅ All demos stopped; their ports are free again.")
 
 
 # ──────────────────────────────── deps ──────────────────────────────────────

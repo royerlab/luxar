@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -994,3 +995,142 @@ class TestDeps:
         # ...but it must not claim completeness either.
         assert "Still to install by hand" in result.stdout
         assert "gdown" in result.stdout
+
+
+def test_demo_runs_dir_matches_demo_cache_root() -> None:
+    """demo_runs deliberately duplicates DEMO_CACHE_ROOT (import-weight); pin it.
+
+    If the demo cache root ever moves, the running-demo registry must move
+    with it — this is the guard for that silent divergence.
+    """
+    from luxar.demos.registry import DEMO_CACHE_ROOT, NON_CACHE_DIRS
+    from luxar.utils.demo_runs import DEMO_RUNS_DIR
+
+    assert DEMO_RUNS_DIR.parent == DEMO_CACHE_ROOT
+    # …and it is not a cache: `cache clear --orphans` must never delete the
+    # record of demos that are still running.
+    assert DEMO_RUNS_DIR.name in NON_CACHE_DIRS
+
+
+def test_running_registry_is_not_inventoried_as_a_cache(tmp_path: Path) -> None:
+    """The pidfile registry is live state, so it is neither listed nor cleared."""
+    from luxar.demos import registry as demo_registry
+
+    (tmp_path / "running").mkdir()
+    (tmp_path / "running" / "4242.json").write_text('{"key": "lorenz", "pgid": 4242}')
+    (tmp_path / "some_cache").mkdir()
+    (tmp_path / "some_cache" / "blob.bin").write_bytes(b"x" * 8)
+
+    entries = demo_registry.inventory_caches(cache_root=tmp_path)
+    assert [e.path.name for e in entries] == ["some_cache"]
+
+
+class TestDemoStop:
+    """`demo stop` — discovery listing, filtering, confirmation, exit codes."""
+
+    @staticmethod
+    def _fake_runs():
+        from luxar.utils.demo_runs import DemoRun
+
+        return [
+            DemoRun(key="lorenz", pgid=111, pid=0, started=0.0, source="registry"),
+            # Sweep entries carry the MODULE suffix ("4d_fractals"), which the
+            # command must translate to the real key ("fractals_4d").
+            DemoRun(key="4d_fractals", pgid=222, pid=0, started=0.0, source="sweep"),
+        ]
+
+    def test_no_running_demos_exits_zero(self, runner, monkeypatch) -> None:
+        from luxar.cli import demo_commands
+
+        monkeypatch.setattr(demo_commands.demo_runs, "discover_runs", lambda **kw: [])
+        result = runner.invoke(app, ["demo", "stop"])
+        assert result.exit_code == 0
+        assert "No running demos" in result.stdout
+
+    def test_dry_run_lists_translated_keys_and_kills_nothing(
+        self, runner, monkeypatch
+    ) -> None:
+        from luxar.cli import demo_commands
+
+        killed: list[int] = []
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "discover_runs", lambda **kw: self._fake_runs()
+        )
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "stop_run", lambda r: killed.append(r.pgid) or True
+        )
+        result = runner.invoke(app, ["demo", "stop", "--dry-run"])
+        assert result.exit_code == 0
+        assert "lorenz" in result.stdout
+        assert "fractals_4d" in result.stdout  # module suffix translated to key
+        assert killed == []
+
+    def test_confirmation_abort_kills_nothing(self, runner, monkeypatch) -> None:
+        from luxar.cli import demo_commands
+
+        killed: list[int] = []
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "discover_runs", lambda **kw: self._fake_runs()
+        )
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "stop_run", lambda r: killed.append(r.pgid) or True
+        )
+        result = runner.invoke(app, ["demo", "stop"], input="n\n")
+        assert result.exit_code == 0
+        assert "Aborted" in result.stdout
+        assert killed == []
+
+    def test_yes_stops_all_and_key_filters(self, runner, monkeypatch) -> None:
+        from luxar.cli import demo_commands
+
+        killed: list[int] = []
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "discover_runs", lambda **kw: self._fake_runs()
+        )
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "stop_run", lambda r: killed.append(r.pgid) or True
+        )
+        result = runner.invoke(app, ["demo", "stop", "-y"])
+        assert result.exit_code == 0
+        assert killed == [111, 222]
+        assert "All demos stopped" in result.stdout
+
+        killed.clear()
+        # Filter by the TRANSLATED key of a swept run (and by index-free key).
+        result = runner.invoke(app, ["demo", "stop", "fractals_4d", "-y"])
+        assert result.exit_code == 0
+        assert killed == [222]
+
+    def test_survivors_exit_one_with_their_pgids(self, runner, monkeypatch) -> None:
+        from luxar.cli import demo_commands
+
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "discover_runs", lambda **kw: self._fake_runs()
+        )
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "stop_run", lambda r: r.pgid == 111
+        )
+        result = runner.invoke(app, ["demo", "stop", "-y"])
+        assert result.exit_code == 1
+        # The manual-cleanup hint names the SURVIVOR's pgid, not the first run's.
+        assert "kill -9 -222" in result.stdout
+        assert "kill -9 -111" not in result.stdout
+
+    def test_manual_hint_matches_the_platform(self, runner, monkeypatch) -> None:
+        """Without process groups, `kill -9 -<pgid>` is not a runnable command.
+
+        That is the whole listing off POSIX: `stop_run` refuses to signal a pid
+        it cannot verify, so every run surfaces here and the hint is the only
+        way out.
+        """
+        from luxar.cli import demo_commands
+
+        monkeypatch.setattr(demo_commands, "can_kill_process_groups", lambda: False)
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "discover_runs", lambda **kw: self._fake_runs()
+        )
+        monkeypatch.setattr(demo_commands.demo_runs, "stop_run", lambda r: False)
+        result = runner.invoke(app, ["demo", "stop", "-y"])
+        assert result.exit_code == 1
+        assert "taskkill /F /T /PID 111" in result.stdout
+        assert "kill -9" not in result.stdout
