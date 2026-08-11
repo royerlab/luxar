@@ -147,7 +147,7 @@ export class DebugConsole {
       <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--left" aria-hidden="true"></div>
       <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--corner" aria-hidden="true"></div>
       <div class="luxar-debug-console__scroll">
-        <div class="luxar-debug-console__header">
+        <div class="luxar-debug-console__header luxar-panel-header">
           <div id="luxar-debug-console-title" class="luxar-debug-console__title">Debug Console</div>
           <div class="luxar-debug-console__controls">
             <input type="text" class="luxar-debug-console__filter" placeholder="Filter..." aria-label="Filter messages" />
@@ -156,7 +156,7 @@ export class DebugConsole {
             <label class="luxar-debug-console__autoscroll">
               <input type="checkbox" checked /> Auto-scroll
             </label>
-            <button type="button" class="luxar-debug-console__close-btn" title="Close (Ctrl+L)" aria-label="Close debug console">×</button>
+            <button type="button" class="luxar-debug-console__close-btn luxar-panel-close" title="Close (Ctrl+L)" aria-label="Close debug console"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></button>
           </div>
         </div>
         <div class="luxar-debug-console__content" role="log" aria-live="polite" aria-atomic="false"></div>

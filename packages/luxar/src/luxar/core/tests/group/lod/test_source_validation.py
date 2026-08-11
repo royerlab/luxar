@@ -126,6 +126,85 @@ def _lines_kwargs(channel: str, value: Any) -> Dict[str, Any]:
     return kwargs
 
 
+#: The uniform colour forms the flat path accepts, all four of which the
+#: substitutive wrappers used to refuse downstream in the gsplat lift (#1444),
+#: each paired with the row EVERY level must end up carrying — alpha included,
+#: because gsplats carry per-splat alpha and all three shaders scale intensity
+#: by it (dropping it would make the coarse levels 1/alpha too bright the
+#: instant the ladder switches off the finest child).
+_BROADCAST_RGB = (0.25, 0.5, 1.0)
+_BROADCAST_ALPHA = 0.5
+_BROADCAST_COLORS = [
+    (_BROADCAST_RGB, _BROADCAST_RGB),  # RGB tuple
+    (np.array([_BROADCAST_RGB], dtype=np.float32), _BROADCAST_RGB),  # (1, 3) row
+    (  # RGBA tuple
+        (*_BROADCAST_RGB, _BROADCAST_ALPHA),
+        (*_BROADCAST_RGB, _BROADCAST_ALPHA),
+    ),
+    (  # (1, 4) row
+        np.array([(*_BROADCAST_RGB, _BROADCAST_ALPHA)], dtype=np.float32),
+        (*_BROADCAST_RGB, _BROADCAST_ALPHA),
+    ),
+    (  # opaque RGBA — above the clamp, see _assert_coarse_levels_carry_color
+        (*_BROADCAST_RGB, 1.0),
+        (*_BROADCAST_RGB, 1.0),
+    ),
+    (  # just BELOW the clamp: still bit-exact, which the tolerance split pins
+        (*_BROADCAST_RGB, 0.99),
+        (*_BROADCAST_RGB, 0.99),
+    ),
+]
+
+#: The merge round-trips a per-splat alpha through optical depth, which caps it
+#: at ``ALPHA_CLAMP = 511/512``: an authored alpha ABOVE that comes back clamped
+#: on every coarse level (measured: 1.0 → 0.998046875, 0.999 → 0.998046875),
+#: a step the finest child does not have. Anything at or below the clamp — RGB,
+#: alpha 0.5, alpha 0.99 — is bit-exact and is asserted as such, so this
+#: tolerance is reserved for the clamped case and cannot absorb a future drift
+#: elsewhere.
+_ALPHA_CLAMP = 511.0 / 512.0
+_ALPHA_CLAMP_ATOL = 2.5e-3
+_EXACT_ATOL = 1e-6
+
+#: Colours whose dtype the leaf write refuses (COLOR arrays are floating, uint8
+#: or uint16), in both the uniform-row and per-element shapes. Normalising
+#: either would bake a near-black coarse level that the encoder then rejects at
+#: the finest child — after the coarse levels are on disk. Nothing may be
+#: written for them.
+_BAD_DTYPE_COLORS = [
+    ("uniform row", np.array([[255, 0, 0]], dtype=np.int64)),
+    ("per-element", np.tile([255, 0, 0], (_SUB_N, 1)).astype(np.int64)),
+]
+
+
+def _assert_coarse_levels_carry_color(
+    reader: LuxarScene, node: str, coarse: "list[str]", want: Any
+) -> None:
+    """Every coarse gsplat level of a substitutive group carries the authored colour.
+
+    A uniform colour is exactly the case a coarse level can honour trivially
+    (every merged representative is that same colour), so this is an equality
+    check, not a "some colour was written" one — and it covers the alpha column,
+    whose loss would be a brightness jump at the LOD seam rather than a refusal.
+    Equality is EXACT unless the authored alpha exceeds the merge's
+    optical-depth :data:`_ALPHA_CLAMP`, the only value the round-trip changes.
+    """
+    alpha = want[3] if len(want) == 4 else None
+    atol = (
+        _ALPHA_CLAMP_ATOL if alpha is not None and alpha > _ALPHA_CLAMP else _EXACT_ATOL
+    )
+    assert coarse, "no coarse gsplat levels were written"
+    for child in coarse:
+        data = reader.get_gsplats(f"{node}/{child}")
+        assert data.colors is not None, f"{child} lost its colours"
+        n = int(np.asarray(data.centers).shape[0])
+        assert np.asarray(data.colors).shape[1] == len(want), (
+            f"{child} carries {np.asarray(data.colors).shape[1]} channels, "
+            f"expected {len(want)} (a dropped alpha renders 1/alpha too bright)"
+        )
+        assert_uniform(data.colors, want, n, atol=atol)
+
+
 def _n_levels(path: str, node: str) -> int:
     store = zarr.open_group(path, mode="r")
     n_levels = int(store[node].attrs["n_additive_sublods"])
@@ -492,15 +571,19 @@ class TestLegalBroadcastFormsStillReachEveryLevel:
             assert_uniform(data.widths, 0.25, n_level)
         assert total == _N
 
-    def test_points_substitutive_broadcast_channels(self, tmp_path: Any) -> None:
-        # No uniform ``colors`` here: a broadcast RGB(A) under
-        # ``substitutive_lod=`` is refused by the LIFT itself (it needs (N, 3)
-        # per-element RGB to bake the coarse gsplat levels) — a separate,
-        # pre-existing limitation that this gate neither creates nor changes.
+    @pytest.mark.parametrize("colors,want", _BROADCAST_COLORS)
+    def test_points_substitutive_broadcast_channels(
+        self, tmp_path: Any, colors: Any, want: Any
+    ) -> None:
+        # Uniform ``colors`` INCLUDED: every broadcast form the flat path accepts
+        # now reaches disk under ``substitutive_lod=`` too — the lift broadcasts
+        # it to the coarse gsplat levels instead of refusing it (#1444), alpha
+        # and all, so every level renders at the authored opacity.
         compiler, scene, path = open_scene(tmp_path, "points_sub_broadcast.luxar.zarr")
         scene.add_points(
             "p",
             random_positions(_SUB_N, seed=54),
+            colors=colors,  # uniform RGB(A)
             radii=0.5,  # scalar
             sharpness=0.8,  # scalar
             substitutive_lod=True,
@@ -512,20 +595,27 @@ class TestLegalBroadcastFormsStillReachEveryLevel:
         children = sorted(store["p"].group_keys())
         assert len(children) > 1
         # The finest child is the original Points node, written LAST.
+        reader = LuxarScene.load(path)
         finest = children[-1]
-        data = LuxarScene.load(path).get_points(f"p/{finest}")
+        data = reader.get_points(f"p/{finest}")
         assert data.positions.shape[0] == _SUB_N
         assert_uniform(data.radii, 0.5, _SUB_N)
+        assert_uniform(data.colors, want, _SUB_N)
+        _assert_coarse_levels_carry_color(reader, "p", children[:-1], want)
 
-    def test_lines_substitutive_broadcast_channels(self, tmp_path: Any) -> None:
-        # Colours omitted for the same reason as the points twin above: the
-        # gsplat lift refuses a broadcast colour, independently of this gate
-        # (#1444).
+    @pytest.mark.parametrize("colors,want", _BROADCAST_COLORS)
+    def test_lines_substitutive_broadcast_channels(
+        self, tmp_path: Any, colors: Any, want: Any
+    ) -> None:
+        # Colours included for the same reason as the points twin above: the
+        # lift broadcasts a uniform colour onto the beads instead of gathering
+        # its components as vertex rows (which raised a bare IndexError) (#1444).
         compiler, scene, path = open_scene(tmp_path, "lines_sub_broadcast.luxar.zarr")
         scene.add_lines(
             "line",
             random_positions(_SUB_N, seed=55),
             widths=0.3,  # scalar
+            colors=colors,  # uniform RGB(A)
             sharpness=0.7,  # scalar
             line_type="segments",
             substitutive_lod=True,
@@ -536,10 +626,91 @@ class TestLegalBroadcastFormsStillReachEveryLevel:
         assert store["line"].attrs["kind"] == "lod"
         children = sorted(store["line"].group_keys())
         assert len(children) > 1
+        reader = LuxarScene.load(path)
         finest = children[-1]
-        data = LuxarScene.load(path).get_lines(f"line/{finest}")
+        data = reader.get_lines(f"line/{finest}")
         assert data.vertices.shape[0] == _SUB_N
         assert_uniform(data.widths, 0.3, _SUB_N)
+        assert_uniform(data.colors, want, _SUB_N)
+        _assert_coarse_levels_carry_color(reader, "line", children[:-1], want)
+
+    def test_substitutive_one_bead_line_refuses_per_element_rgba(
+        self, tmp_path: Any
+    ) -> None:
+        # A segment far shorter than its width lifts to exactly ONE bead, so the
+        # per-bead colour array is (1, 4). Re-classifying it as the uniform form
+        # would admit a per-element RGBA and bake the MEAN of two different
+        # alphas — a value neither vertex has — into the coarse level. The
+        # vertex-level verdict is final, so this is refused, and nothing lands.
+        compiler, scene, path = open_scene(tmp_path, "one_bead_rgba.luxar.zarr")
+        verts = np.array([[0, 0, 0], [0.001, 0, 0]], dtype=np.float32)
+        varying = np.array([[0.2, 0.4, 0.6, 0.3], [0.2, 0.4, 0.6, 0.9]], np.float32)
+        exc = refusal(
+            lambda: scene.add_lines(
+                "l",
+                verts,
+                widths=10.0,
+                colors=varying,
+                line_type="segments",
+                substitutive_lod=True,
+            )
+        )
+        assert "per-element" in str(exc)
+        assert "l" not in set(zarr.open_group(path, mode="r").group_keys())
+
+        # ... and the uniform twin on the very same geometry still writes, alpha
+        # intact on the coarse gsplat child.
+        scene.add_lines(
+            "ok",
+            verts,
+            widths=10.0,
+            colors=(*_BROADCAST_RGB, _BROADCAST_ALPHA),
+            line_type="segments",
+            substitutive_lod=True,
+        )
+        compiler.finalize()
+        store = zarr.open_group(path, mode="r")
+        assert store["ok"].attrs["kind"] == "lod"
+        children = sorted(store["ok"].group_keys())
+        _assert_coarse_levels_carry_color(
+            LuxarScene.load(path),
+            "ok",
+            children[:-1],
+            (*_BROADCAST_RGB, _BROADCAST_ALPHA),
+        )
+
+    @pytest.mark.parametrize("shape,colors", _BAD_DTYPE_COLORS)
+    @pytest.mark.parametrize("geometry", ["points", "lines"])
+    def test_substitutive_bad_dtype_colors_write_nothing(
+        self, tmp_path: Any, geometry: str, shape: str, colors: Any
+    ) -> None:
+        # A colour of a dtype the leaf refuses must be refused BEFORE the lift
+        # builds anything — uniform row and per-element array alike: the coarse
+        # gsplat children are written first and the finest child LAST, so
+        # discovering the dtype at the encoder would strand a partial kind=lod
+        # node — the #1437 stranding class.
+        compiler, scene, path = open_scene(
+            tmp_path, f"{geometry}_sub_dtype_{shape.replace(' ', '_')}.luxar.zarr"
+        )
+        add = scene.add_points if geometry == "points" else scene.add_lines
+        kwargs: Dict[str, Any] = (
+            {"radii": 0.5} if geometry == "points" else {"widths": 0.3}
+        )
+        exc = refusal(
+            lambda: add(
+                "n",
+                random_positions(_SUB_N, seed=56),
+                colors=colors,
+                substitutive_lod=True,
+                **kwargs,
+            )
+        )
+        assert "dtype" in str(exc)
+        store = zarr.open_group(path, mode="r")
+        assert "n" not in set(store.group_keys()), (
+            f"a partial node was stranded on disk: {sorted(store.group_keys())}"
+        )
+        compiler.finalize()
 
 
 # ---------------------------------------------------------------------------

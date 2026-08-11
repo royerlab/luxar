@@ -189,7 +189,8 @@ Maintainers review for:
 - ✅ Examples added for new functionality
 - ✅ docs/guides/user/LUXAR_ZARR_FORMAT.md updated (if data format changes)
 - ✅ CLAUDE.md updated (if significant learnings)
-- ✅ CHANGELOG.md updated (if applicable)
+- ✅ `changelog.d/<PR-number>.md` fragment added (if applicable) — do NOT edit
+  `CHANGELOG.md` directly; see `changelog.d/README.md`
 
 ### PR Description Template
 ```markdown

@@ -6,77 +6,31 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
-#### `labels=` on a multi-child gsplats wrapper is refused, not stranded (#1471)
+#### Viewer stylesheets: a phantom radius token, magic z-indexes, duplicated rgba
 
-`add_gsplats_from_data("g", two_level_pyramid, lod_group=True, labels=[…8…])`
-raised `Could not add gsplats 'child_0': labels: Labels length (8) must match
-element count (2)` and left `g` in the store as a childless `kind=lod` group that
-survived `finalize()` — the same shape as #1422 / #1437 / #1446, a wrapper missing
-one door of its pre-split gate. Neither `labels` nor `image_labels` is a named
-kwarg of `add_gsplats_from_data`: both travel in `**attrs` and rode into every
-child through `child_attrs`, unsliced.
-
-This one is not a hoist. Every substitutive level is its own set of merged
-representative splats with its own count, so no single list has a per-element
-correspondence to carry — slicing would pair entries with the wrong splats, and
-passing it whole only ever fits whichever level happened to match. Both are now
-REFUSED up front, naming the caller's node, with nothing written. Label a
-single-level node instead (`lod_group=False` collapses to the finest level), or
-build the `kind=lod` group yourself with `add_lod_group()` and give each
-`add_gsplats()` child its own labels. An `additive_lod=` ladder is not an
-alternative for gsplats: `write_gsplat_leaf_subtree` has no labels channel at all
-(the ladder-union CSR labels of #1422 are Points/Lines only).
-
-The refusal is LAST in the `_reject_before_wrapper` gate, and deliberately so:
-unlike every other check there it has no flat-path counterpart — the flat path
-ACCEPTS `labels` and validates it last of all, in the writer sweep — so ranking it
-higher would let it outrank a fault the flat path reports first, silently changing
-what #1446's parity assertions mean. A call passing both hears about `labels`
-(the leaf adder's signature order).
-
-Two more doors into the same strand, closed with the same template. An explicit
-`labels=None` — the idiomatic `labels=maybe_labels` — was read correctly as "no
-labels" by the gate, but the KEY stayed in `**attrs` and rode into `child_attrs`,
-where `validate_render_attrs` rejects an unknown key by NAME without looking at
-its value: any child taking the additive-ladder writer then raised `Unknown node
-attribute 'labels'` with the wrapper already on disk, which stock `gsplat lod
---recipe levels` output triggers on its own (its per-level stream ladders are on
-by default). Both keys are now dropped when None. And `graft_gsplat_node` — the
-door for every non-matrix-shaped file (`--recipe tiles|overview|adaptive`,
-`gsplat partition`, a `batch-fit merge` `kind=partition`) — builds its wrappers by
-calling `add_lod_group` / `add_partition_group` directly and so never met the gate
-at all. It had the worse of the two failure modes: a list whose length happened to
-equal a part's own count raised nothing and was written onto EVERY part. It now
-refuses up front unless the grafted subtree is exactly ONE LEAF WITH ONE
-ADDITIVE SUB-LOD — the only shape that can actually carry labels. Leaf count, not
-node type: a one-part `kind=partition` of a flat leaf still has an exact
-per-element correspondence and keeps labelling normally. A one-part partition of
-a LADDERED leaf is refused as well, but for its own reason and in its own words:
-`write_gsplat_leaf_subtree` has no labels channel at all, so exempting it would
-merely move the refusal down into `part_0` with the wrapper already on disk —
-and since `--recipe tiles` carries a stream ladder by default, that is an
-ordinary call. (Its answer therefore changes: from `Unknown node attribute
-'labels'` blaming `part_0`, to a prefixed refusal naming the caller's node with
-nothing written. The `additive_lod=` door is untouched — it writes once, so it
-strands nothing, and still answers as before.) Multi-leaf cannot be sliced here at all, because a stored
-`GSplatPartition` carries no per-part index arrays (unlike `add_gsplats(partition=…)`,
-which slices the BSP `parts` it just computed); the only definable mapping would
-be implicit leaf-concatenation order, which is the storage-order coupling this
-gate exists to remove. `gsplat flatten` is the named remedy for exactly that
-reason — it emits that order, so the list a caller would have had to guess is the
-list that works on the flattened file.
-
-Points and Lines were already correct for `labels`: their substitutive wrappers
-check it against the SOURCE element count and hand it only to the finest child,
-which carries the full element set. NOT so for `image_labels` — their pre-split
-gates take no such parameter, so the same class of strand is live there
-(measured: a 4-level Points wrapper with a half-length `image_labels` refuses from
-inside `child_3` with all four children on disk). Tracked separately in #1491.
-
-Scope: this closes the strand for `labels` and `image_labels` only. The same
-shape for `colors=` (a raw `TypeError` and a childless wrapper, on both doors),
-`partition=None` and `truncation_radius=None` is tracked in #1496 and deliberately
-left alone here.
+Three kinds of drift in the viewer CSS, all mechanical and all chosen to be
+pixel-identical (or imperceptibly close) in the dark theme. The colormap
+legend asked for `--luxar-radius-xs`, which no theme emits — the radius scale
+is none/sm/md/lg/full — so the `2px` fallback literal had been quietly in
+charge; it is now an intentional, documented literal (half of `radius-sm`, so
+a 12px-tall gradient bar does not read as a pill). Layer z-indexes are stated
+against the token scale instead of magic numbers: the debug console's `150`
+becomes `calc(z-base + 50)` (same value, now with its intent written down —
+above the in-canvas widgets, below every panel), the toast moves to
+`calc(z-tooltip + 1000)`, and the dimension-slider context menu drops from
+`10000` to the popover tier it actually belongs to. The recording panel keeps
+its absolute magnitudes: its documented job is to beat unknown third-party
+host UI, so those values are load-bearing — and the toast comment now says so
+rather than claiming to sit above everything. Finally, raw `rgba()` that was
+just re-spelling a token becomes `color-mix()` on the token itself: the debug
+console's warn/error row tints (byte-identical in dark), the monitor
+scene-graph's active-level highlight and kind badge (a selection state, so it
+follows the theme's highlight accent — purple under the glass themes), and the
+loading indicator's hardcoded black chrome and white spinner, which stop
+rendering as a black box in the light theme. That indicator takes the overlay
+scrim token rather than the panel one — it is the one box in the file with no
+`.luxar-glass-surface` to tint it, and the panel background is a translucent
+white under both glass themes.
 
 #### Domain-scoped CI: a language suite runs only when that language changed
 
@@ -257,6 +211,55 @@ each level is queried once per view, not once per pass. Per *view* an empty
 slice now issues `nLods` sub-loader queries instead of 1; they resolve to zero
 ranges and fetch no chunks, so there is no network cost, and the resulting
 all-empty ladder is cached like any other.
+
+#### `substitutive_lod=` accepts a uniform colour, like every other path (#1444)
+
+A bare RGB(A) tuple, or a `(1, c)` row, is a legal and documented broadcast
+colour on the flat path and under `partition=` / `additive_lod=`, but under
+`substitutive_lod=` it was refused: the coarse levels go through the gsplat
+lift, which had no broadcast-colour handling. Points raised a shape complaint
+("colors must be (N, 3) RGB" for a tuple, "Colors count 1 doesn't match centers
+count N" for a `(1, 3)` row); Lines raised a bare `IndexError` from the
+per-vertex colour gather — a raw numpy traceback mentioning neither colours
+nor `substitutive_lod`, and not even caught by `add_lines_impl`'s
+`(ValueError, TypeError)` wrapper. `lift_points_to_gsplats` /
+`lift_lines_to_gsplats` now expand a uniform colour to the element count before
+anything indexes it (before the zero-radius drop for Points, before the
+`pairs` gather for Lines), so every coarse level carries the authored colour —
+the one case a coarse level can honour exactly, every merged representative
+being that same colour. The **alpha column rides along**: gsplats carry
+per-splat alpha end to end (`GSplatData.colors` is `(N, 3)` or `(N, 4)`, the
+writer validates `channels=(3, 4)`, the merge propagates the 4th column, and all
+three shaders scale intensity by it), so dropping it would make the node jump
+`1/alpha` brighter the instant the ladder switches off the finest level —
+exactly the LOD seam that mass-preserving amplitudes, the anisotropy cap and the
+render-light rescale exist to keep flat. A **per-element** `(N, 4)` RGBA stays
+refused by the lift (shape alone cannot tell a constant alpha from a varying
+one, and the substitutive merge is untested on the latter); the 4-column
+allowance applies only to a colour resolved as uniform, and it is resolved
+exactly once — Lines judges its vertices and the inner point lift takes that
+verdict as final, so a line set that collapses to a single bead cannot
+re-present a per-element RGBA as a uniform `(1, 4)` row. (The one inexactness
+is an alpha above `ALPHA_CLAMP = 511/512`, which the merge's optical-depth
+round-trip caps: an authored 1.0 or 0.999 reaches the coarse levels as 0.998,
+a ≤0.2% step, pinned by a test; at or below the clamp it is exact.) Value
+semantics mirror the leaf writer's: a list/tuple's components are taken at face
+value (an integer tuple is never divided by 255, `write_colors`-style), while
+an array keeps the dtype rule — and colour arrays are now held to the dtypes
+the leaf accepts (floating, uint8, uint16) before the lift builds anything.
+Normalising an `int64` array by `iinfo(int64).max` baked a near-black coarse
+level that the encoder rejected only at the finest child, stranding a
+`kind=lod` node with complete coarse children and a half-written finest one — the #1437
+stranding class, and it applied to a per-element array as much as to a uniform
+row. The pre-split gate added in #1437 always accepted the broadcast forms —
+it mirrors the flat verdict — so the two paths now agree end to end on every
+uniform colour. One neighbour in the same lift was hardened while there: the
+Lines `scalars=` + `colormap=` path took its LUT range from all vertex scalars,
+so one non-finite vertex either collapsed the whole tube to the map's first
+colour (`+inf`) or produced a garbage LUT index (`NaN` / `-inf`); the range is
+now taken over the finite vertices only, as `scalars_to_colors` already does for
+its own defaults. Only reachable by calling the lift directly — through the
+scene API the #1437 pre-split gate refuses non-finite scalars first.
 
 #### Demos serve on per-dataset derived ports, not 8000/5173
 
