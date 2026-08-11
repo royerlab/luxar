@@ -125,8 +125,14 @@ STAGE_MATURITY = (0.16, 0.30, 0.46, 0.64, 0.82, 1.0)
 N_STAGES = len(GROWTH_STAGES)
 
 #: Sigma written on the two stacked (season/growth) axes of the 5D foliage
-#: Cholesky factors: effectively zero extent, so a splat belongs to exactly
-#: one slot, while keeping the matrix positive-definite.
+#: Cholesky factors. It is NOT what confines a splat to one slot: both stacked
+#: dims are CATEGORICAL, hence discrete, so the viewer gates them on a half-step
+#: membership test against the splat CENTRE and never looks at the covariance
+#: there. The value's only job is to keep the packed lower-triangular factor
+#: non-singular. Don't copy this onto a CONTINUOUS stacked axis, where the
+#: attenuation IS Gaussian: centres are stored as per-column uint16, so a
+#: coordinate lands up to ~1.5e-5 off its authored value, which against a 1e-6
+#: sigma is ~15 sigma — the whole node would slice away to nothing.
 STACKED_AXIS_SIGMA = 1e-6
 
 #: Bump when the generation logic changes in a way that must invalidate
@@ -1225,7 +1231,8 @@ def _pack_spatial_cholesky_5d(spatial_l: np.ndarray) -> np.ndarray:
     packed lower-triangular layout of the 5D scene (season, growth, x, y, z).
 
     Packed order is row-major over ``np.tril_indices(5)``; the two stacked
-    axes get a near-zero diagonal so each splat lives in exactly one slot.
+    axes get the near-zero diagonal of :data:`STACKED_AXIS_SIGMA` (slot
+    membership comes from the discrete gate, not from this — see there).
     """
     k = len(spatial_l)
     packed = np.zeros((k, 15), dtype=np.float32)
