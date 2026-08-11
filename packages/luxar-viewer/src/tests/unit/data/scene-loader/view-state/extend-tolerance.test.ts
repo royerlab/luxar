@@ -9,6 +9,7 @@ import {
   getOrComputeExtendedTolerance,
   hasOwnProperties,
   isSceneDimensions,
+  normalizeExtendDims,
   validateExtendDims,
 } from '../../../../../data/scene-loader/view-state/extend-tolerance';
 
@@ -27,6 +28,37 @@ describe('hasOwnProperties', () => {
     const parent = { inherited: 1 };
     const child = Object.create(parent);
     expect(hasOwnProperties(child)).toBe(false);
+  });
+});
+
+describe('normalizeExtendDims', () => {
+  it('returns [] for undefined / null (attr absent)', () => {
+    expect(normalizeExtendDims(undefined)).toEqual([]);
+    expect(normalizeExtendDims(null)).toEqual([]);
+  });
+
+  it('passes an empty list through', () => {
+    expect(normalizeExtendDims([])).toEqual([]);
+  });
+
+  it('passes a list of names through', () => {
+    expect(normalizeExtendDims(['T'])).toEqual(['T']);
+    expect(normalizeExtendDims(['T', 'C'])).toEqual(['T', 'C']);
+  });
+
+  it("degrades the unresolved 'all' sentinel to not-extended instead of throwing", () => {
+    // A producer bug (the additive-LOD ladder used to stamp the raw sentinel)
+    // must not be read as the 3-element string[] ['a','l','l'].
+    expect(normalizeExtendDims('all')).toEqual([]);
+  });
+
+  it('drops non-string entries of an array', () => {
+    expect(normalizeExtendDims(['T', 5])).toEqual(['T']);
+  });
+
+  it('returns [] for other non-array values', () => {
+    expect(normalizeExtendDims(42)).toEqual([]);
+    expect(normalizeExtendDims({ Time: true })).toEqual([]);
   });
 });
 
