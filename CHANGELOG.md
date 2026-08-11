@@ -6,6 +6,40 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Domain-scoped CI: a language suite runs only when that language changed
+
+Every pull request used to run every suite. A one-line TypeScript change paid
+for the full Python matrix; a Go launcher tweak paid for a WASM build and a
+viewer bundle. The `changes` job now classifies the diff into four language
+domains (`dom_py`, `dom_ts`, `dom_rust`, `dom_go`) and each job runs its
+expensive steps only for the domain(s) it covers. The mapping is a hierarchy,
+not a partition: `typescript-tests` and `release-readiness` select on
+TypeScript **or** Rust (they build WASM and run `cargo test`), and
+`wheel-viewer` selects on Python, TypeScript **or** Rust (it bundles the built
+viewer into the wheel).
+
+Classification names every INPUT of a gated check, not just the obvious source
+extensions — a check whose own inputs are unclassified is a check that skips
+for exactly the change it exists to catch. So `dom_py`, which hosts the
+cross-language gates, also owns `format-contract/contract.yaml` and its
+generated TypeScript half, the viewer `package.json` (the other end of the
+version-consistency check), and the `demos/data` tree with its manifest. And
+`.github/workflows/ci.yml` selects all four domains: it defines how every suite
+is invoked, so an edit that breaks a command or a condition is caught by the
+run that contains it rather than by the next unrelated PR in that language.
+
+Nothing wedges under strict branch protection: a job whose domain is untouched
+still runs (checkout plus skipped steps) and reports its required context green
+in seconds, exactly as the previous docs-only fast path did — which this
+subsumes, since a Markdown change touches no domain. The conditions are written
+`dom_x != 'false'` rather than `== 'true'` so the gate keeps failing safe: if
+the classifier itself dies, its outputs read empty and every suite runs.
+
+What this gives up is latency, not coverage: a break that only shows across a
+domain boundary — a Python encoder change the viewer's generated fixtures can
+no longer decode — is caught by the merge's push run, which has no PR base and
+runs everything, rather than by the pull request itself.
+
 #### Per-PR CI gates on Python 3.12; the full matrix runs nightly and on main
 
 `python-tests` was a three-leg matrix (3.10/3.11/3.12) on every pull request,
