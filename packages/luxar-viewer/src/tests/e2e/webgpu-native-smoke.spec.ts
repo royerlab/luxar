@@ -40,9 +40,8 @@ const SKIP_REASON =
   'Run manually with a WebGPU-enabled Chrome stable for full coverage.';
 
 const SURFACE_SKIP_REASON =
-  'no WebGPURenderer surface on this page: `?renderer=webgpu` dropped all the ' +
-  'way to THREE.WebGLRenderer, so caps.apiSurface is "webgl2" and the WebGPU ' +
-  'readback arm this test exercises does not exist here.';
+  'no WebGPURenderer surface on this page: caps.apiSurface is not "webgpu", ' +
+  'so the WebGPU readback arm this test exercises does not exist here.';
 
 test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', () => {
   test.beforeEach(async ({ page }) => {
@@ -131,11 +130,15 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
   // The gate is therefore `apiSurface`, NOT the native-backend probe: that
   // arm is selected by `caps.apiSurface !== 'webgl2'` in
   // `readPixelsCompactAsync`, so the claim above holds exactly while the
-  // WebGPURenderer surface is present. A page that drops all the way to a
-  // plain `THREE.WebGLRenderer` (no adapter, or below-spec adapter limits —
-  // see `renderer-setup.ts`'s `{ fallback: true }`) reports `'webgl2'` and
-  // takes the WebGL arm, which would pass this test while proving the
-  // opposite of what it says.
+  // WebGPURenderer surface is present. A page on a plain
+  // `THREE.WebGLRenderer` reports `'webgl2'` and takes the WebGL arm, which
+  // would pass this test while proving the opposite of what it says. Today
+  // `?renderer=webgpu` cannot land there — it is an explicit override, so
+  // `renderer-setup.ts` skips its `{ fallback: true }` branch, and an
+  // adapter-less browser still gets a WebGPURenderer over three's internal
+  // WebGL2 backend (surface `'webgpu'`). The skip is the guard for that
+  // policy changing; the `toBeDefined()` above is what catches drift in the
+  // debug path itself.
   test('captureHDRPixels round-trips through the WebGPU readback surface (either backend)', async ({
     page,
   }) => {

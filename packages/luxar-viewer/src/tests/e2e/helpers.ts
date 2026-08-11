@@ -1498,6 +1498,12 @@ export interface WebGPUBackendProbe {
  * third backend, a wrapped `backend` — silently restoring the very
  * fail-open behaviour #1449 fixed. The positive form fails closed
  * (skip), mirroring `isWebGLRenderer` in `rendering/renderer-capabilities.ts`.
+ *
+ * Call this only AFTER `waitForLuxarReady`. `WebGPURenderer` constructs a
+ * `WebGPUBackend` eagerly and *replaces* `this.backend` with a
+ * `WebGLBackend` from inside `init()` when no adapter can be acquired, so a
+ * probe that races the viewer's `await renderer.init()` reads the optimistic
+ * pre-fallback value and reports a native backend that isn't there.
  */
 export async function probeWebGPUBackend(page: Page): Promise<WebGPUBackendProbe> {
   return await page.evaluate(() => {
