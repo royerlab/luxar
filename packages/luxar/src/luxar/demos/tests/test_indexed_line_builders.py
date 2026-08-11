@@ -185,15 +185,214 @@ def test_lsystem_turtle_reuses_branch_hub() -> None:
         rules={},
         randomness=0.0,
     )
-    vertices, widths, colors, sharpness, edges, _leaves = forest.create_tree(
+    vertices, edges, edge_depths, vertex_depths = forest.derive_tree(
         lsystem,
         iterations=0,
-        add_leaves=False,
+        seed=7,
     )
-    _assert_indexed_geometry(vertices, edges, widths, colors, sharpness)
+    _assert_indexed_geometry(vertices, edges, vertex_depths)
+    assert len(edge_depths) == len(edges)
 
     degree = np.bincount(edges.reshape(-1), minlength=len(vertices))
     assert int(degree.max()) == 3, "the pushed/popped branch point was duplicated"
+
+
+def test_lsystem_stochastic_expansion_is_seeded_and_normalized() -> None:
+    """Stochastic productions sample deterministically from the seeded rng."""
+    lsystem = forest.LSystem(
+        axiom="X",
+        rules={"X": [(0.5, "F[+X]"), (0.5, "F[-X]")]},
+        randomness=0.0,
+    )
+    a = lsystem.expand(6, np.random.default_rng(11))
+    b = lsystem.expand(6, np.random.default_rng(11))
+    c = lsystem.expand(6, np.random.default_rng(12))
+    assert a == b, "same seed must reproduce the same derivation"
+    assert a != c, "different seeds should (overwhelmingly) diverge"
+    assert set(a) <= set("F[]+-X")
+
+
+def test_lsystem_tropism_bends_branches_not_the_trunk() -> None:
+    """Tropism applies only at branching depth >= 1: trunks stay straight.
+
+    The trunk is TILTED (leading ``+``) on purpose: a vertical trunk is
+    antiparallel to the gravity tropism, where the bend is a no-op anyway
+    (``H x T = 0``), so a vertical-trunk assertion would stay green even
+    with the depth gate deleted.
+    """
+    axiom = "+FFFF[+FFFF]"
+    straight = forest.LSystem(axiom=axiom, rules={}, randomness=0.0)
+    drooped = forest.LSystem(
+        axiom=axiom,
+        rules={},
+        randomness=0.0,
+        tropism=(0.0, 0.0, -1.0),
+        tropism_strength=0.4,
+    )
+    v_straight, e_straight, _, _ = forest.derive_tree(straight, iterations=0, seed=1)
+    v_drooped, e_drooped, d_drooped, _ = forest.derive_tree(
+        drooped, iterations=0, seed=1
+    )
+    assert np.array_equal(e_straight, e_drooped)
+    # Trunk vertices (introduced at depth 0) are identical...
+    trunk = v_straight[:5]
+    np.testing.assert_allclose(v_drooped[:5], trunk, atol=1e-6)
+    # ...while the branch tip ends up strictly lower under gravity droop.
+    tip_straight = v_straight[e_straight[d_drooped >= 1][-1, 1]]
+    tip_drooped = v_drooped[e_drooped[d_drooped >= 1][-1, 1]]
+    assert tip_drooped[2] < tip_straight[2]
+
+
+def test_lsystem_frame_survives_long_derivations() -> None:
+    """Regression: frame vectors must stay unit through long command paths.
+
+    Rodrigues rotation about a frame vector assumes a UNIT axis; without
+    per-step renormalization the ~1e-16 float error per rotation compounds
+    geometrically and the frame collapses to zero within ~250 rotations
+    (measured), shrinking every drawn segment along the way.
+    """
+    lsystem = forest.LSystem(
+        axiom="F" + "+F-F^F&F/F\\F" * 200,  # 1,200 rotations along ONE path
+        rules={},
+        randomness=0.3,
+    )
+    vertices, edges, _, _ = forest.derive_tree(lsystem, iterations=0, seed=5)
+    segments = (
+        vertices[edges[:, 1].astype(np.int64)] - vertices[edges[:, 0].astype(np.int64)]
+    )
+    lengths = np.linalg.norm(segments, axis=1)
+    assert float(lengths.min()) > 0.999, "heading norm decayed along the walk"
+    assert float(lengths.max()) < 1.001
+
+
+def test_forest_foliage_cholesky_packs_the_5d_tril_layout() -> None:
+    """The hand-packed 15-wide factors reproduce the intended covariance."""
+    dirs = np.array([[0.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
+    sigma_along = np.array([0.5, 0.4])
+    sigma_perp = np.array([0.3, 0.2])
+    packed = forest._pack_spatial_cholesky_5d(
+        forest._foliage_cholesky(dirs, sigma_along, sigma_perp)
+    )
+    assert packed.shape == (2, 15)
+    for k in range(2):
+        lower = np.zeros((5, 5))
+        lower[np.tril_indices(5)] = packed[k]
+        cov = lower @ lower.T
+        # Stacked (season, growth) axes: near-zero isotropic, no cross terms.
+        np.testing.assert_allclose(
+            np.diag(cov)[:2], forest.STACKED_AXIS_SIGMA**2, rtol=1e-5
+        )
+        assert np.all(cov[:2, 2:] == 0.0)
+        # Spatial block: principal sigmas are exactly (along, perp, perp).
+        eigenvalues = np.linalg.eigvalsh(cov[2:, 2:])
+        np.testing.assert_allclose(
+            np.sqrt(eigenvalues.max()), sigma_along[k], atol=1e-6
+        )
+        np.testing.assert_allclose(np.sqrt(eigenvalues.min()), sigma_perp[k], atol=1e-6)
+
+
+def test_forest_stagger_delays_development_but_converges() -> None:
+    """A staggered tree lags through the middle slots yet ends ancient.
+
+    A plain ``growth - offset`` clamp leaves offset trees permanently short
+    of the final stage — most of the forest would never be ancient in the
+    authored ancient poster slice.
+    """
+    last = forest.N_STAGES - 1
+    for offset in (0, 1, 2):
+        stages = [forest._effective_stage(g, offset) for g in range(forest.N_STAGES)]
+        assert stages[0] == 0, (offset, stages)
+        assert stages[-1] == last, f"offset {offset} never reaches ancient: {stages}"
+        assert all(b >= a for a, b in zip(stages, stages[1:])), (offset, stages)
+        if offset:
+            assert sum(stages) < sum(range(forest.N_STAGES)), (
+                f"offset {offset} does not actually delay development"
+            )
+
+
+def test_forest_palm_grows_foliage() -> None:
+    """Palm fronds live at branch depth 1; the foliage gate must accept them.
+
+    A ``max_depth >= 2`` gate silently leaves palms bare in every season —
+    the composite layer test only proves SOME species produced gsplats.
+    """
+    palm_index = next(i for i, s in enumerate(forest.SPECIES) if s.key == "palm")
+    palm = forest.SPECIES[palm_index]
+    plan = forest.TreePlan(
+        index=0,
+        species_index=palm_index,
+        x=0.0,
+        y=0.0,
+        z=0.0,
+        seed=5,
+        scale=1.0,
+        rotation=0.0,
+        stage_offset=0,
+        tint_shift=np.zeros(3, dtype=np.float32),
+        brightness=1.0,
+        lsystem=palm.lsystem,
+    )
+    lines_out = forest.SpeciesArrays()
+    foliage_out = forest.FoliageArrays()
+    forest._build_tree(
+        plan, lines_out, foliage_out, final_iterations=4 + palm.iter_bonus
+    )
+    assert foliage_out.n_splats > 0, "palm grew no foliage splats"
+    assert all("Palm" in label for _, label in foliage_out.label_runs)
+
+
+def _first_branch_direction(lsystem: forest.LSystem, iterations: int) -> np.ndarray:
+    """Unit direction of the first depth-1 segment of a derivation."""
+    v, e, ed, _ = forest.derive_tree(lsystem, iterations, seed=77)
+    first = int(np.argmax(ed == 1))
+    segment = v[int(e[first, 1])] - v[int(e[first, 0])]
+    return segment / np.linalg.norm(segment)
+
+
+#: The one shipped grammar whose crown ordinals are NOT depth-stable: the palm
+#: axiom is ``TC`` and ``T -> F/T`` inserts a top-level roll ahead of the crown
+#: on every derivation step. See :func:`demo_lsystem_forest._branch_jitter`.
+_ORDINAL_UNSTABLE = {"palm"}
+
+
+@pytest.mark.parametrize(
+    "key", [s.key for s in forest.SPECIES if s.key not in _ORDINAL_UNSTABLE]
+)
+def test_lsystem_growth_stages_keep_existing_branch_orientations(key: str) -> None:
+    """Re-deriving a tree one iteration deeper must not re-roll its angles.
+
+    Growth stages are re-derivations at increasing depth. Jitter therefore
+    cannot come from a sequential rng stream (the deeper expansion consumes
+    a different number of draws, shifting every subsequent sample and
+    visibly popping branches during the growth time-lapse); it is a pure
+    function of each branch's bracket path. The first branch exists at
+    every depth, so its opening direction must match exactly across stages.
+
+    Parametrized over every species so the docstring's scope is CHECKED
+    rather than asserted: the property depends on each grammar appending its
+    recursion last, which is a per-grammar fact, not a property of
+    :func:`demo_lsystem_forest._branch_jitter` alone.
+    """
+    lsystem = next(s for s in forest.SPECIES if s.key == key).lsystem
+    d3 = _first_branch_direction(lsystem, 3)
+    d4 = _first_branch_direction(lsystem, 4)
+    d5 = _first_branch_direction(lsystem, 5)
+    np.testing.assert_allclose(d3, d4, atol=1e-5)
+    np.testing.assert_allclose(d4, d5, atol=1e-5)
+
+
+def test_palm_crown_reroll_is_the_documented_exception() -> None:
+    """The palm's crown DOES re-roll across depths — keep the doc honest.
+
+    If a future grammar edit makes the palm depth-stable (e.g. bracketing the
+    crown so it gets its own ordinal space), this test fails and the
+    ``_branch_jitter`` caveat plus ``_ORDINAL_UNSTABLE`` must be retired
+    rather than left as stale prose.
+    """
+    palm = next(s for s in forest.SPECIES if s.key == "palm").lsystem
+    d4 = _first_branch_direction(palm, 4)
+    d5 = _first_branch_direction(palm, 5)
+    assert not np.allclose(d4, d5, atol=1e-5)
 
 
 class _RecordingScene:

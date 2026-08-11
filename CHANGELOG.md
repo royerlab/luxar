@@ -46,6 +46,38 @@ the host page, so `LuxarApp.dispose()` hands the page's own `<title>` back —
 an embedder that removes the viewer is not left named after a torn-down
 scene.
 
+#### L-system forest 2.0: a growing, seasonal forest on all four geometry types (#1460)
+
+The `forest` demo is rebuilt into the flagship synthetic scene. Two
+non-displayed dimensions make it navigable in time: `growth` (six stages,
+each a genuine re-derivation of every tree at increasing iteration depth —
+development IS successive derivation — with per-tree stagger so maturity
+rolls across the field in waves) and `season` (the same forest re-coloured
+and re-dressed: blossom, green, fire, frost). All four geometry types share
+the frame: an fBm-heightfield **Mesh** terrain with per-season vertex colours
+(snow in winter), eight tree species as merged indexed **Lines** nodes (one
+Layers-panel row per species; per-vertex hover labels carry species /
+instance / season / stage; `normal` blending so trunks occlude), volumetric
+**GSplat** foliage oriented along its parent branches (hand-packed 5D
+Cholesky factors with near-zero sigma on the two stacked axes), and
+**Points** accents pinned to their season and extended over growth (summer
+fireflies, winter frost sparkle, spring petals). The grammars gain the three
+ABOP ingredients that separate fractal twigs from recognisable trees —
+stochastic productions, tropism (gravity droop for willow and palm fronds,
+upward phototropism for the columnar poplar, applied only at branch depth
+>= 1 so trunks stay straight), and an apical-leader symbol for Honda's
+monopodial conifer, whose lower whorls are older and therefore naturally
+longer. Species placement follows eco-zones on the terrain (conifers climb
+ridges, willows and palms keep wet feet). Presentation is authored:
+explicit ACES, a forest-edge opening camera on the autumn/ancient slice,
+season/growth-conditional captions, and a grammar card showing the actual
+production rules next to the forest they built. The computed bundle is
+cached under `~/.cache/luxar/forest` for instant warm regeneration. One
+authoring lesson is now written down in the demo: Luxar stores LINEAR
+colours, so palettes designed as sRGB intents must be linearized (`c**2.2`)
+or every bark reads pastel and a bright ground plane hazes the scene
+through bloom.
+
 #### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
 
 Three of its four tests gated on `capabilities.apiSurface !== 'webgpu'` alone
