@@ -100,8 +100,20 @@
 }
 
 .luxar-error-dialog__icon {
-  font-size: var(--luxar-text-3xl);
-  line-height: 1;
+  display: grid;
+  place-items: center;
+  color: var(--luxar-error);
+}
+
+.luxar-error-dialog__icon svg {
+  width: 28px;
+  height: 28px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .luxar-error-dialog__title {

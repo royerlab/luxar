@@ -18,6 +18,11 @@ vi.mock('../../../../rendering/picking/line/pick.tsl', async (importOriginal) =>
   const mod = await importOriginal<typeof import('../../../../rendering/picking/line/pick.tsl')>();
   return { ...mod, linePickWebGPUFactory: vi.fn(mod.linePickWebGPUFactory) };
 });
+vi.mock('../../../../rendering/picking/line/pick-capsule.tsl', async (importOriginal) => {
+  const mod =
+    await importOriginal<typeof import('../../../../rendering/picking/line/pick-capsule.tsl')>();
+  return { ...mod, capsuleLinePickWebGPUFactory: vi.fn(mod.capsuleLinePickWebGPUFactory) };
+});
 
 import {
   DEFAULT_LINE_PRIMITIVE,
@@ -35,6 +40,10 @@ import {
   VOLUMETRIC_LINE_FRAGMENT_SHADER,
   VOLUMETRIC_LINE_VERTEX_SHADER,
 } from '../../../../rendering/materials/line/shader-glsl-volumetric';
+import {
+  CAPSULE_LINE_FRAGMENT_SHADER,
+  CAPSULE_LINE_VERTEX_SHADER,
+} from '../../../../rendering/materials/line/shader-glsl-capsule';
 
 afterEach(() => {
   setLinePrimitiveOverride(null);
@@ -43,6 +52,8 @@ afterEach(() => {
 describe('types/line-primitive', () => {
   it('parses known primitives case/whitespace-insensitively, null otherwise', () => {
     expect(parseLinePrimitive('volumetric')).toBe('volumetric');
+    expect(parseLinePrimitive('capsule')).toBe('capsule');
+    expect(parseLinePrimitive(' Capsule ')).toBe('capsule');
     expect(parseLinePrimitive(' Screen-Space ')).toBe('screen-space');
     expect(parseLinePrimitive('quads')).toBeNull();
     expect(parseLinePrimitive('')).toBeNull();
@@ -62,7 +73,7 @@ describe('types/line-primitive', () => {
   });
 
   it('keeps the allowed-values list and the type in sync', () => {
-    expect(LINE_PRIMITIVES).toEqual(['screen-space', 'volumetric']);
+    expect(LINE_PRIMITIVES).toEqual(['screen-space', 'volumetric', 'capsule']);
   });
 });
 
@@ -93,11 +104,44 @@ describe('LineMaterial primitive selection (GLSL)', () => {
     m.dispose();
   });
 
+  it('selects the capsule pair for an explicit primitive', () => {
+    const m = new LineMaterial({ primitive: 'capsule' });
+    expect(m.vertexShader).toBe(CAPSULE_LINE_VERTEX_SHADER);
+    expect(m.fragmentShader).toBe(CAPSULE_LINE_FRAGMENT_SHADER);
+    expect(m.userData.linePrimitive).toBe('capsule');
+    m.dispose();
+  });
+
+  it('capsule never stamps LUXAR_PEAK_PROJECTION (peak-shaped by construction)', () => {
+    // The capsule profile is already a peak; there is no sum/peak graph
+    // split, so peak-family modes must not perturb its program cache keys.
+    const m = new LineMaterial({ primitive: 'capsule', blendingMode: 'max' });
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(false);
+    m.applyBlendingMode('normal');
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(false);
+    m.applyBlendingMode('volumetric');
+    expect('LUXAR_PEAK_PROJECTION' in (m.defines ?? {})).toBe(false);
+    m.dispose();
+  });
+
+  it('capsule clone() round-trips the primitive through the constructor', () => {
+    const m = new LineMaterial({ primitive: 'capsule' });
+    const c = m.clone();
+    expect(c.vertexShader).toBe(CAPSULE_LINE_VERTEX_SHADER);
+    expect(c.userData.linePrimitive).toBe('capsule');
+    m.dispose();
+    c.dispose();
+  });
+
   it('honours the session override when no explicit primitive is passed', () => {
     setLinePrimitiveOverride('volumetric');
     const m = new LineMaterial();
     expect(m.vertexShader).toBe(VOLUMETRIC_LINE_VERTEX_SHADER);
     m.dispose();
+    setLinePrimitiveOverride('capsule');
+    const c = new LineMaterial();
+    expect(c.vertexShader).toBe(CAPSULE_LINE_VERTEX_SHADER);
+    c.dispose();
   });
 
   it('manages the peak/sum define across blending-mode changes (volumetric only)', () => {
@@ -135,9 +179,16 @@ describe('LineMaterial primitive selection (GLSL)', () => {
     // Screen-space TSL material never stamps it, even under peak modes.
     const q = new LineTSLMaterial({ blendingMode: 'max' });
     expect('LUXAR_PEAK_PROJECTION' in (q.defines ?? {})).toBe(false);
+    // Capsule TSL material never stamps it either.
+    const cap = new LineTSLMaterial({ primitive: 'capsule', blendingMode: 'max' });
+    expect('LUXAR_PEAK_PROJECTION' in (cap.defines ?? {})).toBe(false);
+    cap.applyBlendingMode('normal');
+    expect('LUXAR_PEAK_PROJECTION' in (cap.defines ?? {})).toBe(false);
+    expect(cap.clone().userData.linePrimitive).toBe('capsule');
     m.dispose();
     c.dispose();
     q.dispose();
+    cap.dispose();
   });
 
   it('volumetric PICK shaders never import erf (peak lane only)', async () => {
@@ -185,6 +236,25 @@ describe('LinePickingMaterial primitive selection (#1352 PR-3)', () => {
     setLinePrimitiveOverride('volumetric');
     const viaOverride = new LinePickingMaterial({ nodeId: 7 });
     expect(viaOverride.vertexShader).toBe(VOLUMETRIC_LINE_PICK_VERTEX_SHADER);
+    viaOverride.dispose();
+  });
+
+  it('selects the capsule pick pair (explicit and via session override)', async () => {
+    const { LinePickingMaterial } = await import('../../../../rendering/picking/line/material');
+    const { CAPSULE_LINE_PICK_VERTEX_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER } =
+      await import('../../../../rendering/picking/line/shaders-capsule');
+    const explicit = new LinePickingMaterial({ nodeId: 7, primitive: 'capsule' });
+    expect(explicit.vertexShader).toBe(CAPSULE_LINE_PICK_VERTEX_SHADER);
+    expect(explicit.fragmentShader).toBe(CAPSULE_LINE_PICK_FRAGMENT_SHADER);
+    expect(explicit.userData.linePrimitive).toBe('capsule');
+    const c = explicit.clone();
+    expect(c.vertexShader).toBe(CAPSULE_LINE_PICK_VERTEX_SHADER);
+    expect(c.userData.linePrimitive).toBe('capsule');
+    explicit.dispose();
+    c.dispose();
+    setLinePrimitiveOverride('capsule');
+    const viaOverride = new LinePickingMaterial({ nodeId: 7 });
+    expect(viaOverride.vertexShader).toBe(CAPSULE_LINE_PICK_VERTEX_SHADER);
     viaOverride.dispose();
   });
 
@@ -237,9 +307,22 @@ describe('LinePickingMaterial primitive selection (#1352 PR-3)', () => {
     expect(quadFactory).toHaveBeenCalledTimes(1);
     expect(volFactory).not.toHaveBeenCalled();
 
+    const capFactory = vi.mocked(
+      (await import('../../../../rendering/picking/line/pick-capsule.tsl'))
+        .capsuleLinePickWebGPUFactory
+    );
+    capFactory.mockClear();
+    quadFactory.mockClear();
+    const cap = new LinePickingTSLMaterial({ nodeId: 7, primitive: 'capsule' });
+    expect(capFactory).toHaveBeenCalledTimes(1);
+    expect(quadFactory).not.toHaveBeenCalled();
+    expect(volFactory).not.toHaveBeenCalled();
+    expect(cap.clone().userData.linePrimitive).toBe('capsule');
+
     vol.dispose();
     c.dispose();
     quad.dispose();
+    cap.dispose();
     tex.dispose();
   });
 });

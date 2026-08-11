@@ -793,6 +793,9 @@
 }
 
 .luxar-failed-loads__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--luxar-spacing-2);
   color: var(--luxar-warning);
   font-size: var(--luxar-text-sm);
   font-weight: 600;
@@ -938,8 +941,15 @@
 }
 
 .luxar-scene-graph__icon {
-  font-size: var(--luxar-text-xs);
+  display: inline-flex;
+  align-items: center;
   margin-right: var(--luxar-spacing-2);
+  color: var(--luxar-text-muted);
+}
+
+.luxar-scene-graph__icon .luxar-micon {
+  width: 12px;
+  height: 12px;
 }
 
 .luxar-scene-graph__name {
@@ -1003,25 +1013,20 @@
   padding: var(--luxar-spacing-4);
 }
 
-/* Scene graph node type colors */
-.luxar-scene-graph__name--scene {
-  color: var(--luxar-info);
-}
-
+/* Scene graph node names — NEUTRAL by design. The node's type is carried by
+   its stroke glyph, not by an identity tint (quiet-instrument rule: color is
+   semantics only; the old per-type palette even burned the warning color on
+   ordinary Lines nodes). Containers recede; renderable leaves read primary. */
+.luxar-scene-graph__name--scene,
 .luxar-scene-graph__name--group {
   color: var(--luxar-text-muted);
 }
 
-.luxar-scene-graph__name--points {
-  color: var(--luxar-success);
-}
-
-.luxar-scene-graph__name--lines {
-  color: var(--luxar-warning);
-}
-
+.luxar-scene-graph__name--points,
+.luxar-scene-graph__name--lines,
+.luxar-scene-graph__name--gsplats,
 .luxar-scene-graph__name--mesh {
-  color: #9b59b6;
+  color: var(--luxar-text-primary);
 }
 
 /* ========== Performance Tab ========== */
@@ -1050,8 +1055,13 @@
 }
 
 .luxar-cache-disabled__icon {
-  font-size: var(--luxar-text-4xl);
   margin-bottom: var(--luxar-spacing-4);
+  color: var(--luxar-text-muted);
+}
+
+.luxar-cache-disabled__icon .luxar-micon {
+  width: 28px;
+  height: 28px;
 }
 
 .luxar-cache-disabled__message {
