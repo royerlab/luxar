@@ -21,16 +21,17 @@
  * Verdicts surface through the cross-layer notifier as a persistent banner
  * (`ui/scene-identity-banner.ts`):
  *
- * - **changed** (different hash, unparseable body, or a non-retryable HTTP
- *   error such as 404): terminal — polling stops, the banner offers Reload.
+ * - **changed** (different hash, unparseable body, or a conclusive HTTP error
+ *   such as 404): terminal — polling stops, the banner offers Reload.
  *   An HTTP 404 is "changed" rather than "unreachable" because something IS
  *   answering the address; whatever it is, it no longer serves this scene.
- * - **unreachable** (fetch throws, times out, or the server answers with a
- *   retryable status — 408/425/429/5xx): shown only after two consecutive
- *   failures so a single blip stays silent, and cleared automatically when
- *   the server answers again (a recovered server that serves a different
- *   scene escalates straight to `changed`). A transient overload must never
- *   latch the terminal verdict: it says nothing about scene identity.
+ * - **unreachable** (fetch throws, times out, or the server answers with an
+ *   inconclusive status — 401/403/408/425/429/5xx): shown only after two
+ *   consecutive failures so a single blip stays silent, and cleared
+ *   automatically when the server answers again (a recovered server that
+ *   serves a different scene escalates straight to `changed`). A transient
+ *   overload — or an expired credential on a presigned source — must never
+ *   latch the terminal verdict: neither says anything about scene identity.
  *
  * Only `http(s)` sources are watched — there is nothing to race against on
  * an in-memory or file-backed store. All timers/listeners are removed by
@@ -54,12 +55,27 @@ const UNREACHABLE_THRESHOLD = 2;
 const PROBE_TIMEOUT_MS = 10_000;
 
 /**
- * HTTP statuses that mean "ask again later" rather than "someone else is
- * serving this address". A 429/503 from an overloaded server or a proxy says
- * nothing about scene identity, so it must not latch the terminal verdict.
+ * HTTP statuses that say nothing about scene identity — "ask again later" or
+ * "I won't tell you" — as opposed to "someone else is serving this address".
+ *
+ * - 408/425/429/5xx: an overloaded server or proxy.
+ * - 401/403: an auth wall. Presigned/tokenized sources are explicitly
+ *   supported and their credentials expire; a refused probe is NOT evidence
+ *   that the scene changed, and the terminal banner's Reload cannot repair a
+ *   stale credential anyway.
+ *
+ * None of these may latch the terminal verdict. A 404 is different: the
+ * server answered, and this scene's root attrs are simply not there.
  */
-function isRetryableStatus(status: number): boolean {
-  return status === 408 || status === 425 || status === 429 || status >= 500;
+function isInconclusiveStatus(status: number): boolean {
+  return (
+    status === 401 ||
+    status === 403 ||
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
+  );
 }
 
 /**
@@ -236,7 +252,7 @@ export class SceneIdentityWatchdog {
         cache: 'no-store',
         signal: abort.signal,
       });
-      if (!res.ok) return isRetryableStatus(res.status) ? 'unreachable' : 'changed';
+      if (!res.ok) return isInconclusiveStatus(res.status) ? 'unreachable' : 'changed';
       body = await res.text();
     } catch {
       return 'unreachable';

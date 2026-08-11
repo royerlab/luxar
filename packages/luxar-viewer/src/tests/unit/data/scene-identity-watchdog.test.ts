@@ -161,6 +161,32 @@ describe('SceneIdentityWatchdog', () => {
     wd2.dispose();
   });
 
+  it('an auth wall (401/403) is inconclusive, not a scene change', async () => {
+    // A presigned/tokenized source whose credential expired answers 403. The
+    // scene may well be unchanged, and the changed banner's Reload cannot
+    // repair a stale credential — so this must stay non-terminal and clear
+    // itself once the source is reachable again.
+    for (const status of [401, 403]) {
+      banner.shown.length = 0;
+      banner.hidden.length = 0;
+      let mode: 'refused' | 'up' = 'refused';
+      const wd = makeWatchdog(async () =>
+        mode === 'refused' ? new Response('denied', { status }) : okResponse(ATTRS)
+      );
+      wd.start();
+      await tick(5000);
+      expect(banner.shown).toEqual([]); // single blip stays silent
+      await tick(5000);
+      expect(banner.shown).toEqual(['unreachable']);
+      // Non-terminal: polling continues and recovery clears the banner.
+      mode = 'up';
+      await tick(5000);
+      expect(banner.shown).toEqual(['unreachable']);
+      expect(banner.hidden).toContain('unreachable');
+      wd.dispose();
+    }
+  });
+
   it('a transient 503 is a reachability failure, not a scene change', async () => {
     let mode: 'overloaded' | 'up' = 'overloaded';
     let calls = 0;
