@@ -11,6 +11,14 @@ import { config } from '../config';
 import { trapFocus } from './help-overlay/focus-trap';
 import { getViewerContainer } from '../utils/viewer-container';
 
+/**
+ * Warning-triangle glyph in the rail icon contract (24×24, geometry-only,
+ * painted by CSS via currentColor stroke) — replaces the ⚠️ emoji, which
+ * rendered differently on every platform.
+ */
+const ALERT_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5L22 20H2L12 3.5z"/><line x1="12" y1="10" x2="12" y2="14.5"/><line x1="12" y1="17.2" x2="12" y2="17.21"/></svg>';
+
 const UI_CONFIG = config.ui;
 
 // Audit G17 (viewer-ui-config-themes-core-utils) — the auto-dismiss
@@ -77,7 +85,7 @@ export function showError(message: string) {
 
   const icon = document.createElement('div');
   icon.className = 'luxar-error-dialog__icon';
-  icon.textContent = '⚠️';
+  icon.innerHTML = ALERT_ICON;
 
   const title = document.createElement('div');
   title.id = 'luxar-error-title';
@@ -99,7 +107,7 @@ export function showError(message: string) {
 
   const guidanceTitle = document.createElement('div');
   guidanceTitle.className = 'luxar-error-dialog__guidance-title';
-  guidanceTitle.textContent = '💡 How to Load a Dataset:';
+  guidanceTitle.textContent = 'How to Load a Dataset:';
 
   const guidanceList = document.createElement('div');
   guidanceList.className = 'luxar-error-dialog__guidance-content';
