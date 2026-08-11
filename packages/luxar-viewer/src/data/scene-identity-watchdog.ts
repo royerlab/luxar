@@ -14,8 +14,9 @@
  *
  * - `content_hash` when the loaded scene had one (every compiler-written
  *   scene does): the same identity stamp the L2 cache validates against.
- * - Otherwise the raw `.zattrs` text, baselined on the first successful
- *   probe (hash-less bare nodes).
+ * - Otherwise (hash-less bare nodes) the canonicalized `.zattrs` JSON,
+ *   baselined on the attrs actually LOADED — never on a probe, so even a
+ *   swap before the first probe is caught.
  *
  * Verdicts surface through the cross-layer notifier as a persistent banner
  * (`ui/scene-identity-banner.ts`):
@@ -49,6 +50,14 @@ export interface SceneIdentityWatchdogOptions {
   datasetUrl: string;
   /** `content_hash` of the scene actually loaded (null when absent). */
   expectedContentHash: string | null;
+  /**
+   * `JSON.stringify` of the root attrs actually loaded — the identity
+   * baseline for HASH-LESS scenes (bare nodes), compared against the
+   * canonicalized probe body. Baselines on what was loaded, so even a swap
+   * before the first probe is caught (a first-probe baseline would adopt
+   * the impostor as the identity).
+   */
+  expectedAttrsJson?: string | null;
   /** Probe cadence override (tests). */
   intervalMs?: number;
   /** Fetch override (tests). */
@@ -60,11 +69,10 @@ type Verdict = 'ok' | 'changed' | 'unreachable';
 export class SceneIdentityWatchdog {
   private readonly url: string;
   private readonly expectedHash: string | null;
+  private readonly expectedAttrsJson: string | null;
   private readonly intervalMs: number;
   private readonly fetchImpl: typeof fetch;
 
-  /** Raw-text baseline for hash-less scenes (set by the first OK probe). */
-  private textBaseline: string | null = null;
   private consecutiveFailures = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastProbeAt = 0;
@@ -81,6 +89,7 @@ export class SceneIdentityWatchdog {
   constructor(opts: SceneIdentityWatchdogOptions) {
     this.url = opts.datasetUrl.replace(/\/+$/, '');
     this.expectedHash = opts.expectedContentHash;
+    this.expectedAttrsJson = opts.expectedAttrsJson ?? null;
     this.intervalMs = opts.intervalMs ?? CHECK_INTERVAL_MS;
     // Bind: an unbound window.fetch reference throws "Illegal invocation".
     this.fetchImpl = opts.fetchImpl ?? fetch.bind(globalThis);
@@ -157,12 +166,20 @@ export class SceneIdentityWatchdog {
         return 'changed';
       }
     }
-    // Hash-less scene: first successful probe defines the identity.
-    if (this.textBaseline === null) {
-      this.textBaseline = body;
-      return 'ok';
+    // Hash-less scene: compare against the attrs actually LOADED (parse +
+    // restringify canonicalizes whitespace; key order survives both parses
+    // of identical server text). Baselining on the loaded attrs — never on
+    // a probe — means even a swap before the first probe is caught.
+    if (this.expectedAttrsJson !== null) {
+      try {
+        return JSON.stringify(JSON.parse(body)) === this.expectedAttrsJson ? 'ok' : 'changed';
+      } catch {
+        return 'changed';
+      }
     }
-    return body === this.textBaseline ? 'ok' : 'changed';
+    // No identity to compare against (loader passed neither hash nor attrs):
+    // only reachability is watchable.
+    return 'ok';
   }
 
   private apply(verdict: Verdict): void {

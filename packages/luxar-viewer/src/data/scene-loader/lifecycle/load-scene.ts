@@ -272,9 +272,19 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const normalizedUrl = ctx.normalizeURL(url);
   if (SceneIdentityWatchdog.isWatchable(normalizedUrl)) {
     const loadedHash = (sceneAttrs as Record<string, unknown>)?.content_hash;
+    // Hash-less fallback baseline: the attrs we actually loaded, serialized.
+    // Root scene attrs are small (KBs); a stringify failure only downgrades
+    // the watchdog to reachability-only for this (already hash-less) scene.
+    let attrsJson: string | null;
+    try {
+      attrsJson = JSON.stringify(sceneAttrs) ?? null;
+    } catch {
+      attrsJson = null;
+    }
     const watchdog = new SceneIdentityWatchdog({
       datasetUrl: normalizedUrl,
       expectedContentHash: typeof loadedHash === 'string' ? loadedHash : null,
+      expectedAttrsJson: attrsJson,
     });
     watchdog.start();
     ctx.setIdentityWatchdog(watchdog);

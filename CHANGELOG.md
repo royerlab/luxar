@@ -13,8 +13,9 @@ tab could silently front a DIFFERENT scene than the one it loaded (another
 server took the port) — or a dead one — with no visual hint. The viewer now
 watches its dataset's identity for the life of the tab: a watchdog re-fetches
 the root `.zattrs` (cache-bypassing) every 15 s and the moment the tab
-regains focus/visibility, comparing `content_hash` (raw-text baseline for
-hash-less bare nodes). A different hash — or an HTTP error where something
+regains focus/visibility, comparing `content_hash` (hash-less bare nodes fall
+back to the canonicalized attrs JSON, baselined on what was actually LOADED —
+never on a probe — so even a swap before the first probe is caught). A different hash — or an HTTP error where something
 else answers the address — raises a persistent top banner ("This address now
 serves a different scene — the view below is stale") with a Reload button
 and stops polling; a server that stops answering shows a self-clearing

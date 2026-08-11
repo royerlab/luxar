@@ -163,21 +163,55 @@ describe('SceneIdentityWatchdog', () => {
     wd.dispose();
   });
 
-  it('hash-less scenes baseline on first probe text and detect changes', async () => {
-    const bodies = ['{"a": 1}', '{"a": 1}', '{"a": 2}'];
+  it('hash-less scenes compare probes against the LOADED attrs json', async () => {
+    // Whitespace/formatting differences are canonicalized away; only a
+    // structural change reads as a different scene.
+    const bodies = ['{ "a": 1 }', '{"a":1}', '{"a": 2}'];
     let i = 0;
     const wd = new SceneIdentityWatchdog({
       datasetUrl: 'http://127.0.0.1:8000',
       expectedContentHash: null,
+      expectedAttrsJson: JSON.stringify({ a: 1 }),
       intervalMs: 5000,
       fetchImpl: (async () => okResponse(bodies[i++])) as typeof fetch,
     });
     wd.start();
-    await tick(5000); // baseline
-    await tick(5000); // same
+    await tick(5000); // spaced formatting — same structure
+    await tick(5000); // compact formatting — same structure
     expect(banner.shown).toEqual([]);
-    await tick(5000); // different
+    await tick(5000); // different structure
     expect(banner.shown).toEqual(['changed']);
+    wd.dispose();
+  });
+
+  it('hash-less scenes catch a swap BEFORE the first probe', async () => {
+    // The old first-probe baseline would have adopted the impostor as the
+    // identity; baselining on the loaded attrs catches it immediately.
+    const wd = new SceneIdentityWatchdog({
+      datasetUrl: 'http://127.0.0.1:8000',
+      expectedContentHash: null,
+      expectedAttrsJson: JSON.stringify({ scene: 'loaded-one' }),
+      intervalMs: 5000,
+      fetchImpl: (async () => okResponse('{"scene": "impostor"}')) as typeof fetch,
+    });
+    wd.start();
+    await tick(5000); // FIRST probe already sees the impostor
+    expect(banner.shown).toEqual(['changed']);
+    wd.dispose();
+  });
+
+  it('with neither hash nor attrs json, only reachability is watched', async () => {
+    const wd = new SceneIdentityWatchdog({
+      datasetUrl: 'http://127.0.0.1:8000',
+      expectedContentHash: null,
+      expectedAttrsJson: null,
+      intervalMs: 5000,
+      fetchImpl: (async () => okResponse('{"anything": 1}')) as typeof fetch,
+    });
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+    expect(banner.shown).toEqual([]);
     wd.dispose();
   });
 
