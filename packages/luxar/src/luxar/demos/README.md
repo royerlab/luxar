@@ -34,6 +34,7 @@ luxar demo info lorenz      # metadata for one demo
 luxar demo run lorenz       # run by key or index; forwards -- args
 luxar demo run lorenz -- --no-serve --points=10000
 luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/large-download by default)
+luxar demo stop             # stop demos left running (frees their ports); --dry-run to list
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
 luxar demo deps                    # which optional dependencies are missing?
 luxar demo deps --install          # install the extras that provide them
