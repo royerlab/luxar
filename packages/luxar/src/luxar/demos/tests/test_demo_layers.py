@@ -719,6 +719,15 @@ class TestTheExemptionsThemselves:
 BUILDABLE_COMPOSITE_DEMOS = ("demo_nd_transforms.py", "demo_lsystem_forest.py")
 
 
+#: Geometry types each buildable demo's store must actually CONTAIN — without
+#: this the walk can pass vacuously on a store that never wrote the node kind
+#: it claims to cover (a forest built too shallow grows no gsplat foliage).
+COMPOSITE_DEMO_REQUIRED_TYPES = {
+    "demo_nd_transforms.py": {"points", "lines"},
+    "demo_lsystem_forest.py": {"points", "lines", "gsplats", "mesh"},
+}
+
+
 def _build_composite_scene(module_name: str, output: Path) -> None:
     if module_name == "demo_nd_transforms.py":
         from .. import demo_nd_transforms
@@ -727,9 +736,11 @@ def _build_composite_scene(module_name: str, output: Path) -> None:
     else:
         from .. import demo_lsystem_forest
 
-        # Smallest forest that still writes every node type: a few trees at
-        # the lowest derivation depth that keeps at least one segment.
-        demo_lsystem_forest.generate_forest(output, iterations=2, n_trees=4)
+        # Smallest forest that still writes every node type. The derivation
+        # must go DEEP enough to grow foliage (gsplats appear only from
+        # iteration >= 2 at branch depth >= 2), or the store this test walks
+        # would silently stop exercising the gsplat layer path.
+        demo_lsystem_forest.generate_forest(output, iterations=4, n_trees=6)
 
 
 @pytest.mark.parametrize("module_name", BUILDABLE_COMPOSITE_DEMOS)
@@ -744,18 +755,28 @@ def test_written_scene_puts_every_geometry_node_under_a_layer(
 
     geometry_types = {"points", "lines", "gsplats", "mesh"}
     orphans: list[str] = []
+    present: set[str] = set()
 
     def walk(group: object, path: str, covered: bool) -> None:
         for name in sorted(group.group_keys()):  # type: ignore[attr-defined]
             child = group[name]  # type: ignore[index]
             child_path = f"{path}/{name}"
             child_covered = covered or bool(child.attrs.get("layer"))
-            if child.attrs.get("type") in geometry_types and not child_covered:
-                orphans.append(child_path)
+            child_type = child.attrs.get("type")
+            if child_type in geometry_types:
+                present.add(child_type)
+                if not child_covered:
+                    orphans.append(child_path)
             walk(child, child_path, child_covered)
 
     walk(zarr.open_group(output, mode="r"), "", False)
 
+    missing = COMPOSITE_DEMO_REQUIRED_TYPES[module_name] - present
+    assert not missing, (
+        f"{module_name} was expected to write {sorted(missing)} nodes but the "
+        "built store has none — the layer-coverage walk no longer exercises "
+        "those writer paths."
+    )
     assert not orphans, (
         f"{module_name} writes geometry with no `layer: true` node above it: "
         f"{orphans}. Those nodes cannot be toggled, ranged, gamma'd or "

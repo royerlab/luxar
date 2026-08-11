@@ -291,6 +291,31 @@ def test_forest_foliage_cholesky_packs_the_5d_tril_layout() -> None:
         np.testing.assert_allclose(np.sqrt(eigenvalues.min()), sigma_perp[k], atol=1e-6)
 
 
+def test_lsystem_growth_stages_keep_existing_branch_orientations() -> None:
+    """Re-deriving a tree one iteration deeper must not re-roll its angles.
+
+    Growth stages are re-derivations at increasing depth. Jitter therefore
+    cannot come from a sequential rng stream (the deeper expansion consumes
+    a different number of draws, shifting every subsequent sample and
+    visibly popping branches during the growth time-lapse); it is a pure
+    function of each branch's bracket path. The first branch exists at
+    every depth, so its opening direction must match exactly across stages.
+    """
+    species = next(s for s in forest.SPECIES if s.key == "elegant")
+
+    def first_branch_direction(iterations: int) -> np.ndarray:
+        v, e, ed, _ = forest.derive_tree(species.lsystem, iterations, seed=77)
+        first = int(np.argmax(ed == 1))
+        segment = v[int(e[first, 1])] - v[int(e[first, 0])]
+        return segment / np.linalg.norm(segment)
+
+    d3 = first_branch_direction(3)
+    d4 = first_branch_direction(4)
+    d5 = first_branch_direction(5)
+    np.testing.assert_allclose(d3, d4, atol=1e-5)
+    np.testing.assert_allclose(d4, d5, atol=1e-5)
+
+
 class _RecordingScene:
     """Small scene sink that records geometry submitted by demo builders."""
 

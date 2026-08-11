@@ -129,7 +129,7 @@ STACKED_AXIS_SIGMA = 1e-6
 
 #: Bump when the generation logic changes in a way that must invalidate
 #: cached bundles (also passed as `version=` to :func:`cache_computed`).
-SCENE_VERSION = 7
+SCENE_VERSION = 8
 
 
 def _maturity_length_scale(m: float) -> float:
@@ -178,6 +178,32 @@ def _rotate_vec(v: Vec3, k: Vec3, c: float, s: float) -> Vec3:
         vy * c + cy * s + ky * oc,
         vz * c + cz * s + kz * oc,
     )
+
+
+_MASK64 = (1 << 64) - 1
+
+
+def _mix64(x: int) -> int:
+    """SplitMix64 finalizer: avalanche an integer into 64 well-mixed bits."""
+    x = (x + 0x9E3779B97F4A7C15) & _MASK64
+    x = ((x ^ (x >> 30)) * 0xBF58476D1CE4E5B9) & _MASK64
+    x = ((x ^ (x >> 27)) * 0x94D049BB133111EB) & _MASK64
+    return x ^ (x >> 31)
+
+
+def _branch_jitter(seed: int, branch_hash: int, ordinal: int) -> float:
+    """Uniform [0, 1) as a PURE FUNCTION of (tree seed, branch path, ordinal).
+
+    Angle jitter must NOT come from a sequential rng stream: a growth stage
+    is a re-derivation at a deeper iteration count, and a stream's draw
+    positions shift with the string length, re-rolling every branch angle
+    between stages (visible popping in the growth time-lapse). Keyed on the
+    branch's bracket PATH and the rotation's ordinal within that branch —
+    both stable across derivation depths for grammars whose productions
+    append recursion after the existing commands, as all shipped ones do —
+    a branch that exists at two stages bends identically at both.
+    """
+    return _mix64(seed ^ _mix64(branch_hash ^ _mix64(ordinal))) / 2.0**64
 
 
 def _rotate_frame_vec(v: Vec3, k: Vec3, c: float, s: float) -> Vec3:
@@ -262,7 +288,7 @@ class LSystem:
         return current
 
     def interpret(
-        self, string: str, rng: np.random.Generator
+        self, string: str, seed: int
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Interpret an expanded string as an indexed 3D line network.
 
@@ -273,6 +299,11 @@ class LSystem:
         with no position hashing. Shared indices let the viewer suppress
         joint caps, so thick trunks render as smooth tubes instead of bead
         chains.
+
+        Angle jitter is drawn from :func:`_branch_jitter` — a pure function
+        of (seed, bracket path, per-branch ordinal), NOT a sequential rng —
+        so a branch that exists at two growth stages bends identically at
+        both (see the growth-stage stability test).
 
         The hot loop runs on plain Python floats (tuples + ``math``) rather
         than small numpy arrays — the strings run to tens of thousands of
@@ -293,8 +324,13 @@ class LSystem:
         length = self.length
         tropism = self.tropism
         strength = self.tropism_strength
+        branch_hash = _mix64(seed)
+        rotation_ordinal = 0
+        child_count = 0
 
-        stack: list[tuple[Vec3, tuple[Vec3, Vec3, Vec3], int, int, float]] = []
+        stack: list[
+            tuple[Vec3, tuple[Vec3, Vec3, Vec3], int, int, float, int, int, int]
+        ] = []
         vertices: list[Vec3] = []
         vertex_depths: list[int] = []
         edges: list[tuple[int, int]] = []
@@ -318,7 +354,9 @@ class LSystem:
                 vertex_index = len(vertices) - 1
             elif char in _ROTATIONS:
                 axis_index, sign = _ROTATIONS[char]
-                jitter = 1.0 + (rng.random() - 0.5) * 2.0 * self.randomness
+                u = _branch_jitter(seed, branch_hash, rotation_ordinal)
+                rotation_ordinal += 1
+                jitter = 1.0 + (u - 0.5) * 2.0 * self.randomness
                 angle = self.angle * sign * jitter
                 axis = frame[axis_index]
                 c, s = math.cos(angle), math.sin(angle)
@@ -326,14 +364,36 @@ class LSystem:
                     if j != axis_index:
                         frame[j] = _rotate_frame_vec(frame[j], axis, c, s)
             elif char == "[":
+                child_count += 1
                 stack.append(
-                    (pos, (frame[0], frame[1], frame[2]), depth, vertex_index, length)
+                    (
+                        pos,
+                        (frame[0], frame[1], frame[2]),
+                        depth,
+                        vertex_index,
+                        length,
+                        branch_hash,
+                        rotation_ordinal,
+                        child_count,
+                    )
                 )
+                branch_hash = _mix64(branch_hash ^ child_count)
+                rotation_ordinal = 0
+                child_count = 0
                 depth += 1
                 length *= self.length_decay
             elif char == "]":
                 if stack:
-                    pos, saved, depth, vertex_index, length = stack.pop()
+                    (
+                        pos,
+                        saved,
+                        depth,
+                        vertex_index,
+                        length,
+                        branch_hash,
+                        rotation_ordinal,
+                        child_count,
+                    ) = stack.pop()
                     frame = list(saved)
 
         if not edges:
@@ -357,14 +417,17 @@ def derive_tree(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Expand + interpret one tree deterministically from its seed.
 
-    One rng drives both the stochastic productions and the angle jitter, so
-    re-deriving the same tree at a HIGHER iteration count keeps the early
-    decisions of the shared derivation prefix — across growth stages the
-    trunk and main limbs stay put while new growth appears at the tips.
+    Cross-stage coherence rests on two separated randomness sources: the
+    expansion rng replays the same production choices for the shared
+    derivation prefix when re-deriving at a HIGHER iteration count, and the
+    turtle jitter is a pure function of each branch's bracket path (see
+    :func:`_branch_jitter`), immune to the string growing around it. A
+    branch that exists at two growth stages therefore keeps its exact
+    orientation — growth adds geometry instead of re-rolling it.
     """
     rng = np.random.default_rng(seed)
     string = lsystem.expand(iterations, rng)
-    return lsystem.interpret(string, rng)
+    return lsystem.interpret(string, seed)
 
 
 def vary_lsystem(
