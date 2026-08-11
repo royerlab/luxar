@@ -6,6 +6,55 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Demos serve on per-dataset derived ports, not 8000/5173
+
+Every demo used to contend for the same default ports, so with several demos
+(or several agents) on one machine, whichever came second silently shifted to
+8001/5174 — and a browser tab left over from demo A could later front demo
+B's server at the very same URL, showing the wrong scene with full
+confidence. `launch_viewer` now derives a stable `(data, viewer)` port pair
+from the dataset's file name (`demo_ports`, ranges 8001–8499 / 5200–5698,
+disjoint from the bare `luxar serve` defaults): no two demos share a full port
+pair — hence never a URL — and re-running the same demo lands on the same URL,
+so concurrent demos stop stepping on each other. Two demos can still draw the
+same *data* port and shift with the usual warning; that is harmless, because
+the viewer URL carries its own `?src=` and the wrong-scene trap needs both
+ports to match. A demo passing an explicit `--port` /
+`--viewer-port` through `serve_args` keeps full control, and `pick_port`
+still resolves the rare same-slot hash collision by shifting up with its
+usual warning.
+
+#### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
+
+Three of its four tests gated on `capabilities.apiSurface !== 'webgpu'` alone
+(the fourth also probed the backend, and did skip correctly), but
+`apiSurface` is `'webgpu'` for any active `WebGPURenderer` — *including* one
+whose internal backend has fallen back to WebGL2, which is the documented
+meaning of that field ("which method-signature contract?", not "which GPU
+backend?"). So in headless Playwright chromium, where there is no real adapter,
+those tests did not skip: they ran green on the fallback and reported native
+WebGPU verified for a run that never touched WGSL. The unaligned-width test was
+the starkest — its whole point is to force the 256-byte `bytesPerRow` padding
+path, and on the fallback `compactWebGPUReadbackRows` returns its input
+unchanged, so the assertions passed without the path existing.
+
+The native gate is now one shared `probeWebGPUBackend` helper in the e2e
+helpers, which `y-orientation.spec.ts` also uses — and that is not just
+de-duplication: its inline copy was the negative form too, so it moves from
+fail-open to fail-closed with it. The helper reads the backend's POSITIVE
+`isWebGPUBackend` flag rather than `isWebGLBackend !== true`: a negative tell
+fails OPEN under drift — a renamed flag or a third backend — which is the
+#1449 bug itself. Gating on the physical backend alone also keeps
+`apiSurface === 'webgpu'` a falsifiable assertion instead of a restatement of
+the gate; it is folded into the framebuffer-Y test, and the tautological test
+that only asserted it is gone. The `captureHDRPixels` round-trip is
+deliberately NOT backend-gated — it is the only automated execution of that
+function anywhere, and what it proves (the WebGPU arm of
+`readPixelsCompactAsync`, `length === width * height * 4`) holds on either
+backend. It is gated on the `apiSurface` instead, since a page that drops all
+the way to a plain `WebGLRenderer` takes the other arm. Retitled and commented
+so it claims nothing about WGSL.
+
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 
 Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,
@@ -85,6 +134,46 @@ brightness floor. Cross-backend parity gets four new pick fixtures
 building the TSL perspective pick graph / V-joint, the joint reaching the
 partner fetch and the ray-domain cut interval), all under the existing
 ≤ 2.0 covered-pixel gate.
+
+#### A laddered node no longer writes the raw `extend_to_all="all"` sentinel (#1441)
+
+`extend_to_all="all"` is an authoring convenience: the Scene expands it to the
+concrete names of the non-displayed dimensions before anything reaches the store,
+so the on-disk value is always a list like `["Time"]`. Every flat leaf adder did
+that expansion. The two additive-LOD (streaming ladder) wrappers did not — they
+handed the raw argument to `write_points_multi_lod` / `write_lines_multi_lod`,
+which stamp it verbatim onto the parent group AND every `additive_<i>/` sub-LOD.
+A laddered node therefore landed on disk carrying the bare string `'all'` while a
+flat sibling authored identically carried `['Time']`. Both wrappers now resolve
+the argument immediately before the writer call. The resolution is guarded on
+`is not None`: an unguarded resolve would add a "these dimensions have single
+values" advisory to a path that never emitted one — once per BSP part under
+`partition=` + `additive_lod=`, advising extension on a dim the layer is meant to
+be sliced by — and attribute it to `Group.add_points` rather than to the user's
+line. That leaves points and lines diverging from the structurally identical
+gsplats wrapper (`gsplats_pipeline/lod_dispatch.py`), which resolves unguarded
+and does warn; the divergence is noted at both sites.
+
+The viewer types that attr as `string[]`, so the malformed value was a hard
+failure rather than a cosmetic one — `'all'` has `.length === 3`, which passes
+every `extendDims.length > 0` gate before something calls `.join` or `.filter` on
+it. `buildSceneGraph` now normalizes the attr once, where it enters the graph,
+and writes the normalized array back onto the node's attrs: a non-array degrades
+to "not extended", while an array keeps its string entries and drops the rest, so
+`["Time", 42]` stays partially extended across `Time`. Either way the node is
+warned about once per load.
+That write-back is what makes the defence real: the synthesized `additive_<i>`
+children built by the loader factory, the three spatial-index loaders, and
+`SpatialQueryBuilder` all read the node attrs, so normalizing only for the log
+line would have moved the `TypeError` from load time to query time.
+The store listing never contains the root, so the root node is coerced
+explicitly alongside the loop — it is a real node for a detached
+`.gsplats.zarr` subtree, whose file root IS the leaf.
+`deriveNodeViewState` normalizes again — silently, since it runs every update
+cycle — for attrs that never came through the graph builder. The `"all"` sentinel
+is deliberately not reinterpreted viewer-side: the displayed-dimension set is
+mutable at runtime, so it would not mean at view time what it meant at author
+time.
 
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 

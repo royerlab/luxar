@@ -68,6 +68,27 @@ describe('deriveNodeViewState — no extend, no transform', () => {
     );
     expect(result.skip).toBe(false);
   });
+
+  it("degrades a malformed extend_to_all ('all' sentinel) to no extension (#1441)", () => {
+    // A producer that stamped the unresolved `'all'` sentinel used to make
+    // `extendDims` the STRING 'all' — length 3, so the extend branch ran and
+    // `extendDims.filter(...)` threw, taking down the node's derivation.
+    const base = baseViewState();
+    const malformed = deriveNodeViewState(
+      'points',
+      { extend_to_all: 'all' } as unknown as { extend_to_all?: string[] },
+      base,
+      null,
+      { applyPartialExtendTolerance: true }
+    );
+    const absent = deriveNodeViewState('points', undefined, base, null, {
+      applyPartialExtendTolerance: true,
+    });
+    expect(malformed.skip).toBe(false);
+    expect(malformed.viewState).toEqual(absent.viewState);
+    expect(malformed.viewState.tolerance).toEqual([0.5, 0.5, 0, 0]);
+    expect(malformed.viewState.slicePosition).toEqual([5, 1, 0, 0]);
+  });
 });
 
 describe('deriveNodeViewState — fully-extended = slice-invariant normal node (#1157)', () => {
