@@ -208,6 +208,7 @@ exports group into the categories below.
 | `getSceneObjectNames(page)`                    | Flat list of every named object in the scene graph.                                                                            |
 | `getLayerMaterialState(page, layer)`           | Inspect uniforms / blending / depth state of a specific layer's material.                                                      |
 | `getPostProcessingState(page)`                 | Read the post-processing pipeline state (tone mapping mode, bloom, exposure).                                                  |
+| `probeWebGPUBackend(page)`                     | Which backend physically runs behind `?renderer=webgpu` — skip gate for specs that must not run on the WebGL2 fallback.        |
 | `validateSceneAttributes(page)`                | Audit every geometry's attribute buffers against the format spec.                                                              |
 | `SampledPixel`, `ElementPixelStats`            | Types returned by the pixel-sampling helpers.                                                                                  |
 | `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`.                                                                            |
@@ -290,7 +291,7 @@ Why a dedicated page rather than reusing the main viewer:
   strings are recoverable for snapshot diff.
 
 Not in scope: real WebGPU dispatch. That requires Chrome stable +
-`?webgpu=1` and runs in a separate spec
+`?renderer=webgpu` and runs in a separate spec
 (`webgpu-native-smoke.spec.ts`). This harness validates the
 WebGL2-via-WebGPU-backend fallback parity, which is what
 `forceWebGL: true` covers.

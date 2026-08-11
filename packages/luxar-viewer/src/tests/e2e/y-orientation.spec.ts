@@ -27,7 +27,7 @@
  */
 
 import { test, expect, type Page } from './fixtures';
-import { waitForLuxarReady, waitForPointsLoaded } from './helpers';
+import { probeWebGPUBackend, waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
 
@@ -150,22 +150,9 @@ test.describe('Y-orientation contract — renderToImageData cross-backend parity
       // ?renderer=webgpu silently runs the WebGL2 fallback and this
       // test becomes a vacuous duplicate of the forceWebGL one above —
       // while pixel-utils load-bears on this spec pinning the NATIVE
-      // readback orientation. Skip explicitly instead (same pattern as
-      // webgpu-native-smoke.spec.ts).
-      const isNative = await pageB.evaluate(() => {
-        const dbg = (
-          window as unknown as {
-            __luxarDebug?: {
-              app?: { sceneManager?: { capabilities?: { apiSurface?: string } } };
-              renderer?: { backend?: { isWebGLBackend?: boolean } };
-            };
-          }
-        ).__luxarDebug;
-        return (
-          dbg?.app?.sceneManager?.capabilities?.apiSurface === 'webgpu' &&
-          dbg?.renderer?.backend?.isWebGLBackend !== true
-        );
-      });
+      // readback orientation. Skip explicitly instead, on the same
+      // shared gate webgpu-native-smoke.spec.ts uses.
+      const { isNative } = await probeWebGPUBackend(pageB);
       test.skip(
         !isNative,
         'No native WebGPU adapter — fallback path is covered by the forceWebGL test'
