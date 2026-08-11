@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { LINE_PICK_SOURCE } from './shaders';
 import { VOLUMETRIC_LINE_PICK_SOURCE } from './shaders-volumetric';
+import { CAPSULE_LINE_PICK_SOURCE } from './shaders-capsule';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
@@ -19,6 +20,7 @@ import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-pr
 // Module-load assertion: the GLSL wrapper requires the GLSL sources.
 const LINE_PICK_GLSL = requireWebGLSources(LINE_PICK_SOURCE);
 const LINE_PICK_VOLUMETRIC_GLSL = requireWebGLSources(VOLUMETRIC_LINE_PICK_SOURCE);
+const LINE_PICK_CAPSULE_GLSL = requireWebGLSources(CAPSULE_LINE_PICK_SOURCE);
 
 export interface LinePickingMaterialConfig {
   nodeId: number;
@@ -45,7 +47,12 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
   constructor(config: LinePickingMaterialConfig) {
     // The primitive picks the shader-source pair (visual-material parity).
     const primitive = resolveLinePrimitive(config.primitive);
-    const glsl = primitive === 'volumetric' ? LINE_PICK_VOLUMETRIC_GLSL : LINE_PICK_GLSL;
+    const glsl =
+      primitive === 'capsule'
+        ? LINE_PICK_CAPSULE_GLSL
+        : primitive === 'volumetric'
+          ? LINE_PICK_VOLUMETRIC_GLSL
+          : LINE_PICK_GLSL;
     super({
       uniforms: {
         // Line data texture — rebound by the commit's material sync
