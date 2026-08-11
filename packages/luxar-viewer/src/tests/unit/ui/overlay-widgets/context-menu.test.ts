@@ -100,6 +100,19 @@ describe('openContextMenu', () => {
     expect(document.activeElement).toBe(itemByLabel('First')); // wraps
   });
 
+  it('with no item focused, ArrowUp enters at the LAST enabled item (APG ends)', () => {
+    openBasic();
+    // Drop focus off the menu items (a pointer-driven submenu retract can
+    // leave activeElement outside the list).
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    expect(menuEl()!.contains(document.activeElement)).toBe(false);
+
+    menuEl()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    // Last ENABLED item — 'Disabled' is skipped, so 'Radio off', not
+    // second-to-last (the raw modular walk landed there).
+    expect(document.activeElement).toBe(itemByLabel('Radio off'));
+  });
+
   it('submenu opens on click/ArrowRight and retracts on ArrowLeft', () => {
     const subAction = vi.fn();
     openBasic([

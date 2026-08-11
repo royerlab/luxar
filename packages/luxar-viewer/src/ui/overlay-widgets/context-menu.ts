@@ -202,10 +202,16 @@ export function openContextMenu(opts: ContextMenuOptions): () => void {
         e.preventDefault();
         e.stopPropagation();
         if (!items.length) return;
+        // With no item focused (idx -1, e.g. right after a pointer-driven
+        // submenu retract dropped focus), enter the list at the APG ends:
+        // ArrowDown → first, ArrowUp → last. The modular walk alone would
+        // land ArrowUp on the second-to-last item.
         const next =
-          e.key === 'ArrowDown'
-            ? items[(idx + 1) % items.length]
-            : items[(idx - 1 + items.length) % items.length];
+          idx === -1
+            ? items[e.key === 'ArrowDown' ? 0 : items.length - 1]
+            : e.key === 'ArrowDown'
+              ? items[(idx + 1) % items.length]
+              : items[(idx - 1 + items.length) % items.length];
         focusItem(next);
         break;
       }
