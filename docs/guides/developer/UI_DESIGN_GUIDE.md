@@ -336,8 +336,10 @@ refraction injector in `glass-filters.ts` all read the same class.
   layers panel, monitor, dataset browser, debug console, dimension sliders,
   toast, resolution indicator, error overlay, scene-identity banner, rail
   flyout/popover).
-- **Opt out**: frameless in-canvas widgets (scale bar, colormap legend) are
-  deliberately NOT glass — they use drop-shadows instead of a panel material.
+- **Opt out**, two kinds: frameless in-canvas widgets (scale bar, colormap
+  legend) are deliberately NOT glass — they use drop-shadows instead of a
+  panel material; and transient cursor popovers (context menus, §7.8) are
+  *framed* but still not glassed, because they live and die with the cursor.
 - **Nested surfaces must de-glass**: a GUI mounted inside an already-glass
   rail popover removes the class (`rail-panels/popover-gui.ts`) — never
   double-glass.
@@ -441,8 +443,10 @@ font-family:     var(--luxar-font-base);
 font-size:       var(--luxar-text-base);                 /* 13px */
 ```
 
-…plus `luxar-glass-surface` on the root element in TS. Do NOT add per-theme
-`box-shadow` rings on top (removed deliberately in PR #447).
+…plus `luxar-glass-surface` on the root element in TS — except for §5's two
+opt-outs (frameless in-canvas widgets, and transient cursor popovers such as
+context menus, §7.8), which take the recipe without the glass class. Do NOT
+add per-theme `box-shadow` rings on top (removed deliberately in PR #447).
 
 **Tier variants:**
 
@@ -595,10 +599,11 @@ Behavioral contract, uniform across adopters (layers panel, help overlay):
   nothing.
 - **Zero matches shows a note** ("No layers match." / "No shortcuts match."),
   centered, `text-muted`, `--luxar-text-sm` — a silently collapsed list reads
-  as broken. In a panel that rebuilds its list incrementally (the layers
-  panel's `renderList()`), the note must live OUTSIDE the rebuilt container
-  so rebuilds never wipe it; a surface rebuilt whole per open (the help
-  overlay) may keep it inline.
+  as broken. In a panel that outlives its list — one that re-renders the list
+  container in place (the layers panel's `renderList()` clears it with
+  `innerHTML = ''`) — the note must live OUTSIDE that container so a rebuild
+  never wipes it; a surface rebuilt whole per open (the help overlay) may keep
+  it inline.
 - **Escape is two-stage**: with a query it clears and stays (stopPropagation);
   empty, it falls through to the panel's own close.
 - **Keystrokes must not leak** to global shortcuts while the input has focus.
@@ -915,8 +920,9 @@ Further requirements:
 
 ## 14. Checklist for a new UI surface
 
-1. Root: surface recipe (§7.1) + `luxar-glass-surface` (unless frameless by
-   design) + `overflow: visible` + inner `__scroll` wrapper if it scrolls.
+1. Root: surface recipe (§7.1) + `luxar-glass-surface` (unless it is one of
+   §5's opt-outs — frameless by design, or a transient cursor popover, §7.8)
+   + `overflow: visible` + inner `__scroll` wrapper if it scrolls.
 2. Correct tier: panel / modal (+scrim) / popover / badge (§7.1 table) with
    token z-index — and if it docks beside the rail, it joins the exclusive
    dock rather than out-stacking the incumbents (§3.5, §7.5).
