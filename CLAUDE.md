@@ -1117,6 +1117,14 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 
 ---
 
+## Changelog
+
+Do NOT edit `CHANGELOG.md` directly in a PR. Add a fragment file
+`changelog.d/<PR-or-issue>.md` containing the entry in the house style (a
+`#### Title` line + prose paragraphs). One file per PR means `CHANGELOG.md` is no
+longer a rebase-conflict magnet; `make changelog` folds fragments into it at
+release-prep. See `changelog.d/README.md`. (Not every PR needs one.)
+
 ## Pre-commit Checklist
 
 ```bash
