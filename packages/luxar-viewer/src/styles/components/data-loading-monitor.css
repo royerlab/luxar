@@ -885,7 +885,7 @@
    highlight; levels present in the file but not rendered are dimmed.
    Classes are toggled live by the monitor as the LOD selector switches. */
 .luxar-scene-graph__node-row--active-level {
-  background: rgba(120, 170, 255, 0.12);
+  background: color-mix(in srgb, var(--luxar-highlight) 14%, transparent);
   border-radius: var(--luxar-radius-sm);
 }
 
@@ -939,8 +939,8 @@
 
 /* Kind badge (K LODs / N parts) — mirrors the Layers-panel --kind chip. */
 .luxar-scene-graph__badge--kind {
-  background: rgba(120, 170, 255, 0.18);
-  color: var(--luxar-text-secondary, #9cc2ff);
+  background: color-mix(in srgb, var(--luxar-highlight) 16%, transparent);
+  color: var(--luxar-text-secondary);
   text-transform: none;
 }
 

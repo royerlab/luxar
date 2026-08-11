@@ -21,7 +21,11 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: rgba(0, 0, 0, 0.8);
+  /* The overlay scrim token, not the panel one: this box floats over the raw
+     canvas with no .luxar-glass-surface to tint it, and bg-secondary is a
+     translucent WHITE under both glass themes (white-on-white over a bright
+     scene). bg-overlay is a dark scrim in all four themes. */
+  background: var(--luxar-bg-overlay);
   color: var(--luxar-text-primary);
   padding: var(--luxar-spacing-10);
   border: 1px solid var(--luxar-border-default);
@@ -35,8 +39,8 @@
 }
 
 .luxar-loading-indicator__spinner {
-  border: 3px solid rgba(255, 255, 255, 0.3);
-  border-top: 3px solid white;
+  border: 3px solid var(--luxar-border-strong);
+  border-top: 3px solid var(--luxar-text-primary);
   border-radius: 50%;
   width: 24px;
   height: 24px;

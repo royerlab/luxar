@@ -45,7 +45,9 @@
 }
 
 .luxar-colormap-legend__gradient {
-  border-radius: var(--luxar-radius-xs, 2px);
+  /* Deliberately half of --luxar-radius-sm: 4px corners on a 12px-tall
+     pixelated bar read as a pill. (--luxar-radius-xs does not exist.) */
+  border-radius: 2px;
   width: 120px;
   height: 12px;
   image-rendering: pixelated;

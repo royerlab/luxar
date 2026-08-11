@@ -6,6 +6,32 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Viewer stylesheets: a phantom radius token, magic z-indexes, duplicated rgba
+
+Three kinds of drift in the viewer CSS, all mechanical and all chosen to be
+pixel-identical (or imperceptibly close) in the dark theme. The colormap
+legend asked for `--luxar-radius-xs`, which no theme emits — the radius scale
+is none/sm/md/lg/full — so the `2px` fallback literal had been quietly in
+charge; it is now an intentional, documented literal (half of `radius-sm`, so
+a 12px-tall gradient bar does not read as a pill). Layer z-indexes are stated
+against the token scale instead of magic numbers: the debug console's `150`
+becomes `calc(z-base + 50)` (same value, now with its intent written down —
+above the in-canvas widgets, below every panel), the toast moves to
+`calc(z-tooltip + 1000)`, and the dimension-slider context menu drops from
+`10000` to the popover tier it actually belongs to. The recording panel keeps
+its absolute magnitudes: its documented job is to beat unknown third-party
+host UI, so those values are load-bearing — and the toast comment now says so
+rather than claiming to sit above everything. Finally, raw `rgba()` that was
+just re-spelling a token becomes `color-mix()` on the token itself: the debug
+console's warn/error row tints (byte-identical in dark), the monitor
+scene-graph's active-level highlight and kind badge (a selection state, so it
+follows the theme's highlight accent — purple under the glass themes), and the
+loading indicator's hardcoded black chrome and white spinner, which stop
+rendering as a black box in the light theme. That indicator takes the overlay
+scrim token rather than the panel one — it is the one box in the file with no
+`.luxar-glass-surface` to tint it, and the panel background is a translucent
+white under both glass themes.
+
 #### Domain-scoped CI: a language suite runs only when that language changed
 
 Every pull request used to run every suite. A one-line TypeScript change paid
