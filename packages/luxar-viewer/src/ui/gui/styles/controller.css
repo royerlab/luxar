@@ -85,6 +85,14 @@
   outline: none;
 }
 
+/* Keyboard focus must stay visible: unlike the text/number/select inputs
+   (whose border switches color on focus), a range input has no border to
+   repurpose — give it the standard ring. */
+.luxar-gui__slider:focus-visible {
+  outline: 2px solid var(--luxar-border-focus);
+  outline-offset: 2px;
+}
+
 /* WebKit (Chrome, Safari, Edge) */
 .luxar-gui__slider::-webkit-slider-track {
   height: 3px;
@@ -325,4 +333,24 @@
 
 [data-theme='light'] .luxar-gui__slider {
   background: rgba(0, 0, 0, 0.1);
+}
+
+/* Respect a user's reduced-motion preference (WCAG 2.3.3): drop the row/
+   widget transitions and the slider-thumb hover zoom. `transition` is not
+   inherited, so every declaring selector is listed. */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-gui__controller,
+  .luxar-gui__slider,
+  .luxar-gui__slider::-webkit-slider-thumb,
+  .luxar-gui__slider::-moz-range-thumb,
+  .luxar-gui__input,
+  .luxar-gui__select,
+  .luxar-gui__button {
+    transition: none;
+  }
+
+  .luxar-gui__slider::-webkit-slider-thumb:hover,
+  .luxar-gui__slider::-moz-range-thumb:hover {
+    transform: none;
+  }
 }
