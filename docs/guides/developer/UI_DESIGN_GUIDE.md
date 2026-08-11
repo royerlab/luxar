@@ -210,7 +210,7 @@ Key color differences:
 
 | | dark | light | frosted-glass | liquid-glass |
 | --- | --- | --- | --- | --- |
-| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(255,255,255,0.12)` | `rgba(255,255,255,0.15)` |
+| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(255,255,255,0.12)` (a dark frost, pending #1480) | `rgba(255,255,255,0.15)` |
 | `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(88,86,214,1)` (indigo) | `rgba(88,86,214,1)` (indigo) |
 | `border.focus` | green `rgba(76,175,80,0.5)` | green | **blue** `rgba(0,122,255,0.6)` | **blue** `rgba(0,122,255,0.5)` |
 | `interactive.*` base | white alpha | black alpha | white alpha | bluish-gray `rgba(120,120,128,…)` |
@@ -220,9 +220,10 @@ Design consequences:
 
 - **The accent hue is not constant across themes.** `highlight` is the bright
   brand blue in dark, a darker blue in light for contrast on white, and still
-  an indigo `rgba(88,86,214,1)` in both glass themes — where it sits at
-  ~1.6:1 against a dark glass panel. #1480 unifies all of them on the brand
-  blue (pending); until it lands, never rely on the accent reading as blue.
+  an indigo `rgba(88,86,214,1)` in both glass themes — dark enough that it
+  barely separates from a dark glass panel (~1.6:1 once #1480's dark frost
+  lands). #1480 unifies all of them on the brand blue (pending); until it
+  does, never rely on the accent reading as blue.
 - **Never assume the focus ring is green** — it is green in dark/light and
   blue in the glass themes. Always use `--luxar-border-focus` /
   `--luxar-interactive-focus`; never hardcode a green.
@@ -230,6 +231,13 @@ Design consequences:
   are unitless multipliers and theme-dependent.
 - Anything using `box-shadow: var(--luxar-shadow-lg)` silently gains an inner
   glow in liquid-glass; that is intended.
+- Frosted-glass panels become a **dark frost** in #1480 (pending): the tint
+  must guarantee text contrast over ANY scene, so the panel background moves
+  to a ~65% dark layer under the blur (worst-case bright backdrop ≈ 4.4:1
+  against text-primary) — the same contrast-protection role liquid-glass's
+  dark `::after` already plays. Today it is still a 12% white tint, which is
+  exactly the bright-scene contrast problem #1480 fixes. Never lighten the
+  glass panel tints without re-checking bright-scene contrast.
 - Blur tokens differ radically per theme by design: frosted-glass IS its blur;
   liquid-glass barely blurs because refraction + tint do the work.
 
