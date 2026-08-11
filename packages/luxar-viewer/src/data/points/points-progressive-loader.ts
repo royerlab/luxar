@@ -159,7 +159,8 @@ function buildLadderElementIdMap(
  * arrays (`colors`, `radii`, `sharpness`, `scalars`) are concatenated
  * only when ALL levels carry them (mixed-presence is dropped — keeps
  * the loader simple and matches the writer's all-or-nothing per-attr
- * policy).
+ * policy). A level the current slice culled to ZERO points abstains from
+ * that vote rather than vetoing it — see `concatOptionalField` (#1456).
  *
  * `levelOffsets` (non-null only for a ladder whose PARENT declares the union
  * label CSR) gives each level's half-open extent inside that CSR's index
@@ -378,13 +379,6 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   // Mirrors GSplatsProgressiveLoader.
   private _frameBudgetMs: number | null = null;
 
-  // Set when LOD 0 committed 0 elements for the current view: the slice is
-  // empty, so every higher (spatially-coextensive) LOD is empty too and the
-  // ladder is TERMINAL. Makes `hasMoreLODs` read false so refinement doesn't
-  // fetch+decode the higher empty LODs pass after pass. Reset on view change.
-  // Mirrors GSplatsProgressiveLoader.
-  private _emptyLadder = false;
-
   constructor(
     lodLoaders: PointsSpatialIndexLoader[],
     nLods: number,
@@ -411,9 +405,6 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // refinement loop holding a stale reference stops instead of indexing
     // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
     if (this._disposed) return false;
-    // Empty slice (LOD 0 committed 0 elements): terminal ladder — no further
-    // work, so refinement doesn't fetch the higher empty LODs pass after pass.
-    if (this._emptyLadder) return false;
     // While a playback frame budget is active, the budgeted prefix IS the
     // target: no background refinement between animation ticks; the commit
     // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
@@ -505,14 +496,6 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // levels and must never mutate the cache's payload array (elements
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
       this.loadedLODs = restored ? [...restored] : [];
-      // Re-derive the terminal empty-ladder flag from the RESTORED prefix:
-      // an S-cache-restored LOD 0 with zero elements is just as terminal
-      // as a freshly loaded one. The level===0 empty check in the
-      // streaming loop only fires for freshly LOADED levels, so a
-      // restored 1-level empty prefix would otherwise stream the higher
-      // (equally empty) LODs again on every revisit of the empty slice.
-      this._emptyLadder =
-        restored !== null && restored.length > 0 && restored[0].positions.length === 0;
       this._resetGeneration++;
       this.lastViewState = {
         displayDims: [...viewState.displayDims],
@@ -538,15 +521,6 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // determinant-equal per the check above, so cache keys (which build
       // from the same determinant) are unaffected.
       this.lastViewState.dimensions = viewState.dimensions;
-    }
-
-    // Known-empty slice: LOD 0 committed 0 points on a prior pass for this SAME
-    // view (the view-change branch re-derives the flag from the restored prefix). Terminal
-    // ladder — skip the streaming loop AND prefetch so a same-view re-invoke
-    // (e.g. refine-on-pause) doesn't fetch the higher (empty) LODs. Mirrors
-    // GSplatsProgressiveLoader.
-    if (this._emptyLadder) {
-      return finish();
     }
 
     // Stream under the shared streaming policy (see `streaming-policy.ts`):
@@ -594,13 +568,20 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         );
       }
 
-      // Short-circuit: LOD 0 with 0 points → higher LODs would also
-      // have 0 visible (LODs are spatially coextensive). Mark terminal so
-      // `hasMoreLODs` reads false and refinement skips the empty higher LODs.
-      if (level === 0 && lodData.positions.length === 0) {
-        this._emptyLadder = true;
-        break;
-      }
+      // NEVER break out because a level came back empty (#1456). It is a
+      // tempting optimization — this loop used to latch a terminal "empty
+      // ladder" on an empty LOD 0 and stop — but it is wrong here: this loader
+      // is constructed only for ADDITIVE ladders (`createProgressivePointsLoader`
+      // iterates the `additive_<i>` subgroups), whose levels are DISJOINT
+      // increments of one permutation, not coarse-to-fine resamplings of the
+      // same elements. They are therefore NOT spatially coextensive: LOD 0 is a
+      // small SUBSET of the node (a few thousand points under `-b stream:C` /
+      // `--target-ms`, the recommended ladder shape), so a hidden-dimension
+      // slice that none of ITS members lands on says nothing whatever about
+      // levels 1..n-1, which may hold plenty of points right there. Stopping
+      // here rendered such a slice permanently blank. The same reasoning
+      // forbids inferring anything from a restored cache PREFIX whose LOD 0 is
+      // empty.
 
       if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) {
         break;
@@ -624,10 +605,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       );
     }
 
-    // A terminal empty ladder has nothing to prefetch — this also covers
-    // the very pass that DISCOVERS the empty LOD 0 (the known-empty
-    // early-return above only guards subsequent same-view invokes).
-    if (!this._emptyLadder) this.prefetchNextLOD(viewState);
+    this.prefetchNextLOD(viewState);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
     // PREFIXES only while a playback budget is active. Mirrors
