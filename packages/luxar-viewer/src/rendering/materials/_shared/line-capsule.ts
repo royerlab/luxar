@@ -25,20 +25,27 @@
  *    sharpness as varyings evaluated at clamped corner positions) — the
  *    blend stretches marginally into cap regions; sub-quantization.
  *
- * Joints: EVERY end is a round cap; an interior end keeps its HALF of the
- * joint disc — the cap region (beyond the endpoint) is partitioned along
- * the joint's 2D BISECTOR line (normal = normalize(q̂ − m̂) in pixel
- * space, my side negative; the partner's normal is the exact negation, so
- * the two half-discs tile the disc exactly at any bend angle). The cut is
+ * Joints: EVERY end is a round cap; a partner-bearing interior end keeps
+ * its HALF of the joint disc — the cap region (beyond the endpoint) is
+ * partitioned along the joint's 2D BISECTOR line (normal =
+ * normalize(q̂ − m̂) in pixel space, my side negative; the partner's normal
+ * is the exact negation, so the two half-discs tile the disc exactly at any
+ * bend angle). Which ends cut at all is the SHARED joint-code rule
+ * (`luxarLineJointCapSuppression`): a free end and a degree-≥3 hub keep the
+ * whole round cap — a hub has no single partner to tile against — while a
+ * slice-clipped end is butt-cut. The cut is
  * confined to the cap region: where the two rod BODIES genuinely overlap
  * (the inner corner of a bend) both legs render, matching the physical
  * union. The foreign-side cap contribution fades (smoothstep,
  * bend-scaled — see `CAPSULE_CUT_FADE_RADIUS_FRACTION`) instead of
  * cutting hard, so the hand-off to the partner's body is C0 — sub-pixel
- * at normal widths, smooth when zoomed in. The partner's far endpoint is
- * near-plane-clipped toward the joint vertex before projecting (a
- * behind-eye projection flips and poisons the cut normal), and a joint
- * vertex behind the near plane keeps the perpendicular butt.
+ * at normal widths, smooth when zoomed in. A BUTT cut — no bisector, i.e.
+ * a slice-clipped end, a joint vertex behind the near plane, a degenerate
+ * partner projection, or an exactly straight joint — has no partner body
+ * beyond the endpoint to fade into and no reserved fade band, so it cuts
+ * HARD. The partner's far endpoint is near-plane-clipped toward the joint
+ * vertex before projecting (a behind-eye projection flips and poisons the
+ * cut normal).
  *
  * @module rendering/materials/_shared/line-capsule
  */
@@ -73,7 +80,9 @@ export const CAPSULE_STENCIL_APRON_PX = 0.5;
  * apparent radii genuinely diverge in 2D; the 0.25 floor keeps the fade
  * from collapsing to a hard seam at shallow projected bends. Sub-pixel
  * at normal widths. The joint stencil reach accounts for the fade band
- * (`(|n.y| + fraction·max(|n.y|, 0.25))·rMax`).
+ * (`(|n.y| + fraction·max(|n.y|, 0.25))·rMax`) — it is raised only where a
+ * bisector was actually found, which is why a butt cut is hard rather than
+ * faded (a faded overhang there would just be clipped by the stencil).
  */
 export const CAPSULE_CUT_FADE_RADIUS_FRACTION = 0.25;
 

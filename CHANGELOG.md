@@ -26,11 +26,16 @@ the joint bisector via the volumetric primitive's joint-code partner
 machinery — the two half-discs tile the disc exactly at any bend angle (no
 notch, no chopped miter tip, no double-bright overlap). The cut is
 confined to the cap region (overlapping rod bodies at a bend's inner
-corner both render, like the physical union), fades over a quarter radius
-instead of cutting hard, and the partner endpoint is near-plane-clipped
-before projecting — together these keep zoomed-in joints seamless, the
-regime where both the quad and the first capsule iteration showed hard
-seams and wedges. The per-fragment radius interpolates linearly across the
+corner both render, like the physical union), fades smoothly over a
+bend-scaled band the vertex stage reserves stencil for (so the rasterizer
+cannot chop the ramp part-way down and hand back the very step it removes),
+and the partner endpoint is near-plane-clipped before projecting — together
+these keep zoomed-in joints seamless, the regime where both the quad and the
+first capsule iteration showed hard seams and wedges. Which ends cut at all
+is the shared joint-code rule the other two primitives use, so a free end
+and a degree-≥3 hub keep their whole round cap, while a butt cut — a
+slice-clipped end, a joint vertex behind the near plane, an exactly straight
+joint — is hard, with nothing drawn past the endpoint line. The per-fragment radius interpolates linearly across the
 stencil (perspective-correct for constant-width tubes), which keeps
 silhouettes straight under extreme foreshortening. One profile serves every blending mode (the
 capsule is peak-shaped by construction, so there is no peak/sum lane split),

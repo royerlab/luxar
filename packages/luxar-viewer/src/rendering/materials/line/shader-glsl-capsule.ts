@@ -25,6 +25,7 @@
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_LINE_JOINT_CODE,
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
@@ -57,6 +58,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
+    ${GLSL_LINE_JOINT_CODE}
 
     in vec2 aQuadCorner;
 
@@ -198,8 +200,15 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       float rA = clamp(rawA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
       float rB = clamp(rawB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
 
-      float interiorA = abs(lineT4.y) > 0.5 ? 1.0 : 0.0;
-      float interiorB = abs(lineT4.z) > 0.5 ? 1.0 : 0.0;
+      // Which ends CUT rather than cap, from the shared joint-code rule
+      // (glsl-lib.ts): a free end (code 0) and a degree->=3 hub (code -2)
+      // keep the whole round cap — several legs already stack at a hub and
+      // its cut has no single partner to tile against. Everything else
+      // cuts: a slot-bearing code at the bisector below, a slice-clipped
+      // end (-1) at the perpendicular butt (nothing beyond the slice plane
+      // may draw).
+      float interiorA = luxarLineJointCapSuppression(lineT4.y);
+      float interiorB = luxarLineJointCapSuppression(lineT4.z);
 
       vec2 ab = pB - pA;
       float abLen = length(ab);
@@ -383,20 +392,31 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       // volumetric primitive integrates (and additive sums it, correctly).
       // Foreign-side cap fade: my cap region on the PARTNER's side of the
       // joint bisector fades out instead of cutting hard. The fade length
-      // scales with the BEND (|n.y| = sin of the projected half-turn): a
-      // straight joint fades over zero length — an exact butt, no
-      // double-count band — while a real bend gets its fade exactly where
-      // the two legs' apparent radii genuinely diverge (the 2D ambiguity
-      // a hard partition renders as a visible seam when zoomed).
+      // scales with the BEND (|n.y| = sin of the projected half-turn),
+      // floored at CUT_FADE so a shallow projected bend does not collapse
+      // to a hard seam: a near-straight joint keeps its double-count band
+      // short, while a real bend gets its fade exactly where the two legs'
+      // apparent radii genuinely diverge (the 2D ambiguity a hard
+      // partition renders as a visible seam when zoomed). A BUTT cut —
+      // normal exactly ±(1,0), i.e. a slice-clipped end, a joint vertex
+      // behind the near plane, a degenerate partner projection, or an
+      // exactly straight joint — has no partner body beyond the endpoint
+      // to fade into, and the vertex stage reserves no fade band for it
+      // (the reach above is raised only where a bisector was found), so it
+      // cuts HARD: nothing draws past the endpoint line.
       float rPx = max(vR * invW, 1e-4);
       float cutFade = 1.0;
       if (vMeta.y > 0.5 && x < 0.0 && (vCutA2.x * x + vCutA2.y * y) > 0.0) {
         float fadeLenA = ${G.CUT_FADE} * rPx * max(abs(vCutA2.y), 0.25);
-        cutFade *= smoothstep(0.0, 1.0, 1.0 + x / fadeLenA);
+        cutFade *= (vCutA2.y == 0.0)
+          ? 0.0
+          : smoothstep(0.0, 1.0, 1.0 + x / fadeLenA);
       }
       if (vMeta.z > 0.5 && x > vMeta.x && (vCutB2.x * (x - vMeta.x) + vCutB2.y * y) > 0.0) {
         float fadeLenB = ${G.CUT_FADE} * rPx * max(abs(vCutB2.y), 0.25);
-        cutFade *= smoothstep(0.0, 1.0, 1.0 - (x - vMeta.x) / fadeLenB);
+        cutFade *= (vCutB2.y == 0.0)
+          ? 0.0
+          : smoothstep(0.0, 1.0, 1.0 - (x - vMeta.x) / fadeLenB);
       }
       if (cutFade <= 0.0) discard;
       // Squared distance in the local frame; at cut ends the ROD continues

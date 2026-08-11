@@ -41,8 +41,9 @@ active, each side of a joint decodes to exactly its own segment id.
 ## The capsule pick pass (#1352, behind `?linePrimitive=capsule`)
 
 Same dispatch, third variant. The capsule pick shaders duplicate the visual
-capsule's vertex stage exactly — stencil-local corners, half-disc
-bisector joints — and the fragment shades the same quartic
+capsule's vertex stage exactly — stencil-local corners, half-disc bisector
+joints (same shared joint-code cap rule, same reserved fade band) — and the
+fragment shades the same quartic
 profile of the 2D point-to-segment distance, so `brightness = profile ×
 fade` tracks the visible pixels one-for-one (the capsule is peak-shaped by
 construction; there is no separate peak lane to select). Per-element alpha

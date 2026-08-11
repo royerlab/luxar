@@ -46,6 +46,7 @@ import {
 import {
   perspectiveNearFadeStaticTSL,
   sanitizeNonNegative,
+  tslLineJointCapSuppression,
   type TSLNode,
   sortedIndexNode,
 } from '../../materials/_shared/tsl-helpers';
@@ -168,14 +169,10 @@ export function capsuleLinePickWebGPUFactory(
     const rA: TSLNode = clamp(rawA, CAPSULE_MIN_RADIUS_PX, uMaxLinePixelWidth).toVar();
     const rB: TSLNode = clamp(rawB, CAPSULE_MIN_RADIUS_PX, uMaxLinePixelWidth).toVar();
 
-    const interiorA: TSLNode = abs(lineT4.y)
-      .greaterThan(0.5)
-      .select(float(1.0), float(0.0))
-      .toVar();
-    const interiorB: TSLNode = abs(lineT4.z)
-      .greaterThan(0.5)
-      .select(float(1.0), float(0.0))
-      .toVar();
+    // Which ends cut rather than cap — the shared joint-code rule, same as
+    // the visual twin (a free end and a degree->=3 hub keep the round cap).
+    const interiorA: TSLNode = tslLineJointCapSuppression(lineT4.y).toVar();
+    const interiorB: TSLNode = tslLineJointCapSuppression(lineT4.z).toVar();
 
     const ab: TSLNode = pB.sub(pA).toVar();
     const abLen: TSLNode = length(ab).toVar();
@@ -351,7 +348,13 @@ export function capsuleLinePickWebGPUFactory(
           .mul(CAPSULE_CUT_FADE_RADIUS_FRACTION)
           .mul(max(abs(vCutA2.y), float(0.25)))
           .toVar();
-        cutFade.mulAssign(smoothstep(0.0, 1.0, float(1.0).add(x.div(fadeLenA))));
+        // A BUTT cut (normal exactly ±(1,0)) has no partner body beyond the
+        // endpoint to fade into and no reserved fade band — cut hard.
+        cutFade.mulAssign(
+          vCutA2.y
+            .equal(0.0)
+            .select(float(0.0), smoothstep(0.0, 1.0, float(1.0).add(x.div(fadeLenA))))
+        );
       }
     );
     If(
@@ -364,7 +367,11 @@ export function capsuleLinePickWebGPUFactory(
           .mul(CAPSULE_CUT_FADE_RADIUS_FRACTION)
           .mul(max(abs(vCutB2.y), float(0.25)))
           .toVar();
-        cutFade.mulAssign(smoothstep(0.0, 1.0, float(1.0).sub(x.sub(vMeta.x).div(fadeLenB))));
+        cutFade.mulAssign(
+          vCutB2.y
+            .equal(0.0)
+            .select(float(0.0), smoothstep(0.0, 1.0, float(1.0).sub(x.sub(vMeta.x).div(fadeLenB))))
+        );
       }
     );
     Discard(cutFade.lessThanEqual(0.0));

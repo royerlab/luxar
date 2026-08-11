@@ -51,6 +51,41 @@ describe('capsule constants', () => {
     }
   });
 
+  it('the two stages agree on the foreign-side fade band', () => {
+    // The fragment shades the bend-scaled fade beyond the endpoint, so the
+    // vertex stage must reserve stencil for it — reserving only the kept
+    // half-disc (|n.y|·rMax) chopped the ramp part-way down at gentle
+    // joints and handed back the hard step the fade exists to remove.
+    const frac = CAPSULE_CUT_FADE_RADIUS_FRACTION.toFixed(2);
+    for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
+      expect(src).toContain(`(abs(nLoc.y) + ${frac} * max(abs(nLoc.y), 0.25)) * rMax`);
+      expect(src).not.toMatch(/ext[AB] = abs\(nLoc\.y\) \* rMax/);
+    }
+    for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
+      expect(src).toContain(`${frac} * rPx * max(abs(vCutA2.y), 0.25)`);
+      expect(src).toContain(`${frac} * rPx * max(abs(vCutB2.y), 0.25)`);
+    }
+  });
+
+  it('the cap rule comes from the shared joint-code helper (a hub keeps its cap)', () => {
+    // A degree->=3 hub (code -2) and a free end (0) keep the whole round
+    // cap; reading `abs(code) > 0.5` instead butt-cuts a hub and notches it.
+    for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
+      expect(src).toContain('luxarLineJointCapSuppression(lineT4.y)');
+      expect(src).toContain('luxarLineJointCapSuppression(lineT4.z)');
+    }
+  });
+
+  it('a butt cut is hard — nothing draws past the endpoint line', () => {
+    // No bisector (slice-clipped end, behind-near joint vertex, degenerate
+    // partner projection, exactly straight joint) ⇒ no partner body to fade
+    // into, and the vertex stage reserves no fade band there either.
+    for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
+      expect(src).toContain('vCutA2.y == 0.0');
+      expect(src).toContain('vCutB2.y == 0.0');
+    }
+  });
+
   it('no backticks inside the GLSL template literals', () => {
     for (const src of [
       CAPSULE_LINE_VERTEX_SHADER,

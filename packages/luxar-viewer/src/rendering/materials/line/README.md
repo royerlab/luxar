@@ -414,9 +414,14 @@ profile; approximate math fine"):
    renormalization.
 
 Interior polyline joints reuse the volumetric primitive's partner machinery
-(the joint-code partner slot; `compute_joint_codes` stays load-bearing).
-**Every end is a round cap**; an interior end keeps its HALF of the joint
-disc — the cap region (beyond the endpoint) is partitioned along the joint
+(the joint-code partner slot; `compute_joint_codes` stays load-bearing),
+including its cap rule: which ends cut at all comes from the shared
+`luxarLineJointCapSuppression` / `tslLineJointCapSuppression`, so a free end
+(code `0`) and a degree-≥3 hub (code `-2`) keep the whole round cap — a hub
+has no single partner to tile against — while a slice-clipped end (`-1`) is
+butt-cut at the slice plane.
+**Every end is a round cap**; a partner-bearing interior end keeps its HALF
+of the joint disc — the cap region (beyond the endpoint) is partitioned along the joint
 bisector, the line through the shared vertex with 2D normal
 `normalize(q̂ − m̂)` in pixel space (the partner's normal is the exact
 negation, so the two half-discs tile the disc exactly at ANY bend angle —
@@ -428,7 +433,10 @@ the physical union; the foreign-side cap contribution fades smoothly over a
 bend-scaled fraction of the radius (`CAPSULE_CUT_FADE_RADIUS_FRACTION`)
 instead of a hard cut, keeping the hand-off to the partner's body C0
 (sub-pixel at normal widths, and collapsing toward an exact butt at
-straight joints where any foreign contribution would double-count); and
+straight joints where any foreign contribution would double-count) — a
+BUTT cut, where no bisector was found at all, is hard rather than faded,
+since the reach the vertex stage reserves is raised only where a bisector
+was; and
 the partner's far endpoint is near-plane-clipped toward the joint vertex
 before projecting (a behind-eye projection flips and would poison the cut
 normal), with a joint vertex behind the near plane keeping the
