@@ -108,6 +108,16 @@ export interface MeshGeometryConfig {
    * `undefined` falls back to the scan, `null` means nothing is drawn.
    */
   bounds?: MeshProjectionBounds | null;
+  /**
+   * Whether this node's vertex count legitimately GROWS between commits.
+   *
+   * True for a reveal-ladder node, whose every level adds vertices, and false for
+   * every other mesh — a whole-node mesh is fetched once, so a changed vertex count
+   * there means the buffers and the metadata disagree and is worth a warning. The
+   * flag exists only to keep that warning meaningful; the rebind itself is identical
+   * either way.
+   */
+  vertexCountGrows?: boolean;
 }
 
 /**
@@ -490,11 +500,12 @@ export function updateMeshGeometry(
       }
       positionAttr.needsUpdate = true;
     } else {
-      // A length change on a LIVE node means the vertex count changed, which the
+      // A length change on a LIVE node means the vertex count changed, which a
       // whole-node loader never does — warn and rebind rather than silently
-      // truncate. The 1-vertex placeholder growing to the real buffer is the
-      // expected first commit of every mesh, not an anomaly, so it stays quiet.
-      if (positionAttr.count !== 1) {
+      // truncate. Two expected cases stay quiet: the 1-vertex placeholder growing
+      // to the real buffer (the first commit of every mesh), and a reveal ladder,
+      // whose every level genuinely adds vertices (`vertexCountGrows`).
+      if (positionAttr.count !== 1 && input.vertexCountGrows !== true) {
         log.warning(
           Modules.SCENE_LOADER,
           `Mesh position length changed (${positionAttr.array.length} -> ${input.position.length}); rebinding`

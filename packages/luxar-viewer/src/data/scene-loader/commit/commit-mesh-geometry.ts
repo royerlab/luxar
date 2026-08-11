@@ -35,7 +35,7 @@ import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { applyMeshSide, applyMeshShading } from '../../../rendering/node-factory/create-mesh-node';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { computeFaceCentroids } from '../../../rendering/depth-sort-coordinator/triangle-ordering';
-import { stampLoadedViewVersion } from './stamp-view-version';
+import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { setCommittedData } from '../../../types/committed-data';
 import { isMeshUserData, type MeshMetadata } from '../../../types/mesh';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
@@ -104,8 +104,16 @@ export function commitMeshGeometry(
     vertexCount: data.vertexCount,
     // The node's TOTAL faces, which sizes the index buffer's capacity — not the
     // visible count, which changes every slice move and would reallocate (and leak)
-    // the index buffer each time.
+    // the index buffer each time. On a reveal ladder "total" means the REVEALED
+    // prefix's total, which grows by a level at a time.
     faceCount: data.faceCount,
+    // Structural probe, the same idiom `stampLadderComplete` and `queue-next.ts`
+    // use: only the progressive loader has a level count. Tells the geometry that a
+    // changed vertex count is this node's normal behaviour rather than buffers and
+    // metadata disagreeing.
+    vertexCountGrows:
+      (object.userData.loader as { totalLODCount?: number } | undefined)?.totalLODCount !==
+      undefined,
   });
 
   // The epoch's side, which is NOT simply the node's `double_sided`: an odd-parity
@@ -162,6 +170,20 @@ export function commitMeshGeometry(
   );
 
   stampLoadedViewVersion(object.userData, loadedViewVersion ?? currentVersion);
+
+  // Ladder state, for the never-downgrade display gate: a mesh with a reveal
+  // ladder commits a PARTIAL surface until the last level lands, and without this
+  // stamp `lod-display-gate.ts` reads a half-revealed mesh as complete and lets a
+  // substitutive parent swap to it early. Stamped at commit time rather than read
+  // live, so "complete" can never be paired with a stale partial count.
+  //
+  // It also stamps `committedEnergyFraction`, and for a mesh that stamp must end up
+  // ABSENT — `MeshProgressiveLoader.committedEnergyFraction` returns `null` to make
+  // it so. Present-and-numeric would let `energyCompensation` brighten an incomplete
+  // ladder by `1/e(k)`, which is right for a coarse prefix of an emissive cloud and
+  // exactly wrong for a partial object at full brightness (§9.1). An unladdered mesh
+  // has no such getter and stamps `1`, which is true: its commit IS its content.
+  stampLadderComplete(object.userData);
 
   if (projected.visibleFaceCount === 0) {
     log.info(

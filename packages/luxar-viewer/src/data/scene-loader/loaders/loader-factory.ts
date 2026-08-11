@@ -29,6 +29,7 @@ export type { PointsSpatialIndexLoader } from '../../points/points-spatial-index
 import { LinesSpatialIndexLoader } from '../../lines/lines-spatial-index-loader';
 import { GSplatsSpatialIndexLoader } from '../../gsplats/gsplats-spatial-index-loader';
 import { MeshWholeNodeLoader } from '../../mesh/mesh-whole-node-loader';
+import { MeshProgressiveLoader } from '../../mesh/mesh-progressive-loader';
 import { GSplatsProgressiveLoader } from '../../gsplats/gsplats-progressive-loader';
 import type { SceneNode } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
@@ -254,37 +255,82 @@ export function createMeshLoader(
 }
 
 /**
- * Refuse to build a progressive (multi-LOD) mesh loader.
+ * Create a progressive mesh loader for a REVEAL-ladder node.
  *
- * Mesh has no ADDITIVE (prefix) ladder: a prefix of an index buffer is a surface with
- * holes in it, not a coarser one, so that flavour is excluded on principle
- * (`docs/specs/MESH_NODE_SPEC.md` §9). SUBSTITUTIVE levels are a different shape and DO
- * work — sibling children of a `kind=lod` group, written by
- * `add_mesh(substitutive_lod=…)` — and they never route through here. This exists because
- * `GeometryDescriptor` requires the factory for every drawable kind, and the
- * honest implementation of "this kind cannot do that" is a clear throw rather than
- * a silent fallback to the single-LOD loader.
+ * Walks `additive_<i>/` subgroups under the node path and builds one
+ * {@link MeshWholeNodeLoader} per level, wrapped in a `MeshProgressiveLoader`.
+ * Structurally the sibling of the three factories above; two differences, both
+ * following from what a mesh ladder is:
  *
- * Reaching this means a store declared `n_additive_sublods > 1` on a mesh node,
- * which no Luxar writer produces; failing loudly is what turns that into one lost
- * node with an explanation instead of a mesh that quietly renders its coarsest
- * level forever.
+ *  - **No energy table.** The other three read each level's
+ *    `lod_stats.energy_fraction_cum` so the display gate can release an upgrade
+ *    early and `energyCompensation` can brighten an incomplete emissive prefix.
+ *    A reveal prefix is a partial object at FULL brightness, so that multiplier
+ *    would blow out the first shell and fade it as the surface completes — the
+ *    inverse of growing in. Not reading the stamps is the second of the three
+ *    latches (`MeshProgressiveLoader.committedEnergyFraction` and the Python
+ *    writer's refusal are the others; `MESH_NODE_SPEC.md` §9.1).
+ *  - **No `SliceCache`.** A mesh level is whole-node resident, so its own decode
+ *    is the cache and lasts the node's lifetime; a per-slice ladder entry would
+ *    store the same bytes under every key.
+ *
+ * This function REPLACED a deliberate rejection. Mesh has no additive
+ * level-of-detail ladder and still never will — a prefix of an arbitrary index
+ * buffer is a holed surface, not a coarser one — but a REVEAL is a different
+ * claim: the writer admits only orderings whose every prefix is one connected
+ * patch (`MESH_ADDITIVE_METHODS = {"radial"}`), so what streams in is a growing
+ * surface rather than lace. See `MESH_NODE_SPEC.md` §9 for the distinction.
  */
-export function createProgressiveMeshLoader(
+export async function createProgressiveMeshLoader(
   node: SceneNode,
-  _nAdditive: number,
-  _parentEffectiveAttrs: SceneNode['attrs'],
-  _deps: LoaderFactoryDeps
+  nAdditive: number,
+  parentEffectiveAttrs: SceneNode['attrs'],
+  deps: LoaderFactoryDeps
 ): Promise<MeshDataLoader> {
-  return Promise.reject(
-    new Error(
-      `Mesh node ${node.path} declares additive sub-LODs, but mesh has no additive ` +
-        '(prefix) ladder (MESH_NODE_SPEC.md §9): a prefix of an index buffer is a ' +
-        'surface with holes, not a coarser one. Write the mesh as a plain leaf, or use ' +
-        'substitutive levels — add_mesh(substitutive_lod=...) — which are separate ' +
-        'kind=lod children, not sub-LODs inside this node.'
-    )
+  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
+
+  log.query(
+    Modules.SCENE_LOADER,
+    `Creating progressive Mesh loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );
+
+  const lodLoaders: MeshWholeNodeLoader[] = [];
+
+  for (let i = 0; i < nAdditive; i++) {
+    const lodLoc = parentLoc.resolve(`additive_${i}`);
+    const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
+    const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+
+    const lodAttrsComposed = {
+      ...lodAttrs,
+      opacity: parentEffectiveAttrs.opacity,
+      absorption: parentEffectiveAttrs.absorption,
+      gamma: parentEffectiveAttrs.gamma,
+      intensity: parentEffectiveAttrs.intensity,
+      offset: parentEffectiveAttrs.offset,
+      blending_mode: parentEffectiveAttrs.blending_mode,
+      extend_to_all: node.attrs.extend_to_all,
+      // A laddered mesh has NO labels — `write_mesh_multi_lod` refuses a level
+      // that carries them, because the three sibling ladders put one union CSR
+      // on the parent and a face-partition duplicates boundary vertices, so one
+      // source vertex maps to two slots and that index space is ill-defined.
+      // Cleared here as well so a hand-written store cannot make a level publish
+      // per-level label ranges the concat would then have to discard.
+      has_labels: false,
+      has_image_labels: false,
+    } as unknown as MeshMetadata;
+
+    lodLoaders.push(
+      new MeshWholeNodeLoader(
+        `${node.path === '/' ? '' : node.path}/additive_${i}`,
+        lodAttrsComposed,
+        lodLoc,
+        { zarrStore: deps.zarrStore, arrayRefRegistry: deps.arrayRefRegistry }
+      )
+    );
+  }
+
+  return new MeshProgressiveLoader(lodLoaders, nAdditive, node.path);
 }
 
 /**

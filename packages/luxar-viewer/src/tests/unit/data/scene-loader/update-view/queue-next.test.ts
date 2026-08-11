@@ -4,8 +4,8 @@
  * The helper has three outcomes:
  *   1. Pending state → yield via requestAnimationFrame, release the
  *      lock INSIDE the rAF callback, then re-enter updateView.
- *   2. No pending + at least one progressive loader (points, lines, OR
- *      gsplats) with hasMoreLODs:true → kick the refinement loop; lock
+ *   2. No pending + at least one progressive loader (points, lines,
+ *      gsplats OR mesh) with hasMoreLODs:true → kick the refinement loop; lock
  *      stays HELD
  *      (refinement holds the lock so slider events queue and naturally
  *      cancel refinement).
@@ -26,6 +26,7 @@ import { queueNext } from '../../../../../data/scene-loader/update-view/queue-ne
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import type { GSplatsDataLoader } from '../../../../../types/gsplats';
 import type { LinesDataLoader } from '../../../../../types/lines';
+import type { MeshDataLoader } from '../../../../../types/mesh';
 import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { QueueNextCtx } from '../../../../../data/scene-loader/update-view/queue-next';
 
@@ -43,6 +44,10 @@ function makePointsLoader(hasMoreLODs: boolean): DataLoader {
 
 function makeLinesLoader(hasMoreLODs: boolean): LinesDataLoader {
   return { hasMoreLODs } as unknown as LinesDataLoader;
+}
+
+function makeMeshLoader(hasMoreLODs: boolean): MeshDataLoader {
+  return { hasMoreLODs } as unknown as MeshDataLoader;
 }
 
 function makeCtx(overrides: Partial<QueueNextCtx> = {}): QueueNextCtx & {
@@ -63,6 +68,7 @@ function makeCtx(overrides: Partial<QueueNextCtx> = {}): QueueNextCtx & {
     pointsLoaders: new Map(),
     linesLoaders: new Map(),
     gsplatLoaders: new Map(),
+    meshLoaders: new Map(),
     updateView,
     setUpdateInProgress,
     scheduleGSplatsRefinement,
@@ -287,11 +293,27 @@ describe('queueNext — points/lines progressive loaders gate refinement too', (
     expect(ctx.spies.setUpdateInProgress).not.toHaveBeenCalled(); // lock held
   });
 
-  it('releases the lock when points/lines/gsplats loaders all report no more LODs', () => {
+  // Mesh joins the gate with the reveal ladder (#1476). Without this arm a
+  // mesh-only scene would commit its first patch and then sit there: nothing
+  // else in `queueNext` looks at a mesh loader, so the ladder would only
+  // advance if some OTHER geometry type happened to want refinement too.
+  it('kicks refinement when only a MESH loader has more LODs', () => {
+    const ctx = makeCtx({
+      meshLoaders: new Map<string, MeshDataLoader>([['/m', makeMeshLoader(true)]]),
+    });
+
+    queueNext(ctx);
+
+    expect(ctx.spies.scheduleGSplatsRefinement).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.setUpdateInProgress).not.toHaveBeenCalled(); // lock held
+  });
+
+  it('releases the lock when points/lines/gsplats/mesh loaders all report no more LODs', () => {
     const ctx = makeCtx({
       pointsLoaders: new Map<string, DataLoader>([['/p', makePointsLoader(false)]]),
       linesLoaders: new Map<string, LinesDataLoader>([['/l', makeLinesLoader(false)]]),
       gsplatLoaders: new Map<string, GSplatsDataLoader>([['/g', makeGSplatsLoader(false)]]),
+      meshLoaders: new Map<string, MeshDataLoader>([['/m', makeMeshLoader(false)]]),
     });
 
     queueNext(ctx);
