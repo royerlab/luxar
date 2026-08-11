@@ -199,13 +199,6 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
             if (nl > 1e-3) {
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
-              // Snap the cut normal to a 1/1024 grid. NOTE the honest
-              // rationale: each leg snaps in its OWN (u, v) basis, so the
-              // two planes still disagree by up to ~1e-3 rad — the AA ramp
-              // is what actually kills the boundary speckle; the snap just
-              // keeps the residual plane disagreement ≲0.05 px of the 1 px
-              // ramp.
-              nLoc = round(nLoc * 1024.0) / 1024.0;
               if (nLoc.x < -1e-3) {
                 cutA = vec4(nLoc, 0.0, 0.0);
                 if (rMax > ${G.PACKET_MIN_R}) {
@@ -274,7 +267,6 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
             if (nl > 1e-3) {
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
-              nLoc = round(nLoc * 1024.0) / 1024.0;
               if (nLoc.x > 1e-3) {
                 cutB = vec4(nLoc, 0.0, 0.0);
                 if (rMax > ${G.PACKET_MIN_R}) {
@@ -397,10 +389,8 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       float invW = 1.0 / max(vW, 1e-9);
       float x = vLocal.x * invW;
       float y = vLocal.y * invW;
-      // EXACT per-fragment radius: mix of the endpoint radii clamped to
-      // the segment span — a varying cannot represent this (its linear
-      // interpolation spans the cap extensions, so a short stub's drawn
-      // radius at its own endpoint drifts; the deeper root of #1494).
+      // Decode the packed vMeta lanes; the EXACT per-fragment radius comes
+      // from the endpoint radii (see the visual twin's note).
       float cutFlagA = mod(vMeta.y, 2.0);
       float cutFlagB = vMeta.y >= 2.0 ? 1.0 : 0.0;
       // EXACT per-fragment radius without a divide: 1/abLen rides the

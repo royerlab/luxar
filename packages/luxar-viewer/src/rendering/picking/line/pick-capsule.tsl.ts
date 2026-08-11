@@ -28,7 +28,6 @@ import {
   length,
   exp2,
   pow,
-  round,
   dot,
   abs,
   textureSize,
@@ -249,11 +248,7 @@ export function capsuleLinePickWebGPUFactory(
           const nl: TSLNode = length(nRaw).toVar();
           If(nl.greaterThan(1e-3), () => {
             const n2: TSLNode = nRaw.div(nl).toVar();
-            // Snap to a 1/1024 grid — residual-noise reduction only; the
-            // AA ramp is what kills boundary speckle (see the GLSL twin).
-            const nLoc: TSLNode = round(vec2(dot(n2, u), dot(n2, v)).mul(1024.0))
-              .div(1024.0)
-              .toVar();
+            const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.lessThan(-1e-3), () => {
               cutA.assign(vec4(nLoc, 0.0, 0.0));
               // Width gate (see _shared/line-capsule.ts).
@@ -268,7 +263,7 @@ export function capsuleLinePickWebGPUFactory(
                   CAPSULE_MIN_RADIUS_PX,
                   uMaxLinePixelWidth
                 ).toVar();
-                // Packet gate (#1495; see the GLSL twin's note).
+                // Packet gate (#1495, #1501; see the GLSL twin's note).
                 const needPacketA: TSLNode = abs(float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))))
                   .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
                   .or(rB.greaterThan(rA.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
@@ -307,11 +302,7 @@ export function capsuleLinePickWebGPUFactory(
           const nl: TSLNode = length(nRaw).toVar();
           If(nl.greaterThan(1e-3), () => {
             const n2: TSLNode = nRaw.div(nl).toVar();
-            // Snap to a 1/1024 grid — residual-noise reduction only; the
-            // AA ramp is what kills boundary speckle (see the GLSL twin).
-            const nLoc: TSLNode = round(vec2(dot(n2, u), dot(n2, v)).mul(1024.0))
-              .div(1024.0)
-              .toVar();
+            const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.greaterThan(1e-3), () => {
               cutB.assign(vec4(nLoc, 0.0, 0.0));
               // Width gate (see _shared/line-capsule.ts).
@@ -326,7 +317,7 @@ export function capsuleLinePickWebGPUFactory(
                   CAPSULE_MIN_RADIUS_PX,
                   uMaxLinePixelWidth
                 ).toVar();
-                // Packet gate (#1495; see the GLSL twin's note).
+                // Packet gate (#1495, #1501; see the GLSL twin's note).
                 const needPacketB: TSLNode = abs(float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))))
                   .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
                   .or(rA.greaterThan(rB.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))

@@ -202,6 +202,11 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       ['const partner 160° ql20 (#1501)', leg(180, 10, 10, 60), leg(-160, 10, 10, 20)],
       ['const partner 170° ql25 (#1501)', leg(180, 10, 10, 60), leg(-170, 10, 10, 25)],
       ['const partner 175° ql20 (#1501)', leg(180, 10, 10, 60), leg(-175, 10, 10, 20)],
+      // BOTH legs long at a near-hairpin (#1502): with the cut spanning
+      // the full stencil, any per-leg quantisation of the plane normal
+      // accumulates with distance along the rod — a 1/1024 snap measured
+      // +0.057 here and ±0.35 at longer legs. Unsnapped it is ~0.
+      ['hairpin, both legs long (#1502)', leg(180, 10, 10, 60), leg(-178.6, 10, 10, 60)],
       // Thinning partner at a moderate bend: isolates the taper-ratio
       // clause (constant own leg, long partner, gentle enough that the
       // sharp clause stays closed). The own-widening clause is the one

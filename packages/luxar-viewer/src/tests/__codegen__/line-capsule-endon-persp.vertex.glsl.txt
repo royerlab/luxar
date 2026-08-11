@@ -638,7 +638,7 @@ void main() {
 				if ( ( nodeVar168 > 0.001 ) ) {
 
 					nodeVar169 = ( nodeVar167 / vec2( nodeVar168 ) );
-					nodeVar170 = ( round( ( vec2( dot( nodeVar169, nodeVar127 ), dot( nodeVar169, nodeVar128 ) ) * vec2( 1024.0 ) ) ) / vec2( 1024.0 ) );
+					nodeVar170 = vec2( dot( nodeVar169, nodeVar127 ), dot( nodeVar169, nodeVar128 ) );
 
 					if ( ( nodeVar170.x < -0.001 ) ) {
 
@@ -813,7 +813,7 @@ void main() {
 				if ( ( nodeVar203 > 0.001 ) ) {
 
 					nodeVar204 = ( nodeVar202 / vec2( nodeVar203 ) );
-					nodeVar205 = ( round( ( vec2( dot( nodeVar204, nodeVar127 ), dot( nodeVar204, nodeVar128 ) ) * vec2( 1024.0 ) ) ) / vec2( 1024.0 ) );
+					nodeVar205 = vec2( dot( nodeVar204, nodeVar127 ), dot( nodeVar204, nodeVar128 ) );
 
 					if ( ( nodeVar205.x > 0.001 ) ) {
 

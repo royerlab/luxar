@@ -178,11 +178,16 @@ export function capsuleJointRenderLeg(
   const nRaw: [number, number] = [qx - 1, qy];
   const nl = Math.hypot(nRaw[0], nRaw[1]);
   if (nl <= 1e-3) return profile; // hairpin fallback: plain cap
-  let nx = nRaw[0] / nl;
-  let ny = nRaw[1] / nl;
-  // 1/1024 snap, as the vertex stage does.
-  nx = Math.round(nx * 1024) / 1024;
-  ny = Math.round(ny * 1024) / 1024;
+  // No quantisation of the normal (#1502): each leg would snap in its
+  // OWN (u, v) basis, so the rounding does not cancel — it injects
+  // ~7e-4 rad of disagreement between two planes that must be exact
+  // complements, and with the cut spanning the full stencil that error
+  // scales with DISTANCE along the rod (±0.35 of peak on long
+  // doubled-back polylines). Unsnapped, the two normals are exact
+  // negations in exact arithmetic; the residual float noise is what the
+  // 1 px AA ramp absorbs.
+  const nx = nRaw[0] / nl;
+  const ny = nRaw[1] / nl;
 
   // Packet per the vertex stage (width gate assumed passed; callers use
   // radii above CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).

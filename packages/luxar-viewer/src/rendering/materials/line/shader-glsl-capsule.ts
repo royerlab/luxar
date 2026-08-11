@@ -261,13 +261,6 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
             if (nl > 1e-3) {
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
-              // Snap the cut normal to a 1/1024 grid. NOTE the honest
-              // rationale: each leg snaps in its OWN (u, v) basis, so the
-              // two planes still disagree by up to ~1e-3 rad — the AA ramp
-              // is what actually kills the boundary speckle; the snap just
-              // keeps the residual plane disagreement ≲0.05 px of the 1 px
-              // ramp.
-              nLoc = round(nLoc * 1024.0) / 1024.0;
               if (nLoc.x < -1e-3) {
                 cutA = vec4(nLoc, 0.0, 0.0);
                 // Width gate (see _shared/line-capsule.ts): hairline
@@ -340,7 +333,6 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
             if (nl > 1e-3) {
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
-              nLoc = round(nLoc * 1024.0) / 1024.0;
               if (nLoc.x > 1e-3) {
                 cutB = vec4(nLoc, 0.0, 0.0);
                 // Width gate (see _shared/line-capsule.ts): hairline
