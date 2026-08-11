@@ -42,6 +42,22 @@ def test_fold_into_existing_month_prepends_newest_first():
     assert "## Earlier History" in out
 
 
+def test_fold_reuses_an_existing_month_that_is_not_the_newest():
+    # Every month sits under [Unreleased], so a pinned `--month` may name a section
+    # that is not the first one. It must be reused, not duplicated above the newer.
+    changelog = CHANGELOG_TEMPLATE.replace(
+        "### August 2026",
+        "### September 2026\n\n#### A September entry\n\nSeptember prose.\n\n### August 2026",
+    )
+    out = cb._fold(changelog, "August 2026", ["#### Backfilled\n\nBackfilled prose."])
+    assert out.count("### August 2026") == 1
+    sep = out.index("### September 2026")
+    aug = out.index("### August 2026")
+    new = out.index("#### Backfilled")
+    existing = out.index("#### An existing entry")
+    assert sep < aug < new < existing
+
+
 def test_fold_creates_missing_month_under_unreleased():
     out = cb._fold(
         CHANGELOG_TEMPLATE, "September 2026", ["#### Sep entry\n\nSep prose."]

@@ -83,19 +83,22 @@ def _fold(changelog: str, month: str, blocks: list[str]) -> str:
     entry = "\n\n".join(blocks)
     month_hdr = f"### {month}"
 
-    # Look for an existing '### <month>' between Unreleased and the next '## ' header.
+    # Look for an existing '### <month>' ANYWHERE between Unreleased and the next
+    # '## ' header. Every month lives under Unreleased, so the requested one is not
+    # necessarily the newest: `--month "July 2026"` must land in the existing July
+    # section rather than mint a second one above August.
     j = u + 1
-    first_sub = None
+    existing = None
     while j < len(lines) and not lines[j].startswith("## "):
-        if lines[j].startswith("### "):
-            first_sub = j
+        if lines[j].strip() == month_hdr:
+            existing = j
             break
         j += 1
 
-    if first_sub is not None and lines[first_sub].strip() == month_hdr:
-        # Insert new entries at the TOP of the current month (newest-first), right
+    if existing is not None:
+        # Insert new entries at the TOP of that month (newest-first), right
         # after the header and its blank line.
-        insert_at = first_sub + 1
+        insert_at = existing + 1
         while insert_at < len(lines) and lines[insert_at].strip() == "":
             insert_at += 1
         new = lines[:insert_at] + [entry, ""] + lines[insert_at:]
