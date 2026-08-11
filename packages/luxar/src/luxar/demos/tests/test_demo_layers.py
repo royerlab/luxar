@@ -737,9 +737,10 @@ def _build_composite_scene(module_name: str, output: Path) -> None:
         from .. import demo_lsystem_forest
 
         # Smallest forest that still writes every node type. The derivation
-        # must go DEEP enough to grow foliage (gsplats appear only from
-        # iteration >= 2 at branch depth >= 2), or the store this test walks
-        # would silently stop exercising the gsplat layer path.
+        # must go DEEP enough to grow foliage (gsplats need iteration >= 2 at
+        # branch depth >= 1, and a maturity high enough to clear the 3-splat
+        # floor), or the store this test walks would silently stop exercising
+        # the gsplat layer path.
         demo_lsystem_forest.generate_forest(output, iterations=4, n_trees=6)
 
 

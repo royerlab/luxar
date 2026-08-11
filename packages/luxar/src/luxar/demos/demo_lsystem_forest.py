@@ -200,10 +200,18 @@ def _branch_jitter(seed: int, branch_hash: int, ordinal: int) -> float:
     is a re-derivation at a deeper iteration count, and a stream's draw
     positions shift with the string length, re-rolling every branch angle
     between stages (visible popping in the growth time-lapse). Keyed on the
-    branch's bracket PATH and the rotation's ordinal within that branch —
-    both stable across derivation depths for grammars whose productions
-    append recursion after the existing commands, as all shipped ones do —
-    a branch that exists at two stages bends identically at both.
+    branch's bracket PATH and the rotation's ordinal within that branch, so a
+    branch that exists at two stages bends identically at both.
+
+    The ordinal is only depth-stable when a production appends its recursion
+    AFTER the commands already in the string — true of every shipped species
+    except the palm, whose axiom is ``TC``: ``T -> F/T`` inserts one more
+    top-level roll AHEAD of the crown per derivation step, so the crown's
+    ordinals all shift by one and its fronds re-roll. Measured, that costs
+    the palm a few degrees of crown jitter per stage, on top of the ~26
+    deg/stage roll its trunk grammar intends anyway (phyllotaxis), so it is
+    a wash visually — but do not read the property as universal. The scope
+    is pinned by ``test_lsystem_growth_stages_keep_existing_branch_orientations``.
     """
     return _mix64(seed ^ _mix64(branch_hash ^ _mix64(ordinal))) / 2.0**64
 
@@ -425,7 +433,8 @@ def derive_tree(
     turtle jitter is a pure function of each branch's bracket path (see
     :func:`_branch_jitter`), immune to the string growing around it. A
     branch that exists at two growth stages therefore keeps its exact
-    orientation — growth adds geometry instead of re-rolling it.
+    orientation — growth adds geometry instead of re-rolling it. (The palm
+    is the one exception; :func:`_branch_jitter` says why.)
     """
     rng = np.random.default_rng(seed)
     string = lsystem.expand(iterations, rng)

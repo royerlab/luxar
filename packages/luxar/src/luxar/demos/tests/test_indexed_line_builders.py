@@ -341,7 +341,24 @@ def test_forest_palm_grows_foliage() -> None:
     assert all("Palm" in label for _, label in foliage_out.label_runs)
 
 
-def test_lsystem_growth_stages_keep_existing_branch_orientations() -> None:
+def _first_branch_direction(lsystem: forest.LSystem, iterations: int) -> np.ndarray:
+    """Unit direction of the first depth-1 segment of a derivation."""
+    v, e, ed, _ = forest.derive_tree(lsystem, iterations, seed=77)
+    first = int(np.argmax(ed == 1))
+    segment = v[int(e[first, 1])] - v[int(e[first, 0])]
+    return segment / np.linalg.norm(segment)
+
+
+#: The one shipped grammar whose crown ordinals are NOT depth-stable: the palm
+#: axiom is ``TC`` and ``T -> F/T`` inserts a top-level roll ahead of the crown
+#: on every derivation step. See :func:`demo_lsystem_forest._branch_jitter`.
+_ORDINAL_UNSTABLE = {"palm"}
+
+
+@pytest.mark.parametrize(
+    "key", [s.key for s in forest.SPECIES if s.key not in _ORDINAL_UNSTABLE]
+)
+def test_lsystem_growth_stages_keep_existing_branch_orientations(key: str) -> None:
     """Re-deriving a tree one iteration deeper must not re-roll its angles.
 
     Growth stages are re-derivations at increasing depth. Jitter therefore
@@ -350,20 +367,32 @@ def test_lsystem_growth_stages_keep_existing_branch_orientations() -> None:
     visibly popping branches during the growth time-lapse); it is a pure
     function of each branch's bracket path. The first branch exists at
     every depth, so its opening direction must match exactly across stages.
+
+    Parametrized over every species so the docstring's scope is CHECKED
+    rather than asserted: the property depends on each grammar appending its
+    recursion last, which is a per-grammar fact, not a property of
+    :func:`demo_lsystem_forest._branch_jitter` alone.
     """
-    species = next(s for s in forest.SPECIES if s.key == "elegant")
-
-    def first_branch_direction(iterations: int) -> np.ndarray:
-        v, e, ed, _ = forest.derive_tree(species.lsystem, iterations, seed=77)
-        first = int(np.argmax(ed == 1))
-        segment = v[int(e[first, 1])] - v[int(e[first, 0])]
-        return segment / np.linalg.norm(segment)
-
-    d3 = first_branch_direction(3)
-    d4 = first_branch_direction(4)
-    d5 = first_branch_direction(5)
+    lsystem = next(s for s in forest.SPECIES if s.key == key).lsystem
+    d3 = _first_branch_direction(lsystem, 3)
+    d4 = _first_branch_direction(lsystem, 4)
+    d5 = _first_branch_direction(lsystem, 5)
     np.testing.assert_allclose(d3, d4, atol=1e-5)
     np.testing.assert_allclose(d4, d5, atol=1e-5)
+
+
+def test_palm_crown_reroll_is_the_documented_exception() -> None:
+    """The palm's crown DOES re-roll across depths — keep the doc honest.
+
+    If a future grammar edit makes the palm depth-stable (e.g. bracketing the
+    crown so it gets its own ordinal space), this test fails and the
+    ``_branch_jitter`` caveat plus ``_ORDINAL_UNSTABLE`` must be retired
+    rather than left as stale prose.
+    """
+    palm = next(s for s in forest.SPECIES if s.key == "palm").lsystem
+    d4 = _first_branch_direction(palm, 4)
+    d5 = _first_branch_direction(palm, 5)
+    assert not np.allclose(d4, d5, atol=1e-5)
 
 
 class _RecordingScene:
