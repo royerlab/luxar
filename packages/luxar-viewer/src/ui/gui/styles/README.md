@@ -7,9 +7,14 @@ stays self-contained. Every rule is namespaced under `.luxar-gui` /
 embed-safe `src/styles/index.css` bundle.
 
 All styling references CSS custom properties from the Luxar theme
-system (`--luxar-bg-*`, `--luxar-text-*`, `--luxar-spacing-*`, etc.) —
-no hardcoded colors, no `!important`. Theme changes are picked up
-automatically via `[data-theme='dark'|'light']` attribute selectors.
+system (`--luxar-bg-*`, `--luxar-text-*`, `--luxar-spacing-*`, etc.), so
+theme changes are picked up automatically for all four themes (`dark`,
+`light`, `frosted-glass`, `liquid-glass`); the `[data-theme='light']`
+selectors here only cover the cases needing a per-theme override. No
+`!important` anywhere. The green accents and the raw `rgba(0, 0, 0, …)` fills
+in `gui.css`/`controller.css` are known drift — see the
+[UI Design Guide](../../../../../../docs/guides/developer/UI_DESIGN_GUIDE.md)
+§6/§15.1.
 
 ## Files
 

@@ -10,6 +10,10 @@ fix the code or fix the guide in the same PR, never let them drift silently.
 - Not in scope: console/log output (see `CONSOLE_OUTPUT_STYLE.md`), code
   comments (see `JSDOC_STYLE_GUIDE.md`), rendered scene content.
 - Verified against the codebase: 2026-08-11.
+- Everything here describes the tree **as it stands**. Where a rule's
+  implementation only exists in an open PR, it is marked **(pending #N)** —
+  never write a claim in the present tense against an unmerged change; drop
+  the marker when that PR lands.
 
 ---
 
@@ -45,9 +49,10 @@ needed. Seven principles govern every surface:
 The reference implementations of this language are the **control rail**
 (`src/ui/control-rail.ts` + `src/styles/components/control-rail.css`), the
 **data-loading monitor** (`src/styles/components/data-loading-monitor.css`,
-whose end-of-file "Refinement layer" block is the original manifesto), the
-**help overlay**, and the **dataset browser** (refreshed to this language in
-PR #1472).
+whose end-of-file "Refinement layer" block is the original manifesto), and the
+**help overlay**. The dataset browser joins them when #1472 lands; today it
+still carries pre-guide emoji and chrome (§15), so read it as debt, not as a
+model.
 
 ---
 
@@ -64,7 +69,7 @@ PR #1472).
 | Liquid-glass SVG filter | `src/themes/glass-filters.ts` (its `defaultGlassParams` are authoritative — CSS comments describing them have historically gone stale) |
 | Rail/panel icons | `src/ui/control-rail/icons.ts` (`RAIL_ICONS`) |
 | Monitor icons | `src/ui/data-loading-monitor/templates.ts` (`MONITOR_ICONS`) |
-| Dataset-browser icons | `src/ui/dataset-browser/icons.ts` (`BROWSER_ICONS`) |
+| Dataset-browser icons | `src/ui/dataset-browser/icons.ts` (`BROWSER_ICONS`) — **pending #1472**; the module is not in the tree yet |
 | Native `<select>` chrome | `src/styles/components/select-menu.css` — the single place `<option>` colors may be styled |
 
 Two CSS entry points (see `src/styles/README.md`):
@@ -126,8 +131,8 @@ override per §4.
 Note the naming quirks (these are exactly as emitted; there is no deeper
 scheme): `colors.semantic.*` drops the `semantic-` segment
 (`--luxar-success`, not `--luxar-semantic-success`); `colors.menu.text` →
-`--luxar-menu-fg` (the only renamed keys); `visualization` abbreviates to
-`viz`; `background` to `bg`.
+`--luxar-menu-fg` and `colors.menu.activeText` → `--luxar-menu-active-fg` (the
+only renamed keys); `visualization` abbreviates to `viz`; `background` to `bg`.
 
 ### 3.2 Typography tokens
 
@@ -206,16 +211,18 @@ Key color differences:
 | | dark | light | frosted-glass | liquid-glass |
 | --- | --- | --- | --- | --- |
 | `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(255,255,255,0.12)` | `rgba(255,255,255,0.15)` |
-| `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(0,160,255,1)` (blue) | `rgba(0,160,255,1)` (blue) |
+| `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(88,86,214,1)` (indigo) | `rgba(88,86,214,1)` (indigo) |
 | `border.focus` | green `rgba(76,175,80,0.5)` | green | **blue** `rgba(0,122,255,0.6)` | **blue** `rgba(0,122,255,0.5)` |
 | `interactive.*` base | white alpha | black alpha | white alpha | bluish-gray `rgba(120,120,128,…)` |
 | `menu.background` | `#1e1e1e` | `#ffffff` | `#1a1a1a` (opaque!) | `#1a1a1a` (opaque!) |
 
 Design consequences:
 
-- `highlight` is the same bright brand blue in dark and both glass themes
-  (unified in #1480 — the glass themes' original indigo sat at ~1.6:1 against
-  a dark glass panel); light uses a darker blue for contrast on white.
+- **The accent hue is not constant across themes.** `highlight` is the bright
+  brand blue in dark, a darker blue in light for contrast on white, and still
+  an indigo `rgba(88,86,214,1)` in both glass themes — where it sits at
+  ~1.6:1 against a dark glass panel. #1480 unifies all of them on the brand
+  blue (pending); until it lands, never rely on the accent reading as blue.
 - **Never assume the focus ring is green** — it is green in dark/light and
   blue in the glass themes. Always use `--luxar-border-focus` /
   `--luxar-interactive-focus`; never hardcode a green.
@@ -312,7 +319,7 @@ intended, authoritative direction (existing violations are cataloged in §15).
 
 | Color | Meaning | Correct uses |
 | --- | --- | --- |
-| `--luxar-highlight` | **Interactive accent**: active, selected, current | Rail active button (20% `color-mix` fill + 3px left pip), active chips/segments (`22%` fill + `50%` border mix), "current item" rings, type badges (dataset browser ZARR chip) |
+| `--luxar-highlight` | **Interactive accent**: active, selected, current | Rail active button (20% `color-mix` fill + 3px left pip), active chips/segments (`22%` fill + `50%` border mix), "current item" rings, type badges (the dataset browser's file-type chip is still solid `--luxar-success` — §15.1) |
 | `--luxar-success` | Semantically **good/healthy** + the house motif | Status ticks (§8.3), healthy metrics, LOADED state, cache-hit-good; focus rings *via the focus tokens only* |
 | `--luxar-warning` / `--luxar-error` / `--luxar-info` | Their names | Alarms and information only. `info` additionally marks the layers-panel selection |
 | `--luxar-interactive-*` | Neutral fills | Resting/hover/pressed backgrounds of ALL controls — hover feedback is a neutral fill change, not a color change |
@@ -374,7 +381,8 @@ font-size:       var(--luxar-text-base);                 /* 13px */
 
 ### 7.2 Modals
 
-Modals (dataset browser is the reference) additionally get:
+Modals additionally get (the dataset browser is the intended reference, but
+#1472 is what gives it the scrim and the entry pop — today it has neither):
 
 - A **scrim**: sibling element, `position: fixed; inset: 0;
   background: var(--luxar-bg-overlay); z-index: calc(var(--luxar-z-modal) - 1)`,
@@ -389,7 +397,7 @@ Modals (dataset browser is the reference) additionally get:
 The shared header recipe: flex row, `justify-content: space-between`,
 `border-bottom: 1px solid var(--luxar-border-default|strong)`, title at
 `--luxar-text-lg`/`--luxar-font-bold` (or the §8.3 tick-motif micro-header for
-quiet-instrument surfaces), and a 28–30px square close button —
+quiet-instrument surfaces), and a 30px square close button —
 `background: none; border: none; color: var(--luxar-text-muted)` hovering to
 `text-primary` (+ `interactive-hover` fill on newer surfaces). New surfaces
 should prefer a **stroke-SVG ✕** over the text `×` glyph.
@@ -479,13 +487,14 @@ Three-rank hierarchy (from the monitor's refinement layer):
    `::before`: `width: 3px; height: 10px; border-radius: 1px;
    background: var(--luxar-success); opacity: 0.55`. Optionally a 13px stroke
    icon. (Dialog titles may scale this up to `--luxar-text-base` with a
-   3×12px tick — dataset browser.)
+   3×12px tick — pending #1472, which brings the dataset browser's.)
 2. **Metric label** — 10px / 600 / `letter-spacing: 0.08em` /
    `--luxar-text-muted` (usually uppercase).
 3. **Tertiary/summary label** — `medium` weight, `--luxar-text-disabled`.
 
-Letter-spacing is always **em-based** (`0.06em`/`0.08em`/`0.09em`); the older
-`0.3px`/`0.5px` values in layers-panel/monitor are drift.
+Letter-spacing is always **em-based** — `0.06em` for the micro-header,
+`0.08em` for metric labels, and `0.02em`–`0.05em` for the monitor's tighter
+ranks; the older `0.3px`/`0.5px` values in layers-panel/monitor are drift.
 
 ### 8.4 `<kbd>` chips
 
@@ -521,12 +530,12 @@ stroke-linecap: round;
 stroke-linejoin: round;
 ```
 
-Sets: `RAIL_ICONS` (`src/ui/control-rail/icons.ts`) and `BROWSER_ICONS`
-(`src/ui/dataset-browser/icons.ts`). New icons: draw on the 24-grid with
-~2px optical margins, single stroke weight, no fills (a filled dot ≤2.5px
-radius is acceptable as an accent), and check the existing sets first to
-avoid glyph collisions (e.g. fullscreen deliberately avoids corner brackets
-because "fit" owns them).
+Sets: `RAIL_ICONS` (`src/ui/control-rail/icons.ts`), joined by `BROWSER_ICONS`
+(`src/ui/dataset-browser/icons.ts`) once #1472 lands. New icons: draw on the
+24-grid with ~2px optical margins, single stroke weight, no fills (a filled
+dot ≤2.5px radius is acceptable as an accent), and check the existing sets
+first to avoid glyph collisions (e.g. fullscreen deliberately avoids corner
+brackets because "fit" owns them).
 
 ### 9.2 The monitor micro-contract (dense data UIs only)
 
@@ -536,9 +545,10 @@ because "fit" owns them).
 
 ### 9.3 Rendered size ladder
 
-`19px` rail buttons · `18px` chips · `17px` list-row icons · `15px` GUI/layers
-rows · `13px` section titles & micon default · `12px` tabs/inline ·
-`9px` compact alerts. Icons at ≤13px may carry `opacity: 0.75–0.9` at rest.
+`19px` rail buttons · `18px` chips · `15px` GUI/layers rows · `13px` section
+titles & micon default · `12px` tabs/inline · `9px` compact alerts (plus a
+`17px` list-row rung pending #1472). Icons at ≤13px may carry
+`opacity: 0.75–0.9` at rest.
 
 ---
 
@@ -556,9 +566,14 @@ ease`) over `all` in hot paths (long lists).
 - Panels/modals: **transform-only** scale-settle, e.g.
   `scale(0.975) → scale(1)` over `0.15–0.2s cubic-bezier(0.2, 0.7, 0.2, 1)`.
   Never animate `opacity` on a glass surface root (§5.1.3).
-- Scrims and non-glass transients (toasts, badges): opacity fades are fine.
-- The rail collapse/expand animates transform + opacity over
-  `0.28s cubic-bezier(0.2, 0.7, 0.2, 1)`. The rail is the sanctioned
+- Scrims and genuinely **non-glass** transients (badges, frameless in-canvas
+  widgets): opacity fades are fine. **The toast is not one of them** — it
+  carries `luxar-glass-surface` (`ui/toast.ts:17`), so §5.1.3 governs its
+  root: a new transient of that shape fades an inner wrapper or moves with
+  transform. The shipped toast fades its own root; that is drift (§15.3), not
+  the pattern to copy.
+- The rail collapse/expand animates `opacity 0.3s ease` alongside
+  `transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1)`. The rail is the sanctioned
   steady-translucency exception to §5.1.3: its resting state is already
   fractional opacity (a stable compositing context, verified rendering
   correctly under liquid-glass), and it transitions between rest points
@@ -611,11 +626,15 @@ Every interactive element defines, in this order:
    hover affordances (directory chevrons) go from `opacity: 0` → `0.7`.
 3. **Active/selected** — highlight accent per §6.2.
 4. **Focus** — `:focus-visible { outline: 2px solid var(--luxar-border-focus);
-   outline-offset: 1–2px }` (negative offset inside dense lists). The
-   embed-safe baseline ring is `.luxar-glass-surface :focus-visible` in
-   `base/utilities.css` (PR #1476) — it covers every control inside a glass
-   panel even when only `index.css` is imported; components with richer focus
-   styles override it later in the import order. Text inputs may substitute a
+   outline-offset: 1–2px }` (negative offset inside dense lists). **There is
+   no embed-safe baseline ring today**: the only global `:focus-visible` rule
+   lives in `reset.css`, which ships via `standalone.css` alone (§2), so an
+   embedded consumer gets nothing unless the component declares its own — a
+   per-component ring is therefore mandatory, not optional. #1476 adds a
+   `.luxar-glass-surface :focus-visible` baseline to `base/utilities.css` so
+   `index.css` alone covers every control inside a glass panel, with richer
+   component styles overriding it later in the import order (pending). Text
+   inputs may substitute a
    `--luxar-border-focus` border-color switch. Never `outline: none` without
    a visible replacement (a `tabindex="-1"` focus-trap *container* is the one
    sanctioned exception).
@@ -695,60 +714,70 @@ Further requirements:
 
 The following existing code contradicts this guide. It is listed so nobody
 mistakes it for precedent; migrate opportunistically when touching these
-files. (Inventory verified 2026-08-11; the four-tranche modernization
-campaign — #1476 a11y, #1478 token hygiene, #1479 emoji→icons, #1480 accent
-migration — addresses most of it. Entries below are annotated with their
-fixing PR and should be DELETED as those PRs merge.)
+files. (Inventory verified 2026-08-11.) A four-tranche modernization campaign
+addresses most of it — #1476 a11y, #1478 token hygiene, #1479 emoji→icons,
+#1480 accent migration — but **all four are still open, so every entry below
+is live on this branch**. Each is annotated with the PR that will close it;
+delete the entry as that PR merges.
 
-### 15.1 Green-as-interactive (§6.4 violations) — fixed by #1480
+### 15.1 Green-as-interactive (§6.4 violations) — pending #1480
 
 - GUI library: slider thumbs, number-input text, checkbox `accent-color`,
   select focus borders, scrollbar thumb (`ui/gui/styles/gui.css`,
   `controller.css`).
 - Layers panel: sliders, values, scrollbar (`layers-panel.css`).
-- Dimension sliders: context-menu hover uses solid `--luxar-success` + literal
-  `white` (`dimension-sliders.css`).
+- Dimension sliders: green runs through the whole file (~20 `--luxar-success`
+  sites — slider fill, active/hover borders, labels), and the context-menu
+  hover pairs solid `--luxar-success` with literal `white`
+  (`dimension-sliders.css`).
+- Dataset browser: the file-type badge is a solid `--luxar-success` fill with
+  literal `white` text and no justifying comment (§6.6) —
+  `dataset-browser.css` `__badge`.
 - Error dialog: green headings on an informational guidance block inside an
   *error* surface (`error-dialog.css`).
 - Monitor: active tab tinted success rather than highlight
   (`data-loading-monitor.css`).
 
-### 15.2 Emoji still in the DOM (§9 violations) — fixed by #1479 / #1472
+### 15.2 Emoji still in the DOM (§9 violations) — pending #1479 / #1472
 
 - Monitor templates: `⚠`, `🚫`, scene-graph node glyphs `🌐📁⚬╱🔮⬡`, `🎚️🧩`
   (`ui/data-loading-monitor/templates.ts`).
 - Error overlay: `⚠️`, `💡` (`ui/error-overlay.ts`).
-- Dataset browser `🌌📁📄` — fixed by PR #1472 (stroke `BROWSER_ICONS`).
+- Dataset browser `🌌📁📄` (`ui/dataset-browser.ts`) — #1472 replaces them
+  with stroke `BROWSER_ICONS`.
 
-### 15.3 Hardcoded values / phantom tokens — largely fixed by #1478 / #1480
+### 15.3 Hardcoded values / phantom tokens — largely pending #1478 / #1480
 
 - `colormap-legend.css` references the **non-existent** `--luxar-radius-xs`
   (falls back to its literal).
 - Raw z-indexes: `150` (debug console), `10000` (toast, dimension-slider
-  menu) — tokenized in #1478. NOT drift (correction to the original
+  menu), `5` (the `overlay-layer.css` container — a global layer, not a local
+  stacking index) — tokenized by #1478. NOT drift (correction to the original
   inventory): the recording panel's `9999/10000/100000` stay literal by
   design (their magnitude beats unknown third-party host UI — documented in
   the file header), and small local stacking indexes (`1/2/10` inside a
   positioned parent) are not layer tokens.
 - Recording panel indicator/confirm dialog bypasses the surface recipe
   entirely (raw rgba/blur/radius) — the largest single drift.
-- Assorted raw `rgba()` duplicating tokens: debug-console warn/error tints,
+- Assorted raw `rgba()` duplicating tokens: the GUI library's
+  `rgba(0, 0, 0, …)` control fills (`ui/gui/styles/controller.css`),
+  debug-console warn/error tints,
   monitor hairlines/mesh-purple `#9b59b6`/kind-badge blue, error-dialog
   spinner chrome, `color: white` in overlay-layer and dimension-sliders.
 - Legacy px letter-spacing (`0.3px`/`0.5px`) and the tick-less legacy
   `.luxar-section-title` recipe in monitor/layers CSS.
 
-### 15.4 Accessibility gaps — fixed by #1476
+### 15.4 Accessibility gaps — pending #1476
 
 - `help-overlay.css` sets `outline: none !important` on the panel root (the
   one unjustified `!important`).
 - GUI slider/select/input focus removes the outline without a visible
   replacement.
 - `prefers-reduced-motion` gaps (GUI library, layers panel, toast, debug
-  console, help overlay, overlay fade) — closed in #1476.
+  console, help overlay, dataset browser, overlay fade) — closed by #1476.
 - The standalone-only focus ring (embedded viewers losing keyboard
   affordance) — closed by the `.luxar-glass-surface :focus-visible` utility
-  in #1476 (§12.4).
+  #1476 adds (§12.4).
 
 ### 15.5 Divergent contracts (tolerated, bounded)
 
@@ -756,6 +785,19 @@ fixing PR and should be DELETED as those PRs merge.)
   not invent a third.
 - Layers-panel selection uses `--luxar-info`; everything else uses
   `--luxar-highlight`. New selection UIs use highlight.
+
+### 15.6 Glass-constraint violations (§5.1)
+
+- The toast fades `opacity` on its own `luxar-glass-surface` root
+  (`toast.css` `transition: opacity 0.3s ease`, driven by
+  `ui/toast.ts:19,24`) — the one surface still doing what §5.1.3 forbids, so
+  under liquid-glass its refraction layers ride the fade with it. Fix by
+  moving the fade to an inner wrapper (or dropping the glass class); until
+  then, do not cite it as precedent (§10.2).
+- `.luxar-dimension-sliders` is a glass surface whose root sets
+  `overflow-y: auto` instead of delegating to an inner `__scroll` wrapper
+  (§5.1.2/§7.4), and sits at `--luxar-z-base` rather than the `dropdown`
+  layer its placement implies (§3.5).
 
 ---
 

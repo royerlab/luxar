@@ -790,12 +790,13 @@ src/styles/
 --luxar-text-primary, --luxar-text-secondary, --luxar-text-muted
 --luxar-success, --luxar-warning, --luxar-error, --luxar-info
 
-/* Spacing (8px grid) */
+/* Spacing — the key is HALF the pixel value (spacing-10 = 20px), and the
+   keys are not contiguous: 0 1 2 3 4 5 6 8 10 12 16 20 */
 --luxar-spacing-0 through --luxar-spacing-20
 
 /* Typography */
 --luxar-font-base, --luxar-font-mono
---luxar-text-xs through --luxar-text-3xl
+--luxar-text-xs through --luxar-text-4xl
 --luxar-font-normal, --luxar-font-medium, --luxar-font-semibold, --luxar-font-bold
 
 /* Effects */
