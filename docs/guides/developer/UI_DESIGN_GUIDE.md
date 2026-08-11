@@ -205,7 +205,7 @@ Key color differences:
 
 | | dark | light | frosted-glass | liquid-glass |
 | --- | --- | --- | --- | --- |
-| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(255,255,255,0.12)` | `rgba(255,255,255,0.15)` |
+| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(28,30,36,0.65)` (dark frost) | `rgba(255,255,255,0.15)` |
 | `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(0,160,255,1)` (blue) | `rgba(0,160,255,1)` (blue) |
 | `border.focus` | green `rgba(76,175,80,0.5)` | green | **blue** `rgba(0,122,255,0.6)` | **blue** `rgba(0,122,255,0.5)` |
 | `interactive.*` base | white alpha | black alpha | white alpha | bluish-gray `rgba(120,120,128,…)` |
@@ -223,6 +223,12 @@ Design consequences:
   are unitless multipliers and theme-dependent.
 - Anything using `box-shadow: var(--luxar-shadow-lg)` silently gains an inner
   glow in liquid-glass; that is intended.
+- Frosted-glass panels are a **dark frost** (#1480): the tint must guarantee
+  text contrast over ANY scene, so the panel background is a ~65% dark layer
+  under the blur (worst-case bright backdrop ≈ 4.4:1 against text-primary) —
+  the same contrast-protection role liquid-glass's dark `::after` plays.
+  Never lighten the glass panel tints without re-checking bright-scene
+  contrast.
 - Blur tokens differ radically per theme by design: frosted-glass IS its blur;
   liquid-glass barely blurs because refraction + tint do the work.
 
