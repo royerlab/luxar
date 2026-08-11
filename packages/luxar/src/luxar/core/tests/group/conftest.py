@@ -38,6 +38,49 @@ def cholesky_rows(n: int) -> np.ndarray:
     return np.tile(np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32), (n, 1))
 
 
+def cholesky_rows_nd(n: int, ndim: int) -> np.ndarray:
+    """``(n, ndim*(ndim+1)/2)`` packed identity Cholesky factors.
+
+    The ``ndim``-general form of :func:`cholesky_rows` (which it reproduces
+    exactly at ``ndim=3``), needed by the #1446 tests: those feed a 4-column
+    centers array to a 3-dimension scene, and ``GSplatData`` validates the
+    Cholesky width against the centers width before the scene ever sees it — so
+    a 6-wide row would fail for the wrong reason.
+    """
+    tril = np.tril(np.eye(ndim, dtype=np.float32))
+    return np.tile(tril[np.tril_indices(ndim)], (n, 1))
+
+
+def bad_ndim_positions(n: int, seed: int, ndim: int = 4) -> np.ndarray:
+    """``(n, ndim)`` coordinates — one column too many for a 3-D scene (#1446)."""
+    rng = np.random.default_rng(seed)
+    return (rng.random((n, ndim)) * 100.0).astype(np.float32)
+
+
+def open_ranged_scene(
+    tmp_path: Any, filename: str
+) -> Tuple[LuxarZarrCompiler, Any, str]:
+    """Like :func:`open_scene`, but every dimension declares ``range=(0, 10)``.
+
+    Data from :func:`random_positions` spans ``[0, 100)``, so each dimension is
+    out of its declared range and the per-dimension ``UserWarning`` in
+    ``validate_data_dimensions`` fires — which is how the #1446 controls count
+    those warnings.
+    """
+    path = str(tmp_path / filename)
+    compiler = LuxarZarrCompiler(path)
+    scene = compiler.create_scene(
+        dimensions=Dimensions(
+            [
+                Dimension("X", range=(0.0, 10.0), display=True),
+                Dimension("Y", range=(0.0, 10.0), display=True),
+                Dimension("Z", range=(0.0, 10.0), display=True),
+            ]
+        )
+    )
+    return compiler, scene, path
+
+
 def open_scene(tmp_path: Any, filename: str) -> Tuple[LuxarZarrCompiler, Any, str]:
     """A fresh compiler + 3-D scene under ``tmp_path``; returns it with its path."""
     path = str(tmp_path / filename)
@@ -61,6 +104,15 @@ def assert_uniform(actual: Any, expected: Any, count: int, atol: float = 5e-3) -
         f"got shape {arr.shape}"
     )
     np.testing.assert_allclose(arr, np.broadcast_to(want, arr.shape), atol=atol)
+
+
+def count_range_warnings(records: Any) -> int:
+    """How many of ``records`` are the per-dimension out-of-range ``UserWarning``.
+
+    Used by both halves of the #1446 suite to assert the hoisted count check did
+    not multiply the warning half of ``validate_data_dimensions``.
+    """
+    return sum(1 for r in records if "outside declared range" in str(r.message))
 
 
 def refusal(call: Callable[[], Any]) -> Exception:

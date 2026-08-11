@@ -194,9 +194,13 @@ def validate_labels_before_split(labels: Any, n_elements: int) -> None:
     (``validate_labels_for_writing``, last in the flat order). Whichever door, the
     call belongs to a wrapper's pre-split gate — entering a wrapper is exactly "a
     split is about to happen" — and deliberately NOT to the top of a leaf adder:
-    the plain-leaf path validates in the writer, and hoisting the check above
-    ``_validate_data_dimensions`` there would change which error a multi-fault
-    call reports. Same reasoning, and the same house rule, as
+    the plain-leaf path validates in the writer, and hoisting the check above the
+    adder's positions/attr gates (and above the range half of
+    ``_validate_data_dimensions``, which still runs only in the single-leaf write)
+    would change which error a multi-fault call reports. The count half of that
+    validator is the acknowledged exception — #1446 moved it to the top of every
+    leaf adder, so a wrong column count outranks this gate on both paths, by
+    design. Same reasoning, and the same house rule, as
     ``adders/mesh.py::_validate_partition_sources``.
 
     No-op when ``labels`` is ``None``.

@@ -52,6 +52,36 @@ def apply_dim_order_positions(
     return transformed, extend_to_all
 
 
+def validate_fill_sigma_keys(
+    scene: "Scene",
+    dim_order: List[str],
+    fill_sigma: Optional[Dict[str, float]],
+) -> None:
+    """Validate ``fill_sigma`` keys against the scene and ``dim_order``.
+
+    The gsplats-only counterpart of ``validate_dim_order_spec``, and extracted
+    for the same reason: both refusals are pure spec checks (they never look at
+    the Cholesky array), so a split path can run them before it creates a wrapper
+    group instead of discovering them from inside ``child_0`` (#1446).
+    :func:`apply_dim_order_cholesky` still calls this first, so the messages and
+    their order are unchanged.
+    """
+    if not fill_sigma:
+        return
+    scene_names = scene._dimensions.names
+    dim_order_set = set(dim_order)
+    for name in fill_sigma:
+        if name not in scene_names:
+            raise ValueError(
+                f"fill_sigma key '{name}' not found in scene dimensions {scene_names}"
+            )
+        if name in dim_order_set:
+            raise ValueError(
+                f"fill_sigma key '{name}' is already in dim_order — "
+                f"fill_sigma is only for unmapped dimensions"
+            )
+
+
 def apply_dim_order_cholesky(
     cholesky_factors: np.ndarray,
     d_data: int,
@@ -68,21 +98,10 @@ def apply_dim_order_cholesky(
     # Build dim_mapping: src_dim_i → dst_dim_index
     dim_mapping = [scene_names.index(name) for name in dim_order]
 
-    # Validate fill_sigma keys
+    validate_fill_sigma_keys(scene, dim_order, fill_sigma)
+
     fill_sigma_indexed: Optional[Dict[int, float]] = None
     if fill_sigma:
-        dim_order_set = set(dim_order)
-        for name in fill_sigma:
-            if name not in scene_names:
-                raise ValueError(
-                    f"fill_sigma key '{name}' not found in scene "
-                    f"dimensions {scene_names}"
-                )
-            if name in dim_order_set:
-                raise ValueError(
-                    f"fill_sigma key '{name}' is already in dim_order — "
-                    f"fill_sigma is only for unmapped dimensions"
-                )
         fill_sigma_indexed = {
             scene_names.index(name): sigma for name, sigma in fill_sigma.items()
         }

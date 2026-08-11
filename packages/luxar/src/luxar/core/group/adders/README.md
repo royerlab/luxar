@@ -101,23 +101,44 @@ Each `*_impl` walks the same ordered decision tree:
 2. **Apply `dim_order`** (`apply_dim_order_positions`, plus
    `apply_dim_order_cholesky` for gsplats), which may also extend
    `extend_to_all` for unmapped dimensions.
-3. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
+3. **Colormap / colors / scalars mutual-exclusivity gate** — the only place these
+   are checked; every branch below therefore rejects an invalid combination
+   (the LOD wrappers used to return early and skip them).
+4. **Check the scene-dimension count** (`scene._validate_dimension_count`) — the
+   hard column-count-vs-scene-dimensions raise (a non-2-D array included), on the
+   caller's own array, with the caller's own node name. Placement is load-bearing
+   (#1446): above every structural branch below, so a mismatch cannot strand a
+   childless wrapper group; after step 2, which is what decides the final column
+   count; and below step 3, so a colours fault keeps precedence. It is ABOVE the
+   kwarg checks that live inside the branches (a malformed `partition=` /
+   `additive_lod=` spec, the `image_labels`-with-`partition` ban, the Lines
+   `indices` topology check), so a call that also trips one of those is told
+   about the width first — on the flat path as well as the split ones, so the two
+   still agree. Only the count half is here — the range `UserWarning` half stays
+   in the single-leaf write at step 9, so it fires once per written leaf (none
+   under an additive ladder, whose writer never validates) rather than once more
+   for the source array.
+5. **Substitutive-LOD branch** (points/lines, when `substitutive_lod` is set):
+   delegate to the substitutive wrapper, whose coarse levels are synthesised
+   gsplats under a `kind=lod` group. Fires before (auto-)partition.
+6. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it
    honors only explicit `partition=`.)
-4. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
+7. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
    (`median` / `midpoint` / `sah`) capped at `max_elements`, and if it yields
    more than one part, delegate to the partition wrapper. A single part falls
    through to the regular write.
-5. **Additive-LOD branch** (points/lines, when `additive_lod` is set): build
+8. **Additive-LOD branch** (points/lines, when `additive_lod` is set): build
    prefix-monotone levels and, if more than one level results, delegate to the
    multi-LOD wrapper. Fires after the 1-part-partition fall-through, so a
    single `add_*` call can compose partition-of-additive-LOD.
-6. **Single-leaf write**: validate dimensions, resolve `extend_to_all` (this is
-   where the `"all"` sentinel becomes a concrete dim-name list for a flat leaf
-   AND for every part of a partition, whose recursion re-enters here; the
-   multi-LOD wrapper resolves it itself — see below), check
-   colormap/colors/scalars mutual-exclusivity, then call the scene writer
+9. **Single-leaf write**: validate dimensions (the full
+   `_validate_data_dimensions`, i.e. the step-4 count check again plus the
+   per-dimension range `UserWarning`), resolve `extend_to_all` (this is where
+   the `"all"` sentinel becomes a concrete dim-name list for a flat leaf AND
+   for every part of a partition, whose recursion re-enters here; the multi-LOD
+   wrapper resolves it itself — see below), then call the scene writer
    (`write_points` / `write_lines` / `write_gsplats`) and return the
    constructed `Points` / `Lines` / `GSplats` node.
 
@@ -153,7 +174,10 @@ whose own count happens to match accepts it, so the write succeeds with values o
 the wrong elements. Mesh does the same thing in `_validate_partition_sources`;
 the gate belongs at the top of the wrapper, never the leaf adder, so the
 plain-leaf error order is untouched (a call that also trips the positions/attr
-gates therefore reports the channel fault first here). Uniform values whose own
+gates therefore reports the channel fault first here). The scene-dimension count
+is the one exception: since #1446 it is checked at step 4 of the adder, above the
+branch that enters this wrapper, so a wrong column count outranks a wrong-length
+channel on both paths alike. Uniform values whose own
 length can collide with the element count (an RGB(A) list/tuple, a `(k,)`
 Cholesky) are classified before slicing rather than length-tested. Lines
 additionally validate `indices` — topology before channels, as mesh validates

@@ -16,10 +16,20 @@ reject (their finest child carries the FULL element set), so those are pinned by
 WHERE the write fails: the finest child is written LAST, after ``add_lod_group``
 and every coarse gsplat level, so without the gate a wrong-length channel strands
 a partial ``kind=lod`` node on disk.
+
+The second half of this module covers the SCENE-DIMENSION COUNT gate (#1446),
+which is the same bug class one validator over: the count check sat below the LOD
+branches, so an additive ladder wrote ``additive_<i>`` nodes whose column count
+contradicted the scene's dimensions, and the substitutive / ``lod_group=``
+wrappers refused only from inside ``child_0`` — after the ``kind=lod`` group was
+already on disk. Each case asserts message parity with the flat call AND an empty
+store; the controls assert the hoist did not multiply the per-dimension range
+``UserWarning`` across levels.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict
 
 import numpy as np
@@ -31,6 +41,10 @@ from luxar.io.reader import LuxarScene
 from ..conftest import (
     assert_same_refusal,
     assert_uniform,
+    bad_ndim_positions,
+    cholesky_rows_nd,
+    count_range_warnings,
+    open_ranged_scene,
     open_scene,
     random_positions,
     refusal,
@@ -632,3 +646,680 @@ class TestLegalBroadcastFormsStillReachEveryLevel:
             f"a partial node was stranded on disk: {sorted(store.group_keys())}"
         )
         compiler.finalize()
+
+
+# ---------------------------------------------------------------------------
+# Scene-dimension COUNT, pre-split (#1446)
+# ---------------------------------------------------------------------------
+
+# 400 elements is enough for the substitutive reduce to synthesise coarse levels
+# (a degenerate input falls back to a flat node, which would test nothing).
+_DIM_N = 400
+_DIM_HALF = 200
+
+# Cumulative ladder counts. For Lines these are POLYLINE counts: with
+# line_type="segments" the 400 vertices are 200 two-vertex polylines, and the
+# ladder MUST end up with more than one level — a single-polyline input
+# degenerates to one level and falls through to the flat write, which refuses on
+# its own and would make the case vacuous.
+_DIM_POINTS_LADDER = {"counts": [_DIM_HALF, _DIM_N]}
+_DIM_LINES_LADDER = {"counts": [_DIM_HALF // 2, _DIM_N // 2]}
+
+
+class TestPointsAdditiveLodDimensionCount:
+    def test_mismatched_ndim_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        """A ladder must not write levels whose column count contradicts the scene.
+
+        Pre-fix this call was ACCEPTED — ``refusal()`` is what catches that — and
+        left ``p/additive_0``, ``p/additive_1`` on disk at ndim=4 in a
+        3-dimension scene, while the same call without ``additive_lod=`` refuses.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "points_add_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "points_add_ndim_flat.luxar.zarr")
+        positions = bad_ndim_positions(_DIM_N, seed=61)
+
+        flat = refusal(lambda: flat_scene.add_points("p", positions))
+        split = refusal(
+            lambda: scene.add_points("p", positions, additive_lod=_DIM_POINTS_LADDER)
+        )
+
+        assert_same_refusal(flat, split)
+        assert "4 columns" in str(split)
+        assert "p" not in compiler.store
+
+
+class TestLinesAdditiveLodDimensionCount:
+    def test_mismatched_ndim_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        """The Lines twin — 200 polylines, so the ladder really does fire.
+
+        ``refusal()`` is the bug-catching assertion: pre-fix the ladder wrote
+        every level at ndim=4.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lines_add_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lines_add_ndim_flat.luxar.zarr")
+        vertices = bad_ndim_positions(_DIM_N, seed=62)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line", vertices, widths=0.2, line_type="segments"
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                additive_lod=_DIM_LINES_LADDER,
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "4 columns" in str(split)
+        assert "line" not in compiler.store
+
+
+class TestPointsSubstitutiveLodDimensionCount:
+    def test_mismatched_ndim_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        """Pre-fix this refused, but blamed ``child_0`` and stranded ``kind=lod``.
+
+        ``assert_same_refusal`` fails first pre-fix — the message named
+        ``child_0`` and a synthesised level's own row count — and the store
+        assertion after it is an independent check on the other half of the same
+        bug: pre-fix ``p`` is in the store, as a childless wrapper.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "points_sub_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "points_sub_ndim_flat.luxar.zarr")
+        positions = bad_ndim_positions(_DIM_N, seed=63)
+
+        flat = refusal(lambda: flat_scene.add_points("p", positions))
+        split = refusal(lambda: scene.add_points("p", positions, substitutive_lod=True))
+
+        assert_same_refusal(flat, split)
+        assert "p" not in compiler.store
+
+
+class TestLinesSubstitutiveLodDimensionCount:
+    def test_mismatched_ndim_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        """The Lines twin of the Points substitutive case; same two assertions."""
+        compiler, scene, _ = open_scene(tmp_path, "lines_sub_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lines_sub_ndim_flat.luxar.zarr")
+        vertices = bad_ndim_positions(_DIM_N, seed=64)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line", vertices, widths=0.2, line_type="segments"
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                substitutive_lod=True,
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "line" not in compiler.store
+
+
+def _multi_substitutive_4d_data(n_fine: int = 8, n_coarse: int = 2) -> Any:
+    """A 2-level substitutive ``GSplatData`` whose centers have FOUR columns.
+
+    Stored levels (not a compute spec) on purpose: ``lod_group=`` then needs no
+    reduce, so the pre-fix path really did reach ``add_lod_group`` and strand a
+    childless ``kind=lod`` group.
+    """
+    from luxar.gsplats.gsplat_data import (
+        AdditiveSubLOD,
+        GSplatData,
+        SubstitutiveLevel,
+    )
+
+    def level(n: int, seed: int, compression_factor: int, level_index: int) -> Any:
+        return SubstitutiveLevel(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=bad_ndim_positions(n, seed=seed),
+                    amplitudes=np.ones(n, dtype=np.float32),
+                    cholesky_factors=cholesky_rows_nd(n, 4),
+                )
+            ],
+            compression_factor=compression_factor,
+            level_index=level_index,
+        )
+
+    return GSplatData.from_substitutive_levels(
+        [level(n_fine, 65, 1, 0), level(n_coarse, 66, 4, 1)]
+    )
+
+
+class TestGSplatsLodGroupDimensionCount:
+    """``lod_group=`` is the third wrapper with the same leak (#1446).
+
+    Both cases compare against a DIRECT ``add_gsplats`` call rather than against
+    ``add_gsplats_from_data(..., lod_group=False)``: the pre-dispatch gate in
+    ``from_data`` formats its ``Could not add gsplats '<name>': `` prefix by hand,
+    and ``lod_group=False`` would route through that same hand-written string —
+    a parity assertion comparing a string with itself, which could never catch the
+    prefix drifting from what ``add_gsplats_impl``'s own funnel produces. The
+    direct call is the independent witness.
+    """
+
+    def test_mismatched_ndim_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        """Pre-fix: refused from inside ``child_0``, ``g`` already a ``kind=lod``.
+
+        ``assert_same_refusal`` is what fails first pre-fix (the message named
+        ``child_0`` and the coarsest level's 2-row shape). The store assertion is
+        an independent check on the same bug — pre-fix ``g`` really is in the
+        store, as a childless wrapper.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "gsplats_lg_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "gsplats_lg_ndim_flat.luxar.zarr")
+        data = _multi_substitutive_4d_data()
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+            )
+        )
+        split = refusal(lambda: scene.add_gsplats_from_data("g", data, lod_group=True))
+
+        assert_same_refusal(flat, split)
+        assert "4 columns" in str(split)
+        assert "g" not in compiler.store
+
+    def test_mismatched_dim_order_length_leaves_no_childless_wrapper(
+        self, tmp_path: Any
+    ) -> None:
+        """The ``dim_order=`` half of the same leak — the shape the docstring shows.
+
+        With a ``dim_order`` the post-transform width is the scene's by
+        construction, so the column-count check can never fire downstream; what
+        raises from inside ``child_0`` is ``dim_order``'s own length-vs-columns
+        check. Measured pre-fix: ``Could not add gsplats 'child_0': dim_order has
+        3 names but data has 4 columns``, with ``g`` on disk as a childless
+        ``kind=lod`` group. ``assert_same_refusal`` fails first pre-fix (the
+        sentence is the same, the node it blames is not); the store assertion is
+        an independent check on the wrapper that got written.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "gsplats_lg_dimorder.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "gsplats_lg_dimorder_flat.luxar.zarr")
+        data = _multi_substitutive_4d_data()
+        dim_order = ["X", "Y", "Z"]
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                dim_order=dim_order,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, dim_order=dim_order
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "dim_order has 3 names but data has 4 columns" in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_structural_kwarg_fault_still_outranks_the_width_fault(
+        self, tmp_path: Any
+    ) -> None:
+        """Precedence control: ``coverage_fraction`` is refused before the width.
+
+        The gate sits BELOW the multi-substitutive ``coverage_fraction`` refusal
+        on purpose, mirroring how the three leaf adders keep their
+        colours/colormap gate above their count check. A call that trips both must
+        still hear about the kwarg.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "gsplats_lg_cov.luxar.zarr")
+        data = _multi_substitutive_4d_data()
+
+        with pytest.raises(ValueError, match="coverage_fraction must not be passed"):
+            scene.add_gsplats_from_data(
+                "g", data, lod_group=True, coverage_fraction=0.5
+            )
+
+        assert "g" not in compiler.store
+
+
+def _coloured_multi_substitutive_data(ndim: int) -> Any:
+    """A 2-level substitutive ``GSplatData`` carrying per-splat colours."""
+    return _multi_substitutive_data(
+        lambda n, seed: (
+            bad_ndim_positions(n, seed=seed)
+            if ndim == 4
+            else random_positions(n, seed=seed)
+        ),
+        lambda n: cholesky_rows_nd(n, ndim),
+        colors_for=lambda n, _level: np.zeros((n, 3), dtype=np.float32),
+    )
+
+
+class TestGSplatsLodGroupColoursGate:
+    """The colours/colormap exclusion is judged before the width, on both paths.
+
+    The three leaf adders put that gate above their count check; the ``from_data``
+    gate has to answer the same way or ``lod_group=`` disagrees with its own flat
+    path about which fault a call that trips both is told about.
+    """
+
+    def test_a_colours_fault_outranks_a_width_fault(self, tmp_path: Any) -> None:
+        """Both faults at once: the colours one wins, flat and split alike.
+
+        Measured with the width check first (the shape this landed in briefly):
+        the split path answered ``Dimension mismatch …`` where the flat path
+        answered ``Cannot specify both …``. ``assert_same_refusal`` is what
+        catches that.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_colour_width.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lg_colour_width_flat.luxar.zarr")
+        data = _coloured_multi_substitutive_data(4)
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                colors=data.colors,
+                colormap="viridis",
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, colormap="viridis"
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "both 'colors' and 'colormap'" in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_colours_fault_alone_leaves_no_childless_wrapper(
+        self, tmp_path: Any
+    ) -> None:
+        """Width perfectly fine — the same stranding class, a different fault.
+
+        Pre-fix: ``Could not add gsplats 'child_0': Cannot specify both …`` with
+        ``g`` on disk as a childless ``kind=lod`` group that survives
+        ``finalize()``. The store assertion is the one that catches it here (the
+        sentence is the same either way, only the node it blames differs, which
+        ``assert_same_refusal`` also sees).
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_colour_only.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lg_colour_only_flat.luxar.zarr")
+        data = _coloured_multi_substitutive_data(3)
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                colors=data.colors,
+                colormap="viridis",
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, colormap="viridis"
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "child_0" not in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_dim_order_fault_outranks_the_colours_fault(self, tmp_path: Any) -> None:
+        """Three faults deep: the ``dim_order`` spec wins, flat and split alike.
+
+        The flat path applies ``dim_order`` (spec + ``fill``, then ``fill_sigma``)
+        while transforming the arrays, which is ABOVE its colours/colormap gate —
+        so a call carrying colours, a ``colormap`` and a bad ``dim_order`` hears
+        about the ``dim_order``. Measured with the colours gate first (the shape
+        this landed in briefly): the split path answered ``Cannot specify both
+        'colors' and 'colormap'`` where the flat path answered ``dim_order has 3
+        names but data has 4 columns``. Together with
+        :meth:`test_a_colours_fault_outranks_a_width_fault` this pins the whole
+        order — dim_order spec, then colours, then width.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_colour_dimorder.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lg_colour_dimorder_flat.luxar.zarr")
+        data = _coloured_multi_substitutive_data(4)
+        dim_order = ["X", "Y", "Z"]
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                colors=data.colors,
+                colormap="viridis",
+                dim_order=dim_order,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, colormap="viridis", dim_order=dim_order
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "dim_order has 3 names but data has 4 columns" in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_colour_on_a_coarse_level_alone_is_seen_by_the_gate(
+        self, tmp_path: Any
+    ) -> None:
+        """Only the COARSE level carries colours — the finest carries none.
+
+        ``GSplatData.colors`` is the FINEST level's ladder merged, so a gate that
+        asked only that question passed this call, and the coarsest child (written
+        first) then raised ``Could not add gsplats 'child_0': Cannot specify both
+        …`` with ``g`` already on disk as a childless ``kind=lod`` group. Measured
+        in exactly that shape before the gate was widened to every level. No flat
+        twin: a single leaf cannot express per-level colours, so the assertions
+        are the blamed node and the empty store.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_colour_coarse.luxar.zarr")
+        data = _multi_substitutive_data(
+            lambda n, seed: random_positions(n, seed=seed),
+            lambda n: cholesky_rows_nd(n, 3),
+            colors_for=lambda n, level_index: (
+                None if level_index == 0 else np.zeros((n, 3), dtype=np.float32)
+            ),
+        )
+        assert data.colors is None, "the finest level must be the uncoloured one"
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, colormap="viridis"
+            )
+        )
+
+        assert "both 'colors' and 'colormap'" in str(split)
+        assert "child_0" not in str(split)
+        assert "g" not in compiler.store
+
+
+class TestRangeWarningsAreNotMultipliedByTheHoist:
+    """The control: only the COUNT half was hoisted above the branches.
+
+    ``validate_data_dimensions`` also warns once per dimension whose values fall
+    outside its declared ``range``. Hoisting the WHOLE validator above the
+    branches would have added one such warning per dimension for the SOURCE array
+    on top of whatever each path already emits — three extra here. Both counts
+    below are the measured pre-hoist numbers, so either kind of drift fails.
+
+    ``warnings.catch_warnings`` rather than ``pytest.warns``, because the additive
+    count is ZERO and ``pytest.warns`` cannot express "no warnings". That zero is
+    a KNOWN GAP, not the desired end state: the multi-LOD writer never runs the
+    range half at all, so a laddered node silently loses the three warnings the
+    same data gets on the flat path. Closing it means hoisting the range half too
+    and suppressing it per child — cross-cutting, and out of scope for #1446,
+    which changed only the count half. Pinned at 0 here so the gap is visible and
+    cannot widen unnoticed.
+    """
+
+    def test_points_ladder_does_not_gain_a_source_range_warning(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, _ = open_ranged_scene(tmp_path, "points_add_warn.luxar.zarr")
+        positions = random_positions(_DIM_N, seed=67)  # spans [0, 100), range (0, 10)
+
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            scene.add_points("p", positions, additive_lod=_DIM_POINTS_LADDER)
+        compiler.finalize()
+
+        assert count_range_warnings(records) == 0
+
+    def test_points_substitutive_warns_once_per_dimension_per_leaf(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_ranged_scene(
+            tmp_path, "points_sub_warn.luxar.zarr"
+        )
+        positions = random_positions(_DIM_N, seed=68)
+
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            scene.add_points("p", positions, substitutive_lod=True)
+        compiler.finalize()
+
+        # Every child is written through a leaf adder (the finest is the original
+        # Points node, the coarse ones are synthesised gsplats), so each
+        # contributes one warning per dimension. Asserted against the children
+        # actually written rather than a bare literal, so a change in the number
+        # of synthesised levels cannot silently weaken the count.
+        store = zarr.open_group(path, mode="r")
+        n_leaves = len(list(store["p"].group_keys()))
+        assert n_leaves > 1
+        assert count_range_warnings(records) == 3 * n_leaves
+
+
+# The documented precedence (CHANGELOG #1446, core/group/README.md): the
+# scene-dimension count is checked ABOVE the #1437 per-element channel gate, so a
+# call that trips both hears about the column count — on every path. Parametrized
+# over both wrapper families rather than split across the two files, because the
+# claim is precisely that they all answer the same way.
+_PRECEDENCE_SPLITS = [
+    ("partition", {"partition": {"max_elements": _DIM_HALF}}),
+    ("additive", {"additive_lod": _DIM_POINTS_LADDER}),
+    ("substitutive", {"substitutive_lod": True}),
+]
+
+
+class TestDimensionCountPrecedesTheChannelGate:
+    @pytest.mark.parametrize("case,split_kwargs", _PRECEDENCE_SPLITS)
+    def test_a_wrong_length_colour_does_not_mask_the_column_count(
+        self, tmp_path: Any, case: str, split_kwargs: Dict[str, Any]
+    ) -> None:
+        """Both faults at once: the column count is reported, flat and split alike.
+
+        The #1437 channel gate sits at the top of each WRAPPER impl, the count
+        check at the top of the leaf ADDER — so the count is reached first on the
+        split paths too, and every path gives the caller the same sentence. The
+        first assertion pins which fault wins on the flat path (the reference the
+        other three are compared against), the second that the split paths agree.
+        """
+        compiler, scene, _ = open_scene(tmp_path, f"prec_{case}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"prec_{case}_flat.luxar.zarr")
+        positions = bad_ndim_positions(_DIM_N, seed=69)
+        # Half-length per-point colours: on their own these are what the #1437
+        # gate refuses.
+        colors = np.zeros((_DIM_HALF, 3), dtype=np.float32)
+
+        flat = refusal(lambda: flat_scene.add_points("p", positions, colors=colors))
+        split = refusal(
+            lambda: scene.add_points("p", positions, colors=colors, **split_kwargs)
+        )
+
+        assert "Dimension mismatch" in str(flat)
+        assert_same_refusal(flat, split)
+        assert "p" not in compiler.store
+
+
+def _multi_substitutive_data(
+    centers_for: Any,
+    chol_for: Any,
+    n_fine: int = 8,
+    n_coarse: int = 2,
+    colors_for: Any = None,
+) -> Any:
+    """A 2-level substitutive ``GSplatData`` built from two per-level factories.
+
+    Stored levels rather than a compute spec, for the same reason as the 4-column
+    twin above: ``lod_group=`` then needs no reduce, so the pre-fix path really
+    did reach ``add_lod_group`` and strand a childless ``kind=lod`` group.
+    """
+    from luxar.gsplats.gsplat_data import (
+        AdditiveSubLOD,
+        GSplatData,
+        SubstitutiveLevel,
+    )
+
+    def level(n: int, seed: int, compression_factor: int, level_index: int) -> Any:
+        return SubstitutiveLevel(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=centers_for(n, seed),
+                    amplitudes=np.ones(n, dtype=np.float32),
+                    cholesky_factors=chol_for(n),
+                    # ``colors_for`` takes the level index as well as the count so
+                    # a case can colour ONE level (see the coarse-only case).
+                    colors=None if colors_for is None else colors_for(n, level_index),
+                )
+            ],
+            compression_factor=compression_factor,
+            level_index=level_index,
+        )
+
+    return GSplatData.from_substitutive_levels(
+        [level(n_fine, 81, 1, 0), level(n_coarse, 82, 4, 1)]
+    )
+
+
+def _multi_substitutive_3d_data() -> Any:
+    """The well-formed 3-column twin: only the ``dim_order`` spec is at fault."""
+    return _multi_substitutive_data(
+        lambda n, seed: random_positions(n, seed=seed),
+        lambda n: cholesky_rows_nd(n, 3),
+    )
+
+
+# Every refusal ``apply_dim_order`` / ``apply_dim_order_cholesky`` can reach from
+# the SPEC alone — no transformed array needed — so every one of them is
+# checkable before the wrapper group is created. Measured pre-fix: each named
+# ``child_0`` with ``g`` already on disk as a childless ``kind=lod`` group.
+_DIM_ORDER_SPEC_CASES = [
+    ("duplicate_names", {"dim_order": ["X", "Y", "X"]}),
+    ("name_not_in_scene", {"dim_order": ["X", "Y", "W"]}),
+    ("fill_key_not_in_scene", {"dim_order": ["X", "Y", "Z"], "fill": {"Q": 0.0}}),
+    ("fill_key_in_dim_order", {"dim_order": ["X", "Y", "Z"], "fill": {"X": 0.0}}),
+    (
+        "fill_sigma_key_not_in_scene",
+        {"dim_order": ["X", "Y", "Z"], "fill_sigma": {"Q": 1.0}},
+    ),
+    (
+        "fill_sigma_key_in_dim_order",
+        {"dim_order": ["X", "Y", "Z"], "fill_sigma": {"X": 1.0}},
+    ),
+    # Not a sequence at all: the validator raises TypeError, which the leaf
+    # adders' funnel converts to a ValueError. The pre-dispatch gate must catch
+    # both or the two paths differ in exception TYPE, not just wording.
+    ("dim_order_not_a_sequence", {"dim_order": 3}),
+]
+
+
+class TestGSplatsLodGroupDimOrderSpec:
+    @pytest.mark.parametrize("case,kwargs", _DIM_ORDER_SPEC_CASES)
+    def test_a_bad_spec_is_refused_before_the_wrapper_exists(
+        self, tmp_path: Any, case: str, kwargs: Dict[str, Any]
+    ) -> None:
+        """Data is well-formed; only the ``dim_order``/``fill``/``fill_sigma`` spec is not.
+
+        The flat reference is a direct ``add_gsplats`` with the same kwargs — the
+        independent witness for the hand-written prefix (see the sibling class).
+        ``assert_same_refusal`` is what fails pre-fix, on the blamed node name;
+        the ``child_0`` and store assertions after it pin the two halves of the
+        symptom separately.
+        """
+        compiler, scene, _ = open_scene(tmp_path, f"lg_spec_{case}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"lg_spec_{case}_flat.luxar.zarr")
+        data = _multi_substitutive_3d_data()
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                **kwargs,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data("g", data, lod_group=True, **kwargs)
+        )
+
+        assert_same_refusal(flat, split)
+        assert "child_0" not in str(split)
+        assert "g" not in compiler.store
+
+
+class TestGSplatsLodGroupRankGuard:
+    """1-D centers: ``AdditiveSubLOD`` accepts them, so they reach the gate.
+
+    Without the rank guard in ``validate_dimension_count`` this was a bare
+    ``IndexError`` from ``shape[1]`` — which escapes the adders'
+    ``except (ValueError, TypeError)`` funnels entirely.
+    """
+
+    def test_lod_group_refuses_1d_centers_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "lg_rank.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lg_rank_flat.luxar.zarr")
+        data = _multi_substitutive_data(
+            lambda n, seed: np.zeros((n,), dtype=np.float32),
+            lambda n: cholesky_rows_nd(n, 3),
+        )
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+            )
+        )
+        split = refusal(lambda: scene.add_gsplats_from_data("g", data, lod_group=True))
+
+        assert_same_refusal(flat, split)
+        assert "Centers must have shape (N, D)" in str(split)
+        assert "g" not in compiler.store
+
+    def test_additive_path_refuses_1d_centers_with_a_value_error(
+        self, tmp_path: Any
+    ) -> None:
+        """The other ``GSplatData`` path through the guard, reached per sub-LOD.
+
+        No exact-message parity here on purpose: ``add_gsplats_multi_lod_impl``
+        validates each sub-LOD in its own right, so the shape it reports is that
+        sub-LOD's ``(4,)``, not the concatenated ``(8,)`` a flat call would see.
+        What matters is the exception TYPE — a ``ValueError`` through the funnel,
+        not the raw ``IndexError`` this used to be.
+        """
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+
+        compiler, scene, _ = open_scene(tmp_path, "add_rank.luxar.zarr")
+        sublods = [
+            AdditiveSubLOD(
+                centers=np.zeros((4,), dtype=np.float32),
+                amplitudes=np.zeros((4,), dtype=np.float32),
+                cholesky_factors=cholesky_rows_nd(4, 3),
+            )
+            for _ in range(2)
+        ]
+        data = GSplatData(additive_sublods=sublods)
+
+        with pytest.raises(ValueError, match=r"Centers must have shape \(N, D\)"):
+            scene.add_gsplats_from_data("g", data)
+
+        assert "g" not in compiler.store
