@@ -7,8 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { GAUSSIAN_EQUIVALENT_TRUNCATION } from '../../../../rendering/materials/_shared/falloff';
 import {
-  CAPSULE_FOLD_CAP_MAX_COS,
-  CAPSULE_FOLD_CAP_MIN_RADIUS_PX,
+  CAPSULE_CUT_FADE_RADIUS_FRACTION,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_SUPPORT_SIGMA,
@@ -33,22 +32,22 @@ describe('capsule constants', () => {
     expect(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7)).toBe('0.6590102');
   });
 
-  it('fold-cap rule constants: 120° bound, 3 px visibility gate', () => {
-    expect(CAPSULE_FOLD_CAP_MAX_COS).toBe(0.5); // cos(60°) ⇔ 120° turn
-    expect(CAPSULE_FOLD_CAP_MIN_RADIUS_PX).toBe(3.0);
+  it('joint constants: quarter-radius cut fade, 1.5 px AA floor', () => {
+    expect(CAPSULE_CUT_FADE_RADIUS_FRACTION).toBe(0.25);
     expect(CAPSULE_MIN_RADIUS_PX).toBe(1.5); // matches the quad's AA floor
   });
 
   it('shaders fold the shared literals (no re-derived magic numbers)', () => {
     for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
       expect(src).toContain(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7)); // radius factor
-      expect(src).toContain('0.5');
-      expect(src).toContain('3.0'); // fold visibility gate
+      expect(src).toContain('1.5'); // AA radius floor
     }
     for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
-      // The quartic default path and the sharpness exponent map.
+      // The quartic default path, the sharpness exponent map, and the
+      // foreign-side cut fade fraction.
       expect(src).toContain('w * w');
       expect(src).toContain('exp2(3.0 - 4.0 * vSharp)');
+      expect(src).toContain(CAPSULE_CUT_FADE_RADIUS_FRACTION.toFixed(2));
     }
   });
 

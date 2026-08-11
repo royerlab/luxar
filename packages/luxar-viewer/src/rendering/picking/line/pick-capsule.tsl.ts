@@ -2,7 +2,7 @@
  * Capsule line PICKING — TSL / NodeMaterial twin of `shaders-capsule.ts`
  * (issue #1352, behind `?linePrimitive=capsule`).
  *
- * Same stencil, cuts, fold-cap rule and quartic profile as the visual
+ * Same stencil, half-disc joints and quartic profile as the visual
  * capsule TSL factory (`materials/line/shader-tsl-capsule.ts`); the pick
  * output contract is the shared one:
  *   `vec4(nodeId, elementId-low16, brightness, elementId-high16)`,
@@ -37,8 +37,7 @@ import {
 import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
 import {
-  CAPSULE_FOLD_CAP_MAX_COS,
-  CAPSULE_FOLD_CAP_MIN_RADIUS_PX,
+  CAPSULE_CUT_FADE_RADIUS_FRACTION,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
@@ -79,7 +78,7 @@ export function capsuleLinePickWebGPUFactory(
   const vMeta: TSLNode = varying(vec3(1.0, 0.0, 0.0)).setInterpolation('flat');
   const vCutA2: TSLNode = varying(vec2(-1.0, 0.0)).setInterpolation('flat');
   const vCutB2: TSLNode = varying(vec2(1.0, 0.0)).setInterpolation('flat');
-  const vInvR2: TSLNode = varying(float(1.0));
+  const vR: TSLNode = varying(float(1.0));
   const vFade: TSLNode = varying(float(1.0));
   const vSharp: TSLNode = varying(float(0.5));
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
@@ -116,13 +115,18 @@ export function capsuleLinePickWebGPUFactory(
 
     const mvA: TSLNode = mvStart.toVar();
     const mvB: TSLNode = mvEnd.toVar();
+    // Clip flags survive the block (mirrors the visual capsule exactly).
+    const clippedA: TSLNode = float(0.0).toVar();
+    const clippedB: TSLNode = float(0.0).toVar();
     if (!isOrtho) {
       If(startDepth.lessThan(nearCull).and(endDepth.greaterThanEqual(nearCull)), () => {
         const tA: TSLNode = nearCull.sub(startDepth).div(endDepth.sub(startDepth)).toVar();
         mvA.assign(mix(mvStart, mvEnd, tA));
+        clippedA.assign(1.0);
       }).ElseIf(endDepth.lessThan(nearCull).and(startDepth.greaterThanEqual(nearCull)), () => {
         const tB: TSLNode = startDepth.sub(nearCull).div(startDepth.sub(endDepth)).toVar();
         mvB.assign(mix(mvStart, mvEnd, tB));
+        clippedB.assign(1.0);
       });
     }
 
@@ -182,7 +186,9 @@ export function capsuleLinePickWebGPUFactory(
     const capA: TSLNode = interiorA.toVar();
     const capB: TSLNode = interiorB.toVar();
 
-    const partnerFarPx = (code: TSLNode): TSLNode => {
+    const partnerFarPx = (code: TSLNode, mvJoint: TSLNode, jointDepth: TSLNode): TSLNode => {
+      // Near-clips the partner's far endpoint toward the joint vertex
+      // before projecting (mirrors the visual capsule exactly).
       const interior: TSLNode = code.greaterThan(0.5).or(code.lessThan(-2.5)).toVar();
       const slot: TSLNode = code
         .greaterThan(0.0)
@@ -193,9 +199,19 @@ export function capsuleLinePickWebGPUFactory(
       const pStart: TSLNode = uLineTex.load(pt0).xyz.toVar();
       const pEnd: TSLNode = uLineTex.load(ivec2(pt0.x.add(int(1)), pt0.y)).xyz.toVar();
       const farObj: TSLNode = code.greaterThan(0.0).select(pEnd, pStart).toVar();
-      const cl: TSLNode = cameraProjectionMatrix
-        .mul(modelViewMatrix.mul(vec4(farObj, 1.0)))
-        .toVar();
+      const mvFar: TSLNode = modelViewMatrix.mul(vec4(farObj, 1.0)).toVar();
+      if (!isOrtho) {
+        const farDepth: TSLNode = mvFar.z.negate().toVar();
+        If(farDepth.lessThan(nearCull), () => {
+          const tF: TSLNode = clamp(
+            jointDepth.sub(nearCull).div(max(jointDepth.sub(farDepth), float(1e-20))),
+            0.0,
+            1.0
+          ).toVar();
+          mvFar.assign(mix(mvJoint, mvFar, tF));
+        });
+      }
+      const cl: TSLNode = cameraProjectionMatrix.mul(mvFar).toVar();
       const px: TSLNode = cl.xy
         .div(max(cl.w, float(1e-6)))
         .mul(0.5)
@@ -206,67 +222,51 @@ export function capsuleLinePickWebGPUFactory(
     };
 
     If(interiorA.greaterThan(0.5), () => {
-      extA.assign(1.0);
-      const far: TSLNode = partnerFarPx(lineT4.y);
-      If(far.z.greaterThan(0.5), () => {
+      extA.assign(CAPSULE_STENCIL_APRON_PX);
+      const far: TSLNode = partnerFarPx(lineT4.y, mvStart, startDepth);
+      If(clippedA.lessThan(0.5).and(far.z.greaterThan(0.5)), () => {
         const qq: TSLNode = far.xy.sub(pA).toVar();
         const ql: TSLNode = length(qq).toVar();
         If(ql.greaterThan(1e-4), () => {
           const qhat: TSLNode = qq.div(ql).toVar();
-          If(
-            dot(qhat, u)
-              .greaterThan(CAPSULE_FOLD_CAP_MAX_COS)
-              .and(rA.greaterThan(CAPSULE_FOLD_CAP_MIN_RADIUS_PX)),
-            () => {
-              capA.assign(0.0);
-              extA.assign(rMax);
-            }
-          ).Else(() => {
-            const nRaw: TSLNode = qhat.sub(u).toVar();
-            const nl: TSLNode = length(nRaw).toVar();
-            If(nl.greaterThan(1e-3), () => {
-              const n2: TSLNode = nRaw.div(nl).toVar();
-              const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
-              If(nLoc.x.lessThan(-1e-3), () => {
-                cutA.assign(nLoc);
-                extA.assign(
-                  clamp(abs(nLoc.y.div(nLoc.x)).mul(rMax), 0.0, rMax).add(CAPSULE_STENCIL_APRON_PX)
-                );
-              });
+          const nRaw: TSLNode = qhat.sub(u).toVar(); // q − m, m = +u at A
+          const nl: TSLNode = length(nRaw).toVar();
+          If(nl.greaterThan(1e-3), () => {
+            const n2: TSLNode = nRaw.div(nl).toVar();
+            const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
+            If(nLoc.x.lessThan(-1e-3), () => {
+              cutA.assign(nLoc);
+              extA.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
             });
+          }).Else(() => {
+            // Near-hairpin: the bisector is degenerate — plain round cap.
+            capA.assign(0.0);
+            extA.assign(rMax);
           });
         });
       });
     });
     If(interiorB.greaterThan(0.5), () => {
-      extB.assign(1.0);
-      const far: TSLNode = partnerFarPx(lineT4.z);
-      If(far.z.greaterThan(0.5), () => {
+      extB.assign(CAPSULE_STENCIL_APRON_PX);
+      const far: TSLNode = partnerFarPx(lineT4.z, mvEnd, endDepth);
+      If(clippedB.lessThan(0.5).and(far.z.greaterThan(0.5)), () => {
         const qq: TSLNode = far.xy.sub(pB).toVar();
         const ql: TSLNode = length(qq).toVar();
         If(ql.greaterThan(1e-4), () => {
           const qhat: TSLNode = qq.div(ql).toVar();
-          If(
-            dot(qhat, u)
-              .lessThan(-CAPSULE_FOLD_CAP_MAX_COS)
-              .and(rB.greaterThan(CAPSULE_FOLD_CAP_MIN_RADIUS_PX)),
-            () => {
-              capB.assign(0.0);
-              extB.assign(rMax);
-            }
-          ).Else(() => {
-            const nRaw: TSLNode = qhat.add(u).toVar();
-            const nl: TSLNode = length(nRaw).toVar();
-            If(nl.greaterThan(1e-3), () => {
-              const n2: TSLNode = nRaw.div(nl).toVar();
-              const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
-              If(nLoc.x.greaterThan(1e-3), () => {
-                cutB.assign(nLoc);
-                extB.assign(
-                  clamp(abs(nLoc.y.div(nLoc.x)).mul(rMax), 0.0, rMax).add(CAPSULE_STENCIL_APRON_PX)
-                );
-              });
+          const nRaw: TSLNode = qhat.add(u).toVar(); // q − m, m = −u at B
+          const nl: TSLNode = length(nRaw).toVar();
+          If(nl.greaterThan(1e-3), () => {
+            const n2: TSLNode = nRaw.div(nl).toVar();
+            const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
+            If(nLoc.x.greaterThan(1e-3), () => {
+              cutB.assign(nLoc);
+              extB.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
             });
+          }).Else(() => {
+            // Near-hairpin (see end A).
+            capB.assign(0.0);
+            extB.assign(rMax);
           });
         });
       });
@@ -294,7 +294,7 @@ export function capsuleLinePickWebGPUFactory(
     vMeta.assign(vec3(abLen, capA, capB));
     vCutA2.assign(cutA);
     vCutB2.assign(cutB);
-    vInvR2.assign(float(1.0).div(rC.mul(rC)));
+    vR.assign(rC);
     vFade.assign(fade.mul(widthScale).mul(culled.select(float(0.0), float(1.0))));
     vSharp.assign(mix(s0, s1, tc));
 
@@ -314,23 +314,50 @@ export function capsuleLinePickWebGPUFactory(
   const brightnessShared = Fn(() => {
     const x: TSLNode = vLocal.x.toVar();
     const y: TSLNode = vLocal.y.toVar();
-    Discard(vMeta.y.greaterThan(0.5).and(vCutA2.x.mul(x).add(vCutA2.y.mul(y)).greaterThan(0.0)));
-    Discard(
+    // Foreign-side cap fade (see the GLSL twin): C0 hand-off to the
+    // partner's body instead of a hard cut edge.
+    const rPx: TSLNode = max(vR, float(1e-4)).toVar();
+    const cutFade: TSLNode = float(1.0).toVar();
+    If(
+      vMeta.y
+        .greaterThan(0.5)
+        .and(x.lessThan(0.0))
+        .and(vCutA2.x.mul(x).add(vCutA2.y.mul(y)).greaterThan(0.0)),
+      () => {
+        cutFade.mulAssign(
+          clamp(float(1.0).add(x.div(rPx.mul(CAPSULE_CUT_FADE_RADIUS_FRACTION))), 0.0, 1.0)
+        );
+      }
+    );
+    If(
       vMeta.z
         .greaterThan(0.5)
-        .and(vCutB2.x.mul(x.sub(vMeta.x)).add(vCutB2.y.mul(y)).greaterThan(0.0))
+        .and(x.greaterThan(vMeta.x))
+        .and(vCutB2.x.mul(x.sub(vMeta.x)).add(vCutB2.y.mul(y)).greaterThan(0.0)),
+      () => {
+        cutFade.mulAssign(
+          clamp(
+            float(1.0).sub(x.sub(vMeta.x).div(rPx.mul(CAPSULE_CUT_FADE_RADIUS_FRACTION))),
+            0.0,
+            1.0
+          )
+        );
+      }
     );
-    const oxA: TSLNode = vMeta.y.greaterThan(0.5).select(float(0.0), x.negate()).toVar();
-    const oxB: TSLNode = vMeta.z.greaterThan(0.5).select(float(0.0), x.sub(vMeta.x)).toVar();
+    Discard(cutFade.lessThanEqual(0.0));
+    // TRUE point-to-segment distance: every end is capped (a free end
+    // keeps the whole disc, a cut end its half of the joint disc).
+    const oxA: TSLNode = x.negate().toVar();
+    const oxB: TSLNode = x.sub(vMeta.x).toVar();
     const ox: TSLNode = max(max(oxA, oxB), 0.0).toVar();
-    const q: TSLNode = y.mul(y).add(ox.mul(ox)).mul(vInvR2).toVar();
+    const q: TSLNode = y.mul(y).add(ox.mul(ox)).div(rPx.mul(rPx)).toVar();
     const w: TSLNode = float(1.0).sub(q).toVar();
     Discard(w.lessThanEqual(0.0));
     const profile: TSLNode = abs(vSharp.sub(0.5))
       .lessThan(1e-3)
       .select(w.mul(w).toVar(), pow(w, exp2(float(3.0).sub(vSharp.mul(4.0)))).toVar())
       .toVar();
-    return profile.mul(vFade);
+    return profile.mul(vFade).mul(cutFade);
   }).once();
   const brightness: TSLNode = brightnessShared().toVar('lineCapsulePickBrightness');
 

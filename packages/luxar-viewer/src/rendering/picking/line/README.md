@@ -10,7 +10,7 @@ Per-geometry picking sources for lines. Self-contained — no cross-geometry imp
 | `pick-volumetric.tsl.ts` | TSL node factory for the volumetric primitive (#1352, `volumetricLinePickWebGPUFactory`): the visual stadium-stencil vertex with pick IDs, and the PEAK capsule fragment used unconditionally                               |
 | `shaders.ts`             | Screen-space GLSL3 vertex/fragment source strings + `LINE_PICK_SOURCE: ShaderSource`. Uses full pick width (lines are already narrow); cap factor in fragment matches the visual shader                                     |
 | `shaders-volumetric.ts`  | Volumetric GLSL3 sources + `VOLUMETRIC_LINE_PICK_SOURCE: ShaderSource` — the GLSL twin of `pick-volumetric.tsl.ts`                                                                                                          |
-| `pick-capsule.tsl.ts`    | TSL node factory for the capsule primitive (#1352, `capsuleLinePickWebGPUFactory`): the capsule stencil vertex (bisector cuts + fold-cap rule) with pick IDs, quartic-profile brightness fragment                           |
+| `pick-capsule.tsl.ts`    | TSL node factory for the capsule primitive (#1352, `capsuleLinePickWebGPUFactory`): the capsule stencil vertex (half-disc bisector joints) with pick IDs, quartic-profile brightness fragment                               |
 | `shaders-capsule.ts`     | Capsule GLSL3 sources + `CAPSULE_LINE_PICK_SOURCE: ShaderSource` — the GLSL twin of `pick-capsule.tsl.ts`                                                                                                                   |
 
 ## The volumetric pick pass (#1352, behind `?linePrimitive=volumetric`)
@@ -41,8 +41,8 @@ active, each side of a joint decodes to exactly its own segment id.
 ## The capsule pick pass (#1352, behind `?linePrimitive=capsule`)
 
 Same dispatch, third variant. The capsule pick shaders duplicate the visual
-capsule's vertex stage exactly — stencil-local corners, 2D bisector cuts,
-the width-gated fold-cap rule — and the fragment shades the same quartic
+capsule's vertex stage exactly — stencil-local corners, half-disc
+bisector joints — and the fragment shades the same quartic
 profile of the 2D point-to-segment distance, so `brightness = profile ×
 fade` tracks the visible pixels one-for-one (the capsule is peak-shaped by
 construction; there is no separate peak lane to select). Per-element alpha

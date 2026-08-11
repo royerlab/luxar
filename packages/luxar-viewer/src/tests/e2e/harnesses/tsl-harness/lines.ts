@@ -826,11 +826,12 @@ function buildScaledJoinTexelSource(): LineTexelSource {
 }
 
 /**
- * SHARP-FOLD joint (capsule fold-cap rule, #1352): two segments sharing a
- * vertex with a ~150° direction change. Wide enough (width 0.3 ⇒ ~12 px
- * capsule radius at ortho scale 64) that the fold-cap rule fires; the
- * `thin` variant (width 0.02 ⇒ clamped to the 1.5 px floor) stays under
- * the visibility gate, so the clamped bisector CUT must be used instead.
+ * SHARP-FOLD joint (#1352): two segments sharing a vertex with a ~150°
+ * direction change. Every interior end renders its half of the joint
+ * DISC (round cap partitioned at the bisector), so the wide variant
+ * (width 0.3 ⇒ ~12 px capsule radius at ortho scale 64) fills its fold
+ * tip; the `thin` variant (width 0.02 ⇒ clamped to the 1.5 px floor)
+ * exercises the same path at a hairline-sized joint disc.
  */
 function buildFoldJoinTexelSource(width: number): LineTexelSource {
   return {
@@ -2149,8 +2150,8 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // Gaussian-like quartic profile of the 2D point-to-segment distance —
   // see _shared/line-capsule.ts. These fixtures pin value-level parity
   // of the two backends over the capsule's behaviour surface: side-on
-  // ribbon, end-on disc, bisector-cut joints, the width-gated fold-cap
-  // rule, taper, colormap, max + volumetric mode tails, near-plane
+  // ribbon, end-on disc, half-disc bisector joints (gentle and sharp
+  // folds), taper, colormap, max + volumetric mode tails, near-plane
   // straddling, and the pick twins.
   // NOTE for snapshot hygiene: append new entries at the END.
   // ============================================================
@@ -2218,8 +2219,8 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
   },
-  // ~150° fold, WIDE: the fold-cap rule replaces the clamped cut with a
-  // round cap (no chopped notch at the fold tip).
+  // ~150° fold, WIDE: the end's half of the joint disc fills the fold
+  // tip (no chopped notch, no double-bright overlap).
   'line-capsule-fold': {
     source: CAPSULE_LINE_SOURCE,
     buildUniforms: () =>
@@ -2235,8 +2236,8 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: (material) => buildJoinMesh(buildFoldJoinTexelSource(0.3), material),
   },
-  // The same fold, HAIRLINE-thin: the width gate keeps the cheap cut
-  // (sub-pixel notch) — the fold-cap rule must NOT fire.
+  // The same fold, HAIRLINE-thin: the joint disc is hairline-sized (the
+  // 1.5 px AA floor), pinning that a thin fold stays compact.
   'line-capsule-fold-thin': {
     source: CAPSULE_LINE_SOURCE,
     buildUniforms: () =>

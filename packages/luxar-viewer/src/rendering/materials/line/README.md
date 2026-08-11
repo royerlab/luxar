@@ -414,14 +414,26 @@ profile; approximate math fine"):
    renormalization.
 
 Interior polyline joints reuse the volumetric primitive's partner machinery
-(the joint-code partner slot; `compute_joint_codes` stays load-bearing):
-each end with a partner gets a **2D bisector cut** — the half-plane whose
-normal is `normalize(q̂ − m̂)` in pixel space — which tiles exactly
-(the partner's normal is the exact negation). Turns sharper than 120°
-(`CAPSULE_FOLD_CAP_MAX_COS`) fall back to a round cap instead of the
-chopped cut, but only when the end's radius exceeds 3 px on screen
-(`CAPSULE_FOLD_CAP_MIN_RADIUS_PX`) — at hairline widths the notch a cut
-leaves is subpixel and the cap would only add fill.
+(the joint-code partner slot; `compute_joint_codes` stays load-bearing).
+**Every end is a round cap**; an interior end keeps its HALF of the joint
+disc — the cap region (beyond the endpoint) is partitioned along the joint
+bisector, the line through the shared vertex with 2D normal
+`normalize(q̂ − m̂)` in pixel space (the partner's normal is the exact
+negation, so the two half-discs tile the disc exactly at ANY bend angle —
+no notch, no chopped miter tip, no double-bright overlap). Three
+refinements make this hold at extreme zoom as well as at normal widths:
+the cut is confined to the cap region, so where the two rod BODIES
+genuinely overlap (the inner corner of a bend) both legs render — matching
+the physical union; the foreign-side cap contribution fades over a quarter
+radius (`CAPSULE_CUT_FADE_RADIUS_FRACTION`) instead of a hard cut, keeping
+the hand-off to the partner's body C0 (sub-pixel at normal widths); and
+the partner's far endpoint is near-plane-clipped toward the joint vertex
+before projecting (a behind-eye projection flips and would poison the cut
+normal), with a joint vertex behind the near plane keeping the
+perpendicular butt. The per-fragment radius interpolates LINEARLY across
+the stencil (`vR`) — a constant-width tube's pixel radius is exactly
+linear in screen x (1/depth is perspective-linear), so this keeps
+silhouettes straight and rims soft under extreme foreshortening.
 
 Picking follows the toggle (same dispatch as volumetric): the capsule pick
 shaders run the same stencil, cuts, and fold rule as the visual pair so the

@@ -25,15 +25,20 @@
  *    sharpness as varyings evaluated at clamped corner positions) — the
  *    blend stretches marginally into cap regions; sub-quantization.
  *
- * Joints: interior ends are cut along the joint's 2D BISECTOR line
- * (normal = normalize(q̂ − m̂) in pixel space, my side negative) — the two
- * capsules tile EXACTLY at any bend because the two normals are exact
- * negations of the same normalize argument; a straight joint degrades to
- * the perpendicular butt. Beyond `CAPSULE_FOLD_CAP_MAX_COS` (turns sharper
- * than 120°) a clamped cut would chop the fold tip flat, so the end falls
- * back to a round cap — but only when the end is visibly wide
- * (`CAPSULE_FOLD_CAP_MIN_RADIUS_PX`); at hairline widths the notch is
- * sub-pixel and the cheap cut stays.
+ * Joints: EVERY end is a round cap; an interior end keeps its HALF of the
+ * joint disc — the cap region (beyond the endpoint) is partitioned along
+ * the joint's 2D BISECTOR line (normal = normalize(q̂ − m̂) in pixel
+ * space, my side negative; the partner's normal is the exact negation, so
+ * the two half-discs tile the disc exactly at any bend angle). The cut is
+ * confined to the cap region: where the two rod BODIES genuinely overlap
+ * (the inner corner of a bend) both legs render, matching the physical
+ * union. The foreign-side cap contribution fades over
+ * `CAPSULE_CUT_FADE_RADIUS_FRACTION` of the radius instead of a hard cut,
+ * so the hand-off to the partner's body is C0 — sub-pixel at normal
+ * widths, smooth when zoomed in. The partner's far endpoint is
+ * near-plane-clipped toward the joint vertex before projecting (a
+ * behind-eye projection flips and poisons the cut normal), and a joint
+ * vertex behind the near plane keeps the perpendicular butt.
  *
  * @module rendering/materials/_shared/line-capsule
  */
@@ -57,18 +62,13 @@ export const CAPSULE_MIN_RADIUS_PX = 1.5;
 export const CAPSULE_STENCIL_APRON_PX = 0.5;
 
 /**
- * Fold-cap rule: an interior end whose turn is SHARPER than this cosine
- * bound (|cos(turn)| with turn measured between consecutive travel
- * directions; 0.5 ⇔ 120°) renders a round cap instead of the clamped
- * bisector cut, which would chop the fold tip flat.
+ * Foreign-side cap fade length as a fraction of the end radius: my cap
+ * region on the PARTNER's side of the joint bisector fades out over this
+ * fraction of axial overhang instead of a hard cut — C0 with the
+ * partner's body at its endpoint line (no chevron edge when zoomed) and
+ * with my own half-disc at the bisector. Sub-pixel at normal widths.
  */
-export const CAPSULE_FOLD_CAP_MAX_COS = 0.5;
-
-/**
- * Fold caps only when the end is visibly wide: below this pixel radius the
- * chopped notch is sub-pixel and the cheaper cut stays.
- */
-export const CAPSULE_FOLD_CAP_MIN_RADIUS_PX = 3.0;
+export const CAPSULE_CUT_FADE_RADIUS_FRACTION = 0.25;
 
 /**
  * Sharpness-knob → profile exponent map: `n = 2^(3 − 4s)`. In `(1 − p²)^n`

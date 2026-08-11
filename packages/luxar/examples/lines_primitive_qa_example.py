@@ -79,7 +79,7 @@ def main():
             add(scene, "join-zigzag-90deg", zig, 0.10, 0.0, 4.0)
 
             # Extreme bends: ~150-degree direction change per vertex — the
-            # capsule primitive's fold-cap rule (>120 degrees) triggers here.
+            # capsule primitive's half-disc joints must fill the fold tips.
             sharpzig = [[i * 0.18, 0.8 * (i % 2), 0] for i in range(8)]
             add(scene, "join-extreme-150deg", sharpzig, 0.10, 0.0, 8.0)
 
@@ -190,8 +190,8 @@ def main():
                     "<strong>Row 1 — joins</strong>: gentle wave, 90&#176; zigzag, "
                     "extreme 150&#176; zigzag. Corners must tile seamlessly: no "
                     "gaps, no double-bright wedges, no slivers even at the "
-                    "extreme bends (the capsule rounds folds sharper than "
-                    "120&#176; when the line is wider than ~3 px on screen).",
+                    "extreme bends (each capsule end carries its half of the "
+                    "joint disc, so folds stay round at any angle).",
                     "<strong>Row 2 — width</strong>: smooth thin&#8594;thick taper; "
                     "alternating widths form clean diamonds; the hairline stays "
                     "crisp (~1.5 px floor), the thick bar shows a soft "

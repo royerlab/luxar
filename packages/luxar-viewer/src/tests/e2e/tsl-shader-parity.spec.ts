@@ -2607,20 +2607,16 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(offRibbon, 'pick/visual footprint disagreement beyond the 1-px ribbon').toBe(0);
   });
 
-  test('line-capsule fold-cap rule: wide folds round, hairline folds stay cut (#1352)', async ({
+  test('line-capsule joints: a wide fold fills its joint disc, a hairline stays compact (#1352)', async ({
     page,
   }) => {
-    // GLSL-only physics pin (parity transfers it to TSL). The WIDE fold
-    // renders a round cap at the fold tip, so the region just beyond the
-    // shared vertex along the fold bisector is COVERED; the THIN fold
-    // keeps the clamped cut, whose tip coverage collapses to the hairline
-    // itself. Compare covered-pixel counts inside a small window centred
-    // on the fold vertex: wide ≫ thin scaled by the width ratio alone
-    // would be ~15×; the cap adds the tip disc on top — assert the window
-    // coverage RATIO clears what widths alone explain is impractical
-    // pixel-exactly, so instead assert both absolutes: the wide fold's
-    // vertex window is substantially covered (cap present, no notch hole)
-    // and the thin fold's is nearly empty (cut, hairline only).
+    // GLSL-only physics pin (parity transfers it to TSL). Every interior
+    // end renders its half of the joint DISC (cap + bisector partition),
+    // so the WIDE fold's vertex window is substantially covered — no
+    // notch hole and no chopped tip at any angle. The THIN fold's joint
+    // disc is hairline-sized, so its window stays nearly empty. The
+    // absolute bounds also catch a radius blow-up (hairline blobbing) —
+    // the failure class a broken radius interpolation produces.
     await bootHarness(page);
     const wide = await runGLSL(page, 'line-capsule-fold');
     const thin = await runGLSL(page, 'line-capsule-fold-thin');
@@ -2646,12 +2642,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     };
     const wideCovered = count(wide);
     const thinCovered = count(thin);
-    expect(wideCovered, 'wide fold: vertex window covered by the cap').toBeGreaterThan(80);
-    // Measured 40/169 (the hairline's own diagonal strip through the
-    // window). The failure classes this guards — a radius bug blobbing the
-    // hairline, or the width gate lost so the thin fold grows cap overhang —
-    // both inflate it well past half the wide fold's coverage.
-    expect(thinCovered, 'thin fold: hairline cut only').toBeLessThan(60);
+    expect(wideCovered, 'wide fold: vertex window covered by the joint disc').toBeGreaterThan(80);
+    expect(thinCovered, 'thin fold: hairline-sized joint only').toBeLessThan(60);
     expect(thinCovered, 'thin fold ≪ wide fold').toBeLessThan(wideCovered / 2);
   });
 

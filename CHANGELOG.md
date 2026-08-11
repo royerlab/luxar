@@ -20,11 +20,19 @@ point-to-segment distance in **pixel space**, evaluated on stencil-local
 interpolated coordinates (`distance² = y² + max(0, −x, x−L)²` — no
 projection, no sqrt, no transcendentals), with the drawn radius at the 2σ
 support of the quad's Gaussian-equivalent σ and the sharpness knob mapped to
-the exponent (`n = 2^(3−4s)`). Interior polyline joints are 2D bisector cuts
-driven by the volumetric primitive's joint-code partner machinery — the two
-sides tile exactly — and turns sharper than 120° fall back to a round cap,
-but only when the end is wider than 3 px on screen (at hairline widths the
-cut's notch is subpixel). One profile serves every blending mode (the
+the exponent (`n = 2^(3−4s)`). Every end is a round cap; interior
+polyline joints keep each leg's half of the joint disc, partitioned along
+the joint bisector via the volumetric primitive's joint-code partner
+machinery — the two half-discs tile the disc exactly at any bend angle (no
+notch, no chopped miter tip, no double-bright overlap). The cut is
+confined to the cap region (overlapping rod bodies at a bend's inner
+corner both render, like the physical union), fades over a quarter radius
+instead of cutting hard, and the partner endpoint is near-plane-clipped
+before projecting — together these keep zoomed-in joints seamless, the
+regime where both the quad and the first capsule iteration showed hard
+seams and wedges. The per-fragment radius interpolates linearly across the
+stencil (perspective-correct for constant-width tubes), which keeps
+silhouettes straight under extreme foreshortening. One profile serves every blending mode (the
 capsule is peak-shaped by construction, so there is no peak/sum lane split),
 while the mode tails — volumetric τ mapping with per-element alpha, max-mode
 premultiply, colormap, gamma — are the quad fragment's, unchanged. Both

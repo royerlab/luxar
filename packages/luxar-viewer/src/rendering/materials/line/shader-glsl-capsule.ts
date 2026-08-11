@@ -14,7 +14,7 @@
  *
  * Model, calibration, the three deliberate exactness relaxations
  * (quartic profile, 2σ support, interpolated attributes) and the joint
- * rules (2D bisector cuts; width-gated round caps past 120° turns) are
+ * rules (half-disc bisector joints — every end a round cap) are
  * documented in `_shared/line-capsule.ts`, the single constants source
  * this file and the TSL twin (`shader-tsl-capsule.ts`) fold from.
  *
@@ -38,9 +38,8 @@ import {
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
 import {
-  CAPSULE_FOLD_CAP_MAX_COS,
-  CAPSULE_FOLD_CAP_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
+  CAPSULE_CUT_FADE_RADIUS_FRACTION,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
 } from '../_shared/line-capsule';
@@ -50,8 +49,7 @@ const G = {
   RADIUS_FACTOR: CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7), // 0.6590102
   MIN_RADIUS: CAPSULE_MIN_RADIUS_PX.toFixed(1),
   APRON: CAPSULE_STENCIL_APRON_PX.toFixed(1),
-  FOLD_COS: CAPSULE_FOLD_CAP_MAX_COS.toFixed(1),
-  FOLD_MIN_R: CAPSULE_FOLD_CAP_MIN_RADIUS_PX.toFixed(1),
+  CUT_FADE: CAPSULE_CUT_FADE_RADIUS_FRACTION.toFixed(2),
 };
 
 export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
@@ -82,7 +80,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     // perpendicular butt ((-1,0) at A, (1,0) at B).
     flat out vec2 vCutA2;
     flat out vec2 vCutB2;
-    out float vInvR2;       // 1/r² (linearized across taper — relaxation 3)
+    out float vR;           // capsule radius in px (perspective-LINEAR in screen x)
     out float vFade;        // nearFade × thin-width energy compensation
     out float vAlpha;       // per-element alpha (raw — volumetric gates it)
     out float vSharp;
@@ -106,9 +104,10 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       return vec4((code > 0.0) ? pEnd : pStart, 1.0);
     }
 
-    // Project an object-space point to pixel coordinates.
-    vec2 luxarToPx(vec3 objP) {
-      vec4 cl = projectionMatrix * (modelViewMatrix * vec4(objP, 1.0));
+    // Project a VIEW-space point to pixel coordinates. Callers must
+    // near-clip the point first — a behind-eye w flips the projection.
+    vec2 luxarViewToPx(vec4 mv) {
+      vec4 cl = projectionMatrix * mv;
       return (cl.xy / max(cl.w, 1e-6) * 0.5 + 0.5) * uResolution;
     }
 
@@ -130,7 +129,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vLocal = vec2(0.0); vMeta = vec3(1.0, 0.0, 0.0);
         vCutA2 = vec2(-1.0, 0.0); vCutB2 = vec2(1.0, 0.0);
-        vInvR2 = 1.0; vFade = 0.0; vAlpha = 1.0; vSharp = 0.5;
+        vR = 1.0; vFade = 0.0; vAlpha = 1.0; vSharp = 0.5;
         #ifdef USE_COLORMAP
         vScalar = 0.0;
         #else
@@ -140,9 +139,11 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       }
       // Near-plane segment clip (stencil AND profile domain — the 2D
       // formulation has no behind-eye notion, so clip the endpoints).
+      // tA/tB survive the block: a clipped end means the JOINT VERTEX is
+      // behind the near plane, which the cut construction must know.
+      float tA = 0.0;
+      float tB = 1.0;
       if (uIsOrtho == 0) {
-        float tA = 0.0;
-        float tB = 1.0;
         if (startDepth < nearCull && endDepth >= nearCull) {
           tA = (nearCull - startDepth) / (endDepth - startDepth);
         } else if (endDepth < nearCull && startDepth >= nearCull) {
@@ -192,26 +193,36 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       vec2 v = vec2(-u.y, u.x);
       float rMax = max(rA, rB) + ${G.APRON};
       // Interior ends get a 2D BISECTOR cut (adjacent capsules tile
-      // exactly at any bend); the stencil extends by the clamped miter
-      // overhang. Free ends — and interior ends at visibly-wide sharp
-      // folds (the fold-cap rule) — keep the round cap.
+      // EVERY end is a round cap. A free end keeps the whole disc; an
+      // interior end keeps its HALF of the joint disc — the bisector cut
+      // partitions the disc exactly between the two legs, so joints are
+      // seamless, notch-free, and double-bright-free at any bend angle
+      // and any zoom. Stencil reach at a cut end is |ny|·rMax (the kept
+      // half-disc's axial extent), so joints cost LESS fill than caps.
       vec2 cutA = vec2(-1.0, 0.0);
       vec2 cutB = vec2(1.0, 0.0);
       float extA = rMax;
       float extB = rMax;
       if (interiorA > 0.5) {
-        extA = 1.0;
-        vec4 farA = luxarPartnerFar(lineT4.y, lineTexW);
+        extA = ${G.APRON};
+        // Joint vertex behind the near plane (my A end was clipped): the
+        // joint region is invisible and the partner's projection is
+        // meaningless — keep the perpendicular butt at the clip line.
+        vec4 farA = tA > 0.0 ? vec4(0.0) : luxarPartnerFar(lineT4.y, lineTexW);
         if (farA.w > 0.5) {
-          vec2 qq = luxarToPx(farA.xyz) - pA;
+          // Near-clip the PARTNER's far endpoint toward the joint vertex
+          // before projecting — a behind-eye projection flips, and the
+          // garbage direction poisons both the fold decision and the cut
+          // normal (razor seams when zoomed into a joint).
+          vec4 mvFarA = modelViewMatrix * vec4(farA.xyz, 1.0);
+          float farDepthA = -mvFarA.z;
+          if (uIsOrtho == 0 && farDepthA < nearCull) {
+            float tF = (startDepth - nearCull) / max(startDepth - farDepthA, 1e-20);
+            mvFarA = mix(mvStart, mvFarA, clamp(tF, 0.0, 1.0));
+          }
+          vec2 qq = luxarViewToPx(mvFarA) - pA;
           float ql = length(qq);
-          if (ql > 1e-4 && dot(qq / ql, u) > ${G.FOLD_COS} && rA > ${G.FOLD_MIN_R}) {
-            // Turn sharper than the fold bound AND visibly wide: a clamped
-            // cut would chop the fold tip flat — round cap instead. At
-            // hairline widths the notch is sub-pixel, so the cut stays.
-            interiorA = 0.0;
-            extA = rMax;
-          } else if (ql > 1e-4) {
+          if (ql > 1e-4) {
             vec2 nRaw = qq / ql - u;   // q − m, m = +u at A
             float nl = length(nRaw);
             if (nl > 1e-3) {
@@ -219,23 +230,32 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x < -1e-3) {
                 cutA = nLoc;
-                extA = clamp(abs(nLoc.y / nLoc.x) * rMax, 0.0, rMax) + ${G.APRON};
+                extA = abs(nLoc.y) * rMax + ${G.APRON};
               }
+            } else {
+              // Near-hairpin: the bisector is degenerate — plain round cap
+              // (the partner nearly coincides; overlap is unavoidable).
+              interiorA = 0.0;
+              extA = rMax;
             }
           }
         }
       }
       if (interiorB > 0.5) {
-        extB = 1.0;
-        vec4 farB = luxarPartnerFar(lineT4.z, lineTexW);
+        extB = ${G.APRON};
+        // See end-A: behind-near joint keeps the butt; the partner's far
+        // endpoint is near-clipped toward the joint vertex first.
+        vec4 farB = tB < 1.0 ? vec4(0.0) : luxarPartnerFar(lineT4.z, lineTexW);
         if (farB.w > 0.5) {
-          vec2 qq = luxarToPx(farB.xyz) - pB;
+          vec4 mvFarB = modelViewMatrix * vec4(farB.xyz, 1.0);
+          float farDepthB = -mvFarB.z;
+          if (uIsOrtho == 0 && farDepthB < nearCull) {
+            float tF = (endDepth - nearCull) / max(endDepth - farDepthB, 1e-20);
+            mvFarB = mix(mvEnd, mvFarB, clamp(tF, 0.0, 1.0));
+          }
+          vec2 qq = luxarViewToPx(mvFarB) - pB;
           float ql = length(qq);
-          if (ql > 1e-4 && dot(qq / ql, u) < -${G.FOLD_COS} && rB > ${G.FOLD_MIN_R}) {
-            // Fold-cap rule at end B (see end-A note).
-            interiorB = 0.0;
-            extB = rMax;
-          } else if (ql > 1e-4) {
+          if (ql > 1e-4) {
             vec2 nRaw = qq / ql + u;   // q − m, m = −u at B
             float nl = length(nRaw);
             if (nl > 1e-3) {
@@ -243,8 +263,12 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x > 1e-3) {
                 cutB = nLoc;
-                extB = clamp(abs(nLoc.y / nLoc.x) * rMax, 0.0, rMax) + ${G.APRON};
+                extB = abs(nLoc.y) * rMax + ${G.APRON};
               }
+            } else {
+              // Near-hairpin (see end A).
+              interiorB = 0.0;
+              extB = rMax;
             }
           }
         }
@@ -263,8 +287,12 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       // rasterizer blends them per fragment (the blend spans the cap
       // extensions too — sub-quantization stretch, accepted).
       float tc = abLen > 1e-4 ? clamp(lx / abLen, 0.0, 1.0) : 0.5;
-      float rC = mix(rA, rB, tc);
-      vInvR2 = 1.0 / (rC * rC);
+      // The RADIUS interpolates linearly in screen space (1/depth is
+      // perspective-linear, so a constant-width tube's pixel radius is
+      // exactly linear in screen x). Interpolating 1/r² instead bends the
+      // rim quadratically inward — a hard concave silhouette at strong
+      // taper (the zoomed near-axial case).
+      vR = mix(rA, rB, tc);
       // nearFade at the segment's own depth × the thin-width energy
       // compensation (the AA radius floor fattens sub-1.5px lines; scale
       // intensity down so additive totals stay width-linear — the quad's
@@ -309,7 +337,7 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     flat in vec3 vMeta;
     flat in vec2 vCutA2;
     flat in vec2 vCutB2;
-    in float vInvR2;
+    in float vR;
     in float vFade;
     in float vAlpha;
     in float vSharp;
@@ -324,14 +352,32 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     void main() {
       float x = vLocal.x;
       float y = vLocal.y;
-      // Interior joints: cut along the joint BISECTOR (my side negative)
-      // — adjacent capsules tile exactly; straight joints degrade to butt.
-      if (vMeta.y > 0.5 && (vCutA2.x * x + vCutA2.y * y) > 0.0) discard;
-      if (vMeta.z > 0.5 && (vCutB2.x * (x - vMeta.x) + vCutB2.y * y) > 0.0) discard;
+      // Interior joints: the CAP region (beyond the endpoint) is cut along
+      // the joint BISECTOR (my side negative) — the two legs' half-discs
+      // tile the joint disc exactly. The cut applies ONLY beyond the
+      // endpoint: where the two rod BODIES genuinely overlap (the inner
+      // corner of a bend) both render, matching the physical union the
+      // volumetric primitive integrates (and additive sums it, correctly).
+      // Foreign-side cap fade: my cap region on the PARTNER's side of the
+      // joint bisector fades out over a quarter radius of axial overhang
+      // instead of a hard cut — C0 with the partner's body at its endpoint
+      // line (no chevron edge) and with my own half-disc at the bisector.
+      // Sub-pixel at normal widths; smooth and wide when zoomed in.
+      float rPx = max(vR, 1e-4);
+      float cutFade = 1.0;
+      if (vMeta.y > 0.5 && x < 0.0 && (vCutA2.x * x + vCutA2.y * y) > 0.0) {
+        cutFade *= clamp(1.0 + x / (${G.CUT_FADE} * rPx), 0.0, 1.0);
+      }
+      if (vMeta.z > 0.5 && x > vMeta.x && (vCutB2.x * (x - vMeta.x) + vCutB2.y * y) > 0.0) {
+        cutFade *= clamp(1.0 - (x - vMeta.x) / (${G.CUT_FADE} * rPx), 0.0, 1.0);
+      }
+      if (cutFade <= 0.0) discard;
       // Squared distance in the local frame; at cut ends the ROD continues
       // to the cut line (no cap overshoot term there).
-      float ox = max(max(vMeta.y > 0.5 ? 0.0 : -x, vMeta.z > 0.5 ? 0.0 : x - vMeta.x), 0.0);
-      float q = (y * y + ox * ox) * vInvR2;
+      // TRUE point-to-segment distance: every end is capped (a free end
+      // keeps the whole disc, a cut end its half of the joint disc).
+      float ox = max(max(-x, x - vMeta.x), 0.0);
+      float q = (y * y + ox * ox) / (rPx * rPx);
       float w = 1.0 - q;
       if (w <= 0.0) discard;
 
@@ -342,7 +388,7 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       float profile = (abs(vSharp - 0.5) < 1e-3)
         ? w * w
         : pow(w, exp2(3.0 - 4.0 * vSharp));
-      float intensity = profile * vFade;
+      float intensity = profile * vFade * cutFade;
 
       #ifdef USE_COLORMAP
       float st = clamp((vScalar - uScalarMin) * uScalarScale, 0.0, 1.0);
