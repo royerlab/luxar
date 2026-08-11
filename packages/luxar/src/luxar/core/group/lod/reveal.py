@@ -232,6 +232,27 @@ def resolve_reveal_centre(
     return [float(c) for c in 0.5 * (pts.min(axis=0) + pts.max(axis=0))]
 
 
+def wants_reveal_centre_preflight(spec: Optional[Dict[str, Any]]) -> bool:
+    """Whether :func:`preflight_reveal_centre` would check anything for ``spec``.
+
+    Only an EXPLICIT ``reveal_centre`` under a reveal ordering has a length to
+    cross-check; every other spec makes the preflight a no-op. Exposed so a
+    caller whose ``coords`` argument is expensive to build can skip building it:
+    the Lines wrapper has to run :func:`~luxar.core.group.lod.lines.identify_polylines`
+    plus :func:`~luxar.core.group.lod.lines.polyline_bbox_centres` to get the
+    per-polyline representatives, which is a Python loop over polylines —
+    measured at ~2.5 s for a 400k-vertex ``segments`` node, on every
+    ``add_lines(substitutive_lod=…)`` call, since the composed ladder defaults to
+    ON. Kept next to the preflight so the two cannot disagree about when there is
+    work to do.
+    """
+    if not spec:
+        return False
+    return spec.get("reveal_centre") is not None and is_reveal_additive_method(
+        str(spec.get("method"))
+    )
+
+
 def preflight_reveal_centre(
     spec: Optional[Dict[str, Any]], scene: Any, coords: NDArray, what: str
 ) -> None:
@@ -253,11 +274,9 @@ def preflight_reveal_centre(
     scorer: the derivation IS :func:`_validated_score_dims`. That also brings the
     finite-coordinate check forward, which was late for the same reason.
     """
-    if not spec:
+    if spec is None or not wants_reveal_centre_preflight(spec):
         return
-    centre = spec.get("reveal_centre")
-    if centre is None or not is_reveal_additive_method(str(spec.get("method"))):
-        return
+    centre = spec["reveal_centre"]
     arr = np.asarray(coords, dtype=np.float64)
     if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] == 0:
         # Degenerate shapes have their own (better) messages downstream, and the

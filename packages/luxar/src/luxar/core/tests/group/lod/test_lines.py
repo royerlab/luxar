@@ -1085,6 +1085,61 @@ class TestRevealSpatialDimsFromSceneLines:
             )
         assert (ok / "ln" / "child_2").exists()
 
+    def test_preflight_does_no_work_without_an_explicit_centre(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The wrapper must not derive polyline representatives it will not use.
+
+        The preflight only has something to cross-check when the caller named a
+        ``reveal_centre`` under a reveal ordering. Getting its ``coords`` argument
+        is the expensive part on Lines — ``identify_polylines`` plus
+        ``polyline_bbox_centres`` loop in Python over every polyline (~2.5 s for a
+        400k-vertex ``segments`` node) — and the composed ladder is ON by default,
+        so an unguarded call paid that on every ``add_lines(substitutive_lod=…)``.
+
+        Booby-trap the derivation: the default ladder must never reach it.
+        """
+        from luxar.core.group.lod import lines as lines_lod
+
+        def _boom(*_args, **_kwargs):  # pragma: no cover - must not be called
+            raise AssertionError("polyline representatives derived for a non-reveal")
+
+        monkeypatch.setattr(lines_lod, "polyline_bbox_centres", _boom)
+
+        rng = np.random.RandomState(0)
+        verts = rng.uniform(-50, 50, (200, 3)).astype(np.float32)
+        widths = np.full(len(verts), 0.5, np.float32)
+
+        output = tmp_path / "no_preflight.luxar.zarr"
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "ln",
+                verts,
+                widths=widths,
+                line_type="segments",
+                substitutive_lod={"levels": 2, "compression_factor": 4},
+            )
+        assert (output / "ln" / "child_2").exists()
+
+        # SENSITIVITY CONTROL: the trap DOES fire once a centre is named, so the
+        # test above proves the guard rather than a broken monkeypatch target.
+        trapped = tmp_path / "preflight_runs.luxar.zarr"
+        with LuxarZarrCompiler(trapped) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(AssertionError, match="derived for a non-reveal"):
+                scene.add_lines(
+                    "ln",
+                    verts,
+                    widths=widths,
+                    line_type="segments",
+                    substitutive_lod={"levels": 2, "compression_factor": 4},
+                    additive_lod={
+                        "method": "radial",
+                        "reveal_centre": [0.0, 0.0, 0.0],
+                    },
+                )
+
     def test_control_the_extent_rule_alone_mixes_the_shells(self) -> None:
         """Sensitivity control on identical data, through the bare-array API."""
         verts = self._verts()

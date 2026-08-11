@@ -996,9 +996,17 @@ def add_lines_substitutive_lod_wrapper_impl(
     # raise once every coarse level is already on disk. The scorer ranks whole
     # polylines, so the array whose extent decides the shell axes is the per-
     # polyline bbox CENTRES, not the vertices.
-    if composed_additive is not None:
+    #
+    # Guarded on `wants_reveal_centre_preflight` rather than on
+    # `composed_additive is not None`, because deriving those representatives is
+    # NOT free: identify_polylines + polyline_bbox_centres loop in Python over
+    # every polyline (~2.5 s for a 400k-vertex `segments` node), and the composed
+    # ladder defaults to ON — so the unguarded form paid that on every
+    # `add_lines(substitutive_lod=…)` call, reveal or not.
+    from ..lod.reveal import preflight_reveal_centre, wants_reveal_centre_preflight
+
+    if wants_reveal_centre_preflight(composed_additive):
         from ..lod.lines import identify_polylines, polyline_bbox_centres
-        from ..lod.reveal import preflight_reveal_centre
 
         preflight_reveal_centre(
             composed_additive,
