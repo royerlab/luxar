@@ -13,6 +13,14 @@
  * form; peak-family modes (max, normal, opaque) take the max along the ray,
  * which is today's profile at the ray→segment distance.
  *
+ * Since #1352 PR-4 the sum-lane RADIAL factor is sampled (unconditionally)
+ * from the general-β Abel-transform LUT (`_shared/line-integral-lut.ts`),
+ * whose β = 2 row is the Gaussian radial above — so this density is the
+ * model at the default knob, and the shape generalizes with sharpness.
+ * This module's axial-window and calibration machinery is unchanged (the
+ * erf window stays β = 2 — the cap-local trade recorded in the plan). Peak
+ * lanes honour β exactly, pointwise.
+ *
  * ## End treatments (the four sum-family lanes)
  *
  * Each segment end is either SOFT (a free polyline end, a hub, or a
