@@ -5336,6 +5336,25 @@ class TestAdditiveCommand:
         assert all(v is not None for v in e_cum), e_cum
         assert ref is not None
 
+        # The direction that actually exercises the source-stats merge: the
+        # input already CARRIES a weight, so suppressing the fresh one is not
+        # enough — the merge that preserves source-only stat entries must not
+        # carry the stale `reference_energy` back over the reveal's omission.
+        # (The arms above all start from a source with no weight, so they pass
+        # either way; this one fails without the drop in `_ladder_leaf`.)
+        from_stamped = tmp_path / "from_stamped.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "additive", str(energy), str(from_stamped), "-m", "radial"],
+            ).exit_code
+            == 0
+        )
+        method, e_cum, ref = stamps(from_stamped)
+        assert method == "radial"
+        assert e_cum == [None] * len(e_cum), e_cum
+        assert ref is None, ref
+
 
 class TestFlattenCommand:
     """`gsplat flatten` collapses any tree (esp. a kind=partition) into a single
