@@ -85,7 +85,7 @@ describe('DatasetBrowser', () => {
       expect(panel?.querySelector('#luxar-dataset-browser-status')).not.toBeNull();
     });
 
-    it('shows a close button with aria-label', () => {
+    it('shows a close button with aria-label and a stroke SVG glyph', () => {
       new DatasetBrowser({ container, onDatasetSelect, onClose });
 
       const closeBtn = container.querySelector(
@@ -93,7 +93,20 @@ describe('DatasetBrowser', () => {
       ) as HTMLButtonElement;
       expect(closeBtn).not.toBeNull();
       expect(closeBtn.getAttribute('aria-label')).toBe('Close dataset browser');
-      expect(closeBtn.textContent).toBe('×');
+      expect(closeBtn.querySelector('svg')).not.toBeNull();
+    });
+
+    it('mounts a scrim behind the panel that closes the browser on click', () => {
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+
+      const scrim = container.querySelector('.luxar-dataset-browser-scrim') as HTMLElement;
+      expect(scrim).not.toBeNull();
+      expect(scrim.getAttribute('aria-hidden')).toBe('true');
+
+      scrim.click();
+      expect(onClose).toHaveBeenCalled();
+      expect(container.querySelector('#luxar-dataset-browser')).toBeNull();
+      expect(container.querySelector('.luxar-dataset-browser-scrim')).toBeNull();
     });
 
     it('navigates to root exactly once with empty path when no currentSrc is provided', () => {
@@ -166,9 +179,11 @@ describe('DatasetBrowser', () => {
       await vi.waitFor(() => {
         expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
       });
-      expect(container.querySelector('.luxar-dataset-browser__empty')?.textContent).toBe(
-        'Empty directory'
+      expect(container.querySelector('.luxar-dataset-browser__empty')?.textContent).toContain(
+        'No datasets here'
       );
+      // The empty state offers manual path entry as a next step.
+      expect(container.querySelector('.luxar-dataset-browser__empty-action')).not.toBeNull();
     });
 
     it('shows manual-entry form when strategy=manual + 0 entries', async () => {
@@ -282,6 +297,122 @@ describe('DatasetBrowser', () => {
       expect(
         container.querySelector('.luxar-dataset-browser__error-details')?.textContent
       ).toContain('Network down');
+    });
+  });
+
+  describe('inline path editor', () => {
+    it('the breadcrumb edit toggle swaps in a path input seeded with the current path', async () => {
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ currentPath: 'data/sub', entries: [] })
+      );
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('#luxar-dataset-browser-path-edit')).not.toBeNull();
+      });
+
+      (container.querySelector('#luxar-dataset-browser-path-edit') as HTMLButtonElement).click();
+
+      const input = container.querySelector(
+        '.luxar-dataset-browser__path-input'
+      ) as HTMLInputElement;
+      expect(input).not.toBeNull();
+      expect(input.value).toBe('data/sub');
+    });
+
+    it('Enter on a .zarr path selects it via getFullUrl and closes', async () => {
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult());
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('#luxar-dataset-browser-path-edit')).not.toBeNull();
+      });
+
+      (container.querySelector('#luxar-dataset-browser-path-edit') as HTMLButtonElement).click();
+      const input = container.querySelector(
+        '.luxar-dataset-browser__path-input'
+      ) as HTMLInputElement;
+      input.value = 'sub/sample.zarr';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+      expect(getFullUrlMock).toHaveBeenCalledWith('sub/sample.zarr');
+      expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/sub/sample.zarr');
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('Enter on a plain directory path navigates instead of selecting', async () => {
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult());
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('#luxar-dataset-browser-path-edit')).not.toBeNull();
+      });
+
+      (container.querySelector('#luxar-dataset-browser-path-edit') as HTMLButtonElement).click();
+      navigateMock.mockClear();
+      navigateMock.mockResolvedValue(defaultNavigateResult({ currentPath: 'some/dir' }));
+
+      const input = container.querySelector(
+        '.luxar-dataset-browser__path-input'
+      ) as HTMLInputElement;
+      input.value = 'some/dir';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+      expect(navigateMock).toHaveBeenCalledWith('some/dir');
+      expect(onDatasetSelect).not.toHaveBeenCalled();
+    });
+
+    it('Escape restores the breadcrumb trail without closing the dialog', async () => {
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ currentPath: 'data', entries: [] })
+      );
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('#luxar-dataset-browser-path-edit')).not.toBeNull();
+      });
+
+      (container.querySelector('#luxar-dataset-browser-path-edit') as HTMLButtonElement).click();
+      const input = container.querySelector(
+        '.luxar-dataset-browser__path-input'
+      ) as HTMLInputElement;
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+      expect(container.querySelector('.luxar-dataset-browser__path-input')).toBeNull();
+      expect(container.querySelector('.luxar-dataset-browser__breadcrumb-link')).not.toBeNull();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('arrow-key list navigation', () => {
+    it('ArrowDown / ArrowUp move focus between rows', async () => {
+      const entries: DirectoryEntry[] = [
+        { name: 'a.zarr', path: 'a.zarr', type: 'zarr' },
+        { name: 'b.zarr', path: 'b.zarr', type: 'zarr' },
+        { name: 'c_dir', path: 'c_dir', type: 'directory' },
+      ];
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelectorAll('.luxar-dataset-browser__file-item').length).toBe(3);
+      });
+
+      const items = Array.from(
+        container.querySelectorAll<HTMLElement>('.luxar-dataset-browser__file-item')
+      );
+      items[0].focus();
+      items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      expect(document.activeElement).toBe(items[1]);
+
+      items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+      expect(document.activeElement).toBe(items[0]);
+
+      items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+      expect(document.activeElement).toBe(items[2]);
+
+      items[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+      expect(document.activeElement).toBe(items[0]);
     });
   });
 
