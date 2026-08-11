@@ -123,7 +123,7 @@ source store (raises `FileExistsError` / `ValueError`).
 
 ## Validation helpers (`validation.py`)
 
-Three free functions invoked by `Group`'s leaf adders through `Scene`'s stubs:
+Five free functions invoked by `Group`'s leaf adders through `Scene`'s stubs:
 
 - `resolve_extend_to_all(scene, extend_to_all, positions, data_type)` —
   interprets the `extend_to_all=` kwarg. Accepts `None` (no extension, but warns
@@ -133,9 +133,32 @@ Three free functions invoked by `Group`'s leaf adders through `Scene`'s stubs:
 - `analyze_extend_candidates(scene, positions)` — flags non-displayed dimensions
   that have exactly one unique value in the data yet declare a wider range —
   likely candidates for `extend_to_all`.
-- `validate_data_dimensions(scene, positions, node_name, data_type)` — hard
-  `ValueError` on a column-count vs scene-dimension mismatch; a `UserWarning`
-  when values fall outside a dimension's declared `range`.
+- `validate_array_rank(positions, data_type)` — the 2-D `(N, D)` shape raise on
+  its own, so a split path can rank-check without also count-checking (under a
+  `dim_order` the incoming width is legitimately not the scene's).
+- `validate_dimension_count(scene, positions, node_name, data_type)` — the hard
+  `ValueError` on a column-count vs scene-dimension mismatch, on its own. It also
+  rejects any non-2-D array, wording that like the rank message of the three
+  adders that can reach it (`… must have shape (N, D)`; mesh says `(V, D)` but
+  rank-checks before calling here). The in-memory split paths call it on the
+  caller's SOURCE array before they create a wrapper group, so a mismatch is
+  refused against the caller's own node with nothing written (#1446), and without
+  re-firing the range warning below once per part or level: `partition=`,
+  `additive_lod=` and `substitutive_lod=` on `add_points`/`add_lines`/
+  `add_gsplats` check it at the top of the adder, above every structural branch;
+  `add_gsplats_from_data`'s `lod_group=` checks it just inside the
+  multi-substitutive branch instead, below the `coverage_fraction` refusal so that
+  kwarg fault keeps precedence, and still above `add_lod_group`. That gate also
+  runs the `dim_order`/`fill`/`fill_sigma` spec checks and the colours/colormap
+  exclusion, in the leaf adders' order (colours first), so no in-memory fault it
+  can see leaves a childless wrapper behind. NOT covered:
+  `add_gsplats_from_file`, whose `graft_gsplat_node` builds the whole
+  `kind=lod` / `kind=partition` wrapper chain from the on-disk tree before the
+  first leaf is added, so a stored tree whose width disagrees with the scene still
+  refuses from `child_0` / `part_0` with the wrappers already written.
+- `validate_data_dimensions(scene, positions, node_name, data_type)` — the full
+  check the flat write runs: `validate_dimension_count` first, then a
+  `UserWarning` per dimension whose values fall outside its declared `range`.
 
 ## dim_order remapping (`dim_order.py`)
 
@@ -147,6 +170,14 @@ named in `dim_order` are padded with `fill[name]` (default `0.0`) and returned i
 the `unmapped` list — the caller uses that list to infer `extend_to_all`.
 `fill` keys must be valid scene dimensions and must not also appear in
 `dim_order`.
+
+`validate_dim_order_spec(scene, dim_order, data_ndim, fill=None)` is that whole
+validation preamble on its own — length, duplicate names, names in the scene,
+`fill` keys, in that order. `apply_dim_order` calls it first, so the messages are
+unchanged; it exists separately because none of those refusals need the data,
+which lets a split path run them before it creates a wrapper group (#1446). Its
+gsplats-only companion for `fill_sigma` is `validate_fill_sigma_keys` in
+`core/group/dim_order.py`.
 
 ```python
 # Map 3D data columns into a 4D scene, holding Time at 0.0

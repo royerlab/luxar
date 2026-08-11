@@ -105,6 +105,16 @@ def add_gsplats_impl(
                 "Cannot specify both 'colors' and 'colormap'. Use one or the other."
             )
 
+        # Scene-dimension COUNT check — above the partition branch (so a mismatch
+        # is refused against the caller's own array and name instead of from
+        # inside ``part_0``, which left a childless ``kind=partition`` group on
+        # disk), after the dim_order transform (which decides the final column
+        # count), and below the colours gate so that refusal keeps precedence as
+        # documented above. Only the count half is hoisted — the per-dimension
+        # range ``UserWarning`` stays in the flat write below so it fires once per
+        # user call, not once per part. Do not move it back below the branch.
+        scene._validate_dimension_count(ctr_arr, name, data_type="centers")
+
         # Apply compiler-level auto-partition heuristic (opt-in; default
         # off). User-explicit ``partition=`` always wins.
         partition = resolve_auto_partition(scene, n_splats, partition)

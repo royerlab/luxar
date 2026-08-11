@@ -6,6 +6,62 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### The scene-dimension check runs before a split, not inside the first child (#1446)
+
+`add_points("pt", positions_400x4, additive_lod={"counts": [200, 400]})` in a
+3-dimension scene was ACCEPTED, writing `pt/additive_0` and `pt/additive_1` at
+ndim=4 — a node whose column count contradicts the scene it lives in. The same call
+without `additive_lod=` refuses with `positions array has 4 columns, but scene has 3
+dimensions`. `add_lines(…, additive_lod=…)` did the same (visible once the input has
+more than one polyline; a single one degenerates to a single level and falls through
+to the flat write, which does refuse). The `partition=` / `substitutive_lod=` /
+`lod_group=` wrappers did refuse, but only from inside `part_0` / `child_0` —
+blaming an internal child the caller never wrote, and leaving a childless
+`kind=partition` / `kind=lod` group in the store where the flat path writes nothing
+at all. One cause for all of it: `_validate_data_dimensions` sat BELOW the split
+branches in `add_points`, `add_lines` and `add_gsplats`, so no split path ever ran
+it on the caller's own array.
+
+The hard column-count raise is now its own `validate_dimension_count`, called above
+those branches (and above `add_gsplats_from_data`'s `kind=lod` dispatch) once the
+`dim_order` transform that decides the final column count has been applied. Only
+that half moved: `validate_data_dimensions` still calls it first and keeps the
+per-dimension out-of-range `UserWarning` where it was, so warning counts are
+unchanged for every existing caller — hoisting the whole validator would have fired
+that warning once for the source array on top of once per part or level. The count
+check stays BELOW each adder's colours/colormap gate, and below the
+multi-substitutive `coverage_fraction` refusal, so a structural or kwarg fault keeps
+precedence over a width fault on every path, as it already did. Mesh needed no
+change: it has validated vertices above its own structural branches since the
+branches were added.
+
+Under a `dim_order` the facts to check up front are different ones. The
+post-transform width is the scene's by construction — `apply_dim_order` allocates
+`(N, scene_ndim)` — so the count check can never fire downstream; what raised from
+inside `child_0` was one of six spec refusals: `dim_order`'s length vs the data's
+columns, duplicate names, a name absent from the scene, a `fill` key that is
+unknown or already mapped, and the two `fill_sigma` equivalents. None of them look
+at the arrays, so the whole preamble is now `validate_dim_order_spec` (plus
+`validate_fill_sigma_keys` for the gsplats-only pair), called by `apply_dim_order` /
+`apply_dim_order_cholesky` as before AND at the same pre-dispatch point — which
+closes `add_gsplats_from_data(..., lod_group=…, dim_order=…)`, the call shape the
+method's own docstring demonstrates, for every one of them. A `dim_order` that is
+not a sequence at all is covered too: that raises `TypeError`, which the pre-dispatch
+gate converts exactly as the leaf adders' funnel does, so the two paths agree on the
+exception type as well as the text.
+
+The `lod_group=` gate covers the colours/colormap exclusion too, first and above
+everything else, exactly as the three leaf adders order it — both so a call that
+trips colours AND width hears the same answer either way, and because a
+colours+colormap call with a perfectly good width was stranding a childless
+`kind=lod` group all by itself.
+
+This covers the in-memory authoring paths. `add_gsplats_from_file` is NOT covered:
+its `graft_gsplat_node` builds the entire `kind=lod` / `kind=partition` wrapper chain
+from the on-disk tree before the first leaf is added, so a stored `.gsplats.zarr`
+whose width disagrees with the scene still refuses from `child_0` / `part_0` with the
+wrappers already written. Unchanged by this work, and left for a follow-up.
+
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 
 `add_points("g", positions_200, colors=colors_100, partition={"max_elements": 100})`
@@ -38,11 +94,12 @@ written last, after every coarse gsplat level, so a wrong-length channel used to
 strand a partial `kind=lod` node.
 
 What is guaranteed is that the per-element CHANNEL verdict is the same with and
-without a wrapper. The gate deliberately sits above the positions / dimension /
-attr checks, so a call that ALSO trips one of those — a NaN coordinate, a wrong
-column count, an unknown attr — now reports the channel fault first on the split
-paths where the plain leaf reports the other one. Both refuse and neither writes;
-only the message differs.
+without a wrapper. The gate deliberately sits above the positions / attr checks, so
+a call that ALSO trips one of those — a NaN coordinate, an unknown attr — now
+reports the channel fault first on the split paths where the plain leaf reports the
+other one. Both refuse and neither writes; only the message differs. (A wrong
+column count was in that list too until #1446 above moved the dimension-count check
+above the split branches, so it now precedes this gate on both paths.)
 
 The Lines `indices` list had the same hole one channel over, and it is closed the
 same way. An `(E, 3)` array is refused by the flat writer, but the split paths reach
