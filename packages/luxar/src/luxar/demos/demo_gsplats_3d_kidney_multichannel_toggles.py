@@ -119,7 +119,7 @@ Options:
 
 Output:
     - Scene saved to: demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr
-    - Automatically opens in browser at http://localhost:8000
+    - Automatically opens in your browser on the demo's own derived port
 
 """
 
