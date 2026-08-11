@@ -2528,6 +2528,126 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     });
   }
 
+  // ============================================================
+  // CAPSULE LINE PRIMITIVE (#1352, ?linePrimitive=capsule) — the same
+  // value-level parity contract over the capsule's behaviour surface.
+  // ============================================================
+  for (const variant of [
+    'line-capsule-sideon',
+    'line-capsule-endon-ortho',
+    'line-capsule-endon-persp',
+    'line-capsule-joint',
+    'line-capsule-fold',
+    'line-capsule-fold-thin',
+    'line-capsule-taper',
+    'line-capsule-colormap',
+    'line-capsule-max',
+    'line-capsule-volumetric',
+    'line-capsule-nearclip',
+    'line-capsule-nearclip-taper',
+    'line-capsule-fat',
+    'line-capsule-pick-sideon',
+    'line-capsule-pick-endon',
+    'line-capsule-pick-joint',
+  ] as const) {
+    test(`${variant}: capsule line primitive parity across backends`, async ({ page }) => {
+      await bootHarness(page);
+
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant}: per-covered-pixel parity (footprint-invariant)`
+      ).toBeLessThan(2.0);
+    });
+  }
+
+  test('line-capsule pick footprint agrees with the fat visual footprint (#1352)', async ({
+    page,
+  }) => {
+    // The pick pass rasterizes the SAME stencil + profile as the visual
+    // capsule, so wherever the visual draws, the pick must respond — up to
+    // a 1-px rasterisation ribbon on the FAT fixture, where a σ-level
+    // divergence would move the boundary several pixels (mutation-checked
+    // during development: a 20% pick-radius deflation fails this).
+    await bootHarness(page);
+    const visual = await runGLSL(page, 'line-capsule-fat');
+    const pick = await runGLSL(page, 'line-capsule-pick-sideon');
+    const size = 64;
+    const bgV = visual.slice(0, 4);
+    let offRibbon = 0;
+    for (let row = 1; row < size - 1; row++) {
+      for (let col = 1; col < size - 1; col++) {
+        const i = (row * size + col) * 4;
+        const visCovered =
+          visual[i] !== bgV[0] ||
+          visual[i + 1] !== bgV[1] ||
+          visual[i + 2] !== bgV[2] ||
+          visual[i + 3] !== bgV[3];
+        // Pick buffer: any nonzero brightness in the blue channel slot
+        // (vec4(nodeId, elemLo, brightness, elemHi)) means pickable.
+        const pickCovered = pick[i + 2] > 0;
+        if (visCovered === pickCovered) continue;
+        // Tolerate a 1-px boundary ribbon: a disagreement whose 4-neighbour
+        // ring contains the opposite state on the same buffer is boundary.
+        const ring = [i - 4, i + 4, i - size * 4, i + size * 4];
+        const boundary = ring.some((j) => {
+          const v2 =
+            visual[j] !== bgV[0] ||
+            visual[j + 1] !== bgV[1] ||
+            visual[j + 2] !== bgV[2] ||
+            visual[j + 3] !== bgV[3];
+          const p2 = pick[j + 2] > 0;
+          return v2 !== visCovered || p2 !== pickCovered;
+        });
+        if (!boundary) offRibbon++;
+      }
+    }
+    expect(offRibbon, 'pick/visual footprint disagreement beyond the 1-px ribbon').toBe(0);
+  });
+
+  test('line-capsule joints: a wide fold fills its joint disc, a hairline stays compact (#1352)', async ({
+    page,
+  }) => {
+    // GLSL-only physics pin (parity transfers it to TSL). Every interior
+    // end renders its half of the joint DISC (cap + bisector partition),
+    // so the WIDE fold's vertex window is substantially covered — no
+    // notch hole and no chopped tip at any angle. The THIN fold's joint
+    // disc is hairline-sized, so its window stays nearly empty. The
+    // absolute bounds also catch a radius blow-up (hairline blobbing) —
+    // the failure class a broken radius interpolation produces.
+    await bootHarness(page);
+    const wide = await runGLSL(page, 'line-capsule-fold');
+    const thin = await runGLSL(page, 'line-capsule-fold-thin');
+    const size = 64;
+    const count = (pixels: number[]): number => {
+      const bg = pixels.slice(0, 4);
+      let covered = 0;
+      // The fold vertex sits at world (0,0) → pixel (32,32); window ±6 px.
+      for (let row = 26; row <= 38; row++) {
+        for (let col = 26; col <= 38; col++) {
+          const i = (row * size + col) * 4;
+          if (
+            pixels[i] !== bg[0] ||
+            pixels[i + 1] !== bg[1] ||
+            pixels[i + 2] !== bg[2] ||
+            pixels[i + 3] !== bg[3]
+          ) {
+            covered++;
+          }
+        }
+      }
+      return covered;
+    };
+    const wideCovered = count(wide);
+    const thinCovered = count(thin);
+    expect(wideCovered, 'wide fold: vertex window covered by the joint disc').toBeGreaterThan(80);
+    expect(thinCovered, 'thin fold: hairline-sized joint only').toBeLessThan(60);
+    expect(thinCovered, 'thin fold ≪ wide fold').toBeLessThan(wideCovered / 2);
+  });
+
   test('line-volprim-sharp-taper: the sharpness knob reshapes the radial profile (#1352 PR-4)', async ({
     page,
   }) => {
