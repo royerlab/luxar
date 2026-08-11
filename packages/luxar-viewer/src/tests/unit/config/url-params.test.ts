@@ -12,6 +12,7 @@ describe('readUrlParams', () => {
     expect(params).toEqual({
       src: null,
       theme: null,
+      title: null,
       debug: false,
       noCache: false,
       noSliceCache: false,
@@ -33,6 +34,13 @@ describe('readUrlParams', () => {
       lineJoin: null,
       linePrimitive: null,
     });
+  });
+
+  it('parses ?title=, decoding and trimming; blank collapses to null', () => {
+    expect(readUrlParams('?title=global_rivers_earth').title).toBe('global_rivers_earth');
+    expect(readUrlParams('?title=Rivers%20of%20Earth').title).toBe('Rivers of Earth');
+    expect(readUrlParams('?title=%20%20').title).toBeNull();
+    expect(readUrlParams('?title=').title).toBeNull();
   });
 
   it('lodFade defaults ON and is disabled only by ?no-lod-fade', () => {

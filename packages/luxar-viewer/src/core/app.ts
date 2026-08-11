@@ -418,6 +418,9 @@ export class LuxarApp {
       overlayManager: this.overlayManager,
       setTheme: (id) => ThemeManager.getInstance().setTheme(id),
       setDimensionValue: (i, v) => sceneDimsManager.setDimensionValue(i, v),
+      setDocumentTitle: (title) => {
+        document.title = title;
+      },
     });
   }
 

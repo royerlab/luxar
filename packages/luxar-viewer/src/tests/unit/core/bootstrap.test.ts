@@ -86,6 +86,7 @@ const CANVAS = {} as HTMLCanvasElement;
 const EMPTY_PARAMS: UrlParams = {
   src: null,
   theme: null,
+  title: null,
   debug: false,
   noCache: false,
   noSliceCache: false,

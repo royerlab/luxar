@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from typing import Optional, cast
+from urllib.parse import quote
 
 import typer
 import uvicorn
@@ -54,6 +55,7 @@ from .serving import (
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
     check_viewer_built,
+    dataset_title,
     ensure_viewer_built,
     pick_port,
     wait_for_server,
@@ -309,6 +311,7 @@ def serve(
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
                     args=(host, actual_viewer_port, data_url, False, cors_origin),
+                    kwargs={"title": dataset_title(serve_path)},
                     daemon=True,
                 )
                 viewer_thread.start()
@@ -331,6 +334,9 @@ def serve(
             else:
                 data_url = f"http://{host}:{actual_port}"
                 viewer_url = f"http://{host}:{actual_viewer_port}/?src={data_url}"
+                title = dataset_title(serve_path)
+                if title:
+                    viewer_url += f"&title={quote(title)}"
                 open_browser_func(viewer_url)
 
         # Wrap the complete ASGI app with network simulation (if enabled)
@@ -464,7 +470,14 @@ def viewer(
             raise typer.Exit(1)
 
         # Serve viewer
-        _serve_viewer(host, actual_viewer_port, data_url, open_browser, cors_origin)
+        _serve_viewer(
+            host,
+            actual_viewer_port,
+            data_url,
+            open_browser,
+            cors_origin,
+            title=dataset_title(data),
+        )
 
     except typer.Exit:
         raise

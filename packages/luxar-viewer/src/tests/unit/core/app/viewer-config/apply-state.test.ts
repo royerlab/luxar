@@ -27,6 +27,7 @@ interface PortStubs {
   overlayManager?: { show: ReturnType<typeof vi.fn>; hide: ReturnType<typeof vi.fn> };
   setTheme: ReturnType<typeof vi.fn>;
   setDimensionValue: ReturnType<typeof vi.fn>;
+  setDocumentTitle: ReturnType<typeof vi.fn>;
 }
 
 function makePorts(
@@ -47,6 +48,7 @@ function makePorts(
     overlayManager: overrides.overlayManager === false ? undefined : showSlash(),
     setTheme: vi.fn(),
     setDimensionValue: vi.fn(),
+    setDocumentTitle: vi.fn(),
   };
 }
 
@@ -275,6 +277,19 @@ describe('applyViewerConfigState', () => {
     it('handles empty current_step array gracefully', () => {
       applyViewerConfigState({ dimensions: { current_step: [] } }, asPorts(ports));
       expect(ports.setDimensionValue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('title', () => {
+    it('sets the document title from viewer_config.title (trimmed)', () => {
+      applyViewerConfigState({ title: '  Rivers of Earth  ' }, asPorts(ports));
+      expect(ports.setDocumentTitle).toHaveBeenCalledWith('Rivers of Earth');
+    });
+
+    it('ignores an absent or blank title (URL fallback stays in force)', () => {
+      applyViewerConfigState({}, asPorts(ports));
+      applyViewerConfigState({ title: '   ' }, asPorts(ports));
+      expect(ports.setDocumentTitle).not.toHaveBeenCalled();
     });
   });
 

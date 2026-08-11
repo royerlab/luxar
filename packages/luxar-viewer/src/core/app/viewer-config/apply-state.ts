@@ -34,6 +34,8 @@ export interface ViewerConfigPorts {
   overlayManager?: { show: () => void; hide: () => void };
   setTheme: (themeId: string) => void;
   setDimensionValue: (dim: number, value: number) => void;
+  /** Set the browser tab title (document.title) from the scene's title. */
+  setDocumentTitle: (title: string) => void;
 }
 
 /**
@@ -64,6 +66,13 @@ export function applyViewerConfigState(
     if (ui.show_layers === false && ports.layersPanel) ports.layersPanel.hide();
     if (ui.show_overlays === true && ports.overlayManager) ports.overlayManager.show();
     if (ui.show_overlays === false && ports.overlayManager) ports.overlayManager.hide();
+  }
+
+  // --- Browser tab title ---
+  // Authored scene identity wins over the ?title= URL fallback applied at
+  // bootstrap, so a tab always names the scene it actually shows.
+  if (viewerConfig.title && viewerConfig.title.trim()) {
+    ports.setDocumentTitle(viewerConfig.title.trim());
   }
 
   // --- Theme ---

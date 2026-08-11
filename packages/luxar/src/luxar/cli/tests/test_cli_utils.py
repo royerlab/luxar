@@ -896,3 +896,28 @@ def test_info_tree_shows_mesh_face_count_and_icon(capsys) -> None:
     assert "n=5" in line, f"vertex count missing: {line!r}"
     assert "faces=7" in line, f"face count missing: {line!r}"
     assert "\U0001f53a" in line, f"mesh type icon missing: {line!r}"  # 🔺
+
+
+# ───────────────────────────── dataset_title ─────────────────────────────────
+class TestDatasetTitle:
+    """Tab-title derivation from a dataset path (serve's ?title= fallback)."""
+
+    def test_strips_compound_dataset_suffixes(self) -> None:
+        from luxar.cli.utils import dataset_title
+
+        assert dataset_title("global_rivers_earth.luxar.zarr") == "global_rivers_earth"
+        assert dataset_title(Path("/x/y/fit.gsplats.zarr")) == "fit"
+        assert dataset_title("data.zarr.zip") == "data"
+        assert dataset_title("plain.zarr") == "plain"
+        assert dataset_title("bundle.ZIP") == "bundle"  # case-insensitive
+
+    def test_directories_and_plain_names_pass_through(self) -> None:
+        from luxar.cli.utils import dataset_title
+
+        assert dataset_title(Path("/data/my_scene")) == "my_scene"
+
+    def test_none_and_empty_yield_none(self) -> None:
+        from luxar.cli.utils import dataset_title
+
+        assert dataset_title(None) is None
+        assert dataset_title("") is None

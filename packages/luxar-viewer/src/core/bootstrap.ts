@@ -133,6 +133,15 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // default. See types/line-primitive.ts.
   setLinePrimitiveOverride(urlParams.linePrimitive);
 
+  // Name the browser tab after the scene as early as possible. `luxar serve
+  // --open` derives `?title=` from the dataset file name, so several open
+  // viewer tabs stop being an indistinguishable row of "Luxar Player" — the
+  // stale-tab trap's accomplice. An authored `viewer_config.title` overrides
+  // this at scene load (see core/app/viewer-config/apply-state.ts).
+  if (urlParams.title) {
+    document.title = urlParams.title;
+  }
+
   if (patchConsole) {
     consoleInterceptor.patch();
   }

@@ -153,6 +153,27 @@ def pick_port(
     return actual
 
 
+def dataset_title(path: "Path | str | None") -> Optional[str]:
+    """A human-recognizable title for a dataset path, or None.
+
+    Strips the compound dataset suffixes (``.luxar.zarr``, ``.gsplats.zarr``,
+    ``.zarr``, ``.zarr.zip``) from the file name — ``global_rivers_earth`` from
+    ``global_rivers_earth.luxar.zarr``. Serve-family commands pass it as the
+    viewer's ``?title=`` parameter so every browser tab names the scene it
+    shows (several demo/dev tabs are otherwise indistinguishable). A scene's
+    authored ``viewer_config.title`` overrides it in the viewer.
+    """
+    if path is None:
+        return None
+    name = Path(path).name
+    for suffix in (".luxar.zarr", ".gsplats.zarr", ".zarr.zip", ".zarr", ".zip"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    name = name.strip()
+    return name or None
+
+
 def wait_for_server(
     host: str,
     port: int,

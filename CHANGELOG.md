@@ -6,6 +6,19 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Browser tabs name the scene they show
+
+Every viewer tab was titled "Luxar Player – 3D Scene Viewer", so a row of
+open demo tabs was indistinguishable — the accomplice of the stale-tab trap.
+Two-step title chain, applied to `document.title`: a scene's authored
+`viewer_config.title` (new Python `ViewerConfig` field) wins; otherwise the
+viewer uses the new `?title=` URL parameter, which serve-family commands
+(`luxar serve --viewer` / `--open`, and therefore every `luxar demo run`)
+derive from the dataset's file name (`dataset_title`, compound suffixes like
+`.luxar.zarr` stripped). Zero demo edits required — all 80 demos get named
+tabs for free.
+
+
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 
 Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,

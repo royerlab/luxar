@@ -98,6 +98,12 @@ export interface UrlParams {
   src: string | null;
   /** Theme override (`?theme=light` etc). Null when not provided. */
   theme: string | null;
+  /**
+   * Browser tab title (`?title=...`). `luxar serve --open` derives it from
+   * the dataset file name so several open viewer tabs are tellable apart;
+   * a scene's authored `viewer_config.title` overrides it at load.
+   */
+  title: string | null;
   /** Enable the `window.__luxarDebug` interface (`?debug`). */
   debug: boolean;
   /** Disable all cache layers (`?no-cache`). */
@@ -259,6 +265,7 @@ export function readUrlParams(search?: string): UrlParams {
   return {
     src: normalizeDataSourceUrl(params.get('src')),
     theme: params.get('theme'),
+    title: params.get('title')?.trim() || null,
     debug: params.has('debug'),
     noCache: params.has('no-cache'),
     noSliceCache: params.has('no-slice-cache'),

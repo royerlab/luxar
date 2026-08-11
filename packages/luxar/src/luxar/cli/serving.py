@@ -18,6 +18,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from typing import Any, Callable, MutableMapping, Optional, cast
+from urllib.parse import quote
 
 import uvicorn
 from arbol import aprint
@@ -375,6 +376,7 @@ def _serve_viewer(
     data_url: Optional[str] = None,
     open_browser_flag: bool = True,
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
+    title: Optional[str] = None,
 ) -> None:
     """Internal function to serve the viewer.
 
@@ -387,6 +389,11 @@ def _serve_viewer(
         open_browser_flag: If True, open the viewer URL in the system browser
             shortly after the server starts.
         cors_origin: Allowed CORS origin (see :func:`_add_cors`).
+        title: Optional browser-tab title appended as ``&title=<title>``
+            (URL-encoded) when a ``data_url`` is present. Serve-family
+            commands derive it from the dataset file name
+            (:func:`luxar.cli.utils.dataset_title`); a scene's authored
+            ``viewer_config.title`` overrides it in the viewer.
     """
     viewer_dist = get_viewer_dist_path()
 
@@ -397,6 +404,10 @@ def _serve_viewer(
         # Strip trailing slash from data_url to prevent double-slash in viewer requests
         data_url_clean = data_url.rstrip("/")
         viewer_url = f"http://{host}:{port}/?src={data_url_clean}"
+        if title:
+            # Names the browser tab (document.title) so several open viewer
+            # tabs are tellable apart; authored viewer_config.title overrides.
+            viewer_url += f"&title={quote(title)}"
     else:
         viewer_url = f"http://{host}:{port}/"
 
