@@ -764,6 +764,32 @@ def test_radial_ignores_a_zero_variance_time_axis():
     assert sorted(ranked_r[2:]) == pytest.approx([1.0, 1.0, 3.0, 3.0])
 
 
+def test_radial_still_reveals_when_every_axis_is_degenerate():
+    """All-zero covariance must not leave the shell axes EMPTY.
+
+    The default shell axes come from ``_nondegenerate_axes``, and an empty
+    selection would score every splat 0.0 — a ladder silently emitted in input
+    order. It cannot happen because that helper falls back to ALL axes when
+    nothing clears the sigma threshold, but the ordering depends on a default
+    two modules away, so pin it here.
+    """
+    radii = np.array([5.0, 1.0, 4.0, 2.0, 3.0], dtype=np.float32)
+    centers = np.zeros((radii.size, 3), dtype=np.float32)
+    centers[:, 0] = radii
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(radii.size, dtype=np.float32),
+        cholesky_factors=np.zeros((radii.size, 6), dtype=np.float32),
+    )
+
+    order = compute_additive_order(data, method="radial")
+
+    # Same expectation as the non-degenerate ray: centred on r=3, |r - 3|.
+    assert radii[order[0]] == pytest.approx(3.0)
+    assert sorted(radii[order[1:3]]) == pytest.approx([2.0, 4.0])
+    assert sorted(radii[order[3:]]) == pytest.approx([1.0, 5.0])
+
+
 def test_radial_rejects_a_mis_shaped_centre():
     data = _ray_gsplat(np.array([1.0, 2.0], dtype=np.float32))
     with pytest.raises(ValueError, match="one coordinate per spatial axis"):
