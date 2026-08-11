@@ -122,14 +122,110 @@ def compute_ray_integral_factor(truncation_radius: float) -> float:
     return float(sqrt_2pi * erf - 2.0 * T * np.exp(-0.5 * T * T))
 
 
+#: Integer colour dtypes the leaf write accepts (``encoding._encoders.base``:
+#: "Integer COLOR arrays must use dtype uint8 or uint16"). Floating point is
+#: accepted at any width; everything else — a wider/signed integer, bool — is
+#: refused by the leaf.
+_LEAF_COLOR_INT_DTYPES = (np.dtype("uint8"), np.dtype("uint16"))
+
+
+def _reject_unwritable_color_dtype(colors: NDArray, context: str) -> None:
+    """Refuse a colour dtype the leaf write would reject, BEFORE anything is built.
+
+    Same rule as the leaf, deliberately not a new one. Without this the lift
+    happily normalises e.g. an ``int64`` colour by ``iinfo(int64).max`` (≈1e-19,
+    a near-black coarse level), the coarse gsplat children are written, and only
+    the FINEST child — written last — trips the encoder's dtype check: a
+    ``kind=lod`` node stranded half-written on disk, which is exactly the class
+    the #1437 pre-split gate exists to prevent. Raising here keeps the store
+    untouched, for the uniform ``(1, c)`` row and the per-element ``(N, c)``
+    array alike.
+    """
+    dtype = colors.dtype
+    if np.issubdtype(dtype, np.floating) or dtype in _LEAF_COLOR_INT_DTYPES:
+        return
+    raise ValueError(
+        f"{context} has dtype {dtype}; a COLOR array must be floating point, or "
+        "integer uint8/uint16 (the leaf writer's rule). Cast the colours, or "
+        "pass a uniform colour as an RGB(A) tuple."
+    )
+
+
+def _expand_uniform_colors(
+    colors: Union[NDArray, Sequence[float]], n_elements: int
+) -> "tuple[Any, bool]":
+    """Expand a uniform (broadcast) RGB(A) colour to a per-element ``(n, c)`` array.
+
+    Returns ``(colors, expanded)``. A bare RGB(A) list/tuple and a ``(1, c)`` row
+    are legal, documented colour forms on every other path (the flat write,
+    ``partition=``, ``additive_lod=``), so the lift honours them too: a uniform
+    colour is exactly the case a coarse level can carry trivially, every merged
+    representative being that same colour (#1444). Anything else — a per-element
+    ``(N, c)`` array, a list of triples, a malformed value — is returned
+    UNCHANGED with ``expanded=False`` so the caller's own shape check produces
+    its usual message.
+
+    ``expanded`` is what lets the caller accept **four** columns without opening
+    the door to a genuine per-element RGBA (which stays refused: the substitutive
+    merge is untested on a varying alpha). A uniform alpha is preserved all the
+    way to the coarse levels because all three shaders consume per-element alpha
+    as a linear intensity scale (``-ln(1-a)`` in volumetric), so dropping it
+    would make the node jump ``1/alpha`` brighter the moment the ladder switches
+    off the finest child — the very LOD seam this module's mass/aspect/light
+    machinery exists to keep flat.
+
+    Two rules come from the leaf writers rather than being invented here:
+
+    * **Value scale.** A list/tuple is ALWAYS the uniform form and its components
+      are taken at FACE VALUE, exactly like the leaf writer's tuple branch
+      (``dataset_writers.colors.write_colors`` classifies HDR by value and never
+      divides by 255). Hence the float32 conversion here — it keeps an integer
+      tuple such as ``(255, 0, 0)`` out of the callers' integer-dtype
+      normalisation, which applies to arrays only (where ``uint8`` really does
+      mean 0..255, as it does at the leaf).
+    * **Row dtype.** A ``(1, c)`` ARRAY is held to the leaf's dtype rule
+      (:func:`_reject_unwritable_color_dtype`) *here*, before the bead expansion
+      on the Lines path, rather than only at the shared normalisation block
+      further down.
+
+    The list/tuple admission test is a deliberate MIRROR of
+    :func:`luxar.core.group.compositing.is_broadcast_color` (importing it would
+    invert the core → gsplats layering). It is only the type/shape half: unlike
+    :func:`~luxar.io._compiler.node_common.validate_broadcast_color` it does not
+    range-check the components, so a negative / non-finite / ``alpha > 1`` tuple
+    is expanded here and left to the caller's own gate — which, via the scene
+    API, is the #1437 pre-split gate, and it runs before this function.
+    """
+    if isinstance(colors, (list, tuple)):
+        if len(colors) not in (3, 4) or not all(
+            isinstance(c, (int, float, np.integer, np.floating)) for c in colors
+        ):
+            return colors, False
+        row = np.asarray(colors, dtype=np.float32).reshape(1, -1)
+    else:
+        # Return the CONVERTED array on the pass-through branch: the caller
+        # re-asarray's it anyway, and this way a non-ndarray input is converted
+        # once and its real shape appears in the caller's error message.
+        arr = np.asarray(colors)
+        if arr.ndim != 2 or arr.shape[0] != 1 or arr.shape[1] not in (3, 4):
+            return arr, False
+        _reject_unwritable_color_dtype(arr, "uniform colors row")
+        row = arr
+    # Read-only 0-stride view on purpose: the consumers all fancy-index or
+    # astype it, each of which copies, so materialising here would only add a
+    # SECOND (N, c) transient — not avoid one.
+    return np.broadcast_to(row, (n_elements, row.shape[1])), True
+
+
 def lift_points_to_gsplats(
     positions: NDArray,
     radii: Union[NDArray, float],
-    colors: Union[NDArray, None] = None,
+    colors: Union[NDArray, Sequence[float], None] = None,
     opacity: float = 1.0,
     *,
     radius_scale: float = 1.0,
     truncation_radius: float = LIFT_TRUNCATION_RADIUS,
+    _uniform_colors: bool = False,
 ) -> GSplatData:
     """Lift a point cloud to a single-level :class:`GSplatData` of isotropic Gaussians.
 
@@ -146,8 +242,15 @@ def lift_points_to_gsplats(
         Point centres (any spatial dimensionality ``d``).
     radii : array (N,) or float
         Per-point world radius (the 1% iso-contour radius), before ``radius_scale``.
-    colors : array (N, 3) or None
-        Per-point RGB (float32, 0..1 or HDR). ``None`` leaves colours unset.
+    colors : array (N, 3), uniform RGB(A), or None
+        Per-point RGB (float32, 0..1 or HDR). A **uniform** colour — an RGB(A)
+        list/tuple or a ``(1, c)`` row — is broadcast to all N points, ALPHA
+        INCLUDED: gsplats carry per-splat alpha end to end (``GSplatData.colors``
+        is ``(N, 3)`` or ``(N, 4)``, and every shader scales intensity by it), so
+        a uniform ``(r, g, b, a)`` keeps rendering like the node it coarsens.
+        Per-element ``(N, 4)`` RGBA is refused — the substitutive merge is
+        untested on a VARYING alpha, and only the uniform case is trivially
+        exact. ``None`` leaves colours unset.
     opacity : float
         Node opacity baked into the lifted amplitude (peak match).
     radius_scale : float
@@ -157,6 +260,13 @@ def lift_points_to_gsplats(
         Gaussian truncation ``T`` in sigmas. Defaults to
         :data:`LIFT_TRUNCATION_RADIUS` (3.0) — NOT the codebase-wide
         ``DEFAULT_TRUNCATION_RADIUS``; see that constant for why.
+    _uniform_colors : bool
+        PRIVATE. Declares that ``colors`` was already expanded from a uniform
+        RGB(A) value by the caller, which is what admits a 4th (alpha) column.
+        Only :func:`lift_lines_to_gsplats` sets it — it expands per VERTEX and
+        interpolates per bead before calling this function, and interpolating a
+        constant alpha yields that same constant, so the uniformity that makes
+        the alpha safe is preserved.
 
     Returns
     -------
@@ -168,6 +278,13 @@ def lift_points_to_gsplats(
     if pos.ndim != 2:
         raise ValueError(f"positions must be (N, d); got shape {pos.shape}")
     n, d = pos.shape
+
+    # Uniform colours BEFORE the zero-radius mask below (which indexes `colors`
+    # per point and would corrupt a 3/4-component broadcast row).
+    uniform_colors = bool(_uniform_colors)
+    if colors is not None:
+        colors, expanded = _expand_uniform_colors(colors, n)
+        uniform_colors = uniform_colors or expanded
 
     radii_arr = np.broadcast_to(np.asarray(radii, dtype=np.float64), (n,)).astype(
         np.float64
@@ -218,15 +335,30 @@ def lift_points_to_gsplats(
     colors_arr: Optional[NDArray] = None
     if colors is not None:
         c = np.asarray(colors)
-        if c.ndim != 2 or c.shape[1] != 3:
+        # A 4th (alpha) column is admitted only for a colour that came from the
+        # UNIFORM form: gsplats carry per-splat alpha fine, but the substitutive
+        # merge is untested on a varying one, whereas a constant survives every
+        # merge trivially.
+        allowed_channels = (3, 4) if uniform_colors else (3,)
+        if c.ndim != 2 or c.shape[1] not in allowed_channels:
             raise ValueError(
-                "colors must be (N, 3) RGB; gsplats carry no alpha channel — got "
-                f"shape {c.shape}. Pass RGB (drop the alpha column) before lifting."
+                "colors must be (N, 3) RGB, or a UNIFORM RGB(A) colour (an RGB(A) "
+                "tuple or a (1, c) row) broadcast to every element; per-element "
+                f"RGBA is not supported by the lift — got shape {c.shape}. Pass "
+                "RGB (drop the alpha column) before lifting."
             )
+        # Same leaf dtype rule as the uniform row, applied to EVERY colour that
+        # reaches the store: a per-element int64/uint32/int8 array would
+        # otherwise normalise to near-black here and be refused by the encoder
+        # only at the finest child, stranding the coarse levels on disk.
+        _reject_unwritable_color_dtype(c, "colors")
+        # order="C" keeps the row-major layout every consumer (and the writer)
+        # expects: `c` may be a 0-stride broadcast view, whose default order="K"
+        # astype would yield a channel-major (Fortran) array instead.
         if np.issubdtype(c.dtype, np.integer):
-            colors_arr = c.astype(np.float32) / float(np.iinfo(c.dtype).max)
+            colors_arr = c.astype(np.float32, order="C") / float(np.iinfo(c.dtype).max)
         else:
-            colors_arr = c.astype(np.float32)
+            colors_arr = c.astype(np.float32, order="C")
 
     return GSplatData(
         centers=pos,
@@ -295,7 +427,7 @@ def lift_lines_to_gsplats(
     widths: Union[NDArray, float],
     line_type: str = "polyline",
     indices: Optional[NDArray] = None,
-    colors: Union[NDArray, None] = None,
+    colors: Union[NDArray, Sequence[float], None] = None,
     opacity: float = 1.0,
     *,
     scalars: Union[NDArray, None] = None,
@@ -326,7 +458,20 @@ def lift_lines_to_gsplats(
     pre-baked ``colors`` so non-linear colormaps get correct mid-segment colours.
 
     Parameters otherwise mirror :func:`lift_points_to_gsplats` plus ``line_type`` /
-    ``indices`` (how vertices form edges) and ``bead_spacing_factor``.
+    ``indices`` (how vertices form edges) and ``bead_spacing_factor`` —
+    ``colors`` included, so a uniform RGB(A) list/tuple or ``(1, c)`` row is
+    broadcast to every vertex, alpha included, before the per-bead
+    interpolation (interpolating a constant alpha yields that same constant, so
+    the beads stay uniformly transparent).
+
+    One wrinkle in the "per-element RGBA is refused" contract is bead-count
+    dependent: when the whole line set collapses to exactly ONE bead (a segment
+    far shorter than its width), the per-bead colour array is itself ``(1, 4)``
+    and the inner point lift re-reads it as the uniform form — so a per-element
+    RGBA that would be refused for a longer segment is accepted there, carrying
+    the mean of the two vertex alphas. Only reachable through this function
+    directly: under ``add_lines(substitutive_lod=…)`` such a degenerate set
+    falls back to a flat Lines write. Left as is rather than adding machinery.
     """
     verts = np.asarray(vertices, dtype=np.float32)
     if verts.ndim != 2:
@@ -335,6 +480,16 @@ def lift_lines_to_gsplats(
     T = float(truncation_radius)
     if T <= 0:
         raise ValueError(f"truncation_radius must be > 0; got {T}")
+
+    # Uniform colours BEFORE the per-vertex gather below (`c[pairs[:, 0]]`),
+    # which would otherwise read a 3/4-component broadcast row as if its
+    # components were vertex rows and raise a bare IndexError (#1444).
+    uniform_colors = False
+    if colors is not None:
+        colors, uniform_colors = _expand_uniform_colors(colors, n_vertices)
+        # Leaf dtype rule up front, so a per-element int64 colour fails before
+        # the (potentially huge) bead expansion rather than inside it.
+        _reject_unwritable_color_dtype(np.asarray(colors), "colors")
 
     def _empty() -> GSplatData:
         return lift_points_to_gsplats(
@@ -466,6 +621,10 @@ def lift_lines_to_gsplats(
         opacity=1.0,
         radius_scale=radius_scale,
         truncation_radius=T,
+        # The beads inherit the vertices' uniformity: a uniform colour
+        # interpolates to itself, so a 4th (alpha) column is still the safe
+        # uniform case and must not be read as per-element RGBA.
+        _uniform_colors=uniform_colors,
     )
     flat = lifted.flattened()
     if int(flat.n_splats) != bead_centers.shape[0]:  # defensive: alignment broke

@@ -6,6 +6,46 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### `substitutive_lod=` accepts a uniform colour, like every other path (#1444)
+
+A bare RGB(A) tuple, or a `(1, c)` row, is a legal and documented broadcast
+colour on the flat path and under `partition=` / `additive_lod=`, but under
+`substitutive_lod=` it was refused: the coarse levels go through the gsplat
+lift, which had no broadcast-colour handling. Points raised a shape complaint
+("colors must be (N, 3) RGB" for a tuple, "Colors count 1 doesn't match centers
+count N" for a `(1, 3)` row); Lines raised a bare `IndexError` from the
+per-vertex colour gather — a raw numpy traceback mentioning neither colours nor
+`substitutive_lod`, and not even caught by `add_lines_impl`'s
+`(ValueError, TypeError)` wrapper. `lift_points_to_gsplats` /
+`lift_lines_to_gsplats` now expand a uniform colour to the element count before
+anything indexes it (before the zero-radius drop for Points, before the
+`pairs` gather for Lines), so every coarse level carries the authored colour —
+the one case a coarse level can honour exactly, every merged representative
+being that same colour. The **alpha column rides along**: gsplats carry
+per-splat alpha end to end (`GSplatData.colors` is `(N, 3)` or `(N, 4)`, the
+writer validates `channels=(3, 4)`, the merge propagates the 4th column, and all
+three shaders scale intensity by it), so dropping it would make the node jump
+`1/alpha` brighter the instant the ladder switches off the finest level —
+exactly the LOD seam that mass-preserving amplitudes, the anisotropy cap and the
+render-light rescale exist to keep flat. A **per-element** `(N, 4)` RGBA stays
+refused by the lift (shape alone cannot tell a constant alpha from a varying
+one, and the substitutive merge is untested on the latter); the 4-column
+allowance applies only to a colour the lift itself expanded from the uniform
+form. (The one inexactness is the opaque endpoint: the merge round-trips alpha
+through optical depth, whose `ALPHA_CLAMP = 511/512` turns an authored 1.0 into
+0.998 on the coarse levels — a 0.2% step, pinned by a test.) Value semantics
+mirror the leaf writer's: a list/tuple's components are taken at face value (an
+integer tuple is never divided by 255, matching `write_colors`), while an array
+keeps the dtype rule — and colour arrays are now held to the dtypes the leaf
+accepts (floating, uint8, uint16) before the lift builds anything. Normalising
+an `int64` array by `iinfo(int64).max` used to bake a near-black coarse level
+that the encoder rejected only at the finest child, stranding a `kind=lod` node
+with complete coarse children and a half-written finest one — the #1437
+stranding class, and it applied to a per-element array as much as to a uniform
+row. The pre-split gate added in #1437 always accepted the broadcast forms — it
+mirrors the flat verdict — so the two paths now agree end to end on every
+uniform colour.
+
 #### Demos serve on per-dataset derived ports, not 8000/5173
 
 Every demo used to contend for the same default ports, so with several demos

@@ -290,11 +290,12 @@ def validate_points_channels_before_split(
     covered here the same day, so this gate cannot drift from what the child
     write accepts. Every legal broadcast form the flat path accepts therefore
     passes THIS GATE too (a scalar radius, a ``(1, c)`` colors row, an RGB
-    triple). Passing the gate is not the same as reaching disk on every path:
-    under ``substitutive_lod=`` a broadcast ``colors`` — tuple or ``(1, 3)`` row —
-    is separately refused downstream by the gsplat lift, which bakes the coarse
-    levels from per-element RGB. That refusal predates this gate and is tracked in
-    #1444; per-element ``colors`` is unaffected.
+    triple) — and reaches disk on every path, ``substitutive_lod=`` included:
+    the gsplat lift broadcasts a uniform ``colors`` onto the coarse levels,
+    alpha column and all, rather than refusing it as it did before #1444. A
+    per-element ``(N, 4)`` RGBA is still refused by the lift (the substitutive
+    merge is untested on a varying alpha) — but that is not a broadcast form, so
+    it is not this gate's parity promise.
 
     The CHANNEL verdict is identical with and without a wrapper. Note the gate
     runs ABOVE the positions / dimension / attr checks on the split paths, so a

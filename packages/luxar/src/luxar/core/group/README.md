@@ -181,10 +181,13 @@ LOD wrapper builders:
   GSplats via `validate_labels_before_split` (whose validator has no labels
   channel). The GSplats gate also RETURNS the `cholesky_is_uniform` flag its
   validator already computed, so the wrapper does not restate that rule either.
-  Every legal broadcast form the flat path accepts passes the GATE; reaching disk
-  is a separate matter on one path — a broadcast `colors` under
-  `substitutive_lod=` is refused downstream by the gsplat lift, which needs
-  per-element RGB to bake the coarse levels (pre-existing, tracked in #1444).
+  Every legal broadcast form the flat path accepts passes the GATE and reaches
+  disk on every path, `substitutive_lod=` included: the gsplat lift broadcasts a
+  uniform `colors` onto the coarse levels, alpha column and all (gsplats carry
+  per-splat alpha, and every shader scales intensity by it, so a dropped alpha
+  would brighten each coarse level by `1/alpha` at the LOD seam), where it used
+  to refuse it (#1444). A per-element `(N, 4)` RGBA is still refused by the lift
+  — not a broadcast form, so outside this gate's parity promise.
 - `validate_line_indices_before_split(indices, n_vertices, line_type)` — the
   TOPOLOGY half of the Lines gate, and it runs first (mesh validates `faces`
   before any channel for the same reason). Calls the writer's shared
