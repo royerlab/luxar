@@ -6,6 +6,77 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Per-PR CI gates on Python 3.12; the full matrix runs nightly and on main
+
+`python-tests` was a three-leg matrix (3.10/3.11/3.12) on every pull request,
+and it is the slowest job in the workflow (~27min a leg) on a self-hosted box
+with five slots. Branch protection has only ever required the `3.12` context,
+so the other two legs cost two thirds of the Python CI budget to gate
+nothing. A pull request now runs `3.12` alone; `3.10`/`3.11` still run on every
+push to `main` and on a nightly schedule. The supported floor is unchanged —
+what is given up is the latency of catching a version-specific break, which
+moves from "in the offending PR" to "within 24h", against a 3x cut in per-PR
+Python CI.
+
+Scheduled runs get their own `concurrency` group. A cron run's ref is
+`refs/heads/main`, identical to a merge's, so under one shared group and
+`cancel-in-progress: true` whichever of the two started second cancelled the
+other — and they collide constantly: over the 31 days before the change a merge
+landed inside the nightly's ~30min window on 17 days, and inside the half hour
+before it on 12. The expensive direction is the cron killing a merge's push run,
+which is the only place the new `main` commit gets the full matrix at all now
+that per-PR CI is 3.12-only; the reverse is milder, since a merge that cancels
+the nightly runs the full matrix itself, but it still leaves "did 3.10/3.11 pass
+today?" unanswerable at a glance. Pull-request runs are unaffected: they already
+carry `refs/pull/N/merge` and were never grouped with a push. Note the cron
+fires the whole workflow, not just `python-tests` — a schedule event has no PR
+base, so change detection selects the full suite and the documentation gate too.
+
+#### Capsule line primitive behind `?linePrimitive=capsule` (#1352)
+
+A third line primitive, built after the G1 gate measured the exact
+volumetric primitive at 2.7–5× the quad's frame cost on the 10M-segment
+scenarios: the capsule keeps the volumetric primitive's two behavioural wins
+— direction-stable near-axial rendering (an end-on segment is a stable round
+disc, never a flickering sliver) and seamless joins — at quad-class cost
+(measured 1.04–1.11× the quad on the same worst case, parity at vsync
+elsewhere). The model is deliberately relaxed rather than exact: each
+fragment shades a compact quartic bump `(1 − p²)^n` of the 2D
+point-to-segment distance in **pixel space**, evaluated on stencil-local
+interpolated coordinates (`distance² = y² + max(0, −x, x−L)²` — no
+projection, no sqrt, no transcendentals), with the drawn radius at the 2σ
+support of the quad's Gaussian-equivalent σ and the sharpness knob mapped to
+the exponent (`n = 2^(3−4s)`). Every end is a round cap; interior
+polyline joints keep each leg's half of the joint disc, partitioned along
+the joint bisector via the volumetric primitive's joint-code partner
+machinery — the two half-discs tile the disc exactly at any bend angle (no
+notch, no chopped miter tip, no double-bright overlap). The cut is
+confined to the cap region (overlapping rod bodies at a bend's inner
+corner both render, like the physical union), fades smoothly over a
+bend-scaled band the vertex stage reserves stencil for (so the rasterizer
+cannot chop the ramp part-way down and hand back the very step it removes),
+and the partner endpoint is near-plane-clipped before projecting — together
+these keep zoomed-in joints seamless, the regime where both the quad and the
+first capsule iteration showed hard seams and wedges. Which ends cut at all
+is the shared joint-code rule the other two primitives use, so a free end
+and a degree-≥3 hub keep their whole round cap, while a butt cut — a
+slice-clipped end, a joint vertex behind the near plane, an exactly straight
+joint — is hard, with nothing drawn past the endpoint line. The per-fragment radius interpolates linearly across the
+stencil (perspective-correct for constant-width tubes), which keeps
+silhouettes straight under extreme foreshortening. One profile serves every blending mode (the
+capsule is peak-shaped by construction, so there is no peak/sum lane split),
+while the mode tails — volumetric τ mapping with per-element alpha, max-mode
+premultiply, colormap, gamma — are the quad fragment's, unchanged. Both
+backends ship (GLSL pair + TSL twin factory), picking follows the toggle
+with shaders that duplicate the visual stencil/cuts/fold rule so hover
+tracks pixels exactly, and all constants are single-sourced in
+`_shared/line-capsule.ts`. Pinned by 16 new GLSL↔TSL parity fixtures
+(end-on, joints, folds and the width gate, taper, colormap, volumetric
+blend, near-clip straddle, pick twins), codegen snapshots, and unit pins on
+the constants and profile. The default primitive is unchanged; the new
+`packages/luxar/examples/lines_primitive_qa_example.py` grid scene is the
+side-by-side visual QA artifact for the flip decision.
+
 #### The `radial` reveal ordering: a scene that grows outward as it streams
 
 New additive-ladder ordering `radial`, available on GSplats, Points and Lines
