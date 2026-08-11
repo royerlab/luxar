@@ -194,11 +194,21 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       ['const partner 160° ql15', leg(180, 10, 10, 60), leg(-160, 10, 10, 15)],
       ['widening partner 150°', leg(180, 10, 10, 60), leg(-150, 10, 30, 30)],
       ['widening own leg 160°', leg(180, 10, 20, 60), leg(-160, 10, 10, 60)],
-      // LONG constant partner at a hairpin gets NO packet by design: its
-      // doubled-back rod nearly coincides with mine, so the hard cut
-      // holds within ~2% of peak (the accepted residual; a 130–170° grid
-      // measured −0.0203 worst without any angle clause).
-      ['const partner 160° ql60 (no packet)', leg(180, 10, 10, 60), leg(-160, 10, 10, 60)],
+      ['const partner 160° ql60', leg(180, 10, 10, 60), leg(-160, 10, 10, 60)],
+      // The #1501 band: a hairpin partner LONGER than the disc (passes
+      // the length clause) but SHORTER than my leg — the bisector splits
+      // my rod lengthwise and only the angle clause opens the packet
+      // (measured to −0.92 without it). These isolate that clause.
+      ['const partner 160° ql20 (#1501)', leg(180, 10, 10, 60), leg(-160, 10, 10, 20)],
+      ['const partner 170° ql25 (#1501)', leg(180, 10, 10, 60), leg(-170, 10, 10, 25)],
+      ['const partner 175° ql20 (#1501)', leg(180, 10, 10, 60), leg(-175, 10, 10, 20)],
+      // Thinning partner at a moderate bend: isolates the taper-ratio
+      // clause (constant own leg, long partner, gentle enough that the
+      // sharp clause stays closed). The own-widening clause is the one
+      // clause this model CANNOT isolate: the partner's symmetric ratio
+      // always opens a packet from the other side here, and the clause
+      // exists for the case the model lacks — a width-gated-off partner.
+      ['thinning partner 60° ql30', leg(180, 10, 10, 60), leg(-60, 10, 4, 30)],
     ];
     for (const [name, a, b] of cases) {
       const { minErr, maxErr } = capsuleJointCompositionError(a, b);

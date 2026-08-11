@@ -281,17 +281,21 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                     rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
                   }
                   rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                  // Packet gate (#1495): a hard cut is only exact when
-                  // the partner actually covers my foreign side — which
-                  // fails whenever EITHER leg tapers (both directions) or
-                  // the partner is short relative to the joint disc. A
-                  // long congruent partner covers even a hairpin to
-                  // within 2% of peak (its doubled-back rod nearly
-                  // coincides with mine), so no angle clause is needed.
+                  // Packet gate (#1495, #1501): a hard cut is only exact
+                  // when the partner actually covers my foreign side —
+                  // which fails whenever EITHER leg tapers (both
+                  // directions), the partner is short relative to the
+                  // joint disc, or the turn nears a hairpin: there the
+                  // bisector tilts toward my axis and splits my rod
+                  // LENGTHWISE, so a partner longer than the disc but
+                  // shorter than my leg refills only part of the cut
+                  // half (measured to −0.92 of peak in the 2r–3r
+                  // partner band without the angle clause).
                   bool needPacketA =
                     abs(1.0 - rpFarA / max(rA, 1e-4)) > ${G.DEFICIT_GATE} ||
                     rB > rA * (1.0 + ${G.DEFICIT_GATE}) ||
-                    ql < 2.0 * rA;
+                    ql < 2.0 * rA ||
+                    dot(qq / ql, u) > 0.5;
                   if (needPacketA) {
                     cutA.z = (rpFarA - rA) / ql;
                     cutA.w = ql;
@@ -350,17 +354,21 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                     rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
                   }
                   rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                  // Packet gate (#1495): a hard cut is only exact when
-                  // the partner actually covers my foreign side — which
-                  // fails whenever EITHER leg tapers (both directions) or
-                  // the partner is short relative to the joint disc. A
-                  // long congruent partner covers even a hairpin to
-                  // within 2% of peak (its doubled-back rod nearly
-                  // coincides with mine), so no angle clause is needed.
+                  // Packet gate (#1495, #1501): a hard cut is only exact
+                  // when the partner actually covers my foreign side —
+                  // which fails whenever EITHER leg tapers (both
+                  // directions), the partner is short relative to the
+                  // joint disc, or the turn nears a hairpin: there the
+                  // bisector tilts toward my axis and splits my rod
+                  // LENGTHWISE, so a partner longer than the disc but
+                  // shorter than my leg refills only part of the cut
+                  // half (measured to −0.92 of peak in the 2r–3r
+                  // partner band without the angle clause).
                   bool needPacketB =
                     abs(1.0 - rpFarB / max(rB, 1e-4)) > ${G.DEFICIT_GATE} ||
                     rA > rB * (1.0 + ${G.DEFICIT_GATE}) ||
-                    ql < 2.0 * rB;
+                    ql < 2.0 * rB ||
+                    dot(qq / ql, u) < -0.5;
                   if (needPacketB) {
                     cutB.z = (rpFarB - rB) / ql;
                     cutB.w = ql;
@@ -464,15 +472,13 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
 
     out vec4 fragColor;
 
-    // The PARTNER leg's profile at a pixel offset rel from the shared
-    // vertex (my local frame), rebuilt from just the cut normal and the
-    // partner's radius GRADIENT: the partner's axis is the reflection of
-    // my inward axis mDir across the cut plane (q = m − 2(m·n)n — exact,
-    // both normals being normalize(q − m) up to sign), its radius at the
-    // cap region, where the deficit rule fires), and it is treated as an
-    // unbounded tapering rod (its far cap only matters where both
-    // profiles are ~0). Same profile family as ours; the sharpness knob
-    // comes from our fragment — the joint region is local.
+    // The PARTNER leg's tapered-capsule field at a pixel offset rel from
+    // the shared vertex (my local frame). Its axis is my inward axis
+    // reflected across the cut plane (q = m − 2(m·n)n — exact); its
+    // radius starts at the SHARED-VERTEX radius rEnd (a flat varying,
+    // #1494), tapers by the packed gradient, freezes past its far end,
+    // and the far cap term closes the rod there (#1490). Sharpness is
+    // taken from OUR fragment — the joint region is local.
     float luxarPartnerProfile(vec4 cut, vec2 rel, float mSign, float rEnd, float sharp) {
       vec2 n = cut.xy;
       // Partner axis = my inward axis reflected across the cut plane
@@ -497,16 +503,9 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       float invW = 1.0 / max(vW, 1e-9);
       float x = vLocal.x * invW;
       float y = vLocal.y * invW;
-      // Interior joints: the CAP region (beyond the endpoint) is cut along
-      // the joint BISECTOR (my side negative) — the two legs' half-discs
-      // tile the joint disc exactly. The cut applies ONLY beyond the
-      // endpoint: where the two rod BODIES genuinely overlap (the inner
-      // corner of a bend) both render, matching the physical union the
-      // volumetric primitive integrates (and additive sums it, correctly).
-      // EXACT per-fragment radius: mix of the endpoint radii clamped to
-      // the segment span — a varying cannot represent this (its linear
-      // interpolation spans the cap extensions, so a short stub's drawn
-      // radius at its own endpoint drifts; the deeper root of #1494).
+      // Interior joints: the joint plane (the 2D bisector) spans the FULL
+      // stencil — cap and body — and composes by the DEFICIT rule over a
+      // 1 px AA ramp (see _shared/line-capsule.ts and the blocks below).
       float cutFlagA = mod(vMeta.y, 2.0);
       float cutFlagB = vMeta.y >= 2.0 ? 1.0 : 0.0;
       // EXACT per-fragment radius without a divide: 1/abLen rides the

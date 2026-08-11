@@ -78,13 +78,15 @@ export const CAPSULE_MIN_RADIUS_PX = 1.5;
 export const CAPSULE_STENCIL_APRON_PX = 0.5;
 
 /**
- * Congruence gate for the joint DEFICIT rule: when the partner's far
- * radius is within this fraction of my end radius (deficit ≈ 0 — equal
- * widths, no meaningful perspective divergence), the joint packet stays
- * empty and the fragment takes the cheap hard-cut discard instead of
- * evaluating the partner's field. Congruent joints are the overwhelmingly
- * common case (and the fill-heavy benchmarks' only case), so this keeps
- * the deficit rule's cost confined to the joints that actually need it.
+ * Taper tolerance for the joint packet gate. The gate opens (building a
+ * packet so the fragment runs the DEFICIT rule instead of the cheap hard
+ * cut) when ANY of four conditions defeats the hard cut's assumption
+ * that the partner covers my foreign side: the legs' radii differ by
+ * more than this fraction (either direction), my own leg widens away
+ * from the joint by more than it, the partner is shorter than twice my
+ * joint radius, or the turn is sharper than 120° (#1495, #1501). Long,
+ * congruent, gentle joints — the overwhelmingly common case and the
+ * fill benchmarks' only case — keep the exact zero-cost partition.
  */
 export const CAPSULE_JOINT_DEFICIT_GATE = 0.02;
 
@@ -185,19 +187,20 @@ export function capsuleJointRenderLeg(
   // Packet per the vertex stage (width gate assumed passed; callers use
   // radii above CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).
   const rpFar = partner.rFar;
-  // Packet gate (#1495): either leg tapering (both directions) or a
-  // short partner defeats the hard cut's assumption that the partner
-  // covers my foreign side. No angle clause: a LONG congruent partner
-  // covers even a hairpin to within 2% of peak (measured over a
-  // 130–170° × taper × length grid — its doubled-back rod nearly
-  // coincides with mine), and the hairpin cases that genuinely chop are
-  // all short-partner cases. The own-widening clause looks redundant
-  // with the symmetric ratio seen from the PARTNER's side, but each
-  // leg's gate must stand alone: the partner may be width-gated off.
+  // Packet gate (#1495, #1501): either leg tapering (both directions),
+  // a short partner, or a near-hairpin turn defeats the hard cut's
+  // assumption that the partner covers my foreign side. The angle clause
+  // is NOT redundant with the length clause: at a hairpin the bisector
+  // tilts toward my axis and splits my rod LENGTHWISE, so a partner in
+  // the 2r–3r length band (long enough to pass the length clause,
+  // shorter than my leg) refills only part of the cut half — measured to
+  // −0.92 of peak without this clause. Each leg's gate stands alone (the
+  // partner may be width-gated off), hence the own-widening clause too.
   const hasPacket =
     Math.abs(1 - rpFar / Math.max(leg.rJoint, 1e-4)) > CAPSULE_JOINT_DEFICIT_GATE ||
     leg.rFar > leg.rJoint * (1 + CAPSULE_JOINT_DEFICIT_GATE) ||
-    partner.length < 2 * leg.rJoint;
+    partner.length < 2 * leg.rJoint ||
+    qx > 0.5;
   const g = (rpFar - leg.rJoint) / partner.length;
 
   const side = nx * x + ny * y;
@@ -227,13 +230,22 @@ export function capsuleJointRenderLeg(
 export function capsuleJointCompositionError(
   leg1: CapsuleJointLeg,
   leg2: CapsuleJointLeg,
-  extent = 30,
+  extent?: number,
   step = 0.5
 ): { minErr: number; maxErr: number } {
+  // The window must cover BOTH rods end to end: a hairpin cut splits a
+  // rod lengthwise, so its damage can sit anywhere along the LONGER leg
+  // — a joint-sized window measured −0.02 where the true worst was −0.92
+  // (#1501's discovery path).
+  const auto =
+    Math.max(leg1.length, leg2.length) +
+    Math.max(leg1.rJoint, leg1.rFar, leg2.rJoint, leg2.rFar) +
+    5;
+  const ext = extent ?? auto;
   let minErr = 0;
   let maxErr = 0;
-  for (let px = -extent; px <= extent; px += step) {
-    for (let py = -extent; py <= extent; py += step) {
+  for (let px = -ext; px <= ext; px += step) {
+    for (let py = -ext; py <= ext; py += step) {
       const sum =
         capsuleJointRenderLeg(leg1, leg2, px, py) + capsuleJointRenderLeg(leg2, leg1, px, py);
       const ref = Math.max(capsuleLegField(leg1, px, py), capsuleLegField(leg2, px, py));

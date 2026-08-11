@@ -439,10 +439,9 @@ the half a thin neighbour cannot render; the numeric composition sweep in
 #1494/#1488/#1490). The partner's far endpoint is near-plane-clipped
 toward the joint vertex before projecting (a behind-eye projection flips
 and would poison the cut normal), with a joint vertex behind the near
-plane keeping the perpendicular butt. The per-fragment radius interpolates LINEARLY across
-the stencil (`vR`) — a constant-width tube's pixel radius is exactly
-linear in screen x (1/depth is perspective-linear), so this keeps
-silhouettes straight and rims soft under extreme foreshortening.
+plane keeping the perpendicular butt. The per-fragment radius is computed EXACTLY from the
+endpoint radii (`mix(rA, rB, clamp(x/L, 0, 1))` — a linear varying cannot
+represent this, since its interpolation spans the cap extensions).
 
 Picking follows the toggle (same dispatch as volumetric): the capsule pick
 shaders run the same stencil and joint partition as the visual pair so the

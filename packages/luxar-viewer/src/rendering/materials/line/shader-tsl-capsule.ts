@@ -332,6 +332,7 @@ export function capsuleLineWebGPUFactory(
                   .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
                   .or(rB.greaterThan(rA.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
                   .or(ql.lessThan(rA.mul(2.0)))
+                  .or(dot(qhat, u).greaterThan(0.5))
                   .toVar();
                 If(needPacketA, () => {
                   cutA.z.assign(rpFarA.sub(rA).div(ql));
@@ -390,6 +391,7 @@ export function capsuleLineWebGPUFactory(
                   .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
                   .or(rA.greaterThan(rB.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
                   .or(ql.lessThan(rB.mul(2.0)))
+                  .or(dot(qhat, u).lessThan(-0.5))
                   .toVar();
                 If(needPacketB, () => {
                   cutB.z.assign(rpFarB.sub(rB).div(ql));
