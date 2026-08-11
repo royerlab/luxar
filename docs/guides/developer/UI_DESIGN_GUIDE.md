@@ -270,7 +270,8 @@ refraction injector in `glass-filters.ts` all read the same class.
 
 - **Opt in**: self-contained bordered panels (rail, GUI panels, help overlay,
   layers panel, monitor, dataset browser, debug console, dimension sliders,
-  toast, resolution indicator, error overlay, rail flyout/popover).
+  toast, resolution indicator, error overlay, scene-identity banner, rail
+  flyout/popover).
 - **Opt out**: frameless in-canvas widgets (scale bar, colormap legend) are
   deliberately NOT glass — they use drop-shadows instead of a panel material.
 - **Nested surfaces must de-glass**: a GUI mounted inside an already-glass
@@ -554,10 +555,10 @@ brackets because "fit" owns them).
 ### 9.3 Rendered size ladder
 
 `28px` hero glyphs (error dialog, cache-disabled empty state) · `19px` rail
-buttons · `18px` chips · `15px` GUI/layers rows · `13px` section titles &
-micon default · `12px` tabs/inline and scene-graph node glyphs · `9px`
-compact alerts (plus a `17px` list-row rung pending #1472). Icons at ≤13px
-may carry `opacity: 0.75–0.9` at rest.
+buttons · `18px` chips · `16px` scene-identity banner (§15.3) · `15px`
+GUI/layers rows · `13px` section titles & micon default · `12px` tabs/inline
+and scene-graph node glyphs · `9px` compact alerts (plus a `17px` list-row
+rung pending #1472). Icons at ≤13px may carry `opacity: 0.75–0.9` at rest.
 
 ---
 
@@ -614,6 +615,7 @@ Every animation and transition a component introduces must be disabled under
 | Rail popovers/flyouts | `left: calc(100% + 10px)` off the rail, arrow pointing back |
 | Dimension sliders | Bottom-center, 80% width, max 800px |
 | Toast | Bottom-center, transient |
+| Scene-identity banner | Top-center, `top: 12px`, standing (not transient) |
 | Data monitor | Top-right region (tabs + compact pill) |
 | Help overlay | Top-right, 400px, max-height 82vh |
 | Modals (dataset browser, errors) | Viewport-centered, `translate(-50%,-50%)`, ~600px, max 90vw/80vh |
@@ -635,18 +637,26 @@ Every interactive element defines, in this order:
    hover affordances (directory chevrons) go from `opacity: 0` → `0.7`.
 3. **Active/selected** — highlight accent per §6.2.
 4. **Focus** — `:focus-visible { outline: 2px solid var(--luxar-border-focus);
-   outline-offset: 1–2px }` (negative offset inside dense lists). **There is
-   no embed-safe baseline ring today**: the only global `:focus-visible` rule
-   lives in `reset.css`, which ships via `standalone.css` alone (§2), so an
-   embedded consumer gets nothing unless the component declares its own — a
-   per-component ring is therefore mandatory, not optional. #1476 adds a
-   `.luxar-glass-surface :focus-visible` baseline to `base/utilities.css` so
-   `index.css` alone covers every control inside a glass panel, with richer
-   component styles overriding it later in the import order (pending). Text
-   inputs may substitute a
-   `--luxar-border-focus` border-color switch. Never `outline: none` without
-   a visible replacement (a `tabindex="-1"` focus-trap *container* is the one
-   sanctioned exception).
+   outline-offset: 1–2px }` (negative offset inside dense lists). The global
+   `:focus-visible` rule lives in `reset.css`, which ships via
+   `standalone.css` alone (§2), so the **embed-safe** baseline is instead the
+   `.luxar-glass-surface :focus-visible` rule in `base/utilities.css`. That is
+   `index.css`'s first import, so it deliberately loses on cascade order to
+   every later equal-specificity component rule — richer component styles
+   still win. It covers any control inside a glass panel; a surface that is
+   *not* a glass surface (frameless in-canvas widgets, §5) must still declare
+   its own ring. Because `border.focus` is **optional** in the `Theme`
+   interface (`themes/types.ts`), spell the ring with the dark-theme fallback
+   — `var(--luxar-border-focus, rgba(76, 175, 80, 0.5))`, as `reset.css` and
+   `control-rail.css` do: an undefined token makes the whole `outline`
+   declaration invalid, which resolves to *no* ring and, being
+   higher-specificity, suppresses the one `reset.css` would have drawn. (All
+   four shipped themes define it, so this only bites a new theme.) Text inputs
+   may substitute a `--luxar-border-focus` border-color switch. Never
+   `outline: none` without a visible replacement — a `tabindex="-1"`
+   focus-trap *container* (the help overlay's root) is the one sanctioned
+   exception, and it must be plain, not `!important`, so descendant rings
+   survive.
 5. **Disabled** — `opacity: 0.3–0.4`, `cursor: not-allowed` or `default`,
    `pointer-events: none` where semantics allow.
 
@@ -725,10 +735,11 @@ The following existing code contradicts this guide. It is listed so nobody
 mistakes it for precedent; migrate opportunistically when touching these
 files. (Inventory verified 2026-08-11.) A four-tranche modernization campaign
 addresses most of it — #1476 a11y, #1478 token hygiene, #1479 emoji→icons,
-#1480 accent migration. **#1479 has landed**, so its entries are already
-deleted below; **#1476, #1478 and #1480 are still open, so everything that
-remains here is live on this branch.** Each entry is annotated with the PR
-that will close it; delete the entry as that PR merges.
+#1480 accent migration. **#1476 and #1479 have landed**, so their entries are
+already deleted below; **#1478 and #1480 are still open, as is #1472 (the
+dataset browser), so everything that remains here is live on this branch.**
+Each entry is annotated with the PR that will close it; delete the entry as
+that PR merges.
 
 ### 15.1 Green-as-interactive (§6.4 violations) — pending #1480
 
@@ -769,6 +780,16 @@ stroke SVG, and dropped the per-type scene-graph name tints with them.)
   positioned parent) are not layer tokens.
 - Recording panel indicator/confirm dialog bypasses the surface recipe
   entirely (raw rgba/blur/radius) — the largest single drift.
+- The scene-identity banner (`ui/scene-identity-banner.ts`) styles itself
+  entirely from inline `style.cssText` rather than a
+  `styles/components/*.css` file on the surface recipe: raw `rgba()`
+  backgrounds and borders, `z-index: 10000` (§3.5), literal `color: #fff`
+  (§6.6), `font: 13px system-ui` instead of the font/size tokens, and a
+  `border-radius: 8px` literal. Its two glyphs also inline their
+  presentation attributes at `width/height="16"` on a 24-grid `viewBox`,
+  which is neither the §9.1 rail contract (geometry only, CSS paints) nor the
+  §9.2 micon one — a new banner-like surface should get a component
+  stylesheet and the §9.1 contract, not copy this.
 - Assorted raw `rgba()` duplicating tokens: the GUI library's
   `rgba(0, 0, 0, …)` control fills (`ui/gui/styles/controller.css`),
   debug-console warn/error tints, monitor hairlines and the
@@ -777,17 +798,18 @@ stroke SVG, and dropped the per-type scene-graph name tints with them.)
 - Legacy px letter-spacing (`0.3px`/`0.5px`) and the tick-less legacy
   `.luxar-section-title` recipe in monitor/layers CSS.
 
-### 15.4 Accessibility gaps — pending #1476
+### 15.4 Accessibility gaps — pending #1472
 
-- `help-overlay.css` sets `outline: none !important` on the panel root (the
-  one unjustified `!important`).
-- GUI slider/select/input focus removes the outline without a visible
-  replacement.
-- `prefers-reduced-motion` gaps (GUI library, layers panel, toast, debug
-  console, help overlay, dataset browser, overlay fade) — closed by #1476.
-- The standalone-only focus ring (embedded viewers losing keyboard
-  affordance) — closed by the `.luxar-glass-surface :focus-visible` utility
-  #1476 adds (§12.4).
+- `dataset-browser.css` is the last stylesheet with no
+  `@media (prefers-reduced-motion: reduce)` block, so its five transitions
+  ignore the preference (§10.4) — closed by #1472.
+
+(#1476 closed the rest: the embed-safe `.luxar-glass-surface :focus-visible`
+baseline (§12.4), the GUI slider's missing ring, the help overlay's
+`!important` outline suppression, and the reduced-motion gaps in the GUI
+library, layers panel, toast, debug console and overlay fade. The GUI
+input/select focus *is* visible, but switches the border to
+`--luxar-success` — that green is §15.1's, not an a11y gap.)
 
 ### 15.5 Divergent contracts (tolerated, bounded)
 
@@ -796,6 +818,8 @@ stroke SVG, and dropped the per-type scene-graph name tints with them.)
 - `error-overlay.ts` keeps its one warning glyph as a module-local
   `ALERT_ICON` const rather than an `icons.ts` module (§13). Fine for a
   single glyph; a second one there means promoting it to a module.
+  (`scene-identity-banner.ts` already carries two in a module-local `ICONS`
+  record — the case that rule is about; see §15.3.)
 - Layers-panel selection uses `--luxar-info`; everything else uses
   `--luxar-highlight`. New selection UIs use highlight.
 
