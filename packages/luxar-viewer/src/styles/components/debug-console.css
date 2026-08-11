@@ -81,13 +81,11 @@
 
 /* Header */
 .luxar-debug-console__header {
-  padding: var(--luxar-spacing-8);
-  padding-bottom: var(--luxar-spacing-3);
-  margin-bottom: var(--luxar-spacing-5);
-  border-bottom: 1px solid var(--luxar-border-strong);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  /* Structural extras only — recipe from the shared .luxar-panel-header.
+     Own horizontal/top padding (the console body manages its own). */
+  padding-top: var(--luxar-spacing-8);
+  padding-right: var(--luxar-spacing-8);
+  padding-left: var(--luxar-spacing-8);
 }
 
 .luxar-debug-console__title {

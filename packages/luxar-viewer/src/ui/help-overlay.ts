@@ -157,7 +157,7 @@ export function showHelpOverlay() {
 
   // Create header with title and close button
   const header = document.createElement('div');
-  header.className = 'luxar-help-overlay__header';
+  header.className = 'luxar-help-overlay__header luxar-panel-header';
 
   const title = document.createElement('h3');
   title.id = 'luxar-help-overlay-title';

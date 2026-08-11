@@ -93,7 +93,7 @@ export class GUI extends Folder {
 
     // Header element (contains title and optional close button)
     const header = document.createElement('div');
-    header.className = 'luxar-gui__header';
+    header.className = 'luxar-gui__header luxar-panel-header';
 
     // Title element
     const title = document.createElement('div');

@@ -66,15 +66,6 @@
 }
 
 /* Header */
-.luxar-help-overlay__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--luxar-spacing-5);
-  border-bottom: 1px solid var(--luxar-border-strong);
-  padding-bottom: var(--luxar-spacing-3);
-}
-
 .luxar-help-overlay__title {
   margin: 0;
   font-size: var(--luxar-text-lg);

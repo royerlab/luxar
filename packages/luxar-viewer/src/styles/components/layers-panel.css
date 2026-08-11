@@ -46,12 +46,12 @@
 /* ========== Header ========== */
 
 .luxar-layers-panel__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--luxar-spacing-8) var(--luxar-spacing-8) var(--luxar-spacing-3);
-  margin-bottom: var(--luxar-spacing-5);
-  border-bottom: 1px solid var(--luxar-border-default);
+  /* Structural extras only — the header recipe itself comes from the shared
+     .luxar-panel-header class. This panel pads its own header because its
+     list below manages horizontal padding separately. */
+  padding-top: var(--luxar-spacing-8);
+  padding-right: var(--luxar-spacing-8);
+  padding-left: var(--luxar-spacing-8);
   flex-shrink: 0;
 }
 

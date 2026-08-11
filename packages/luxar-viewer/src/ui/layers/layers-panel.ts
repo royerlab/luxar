@@ -349,7 +349,7 @@ export class LayersPanel {
 
     // Header
     const header = document.createElement('div');
-    header.className = 'luxar-layers-panel__header';
+    header.className = 'luxar-layers-panel__header luxar-panel-header';
     const title = document.createElement('span');
     title.className = 'luxar-layers-panel__title';
     title.textContent = 'Layers';

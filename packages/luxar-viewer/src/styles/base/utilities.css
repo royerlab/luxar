@@ -438,6 +438,22 @@
   z-index: var(--luxar-z-tooltip);
 }
 
+/* ========== Panel header (shared recipe) ==========
+   THE header treatment for every panel (UI Design Guide §7.3): title row
+   with the standard rhythm (6px to the rule, 10px to the content) closed
+   by the same border-default hairline as the panel's own frame — one
+   material, no per-panel emphasis variants. Panels add `luxar-panel-header`
+   alongside their BEM class; structural extras (own horizontal padding,
+   drag cursors) stay per-panel. */
+.luxar-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: var(--luxar-spacing-3);
+  margin-bottom: var(--luxar-spacing-5);
+  border-bottom: 1px solid var(--luxar-border-default);
+}
+
 /* ========== Panel close button (shared recipe) ==========
    THE close affordance for every panel header (UI Design Guide §7.3):
    28×28 grid-centered hit target, radius-md, muted → primary with a

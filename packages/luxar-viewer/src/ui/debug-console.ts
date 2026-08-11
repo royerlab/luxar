@@ -147,7 +147,7 @@ export class DebugConsole {
       <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--left" aria-hidden="true"></div>
       <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--corner" aria-hidden="true"></div>
       <div class="luxar-debug-console__scroll">
-        <div class="luxar-debug-console__header">
+        <div class="luxar-debug-console__header luxar-panel-header">
           <div id="luxar-debug-console-title" class="luxar-debug-console__title">Debug Console</div>
           <div class="luxar-debug-console__controls">
             <input type="text" class="luxar-debug-console__filter" placeholder="Filter..." aria-label="Filter messages" />

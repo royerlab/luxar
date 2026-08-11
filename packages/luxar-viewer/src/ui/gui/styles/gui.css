@@ -81,15 +81,6 @@
 /**
  * GUI Header (contains title and close button)
  */
-.luxar-gui__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: var(--luxar-spacing-3);
-  margin-bottom: var(--luxar-spacing-5);
-  border-bottom: 1px solid var(--luxar-border-default);
-}
-
 /**
  * GUI Title
  */
