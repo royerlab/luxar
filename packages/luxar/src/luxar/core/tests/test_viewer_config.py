@@ -550,3 +550,23 @@ class TestViewerConfig:
         assert d["bloom_strength"] == 0.8
         assert d["camera"]["position"] == [10, 5, 30]
         assert d["camera"]["fov"] == 47
+
+
+# ───────────────────────── scene title (browser tab) ──────────────────────────
+class TestSceneTitle:
+    """`title` names the browser tab; sparse like every other field."""
+
+    def test_title_round_trips(self) -> None:
+        vc = ViewerConfig(title="Rivers of Earth")
+        d = vc.to_dict()
+        assert d["title"] == "Rivers of Earth"
+        assert ViewerConfig.from_dict(d).title == "Rivers of Earth"
+
+    def test_unset_title_is_omitted(self) -> None:
+        assert "title" not in ViewerConfig().to_dict()
+
+    def test_blank_or_non_string_title_rejected(self) -> None:
+        with pytest.raises(ValueError, match="title"):
+            ViewerConfig(title="   ")
+        with pytest.raises(ValueError, match="title"):
+            ViewerConfig(title=123)  # type: ignore[arg-type]

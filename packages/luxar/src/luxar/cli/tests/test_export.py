@@ -628,3 +628,47 @@ class TestCLIExportCommand:
 
         assert result.exit_code == 0, f"CLI failed: {result.stdout}"
         assert (output / "serve.py").exists()
+
+
+class TestServeScriptTitle:
+    """The exported serve.py bakes a tab title into its viewer URL."""
+
+    def test_title_baked_pre_encoded(self) -> None:
+        import ast
+
+        from luxar.cli.export import _get_serve_script_content
+
+        src = _get_serve_script_content("data", "Rivers of Earth & Fjords")
+        ast.parse(src)  # generated script stays valid Python
+        assert "&title=Rivers%20of%20Earth%20%26%20Fjords" in src
+
+    def test_no_title_leaves_url_unchanged(self) -> None:
+        import ast
+
+        from luxar.cli.export import _get_serve_script_content
+
+        src = _get_serve_script_content("data", None)
+        ast.parse(src)
+        assert "&title=" not in src
+
+    def test_export_scene_derives_title_from_source_name(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """export_scene passes the source stem through to the serve script."""
+        from luxar.cli import export as export_mod
+
+        captured: dict[str, object] = {}
+        monkeypatch.setattr(export_mod, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(export_mod, "_copy_viewer", lambda dest: None)
+        monkeypatch.setattr(export_mod, "_copy_zarr_data", lambda s, d: None)
+        monkeypatch.setattr(export_mod, "_generate_readme", lambda o, d: None)
+        monkeypatch.setattr(export_mod, "validate_zarr_store", lambda p: (True, None))
+        monkeypatch.setattr(
+            export_mod,
+            "_generate_serve_script",
+            lambda out, ddn, title=None: captured.update(title=title),
+        )
+        src = tmp_path / "my_scene.luxar.zarr"
+        src.mkdir()
+        export_mod.export_scene(src, tmp_path / "out")
+        assert captured["title"] == "my_scene"

@@ -97,6 +97,11 @@ export interface ZarrViewerConfig {
     target_node?: string;
   };
 
+  // Scene identity — becomes the browser tab title (document.title); wins
+  // over the `?title=` URL parameter `luxar serve --open` derives from the
+  // dataset file name.
+  title?: string;
+
   // Scene
   background_color?: string;
 

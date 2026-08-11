@@ -45,6 +45,7 @@ import { runDisposePipeline } from './app/lifecycle/dispose-pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
+import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { installDebugInterface } from './app/debug/debug-interface';
 import {
   initPicking as initPickingImpl,
@@ -418,6 +419,7 @@ export class LuxarApp {
       overlayManager: this.overlayManager,
       setTheme: (id) => ThemeManager.getInstance().setTheme(id),
       setDimensionValue: (i, v) => sceneDimsManager.setDimensionValue(i, v),
+      setDocumentTitle,
     });
   }
 
@@ -715,6 +717,15 @@ export class LuxarApp {
       );
     }
     this.options.src = src;
+    // Re-title the tab for the incoming scene BEFORE the load. Neither of the
+    // two things that could be naming it survives a switch: `?title=` names
+    // the dataset the server started with (and is dropped from the address bar
+    // by `buildDataSourceBrowserUrl`), and an authored `viewer_config.title`
+    // names the scene we are about to tear down. Leaving either in place is
+    // how a tab ends up advertising a scene it no longer shows. The new
+    // scene's own authored title, if it has one, wins again a moment later in
+    // `applyViewerConfigState`.
+    setDocumentTitle(dataSourceDocumentTitle(src));
     this.switchInFlight = this.loadDataset(src).finally(() => {
       this.switchInFlight = undefined;
     });
@@ -862,6 +873,13 @@ export class LuxarApp {
     // sees the correct state from the first instant of teardown, even if
     // teardown throws partway through.
     this.isInitialized = false;
+
+    // Hand the page its own <title> back. The viewer overwrites document.title
+    // with the scene's name, which is a mutation of a host-page global: an
+    // embedder that removes the viewer would otherwise be left titled after a
+    // scene that no longer exists. Restored BEFORE the teardown pipeline so a
+    // step that throws partway can't strand it.
+    setDocumentTitle(null);
 
     runDisposePipeline({
       events: this.events,
