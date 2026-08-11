@@ -151,6 +151,7 @@ import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
 import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
+import type { SceneIdentityWatchdog } from './scene-identity-watchdog';
 import {
   loadScene as loadSceneHelper,
   type LoadSceneCtx,
@@ -240,6 +241,10 @@ export class SceneLoader {
 
   // Update profiler for timing scene updates (optional, provided by SceneLoaderManager)
   private profiler: UpdateProfiler | null = null;
+
+  // Scene-identity watchdog for the current dataset (http(s) sources only);
+  // started at the end of loadScene, disposed on dataset switch/teardown.
+  private _identityWatchdog: SceneIdentityWatchdog | null = null;
 
   // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
   // When a new update arrives while one is in progress, we store the latest and process it after
@@ -661,6 +666,12 @@ export class SceneLoader {
       },
       setUpdateInProgress: (v) => {
         this._updateInProgress = v;
+      },
+      setIdentityWatchdog: (w) => {
+        // Defensive: loadScene is one-shot per loader, but never leak a
+        // previously-set watchdog's timer if that ever changes.
+        this._identityWatchdog?.dispose();
+        this._identityWatchdog = w;
       },
       getDatasetAbortController: () => this._datasetAbortController,
     };
@@ -1761,6 +1772,12 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+
+    // Stop the scene-identity watchdog first: its verdicts are about THIS
+    // dataset, and a probe landing mid-teardown must not raise a banner
+    // over the next scene.
+    this._identityWatchdog?.dispose();
+    this._identityWatchdog = null;
 
     // Flush queued-update waiters FIRST: a disposed loader never runs its
     // pending pass, so without this any `waitForUpdate()` /
