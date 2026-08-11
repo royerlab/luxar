@@ -157,13 +157,15 @@ additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--n-lods` | 4 | additive LOD levels |
-| `--method` / `-m` | auto | `auto` (greedy at N ≤ 5000, else self_energy) / `greedy` / `self_energy` / `mass` / `amplitude` / `spectral` / `random` |
+| `--method` / `-m` | auto | `auto` (greedy at N ≤ 5000, else self_energy) / `greedy` / `self_energy` / `mass` / `amplitude` / `spectral` / `random` / `radial` (concentric-shell reveal from the bbox centre; no energy stamps) |
 | `--breakpoints` / `-b` | equal-count | `equal-count` / `stream:C` (geometric streaming ladder, first chunk C splats then doubling; sized per part/level) / `counts:N1,N2,...` (clamped per part) / `energy:f1,f2,...` |
 | `--target-ms` | — | streaming sizing: derive `stream:<c>` so the first additive chunk downloads in ~this many ms (mutually exclusive with `--breakpoints`) |
 | `--bandwidth-mbps` | 25 | assumed downlink for `--target-ms` sizing |
 | `--bytes-per-splat` | measured/estimated | override the on-wire bytes/splat for `--target-ms` sizing |
 | `--truncation-sigmas` | 3.0 | Mahalanobis cutoff for greedy |
 | `--max-n-dense` | 2000 | greedy dense-Gram threshold |
+| `--reveal-centre` | dataset bbox centre | `-m radial` only: comma-separated shell centre, one coordinate per measured axis. On a partitioned recipe the default centres each part on itself — pass this to grow the whole object from one point |
+| `--spatial-dims` | non-degenerate axes | `-m radial` only: comma-separated centre-column indices the shell distance spans (order pairs with `--reveal-centre`); the default keeps a stacked time/channel axis out of the shells |
 
 ### `luxar gsplat additive <in> <out>` — ladder every leaf of an existing tree
 Structure-preserving per-leaf additive laddering: substitutive `kind=lod`

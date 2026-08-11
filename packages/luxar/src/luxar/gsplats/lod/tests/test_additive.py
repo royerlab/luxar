@@ -13,11 +13,18 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod import compute_additive_order, make_additive_lod
 from luxar.gsplats.lod.additive import (
     _build_sparse_gram,
+    _radial_score,
     _residual_energy_curve,
     _self_energy_score,
 )
+from luxar.utils.lod_methods import GSPLAT_ADDITIVE_METHODS
 
-METHODS = ("random", "amplitude", "mass", "self_energy", "spectral", "greedy")
+#: DERIVED from the registry, not hand-listed. This was an opt-in allowlist, and
+#: a method missing from it got zero coverage from the four parametrized property
+#: tests below — silently. Deriving it means a new ordering method is covered the
+#: moment it is registered. ``GSPLAT_ADDITIVE_METHODS`` excludes the ``auto`` sentinel,
+#: which is exactly what these tests want (they pass a concrete method).
+METHODS = GSPLAT_ADDITIVE_METHODS
 
 
 def _make_random_gsplat(n: int = 64, ndim: int = 3, seed: int = 0) -> GSplatData:
@@ -656,3 +663,314 @@ def test_sibling_aware_stream_breakpoints_helper() -> None:
     assert saw("energy:0.5,1.0", 512, 4) == "energy:0.5,1.0"
     # Malformed stream payloads pass through for the validator to reject.
     assert saw("stream:abc", 512, 4) == "stream:abc"
+
+
+# ── radial (concentric-shell reveal) ordering ──────────────────────────
+
+
+def _ray_gsplat(radii: np.ndarray, ndim: int = 3, offset: float = 0.0) -> GSplatData:
+    """Splats along one axis at the given radii, optionally re-origined.
+
+    A ray rather than a sphere keeps the expected order unambiguous: distance
+    from the set's own bbox centre is monotone in ``radii``.
+    """
+    n = radii.size
+    centers = np.zeros((n, ndim), dtype=np.float32)
+    centers[:, 0] = radii
+    centers += np.float32(offset)
+    tril = ndim * (ndim + 1) // 2
+    chol = np.zeros((n, tril), dtype=np.float32)
+    diag_idx = np.cumsum(np.arange(1, ndim + 1)) - 1
+    chol[:, diag_idx] = 0.4
+    return GSplatData(
+        centers=centers,
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+
+def test_radial_orders_innermost_first():
+    """Prefixes grow OUTWARD: the ordering is ascending in distance."""
+    # Shuffled input, so a pass cannot come from input order alone.
+    radii = np.array([5.0, 1.0, 4.0, 2.0, 3.0], dtype=np.float32)
+    data = _ray_gsplat(radii)
+
+    order = compute_additive_order(data, method="radial")
+
+    # Centred on the ray's own midpoint (r=3), so distance is |r - 3|.
+    assert radii[order[0]] == pytest.approx(3.0)
+    assert sorted(radii[order[1:3]]) == pytest.approx([2.0, 4.0])
+    assert sorted(radii[order[3:]]) == pytest.approx([1.0, 5.0])
+
+
+def test_radial_centre_defaults_to_bbox_not_scene_origin():
+    """A far-from-origin set reveals from ITS OWN middle, not from a corner."""
+    radii = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+    here = _ray_gsplat(radii)
+    far = _ray_gsplat(radii, offset=1000.0)
+
+    # The 1000-unit translation is irrelevant because the centre travels with
+    # the data. Under a scene-origin default the far set would instead reveal
+    # strictly left-to-right.
+    assert np.array_equal(
+        compute_additive_order(here, method="radial"),
+        compute_additive_order(far, method="radial"),
+    )
+
+
+def test_radial_explicit_centre_overrides_the_bbox():
+    """An explicit centre re-aims the shells."""
+    radii = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+    data = _ray_gsplat(radii)
+
+    order = compute_additive_order(data, method="radial", reveal_centre=[1.0, 0.0, 0.0])
+
+    # Aimed at the near end, so it reveals strictly outward from r=1.
+    assert list(radii[order]) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0])
+
+
+def test_radial_ignores_a_zero_variance_time_axis():
+    """A stacked-time axis must not become a shell dimension.
+
+    Two timepoints of the same 3D ray. The centre is r=2, so BOTH timepoints of
+    r=2 sit at distance 0 and must come first; had the degenerate 4th axis
+    entered the distance, the t=1 copy would be at distance 1 and be displaced
+    by the t=0 copies of r=1 / r=3.
+    """
+    radii = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    n = radii.size
+    centers = np.zeros((2 * n, 4), dtype=np.float32)
+    centers[:n, 0] = radii
+    centers[n:, 0] = radii
+    centers[n:, 3] = 1.0  # timepoint 1
+    chol = np.zeros((2 * n, 10), dtype=np.float32)
+    diag_idx = np.cumsum(np.arange(1, 5)) - 1
+    chol[:, diag_idx] = 0.4
+    chol[:, diag_idx[3]] = 0.0  # degenerate time axis
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(2 * n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+    order = compute_additive_order(data, method="radial")
+    ranked_r = centers[order, 0]
+    ranked_t = centers[order, 3]
+
+    assert list(ranked_r[:2]) == pytest.approx([2.0, 2.0])
+    assert sorted(ranked_t[:2]) == pytest.approx([0.0, 1.0])
+    # The rest is the distance-1 shell: both timepoints of r=1 and r=3. They
+    # TIE, so their relative order is input order — deliberately not asserted.
+    assert sorted(ranked_r[2:]) == pytest.approx([1.0, 1.0, 3.0, 3.0])
+
+
+def test_radial_still_reveals_when_every_axis_is_degenerate():
+    """All-zero covariance must not leave the shell axes EMPTY.
+
+    The default shell axes come from ``_nondegenerate_axes``, and an empty
+    selection would score every splat 0.0 — a ladder silently emitted in input
+    order. It cannot happen because that helper falls back to ALL axes when
+    nothing clears the sigma threshold, but the ordering depends on a default
+    two modules away, so pin it here.
+    """
+    radii = np.array([5.0, 1.0, 4.0, 2.0, 3.0], dtype=np.float32)
+    centers = np.zeros((radii.size, 3), dtype=np.float32)
+    centers[:, 0] = radii
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(radii.size, dtype=np.float32),
+        cholesky_factors=np.zeros((radii.size, 6), dtype=np.float32),
+    )
+
+    order = compute_additive_order(data, method="radial")
+
+    # Same expectation as the non-degenerate ray: centred on r=3, |r - 3|.
+    assert radii[order[0]] == pytest.approx(3.0)
+    assert sorted(radii[order[1:3]]) == pytest.approx([2.0, 4.0])
+    assert sorted(radii[order[3:]]) == pytest.approx([1.0, 5.0])
+
+
+def test_radial_rejects_a_mis_shaped_centre():
+    data = _ray_gsplat(np.array([1.0, 2.0], dtype=np.float32))
+    with pytest.raises(ValueError, match="one coordinate per spatial axis"):
+        compute_additive_order(data, method="radial", reveal_centre=[0.0, 0.0])
+
+
+@pytest.mark.parametrize(
+    "bad", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"]
+)
+def test_radial_rejects_a_non_finite_centre(bad: float) -> None:
+    """Same class as an empty `spatial_dims`: a silent no-op, not a reveal.
+
+    Every distance comes back non-finite, they all compare equal under the stable
+    argsort, and the ladder is emitted in INPUT order with nothing to indicate the
+    centre was junk.
+    """
+    data = _make_random_gsplat(n=8, ndim=3, seed=4)
+    with pytest.raises(ValueError, match="must be finite"):
+        compute_additive_order(data, method="radial", reveal_centre=[bad, 0.0, 0.0])
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_radial_refuses_non_finite_centers(bad: float) -> None:
+    """A non-finite CENTER coordinate is the same silent no-op as a bad knob.
+
+    Measured before the guard: `compute_additive_order(..., method="radial")`
+    returned the identity permutation — every distance non-finite, all equal under
+    the stable argsort, ladder emitted in INPUT order. The element side behaved the
+    same way and Lines raised a misleading `reveal_centre` error, so the three
+    implementations of one ordering disagreed about malformed data. Now they share
+    `validate_finite_reveal_coords` and each names its own array.
+    """
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))
+    centers = np.array(data.centers, dtype=np.float32, copy=True)
+    centers[2, 0] = bad
+    data.centers = centers
+
+    with pytest.raises(ValueError, match="centers must be finite"):
+        compute_additive_order(data, method="radial")
+
+
+def test_radial_scorer_handles_an_empty_dataset_like_its_element_twin() -> None:
+    """`_radial_score` must not raise on an empty input, for symmetry.
+
+    Scope, stated honestly because it is narrower than it looks: the public
+    `compute_additive_order` ALREADY short-circuits an empty dataset before it
+    dispatches here, so it returns an empty permutation with or without this
+    guard (asserted below as the boundary of the claim). The defect was in the
+    HELPER: called directly it raised out of the default-centre bbox reduction,
+    while the element-side `radial_element_score` — the other implementation of the
+    same ordering — has always returned an empty score. This pins the two
+    together, so the mutation that fails is removing the helper's guard, NOT
+    breaking a user-visible path.
+    """
+    from luxar.core.group.lod.reveal import radial_element_score
+
+    empty = _make_empty_gsplat(ndim=3)
+
+    # The helper itself — the surface that was actually broken.
+    assert _radial_score(empty).shape == (0,)
+    # Its element-side twin, which already agreed.
+    assert radial_element_score(np.empty((0, 3), dtype=np.float64)).shape == (0,)
+    # Boundary of the claim: the public entry point was never affected.
+    assert compute_additive_order(empty, method="radial").shape == (0,)
+
+
+def _sublod_stats(laddered: GSplatData) -> list[dict]:
+    """`lod_stats` of every additive sub-LOD of the (single) substitutive level."""
+    return [dict(s.stats) for s in laddered.substitutive_levels[0].additive_sublods]
+
+
+def test_radial_ladder_carries_no_energy_stamps():
+    """A reveal must not be brightened by the viewer's 1/e(k) compensation.
+
+    `energyCompensation` is gated on the BLENDING MODE, not on geometry type, so a
+    stamped radial ladder would blow out the inner shell (~20x for a 5% first
+    shell) and dim as the object completes — the inverse of growing outward.
+    Omitting the stamp makes `energyCompensation(undefined)` return exactly 1.
+    """
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32))
+
+    laddered = make_additive_lod(data, n_lods=3, method="radial")
+
+    stats = _sublod_stats(laddered)
+    assert len(stats) == 3
+    for i, s in enumerate(stats):
+        assert "energy_fraction_cum" not in s, f"sub-LOD {i} carries an energy stamp"
+        # The non-energy provenance must survive — this is not a blanket wipe.
+        assert s["lod_method"] == "radial"
+        assert s["lod_n_splats"] > 0
+    # Both-or-neither: the leaf weight goes too, or the pair is half-written.
+    assert "reference_energy" not in laddered.substitutive_levels[0].stats
+
+
+def test_non_reveal_ladders_still_carry_energy_stamps():
+    """The sensitivity control: suppression is scoped to reveal methods only.
+
+    Without this, a bug that dropped stamps for EVERY method would pass the test
+    above while silently disabling cross-fade and energy compensation everywhere.
+    """
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32))
+
+    laddered = make_additive_lod(data, n_lods=3, method="mass")
+
+    stats = _sublod_stats(laddered)
+    assert [("energy_fraction_cum" in s) for s in stats] == [True, True, True]
+    assert "reference_energy" in laddered.substitutive_levels[0].stats
+
+
+def test_radial_erases_an_inherited_reference_energy():
+    """The weight must GO, not merely not be re-added.
+
+    `merged_level_stats` inherits the input level's stats, so a weight is usually
+    already there: a substitutive build stamps one per level (so
+    `--recipe levels/adaptive -m radial` hits this on every level), and so does
+    `gsplat additive` over an annotated tree. Skipping the `setdefault` alone left
+    the ladder half-stamped — no per-level `energy_fraction_cum`, but the leaf
+    weight the viewer pairs it with still on disk.
+    """
+    from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32))
+    level = data.substitutive_levels[0]
+    pre_stamped = GSplatData(
+        substitutive_levels=[
+            SubstitutiveLevel(
+                additive_sublods=level.additive_sublods,
+                compression_factor=level.compression_factor,
+                parent_method=level.parent_method,
+                level_index=level.level_index,
+                stats={**level.stats, "reference_energy": 1234.5},
+            )
+        ],
+        stats=dict(data.stats),
+    )
+
+    laddered = make_additive_lod(pre_stamped, n_lods=3, method="radial")
+    assert "reference_energy" not in laddered.substitutive_levels[0].stats
+
+    # Control: a non-reveal rebuild keeps the inherited weight (setdefault wins,
+    # so the group-consistent value from a substitutive build is not clobbered).
+    kept = make_additive_lod(pre_stamped, n_lods=3, method="mass")
+    assert kept.substitutive_levels[0].stats["reference_energy"] == 1234.5
+
+
+def test_empty_radial_ladder_keeps_both_halves_of_the_pair():
+    """An empty leaf labels itself `lod_method="none"` and stays fully stamped.
+
+    Nothing streams, so e(k)=1.0 makes the 1/e(k) compensation exactly 1 — there
+    is no reveal to protect. Dropping only the leaf weight there would half-write
+    the pair in the other direction, and `annotate-quality` (which mirrors the
+    build for an empty leaf) would then disagree with it.
+    """
+    laddered = make_additive_lod(_make_empty_gsplat(), n_lods=3, method="radial")
+
+    stats = _sublod_stats(laddered)
+    assert [s["energy_fraction_cum"] for s in stats] == [1.0]
+    assert "reference_energy" in laddered.substitutive_levels[0].stats
+
+
+@pytest.mark.parametrize(
+    ("dims", "match"),
+    [
+        ([], "non-empty"),
+        ([-1], "non-negative"),
+        ([0, 0], "must not repeat"),
+        ([0, 7], "out of range"),
+        ([1.9], "integer column indices"),
+    ],
+    ids=["empty", "negative", "duplicate", "out-of-range", "fractional"],
+)
+def test_radial_rejects_malformed_spatial_dims(dims: list[int], match: str) -> None:
+    """Each of these silently produced a WRONG ordering before being rejected.
+
+    A negative index ALIASES to another column under numpy indexing, a repeat
+    DOUBLE-COUNTS that axis in the distance, an empty selection scores every
+    splat 0.0 — degrading the ladder to input order with nothing to show it — and
+    `np.asarray([1.9], dtype=np.intp)` TRUNCATES to axis 1, measuring a different
+    column than the caller named. The element-side scorer rejects the same five;
+    the CLI bounds-checks too, but the Python API reaches here directly.
+    """
+    data = _make_random_gsplat(n=8, ndim=3, seed=3)
+    with pytest.raises(ValueError, match=match):
+        compute_additive_order(data, method="radial", spatial_dims=dims)

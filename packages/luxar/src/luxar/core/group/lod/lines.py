@@ -17,12 +17,17 @@ Polyline-identification per ``line_type``:
   damage" choice). For these the helper logs a warning and emits a
   single LOD level.
 
-Three ordering methods mirror the Points helper:
+Five ordering methods mirror the Points helper:
 
 * ``random``           — uniform-random per-polyline permutation.
 * ``salience``         — sort polylines by ``length × max_width`` desc.
 * ``spatial-uniform``  — stratified-grid sampling on per-polyline bbox
   centers (:func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order`).
+* ``poisson-disk``     — blue-noise sampling on the same bbox centers.
+* ``radial``           — concentric shells around the node's own bbox centre,
+  ordering WHOLE polylines by their own centre's distance, so a streaming
+  prefix grows outward from the middle with segment topology intact (the
+  reveal). See :func:`luxar.core.group.lod.reveal.radial_element_score`.
 """
 
 from __future__ import annotations
@@ -34,15 +39,19 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .group import (
+    ADDITIVE_METHODS,
     DEFAULT_ADDITIVE_METHOD,
     DEFAULT_ADDITIVE_N_LODS,
     resolve_additive_axis,
 )
 from .poisson_disk import poisson_disk_order
+from .reveal import radial_element_score, resolve_reveal_centre
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
-LinesMethodName = Literal["random", "salience", "spatial-uniform", "poisson-disk"]
+LinesMethodName = Literal[
+    "random", "salience", "spatial-uniform", "poisson-disk", "radial"
+]
 
 # Aliases of the shared resolver's constants so the kwarg defaults below and
 # ``resolve_additive_axis_lines`` always agree.
@@ -196,6 +205,28 @@ def _indexed_connected_components(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def polyline_bbox_centres(
+    vertices: NDArray,
+    polylines: List[NDArray[np.intp]],
+    ncols: Optional[int] = None,
+) -> NDArray:
+    """One representative coordinate per polyline: its own bbox centre.
+
+    The spatial stand-in for a polyline in any ordering that treats it as a
+    single element. ``ncols`` limits the columns considered — the samplers use
+    ``3`` because their grids are 3-D — while ``None`` (the default) uses every
+    column, which is what ``radial`` needs so that
+    :func:`~luxar.core.group.lod.reveal.radial_element_score` can see, and
+    therefore exclude, a stacked time or channel column.
+    """
+    cols = vertices.shape[1] if ncols is None else min(ncols, vertices.shape[1])
+    reps = np.empty((len(polylines), cols), dtype=np.float64)
+    for i, members in enumerate(polylines):
+        pts = vertices[members, :cols].astype(np.float64)
+        reps[i] = 0.5 * (pts.min(axis=0) + pts.max(axis=0))
+    return reps
+
+
 def compute_additive_order_lines(
     vertices: NDArray,
     polylines: List[NDArray[np.intp]],
@@ -203,6 +234,8 @@ def compute_additive_order_lines(
     method: LinesMethodName = DEFAULT_METHOD,
     n_lods: int = DEFAULT_N_LODS,
     seed: Optional[int] = None,
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
 ) -> Tuple[NDArray[np.intp], List[int]]:
     """Compute an additive ordering permutation over **polylines** (not vertices).
 
@@ -211,9 +244,18 @@ def compute_additive_order_lines(
         polylines: Per-polyline vertex-index arrays (from
             :func:`identify_polylines`).
         widths: ``(N,)`` per-vertex widths; required for ``salience``.
-        method: ``random`` / ``salience`` / ``spatial-uniform``.
-        n_lods: Consulted only by ``spatial-uniform``.
+        method: ``random`` / ``salience`` / ``spatial-uniform`` /
+            ``poisson-disk`` / ``radial``.
+        n_lods: Consulted only by ``spatial-uniform`` / ``poisson-disk``.
         seed: For ``random``.
+        reveal_centre: ``radial`` only — centre of the shells, defaulting to the
+            spatial bounding-box centre of ``vertices`` (the node's own middle —
+            NOT of the polyline representatives, whose bounding box weighs a
+            long polyline and a short one equally).
+        spatial_dims: ``radial`` only — columns the distance is measured over,
+            defaulting to the columns with non-zero extent (which drops a
+            *constant* time/channel column but not a *stacked* one — see
+            :func:`~luxar.core.group.lod.reveal.radial_element_score`).
 
     Returns:
         ``(polyline_permutation, per_level_polyline_counts)``. The
@@ -255,18 +297,43 @@ def compute_additive_order_lines(
                 f"{method} ordering needs vertices with d >= 3; "
                 f"got shape {vertices.shape}"
             )
-        # Representative spatial point per polyline = bbox center.
-        reps = np.empty((p, 3), dtype=np.float64)
-        for i, members in enumerate(polylines):
-            pts = vertices[members, :3].astype(np.float64)
-            reps[i] = 0.5 * (pts.min(axis=0) + pts.max(axis=0))
+        reps = polyline_bbox_centres(vertices, polylines, ncols=3)
         if method == "poisson-disk":
             return poisson_disk_order(reps, n_lods, seed=seed or 0)
         return stratified_grid_order(reps, n_lods)
 
+    if method == "radial":
+        # ASCENDING, unlike `salience` above: the score is a DISTANCE, so the
+        # nearest polyline is revealed first and the prefixes grow outward as
+        # concentric shells. A polyline is revealed WHOLE — the ordering is over
+        # polylines, not vertices — so segment topology survives every prefix.
+        #
+        # ALL columns, not just the first three: the shell axes are chosen from
+        # the full column set (by `spatial_dims`, or by non-zero extent), so
+        # truncating to 3 would silently pick the wrong ones on nD data.
+        #
+        # Returns an EMPTY natural partition, deliberately — see the Points
+        # equivalent: per-level counts would make `make_additive_lod_lines`
+        # bypass the caller's `counts:` / `stream:` breakpoints entirely.
+        # The default centre comes from `vertices`, the NODE's own bbox — not
+        # from the bbox of `reps`, in which a long polyline and a short one weigh
+        # the same and pull the origin off the geometry's middle.
+        reps = polyline_bbox_centres(vertices, polylines)
+        return (
+            np.argsort(
+                radial_element_score(
+                    reps,
+                    resolve_reveal_centre(reveal_centre, vertices, reps, spatial_dims),
+                    spatial_dims,
+                ),
+                kind="stable",
+            ).astype(np.intp),
+            [],
+        )
+
     raise ValueError(
-        "method must be one of 'random' / 'salience' / 'spatial-uniform' "
-        f"/ 'poisson-disk'; got {method!r}"
+        f"method must be one of {' / '.join(repr(m) for m in ADDITIVE_METHODS)}; "
+        f"got {method!r}"
     )
 
 
@@ -360,6 +427,8 @@ def make_additive_lod_lines(
     colors: Optional[NDArray] = None,
     scalars: Optional[NDArray] = None,
     salience_kind: Literal["size", "energy"] = "size",
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
 ) -> List[List[NDArray[np.intp]]]:
     """Compute per-LOD-level polyline groupings for Lines.
 
@@ -383,6 +452,13 @@ def make_additive_lod_lines(
           count (along the additive order) reaches it, so cuts stay on
           whole-polyline boundaries while honouring the vertex budget even when
           polyline lengths are highly skewed.
+        reveal_centre: For ``method='radial'`` — centre of the concentric
+            shells, defaulting to the node's own vertex bounding-box centre.
+        spatial_dims: For ``method='radial'`` — the vertex columns the shell
+            distance is measured over, defaulting to the columns with non-zero
+            extent (which excludes a *constant* time/channel column, but not a
+            *stacked* one — see
+            :func:`~luxar.core.group.lod.reveal.radial_element_score`).
 
     Returns:
         List of LOD-level entries. Each entry is a list of per-polyline
@@ -428,6 +504,8 @@ def make_additive_lod_lines(
             method=method,
             n_lods=n_lods,
             seed=seed,
+            reveal_centre=reveal_centre,
+            spatial_dims=spatial_dims,
         )
 
     if method in ("spatial-uniform", "poisson-disk"):

@@ -1535,7 +1535,7 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 
 | Excluded | Why | Natural follow-up |
 |---|---|---|
-| **Additive LOD ladder** | A prefix of an index buffer is a **holed** surface, not a coarse one. That is the difference from a splat prefix, which genuinely is a sparser approximation of the same field — so the ladder degrades gracefully there and produces a *wrong picture* here. The legitimate refinement scheme is a progressive mesh (base mesh + vertex-split records), which cannot use the prefix-count ladder at all: different data structure, not a widening. | Not a LOD in any form. A deliberate progressive-draw effect IS worth exposing — see **§9.1** — but off the `additive` code path |
+| **Additive LOD ladder** | A prefix of an index buffer is a **holed** surface, not a coarse one. That is the difference from a splat prefix, which genuinely is a sparser approximation of the same field — so the ladder degrades gracefully there and produces a *wrong picture* here. The legitimate refinement scheme is a progressive mesh (base mesh + vertex-split records), which cannot use the prefix-count ladder at all: different data structure, not a widening. | Not a LOD in any form. A deliberate progressive-draw effect IS worth exposing, and has shipped for the other three types as the `radial` ordering — see **§9.1**. It uses the `additive` code path deliberately (only the ordering differs); what it must not inherit is the energy stamps, which one shared `REVEAL_METHODS` predicate handles |
 | **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** — a condition that is now *measured* rather than asserted: `processMeshData` emits a `log.info` for a node whose hidden dims include a continuous one (`noticeContinuousHiddenDim` in `data/scene-loader/process/data-processor-mesh.ts`), naming each such dimension and its unit. Promote when that line starts appearing against real datasets; see TODO item 29 under "Future / Exploratory" for why the deferral is a decision rather than a backlog entry |
 | **Spatial index** | Not merely "see §7": a chunk of faces is not independently meaningful, because the index buffer references vertices anywhere in the array — so a face chunk draws only with the whole vertex buffer resident, or after the same remap/duplicate bookkeeping the partition row describes. An efficiency cliff, not an impossibility: partial loading is achievable, it just forfeits most of the bandwidth win a chunk index exists to buy. Moot in practice as well, since the 512 MiB per-node byte budget binds first (≈22.4M vertices for a 3D float32 mesh, measured), well under §7's ≤-few-million-triangle expectation. | Mirror the lines dual-index loader over faces |
 | **`volumetric` blending** | Not about opacity — about **path length**. Emission–absorption integrates κ over the distance a ray spends inside a participating medium, and a triangle is zero-thickness, so τ = 0 however translucent the surface is. The adjacent feature that DOES make sense — volume rendering bounded by a mesh's front and back faces — is a different thing entirely and is not what this excludes. | — |
@@ -1594,12 +1594,61 @@ progressive-draw effect: a surface that grows in. It is not a level of detail, a
 distinction has to survive into the naming, because the existing additive machinery
 assumes *prefix ≈ approximation* and that assumption is false for a surface.
 
-**The mechanism is nearly free.** A reveal is successive `drawRange` extents over a
-reordered index buffer — precisely what §5.4's slice compaction already does. No new
-viewer machinery. Picking follows for free: a narrowed `drawRange` means unrevealed
-triangles are not rasterized, so they are not pickable, which is the consistent answer.
+> **Superseded mechanism (2026-08-09/10).** This section previously specified the reveal
+> as successive `drawRange` extents over a reordered index buffer. That is **not** how it
+> is built. The reveal is **authoring only**: an additive ladder whose ordering is
+> concentric shells around the node's own bounding-box centre. The existing streaming
+> machinery then loads the prefixes progressively and the object visibly grows outward.
+> **No viewer changes, no new display machinery — nothing about how the data is
+> DISPLAYED, only how it is LOADED.** §9.1's *reasoning* below was right about the hazard
+> and is preserved and generalised; only the mechanism claim was wrong.
 
-**The hard rule: a mesh reveal ladder must NOT carry `energy_fraction_cum` stamps.**
+**The mechanism is one new ordering option per additive implementation.** Ordering was
+already a pluggable choice, so the method — named **`radial`** — is a single new member
+of each method registry plus a scorer. It has **shipped for GSplats, Points and Lines**
+(`-m radial` on `gsplat lod`, `additive_lod={"method": "radial"}` on `add_points` /
+`add_lines`), with `reveal_centre` / `spatial_dims` overrides. Two properties are worth
+stating because they are what make it read as a reveal:
+
+- the centre is the **node's own bbox centre, not the scene origin**, so a dataset far
+  from the origin grows from its own middle rather than in from one corner;
+- the distance spans the **spatial axes only**, so a stacked time or channel column
+  cannot become a shell dimension — otherwise the elements furthest in time land at the
+  end of the ladder and an off-centre timepoint's slice paints last instead of growing
+  outward. How that set is found differs by geometry, and it is worth knowing which you
+  get: gsplats use the axes with real **covariance** extent (`_nondegenerate_axes`),
+  which a stacked axis fails by construction (it is built with `sigma=0`); element
+  geometries have no covariance, so `add_points` / `add_lines` take the scene's
+  **displayed** dims, falling back to non-zero positional extent when the positions are
+  not scene-aligned. Either way `spatial_dims` overrides it.
+
+On Lines it orders **whole polylines** by their own centre, so every prefix keeps valid
+segment topology. For **mesh** the ladder itself does not exist yet — the reveal is the
+motivating use case for building it, tracked as its own work item, since a mesh additive
+ladder needs a progressive loader and a multi-LOD writer that no other type can lend it.
+
+**One argument FOR the ladder route that the `drawRange` design missed:** depth sorting
+permutes `geometry.index`, so a reveal expressed as a `drawRange` over a reveal-ordered
+index buffer would be scrambled by the first sort. A ladder of separate subgroups is
+immune, because membership and draw order are independent concerns.
+
+**The hard rule: a reveal ladder must NOT carry `energy_fraction_cum` stamps.**
+
+This is now **enforced by construction** for all three shipped types, not merely
+specified: `luxar.utils.lod_methods.REVEAL_METHODS` names which orderings are reveals, and
+both the gsplat ladder (`gsplats/lod/additive.py`) and the element ladder
+(`core/group/lod/group.py::additive_level_stats`) consult it and omit the stamps. The
+element path gets it from the single flag that already governed the per-level
+`energy_fraction_cum` and the parent `reference_energy` together, so the both-or-neither
+contract holds without a second coordinated edit. `lod_method` and the count fields are
+still written — they are provenance, and nothing keys brightness off them.
+
+Accepted consequence, stated rather than buried: cross-fade and the `e >= 0.6`
+early-upgrade release are gated on the same stamps, so **a reveal hard-switches between
+shells**. That is the right trade — a wrong brightness is far more visible than a missing
+fade — but it is a real loss.
+
+The reasoning, which generalises to every geometry:
 
 `energyCompensation` (`scene/lod-blend.ts`) multiplies a leaf's brightness by `1/e(k)`
 while an additive ladder is incomplete, and it is gated on
@@ -1613,6 +1662,26 @@ Omitting the stamp is both the cheapest fix and the honest encoding, because the
 meaning — "this prefix is dim, compensate for it" — is a false statement about a holed
 surface. `energyCompensation` already returns exactly `1` for an absent `e`, leaving the
 leaf byte-identical. LOD **cross-fade** is gated on the same set and follows the same rule.
+
+**Measured scope of the hazard (2026-08-10).** The compensation is applied in exactly one
+place — `applyLodFade` (`scene/lod-fade.ts`), whose only caller is the `kind=lod` group
+registry (`scene/lod-group-registry.ts`). So the stamps are consulted for a ladder *inside*
+a lod group and are inert on a bare `stream`/`flat` leaf. Verified by rendering the same
+radial ladder twice, stamped and unstamped, under a throttled server: as a bare leaf the
+two are byte-identical frame for frame, while inside a `levels` group the stamped arm is
+**1.87× brighter in mean luma** (p99 luma 109 → 155) for as long as the ladder is
+incomplete, converging to identical once it completes.
+
+The rule stays unconditional, and the reason is not that a bare ladder might drift into a
+lod group — it cannot do so silently. Every ladder-producing path rebuilds through
+`make_additive_lod` / `additive_level_stats` and therefore re-consults `REVEAL_METHODS`:
+both `gsplat additive` and `lod --recipe levels` were run on an already-radial ladder and
+both **discarded** it, re-deriving from the method they were given (default → a `greedy`
+ladder, correctly stamped; `-m radial` → still unstamped). The real reason is simpler: the
+method is the only thing an authoring call keys on, and it already covers both cases —
+`--recipe levels|adaptive|overview -m radial` writes reveal ladders *directly inside* a lod
+group, where the stamps bite, and `--recipe stream -m radial` writes a bare one, where they
+are inert. One predicate, both cases, no scope test needed.
 
 The rule is **enforced at write time**: `add_mesh` raises if `level_stats` or `lod_stats` is
 supplied (`_reject_energy_stamps` in `packages/luxar/src/luxar/core/group/adders/mesh.py`) — on key
@@ -1644,10 +1713,18 @@ distance-selected. A reveal cannot be picked as a distant stand-in because nothi
   region-growing from a seed reads as the surface growing; contribution-ordered — the
   splat metric — reads as confetti, because a mesh triangle has no "contribution" to
   order by. Whoever ships this is choosing an aesthetic, not an error metric, which is a
-  different kind of decision from QEM's and should not reuse its vocabulary.
+  different kind of decision from QEM's and should not reuse its vocabulary. `radial` is
+  the shipped choice, and for mesh it has a second, non-aesthetic advantage: concentric
+  shells keep vertex duplication near the lower bound (each shell boundary is one closed
+  surface), where a confetti order approaches the 3× worst case.
 
-**Naming.** Keep it off the `additive` code path — `reveal` / `progressive_draw` — so it
-cannot inherit machinery that assumes a prefix approximates the whole.
+**Naming.** The method is `radial`, and it sits *inside* the additive vocabulary rather
+than beside it — the earlier plan to keep it off that code path entirely
+(`reveal` / `progressive_draw`) was dropped once the ordering turned out to be the only
+thing that differs. What it must NOT inherit is the energy-stamp machinery, and that is
+handled by `REVEAL_METHODS` above, which is a sharper boundary than a separate code path
+would have been: one predicate, consulted by every implementation, rather than a parallel
+set of builders that could drift.
 
 **Pre-existing gap noticed during this spec's review, since closed by #1220:**
 `POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` had omitted `has_image_labels` even though all three writers
