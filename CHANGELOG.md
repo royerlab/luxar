@@ -6,30 +6,6 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
-#### `luxar demo stop` — clear running demos and free their ports
-
-A demo forgotten in another terminal holds its ports, its memory and its GPU
-until someone finds the window. Re-running that same demo then shifts to a
-neighbouring port (its derived pair is stable) while the old browser tab keeps
-serving the older scene. `luxar demo stop` now finds every
-running demo and tears each one's process group down with the same
-SIGINT → SIGTERM → SIGKILL escalation Ctrl-C uses. Discovery is two-source:
-a JSON pidfile registry (`~/.cache/luxar/running/`) that `demo run`/`run-all`
-maintain around each launch, plus a `ps` sweep for `-m luxar.demos.demo_*`
-command lines that catches strays with no registry entry. The listing is
-printed and confirmed before anything dies (`-y` skips; `--dry-run` only
-lists; `stop <key>` targets one demo) — several agents/people may run demos
-on one machine, and "stop everything" must never take a colleague's live
-server down unseen. The `pick_port` "port busy" warning now also names a
-luxar-owned squatter ("Port 8042 is held by demo 'X' (PID N) — run
-`luxar demo stop` to clear it"), so the port shift explains itself.
-Teardown also stops waiting out a corpse: a child that has exited but has not
-been reaped yet still answers `killpg`, which used to hold the whole signal
-ladder open, so an interrupted `demo run` sat there for the full grace period
-before returning.
-New: `luxar.utils.demo_runs` (discovery + kill engine),
-`terminate_process_group` / `proc_table` / `on_spawn` in `luxar.utils.process`.
-
 #### Demos serve on per-dataset derived ports, not 8000/5173
 
 Every demo used to contend for the same default ports, so with several demos
@@ -86,6 +62,30 @@ mutation-verified physics test: the taper's half-max core is ≥2× wider at the
 hard end than the soft end (a LUT wired to a constant row reads ratio ≈ 1 and
 fails). The texture is a lazy singleton built on the first volumetric material
 (~16 KB, ~90 ms); screen-space materials never trigger it.
+
+#### `luxar demo stop` — clear running demos and free their ports
+
+A demo forgotten in another terminal holds its ports, its memory and its GPU
+until someone finds the window. Re-running that same demo then shifts to a
+neighbouring port (its derived pair is stable) while the old browser tab keeps
+serving the older scene. `luxar demo stop` now finds every
+running demo and tears each one's process group down with the same
+SIGINT → SIGTERM → SIGKILL escalation Ctrl-C uses. Discovery is two-source:
+a JSON pidfile registry (`~/.cache/luxar/running/`) that `demo run`/`run-all`
+maintain around each launch, plus a `ps` sweep for `-m luxar.demos.demo_*`
+command lines that catches strays with no registry entry. The listing is
+printed and confirmed before anything dies (`-y` skips; `--dry-run` only
+lists; `stop <key>` targets one demo) — several agents/people may run demos
+on one machine, and "stop everything" must never take a colleague's live
+server down unseen. The `pick_port` "port busy" warning now also names a
+luxar-owned squatter ("Port 8042 is held by demo 'X' (PID N) — run
+`luxar demo stop` to clear it"), so the port shift explains itself.
+Teardown also stops waiting out a corpse: a child that has exited but has not
+been reaped yet still answers `killpg`, which used to hold the whole signal
+ladder open, so an interrupted `demo run` sat there for the full grace period
+before returning.
+New: `luxar.utils.demo_runs` (discovery + kill engine),
+`terminate_process_group` / `proc_table` / `on_spawn` in `luxar.utils.process`.
 
 #### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
 
