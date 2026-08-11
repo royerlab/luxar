@@ -487,6 +487,7 @@ def quick_view(
 
         from luxar.cli.serving import _serve_data, _serve_viewer
         from luxar.cli.utils import (
+            dataset_title,
             ensure_viewer_built,
             pick_port,
             wait_for_server,
@@ -554,6 +555,7 @@ def quick_view(
                     data_url,
                     open_browser,
                     cors_origin,
+                    title=dataset_title(path),
                 )
 
     except KeyboardInterrupt:

@@ -173,11 +173,6 @@ EXEMPT: dict[str, Exemption] = {
         "BSP tiles of a kind=partition wrapper that is itself layer=True — the "
         "wrapper is where the compositing attrs live (see the comment there).",
     ),
-    "demo_lsystem_forest.py": Exemption(
-        frozenset({"f'tree_{i:04d}'"}),
-        frozenset({"'trees'"}),
-        "Hundreds of per-tree Lines nodes under the layer=True `trees` group.",
-    ),
     "demo_gsplats_lod_embryo_line.py": Exemption(
         frozenset({"'lod'"}),
         frozenset({"'embryo_line'"}),
@@ -695,9 +690,9 @@ class TestTheExemptionsThemselves:
         """The group an exemption leans on must still be added with ``layer=True``.
 
         Without this the exemption is self-certifying: deleting ``layer=True``
-        from ``demo_lsystem_forest``'s ``trees`` group takes every tree node out
-        of the panel — the exact regression #1362 fixed — while the per-call rule
-        stays happy because the trees are exempt.
+        from ``demo_gsplats_lod_embryo_line``'s ``embryo_line`` group takes every
+        copy of the ladder out of the panel — the exact regression class #1362
+        fixed — while the per-call rule stays happy because the copies are exempt.
         """
         for name, exemption in EXEMPT.items():
             tree = _parse(_exempt_module(name))
@@ -714,13 +709,23 @@ class TestTheExemptionsThemselves:
             )
 
 
-#: Demos whose geometry reaches the panel only through a container group, and
-#: that are cheap enough to actually BUILD here (no download, no GPU). The
-#: static rules above check that the group is added with ``layer=True``; only
-#: writing the store proves the nodes are still PARENTED to it — re-pointing
-#: ``_add_frame_ruler(frame_section, …)`` back at ``scene`` would empty the
-#: layer while every static check stayed green.
+#: Demos cheap enough to actually BUILD here (no download, no GPU) whose
+#: written store is worth walking: either the geometry reaches the panel only
+#: through a container group (nd_transforms — the static rules check the group
+#: is ``layer=True``, but only writing the store proves the nodes are still
+#: PARENTED to it), or the demo writes many node kinds across several adders
+#: (the forest: mesh + per-species lines + gsplats + points, each of which
+#: must carry its own ``layer=True``).
 BUILDABLE_COMPOSITE_DEMOS = ("demo_nd_transforms.py", "demo_lsystem_forest.py")
+
+
+#: Geometry types each buildable demo's store must actually CONTAIN — without
+#: this the walk can pass vacuously on a store that never wrote the node kind
+#: it claims to cover (a forest built too shallow grows no gsplat foliage).
+COMPOSITE_DEMO_REQUIRED_TYPES = {
+    "demo_nd_transforms.py": {"points", "lines"},
+    "demo_lsystem_forest.py": {"points", "lines", "gsplats", "mesh"},
+}
 
 
 def _build_composite_scene(module_name: str, output: Path) -> None:
@@ -731,9 +736,12 @@ def _build_composite_scene(module_name: str, output: Path) -> None:
     else:
         from .. import demo_lsystem_forest
 
-        # Smallest forest that still exercises the group: a couple of trees
-        # with enough expansion to survive the degenerate-rules skip.
-        demo_lsystem_forest.generate_forest(output, iterations=2, n_trees=4)
+        # Smallest forest that still writes every node type. The derivation
+        # must go DEEP enough to grow foliage (gsplats need iteration >= 2 at
+        # branch depth >= 1, and a maturity high enough to clear the 3-splat
+        # floor), or the store this test walks would silently stop exercising
+        # the gsplat layer path.
+        demo_lsystem_forest.generate_forest(output, iterations=4, n_trees=6)
 
 
 @pytest.mark.parametrize("module_name", BUILDABLE_COMPOSITE_DEMOS)
@@ -748,18 +756,28 @@ def test_written_scene_puts_every_geometry_node_under_a_layer(
 
     geometry_types = {"points", "lines", "gsplats", "mesh"}
     orphans: list[str] = []
+    present: set[str] = set()
 
     def walk(group: object, path: str, covered: bool) -> None:
         for name in sorted(group.group_keys()):  # type: ignore[attr-defined]
             child = group[name]  # type: ignore[index]
             child_path = f"{path}/{name}"
             child_covered = covered or bool(child.attrs.get("layer"))
-            if child.attrs.get("type") in geometry_types and not child_covered:
-                orphans.append(child_path)
+            child_type = child.attrs.get("type")
+            if child_type in geometry_types:
+                present.add(child_type)
+                if not child_covered:
+                    orphans.append(child_path)
             walk(child, child_path, child_covered)
 
     walk(zarr.open_group(output, mode="r"), "", False)
 
+    missing = COMPOSITE_DEMO_REQUIRED_TYPES[module_name] - present
+    assert not missing, (
+        f"{module_name} was expected to write {sorted(missing)} nodes but the "
+        "built store has none — the layer-coverage walk no longer exercises "
+        "those writer paths."
+    )
     assert not orphans, (
         f"{module_name} writes geometry with no `layer: true` node above it: "
         f"{orphans}. Those nodes cannot be toggled, ranged, gamma'd or "

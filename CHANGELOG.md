@@ -70,6 +70,60 @@ ports to match. A demo passing an explicit `--port` /
 still resolves the rare same-slot hash collision by shifting up with its
 usual warning.
 
+#### Browser tabs name the scene they show
+
+Every viewer tab was titled "Luxar Player – 3D Scene Viewer", so a row of
+open demo tabs was indistinguishable — the accomplice of the stale-tab trap.
+Two-step title chain, applied to `document.title`: a scene's authored
+`viewer_config.title` (new Python `ViewerConfig` field) wins; otherwise the
+viewer uses the new `?title=` URL parameter, which serve-family commands
+(`luxar serve --viewer` / `--open`, and therefore every `luxar demo run`)
+derive from the dataset's file name (`dataset_title`, compound suffixes like
+`.luxar.zarr` stripped, including archive-wrapped ones like
+`.gsplats.zarr.zip`). Zero demo edits required — all 80 demos get named tabs
+for free. Switching datasets inside the viewer drops `?title=` from the
+address bar and retitles the tab after the dataset you switched to (falling
+back to the page title when the URL names no store): both the URL parameter
+and an authored title name the scene you just left, so leaving either in
+place is exactly the stale tab this set out to fix. A tab reloaded after such
+a switch (or a link shared from it) carries no `?title=` any more, so the
+viewer falls back to the store name in `?src=`. `document.title` belongs to
+the host page, so `LuxarApp.dispose()` hands the page's own `<title>` back —
+an embedder that removes the viewer is not left named after a torn-down
+scene.
+
+#### L-system forest 2.0: a growing, seasonal forest on all four geometry types (#1460)
+
+The `forest` demo is rebuilt into the flagship synthetic scene. Two
+non-displayed dimensions make it navigable in time: `growth` (six stages,
+each a genuine re-derivation of every tree at increasing iteration depth —
+development IS successive derivation — with per-tree stagger so maturity
+rolls across the field in waves) and `season` (the same forest re-coloured
+and re-dressed: blossom, green, fire, frost). All four geometry types share
+the frame: an fBm-heightfield **Mesh** terrain with per-season vertex colours
+(snow in winter), eight tree species as merged indexed **Lines** nodes (one
+Layers-panel row per species; per-vertex hover labels carry species /
+instance / season / stage; `normal` blending so trunks occlude), volumetric
+**GSplat** foliage oriented along its parent branches (hand-packed 5D
+Cholesky factors with near-zero sigma on the two stacked axes), and
+**Points** accents pinned to their season and extended over growth (summer
+fireflies, winter frost sparkle, spring petals). The grammars gain the three
+ABOP ingredients that separate fractal twigs from recognisable trees —
+stochastic productions, tropism (gravity droop for willow and palm fronds,
+upward phototropism for the columnar poplar, applied only at branch depth
+>= 1 so trunks stay straight), and an apical-leader symbol for Honda's
+monopodial conifer, whose lower whorls are older and therefore naturally
+longer. Species placement follows eco-zones on the terrain (conifers climb
+ridges, willows and palms keep wet feet). Presentation is authored:
+explicit ACES, a forest-edge opening camera on the autumn/ancient slice,
+season/growth-conditional captions, and a grammar card showing the actual
+production rules next to the forest they built. The computed bundle is
+cached under `~/.cache/luxar/forest` for instant warm regeneration. One
+authoring lesson is now written down in the demo: Luxar stores LINEAR
+colours, so palettes designed as sRGB intents must be linearized (`c**2.2`)
+or every bark reads pastel and a bright ground plane hazes the scene
+through bloom.
+
 #### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
 
 Three of its four tests gated on `capabilities.apiSurface !== 'webgpu'` alone
@@ -100,6 +154,45 @@ function anywhere, and what it proves (the WebGPU arm of
 backend. It is gated on the `apiSurface` instead, since a page that drops all
 the way to a plain `WebGLRenderer` takes the other arm. Retitled and commented
 so it claims nothing about WGSL.
+
+#### Tests — a lazy mesh LOD level is pinned out of the per-slice sweep (#1356)
+
+A mesh LOD level that registers its loader joins the scene-wide `updateView`
+sweep, which then re-projects and re-commits the full-resolution surface on every
+scrub — even while the level is hidden — and gates the cheap coarse level's new
+timepoint behind it. (Re-projects, not re-fetches: the whole-node loader serves
+every later `updateView` from its one cached decode. Two neighbouring comments
+overstated this as a re-fetch and are corrected here too.) That is the exact
+failure deferring the level exists to avoid, and #1356 reported it against the
+mesh cheap/expensive split.
+
+The registration itself is already correct: #1351 landed with
+`registerMeshLoader` in the eager `loadMeshNode`'s `finally`, symmetric with the
+three sibling loaders, and `load-mesh-node.test.ts` pins the three timing cases
+against the real loader functions and a real registry — that spec, not this
+change, is what would fail if the defect were re-introduced. What was missing was the other
+half of the chain. The lod-group spec's registry stub had no `registerMeshLoader`
+at all, so the mesh defer test could not make the negative assertion its
+gsplats/points/lines peers already make, and a regression in the wrapper would
+have surfaced as `not a function` rather than a named invariant. It now asserts
+it, before activation and again after the level reaches `ready`; the second is
+not redundant, since only it can see a register call made from inside the shared
+`attachLazyChild` thunk. The nested-group symmetry parametrization is widened
+from three geometry types to four for the same reason.
+
+Two comments said the opposite of what the code does, which is how the report
+came about: the lod-group defer branch claimed the activation thunk runs "the
+expensive tail (and registration)", and `MeshCheapLoad.loader` claimed "the
+expensive half" registers. Neither is true of any of the four loaders. A third
+overstated its scope rather than inverting it: `attachLazyChild`'s doc claimed no
+lazy level ever joins the sweep, which is true of a lazy LEAF but not of a
+deferred nested GROUP — that one's `runExpensive` is the `loadChildren`
+recursion, so its subtree leaves register themselves on activation like any other
+leaf.
+
+One more mesh coverage residual, in the same vein: the freshness helpers' `isFresh`
+type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
+which has counted mesh since it became a legal ladder level. Widened to four.
 
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 

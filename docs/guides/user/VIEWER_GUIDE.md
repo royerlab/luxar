@@ -47,6 +47,7 @@ Append parameters to the viewer URL to control startup behavior.
 |-----------|------|-------------|
 | `src` | string | Zarr dataset URL or local path. |
 | `theme` | string | Initial theme. One of: `light`, `dark`, `liquid-glass`, `frosted-glass`. |
+| `title` | string | Browser tab title (`document.title`). Serve-family commands derive it from the dataset file name; a scene's authored `viewer_config.title` overrides it. Dropped when you switch datasets in the viewer -- the tab is then named after the dataset you switched to. |
 | `debug` | flag | Enable the debug interface (developer use). |
 | `no-cache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
 | `no-slice-cache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
@@ -348,6 +349,7 @@ loads the dataset.
 import luxar
 
 vc = luxar.ViewerConfig(
+    title="Rivers of Earth",  # names the browser tab (document.title)
     theme="dark",
     camera=luxar.CameraConfig(
         position=(0, 5, 20),
@@ -391,10 +393,21 @@ Settings are resolved with the following priority (highest first):
 2. **viewer_config** -- defaults stored in the Zarr file
 3. **Built-in defaults** -- the viewer's own defaults
 
+The browser tab title has its own two-step chain: an authored
+`viewer_config.title` wins; otherwise the viewer uses the `?title=` URL
+parameter, which serve-family commands (`luxar serve --viewer`,
+`luxar demo run`) derive from the dataset's file name — so every tab names
+the scene it shows instead of a row of identical "Luxar Player" tabs.
+Switching datasets inside the viewer retitles the tab after the dataset you
+switched to (both of the other two name the scene you just left). With no
+`?title=` at all, the viewer derives the name from the store `?src=` points
+at — which is what keeps a reloaded or shared post-switch link named.
+
 ### Available Configuration Categories
 
 | Category | Example fields |
 |----------|---------------|
+| Scene identity | `title` (browser tab title) |
 | Camera | `position`, `target`, `fov`, `fov_preset`, `near`, `far`, `target_node` |
 | Theme | `theme` (`dark`, `light`, `frosted-glass`, `liquid-glass`) |
 | Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
