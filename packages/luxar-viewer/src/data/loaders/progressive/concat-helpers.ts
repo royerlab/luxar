@@ -79,12 +79,44 @@ export function concatRequiredField<A extends ConcatTypedArray, P>(
  *
  * Preserves the source dtype by constructing from the first part's array.
  *
+ * ZERO-ROW PARTS ARE ABSTAINERS (#1456). A part with `countOf(p) === 0`
+ * contributes no rows, so it has no opinion about which attributes the merged
+ * result carries — it is excluded from both the presence gate and the copy.
+ * This matters because the canonical empty payloads OMIT their optional fields
+ * rather than emitting zero-length arrays, so a slice that culls one level of an
+ * additive ladder to zero would otherwise strip those fields from the WHOLE
+ * ladder — including the levels that DO have data, whose values the node
+ * adapters then replace with constant fills. Which fields, per geometry:
+ *
+ * - Points: `createEmptyPointsData` omits `colors`, `radii`, `sharpness` and
+ *   `scalars` — all four route through here, so all four were lost (white,
+ *   radius 0.5, sharpness 0.5, and `hasScalars` cleared = dead colormap).
+ * - Lines: `createEmptyLinesData` omits only `scalars` (there is no `radii`
+ *   field at all, and `colors`/`sharpness` are present-but-null and use the
+ *   bespoke find-first + fill-for-missing path in `concatenateLinesData`, not
+ *   this helper), so only the colormap was lost.
+ * - GSplats: unaffected — its empty payload carries zero-length `Float32Array`s
+ *   for the required fields and null colours on the fill-for-missing path; it
+ *   never calls this helper.
+ *
+ * Excluding zero-row parts is also what keeps the dtype contract honest: such a
+ * part copies nothing, so comparing its (possibly absent, possibly differently
+ * typed) array against the real levels' could only produce a spurious throw.
+ *
+ * When EVERY part is zero-row the gate falls back to all the parts, so a wholly
+ * empty ladder yields exactly what it did before — `undefined` if the parts
+ * omit the field, else a zero-length array of the declared dtype.
+ *
  * COUPLED CONTRACT: the append fast path's commit gates
  * (`commit-points-geometry.ts` / `commit-lines-geometry.ts`) compare each
  * optional field's PRESENCE against the committed parent precisely because of
  * this all-or-nothing drop — a new level without the field flips the merged
  * result from real values to the adapter's constant fill. If this policy ever
- * changes (e.g. fill-with-default), revisit those presence conjuncts.
+ * changes (e.g. fill-with-default), revisit those presence conjuncts. Those
+ * gates stay correct under the abstainer rule: a ladder whose first committed
+ * level is empty publishes no optional fields, and the pass that adds a
+ * non-empty level flips presence on — a difference the gates already read as
+ * "not a pure append" and answer with a full rewrite.
  */
 export function concatOptionalField<A extends ConcatTypedArray, P>(
   parts: P[],
@@ -93,6 +125,8 @@ export function concatOptionalField<A extends ConcatTypedArray, P>(
   perItem = 1,
   label = 'field'
 ): A | undefined {
-  if (!parts.every((p) => get(p) != null)) return undefined;
-  return concatRequiredField(parts, (p) => get(p) as A, countOf, perItem, label);
+  const contributing = parts.filter((p) => countOf(p) > 0);
+  const voting = contributing.length > 0 ? contributing : parts;
+  if (!voting.every((p) => get(p) != null)) return undefined;
+  return concatRequiredField(voting, (p) => get(p) as A, countOf, perItem, label);
 }
