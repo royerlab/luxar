@@ -53,6 +53,10 @@ ui/
 ├── help-overlay.ts                     # Keyboard shortcuts panel (was helpers.show/hideHelp)
 ├── control-rail.ts                     # Always-visible left activity rail (helpers in control-rail/)
 ├── toast.ts                            # Brief auto-dismiss notifications
+├── scene-identity-banner.ts            # Persistent "address now serves a different scene /
+│                                       #   server unreachable" banner (Reload button on the
+│                                       #   changed kind); driven by data/scene-identity-watchdog
+│                                       #   through the cross-layer notifier
 ├── ui-cleanup.ts                       # App-teardown helper
 │
 │ ── Public-file private helpers (siblings) ──

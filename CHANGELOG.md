@@ -299,6 +299,31 @@ One more mesh coverage residual, in the same vein: the freshness helpers' `isFre
 type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
 which has counted mesh since it became a legal ladder level. Widened to four.
 
+#### Scene-identity watchdog — a tab that no longer shows what its address serves says so
+
+Local demo/dev servers share ports and come and go, so a long-lived viewer
+tab could silently front a DIFFERENT scene than the one it loaded (another
+server took the port) — or a dead one — with no visual hint. The viewer now
+watches its dataset's identity for the life of the tab: a watchdog re-fetches
+the root `.zattrs` (cache-bypassing) every 15 s and the moment the tab
+regains focus/visibility, comparing `content_hash` (hash-less bare nodes fall
+back to the canonicalized attrs JSON, baselined on what was actually LOADED —
+never on a probe — so even a swap before the first probe is caught). A
+different hash — or a 404 where something else answers the address — raises a
+persistent top banner ("This address now serves a different scene — the view
+below is stale") with a Reload button and stops polling; a server that stops
+answering, times out, or replies with an inconclusive status (401/403 auth
+walls — a presigned source's credential can simply have expired — plus
+408/425/429/5xx) shows a self-clearing "Data server unreachable" banner after
+two consecutive failed probes, and a server that recovers with a different
+scene escalates straight to the changed banner. Only `http(s)` sources are watched; the
+watchdog is started per dataset as soon as the root attrs have been read
+(identity baselined on those attrs, so a swap during a long load is caught
+too) and disposed on dataset switch. New:
+`data/scene-identity-watchdog.ts`, `ui/scene-identity-banner.ts`, and
+optional `showSceneIdentityBanner`/`hideSceneIdentityBanner` methods on the
+cross-layer notifier surface.
+
 #### The scene-dimension check runs before a split, not inside the first child (#1446)
 
 `add_points("pt", positions_400x4, additive_lod={"counts": [200, 400]})` in a
