@@ -161,8 +161,8 @@
 }
 
 .luxar-data-monitor__tab--active {
-  color: var(--luxar-success);
-  border-bottom-color: var(--luxar-success);
+  color: var(--luxar-highlight);
+  border-bottom-color: var(--luxar-highlight);
 }
 
 /* ========== Content Area ========== */
@@ -761,7 +761,7 @@
   color: var(--luxar-text-muted);
   font-size: var(--luxar-text-xs);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
 }
 
 .luxar-secondary-metrics__value {
@@ -820,7 +820,7 @@
   color: var(--luxar-text-muted);
   margin-bottom: var(--luxar-spacing-5);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
 }
 
 /* ========== Empty States ========== */
@@ -885,7 +885,7 @@
   color: var(--luxar-text-muted);
   font-weight: var(--luxar-font-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
 }
 
 .luxar-scene-graph__stats {

@@ -166,7 +166,9 @@ export function showHelpOverlay() {
 
   const closeBtn = document.createElement('button');
   closeBtn.className = 'luxar-help-overlay__close-btn';
-  closeBtn.textContent = '×';
+  // Stroke ✕ in the rail icon contract (was the text glyph '×').
+  closeBtn.innerHTML =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
   closeBtn.title = 'Close (Escape)';
   closeBtn.setAttribute('aria-label', 'Close help overlay');
   closeBtn.setAttribute('aria-keyshortcuts', 'Escape');

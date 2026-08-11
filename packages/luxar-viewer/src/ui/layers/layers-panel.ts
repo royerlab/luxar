@@ -355,7 +355,9 @@ export class LayersPanel {
     title.textContent = 'Layers';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'luxar-layers-panel__close';
-    closeBtn.textContent = '×';
+    // Stroke ✕ in the rail icon contract (was the text glyph '×').
+    closeBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
     // Advertise Escape rather than L: the L key-binding early-returns
     // when focus is inside the panel, so it doesn't actually close
     // from keyboard while the panel has focus. Escape is handled by
