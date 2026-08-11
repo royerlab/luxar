@@ -355,10 +355,14 @@ export class LayersPanel {
       ariaLabel:
         kind === 'header' ? 'Layers panel actions' : `Layer actions for ${layer?.name ?? ''}`,
       items,
-      // Explicit: a mouse right-click does not focus the row/eye first, so
-      // the utility's activeElement default would return focus somewhere
-      // unrelated on the mouse path.
-      restoreFocus: opener,
+      // Explicit for FOCUSABLE openers (rows carry a tabindex, eyes are
+      // buttons): a mouse right-click does not focus them first, so the
+      // utility's activeElement default would return focus somewhere
+      // unrelated. The header opener is a plain <div> — focusing it fails
+      // silently and would strand focus on <body> when the native
+      // ContextMenu key fires at a focused header child (the close button),
+      // so there we keep the utility's activeElement default instead.
+      restoreFocus: opener?.matches('button, [tabindex]') ? opener : null,
       onClose: () => {
         opener?.setAttribute('aria-expanded', 'false');
         this.contextMenuClose = null;
@@ -521,10 +525,17 @@ export class LayersPanel {
     scratch.dispose();
     if (!fresh) return;
     this.state.resetLayerState(path, fresh);
+    // Same apply set as resetAllLayers(), for the same reasons:
+    // applyVisibility unconditionally (a hidden layer whose authored default
+    // is visible must come back); applyColormap restores the authored
+    // palette (or none) AND then recomposes display range / gamma / opacity /
+    // absorption / blending onto the materials via its trailing
+    // applyComposed (layer-apply.ts — the material-state reset test pins
+    // this dependency); applyMeshAppearance covers the mesh-only shading
+    // uniforms, which are not composed.
     this.applyEngine.applyVisibility(path, live.visible);
     this.applyEngine.applyColormap(live);
     this.applyEngine.applyMeshAppearance(live);
-    this.applyEngine.applyBlendingMode(live);
     this.refreshRowVisual(path);
     this.controls.render();
   }

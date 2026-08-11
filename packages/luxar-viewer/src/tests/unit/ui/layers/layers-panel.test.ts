@@ -3139,6 +3139,72 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it('resetLayer pushes the authored gamma/window back onto the MATERIAL, not just the state', () => {
+    // Reset's material coverage rides on applyColormap's trailing
+    // applyComposed (the same dependency resetAllLayers documents). If that
+    // tail is ever refactored away, reset would leave the material rendering
+    // the pre-reset gamma/window while the controls show authored values —
+    // this test pins the dependency at the material boundary.
+    const updateGamma = vi.fn();
+    const updateIntensity = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: {},
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity,
+      updateOffset: vi.fn(),
+      updateGamma,
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/layer0';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeManyLayerSceneGraph());
+
+    // Drag the layer away from its authored state.
+    panel.layerState.setGamma('/layer0', 2.5);
+    updateGamma.mockClear();
+    updateIntensity.mockClear();
+
+    // Reset via the row context menu item (the real user path).
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const reset = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-context-menu__item')
+    ).find((el) => el.textContent === 'Reset this layer')!;
+    reset.click();
+
+    // State restored AND the material saw the authored values again.
+    expect(panel.layerState.getLayer('/layer0')!.gamma).toBe(1.0);
+    expect(updateGamma).toHaveBeenCalledWith(1.0);
+    expect(updateIntensity).toHaveBeenCalled(); // composed window re-pushed
+    panel.dispose();
+  });
+
+  it('Escape from the HEADER menu returns focus to the focused header child, not <body>', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+
+    // The native ContextMenu key fires `contextmenu` at the focused element —
+    // here the header's close button. The header wrapper itself is a plain
+    // <div>; forcing restoreFocus onto it would silently fail and strand
+    // focus on <body>.
+    const closeBtn = container.querySelector<HTMLElement>('.luxar-layers-panel__close')!;
+    closeBtn.focus();
+    closeBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const menu = document.querySelector('.luxar-context-menu')!;
+    expect(menu).not.toBeNull();
+
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.activeElement).toBe(closeBtn);
+    panel.dispose();
+  });
+
   it('the pinned row aria-label survives a menu open/close (only aria-expanded moves)', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
