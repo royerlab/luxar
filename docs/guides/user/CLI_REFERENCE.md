@@ -69,7 +69,8 @@ skip), and tears each one down with the same SIGINT → SIGTERM → SIGKILL
 escalation Ctrl-C uses. `luxar demo stop <key>` stops just one demo;
 `--dry-run` only lists. On platforms without POSIX process groups it lists the
 recorded runs and prints the command to stop each by hand rather than signalling
-a pid it cannot first verify still belongs to the demo.
+a pid it cannot first verify still belongs to the demo; once that process is
+gone the record drops itself from the next listing.
 
 ## `luxar gsplat`
 

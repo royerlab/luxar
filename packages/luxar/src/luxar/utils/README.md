@@ -235,7 +235,9 @@ running demo — even one forgotten in another terminal — and free its ports.
   `python -m luxar.demos.demo_*`; prunes dead/hijacked
   entries, never returns the caller's own process group. Falls back to
   `proc_table()` when `ps` is missing, so the identity check that keeps a
-  recycled pgid alive-and-innocent never silently disappears
+  recycled pgid alive-and-innocent never silently disappears. Off POSIX, where
+  neither exists, a pid listing (`tasklist`) still prunes a record left behind
+  by a reboot or a hard-killed owner
 - `stop_run()`: Tear one run's process group down via `terminate_process_group`,
   re-validating the group at kill time; returns False without signalling
   anything off POSIX, where a recorded pid cannot be checked before a hard

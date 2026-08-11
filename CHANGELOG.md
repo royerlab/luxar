@@ -255,7 +255,10 @@ ask whether a recorded pid is still the demo before signalling it (on Windows
 `os.kill(pid, 0)` is itself a hard terminate), and a pidfile outlives a reboot,
 so a blind signal would eventually kill whatever innocent process recycled that
 number. There the runs are listed with the command to stop them by hand
-instead.
+instead — and because a pid listing (`tasklist`) still answers *existence*
+safely even where signal-0 does not, a record left behind by a reboot or a
+hard-killed owner is dropped from the listing instead of being reported as a
+running demo forever.
 Teardown also stops waiting out a corpse: a child that has exited but has not
 been reaped yet still answers `killpg`, which used to hold the whole signal
 ladder open, so an interrupted `demo run` sat there for the full grace period

@@ -166,6 +166,45 @@ def _ps_snapshot() -> list[tuple[int, int, str]]:
     return rows or [(pid, pgid, cmd) for pid, pgid, _state, cmd in proc_table()]
 
 
+def _visible_pids() -> frozenset[int]:
+    """Every pid the OS admits to, where no process *table* is reachable.
+
+    Off POSIX ``_ps_snapshot`` is empty and ``os.kill(pid, 0)`` is a hard
+    terminate rather than a probe, which used to leave a registry entry
+    unfalsifiable: one written before a reboot (or by a hard-killed owner) was
+    reported as a running demo forever, on every future ``demo stop``, with no
+    command that could clear it. Windows' own ``tasklist`` answers the one
+    question that *is* safe to ask — does this pid still exist? — so such a
+    record prunes itself on the next listing instead.
+
+    Deliberately NOT folded into ``_ps_snapshot``: ``tasklist`` reports no
+    command line, and a snapshot without one fails the demo-identity check in
+    :func:`_group_has_luxar_process`, which would prune LIVE demos. It also
+    cannot make anything killable — identity is still unverifiable, so
+    :func:`stop_run` keeps refusing to signal.
+
+    An empty result means "unknown", never "nothing is running".
+    """
+    try:
+        out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
+            ["tasklist", "/NH", "/FO", "CSV"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()
+    pids: set[int] = set()
+    for line in out.splitlines():
+        # `"Image Name","PID","Session Name",…` — split on the quote-comma-quote
+        # separator, so an image name containing a comma stays one field.
+        fields = [field.strip('"') for field in line.split('","')]
+        if len(fields) > 1 and fields[1].isdigit():
+            pids.add(int(fields[1]))
+    return frozenset(pids)
+
+
 # Interpreter options whose argument is a SEPARATE token; stepping over it
 # keeps a `python -W ignore -m luxar.demos.demo_x` recognisable as a demo.
 _PY_OPTS_WITH_ARG = frozenset({"-W", "-X"})
@@ -295,21 +334,33 @@ def _group_has_luxar_process(pgid: int, snapshot: list[tuple[int, int, str]]) ->
     )
 
 
-def _entry_still_live(run: DemoRun, snapshot: list[tuple[int, int, str]]) -> bool:
-    """Whether a registry entry still names a live demo, in three regimes.
+def _entry_still_live(
+    run: DemoRun,
+    snapshot: list[tuple[int, int, str]],
+    visible_pids: frozenset[int] = frozenset(),
+) -> bool:
+    """Whether a registry entry still names a live demo, in four regimes.
 
     With a process table in hand the answer is exact (and safe against a
     recycled pgid). Without one, POSIX can at least ask whether the group
-    survives. Off POSIX there is no probe at all — ``os.kill(pid, 0)``
-    TERMINATES its target on Windows rather than testing it — so an entry
-    naming an owner pid is kept for the listing to report (unverified, and
-    :func:`stop_run` refuses to signal it), and only one that names nobody is
-    dropped.
+    survives. Off POSIX there is no signal-based probe at all —
+    ``os.kill(pid, 0)`` TERMINATES its target on Windows rather than testing it
+    — but a pid *listing* (``visible_pids``, from :func:`_visible_pids`) still
+    settles existence, so a record left behind by a reboot or a hard-killed
+    owner is dropped rather than reported as a demo forever. What it cannot
+    settle is identity, so a pid that IS listed is kept unverified and
+    :func:`stop_run` still refuses to signal it. With no listing either, only
+    an entry naming nobody is dropped.
     """
     if snapshot:
         return _group_has_luxar_process(run.pgid, snapshot)
     if can_kill_process_groups():
         return _group_alive(run.pgid)
+    if visible_pids:
+        # `pgid` is the demo process's own pid off POSIX (no group isolation);
+        # `pid` is its `demo run` owner, which is EXPECTED to be gone — that is
+        # what makes the entry survive — so it is the demo that gets probed.
+        return run.pgid in visible_pids
     return bool(run.pid)
 
 
@@ -331,11 +382,20 @@ def discover_runs(
 
     live: list[DemoRun] = []
     covered: set[int] = set()
-    for run in _registry_runs(runs_dir):
+    entries = _registry_runs(runs_dir)
+    # Off POSIX neither a process table nor a group probe exists; a pid listing
+    # is the only liveness question available (see `_visible_pids`). Pay for it
+    # once per scan rather than once per entry, and never on the POSIX path.
+    visible_pids = (
+        _visible_pids()
+        if entries and not snapshot and not can_kill_process_groups()
+        else frozenset()
+    )
+    for run in entries:
         if run.pgid == own_pgid:
             covered.add(run.pgid)
             continue
-        if not _entry_still_live(run, snapshot):
+        if not _entry_still_live(run, snapshot, visible_pids):
             unregister_run(run.path)
             continue
         covered.add(run.pgid)

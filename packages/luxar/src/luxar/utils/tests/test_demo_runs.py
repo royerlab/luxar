@@ -468,6 +468,8 @@ def test_non_posix_lists_runs_but_never_signals_an_unverifiable_pid(
     """
     monkeypatch.setattr(demo_runs, "can_kill_process_groups", lambda: False)
     monkeypatch.setattr(demo_runs, "_ps_snapshot", list)
+    # No pid listing either (a `tasklist`-less platform): the last-resort regime.
+    monkeypatch.setattr(demo_runs, "_visible_pids", frozenset)
     path = register_run("winrun", 4242, runs_dir=tmp_path)
     assert path is not None
 
@@ -490,6 +492,60 @@ def test_non_posix_prunes_an_entry_with_no_owner_pid(
     """…but an entry naming no owner pid is unusable off-POSIX: drop it."""
     monkeypatch.setattr(demo_runs, "can_kill_process_groups", lambda: False)
     monkeypatch.setattr(demo_runs, "_ps_snapshot", list)
+    monkeypatch.setattr(demo_runs, "_visible_pids", frozenset)
     (tmp_path / "4243.json").write_text('{"key": "old", "pgid": 4243, "pid": 0}')
     assert discover_runs(runs_dir=tmp_path) == []
     assert sorted(tmp_path.glob("*.json")) == []
+
+
+def test_non_posix_prunes_a_record_whose_pid_is_gone(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A pidfile that outlived a reboot must not read as a demo forever.
+
+    Off POSIX nothing can be signalled, so without a liveness probe such a
+    record was reported as running by every future `demo stop` (which then
+    exits 1), and no command could clear it. A pid listing settles existence
+    even where signal-0 does not — the live pid stays, the dead one is pruned.
+    """
+    monkeypatch.setattr(demo_runs, "can_kill_process_groups", lambda: False)
+    monkeypatch.setattr(demo_runs, "_ps_snapshot", list)
+    stale = register_run("rebooted", 4242, runs_dir=tmp_path)
+    live = register_run("winrun", 4343, runs_dir=tmp_path)
+    assert stale is not None and live is not None
+    monkeypatch.setattr(demo_runs, "_visible_pids", lambda: frozenset({4343, 999}))
+
+    runs = discover_runs(runs_dir=tmp_path)
+    assert [r.key for r in runs] == ["winrun"]
+    assert not stale.exists()
+    assert live.exists()
+
+    # Listed ≠ killable: existence is not identity, so nothing is signalled.
+    signalled: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        demo_runs.os, "kill", lambda pid, sig: signalled.append((pid, sig))
+    )
+    assert stop_run(runs[0]) is False
+    assert signalled == []
+    assert live.exists()
+
+
+def test_visible_pids_parses_tasklist_and_tolerates_its_absence(monkeypatch) -> None:
+    """`tasklist /NH /FO CSV` rows → pids; anything else means "unknown"."""
+
+    class _Out:
+        stdout = (
+            '"System Idle Process","0","Services","0","8 K"\n'
+            '"python.exe","4343","Console","1","91,204 K"\n'
+            '"weird,name.exe","4344","Console","1","4 K"\n'
+            "\n"
+        )
+
+    monkeypatch.setattr(demo_runs.subprocess, "run", lambda *a, **k: _Out())
+    assert demo_runs._visible_pids() == frozenset({0, 4343, 4344})
+
+    def no_tasklist(*args, **kwargs):
+        raise FileNotFoundError("tasklist")
+
+    monkeypatch.setattr(demo_runs.subprocess, "run", no_tasklist)
+    assert demo_runs._visible_pids() == frozenset()
