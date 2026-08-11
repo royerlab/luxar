@@ -36,8 +36,10 @@ describe('isFresh', () => {
     expect(isFresh(child('gsplats', 1, false), 1)).toBe(false);
   });
 
-  it('version-checks each stamped leaf type (gsplats / points / lines)', () => {
-    for (const t of ['gsplats', 'points', 'lines']) {
+  // Every LOD-capable leaf type, which is what `isFreshnessTracked` resolves to
+  // (`supportsLod`) — mesh included, since it became a legal `kind=lod` level.
+  it('version-checks each stamped leaf type (gsplats / points / lines / mesh)', () => {
+    for (const t of ['gsplats', 'points', 'lines', 'mesh']) {
       expect(isFresh(child(t, 2), 2)).toBe(true); // stamp matches current version
       expect(isFresh(child(t, 1), 2)).toBe(false); // stale stamp
       expect(isFresh(child(t, undefined), 2)).toBe(false); // never committed
