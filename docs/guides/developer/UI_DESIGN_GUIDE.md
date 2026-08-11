@@ -93,7 +93,7 @@ All colors, spacing, and effects are CSS custom properties with the
 `--luxar-` prefix, injected at runtime by `ThemeManager` as **inline styles on
 `document.documentElement`** (not a `:root {}` stylesheet rule — they carry
 inline-style specificity). Component CSS must reference tokens, never
-hardcoded values (sanctioned exceptions are listed in §15).
+hardcoded values (sanctioned exceptions are registered in §15.6).
 
 The full vocabulary is **87 variables** (count them with
 `grep -c "'--luxar" src/themes/theme-manager.ts` — that reports 88, one of
@@ -178,18 +178,66 @@ exist). This is the single most common authoring mistake.
 
 | Token | Value | Layer |
 | --- | --- | --- |
-| `--luxar-z-base` | 100 | In-canvas widgets (scale bar, legend) |
+| `--luxar-z-base` | 100 | Baseline layer — in-canvas widgets and frameless overlays. Both prescribed migrations are still pending, so today it holds the opposite: the data monitor and the dimension sliders, which belong a tier up (§15.4), while the widgets that belong here sit on `tooltip` (§15.1) |
 | `--luxar-z-dropdown` | 1000 | Docked panels, the rail |
 | `--luxar-z-modal` | 2000 | Modal dialogs (+ scrim at `calc(var(--luxar-z-modal) - 1)`) |
 | `--luxar-z-popover` | 3000 | Rail popovers/flyouts, first-run hint |
 | `--luxar-z-tooltip` | 4000 | Tooltips |
 
-Use the tokens. Two surfaces need a tier the scale doesn't name and express it
-as arithmetic *on* the tokens rather than a magic number — the debug console at
-`calc(var(--luxar-z-base) + 50)` (above canvas widgets, below every panel) and
-the toast at `calc(var(--luxar-z-tooltip) + 1000)` (above everything the scale
-defines). That is the sanctioned escape hatch; a bare literal is not. The
-historical raw z-indexes still in the tree (§15) are debt, not precedent.
+Use the tokens. The historical raw z-indexes still in the tree (§15.1) are
+debt, not precedent.
+
+To sit just off a tier, offset it — `calc(var(--luxar-z-…) ± N)` is the
+sanctioned idiom (#1478 standardized it), never a fresh literal. The three
+shipped uses: the modal scrim at `calc(var(--luxar-z-modal) - 1)`
+(`dataset-browser.css:18`), the debug console at
+`calc(var(--luxar-z-base) + 50)` (`debug-console.css:31` — just above the
+baseline layer, deliberately below every panel), and the toast at
+`calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:22` — deliberately above
+*every* tier in the table, because a transient notice must not be occluded).
+Keep the offset readable as an intent ("just above/below tier X"); if you need
+a whole new band, that is a token, not a `calc`. All three are registered in
+§15.6.
+
+**A second, parallel z-scale exists in TypeScript**, and the table above does
+not predict it on its own. `config.ui.zIndex`
+(`src/config/sections/ui/data.ts`) declares eleven numeric layers; four are
+written straight onto `el.style.zIndex` at runtime (marked ● —
+`layers-panel.ts:346`, `recording-panel.ts:168`, `rendering-controls.ts:189`,
+and `performance-monitor.ts:87`, which writes `statsMonitor`, *not* the
+`performanceMonitor` key), the rest are currently unread:
+
+| `config.ui.zIndex` key | Value | Nearest token tier |
+| --- | --- | --- |
+| `dimensionSliders`, `performanceMonitor` | 100 | `base` (100) |
+| `debugConsole` | 150 | just above `base` |
+| `datasetBrowser`, `loading`, `error` | 1000 | `dropdown` (1000) |
+| `help` | 1001 | just above `dropdown` |
+| ● `recordingPanel`, `layersPanel` | 1500 | **between** `dropdown` and `modal` |
+| ● `renderingControls` | 1999 | **between** `dropdown` and `modal` |
+| ● `statsMonitor` | 2000 | `modal` (2000) |
+
+Those live values are normative: a new left-docked panel spelled
+`--luxar-z-dropdown` (1000) paints *underneath* the layers, recording and
+rendering panels, which share that same dock (§7.5). **Do not out-stack them.**
+A new rail-docked panel joins the exclusive-dock handshake of §7.5
+(`closeOtherLeftPanels` in `core/app/init/build-rail-items.ts:74`), so rail
+activation only ever leaves one of them open; the R/L/T shortcuts deliberately
+bypass the handshake, and a pair stacked that way is ordered by the
+`config.ui.zIndex` values above, not by the tokens.
+
+**The tokens cannot express "just above the incumbents", so do not try.** The
+two scales overlap, and the space the token tiers appear to leave is already
+occupied: `calc(var(--luxar-z-modal) - 1)` resolves to 1999, which is exactly
+`renderingControls` — so it *ties* an incumbent, and a tie is settled by DOM
+order, not by intent — and is also exactly the value the modal scrim already
+claims (`dataset-browser.css:18`, prescribed by §7.2 and registered in §15.6).
+There is nothing left between 1999 and `modal` (2000). The correct answer is to
+join the exclusive dock and not stack at all. A surface that genuinely must
+coexist with the incumbents has to pick its value against the *live*
+`config.ui.zIndex` numbers in the table above rather than against a token tier,
+and register that value in §15.6 together with the reason it cannot dock. Until
+the two scales are reconciled (§15.1), read both before picking a tier.
 
 ---
 
@@ -340,7 +388,8 @@ These are load-bearing; violating any of them visibly breaks a theme:
 ## 6. Color semantics — the rules
 
 This is the most drift-prone area of the codebase; the rules below are the
-intended, authoritative direction (existing violations are cataloged in §15).
+intended, authoritative direction (existing violations are cataloged in
+§15.1–15.5).
 
 | Color | Meaning | Correct uses |
 | --- | --- | --- |
@@ -404,6 +453,9 @@ font-size:       var(--luxar-text-base);                 /* 13px */
 | Popover / flyout / tooltip | `lg` (tooltip `md`) | `xl` (tooltip `lg`) | `md` | `popover` / `tooltip` |
 | Transient badge / toast | **`md`** | `md`–`lg` | `sm`–`md` | context |
 
+The toast is the one deliberate outlier in that last column — for its value and
+the reason for it, see §3.5.
+
 ### 7.2 Modals
 
 Modals additionally get (the dataset browser is the reference):
@@ -446,8 +498,11 @@ Titles are `--luxar-text-lg`/`--luxar-font-bold`, or the §8.3 tick-motif
 micro-header for quiet-instrument surfaces.
 
 Adopters: help overlay, layers panel, GUI, debug console, monitor. The dataset
-browser predates the extraction and still spells both out in its own file with
-matching values (§15.1) — copy the classes, not that file's header block.
+browser predates the extraction and still spells both out in its own file —
+and the copies have already drifted from the originals (a focus ring without
+the mandatory fallback, no reduced-motion guard, a header row that restates
+half the shared one; see §15.1) — so copy the classes, not that file's header
+block.
 
 ### 7.4 Scroll containers
 
@@ -490,14 +545,24 @@ The rail is the canonical interactive surface; its patterns generalize:
   first-run hint all share it — it is the popovers' own computed left edge (the
   rail box including its border, plus their 10px gap), so whichever surface is
   open its left edge lands in exactly the same place. Docked panels get it as
-  an `!important` override of inline positioning
-  (sanctioned, see §15.1); the draggable debug console gets the same default
-  *without* `!important` so dragging still wins.
+  an `!important` override of inline positioning (`control-rail.css:527`,
+  sanctioned by §13 and registered in §15.6); the draggable debug console gets
+  the same default *without* `!important` so dragging still wins.
+  **The rule is a hardcoded selector pair** — only `.luxar-gui` and
+  `.luxar-layers-panel`, each under `.luxar-has-control-rail`
+  (`control-rail.css:522-523`) — so a new docked surface that is neither of
+  those silently gets no gutter and opens under the rail. Adding its class to
+  that selector pair is part of docking it, not an afterthought. (The recording
+  panel is already covered: `ui/gui/gui.ts:87` builds it as a `.luxar-gui`, and
+  `recording-panel.ts:161` only adds a second class alongside.)
 - **The rail's left dock is exclusive** — Rendering, Layers and Recording all
   open at that one position, so activating any of them from the rail (or
-  opening a rail popover) closes the others rather than stacking. Keyboard
+  opening a rail popover) closes the others rather than stacking
+  (`closeOtherLeftPanels`, `core/app/init/build-rail-items.ts:74`). Keyboard
   shortcuts (R/L/T) deliberately bypass this, so panels can still be stacked
-  on purpose. A new rail-anchored surface must join this handshake.
+  on purpose — and a stacked pair is then ordered by `config.ui.zIndex`, not
+  by the tokens (§3.5). A new rail-anchored surface must join this handshake
+  rather than out-stacking the incumbents.
 
 ### 7.6 GUI controller rows (custom GUI library, `src/ui/gui/`)
 
@@ -626,7 +691,7 @@ Real `<kbd>` elements: mono, `--luxar-text-xs`, `line-height: 1`,
 (`flex: 0 0 118px`, right-justified) + `text-secondary` description,
 baseline-aligned.
 
-The `4px` is a **sanctioned literal, not an oversight** (§15.1): `radius-sm`
+The `4px` is a **sanctioned literal, not an oversight** (§15.6): `radius-sm`
 is 4px in dark/light but 8px in frosted-glass and 12px in liquid-glass, which
 on an ~18px-tall chip is a pill, not a keycap. Chip corners are deliberately
 theme-invariant.
@@ -780,7 +845,10 @@ Every interactive element defines, in this order:
    `control-rail.css` do: an undefined token makes the whole `outline`
    declaration invalid, which resolves to *no* ring and, being
    higher-specificity, suppresses the one `reset.css` would have drawn. (All
-   four shipped themes define it, so this only bites a new theme.) Text inputs
+   four shipped themes define it, so this only bites a new theme — which is why
+   seven rings in the tree, the embed-safe baseline itself among them, have
+   been able to ship *without* the fallback they prescribe without anyone
+   noticing; that is logged as drift in §15.2.) Text inputs
    may substitute a `--luxar-border-focus` border-color switch. Never
    `outline: none` without a visible replacement — a `tabindex="-1"`
    focus-trap *container* (the help overlay's root) is the one sanctioned
@@ -825,13 +893,19 @@ Further requirements:
 - One CSS file per surface in `styles/components/`, header comment stating
   what it styles and which TS file drives it; keep the README table in
   `styles/README.md` in sync.
-- Tokens only; each sanctioned literal needs an inline comment justifying it
-  (`select-menu.css`'s `#999999` data-URI chevron and the perf monitor's
-  7px micro-caption are the model citizens).
+- Tokens only. A literal standing in for a token *value* needs both an inline
+  comment justifying it and a line in §15.6 (§16). Two shapes are outside that
+  rule and need only the comment: a `var(--token, <literal>)` fallback (§12.4
+  mandates one on every focus ring, and 114 ship across the tree), and the
+  §6.6 white-on-solid-semantic case (`recording-panel.css:202`). The model
+  citizens of the registered kind: `select-menu.css`'s `#999999` data-URI
+  chevron, the perf monitor's 7px micro-caption, and `colormap-legend.css`'s
+  `border-radius: 2px` — deliberately half of `--luxar-radius-sm`, because
+  `--luxar-radius-xs` does not exist (§3.4).
 - `!important` policy — exactly three sanctioned categories: reduced-motion
   overrides; the documented rail-docking/nesting overrides in
   `control-rail.css`; state-forcing in `overlay-layer.css` that must beat
-  inline styles. Anything else is a smell.
+  inline styles. All three are registered in §15.6; anything else is a smell.
 - Icons live in per-domain `icons.ts` modules exporting
   `Record<string, string>` of SVG strings.
 
@@ -842,7 +916,8 @@ Further requirements:
 1. Root: surface recipe (§7.1) + `luxar-glass-surface` (unless frameless by
    design) + `overflow: visible` + inner `__scroll` wrapper if it scrolls.
 2. Correct tier: panel / modal (+scrim) / popover / badge (§7.1 table) with
-   token z-index.
+   token z-index — and if it docks beside the rail, it joins the exclusive
+   dock rather than out-stacking the incumbents (§3.5, §7.5).
 3. Header per §7.3 — add `.luxar-panel-header` + `.luxar-panel-close` rather
    than restating them; quiet-instrument surfaces use the tick micro-header.
 4. All values tokens; spacing keys double-checked (§3.3 half-pixel trap).
@@ -853,7 +928,8 @@ Further requirements:
 8. Motion: transform-only entry; one-shot reveals; full
    `prefers-reduced-motion` guard (§10).
 9. States: rest/hover/active/focus-visible/disabled all defined (§12);
-   component-level `:focus-visible` ring present.
+   component-level `:focus-visible` ring present, spelled with the fallback —
+   `var(--luxar-border-focus, rgba(76, 175, 80, 0.5))` (§12.4).
 10. A11y roles/labels/live-regions per §12; Escape wired; arrow keys in lists;
     a modal traps focus and restores it to the opener (`trapFocus`, §7.2).
 11. No new `<option>` styling outside `select-menu.css`; no pseudo-elements on
@@ -862,68 +938,124 @@ Further requirements:
     is the stress test), plus light theme; screenshots verified before PR.
 13. New strings/ids/classes cross-checked against E2E specs (`grep` the
     `src/tests/e2e/` tree).
-14. This guide updated if the surface introduces a new reusable pattern.
+14. This guide updated if the surface introduces a new reusable pattern, and
+    every sanctioned exception it needs (literal, `!important`, off-tier
+    z-index) registered in §15.6 (§16).
 
 ---
 
 ## 15. Known drift (documented debt — do not copy)
 
-The following existing code contradicts this guide. It is listed so nobody
-mistakes it for precedent; migrate opportunistically when touching these
-files. (Inventory verified 2026-08-11.) A modernization campaign closed most of
-it: #1476 (a11y), #1478 (token hygiene), #1479 (emoji→stroke icons), #1472
-(the dataset browser) and #1480 (accent migration + the shared panel recipes)
-have all landed, so their entries are deleted below —
+The code listed in §15.1–15.5 contradicts this guide. It is listed so nobody
+mistakes it for precedent; migrate opportunistically when touching these files.
+(§15.6 is the opposite list — sanctioned exceptions that stay.) (Inventory
+verified 2026-08-11.) A modernization campaign closed most of it: #1476
+(a11y), #1478 (token hygiene), #1479 (emoji→stroke icons), #1472 (the dataset
+browser) and #1480 (accent migration + the shared panel recipes) have all
+landed, so what they actually fixed is deleted below —
 **green-as-interactive, emoji-in-the-DOM and the phantom radius token are gone
-from the tree entirely**, and the only raw *layer* z-index left is the overlay
-container (§15.1). Everything below is live on `main`; each entry names the PR
-that will close it where one exists, and the entry goes away as that PR
-merges.
+from the tree entirely.** What those tranches did not reach stays listed, token
+hygiene included. Everything below is live on `main`; each entry names the PR
+that will close it where one exists, and the entry goes away as that PR merges
+(§16).
 
 ### 15.1 Hardcoded values / phantom tokens
 
-- NOT drift, by design (kept here so §3.5 audits don't re-flag them): the
-  recording panel's `9999/10000/100000` z-indexes stay literal on purpose —
-  their magnitude beats unknown third-party host UI (documented in the file
-  header); small local stacking indexes (`1/2/10` inside a positioned parent)
-  are not layer tokens; the two off-scale tiers are written *against* the
-  tokens with a stated reason (`calc(var(--luxar-z-base) + 50)` for the debug
-  console, `calc(var(--luxar-z-tooltip) + 1000)` for the toast — §3.5); the
-  `<kbd>`/`<code>` chip radii are deliberate literals (§8.4/§8.5); and
-  `colormap-legend.css`'s `2px` gradient radius is an intentional, documented
-  literal (half of `radius-sm` — there is no `--luxar-radius-xs`), no longer a
-  phantom-token fallback.
-- The one raw layer z-index left: `overlay-layer.css`'s `.luxar-overlay`
-  container at `z-index: 5`. It is a *global* layer (screen-space overlays
-  between the canvas and all UI), not a local stacking index, and it sits
-  below `--luxar-z-base` — a tier the scale doesn't name. Give it a token
-  (or a comment justifying the literal) when that file is next touched.
-- The recording **stop-confirm** dialog (`recording-panel.css`) is on the
-  surface tokens now but still isn't a `luxar-glass-surface`, blurs with a raw
-  `blur(2px)` instead of a blur token, spaces itself in raw px, and carries a
-  literal `rgba(255,255,255,0.98)` light-theme background. (The REC indicator
-  pill itself is on the badge variant of the recipe — that half is done.)
-- The dataset browser restates `.luxar-panel-header` / `.luxar-panel-close`
-  (§7.3) in its own file instead of adding the shared classes. The values
-  match, so this is duplication rather than a visual break; fold it in when
-  next touching that file.
-- The scene-identity banner (`ui/scene-identity-banner.ts`) styles itself
-  entirely from inline `style.cssText` rather than a
+- Two raw layer z-indexes are left: `5` on the `overlay-layer.css`
+  `.luxar-overlay` container and the scene-identity banner's inline `10000`
+  (its own bullet below). Both are *global* layers (the overlay container
+  holds screen-space overlays between the canvas and all UI), not local
+  stacking indexes, and the first sits below `--luxar-z-base` — a tier the
+  scale doesn't name. Give each a token (or a comment justifying the literal)
+  when those files are next touched. NOT drift: the recording panel's
+  `9999/10000/100000` stay literal by design and small local stacking indexes
+  (`1/2/10` inside a positioned parent) are not layer tokens — both registered
+  in §15.6.
+- **The frameless in-canvas widgets sit on the tooltip tier.** The scale bar
+  (`scale-bar.css:35`), the colormap legend (`colormap-legend.css:13`) and the
+  resolution indicator (`resolution-indicator.css:67`) all resolve to
+  `--luxar-z-tooltip` (4000), so they paint over every panel and modal — the
+  opposite of what §11 ("bottom corners, frameless") implies and of the `base`
+  tier their role calls for. The first two also carry a stale
+  `var(--luxar-z-tooltip, 900)` fallback: 900 was never a tier value, and it is
+  inert because the token is always defined. Move them to `--luxar-z-base` when
+  next touching those files.
+- **The whole `config.ui.zIndex` scale is a second, untokenized layer system.**
+  `src/config/sections/ui/data.ts` declares eleven numeric layers (tabulated in
+  §3.5); `ui/layers/layers-panel.ts:346`, `ui/performance-monitor.ts:87`,
+  `ui/recording-panel.ts:168` and `ui/rendering-controls.ts:189` write four of
+  them straight onto `el.style.zIndex`, and
+  `styles/components/recording-panel.css:7-9` names the scale in its header
+  comment. Three of the live values (`layersPanel`/`recordingPanel` 1500,
+  `renderingControls` 1999) fall between the `dropdown` and `modal` token
+  tiers, so the §3.5 token table is not sufficient on its own to say what
+  paints over what. Move these onto the tokens when next touching those panels
+  (and drop the seven unread keys); new surfaces use the tokens.
+- The recording **start-confirm** dialog (`recording-panel.css`; it is rendered
+  by `ui/recording-panel/session.ts:308,315`, whose title and primary button
+  both read "Start … Recording") is on the surface tokens now but still isn't a
+  `luxar-glass-surface`, blurs with a raw `blur(2px)` instead of a blur token,
+  spaces itself in raw px, and carries a literal `rgba(255,255,255,0.98)`
+  light-theme background. (The REC indicator pill itself is on the badge
+  variant of the recipe — that half is done.)
+- The dataset browser restates `.luxar-panel-close` (§7.3) as its own
+  `__close-btn` (`dataset-browser.css:111-143`) instead of adding the shared
+  class, and the copy has since drifted from the original in three ways: its
+  `:focus-visible` outline (`:141`) omits the mandatory `--luxar-border-focus`
+  fallback the shared rule carries — under a theme that leaves `border.focus`
+  undefined that is *no ring at all*, not a duplicate ring (§12.4, §15.2); its
+  `svg` rule omits `display: block`; and its `transition` (`:122`) is not
+  covered by the file's reduced-motion block, whose one rule (`:768-773`) lists
+  only `.luxar-dataset-browser`, `-scrim` and `__skeleton-row`. Fold the shared
+  class in when next touching that file.
+- The dataset browser's header row is per-panel CSS where `utilities.css` calls
+  `.luxar-panel-header` "THE header treatment for every panel" and §7.3 / §14.3
+  both say to add it rather than restate it. Exactly one thing genuinely
+  diverges: the hairline is pushed down to the tagline banner (`:148`) so title
+  and tagline read as one block. The rest (`display: flex; justify-content:
+  space-between; align-items: center`, `:84-86`) is a verbatim restatement of
+  three of the shared class's six declarations. The migration is the shared
+  class plus a local `border-bottom: none` **and** `margin-bottom: 0`:
+  `.luxar-panel-header` (`base/utilities.css:461-468`) also carries
+  `padding-bottom: var(--luxar-spacing-3)` and `margin-bottom:
+  var(--luxar-spacing-5)` (10px). The header's own padding shorthand (`:83`)
+  already overrides the first, but nothing overrides the second, and the
+  tagline banner follows the header directly (`:146-148`), so adopting the
+  class bare would open a 10px gap under the title row. Not another
+  hand-rolled header either way.
+- The scene-identity banner (`ui/scene-identity-banner.ts`) takes only its
+  material from the shared system (it does set
+  `className = 'luxar-glass-surface'`, `:74`) and spells everything else —
+  layout, color, type — inline in `style.cssText`, rather than in a
   `styles/components/*.css` file on the surface recipe: raw `rgba()`
   backgrounds and borders, `z-index: 10000` (§3.5), literal `color: #fff`
-  (§6.6), `font: 13px system-ui` instead of the font/size tokens, and a
+  (not the §6.6 case — this is over a translucent tint, not a solid semantic
+  fill), `font: 13px system-ui` instead of the font/size tokens, and a
   `border-radius: 8px` literal. Its two glyphs also inline their
   presentation attributes at `width/height="16"` on a 24-grid `viewBox`,
   which is neither the §9.1 rail contract (geometry only, CSS paints) nor the
   §9.2 micon one — a new banner-like surface should get a component
   stylesheet and the §9.1 contract, not copy this.
 - Assorted raw `rgba()` duplicating tokens: the GUI library's
-  `rgba(0, 0, 0, …)` control fills (`ui/gui/styles/controller.css`), the
-  monitor's hairlines and inset fills, the error dialog's guidance
-  `code`/`kbd` chips (raw `rgba()` where §8.5 wants `bg-tertiary`), and
-  `color: white` in overlay-layer and dimension-sliders. (#1478 took the
-  debug-console warn/error tints, the scene-graph kind-badge/active-level
-  blue and the loading-indicator chrome off raw values — don't re-file those.)
+  `rgba(0, 0, 0, …)` control fills (`ui/gui/styles/controller.css`); the debug
+  console's `rgba(0, 0, 0, 0.3)` filter and content backgrounds (`:107`,
+  `:151` — that is exactly `--luxar-bg-tertiary`), its scrollbar track (`:163`)
+  and its `rgba(255, 255, 255, 0.05)` message hover (`:199`); the error
+  dialog's guidance panel (`:141`), `<code>` chip (`:172`, again `bg-tertiary`)
+  and `<kbd>` chip (`:180`); in the monitor, hairlines at
+  `rgba(255, 255, 255, 0.1)` (`:1189`, `:1202` = `border-default`) and `0.05`
+  (`:1219` = `border-subtle`) plus two *backgrounds* at the same `0.1` (the
+  progress-bar track `:300` and the scene-graph badge `:934`, both
+  `interactive-default`); and `color: white` in overlay-layer and
+  dimension-sliders, plus the same literal spelled `color: #fff` at
+  `recording-panel.css:270,278`. (#1478 converted the debug console's
+  warn/error row tints, the monitor's active-level and kind badges and the
+  loading-indicator chrome — those are done.) **The cited lines are
+  representative, not exhaustive** — every file named here has uncited
+  siblings, in both kinds of rule: light-theme overrides
+  (`debug-console.css:264,268,272,276`, `error-dialog.css:202,214`) and base
+  rules (`data-loading-monitor.css:1046,1056,1157,1246`). Grep `rgba(` in a
+  file before declaring it migrated and deleting this entry.
 - The tick-less legacy `.luxar-section-title` recipe in
   `data-loading-monitor.css` (§8.3 rank 1 is the current one).
 
@@ -936,6 +1068,19 @@ merges.
   close. Its `aria-modal="true"` therefore over-promises. Wiring `trapFocus`
   into `open()`/`close()` is the fix — #1508 does exactly that; this entry
   goes away when it merges.
+- **The embed-safe focus baseline does not follow §12.4's own fallback rule.**
+  A sweep of `styles/**/*.css` + `ui/**/*.css` for an `outline:` naming
+  `--luxar-border-focus` finds exactly seven rings spelled without the
+  fallback: the baseline `.luxar-glass-surface :focus-visible`
+  (`base/utilities.css:450`), the dataset browser's five
+  (`dataset-browser.css:141,243,302,525,727`) and the GUI slider's
+  (`ui/gui/styles/controller.css:92`). Since `border.focus` is optional in the
+  `Theme` interface (`themes/types.ts:81`), a theme that omits it gets no ring
+  from any of them — and the baseline is precisely the rule that is supposed to
+  guarantee one to embedders. `.luxar-panel-close` (`utilities.css:501`),
+  `reset.css` and `control-rail.css` spell the fallback correctly and are the
+  pattern. All four shipped themes define the token, so nothing is broken
+  today.
 - **Sub-AA micro-label contrast on the glass themes.** Measured against the
   worst-case backdrop (§4), `text-secondary` lands at ~3.7:1 and `text-muted`
   at ~2.5:1 on a frosted-glass panel; WCAG 1.4.3 wants 4.5:1 for text this
@@ -949,7 +1094,8 @@ merges.
 
 (#1476 closed the ring/reduced-motion gaps — the embed-safe
 `.luxar-glass-surface :focus-visible` baseline (§12.4), the GUI slider's missing
-ring, the help overlay's `!important` outline suppression, and the
+ring — both of those are also two of the seven no-fallback rings faulted in the
+bullet above — the help overlay's `!important` outline suppression, and the
 reduced-motion gaps in the GUI library, layers panel, toast, debug console and
 overlay fade — and #1472 added the dataset browser's reduced-motion block, the
 last stylesheet that lacked one.)
@@ -966,7 +1112,7 @@ last stylesheet that lacked one.)
 - Layers-panel selection uses `--luxar-info`; everything else uses
   `--luxar-highlight`. New selection UIs use highlight.
 
-### 15.4 Glass-constraint violations (§5.1)
+### 15.4 Glass-constraint (§5.1) and layer-tier violations
 
 - The toast fades `opacity` on its own `luxar-glass-surface` root
   (`toast.css` `transition: opacity 0.3s ease`, driven by
@@ -976,8 +1122,11 @@ last stylesheet that lacked one.)
   then, do not cite it as precedent (§10.2).
 - `.luxar-dimension-sliders` is a glass surface whose root sets
   `overflow-y: auto` instead of delegating to an inner `__scroll` wrapper
-  (§5.1.2/§7.4), and sits at `--luxar-z-base` rather than the `dropdown`
-  layer its placement implies (§3.5).
+  (§5.1.2/§7.4).
+- Two standing panels sit on the baseline tier rather than the `dropdown`
+  layer their placement implies (§3.5): `dimension-sliders.css:31` and
+  `data-loading-monitor.css:12`, both `--luxar-z-base`. They are the only two
+  component stylesheets on that token, which is why §3.5's table names them.
 
 ### 15.5 Private context menu predating the shared widget
 
@@ -992,6 +1141,44 @@ classes and behavior are pinned by `dimension-animation.spec.ts`
 (`src/tests/e2e/`), so the E2E pins move in the same PR. Until then it is not
 the pattern to copy (§7.8 is).
 
+### 15.6 Sanctioned exceptions (not drift — do not migrate)
+
+Unlike §15.1–15.5, these are deliberate and stay. They are registered here
+because §16 requires every sanctioned `!important`, off-tier z-index and
+token-substituting literal to be written down (§13 exempts `var()` fallbacks
+and the §6.6 white-on-solid case — those need only their inline comment).
+Deleting an entry means the exception itself went away, not that it was
+migrated.
+
+- Literals standing in for token values (§13): `select-menu.css`'s `#999999`
+  data-URI chevron (a data-URI cannot read a custom property), the perf
+  monitor's 7px micro-caption (`performance-monitor.css:62`, below the
+  `--luxar-text-xs` floor by design), `colormap-legend.css`'s
+  `border-radius: 2px` on the gradient bar (`:50`) — half of
+  `--luxar-radius-sm`, because 4px corners on a 12px-tall pixelated bar read as
+  a pill and `--luxar-radius-xs` does not exist (§3.4) — and the
+  `<kbd>`/`<code>` chip radii, deliberately theme-invariant (§8.4/§8.5).
+- `!important` (§13's three categories): the reduced-motion overrides that need
+  one, which exist in exactly eight stylesheets (`base/utilities.css` and, in
+  `components/`, `colormap-legend`, `data-loading-monitor`, `dimension-sliders`,
+  `error-dialog`, `recording-panel`, `resolution-indicator`, `scale-bar`);
+  every other reduced-motion block in the tree spells a plain
+  `animation: none` / `transition: none` and needs no override, so `!important`
+  is not automatic there. Also sanctioned: the rail-docking gutter
+  `left: 73px !important` (`control-rail.css:527`, §7.5) and the
+  popover-nesting overrides that unpin a GUI mounted inside a popover
+  (`control-rail.css:368-371`); and the state-forcing rules in
+  `overlay-layer.css:33-34` that must beat inline styles.
+- Off-tier z-indexes via `calc()` (§3.5): the modal scrim at
+  `calc(var(--luxar-z-modal) - 1)` (`dataset-browser.css:18`), the debug
+  console at `calc(var(--luxar-z-base) + 50)` (`debug-console.css:31`), the
+  toast at `calc(var(--luxar-z-tooltip) + 1000)` (`toast.css:22`).
+- Untokenized z-index magnitudes with a stated reason: the recording panel's
+  `9999/10000/100000` (`recording-panel.css:80,132,225`), whose whole point is
+  to beat unknown third-party host UI (documented in that file's header). Small
+  local stacking indexes (`1/2/10` inside a positioned parent) are not layer
+  values at all and need no entry.
+
 ---
 
 ## 16. Keeping this guide authoritative
@@ -999,9 +1186,11 @@ the pattern to copy (§7.8 is).
 - Any PR that changes tokens (`theme-manager.ts`, `*.theme.ts`), the glass
   system, an icon contract, or a shared recipe **must update this guide in
   the same PR**.
-- Any new sanctioned exception (literal value, `!important`, extra z-index)
-  must be added to §15 with its justification.
-- When migrating drift out of §15, delete the entry.
+- Any new sanctioned exception — a literal standing in for a token value,
+  an `!important`, an off-tier z-index — must be added to **§15.6** with its
+  justification. (`var()` fallbacks and the §6.6 case are exempt; §13.)
+- When migrating drift out of **§15.1–15.5**, delete the entry. §15.6 is not
+  drift — leave it alone unless the exception itself goes away.
 - Cross-references: `src/styles/README.md` (CSS architecture),
   `src/themes/README.md` (theme system mechanics),
   `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md` (console voice),

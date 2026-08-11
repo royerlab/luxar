@@ -24,15 +24,17 @@ values are `text-primary`; the raw `rgba(0, 0, 0, …)` control fills in
   container, no overflow so liquid-glass pseudo-elements can paint
   outside the box), `.luxar-gui__scroll` (inner scrollable container
   with custom thin scrollbar), and the header / title / close-button /
-  children-container subblocks. Includes dark and light theme shadow
-  overrides; the glass themes live in `src/styles/themes/`.
+  children-container subblocks. Deliberately does **not** override
+  `--luxar-shadow-lg` per theme — it uses the same shadow token the control
+  rail does; the only `[data-theme]` block here is a light-theme background
+  override, and the glass themes live in `src/styles/themes/`.
 - `controller.css` — Per-controller widget styles. Covers
   `.luxar-gui__controller` (flex row with label + widget), the range
   slider (WebKit and Firefox thumb/track variants), number input
-  (fixed 52px width, monospace, accent-colored, spinner-stripped),
-  generic string input, checkbox, `<select>` (with explicit `option`
-  background/color rules so Linux GTK themes don't override contrast),
-  and primary button. Light-theme overrides at the bottom.
+  (fixed 52px width, monospace, `text-primary`, spinner-stripped),
+  generic string input, checkbox, `<select>` (its `option` colors are
+  centralized in `styles/components/select-menu.css`, the single sanctioned
+  place for them), and primary button. Light-theme overrides at the bottom.
 - `folder.css` — Nested folder styles. Defines `.luxar-gui__folder`
   (column flex), `.luxar-gui__folder-title` (clickable header),
   `.luxar-gui__folder-caret` (expand/collapse glyph), the indented

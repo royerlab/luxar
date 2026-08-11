@@ -7,7 +7,7 @@ Runtime theming system with CSS custom property injection, persistent user prefe
 ```
 ThemeManager (singleton)
 ├── Theme Registry — stores registered themes by ID
-├── CSS Variable Injector — applies theme as --luxar-* properties on :root
+├── CSS Variable Injector — inline --luxar-* props on document.documentElement
 ├── LocalStorage Persistence — remembers user's chosen theme
 └── Observer Pattern — notifies listeners on theme change
 ```
@@ -72,6 +72,9 @@ Each theme implements the `Theme` interface with these sections:
 - **Semantic**: success, warning, error, info, highlight
 - **Interactive**: default, hover, active, focus, disabled
 - **Border**: default, subtle, strong, focus
+- **Menu** (native `<option>` popups, deliberately opaque): background, text,
+  activeBackground, activeText — emitted as `--luxar-menu-bg`,
+  `--luxar-menu-fg`, `--luxar-menu-active-bg`, `--luxar-menu-active-fg`
 - **Visualization**: hot, warm, cold, neutral
 
 ### Typography
