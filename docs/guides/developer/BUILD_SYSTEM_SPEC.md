@@ -358,6 +358,8 @@ MIN_NODE_MINOR := 22
 | Command | Description |
 |---------|-------------|
 | `make build` | Build wheel + sdist (builds the viewer first so it is bundled) |
+| `make changelog-draft` | Preview the `changelog.d/` fold into `CHANGELOG.md`; changes nothing |
+| `make changelog` | Fold `changelog.d/*.md` fragments into `CHANGELOG.md` and delete them (`MONTH="August 2026"` pins the heading) |
 | `make set-version` | Set release version in code (`DATE=YYYY.MM.DD`, default today) |
 | `make release-check` | Dry-run release: run ALL preflight checks, tag/push nothing |
 | `make release` | Cut release: validate main + CI green, tag `v<version>`, push (triggers PyPI publish) |

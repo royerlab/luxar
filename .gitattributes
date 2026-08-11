@@ -8,3 +8,8 @@ packages/luxar/src/luxar/demos/data/**/*.zip filter=lfs diff=lfs merge=lfs -text
 packages/luxar/src/luxar/demos/data/*.parquet filter=lfs diff=lfs merge=lfs -text
 packages/luxar/src/luxar/demos/data/*.npz filter=lfs diff=lfs merge=lfs -text
 packages/luxar/src/luxar/demos/data/**/*.npz filter=lfs diff=lfs merge=lfs -text
+
+# CHANGELOG.md gets one entry per PR; under a moving main every rebase used to re-conflict
+# on it. Entries now live as per-PR files in changelog.d/ (folded at release), but the union
+# driver keeps BOTH sides' added lines so any direct edit during the transition still resolves.
+CHANGELOG.md merge=union
