@@ -693,6 +693,7 @@ def add_points_substitutive_lod_wrapper_impl(
         level_additive_lod,
     )
     from ..lod.points import resolve_additive_axis_points
+    from ..lod.reveal import preflight_reveal_centre
 
     # Resolve the streaming ladder ONCE for the whole group; each level is
     # specialized from it below. Default ON — a substitutive level is by
@@ -704,6 +705,12 @@ def add_points_substitutive_lod_wrapper_impl(
         # The multi-LOD writer has no image_labels channel, so laddering would
         # silently drop them. Refuse the ladder, not the labels.
         suppress_reason="image_labels is set" if image_labels is not None else None,
+    )
+    # Same reason as the channel check above: the finest child is written LAST, so
+    # a reveal_centre that does not match the DERIVED shell axes would otherwise
+    # raise once every coarse level is already on disk.
+    preflight_reveal_centre(
+        composed_additive, group._find_scene(), pos_arr, "positions"
     )
     compression_factor = int(spec["compression_factor"])
 

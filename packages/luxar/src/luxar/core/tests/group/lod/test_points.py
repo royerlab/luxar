@@ -526,6 +526,50 @@ class TestResolveRevealKnobs:
                 )
         assert not (output / "p").exists()
 
+    def test_derived_shell_axes_write_no_partial_group(self, tmp_path) -> None:
+        """The same trap when ``spatial_dims`` is DERIVED rather than named.
+
+        The resolve-time cross-check above can only fire when the caller gives
+        BOTH knobs — a derived value is not known until the data is in hand. So a
+        PLANAR 3D cloud, whose non-zero-extent columns are ``[0, 1]``, turned the
+        perfectly natural 3-coordinate centre into a raise at ``p/child_2`` with
+        ``child_0`` and ``child_1`` already written. The wrapper now cross-checks
+        against the axes the scorer will really use, before the lift.
+        """
+        output = tmp_path / "t.luxar.zarr"
+        positions = np.random.RandomState(0).rand(200, 3).astype(np.float32)
+        positions[:, 2] = 7.0  # constant column -> zero extent -> shell axes [0, 1]
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="shell axes resolve to"):
+                scene.add_points(
+                    "p",
+                    positions,
+                    substitutive_lod={"levels": 2, "compression_factor": 4},
+                    additive_lod={
+                        "method": "radial",
+                        "reveal_centre": [0.0, 0.0, 7.0],
+                    },
+                )
+        assert not (output / "p").exists()
+
+    def test_derived_shell_axes_accept_a_matching_centre(self, tmp_path) -> None:
+        """SENSITIVITY CONTROL for the test above: the same planar cloud with a
+        centre of the right length builds the whole group, so the guard rejects a
+        mismatch rather than every explicit centre."""
+        output = tmp_path / "t.luxar.zarr"
+        positions = np.random.RandomState(0).rand(200, 3).astype(np.float32)
+        positions[:, 2] = 7.0
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "p",
+                positions,
+                substitutive_lod={"levels": 2, "compression_factor": 4},
+                additive_lod={"method": "radial", "reveal_centre": [0.5, 0.5]},
+            )
+        assert (output / "p" / "child_2").exists()
+
     def test_unknown_key_still_reported_after_popping_reveal_keys(self) -> None:
         """The reveal keys are POPPED, so the leftover-keys check must still fire
         for a genuinely unknown name (a mutation that popped too much would hide

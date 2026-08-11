@@ -1034,6 +1034,57 @@ class TestRevealSpatialDimsFromSceneLines:
             atol=1e-2,
         )
 
+    def test_derived_shell_axes_write_no_partial_group(self, tmp_path) -> None:
+        """A mismatched ``reveal_centre`` must not strand a partial LOD group.
+
+        The resolver can only cross-check the centre against ``spatial_dims``
+        when the caller names both; here the axes are DERIVED. A planar cloud
+        (constant z) resolves to shell axes ``[0, 1]``, so the natural
+        3-coordinate centre used to raise inside the scorer — which for a
+        substitutive ladder runs while writing the FINEST child, after the
+        wrapper group and every coarse gsplat child are on disk.
+
+        For Lines the derivation runs over the per-polyline bbox CENTRES (the
+        scorer ranks whole polylines), which is what the wrapper now checks.
+        """
+        rng = np.random.RandomState(0)
+        verts = np.zeros((200, 3), dtype=np.float32)
+        verts[:, 0] = rng.uniform(-50, 50, 200)
+        verts[:, 1] = rng.uniform(-50, 50, 200)
+        verts[:, 2] = 7.0  # constant column -> zero extent -> shell axes [0, 1]
+        widths = np.full(len(verts), 0.5, np.float32)
+
+        output = tmp_path / "reveal_lines_partial.luxar.zarr"
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="shell axes resolve to"):
+                scene.add_lines(
+                    "ln",
+                    verts,
+                    widths=widths,
+                    line_type="segments",
+                    substitutive_lod={"levels": 2, "compression_factor": 4},
+                    additive_lod={
+                        "method": "radial",
+                        "reveal_centre": [0.0, 0.0, 7.0],
+                    },
+                )
+        assert not (output / "ln").exists()
+
+        # SENSITIVITY CONTROL: a centre of the matching length still builds.
+        ok = tmp_path / "reveal_lines_ok.luxar.zarr"
+        with LuxarZarrCompiler(ok) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "ln",
+                verts,
+                widths=widths,
+                line_type="segments",
+                substitutive_lod={"levels": 2, "compression_factor": 4},
+                additive_lod={"method": "radial", "reveal_centre": [0.0, 0.0]},
+            )
+        assert (ok / "ln" / "child_2").exists()
+
     def test_control_the_extent_rule_alone_mixes_the_shells(self) -> None:
         """Sensitivity control on identical data, through the bare-array API."""
         verts = self._verts()

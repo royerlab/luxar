@@ -978,6 +978,24 @@ def add_lines_substitutive_lod_wrapper_impl(
             else None
         ),
     )
+    # Same reason as the channel check above: the finest child is written LAST, so
+    # a reveal_centre that does not match the DERIVED shell axes would otherwise
+    # raise once every coarse level is already on disk. The scorer ranks whole
+    # polylines, so the array whose extent decides the shell axes is the per-
+    # polyline bbox CENTRES, not the vertices.
+    if composed_additive is not None:
+        from ..lod.lines import identify_polylines, polyline_bbox_centres
+        from ..lod.reveal import preflight_reveal_centre
+
+        preflight_reveal_centre(
+            composed_additive,
+            group._find_scene(),
+            polyline_bbox_centres(
+                vert_arr,
+                identify_polylines(int(vert_arr.shape[0]), line_type, indices),
+            ),
+            "vertices",
+        )
     compression_factor = int(spec["compression_factor"])
 
     # Scalar+colormap lines: pass scalars+colormap THROUGH to the lift, which

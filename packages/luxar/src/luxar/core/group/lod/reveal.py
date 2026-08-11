@@ -232,6 +232,49 @@ def resolve_reveal_centre(
     return [float(c) for c in 0.5 * (pts.min(axis=0) + pts.max(axis=0))]
 
 
+def preflight_reveal_centre(
+    spec: Optional[Dict[str, Any]], scene: Any, coords: NDArray, what: str
+) -> None:
+    """Cross-check an explicit ``reveal_centre`` against the axes it will pair with.
+
+    :func:`pop_reveal_knobs` already does this when the caller names BOTH knobs,
+    but it cannot when ``spatial_dims`` is left to be DERIVED — from the scene's
+    displayed dims, or from non-zero extent — because that needs the data. So the
+    mismatch surfaced inside :func:`radial_element_score`, which under a
+    substitutive ladder runs while writing the FINEST child, i.e. after the
+    wrapper ``kind=lod`` group and every coarse child are already on disk.
+    Measured: a 3D scene whose points are planar (one constant column) derives
+    shell axes ``[0, 1]``, so the natural 3-coordinate centre raised only at
+    ``child_2``, stranding ``child_0``/``child_1`` and making a corrected retry
+    die on "duplicate child name".
+
+    Called by the two substitutive wrappers BEFORE the lift, with the same array
+    and the same resolver the finest child will use, so it cannot drift from the
+    scorer: the derivation IS :func:`_validated_score_dims`. That also brings the
+    finite-coordinate check forward, which was late for the same reason.
+    """
+    if not spec:
+        return
+    centre = spec.get("reveal_centre")
+    if centre is None or not is_reveal_additive_method(str(spec.get("method"))):
+        return
+    arr = np.asarray(coords, dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[0] == 0 or arr.shape[1] == 0:
+        # Degenerate shapes have their own (better) messages downstream, and the
+        # element callers return early at n == 0 rather than scoring at all.
+        return
+    dims = _validated_score_dims(
+        arr, resolve_reveal_spatial_dims(spec, scene, int(arr.shape[1])), what
+    )
+    if len(centre) != len(dims):
+        raise ValueError(
+            f"reveal_centre has {len(centre)} coordinates but the shell axes "
+            f"resolve to {[int(d) for d in dims]} ({len(dims)} axes); they must "
+            f"match (one coordinate per shell axis). Pass spatial_dims= to name "
+            f"the axes explicitly."
+        )
+
+
 def radial_element_score(
     coords: NDArray,
     centre: Optional[List[float]] = None,
