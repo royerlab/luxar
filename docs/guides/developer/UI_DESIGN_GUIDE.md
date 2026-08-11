@@ -206,13 +206,16 @@ Key color differences:
 | | dark | light | frosted-glass | liquid-glass |
 | --- | --- | --- | --- | --- |
 | `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(255,255,255,0.12)` | `rgba(255,255,255,0.15)` |
-| `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(88,86,214,1)` (purple) | `rgba(88,86,214,1)` (purple) |
+| `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(0,160,255,1)` (blue) | `rgba(0,160,255,1)` (blue) |
 | `border.focus` | green `rgba(76,175,80,0.5)` | green | **blue** `rgba(0,122,255,0.6)` | **blue** `rgba(0,122,255,0.5)` |
 | `interactive.*` base | white alpha | black alpha | white alpha | bluish-gray `rgba(120,120,128,…)` |
 | `menu.background` | `#1e1e1e` | `#ffffff` | `#1a1a1a` (opaque!) | `#1a1a1a` (opaque!) |
 
 Design consequences:
 
+- `highlight` is the same bright brand blue in dark and both glass themes
+  (unified in #1480 — the glass themes' original indigo sat at ~1.6:1 against
+  a dark glass panel); light uses a darker blue for contrast on white.
 - **Never assume the focus ring is green** — it is green in dark/light and
   blue in the glass themes. Always use `--luxar-border-focus` /
   `--luxar-interactive-focus`; never hardcode a green.
