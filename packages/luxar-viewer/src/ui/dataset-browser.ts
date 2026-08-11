@@ -2,12 +2,16 @@
  * Dataset browser UI panel for navigating and selecting Zarr datasets.
  *
  * Provides a user-friendly interface for browsing directories and loading
- * Zarr datasets from various server types.
+ * Zarr datasets from various server types. Styled after the viewer's
+ * "quiet instrument" design language (control rail / help overlay): glass
+ * surface, tick-motif header, stroke icons, and the blue highlight accent
+ * for interactive states.
  */
 
 import { DirectoryNavigator, type DirectoryEntry } from '../data';
 import { escapeHtml } from '../utils/escape-html';
 import { extractBaseUrl, extractPath } from './dataset-browser/url-utils';
+import { BROWSER_ICONS } from './dataset-browser/icons';
 import { log, Modules } from '../utils/log';
 import { showToast } from './toast';
 
@@ -63,10 +67,16 @@ export interface DatasetBrowserConfig {
  * renders directory entries, and fires `onDatasetSelect` with the full dataset
  * URL when a `.zarr` is chosen. Navigation uses a generation token so stale
  * async responses from abandoned directories are discarded rather than rendered.
+ *
+ * A dimming scrim is mounted behind the panel (click-to-close), the listing is
+ * arrow-key navigable, and the breadcrumb row hosts an inline "enter path
+ * manually" editor so a path/URL can always be typed — not only when the
+ * server falls back to the `manual` detection strategy.
  */
 export class DatasetBrowser {
   private container: HTMLElement;
   private panel: HTMLElement;
+  private scrim: HTMLElement;
   private navigator: DirectoryNavigator;
   private onDatasetSelect: (fullUrl: string) => void | Promise<void>;
   private onClose?: () => void;
@@ -95,6 +105,15 @@ export class DatasetBrowser {
 
   /** Live filter text from the search bar; matched case-insensitively against entry names. */
   private filterText = '';
+
+  /** Path of the current (last successfully rendered) directory — seeds the inline path editor. */
+  private currentPath = '';
+
+  /** Path of the most recent `navigate()` attempt — target for the error-state Retry button. */
+  private lastAttemptedPath = '';
+
+  /** One-shot: focus the filter field after the first successful listing render. */
+  private initialFocusDone = false;
 
   constructor(config: DatasetBrowserConfig) {
     this.container = config.container;
@@ -147,6 +166,7 @@ export class DatasetBrowser {
     }
 
     this.navigator = new DirectoryNavigator(baseUrl);
+    this.scrim = this.createScrim();
     this.panel = this.createPanel();
 
     // Start navigation at the determined path
@@ -169,6 +189,20 @@ export class DatasetBrowser {
   }
 
   /**
+   * Create the dimming scrim mounted behind the panel. Clicking it closes
+   * the browser (standard modal affordance); it fades in with the panel
+   * and is removed together with it in `close()`.
+   */
+  private createScrim(): HTMLElement {
+    const scrim = document.createElement('div');
+    scrim.className = 'luxar-dataset-browser-scrim';
+    scrim.setAttribute('aria-hidden', 'true');
+    scrim.onclick = () => this.close();
+    this.container.appendChild(scrim);
+    return scrim;
+  }
+
+  /**
    * Create the browser panel UI.
    */
   private createPanel(): HTMLElement {
@@ -181,7 +215,7 @@ export class DatasetBrowser {
     panel.setAttribute('aria-modal', 'true');
     panel.setAttribute('aria-labelledby', 'luxar-dataset-browser-title');
 
-    // Header
+    // Header — tick-motif micro-header (title row) + quiet tagline row.
     const header = document.createElement('div');
     header.className = 'luxar-dataset-browser__header';
 
@@ -191,8 +225,9 @@ export class DatasetBrowser {
     title.textContent = 'Select Dataset';
 
     const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
     closeBtn.className = 'luxar-dataset-browser__close-btn';
-    closeBtn.textContent = '×';
+    closeBtn.innerHTML = BROWSER_ICONS.close;
     closeBtn.title = 'Close (Escape)';
     closeBtn.setAttribute('aria-label', 'Close dataset browser');
     closeBtn.onclick = () => this.close();
@@ -200,7 +235,8 @@ export class DatasetBrowser {
     header.appendChild(title);
     header.appendChild(closeBtn);
 
-    // Compact help banner with essential guidance
+    // Compact tagline row with essential guidance (kept quiet — no accent
+    // wash). The element id + text content are pinned by first-time-UX E2E.
     const welcomeBanner = document.createElement('div');
     welcomeBanner.id = 'luxar-dataset-browser-welcome';
     welcomeBanner.className = 'luxar-dataset-browser__banner';
@@ -208,7 +244,7 @@ export class DatasetBrowser {
     welcomeBanner.innerHTML = `
       <div class="luxar-dataset-browser__banner-content">
         <div class="luxar-dataset-browser__banner-text">
-          <div><strong class="luxar-dataset-browser__banner-title">Luxar</strong> - Interactive Scientific Data Visualization</div>
+          <div class="luxar-dataset-browser__banner-tagline"><strong class="luxar-dataset-browser__banner-title">Luxar</strong> — Interactive Scientific Data Visualization</div>
           <div class="luxar-dataset-browser__banner-description">Browse for <code class="luxar-dataset-browser__banner-code">.zarr</code> or enter path manually</div>
         </div>
         <div class="luxar-dataset-browser__banner-help">
@@ -217,7 +253,7 @@ export class DatasetBrowser {
       </div>
     `;
 
-    // Breadcrumb navigation
+    // Breadcrumb navigation (+ inline path editor toggle at its right edge)
     const breadcrumb = document.createElement('div');
     breadcrumb.id = 'luxar-dataset-browser-breadcrumb';
     breadcrumb.className = 'luxar-dataset-browser__breadcrumb';
@@ -228,6 +264,10 @@ export class DatasetBrowser {
     const search = document.createElement('div');
     search.id = 'luxar-dataset-browser-search-bar';
     search.className = 'luxar-dataset-browser__search';
+    const searchIcon = document.createElement('span');
+    searchIcon.className = 'luxar-dataset-browser__search-icon';
+    searchIcon.innerHTML = BROWSER_ICONS.search;
+    searchIcon.setAttribute('aria-hidden', 'true');
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
     searchInput.id = 'luxar-dataset-browser-search';
@@ -239,6 +279,17 @@ export class DatasetBrowser {
       this.filterText = searchInput.value;
       this.renderEntries();
     };
+    // ArrowDown hands focus from the filter to the first row of the listing.
+    searchInput.onkeydown = (e) => {
+      if (e.key === 'ArrowDown') {
+        const first = this.panel.querySelector<HTMLElement>('.luxar-dataset-browser__file-item');
+        if (first) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    search.appendChild(searchIcon);
     search.appendChild(searchInput);
 
     // Content area
@@ -277,10 +328,17 @@ export class DatasetBrowser {
     const statusBar = this.panel.querySelector('#luxar-dataset-browser-status') as HTMLElement;
 
     const myGeneration = ++this.navigationGeneration;
+    this.lastAttemptedPath = path;
 
-    // Show loading state. Hide the search bar while loading; renderEntries
-    // re-shows it once we have a non-empty listing to filter.
-    content.innerHTML = '<div class="luxar-dataset-browser__loading">Loading...</div>';
+    // Show loading state (skeleton rows). Hide the search bar while loading;
+    // renderEntries re-shows it once we have a non-empty listing to filter.
+    content.innerHTML = `
+      <div class="luxar-dataset-browser__loading" role="status" aria-label="Loading directory contents">
+        <div class="luxar-dataset-browser__skeleton-row"></div>
+        <div class="luxar-dataset-browser__skeleton-row"></div>
+        <div class="luxar-dataset-browser__skeleton-row"></div>
+      </div>
+    `;
     statusBar.textContent = 'Fetching directory contents...';
     this.setSearchVisible(false);
 
@@ -292,6 +350,7 @@ export class DatasetBrowser {
       if (this.navigationGeneration !== myGeneration) return;
 
       // Update breadcrumb
+      this.currentPath = result.currentPath;
       this.updateBreadcrumb(result.currentPath);
 
       // If it's a Zarr dataset, load it directly
@@ -325,20 +384,30 @@ export class DatasetBrowser {
       if (this.navigationGeneration !== myGeneration) return;
       content.innerHTML = `
         <div class="luxar-dataset-browser__error">
-          <p>Failed to load directory</p>
+          <span class="luxar-dataset-browser__error-icon" aria-hidden="true">${BROWSER_ICONS.alert}</span>
+          <p class="luxar-dataset-browser__error-title">Failed to load directory</p>
           <p class="luxar-dataset-browser__error-details">${escapeHtml(String(error))}</p>
+          <button type="button" class="luxar-dataset-browser__error-retry">Retry</button>
         </div>
       `;
+      const retry = content.querySelector(
+        '.luxar-dataset-browser__error-retry'
+      ) as HTMLButtonElement | null;
+      if (retry) retry.onclick = () => this.navigate(this.lastAttemptedPath);
       statusBar.textContent = 'Error loading directory';
     }
   }
 
   /**
-   * Update breadcrumb navigation.
+   * Update breadcrumb navigation. Rebuilds the crumb trail and the
+   * "enter path manually" toggle (which swaps the row for an inline editor).
    */
   private updateBreadcrumb(currentPath: string): void {
     const breadcrumb = this.panel.querySelector('#luxar-dataset-browser-breadcrumb') as HTMLElement;
     breadcrumb.innerHTML = '';
+
+    const crumbs = document.createElement('div');
+    crumbs.className = 'luxar-dataset-browser__breadcrumb-trail';
 
     // Root link — `<button type="button">` so the breadcrumb is keyboard-
     // focusable (anchors without href aren't) and Enter/Space activate
@@ -347,9 +416,9 @@ export class DatasetBrowser {
     const rootLink = document.createElement('button');
     rootLink.type = 'button';
     rootLink.className = 'luxar-dataset-browser__breadcrumb-link';
-    rootLink.textContent = 'Root';
+    rootLink.innerHTML = `<span class="luxar-dataset-browser__breadcrumb-home" aria-hidden="true">${BROWSER_ICONS.home}</span>Root`;
     rootLink.onclick = () => this.navigate('');
-    breadcrumb.appendChild(rootLink);
+    crumbs.appendChild(rootLink);
 
     // Path segments
     if (currentPath) {
@@ -362,7 +431,7 @@ export class DatasetBrowser {
         sep.className = 'luxar-dataset-browser__breadcrumb-separator';
         sep.textContent = '›';
         sep.setAttribute('aria-hidden', 'true');
-        breadcrumb.appendChild(sep);
+        crumbs.appendChild(sep);
 
         accumulated += (accumulated ? '/' : '') + part;
         const pathToNavigate = accumulated;
@@ -373,7 +442,7 @@ export class DatasetBrowser {
           current.className = 'luxar-dataset-browser__breadcrumb-current';
           current.textContent = part;
           current.setAttribute('aria-current', 'location');
-          breadcrumb.appendChild(current);
+          crumbs.appendChild(current);
         } else {
           // Clickable parent — same a11y rationale as the Root button above.
           const link = document.createElement('button');
@@ -381,10 +450,96 @@ export class DatasetBrowser {
           link.className = 'luxar-dataset-browser__breadcrumb-link';
           link.textContent = part;
           link.onclick = () => this.navigate(pathToNavigate);
-          breadcrumb.appendChild(link);
+          crumbs.appendChild(link);
         }
       });
     }
+
+    breadcrumb.appendChild(crumbs);
+
+    // Path-editor toggle: manual entry is always one click away, not only
+    // when the server's listing detection falls back to `manual`.
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.id = 'luxar-dataset-browser-path-edit';
+    editBtn.className = 'luxar-dataset-browser__path-edit';
+    editBtn.innerHTML = BROWSER_ICONS.edit;
+    editBtn.title = 'Enter path manually';
+    editBtn.setAttribute('aria-label', 'Enter dataset path manually');
+    editBtn.onclick = () => this.openPathEditor();
+    breadcrumb.appendChild(editBtn);
+  }
+
+  /**
+   * Swap the breadcrumb row for an inline path editor (mono input seeded
+   * with the current path). Enter commits — a value containing `.zarr`
+   * (or a full URL) is selected as a dataset, anything else is navigated
+   * to; Escape or blur restores the crumb trail.
+   */
+  private openPathEditor(): void {
+    const breadcrumb = this.panel.querySelector('#luxar-dataset-browser-breadcrumb') as HTMLElement;
+    breadcrumb.innerHTML = '';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'luxar-dataset-browser__path-input';
+    input.value = this.currentPath;
+    input.placeholder = 'path/to/dataset.zarr or full URL';
+    input.setAttribute('aria-label', 'Dataset path or URL');
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+
+    const cancel = (): void => this.updateBreadcrumb(this.currentPath);
+
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.commitPathEditor(input.value);
+      } else if (e.key === 'Escape') {
+        // Keep Escape local: restore the crumbs without closing the dialog.
+        e.preventDefault();
+        e.stopPropagation();
+        cancel();
+      }
+    };
+    input.onblur = () => {
+      // Restore the trail when focus leaves without committing. Deferred a
+      // tick so an Enter-commit close doesn't race the blur restore.
+      setTimeout(() => {
+        if (input.isConnected) cancel();
+      }, 0);
+    };
+
+    breadcrumb.appendChild(input);
+    input.focus();
+    input.select();
+  }
+
+  /**
+   * Commit the inline path editor's value (see {@link openPathEditor}).
+   *
+   * Full URLs are selected as-is (parity with the manual-entry form). A
+   * relative path is selected only when it deliberately names a `.zarr`
+   * directory — i.e. its last path segment ends with `.zarr` (trailing
+   * slashes ignored). A mere `.zarr` substring (`archives.zarr-backup`,
+   * `foo.zarr.zip`) is NOT a dataset; those navigate instead, and
+   * `navigate()` still auto-selects if the server reports a real zarr.
+   */
+  private commitPathEditor(raw: string): void {
+    const path = raw.trim();
+    if (!path) {
+      this.updateBreadcrumb(this.currentPath);
+      return;
+    }
+    const isFullUrl = path.startsWith('http://') || path.startsWith('https://');
+    const endsWithZarr = path.replace(/\/+$/, '').endsWith('.zarr');
+    if (isFullUrl || endsWithZarr) {
+      const fullUrl = isFullUrl ? path : this.navigator.getFullUrl(path);
+      safeFireSelect(this.onDatasetSelect, fullUrl);
+      this.close();
+      return;
+    }
+    this.navigate(path);
   }
 
   /**
@@ -444,7 +599,7 @@ export class DatasetBrowser {
         : `${total} item${total === 1 ? '' : 's'}`;
     statusBar.innerHTML = `
       <span>${countLabel}</span>
-      <span>Detection: ${strategyText}</span>
+      <span class="luxar-dataset-browser__status-detection" title="Directory listing via ${escapeHtml(strategyText)}">${escapeHtml(strategyText)}</span>
     `;
 
     // Only offer the filter when there's an actual listing to narrow.
@@ -453,12 +608,23 @@ export class DatasetBrowser {
     this.setSearchVisible(total > 0);
 
     if (total === 0) {
-      content.innerHTML = '<div class="luxar-dataset-browser__empty">Empty directory</div>';
+      content.innerHTML = `
+        <div class="luxar-dataset-browser__empty">
+          <span class="luxar-dataset-browser__empty-icon" aria-hidden="true">${BROWSER_ICONS.folder}</span>
+          <p class="luxar-dataset-browser__empty-title">No datasets here</p>
+          <p class="luxar-dataset-browser__empty-hint">This directory is empty — browse elsewhere or enter a path.</p>
+          <button type="button" class="luxar-dataset-browser__empty-action">Enter path…</button>
+        </div>
+      `;
+      const action = content.querySelector(
+        '.luxar-dataset-browser__empty-action'
+      ) as HTMLButtonElement | null;
+      if (action) action.onclick = () => this.openPathEditor();
       return;
     }
 
     if (entries.length === 0) {
-      content.innerHTML = `<div class="luxar-dataset-browser__empty">No matches for “${escapeHtml(this.filterText.trim())}”</div>`;
+      content.innerHTML = `<div class="luxar-dataset-browser__empty"><p class="luxar-dataset-browser__empty-title">No matches for “${escapeHtml(this.filterText.trim())}”</p></div>`;
       return;
     }
 
@@ -475,6 +641,30 @@ export class DatasetBrowser {
     // Create entry list
     const list = document.createElement('div');
     list.className = 'luxar-dataset-browser__file-list';
+
+    // Arrow-key navigation between rows (the rows are plain focusables, so
+    // Tab order alone would make long listings tedious).
+    list.onkeydown = (e) => {
+      const target = e.target as HTMLElement;
+      if (!target.classList.contains('luxar-dataset-browser__file-item')) return;
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') {
+        return;
+      }
+      // Swallow the default for every handled key — even at the list
+      // boundaries where focus doesn't move — so ArrowUp on the first row
+      // (or ArrowDown on the last) doesn't scroll the content area.
+      e.preventDefault();
+      const items = Array.from(
+        list.querySelectorAll<HTMLElement>('.luxar-dataset-browser__file-item')
+      );
+      const index = items.indexOf(target);
+      let next = index;
+      if (e.key === 'ArrowDown') next = Math.min(index + 1, items.length - 1);
+      else if (e.key === 'ArrowUp') next = Math.max(index - 1, 0);
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = items.length - 1;
+      if (next !== index) items[next].focus();
+    };
 
     sorted.forEach((entry) => {
       const item = document.createElement('div');
@@ -499,18 +689,18 @@ export class DatasetBrowser {
             : entry.name;
       item.setAttribute('aria-label', ariaLabel);
 
-      // Icon
+      // Icon — stroke SVG in the rail's register (was emoji).
       const icon = document.createElement('span');
       icon.className = 'luxar-dataset-browser__file-icon';
       if (entry.type === 'zarr') {
-        // Use the Luxar emoji icon
-        icon.textContent = '🌌';
+        icon.classList.add('luxar-dataset-browser__file-icon--zarr');
+        icon.innerHTML = BROWSER_ICONS.zarr;
         icon.title = 'Zarr Dataset';
       } else if (entry.type === 'directory') {
-        icon.textContent = '📁';
+        icon.innerHTML = BROWSER_ICONS.folder;
         icon.title = 'Directory';
       } else {
-        icon.textContent = '📄';
+        icon.innerHTML = BROWSER_ICONS.file;
         icon.title = 'File';
       }
 
@@ -518,6 +708,9 @@ export class DatasetBrowser {
       const name = document.createElement('span');
       name.className = 'luxar-dataset-browser__file-name';
       name.textContent = entry.name;
+
+      item.appendChild(icon);
+      item.appendChild(name);
 
       // Type badge and current indicator
       if (entry.type === 'zarr') {
@@ -539,12 +732,14 @@ export class DatasetBrowser {
           badgeContainer.appendChild(currentBadge);
         }
 
-        item.appendChild(icon);
-        item.appendChild(name);
         item.appendChild(badgeContainer);
-      } else {
-        item.appendChild(icon);
-        item.appendChild(name);
+      } else if (entry.type === 'directory') {
+        // Quiet "navigates deeper" affordance.
+        const chevron = document.createElement('span');
+        chevron.className = 'luxar-dataset-browser__chevron';
+        chevron.innerHTML = BROWSER_ICONS.chevron;
+        chevron.setAttribute('aria-hidden', 'true');
+        item.appendChild(chevron);
       }
 
       // Click handler
@@ -569,6 +764,24 @@ export class DatasetBrowser {
     });
 
     content.appendChild(list);
+
+    // First successful listing: hand focus to the filter field so typing
+    // narrows immediately (ArrowDown moves into the list). One-shot so
+    // later re-renders never steal focus mid-interaction — and only when
+    // focus is still unclaimed (body or the panel shell): the listing
+    // arrives asynchronously, and a user who already focused the close
+    // button or a breadcrumb must not have focus yanked away.
+    if (!this.initialFocusDone && total > 0) {
+      this.initialFocusDone = true;
+      const active = document.activeElement;
+      const focusUnclaimed = !active || active === document.body || active === this.panel;
+      if (focusUnclaimed) {
+        const searchInput = this.panel.querySelector(
+          '#luxar-dataset-browser-search'
+        ) as HTMLInputElement | null;
+        searchInput?.focus();
+      }
+    }
   }
 
   /**
@@ -624,6 +837,7 @@ export class DatasetBrowser {
    * Show the browser panel.
    */
   show(): void {
+    this.scrim.style.display = '';
     this.panel.style.display = 'flex';
   }
 
@@ -631,6 +845,7 @@ export class DatasetBrowser {
    * Hide the browser panel.
    */
   hide(): void {
+    this.scrim.style.display = 'none';
     this.panel.style.display = 'none';
   }
 
@@ -651,6 +866,7 @@ export class DatasetBrowser {
     if (this.onClose) {
       this.onClose();
     }
+    this.scrim.remove();
     this.panel.remove();
   }
 }
