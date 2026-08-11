@@ -39,7 +39,7 @@ import type { NodeBuildCtx } from './build-ctx';
 export interface MeshCheapLoad {
   /** The empty placeholder mesh, already attached to the parent. */
   placeholder: THREE.Mesh;
-  /** The constructed loader (NOT yet registered — the expensive half does that). */
+  /** The constructed loader (NOT yet registered — the caller registers it). */
   loader: MeshDataLoader;
 }
 
@@ -91,10 +91,12 @@ export async function loadMeshNodeCheap(
  * Deliberately does NOT register the loader — that is the EAGER caller's job (see
  * {@link loadMeshNode}), exactly as in the three sibling loaders. A lazy LOD level
  * must stay out of the per-slice update sweep: the registry drives its reloads on a
- * settled slice change, and a registered level would additionally be re-fetched and
- * re-committed by the sweep on every scrub — including while it is hidden, and
- * concurrently with the registry's own `ensureLoaded`. Gating each scrub on
- * projecting the full-resolution surface is precisely what deferring it avoids.
+ * settled slice change, and a registered level would additionally be re-projected
+ * and re-committed by the sweep on every scrub — including while it is hidden, and
+ * concurrently with the registry's own `ensureLoaded`. (Not re-FETCHED: the
+ * whole-node loader serves every later `updateView` from its one cached decode.)
+ * Gating each scrub on projecting the full-resolution surface is precisely what
+ * deferring it avoids.
  */
 export async function loadMeshNodeExpensive(
   node: SceneNode,

@@ -90,12 +90,16 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * and mesh defer paths so the ready/failed/loading state machine and the
  * abort-discard error handling live in exactly one place.
  *
- * **Lazy levels never join the per-slice update sweep.** ``runExpensive``
+ * **Lazy LEAF levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload
  * on a slice change once the scrub settles (``LODGroupRegistry.maybeKickReload``).
  * Keeping a fine level out of the sweep is what lets the cheap coarse (eager)
  * level commit a new timepoint immediately instead of being gated behind the
- * slow fine reload.
+ * slow fine reload. The deferred-GROUP caller below is the one exception, and
+ * only from activation onwards: its ``runExpensive`` is the ``loadChildren``
+ * recursion, whose nested leaf loaders register themselves exactly as they would
+ * anywhere else. The placeholder this function holds is never registered either
+ * way.
  */
 function attachLazyChild(
   placeholder: THREE.Object3D,
@@ -351,8 +355,9 @@ export async function loadLodGroupNode(
     const canDefer = hasRegistry && i !== eagerIdx && supportsLod(child.type);
 
     if (canDefer) {
-      // Cheap-attach: placeholder mesh + loader, no array fetch. The thunk runs
-      // the expensive tail (and registration) on first activation.
+      // Cheap-attach: placeholder mesh + loader, no array fetch. The activation
+      // thunk runs the expensive tail ONLY: registration stays on the eager
+      // `loadXNode` path, so a lazy level never joins the per-slice sweep.
       const lazyChild = child;
       let entryChild: LODGroupChild;
       if (child.type === 'gsplats') {
@@ -459,8 +464,8 @@ export async function loadLodGroupNode(
     // Geometry-agnostic by construction: it branches on the wrapper's *kind*
     // (lod/partition), never on the inner leaf type, and the load runs through
     // the same ``loadChildren`` recursion as any other node — so a
-    // partition/lod nesting of points or lines defers identically to gsplats
-    // (the three node types stay symmetric here; see the parametrized test).
+    // partition/lod nesting of points, lines or mesh defers identically to
+    // gsplats (all four stay symmetric here; see the parametrized test).
     //
     // A per-child transform would make the transform-less placeholder
     // mis-project its bounds, so those (rare) fall through to the eager path

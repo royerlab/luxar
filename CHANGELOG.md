@@ -72,6 +72,45 @@ backend. It is gated on the `apiSurface` instead, since a page that drops all
 the way to a plain `WebGLRenderer` takes the other arm. Retitled and commented
 so it claims nothing about WGSL.
 
+#### Tests — a lazy mesh LOD level is pinned out of the per-slice sweep (#1356)
+
+A mesh LOD level that registers its loader joins the scene-wide `updateView`
+sweep, which then re-projects and re-commits the full-resolution surface on every
+scrub — even while the level is hidden — and gates the cheap coarse level's new
+timepoint behind it. (Re-projects, not re-fetches: the whole-node loader serves
+every later `updateView` from its one cached decode. Two neighbouring comments
+overstated this as a re-fetch and are corrected here too.) That is the exact
+failure deferring the level exists to avoid, and #1356 reported it against the
+mesh cheap/expensive split.
+
+The registration itself is already correct: #1351 landed with
+`registerMeshLoader` in the eager `loadMeshNode`'s `finally`, symmetric with the
+three sibling loaders, and `load-mesh-node.test.ts` pins the three timing cases
+against the real loader functions and a real registry — that spec, not this
+change, is what would fail if the defect were re-introduced. What was missing was the other
+half of the chain. The lod-group spec's registry stub had no `registerMeshLoader`
+at all, so the mesh defer test could not make the negative assertion its
+gsplats/points/lines peers already make, and a regression in the wrapper would
+have surfaced as `not a function` rather than a named invariant. It now asserts
+it, before activation and again after the level reaches `ready`; the second is
+not redundant, since only it can see a register call made from inside the shared
+`attachLazyChild` thunk. The nested-group symmetry parametrization is widened
+from three geometry types to four for the same reason.
+
+Two comments said the opposite of what the code does, which is how the report
+came about: the lod-group defer branch claimed the activation thunk runs "the
+expensive tail (and registration)", and `MeshCheapLoad.loader` claimed "the
+expensive half" registers. Neither is true of any of the four loaders. A third
+overstated its scope rather than inverting it: `attachLazyChild`'s doc claimed no
+lazy level ever joins the sweep, which is true of a lazy LEAF but not of a
+deferred nested GROUP — that one's `runExpensive` is the `loadChildren`
+recursion, so its subtree leaves register themselves on activation like any other
+leaf.
+
+One more mesh coverage residual, in the same vein: the freshness helpers' `isFresh`
+type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
+which has counted mesh since it became a legal ladder level. Widened to four.
+
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 
 Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,
