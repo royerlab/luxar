@@ -178,6 +178,19 @@ class Scene(Group):
 
         return analyze_extend_candidates(self, positions)
 
+    def _validate_dimension_count(
+        self,
+        positions: np.ndarray,
+        node_name: str,
+        data_type: str = "positions",
+    ) -> None:
+        # No _stacklevel counterpart: this half only raises, and a raise
+        # carries its own traceback (stacklevel matters solely for the
+        # per-dimension range warning in _validate_data_dimensions).
+        from .validation import validate_dimension_count
+
+        validate_dimension_count(self, positions, node_name, data_type)
+
     def _validate_data_dimensions(
         self,
         positions: np.ndarray,

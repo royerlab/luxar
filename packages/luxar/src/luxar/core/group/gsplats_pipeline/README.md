@@ -76,7 +76,13 @@ Both functions produce a `GSplatData` and hand it to
   per-part `add_gsplats_from_file` of an ordinary ladder store never reaches here
   — it is matrix-shaped and anchored by `lod_dispatch`. The scene-side term is a
   defensive fallback for a hand-built / nested lod-of-lods tree, which no library
-  producer writes today.
+  producer writes today. Before it grafts, it checks the STORED tree's column count
+  against the scene (#1446), below the `dim_order` / `fill` / `fill_sigma` refusal
+  the graft path already raises: the chain is built from the on-disk tree before the
+  first leaf is added, so without that check a mismatched store refused from inside
+  `part_0` / `child_0` and left a childless wrapper behind. One leaf answers for the
+  whole subtree — a graft applies no `dim_order`, and both container node types
+  reject mixed-`ndim` children at construction.
 - `add_gsplats_from_volume_impl` — fits in one step. With
   `progressive=True` it calls `fit_progressive_gaussian_splats`
   (honoring `max_splats_per_pass`, `psnr_patience`, `max_passes`);

@@ -239,7 +239,7 @@ export interface UrlParams {
 
   /**
    * Select the line rendering primitive for the session
-   * (`?linePrimitive=screen-space|volumetric`, issue #1352).
+   * (`?linePrimitive=screen-space|volumetric|capsule`, issue #1352).
    *
    * `volumetric` draws each segment as its true 3D density (segment ⊛
    * isotropic Gaussian) solved per fragment — exact end-on, bisector-cut
