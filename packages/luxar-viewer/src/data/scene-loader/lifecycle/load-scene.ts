@@ -58,6 +58,7 @@ import { loadOverlayConfigs } from '../../loaders';
 import { buildSceneGraph } from '../nodes/build-scene-graph';
 import { loadSceneNodes } from '../nodes/load-scene-nodes';
 import { reportLoadOutcome } from '../loaders/failure-report';
+import { SceneIdentityWatchdog } from '../../scene-identity-watchdog';
 import type { NodeBuildCtx } from '../nodes/build-ctx';
 
 /**
@@ -119,6 +120,11 @@ export interface LoadSceneCtx {
   scheduleGSplatsRefinement(): Promise<void>;
 
   // Resource-write setters — orchestrator nulls/sets its own fields.
+  /**
+   * Hand the started scene-identity watchdog to the orchestrator, which
+   * owns its disposal (dataset switch / teardown).
+   */
+  setIdentityWatchdog(watchdog: SceneIdentityWatchdog | null): void;
   setDatasetAbortController(controller: AbortController | null): void;
   setCachingStore(store: MultiLevelCachingStore | null): void;
   setL0Cache(cache: DecompressedChunkCache | null): void;
@@ -256,6 +262,23 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const rootLoc = zarr.root(zarrStore);
   const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
+
+  // Watch the dataset's identity from here on: a demo/dev server dying and a
+  // different one later binding the same port would otherwise leave this tab
+  // silently fronting the wrong scene. Started as soon as the root attrs are
+  // read — not after the full load — so a swap during a LONG load (or a load
+  // that subsequently fails because the server vanished) is caught too.
+  // Identity is baselined on these attrs, so there is no window to race.
+  const normalizedUrl = ctx.normalizeURL(url);
+  if (SceneIdentityWatchdog.isWatchable(normalizedUrl)) {
+    const loadedHash = (sceneAttrs as Record<string, unknown>)?.content_hash;
+    const watchdog = new SceneIdentityWatchdog({
+      datasetUrl: normalizedUrl,
+      expectedContentHash: typeof loadedHash === 'string' ? loadedHash : null,
+    });
+    watchdog.start();
+    ctx.setIdentityWatchdog(watchdog);
+  }
 
   // A stale standalone .gsplats.zarr opened directly won't render correctly —
   // surface a migrate hint rather than failing silently. v3.0–v3.3 are all

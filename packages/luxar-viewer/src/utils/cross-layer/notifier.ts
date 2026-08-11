@@ -37,6 +37,13 @@ export interface NotifierBackend {
   showLoadingIndicator(): HTMLElement | void;
   hideLoadingIndicator(): void;
   clearError(): void;
+  /**
+   * Persistent scene-identity banner (see `ui/scene-identity-banner.ts`).
+   * Optional so existing minimal backends (tests, embedders) stay valid;
+   * calls degrade to the missing-backend warning when absent.
+   */
+  showSceneIdentityBanner?(kind: 'changed' | 'unreachable'): void;
+  hideSceneIdentityBanner?(onlyKind?: 'changed' | 'unreachable'): void;
 }
 
 // MED-42 (audit-ack): module-level singleton state is intentional, not
@@ -102,6 +109,18 @@ export const notifier = {
   clearError(): void {
     if (backend) backend.clearError();
     else warnIfMissing('clearError');
+  },
+  /** Show the persistent scene-identity banner (changed / unreachable). */
+  showSceneIdentityBanner(kind: 'changed' | 'unreachable'): void {
+    // A registered backend WITHOUT the optional method is a deliberate
+    // minimal backend (tests, embedders) — silent no-op, not a warning.
+    if (backend) backend.showSceneIdentityBanner?.(kind);
+    else warnIfMissing('showSceneIdentityBanner');
+  },
+  /** Hide the scene-identity banner (optionally only a specific kind). */
+  hideSceneIdentityBanner(onlyKind?: 'changed' | 'unreachable'): void {
+    if (backend) backend.hideSceneIdentityBanner?.(onlyKind);
+    else warnIfMissing('hideSceneIdentityBanner');
   },
 };
 

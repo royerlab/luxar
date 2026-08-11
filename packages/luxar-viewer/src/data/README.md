@@ -32,6 +32,12 @@ data/
 │                                  #   `numcodecs.luxar_delta_v1`; Python twin in
 │                                  #   luxar/encoding/_encoders/delta_codec.py)
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
+├── scene-identity-watchdog.ts     # Re-probes the dataset's root .zattrs (interval + tab focus)
+│                                  #   and raises the scene-identity banner when the ?src=
+│                                  #   address starts serving a DIFFERENT scene (a demo/dev
+│                                  #   server died and another took its port) or goes
+│                                  #   unreachable; started per dataset by load-scene.ts,
+│                                  #   disposed by SceneLoader.dispose
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
 ├── scene-loader-monitor-port.ts   # Port interface bridging SceneLoader → DataLoadingMonitor
 ├── data-loader-types.ts           # TypeScript interfaces and types

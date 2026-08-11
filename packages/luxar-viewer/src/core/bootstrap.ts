@@ -29,6 +29,7 @@ import { showError, clearError } from '../ui/error-overlay';
 import { showToast } from '../ui/toast';
 import { showHelpOverlay, hideHelpOverlay } from '../ui/help-overlay';
 import { showLoadingIndicator, hideLoadingIndicator } from '../ui/loading-indicator';
+import { showSceneIdentityBanner, hideSceneIdentityBanner } from '../ui/scene-identity-banner';
 import { setNotifierBackend } from '../utils/cross-layer/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
@@ -149,6 +150,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     showLoadingIndicator,
     hideLoadingIndicator,
     clearError,
+    showSceneIdentityBanner,
+    hideSceneIdentityBanner,
   });
 
   if (validateConfig) {

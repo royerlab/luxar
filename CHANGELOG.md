@@ -6,6 +6,27 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Scene-identity watchdog — a tab that no longer shows what its address serves says so
+
+Local demo/dev servers share ports and come and go, so a long-lived viewer
+tab could silently front a DIFFERENT scene than the one it loaded (another
+server took the port) — or a dead one — with no visual hint. The viewer now
+watches its dataset's identity for the life of the tab: a watchdog re-fetches
+the root `.zattrs` (cache-bypassing) every 15 s and the moment the tab
+regains focus/visibility, comparing `content_hash` (raw-text baseline for
+hash-less bare nodes). A different hash — or an HTTP error where something
+else answers the address — raises a persistent top banner ("This address now
+serves a different scene — the view below is stale") with a Reload button
+and stops polling; a server that stops answering shows a self-clearing
+"Data server unreachable" banner after two consecutive failed probes, and a
+server that recovers with a different scene escalates straight to the
+changed banner. Only `http(s)` sources are watched; the watchdog is started
+per dataset at the end of scene load (identity baselined on the attrs
+actually loaded) and disposed on dataset switch. New:
+`data/scene-identity-watchdog.ts`, `ui/scene-identity-banner.ts`, and
+optional `showSceneIdentityBanner`/`hideSceneIdentityBanner` methods on the
+cross-layer notifier surface.
+
 #### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
 
 The volumetric line primitive (#1426) gains its picking pass, so the flag now
