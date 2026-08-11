@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import heapq
 import math
-from typing import Any, Literal
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 from scipy import sparse
@@ -59,24 +60,23 @@ from luxar.utils.lod_breakpoints import (
 from luxar.utils.lod_breakpoints import (
     streaming_chunk_splats as streaming_chunk_splats,
 )
+from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES, GSPLAT_ADDITIVE_METHODS
+from luxar.utils.lod_methods import AutoOrMethod as AutoOrMethod
+from luxar.utils.lod_methods import MethodName as MethodName
+from luxar.utils.lod_methods import is_reveal_method as _is_reveal_method
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
-
-MethodName = Literal["greedy", "self_energy", "mass", "amplitude", "spectral", "random"]
-_VALID_METHODS = (
-    "greedy",
-    "self_energy",
-    "mass",
-    "amplitude",
-    "spectral",
-    "random",
+from luxar.validation.types import (
+    validate_finite_reveal_coords,
+    validate_integral_axis_indices,
 )
 
-#: ``method`` accepted at the API/CLI boundary, including the size-adaptive
-#: ``"auto"`` sentinel resolved by :func:`resolve_additive_method`.
-AutoOrMethod = Literal[
-    "auto", "greedy", "self_energy", "mass", "amplitude", "spectral", "random"
-]
-_VALID_CHOICES: tuple[str, ...] = ("auto", *_VALID_METHODS)
+# The method registry lives in `luxar.utils.lod_methods` so the CLI can share it
+# without importing this package (`luxar/gsplats/__init__.py` adds ~600 ms on top
+# of the CLI's own ~250 ms import — a 3.4x multiplier on `luxar --help`).
+# Re-exported under the historical names — `MethodName` / `AutoOrMethod` are
+# imported from here by `pyramid` and `recipes`.
+_VALID_METHODS: tuple[str, ...] = GSPLAT_ADDITIVE_METHODS
+_VALID_CHOICES: tuple[str, ...] = GSPLAT_ADDITIVE_CHOICES
 
 #: ``method="auto"`` resolves to ``greedy`` (the Minoux 1978 lazy-greedy
 #: submodular selection in :func:`_lazy_greedy` — provably (1-1/e)-optimal at
@@ -431,6 +431,98 @@ def _residual_energy_curve(
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _radial_score(
+    data: GSplatData,
+    centre: Sequence[float] | None = None,
+    spatial_dims: Sequence[int] | None = None,
+) -> np.ndarray:
+    """Distance of each splat from ``centre``, over the SPATIAL axes only.
+
+    The ordering key for ``method="radial"`` — the concentric-shell reveal. This
+    is a presentation choice, not an error metric: it exists so a streaming
+    additive ladder visibly grows outward from the middle of the object rather
+    than filling in by contribution (which reads as confetti).
+
+    ``centre`` defaults to the **bounding-box centre of the spatial axes**, not
+    the scene origin: a dataset sitting far from the origin would otherwise
+    reveal from one corner instead of growing from its own middle.
+
+    ``spatial_dims`` defaults to :meth:`GSplatData._nondegenerate_axes` — the
+    shared "axis with real covariance extent" rule. That matters here: a stacked
+    time or channel axis has zero variance, and including it would make the
+    shells expand through TIME as well as space (every timepoint of the innermost
+    shell before any of the next), which is not a reveal.
+
+    An explicit ``spatial_dims`` is validated rather than trusted, mirroring the
+    element-side :func:`~luxar.core.group.lod.reveal.radial_element_score`: every
+    rejected case silently produced a WRONG ordering instead of an error — a
+    negative index ALIASES to another column under numpy indexing, a repeat
+    DOUBLE-COUNTS that axis in the distance, an empty selection scores every
+    splat 0.0, degrading the ladder to input order with nothing to show it, and a
+    FRACTIONAL index is truncated to a different column than the one named. A
+    non-finite ``centre`` coordinate is rejected for the same reason: it makes
+    every distance NaN/inf, which a stable argsort leaves in input order.
+    """
+    if int(np.asarray(data.centers).shape[0]) == 0:
+        # Read the reach precisely: `compute_additive_order` ALREADY short-circuits
+        # an empty dataset before dispatching here, so no public path was broken —
+        # measured, it returns an empty permutation either way. What this fixes is
+        # the HELPER's own contract: called directly it raised "zero-size array to
+        # reduction operation minimum" out of the default-centre bbox below, while
+        # its public element-side twin `radial_element_score` has always returned
+        # an empty score. Same ordering, two implementations, and only one of them
+        # could be called with an empty input — so this is symmetry insurance for a
+        # future caller, not a live-bug fix.
+        return np.empty(0, dtype=np.float64)
+    if spatial_dims is None:
+        dims = data._nondegenerate_axes()
+    else:
+        validate_integral_axis_indices(spatial_dims)
+        dims = np.asarray(spatial_dims, dtype=np.intp)
+        if dims.ndim != 1 or dims.size == 0:
+            raise ValueError("spatial_dims must be a non-empty sequence of indices")
+        if int(dims.min()) < 0:
+            raise ValueError(
+                "spatial_dims must be non-negative (a negative index would alias "
+                f"to another column); got {list(spatial_dims)}"
+            )
+        if np.unique(dims).size != dims.size:
+            raise ValueError(
+                "spatial_dims must not repeat an axis (a repeat would count it "
+                f"twice in the distance); got {list(spatial_dims)}"
+            )
+        if int(dims.max()) >= data.ndim:
+            raise ValueError(
+                f"spatial_dims {list(spatial_dims)} out of range for centers with "
+                f"{data.ndim} columns"
+            )
+    pts = np.asarray(data.centers, dtype=np.float64)[:, dims]
+    # Same data-side guard as the element scorer, from the one shared validator:
+    # measured, a NaN centre coordinate made this return INPUT order silently.
+    # Only the shell columns — a NaN on an axis the distance does not span is
+    # irrelevant to the ordering.
+    validate_finite_reveal_coords(pts, "centers")
+    if centre is None:
+        origin = (pts.min(axis=0) + pts.max(axis=0)) / 2.0
+    else:
+        origin = np.asarray(centre, dtype=np.float64)
+        if origin.shape != (len(dims),):
+            raise ValueError(
+                f"reveal_centre must have one coordinate per spatial axis "
+                f"{tuple(int(d) for d in dims)}; got shape {origin.shape}"
+            )
+        if not bool(np.all(np.isfinite(origin))):
+            # Same class as an empty `spatial_dims`: every distance comes back
+            # non-finite, they all compare equal under a stable argsort, and the
+            # ladder silently degrades to input order instead of revealing.
+            raise ValueError(
+                "reveal_centre must be finite (a NaN/inf coordinate makes every "
+                "distance non-finite, degrading the ladder to input order); got "
+                f"{[float(c) for c in origin]}"
+            )
+    return np.asarray(np.linalg.norm(pts - origin, axis=1), dtype=np.float64)
+
+
 def compute_additive_order(
     data: GSplatData,
     method: AutoOrMethod = "auto",
@@ -438,6 +530,8 @@ def compute_additive_order(
     truncation_sigmas: float = 3.0,
     max_n_dense: int = 2_000,
     seed: int | None = None,
+    reveal_centre: Sequence[float] | None = None,
+    spatial_dims: Sequence[int] | None = None,
 ) -> np.ndarray:
     """Compute an additive ordering permutation for the splats in ``data``.
 
@@ -448,7 +542,7 @@ def compute_additive_order(
         flattened concatenation across LODs.
     method : str
         One of ``auto``, ``greedy``, ``self_energy``, ``mass``,
-        ``amplitude``, ``spectral``, ``random``.  ``auto`` (the default)
+        ``amplitude``, ``spectral``, ``random``, ``radial``.  ``auto`` (the default)
         resolves to ``greedy`` at small N and ``self_energy`` above
         :data:`_AUTO_ADDITIVE_MAX_N` — see :func:`resolve_additive_method`.
         See module docstring for details.
@@ -461,6 +555,14 @@ def compute_additive_order(
         use lazy-greedy.  Default 2000 (per supp doc §4.3).
     seed : int, optional
         Random seed for ``method='random'``.
+    reveal_centre : sequence of float, optional
+        Centre of the shells for ``method='radial'``. Defaults to the spatial
+        bounding-box centre — NOT the scene origin, so a dataset far from the
+        origin still grows from its own middle. One coordinate per spatial axis.
+    spatial_dims : sequence of int, optional
+        Centre columns the radial distance is measured over. Defaults to the
+        non-degenerate (real-extent) axes, which excludes a stacked time or
+        channel axis. Ignored by every other method.
 
     Returns
     -------
@@ -479,6 +581,16 @@ def compute_additive_order(
     # Resolve the size-adaptive sentinel ONCE, before any (expensive) Gram
     # build, so every downstream branch sees a concrete method.
     method = resolve_additive_method(method, N)
+
+    if method == "radial":
+        # ASCENDING, unlike every other method here: the score is a DISTANCE, so
+        # the smallest is revealed first and the prefixes grow outward as
+        # concentric shells. Every other branch sorts `-score` because its score
+        # is a contribution to maximize.
+        return np.argsort(
+            _radial_score(data, centre=reveal_centre, spatial_dims=spatial_dims),
+            kind="stable",
+        ).astype(np.int64)
 
     if method == "random":
         rng = np.random.default_rng(seed)
@@ -657,6 +769,58 @@ def _energy_fraction_cuts_from_cumulative(
     return cuts
 
 
+def _sublod_stats(
+    *,
+    method: str,
+    level: int,
+    kind: str,
+    prev: int,
+    end: int,
+    energy_cum: np.ndarray,
+    energy_total: float,
+    breakpoints: BreakpointSpec,
+) -> dict[str, Any]:
+    """Per-sub-LOD ``lod_stats`` for one rung of an additive ladder.
+
+    Extracted from :func:`make_additive_lod`'s build loop, which the energy-stamp
+    guard pushed past the C901 ratchet — and a 30-line stats block nested in a
+    loop inside an already-long function reads better named anyway.
+
+    ``radial`` is a REVEAL, so it carries **no** energy stamps. The viewer
+    multiplies a leaf's brightness by ``1/e(k)`` while a ladder is incomplete,
+    gated on the BLENDING MODE and not on geometry type (``scene/lod-blend.ts``).
+    That is right for a contribution-ordered prefix, which genuinely is a dimmer
+    version of the whole, and backwards for a radial one, which is a PARTIAL
+    OBJECT AT FULL BRIGHTNESS: an inner shell would be brightened (up to 10x —
+    ``ENERGY_FLOOR`` caps it), blazing and then dimming as the object completes —
+    the exact inverse of growing outward. Omitting the stamp is the honest
+    encoding, and ``energyCompensation(undefined)`` returns exactly 1, so the leaf
+    is byte-identical. Measured: the compensation reaches a leaf only through the
+    viewer's ``kind=lod`` group registry, so it bites for a ladder inside a lod
+    group (1.87x brighter in mean luma while incomplete) and is inert on a bare
+    leaf. The rule stays unconditional because ``method`` already covers both —
+    ``lod --recipe levels|adaptive|overview -m radial`` lands reveal ladders inside
+    a lod group, ``--recipe stream -m radial`` does not. See MESH_NODE_SPEC §9.1,
+    which states the rule for mesh; the reasoning is geometry-agnostic.
+    """
+    stats: dict[str, Any] = {
+        "lod_method": method,
+        "lod_level": level,
+        "lod_breakpoints_kind": kind,
+        "lod_n_splats": int(end - prev),
+        "lod_cumulative_n": end,
+    }
+    if energy_total > 0.0 and not _is_reveal_method(method):
+        e_frac = float(energy_cum[end - 1] / energy_total)
+        if np.isfinite(e_frac):
+            stats["energy_fraction_cum"] = min(1.0, max(0.0, e_frac))
+    if kind == "stream":
+        # Provenance: the bandwidth-derived first-chunk size, otherwise only
+        # recoverable by re-parsing the breakpoints string.
+        stats["lod_stream_chunk_splats"] = int(str(breakpoints)[len("stream:") :])
+    return stats
+
+
 def make_additive_lod(
     data: GSplatData,
     n_lods: int = 4,
@@ -667,6 +831,8 @@ def make_additive_lod(
     max_n_dense: int = 2_000,
     seed: int | None = None,
     substitutive_level: int | None = None,
+    reveal_centre: Sequence[float] | None = None,
+    spatial_dims: Sequence[int] | None = None,
 ) -> GSplatData:
     """Permute and split a fitted gsplat dataset into a multi-LOD ladder.
 
@@ -716,6 +882,14 @@ def make_additive_lod(
     substitutive_level : int, optional
         Index of the substitutive level to build the ladder for. Defaults
         to ``data.default_substitutive``.
+    reveal_centre : sequence of float, optional
+        ``method='radial'`` only — centre of the concentric shells. Defaults to
+        the spatial bounding-box centre (NOT the scene origin, so a dataset far
+        from the origin still reveals from its own middle).
+    spatial_dims : sequence of int, optional
+        ``method='radial'`` only — the centre columns the shell distance is
+        measured over. Defaults to the non-degenerate axes, so a stacked
+        time/channel axis cannot become a shell dimension.
 
     Returns
     -------
@@ -792,6 +966,8 @@ def make_additive_lod(
                 truncation_sigmas=truncation_sigmas,
                 max_n_dense=max_n_dense,
                 seed=seed,
+                reveal_centre=reveal_centre,
+                spatial_dims=spatial_dims,
             )
 
         # Cumulative self-energy over the ladder ordering — the e(k) of the
@@ -839,23 +1015,16 @@ def make_additive_lod(
             end = int(end)
             if end <= prev:
                 continue
-            lod_stats: dict[str, Any] = {
-                "lod_method": method,
-                "lod_level": level,
-                "lod_breakpoints_kind": kind,
-                "lod_n_splats": int(end - prev),
-                "lod_cumulative_n": end,
-            }
-            if energy_total > 0.0:
-                e_frac = float(energy_cum[end - 1] / energy_total)
-                if np.isfinite(e_frac):
-                    lod_stats["energy_fraction_cum"] = min(1.0, max(0.0, e_frac))
-            if kind == "stream":
-                # Provenance: the bandwidth-derived first-chunk size, otherwise
-                # only recoverable by re-parsing the breakpoints string.
-                lod_stats["lod_stream_chunk_splats"] = int(
-                    str(breakpoints)[len("stream:") :]
-                )
+            lod_stats = _sublod_stats(
+                method=method,
+                level=level,
+                kind=kind,
+                prev=prev,
+                end=end,
+                energy_cum=energy_cum,
+                energy_total=energy_total,
+                breakpoints=breakpoints,
+            )
             new_sublods.append(
                 AdditiveSubLOD(
                     centers=centers_full[prev:end].astype(np.float32, copy=False),
@@ -890,7 +1059,27 @@ def make_additive_lod(
     # make_substitutive_lod) and that must win for coarser levels — self-
     # energy is quadratic in amplitude, so per-level totals differ and would
     # skew partition-of-lod aggregation.
-    merged_level_stats.setdefault("reference_energy", float(reference_energy))
+    # Both-or-neither: a reveal ladder omits `energy_fraction_cum` per sub-LOD
+    # (above), so it must omit the leaf's `reference_energy` too. The pair is a
+    # contract — the viewer's display gate uses `reference_energy` as the
+    # aggregation weight for the per-level fractions, and a weight with nothing
+    # to weight is a half-written stamp.
+    #
+    # POP, not merely skip: `merged_level_stats` inherits the input level's stats,
+    # so a weight is usually already there — a substitutive build stamps one per
+    # level (so `--recipe levels/adaptive -m radial` hits this on every level),
+    # and so do `gsplat additive` over an annotated tree and any re-ladder of a
+    # previously energy-ordered leaf. Skipping the `setdefault` would leave those
+    # untouched and the ladder half-stamped anyway.
+    #
+    # The n == 0 branch is the one exception: it labels itself `lod_method="none"`
+    # and stamps a trivially-complete e(k)=1.0 (nothing to stream, so 1/e(k) is
+    # exactly 1), so it keeps its weight — and `annotate-quality` mirrors that
+    # empty-leaf case, which it could not do if the pair were split here.
+    if _is_reveal_method(method) and n > 0:
+        merged_level_stats.pop("reference_energy", None)
+    else:
+        merged_level_stats.setdefault("reference_energy", float(reference_energy))
     new_sub_levels = list(data.substitutive_levels)
     new_sub_levels[s_target] = SubstitutiveLevel(
         additive_sublods=new_sublods,
