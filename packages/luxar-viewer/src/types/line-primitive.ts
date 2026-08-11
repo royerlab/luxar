@@ -11,15 +11,21 @@
  * |                | per-fragment against the true camera-space segment, so   |
  * |                | end-on viewing is exact and a joint's two cells partition |
  * |                | the bend at a bisector plane instead of overlapping      |
+ * | `capsule`      | gaussian-like profile of the 2D point-to-segment distance |
+ * |                | in pixel space: direction-stable near-axial (end-on is a  |
+ * |                | radial disc), 2D bisector-cut joins, quad-class cost —    |
+ * |                | see `_shared/line-capsule.ts` for the model + the three   |
+ * |                | deliberate exactness relaxations                          |
  *
- * `volumetric` is calibrated so the side-on appearance matches
- * `screen-space` by construction (σ = drawnHalfWidth / T with T the shared
- * Gaussian-equivalent truncation; see `_shared/line-volumetric.ts`), which is
- * what makes a session-wide A/B meaningful.
+ * `volumetric` and `capsule` are calibrated so the side-on appearance
+ * matches `screen-space` by construction (the shared Gaussian-equivalent
+ * truncation T relates drawn width to σ; see `_shared/line-volumetric.ts`
+ * and `_shared/line-capsule.ts`), which is what makes a session-wide A/B
+ * meaningful.
  *
  * Unlike `lineJoin` this is NOT an authorable node attribute: the primitive is
- * a renderer implementation choice, not scene content, and the flip to
- * volumetric-by-default (#1352 PR-5) must not leave authored attributes
+ * a renderer implementation choice, not scene content, and the flip to a new
+ * default (#1352) must not leave authored attributes
  * behind. It is a session-wide toggle only, set once from `?linePrimitive=`.
  *
  * It lives here, in the layer-neutral `types/`, rather than in `rendering/`
@@ -31,7 +37,7 @@
  */
 
 /** Selectable line primitives. */
-export type LinePrimitive = 'screen-space' | 'volumetric';
+export type LinePrimitive = 'screen-space' | 'volumetric' | 'capsule';
 
 /**
  * The default when nothing is overridden. Stays `screen-space` until the
@@ -41,7 +47,7 @@ export type LinePrimitive = 'screen-space' | 'volumetric';
 export const DEFAULT_LINE_PRIMITIVE: LinePrimitive = 'screen-space';
 
 /** Every valid primitive, for validation and for error messages. */
-export const LINE_PRIMITIVES: readonly LinePrimitive[] = ['screen-space', 'volumetric'];
+export const LINE_PRIMITIVES: readonly LinePrimitive[] = ['screen-space', 'volumetric', 'capsule'];
 
 /**
  * Parse a primitive from untrusted text (the `?linePrimitive=` URL
