@@ -116,13 +116,11 @@
   opacity: 0.7;
 }
 
-/* Note: Adjust refraction parameters in src/themes/glass-filters.ts */
-/* Default values (see defaultGlassParams):
- * - blurRadius: 25 (edge curve width - larger = thicker glass feel)
- * - refractionScale: 40 (lens strength - how much light bends)
- * - chromaticStrength: 2 (RGB separation at edges)
- * - specularIntensity: 0.3 (rim light brightness, 0 to disable)
- */
+/* Note: Adjust refraction parameters in src/themes/glass-filters.ts.
+ * `defaultGlassParams` there is the AUTHORITATIVE source for the current
+ * values (blurRadius / refractionScale / chromaticStrength /
+ * specularIntensity) — numbers are deliberately not duplicated here, since
+ * a stale copy of them in this comment misled readers in the past. */
 
 /* ==========================================================================
    INNER ELEMENT TRANSPARENCY

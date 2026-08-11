@@ -19,15 +19,15 @@ styles when the matching `[data-theme=...]` attribute is set on `:root`.
 
 ## Glass-capable surfaces
 
-Both stylesheets target the same set of top-level panel selectors so the
-effect is uniform:
-
-```
-.luxar-help-overlay        .luxar-data-monitor
-.luxar-error-dialog        .luxar-dimension-sliders
-.luxar-dataset-browser     .luxar-layers-panel
-.luxar-debug-console       .luxar-gui
-```
+Both stylesheets key off the **single marker class `.luxar-glass-surface`**
+(shared with `glass-filters.ts` via `GLASS_SURFACE_SELECTOR`) — there is no
+per-panel selector list to keep in sync. A panel opts in by adding the class
+to its root element at creation; frameless in-canvas widgets (scale bar,
+colormap legend) deliberately stay out. See the
+[UI Design Guide](../../../../../docs/guides/developer/UI_DESIGN_GUIDE.md)
+§5 for the opt-in/opt-out rules and the hard constraints every glass surface
+must respect (reserved `::before`/`::after`, `overflow: visible`, no opacity
+animation on the root).
 
 ## Relationship to `src/themes/`
 

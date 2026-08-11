@@ -97,10 +97,15 @@ These files are activated by the `ThemeManager` when the corresponding theme is 
 - All custom classes use the `luxar-` prefix to avoid conflicts
 - Component styles reference CSS custom properties, never hardcoded colors
 - Scrollbar styling is dark-theme optimized via `::-webkit-scrollbar`
-- No `!important` overrides — cascade order handles specificity
+- `!important` only in the three sanctioned categories (reduced-motion
+  overrides, control-rail docking overrides, overlay state-forcing) — see the
+  [UI Design Guide](../../../../docs/guides/developer/UI_DESIGN_GUIDE.md) §13
 
 ## See Also
 
+- [UI Design Guide](../../../../docs/guides/developer/UI_DESIGN_GUIDE.md) —
+  **the authoritative visual-design ground truth** (tokens, surface recipes,
+  color semantics, iconography, motion, a11y, drift inventory)
 - [base/](./base/README.md) — Layout primitives, typography, utility classes
 - [components/](./components/README.md) — Per-UI-surface component styles
 - [themes/](./themes/) — Named theme overrides (`frosted-glass.css`, `liquid-glass.css`)

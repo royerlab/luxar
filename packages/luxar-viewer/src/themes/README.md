@@ -76,10 +76,11 @@ Each theme implements the `Theme` interface with these sections:
 
 ### Typography
 
-- **Font families**: base, mono, display
-- **Font sizes**: xs through 3xl
-- **Font weights**: normal, medium, semibold, bold
-- **Line heights**: tight, normal, relaxed
+- **Font families**: base, mono, display (stacks are theme-specific)
+- **Font sizes**: xs through 4xl (identical across all four themes)
+- **Font weights**: normal, medium, semibold, bold (identical across themes)
+- **Line heights**: tight, normal, relaxed (multipliers differ: dark/light
+  use 1.2/1.4/1.6, the glass themes 1.2/1.5/1.7)
 
 ### Spacing
 
@@ -87,11 +88,16 @@ Scale keys `[0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20]` mapping to `[0, 2, 4, 6, 8
 
 ### Effects
 
+All effect _keys_ are shared, but the _values_ are theme-specific (radii,
+shadows, blur strengths, and transition timing all differ between dark/light
+and the two glass themes — see the
+[UI Design Guide](../../../../docs/guides/developer/UI_DESIGN_GUIDE.md) §4):
+
 - **Border radius**: none, sm, md, lg, full (pill)
 - **Shadows**: sm, md, lg, xl
-- **Backdrop blur**: none, sm, md, lg
+- **Backdrop blur**: none, sm, md, lg (values are complete `blur()` functions)
 - **Opacity**: disabled, secondary, hover, full
-- **Transitions**: fast (0.1s), normal (0.2s), slow (0.3s)
+- **Transitions**: fast, normal, slow (full `all <duration> <easing>` shorthands)
 
 ### Z-Index Layers
 

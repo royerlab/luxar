@@ -1154,6 +1154,7 @@ Before PR/merge:
 | HDR Color Guide | `docs/guides/user/HDR_GUIDE.md` |
 | Network Simulation | `docs/guides/developer/NETWORK_SIMULATION_SPEC.md` |
 | Console Logging Style | `docs/guides/developer/CONSOLE_OUTPUT_STYLE.md` |
+| UI Visual Design (authoritative) | `docs/guides/developer/UI_DESIGN_GUIDE.md` |
 | Documentation Quality | `docs/guides/developer/DOCUMENTATION_QUALITY.md` |
 | Changelog | `CHANGELOG.md` |
 
