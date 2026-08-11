@@ -63,6 +63,26 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     recordingPanel,
   } = deps;
 
+  // Rendering, Layers, and Recording all dock at the same spot beside the
+  // rail (left: 73px), so the rail opens ONE floating surface at a time —
+  // activating a docked panel closes the other docked panels, and opening
+  // any rail popover (Settings, Navigation, Performance, Home) closes the
+  // docked panels too (the reverse is automatic: clicking a rail button is
+  // an outside-click, which dismisses an open popover). Keyboard shortcuts
+  // are deliberately not routed through this: power users may still stack
+  // panels explicitly via R/L/T.
+  const closeOtherLeftPanels = (except?: 'render' | 'layers' | 'recording'): void => {
+    if (except !== 'render' && renderingControls.isVisible()) {
+      ui.commands.toggleRenderingControls();
+    }
+    if (except !== 'layers' && layersPanel.isVisible()) {
+      ui.panels.getLayersPanel()?.toggle();
+    }
+    if (except !== 'recording' && recordingPanel.isVisible()) {
+      ui.panels.getRecordingPanel()?.toggle();
+    }
+  };
+
   return [
     {
       id: 'help',
@@ -85,8 +105,9 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       popover: {
         trigger: 'context',
         title: 'Home',
-        build: (host) =>
-          buildHomePopover(host, {
+        build: (host) => {
+          closeOtherLeftPanels();
+          return buildHomePopover(host, {
             fitScene: () => ui.commands.recenterCamera(),
             centerOnOrigin: () => sceneManager.centerOnOrigin(),
             resetDimensions: () => sceneDims.resetPositions(),
@@ -95,7 +116,8 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
             resetLayers: () => layersPanel.resetAllLayers(),
             hasLayers: () => layersPanel.layerState.count > 0,
             triggerAnimation: () => animationController.startAnimation(),
-          }),
+          });
+        },
       },
     },
     {
@@ -134,15 +156,17 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       popover: {
         trigger: 'context',
         title: 'Navigation',
-        build: (host) =>
-          buildNavigationPopover(host, {
+        build: (host) => {
+          closeOtherLeftPanels();
+          return buildNavigationPopover(host, {
             settings: renderingControls.settings,
             sceneManager,
             animationController,
             saveSettings: () => renderingControls.saveSettings(),
             triggerAnimation: () => animationController.startAnimation(),
             setMode: (type) => ui.commands.setControlMode(type),
-          }),
+          });
+        },
       },
     },
     {
@@ -158,7 +182,10 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Rendering',
       shortcut: 'R',
       icon: RAIL_ICONS.render,
-      activate: () => ui.commands.toggleRenderingControls(),
+      activate: () => {
+        if (!renderingControls.isVisible()) closeOtherLeftPanels('render');
+        ui.commands.toggleRenderingControls();
+      },
       isActive: () => renderingControls.isVisible(),
     },
     {
@@ -166,7 +193,10 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Layers',
       shortcut: 'L',
       icon: RAIL_ICONS.layers,
-      activate: () => ui.panels.getLayersPanel()?.toggle(),
+      activate: () => {
+        if (!layersPanel.isVisible()) closeOtherLeftPanels('layers');
+        ui.panels.getLayersPanel()?.toggle();
+      },
       isActive: () => layersPanel.isVisible(),
       // Grayed + non-clickable until the scene actually has layers (nodes with
       // layer=true). Refreshed on the 'luxar-layers-changed' event after load.
@@ -193,7 +223,10 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Recording',
       shortcut: 'T',
       icon: RAIL_ICONS.recording,
-      activate: () => ui.panels.getRecordingPanel()?.toggle(),
+      activate: () => {
+        if (!recordingPanel.isVisible()) closeOtherLeftPanels('recording');
+        ui.panels.getRecordingPanel()?.toggle();
+      },
       isActive: () => recordingPanel.isVisible(),
       separatorBefore: true,
     },
@@ -276,12 +309,14 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       popover: {
         trigger: 'click',
         title: 'Settings',
-        build: (host) =>
-          buildSettingsPopover(host, {
+        build: (host) => {
+          closeOtherLeftPanels();
+          return buildSettingsPopover(host, {
             triggerAnimation: () => animationController.startAnimation(),
             // Lazy — the loader exists only after the first scene load.
             getSceneLoader: () => getSceneLoader(),
-          }),
+          });
+        },
       },
     },
     {
@@ -297,13 +332,15 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       popover: {
         trigger: 'context',
         title: 'Performance',
-        build: (host) =>
-          buildPerformancePopover(host, {
+        build: (host) => {
+          closeOtherLeftPanels();
+          return buildPerformancePopover(host, {
             settings: renderingControls.settings,
             manager: adaptiveDPRManager,
             saveSettings: () => renderingControls.saveSettings(),
             triggerAnimation: () => animationController.startAnimation(),
-          }),
+          });
+        },
       },
     },
   ];

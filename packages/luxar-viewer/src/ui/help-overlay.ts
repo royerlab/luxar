@@ -157,7 +157,7 @@ export function showHelpOverlay() {
 
   // Create header with title and close button
   const header = document.createElement('div');
-  header.className = 'luxar-help-overlay__header';
+  header.className = 'luxar-help-overlay__header luxar-panel-header';
 
   const title = document.createElement('h3');
   title.id = 'luxar-help-overlay-title';
@@ -165,8 +165,10 @@ export function showHelpOverlay() {
   title.textContent = 'Luxar Controls & Shortcuts';
 
   const closeBtn = document.createElement('button');
-  closeBtn.className = 'luxar-help-overlay__close-btn';
-  closeBtn.textContent = '×';
+  closeBtn.className = 'luxar-help-overlay__close-btn luxar-panel-close';
+  // Stroke ✕ in the rail icon contract (was the text glyph '×').
+  closeBtn.innerHTML =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
   closeBtn.title = 'Close (Escape)';
   closeBtn.setAttribute('aria-label', 'Close help overlay');
   closeBtn.setAttribute('aria-keyshortcuts', 'Escape');
@@ -243,12 +245,15 @@ export function showHelpOverlay() {
   footerNote.className = 'luxar-help-overlay__footer';
   footerNote.textContent = 'Click anywhere or press Esc to close';
 
-  // Create scroll wrapper (separates scrolling from glass effect container)
+  // Scroll wrapper (separates scrolling from the glass-effect container, UI
+  // Design Guide §7.4). The header stays OUTSIDE it, pinned at the top of
+  // the panel — only the sections and footer scroll.
   const scrollWrapper = document.createElement('div');
   scrollWrapper.className = 'luxar-help-overlay__scroll';
-  scrollWrapper.appendChild(header);
   scrollWrapper.appendChild(controlsList);
   scrollWrapper.appendChild(footerNote);
+
+  helpDiv.appendChild(header);
 
   helpDiv.appendChild(scrollWrapper);
 
