@@ -387,14 +387,14 @@ def _translate_sweep_keys(runs: list["demo_runs.DemoRun"]) -> list["demo_runs.De
     return runs
 
 
-def _stop_all(runs: list["demo_runs.DemoRun"]) -> list[str]:
-    """Kill every run's process group; returns the keys that survived."""
-    survivors: list[str] = []
+def _stop_all(runs: list["demo_runs.DemoRun"]) -> list["demo_runs.DemoRun"]:
+    """Kill every run's process group; returns the runs that survived."""
+    survivors: list[demo_runs.DemoRun] = []
     for r in runs:
         if demo_runs.stop_run(r):
             aprint(f"   ✅ stopped {r.key}")
         else:
-            survivors.append(r.key)
+            survivors.append(r)
             aprint(f"   ❌ could not stop {r.key} (pgid {r.pgid})")
     return survivors
 
@@ -445,10 +445,9 @@ def demo_stop(
 
     survivors = _stop_all(runs)
     if survivors:
-        aprint(
-            f"⚠️  {len(survivors)} still running: {', '.join(survivors)} — "
-            f"try `kill -9 -{runs[0].pgid}` style manual cleanup."
-        )
+        names = ", ".join(r.key for r in survivors)
+        hints = "; ".join(f"kill -9 -{r.pgid}" for r in survivors)
+        aprint(f"⚠️  {len(survivors)} still running: {names} — try `{hints}`.")
         raise typer.Exit(1)
     aprint("✅ All demos stopped; their ports are free again.")
 

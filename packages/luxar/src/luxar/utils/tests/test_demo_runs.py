@@ -115,11 +115,38 @@ def test_discover_prunes_hijacked_group_ids(tmp_path: Path, monkeypatch) -> None
     assert not path.exists()
 
 
+def test_luxar_path_mention_is_not_a_live_demo(tmp_path: Path, monkeypatch) -> None:
+    """A recycled pgid whose command merely MENTIONS a luxar path is pruned.
+
+    The guard requires the `-m luxar` module fingerprint — an editor open on a
+    repo file or the viewer dev server must never be sentenced as a demo.
+    """
+    monkeypatch.setattr(
+        demo_runs,
+        "_ps_snapshot",
+        lambda: [
+            (600, 600, "vim /Users/x/workspace/python/luxar/notes.txt"),
+            (601, 601, "node /x/luxar/packages/luxar-viewer/node_modules/vite dev"),
+        ],
+    )
+    for pgid in (600, 601):
+        path = register_run("stale", pgid, runs_dir=tmp_path)
+        assert path is not None
+    assert discover_runs(runs_dir=tmp_path) == []
+    assert sorted(tmp_path.glob("*.json")) == []
+
+
 # ─────────────────────────────── stopping ────────────────────────────────────
 def _spawn_marked_sleeper() -> "subprocess.Popen[bytes]":
-    """An isolated-group child whose ps command line contains 'luxar'."""
+    """An isolated-group child whose ps command line carries a `-m luxar` mark.
+
+    The registry's pid-reuse guard requires the `-m luxar` module fingerprint
+    (not a bare "luxar" substring), so the marker argv mimics it. Deliberately
+    NOT `-m luxar.demos.demo_*`: that would make a concurrently running REAL
+    `luxar demo stop` sweep this test process up as a demo.
+    """
     return subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(120)", "luxar-demo-marker"],
+        [sys.executable, "-c", "import time; time.sleep(120)", "-m", "luxar"],
         start_new_session=True,
     )
 
@@ -184,7 +211,9 @@ def test_describe_port_holder_names_registered_demo(monkeypatch) -> None:
     monkeypatch.setattr(
         demo_runs,
         "discover_runs",
-        lambda: [DemoRun(key="lorenz", pgid=100, pid=0, started=0.0, source="sweep")],
+        lambda **kw: [
+            DemoRun(key="lorenz", pgid=100, pid=0, started=0.0, source="sweep")
+        ],
     )
     hint = demo_runs.describe_port_holder(8000)
     assert hint is not None
@@ -197,6 +226,87 @@ def test_describe_port_holder_names_bare_serve(monkeypatch) -> None:
 
     monkeypatch.setattr(demo_runs.subprocess, "run", lambda *a, **k: _Out())
     monkeypatch.setattr(demo_runs, "_ps_snapshot", lambda: list(_SNAPSHOT))
-    monkeypatch.setattr(demo_runs, "discover_runs", lambda: [])
+    monkeypatch.setattr(demo_runs, "discover_runs", lambda **kw: [])
     hint = demo_runs.describe_port_holder(8000)
     assert hint is not None and "luxar serve" in hint
+
+
+@posix_only
+def test_pgid_zero_never_signals_own_group(tmp_path: Path) -> None:
+    """killpg(0, sig) hits the CALLER's group — corrupt entries must not reach it.
+
+    A parseable registry entry claiming pgid 0 (or 1) must be treated as dead
+    and pruned, and terminate_process_group must refuse the id outright.
+    """
+    path = register_run("corrupt", 0, runs_dir=tmp_path)
+    assert path is not None
+    # Even with no ps snapshot (signal-0 fallback), pgid 0 reads as dead.
+    assert demo_runs._group_alive(0) is False
+    assert demo_runs._group_alive(1) is False
+    assert terminate_process_group(0) is False
+    assert terminate_process_group(-1) is False
+
+
+def test_sweep_requires_python_executable() -> None:
+    """Argument MENTIONS of the fingerprint (grep/vim/less) are never demos."""
+    rows = [
+        (5, 5, "grep -- '-m luxar.demos.demo_fake' notes.txt"),
+        (6, 6, "vim -m luxar.demos.demo_fake.txt"),
+        (7, 7, "/usr/bin/python3 -m luxar.demos.demo_real"),
+        (8, 8, "/opt/py/Python -mluxar.demos.demo_attached"),  # attached -m form
+    ]
+    assert {(r.key, r.pgid) for r in _sweep_runs(rows)} == {
+        ("real", 7),
+        ("attached", 8),
+    }
+
+
+def test_registry_guard_requires_python_invocation(tmp_path: Path, monkeypatch) -> None:
+    """A recycled pgid running a grep that mentions luxar text is pruned."""
+    monkeypatch.setattr(
+        demo_runs,
+        "_ps_snapshot",
+        lambda: [(700, 700, "grep -r '-m luxar serve' /Users/x/luxar")],
+    )
+    path = register_run("stale", 700, runs_dir=tmp_path)
+    assert path is not None
+    assert discover_runs(runs_dir=tmp_path) == []
+    assert not path.exists()
+
+
+def test_registry_rejects_bool_and_nonpositive_pgids(tmp_path: Path) -> None:
+    (tmp_path / "1.json").write_text('{"key": "x", "pgid": true}')
+    (tmp_path / "0.json").write_text('{"key": "y", "pgid": 0}')
+    (tmp_path / "n.json").write_text('{"key": "z", "pgid": -5}')
+    assert _registry_runs(tmp_path) == []
+    assert sorted(tmp_path.glob("*.json")) == []
+
+
+@posix_only
+def test_stop_run_revalidates_at_kill_time(tmp_path: Path, monkeypatch) -> None:
+    """A group that stopped being a demo between listing and kill is spared.
+
+    The confirmation prompt can sit for minutes; a recycled pgid must not
+    inherit the death sentence. The innocent group here is a live sleeper
+    WITHOUT the luxar fingerprint — stop_run must leave it running.
+    """
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True,
+    )
+    try:
+        path = register_run("recycled", proc.pid, runs_dir=tmp_path)
+        run = DemoRun(
+            key="recycled",
+            pgid=proc.pid,
+            pid=0,
+            started=0.0,
+            source="registry",
+            path=path,
+        )
+        assert stop_run(run) is True  # "already gone" as a demo
+        assert proc.poll() is None  # the innocent process SURVIVES
+        assert path is not None and not path.exists()  # entry pruned
+    finally:
+        proc.kill()
+        proc.wait()

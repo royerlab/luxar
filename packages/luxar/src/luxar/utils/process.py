@@ -236,6 +236,11 @@ def terminate_process_group(
     """
     if not _CAN_KILLPG:
         return False
+    # killpg(0, sig) signals the CALLER'S own group and negative/1 values are
+    # kill(2) wildcards or undefined — never forward them, whatever a corrupt
+    # registry entry claims.
+    if pgid <= 1:
+        return False
     if not _killpg(pgid, 0):
         return True  # already gone
 

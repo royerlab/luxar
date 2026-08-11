@@ -42,7 +42,8 @@ DEMO_RUNS_DIR = Path.home() / ".cache" / "luxar" / "running"
 # The L1 demo script every `demo run` spawns: `<python> -m luxar.demos.demo_X`.
 # This is the sweep's definitive fingerprint — it exists for the whole life of
 # a demo, is an isolated group leader, and its module name encodes the key.
-_DEMO_MODULE_RE = re.compile(r"-m\s+luxar\.demos\.demo_([\w.]+)")
+# The strict form anchors a full module token (see `_demo_module_suffix`).
+_DEMO_MODULE_RE_STRICT = re.compile(r"luxar\.demos\.demo_([\w.]+)$")
 
 
 @dataclass
@@ -102,10 +103,15 @@ def _registry_runs(runs_dir: Path) -> list[DemoRun]:
     for path in sorted(runs_dir.glob("*.json")):
         try:
             entry = json.loads(path.read_text())
+            pgid = int(entry["pgid"])
+            if pgid <= 1:
+                # 0 / negative are kill(2) wildcards or the caller's own
+                # group; a JSON `true` also coerces to 1. Corrupt, prune.
+                raise ValueError(f"invalid pgid {pgid}")
             runs.append(
                 DemoRun(
                     key=str(entry["key"]),
-                    pgid=int(entry["pgid"]),
+                    pgid=pgid,
                     pid=int(entry.get("pid", 0)),
                     started=float(entry.get("started", 0.0)),
                     source="registry",
@@ -146,6 +152,40 @@ def _ps_snapshot() -> list[tuple[int, int, str]]:
     return rows
 
 
+def _python_module_token(command: str) -> Optional[str]:
+    """The module a PYTHON invocation runs via ``-m``, or None.
+
+    Requires the executable token to look like a Python interpreter before
+    trusting any ``-m`` fingerprint: a ``grep``/``vim``/``less`` whose
+    *arguments* merely mention ``-m luxar.demos.demo_*`` must never be swept
+    up as a demo (or validated as one) and killed. Handles both ``-m module``
+    and the attached ``-mmodule`` spelling.
+    """
+    tokens = command.split()
+    if not tokens or "python" not in Path(tokens[0]).name.lower():
+        return None
+    for i, tok in enumerate(tokens[1:], start=1):
+        if tok == "-m":
+            return tokens[i + 1] if i + 1 < len(tokens) else None
+        if tok.startswith("-m") and not tok.startswith("--"):
+            return tok[2:]
+    return None
+
+
+def _is_luxar_module(module: Optional[str]) -> bool:
+    """True for ``luxar`` itself or any ``luxar.*`` submodule."""
+    return module is not None and (module == "luxar" or module.startswith("luxar."))
+
+
+def _demo_module_suffix(command: str) -> Optional[str]:
+    """The ``demo_<suffix>`` a python ``-m luxar.demos.demo_*`` command runs."""
+    module = _python_module_token(command)
+    if module is None:
+        return None
+    match = _DEMO_MODULE_RE_STRICT.match(module)
+    return match.group(1) if match else None
+
+
 def _sweep_runs(snapshot: list[tuple[int, int, str]]) -> list[DemoRun]:
     """Demo groups found by fingerprinting command lines in ``snapshot``.
 
@@ -157,35 +197,46 @@ def _sweep_runs(snapshot: list[tuple[int, int, str]]) -> list[DemoRun]:
     runs: list[DemoRun] = []
     seen: set[int] = set()
     for pid, pgid, command in snapshot:
-        match = _DEMO_MODULE_RE.search(command)
-        if match is None or pgid in seen:
+        suffix = _demo_module_suffix(command)
+        if suffix is None or pgid in seen:
             continue
         seen.add(pgid)
-        runs.append(
-            DemoRun(key=match.group(1), pgid=pgid, pid=0, started=0.0, source="sweep")
-        )
+        runs.append(DemoRun(key=suffix, pgid=pgid, pid=0, started=0.0, source="sweep"))
     return runs
 
 
 # ────────────────────────────── discovery ────────────────────────────────────
 def _group_has_luxar_process(pgid: int, snapshot: list[tuple[int, int, str]]) -> bool:
-    """True when ``pgid`` still contains a luxar-flavoured process.
+    """True when ``pgid`` still contains a ``python -m luxar…`` process.
 
     This is the registry's pid-reuse guard: an entry whose group id has been
-    recycled by an unrelated process must be pruned, not killed.
+    recycled by an unrelated process must be pruned, not killed. A live demo
+    group always contains at least one luxar module invocation (the demo
+    script, and usually its ``luxar serve`` child), so requiring the exact
+    python-invocation fingerprint loses nothing, while a substring match
+    could sentence an innocent recycled group whose command merely mentions
+    luxar text (an editor on a repo file, a grep, the viewer dev server).
     """
-    return any(p == pgid and "luxar" in cmd for _pid, p, cmd in snapshot)
+    return any(
+        p == pgid and _is_luxar_module(_python_module_token(cmd))
+        for _pid, p, cmd in snapshot
+    )
 
 
-def discover_runs(runs_dir: Optional[Path] = None) -> list[DemoRun]:
+def discover_runs(
+    runs_dir: Optional[Path] = None,
+    snapshot: Optional[list[tuple[int, int, str]]] = None,
+) -> list[DemoRun]:
     """All live demo runs (registry first, sweep for the rest), oldest first.
 
     Dead or hijacked registry entries are pruned as a side effect. The calling
     process's own group is excluded, so ``demo stop`` (or a ``pick_port``
     diagnosis running inside a demo being launched) never targets itself.
+    ``snapshot`` lets a caller that already paid for a ps snapshot reuse it.
     """
     runs_dir = runs_dir or DEMO_RUNS_DIR
-    snapshot = _ps_snapshot()
+    if snapshot is None:
+        snapshot = _ps_snapshot()
     own_pgid = os.getpgrp() if hasattr(os, "getpgrp") else -1
 
     live: list[DemoRun] = []
@@ -213,7 +264,9 @@ def discover_runs(runs_dir: Optional[Path] = None) -> list[DemoRun]:
 
 def _group_alive(pgid: int) -> bool:
     """True while any member of ``pgid`` survives (POSIX; False elsewhere)."""
-    if not can_kill_process_groups():
+    # killpg(0, 0) probes the CALLER'S own group (always "alive"), which would
+    # keep a corrupt pgid<=1 registry entry forever; treat such ids as dead.
+    if pgid <= 1 or not can_kill_process_groups():
         return False
     try:
         os.killpg(pgid, 0)
@@ -230,8 +283,19 @@ def stop_run(run: DemoRun) -> bool:
     uvicorn gets its graceful shutdown first. On success the registry entry is
     pruned; the L0 ``demo run`` owner (if any) exits by itself once its child
     group dies.
+
+    Re-validates the group at KILL time: `demo stop`'s confirmation prompt can
+    sit for minutes between discovery and this call, long enough for the demo
+    to exit and (in principle) its group id to be recycled by an innocent
+    process — which must not inherit the death sentence.
     """
     if can_kill_process_groups():
+        snapshot = _ps_snapshot()
+        if snapshot and not _group_has_luxar_process(run.pgid, snapshot):
+            # No longer a demo group (exited, possibly recycled): nothing to
+            # stop. Prune the entry and report success.
+            unregister_run(run.path)
+            return True
         gone = terminate_process_group(run.pgid)
     elif run.pid:
         # Windows degrade: no process groups — terminate the registered owner.
@@ -270,7 +334,7 @@ def describe_port_holder(port: int) -> Optional[str]:
 
     snapshot = _ps_snapshot()
     by_pid = {pid: (pgid, cmd) for pid, pgid, cmd in snapshot}
-    runs_by_pgid = {run.pgid: run for run in discover_runs()}
+    runs_by_pgid = {run.pgid: run for run in discover_runs(snapshot=snapshot)}
     for pid in sorted(holder_pids):
         pgid, cmd = by_pid.get(pid, (-1, ""))
         run = runs_by_pgid.get(pgid)
@@ -279,6 +343,6 @@ def describe_port_holder(port: int) -> Optional[str]:
                 f"Port {port} is held by demo '{run.key}' (PID {pid}) — "
                 "run `luxar demo stop` to clear it."
             )
-        if re.search(r"-m\s+luxar\b.*\bserve\b", cmd):
+        if _is_luxar_module(_python_module_token(cmd)) and "serve" in cmd.split():
             return f"Port {port} is held by another `luxar serve` (PID {pid})."
     return None

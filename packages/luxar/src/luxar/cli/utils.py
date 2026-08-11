@@ -153,9 +153,13 @@ def pick_port(
         # Name the squatter when it is one of ours: a forgotten `demo run` in
         # another terminal is the usual culprit, and without this line the
         # user's browser quietly shows the OLD scene on the original port.
-        from ..utils.demo_runs import describe_port_holder
+        # Pure decoration — a failure here must never break serving.
+        try:
+            from ..utils.demo_runs import describe_port_holder
 
-        holder = describe_port_holder(requested)
+            holder = describe_port_holder(requested)
+        except Exception:
+            holder = None
         if holder:
             aprint(f"   {holder}")
     return actual
