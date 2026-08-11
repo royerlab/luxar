@@ -599,6 +599,12 @@ Points nodes contain the actual point data.
 }
 ```
 
+The on-disk `extend_to_all` value is **always a resolved list of dimension
+names**, never the `"all"` sentinel the Python `add_*` API accepts: the sentinel
+is expanded to the scene's non-displayed dimension names before anything is
+written (including onto each `additive_<i>/` sub-LOD of a laddered node). The
+viewer relies on that invariant and reads the attr as a `string[]`.
+
 **Data Arrays:**
 
 The dtypes below describe the default `EncodingMode.AUTO`. Every array

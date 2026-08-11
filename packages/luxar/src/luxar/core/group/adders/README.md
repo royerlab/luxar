@@ -130,8 +130,11 @@ Each `*_impl` walks the same ordered decision tree:
    single `add_*` call can compose partition-of-additive-LOD.
 9. **Single-leaf write**: validate dimensions (the full
    `_validate_data_dimensions`, i.e. the step-4 count check again plus the
-   per-dimension range `UserWarning`), resolve `extend_to_all`, then call the
-   scene writer (`write_points` / `write_lines` / `write_gsplats`) and return the
+   per-dimension range `UserWarning`), resolve `extend_to_all` (this is where
+   the `"all"` sentinel becomes a concrete dim-name list for a flat leaf AND
+   for every part of a partition, whose recursion re-enters here; the multi-LOD
+   wrapper resolves it itself — see below), then call the scene writer
+   (`write_points` / `write_lines` / `write_gsplats`) and return the
    constructed `Points` / `Lines` / `GSplats` node.
 
 All `*_impl` entries wrap the body in a `try/except (ValueError, TypeError)`
@@ -196,6 +199,13 @@ subgroups carry none, because the loader concatenates loaded levels into one
 committed buffer), so the wrappers call `scene._notify_labels_added()` exactly as
 the flat path does — otherwise a ladder-only scene would get no hover overlay.
 
+Unlike the partition wrapper, this one does not recurse through a leaf adder, so
+it resolves `extend_to_all` itself right before the writer call, via the shared
+`lod.group.resolve_ladder_extend_to_all` (which leaves `None` unresolved): the
+multi-LOD writers stamp that value verbatim onto the parent group AND every
+`additive_<i>/` subgroup, so an unresolved `"all"` sentinel would reach disk
+where the viewer expects a list of dimension names.
+
 ## Dependencies
 
 **Sibling modules** (`core/group/`):
@@ -214,6 +224,8 @@ the flat path does — otherwise a ladder-only scene would get no hover overlay.
 - `dim_order` — `apply_dim_order_positions`, `apply_dim_order_cholesky`
 - `lod.points`, `lod.lines` — additive-LOD level builders and polyline
   identification
+- `lod.group` — `additive_level_stats`, `breakpoints_kind_of`,
+  `resolve_ladder_extend_to_all`
 
 **Node types** (`core/`): `Points`, `Lines`, `GSplats`, `Node`, `Group`.
 

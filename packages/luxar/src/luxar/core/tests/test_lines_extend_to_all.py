@@ -6,10 +6,12 @@ per the three-geometry symmetry rule.
 """
 
 import tempfile
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.dimensions import Dimension
@@ -237,3 +239,196 @@ class TestAddLinesExtendToAll:
                 assert lines is not None
                 assert "extend_to_all" in lines.attrs
                 assert set(lines.attrs["extend_to_all"]) == {"time", "channel"}
+
+    def test_additive_lod_resolves_all_sentinel(self) -> None:
+        """extend_to_all='all' must be RESOLVED on the additive-LOD path too.
+
+        The multi-LOD writer stamps the value verbatim onto the parent group
+        AND every ``additive_<i>/`` sub-LOD, so an unresolved ``'all'`` used to
+        reach disk as a bare string — which the viewer reads as a ``string[]``
+        and crashes on.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "test.luxar.zarr"
+
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension(
+                        "time", unit="s", display=False, discrete=True, range=(0, 9)
+                    ),
+                ]
+            )
+
+            rng = np.random.RandomState(0)
+            vertices = np.zeros((40, 4), dtype=np.float32)
+            vertices[:, :3] = rng.rand(40, 3).astype(np.float32)
+
+            with LuxarZarrCompiler(store_path) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_lines(
+                    "flat",
+                    vertices,
+                    widths=0.1,
+                    line_type="segments",
+                    extend_to_all="all",
+                )
+                scene.add_lines(
+                    "laddered",
+                    vertices,
+                    widths=0.1,
+                    line_type="segments",
+                    extend_to_all="all",
+                    additive_lod=dict(n_lods=3, method="random", seed=42),
+                )
+
+            store = zarr.open_group(store_path, mode="r")
+            flat_dims = store["flat"].attrs["extend_to_all"]
+            assert flat_dims == ["time"]
+
+            parent = store["laddered"]
+            assert parent.attrs["n_additive_sublods"] == 3
+            # Same RESOLVED list as the flat sibling — a list, never the sentinel.
+            assert isinstance(parent.attrs["extend_to_all"], list)
+            assert parent.attrs["extend_to_all"] == flat_dims
+            for i in range(3):
+                sub_dims = parent[f"additive_{i}"].attrs["extend_to_all"]
+                assert isinstance(sub_dims, list)
+                assert sub_dims == ["time"]
+
+    def test_additive_lod_explicit_list_round_trips(self) -> None:
+        """An explicit list survives the ladder unchanged.
+
+        NOT a reproduction of #1441 — this passes on the pre-fix code too,
+        because the writer stamped an explicit list verbatim and that happened
+        to be correct. It is a characterization guard for the new resolve call:
+        it pins that resolution does not reorder, dedupe or drop an explicit
+        list on its way to the parent group and every sub-LOD.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "test.luxar.zarr"
+
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension(
+                        "time", unit="s", display=False, discrete=True, range=(0, 9)
+                    ),
+                ]
+            )
+
+            rng = np.random.RandomState(1)
+            vertices = np.zeros((40, 4), dtype=np.float32)
+            vertices[:, :3] = rng.rand(40, 3).astype(np.float32)
+
+            with LuxarZarrCompiler(store_path) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_lines(
+                    "laddered",
+                    vertices,
+                    widths=0.1,
+                    line_type="segments",
+                    extend_to_all=["time"],
+                    additive_lod=dict(n_lods=3, method="random", seed=42),
+                )
+
+            store = zarr.open_group(store_path, mode="r")
+            parent = store["laddered"]
+            assert parent.attrs["extend_to_all"] == ["time"]
+            for i in range(3):
+                assert parent[f"additive_{i}"].attrs["extend_to_all"] == ["time"]
+
+    def test_additive_lod_empty_list_writes_no_attr(self) -> None:
+        """extend_to_all=[] resolves to falsy → no attr anywhere in the ladder.
+
+        Like its explicit-list sibling this passes on the pre-fix code too, so
+        it is a characterization guard, not a #1441 reproduction: it pins that
+        the new resolve call did not turn the falsy case into a written attr.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "test.luxar.zarr"
+
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension(
+                        "time", unit="s", display=False, discrete=True, range=(0, 9)
+                    ),
+                ]
+            )
+
+            rng = np.random.RandomState(2)
+            vertices = np.zeros((40, 4), dtype=np.float32)
+            vertices[:, :3] = rng.rand(40, 3).astype(np.float32)
+
+            with LuxarZarrCompiler(store_path) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_lines(
+                    "laddered",
+                    vertices,
+                    widths=0.1,
+                    line_type="segments",
+                    extend_to_all=[],
+                    additive_lod=dict(n_lods=3, method="random", seed=42),
+                )
+
+            store = zarr.open_group(store_path, mode="r")
+            parent = store["laddered"]
+            assert "extend_to_all" not in parent.attrs
+            for i in range(3):
+                assert "extend_to_all" not in parent[f"additive_{i}"].attrs
+
+    def test_additive_lod_omitted_stays_silent(self) -> None:
+        """A ladder authored WITHOUT extend_to_all emits no candidate advisory.
+
+        The wrapper's resolve is guarded on ``is not None`` precisely so the
+        ladder path keeps behaving as it always has. The data here is the
+        advisory's trigger case (``time`` has one value but a wider range), so
+        an unguarded resolve would warn — once per BSP part under
+        ``partition=`` + ``additive_lod=``, misattributed to
+        ``Group.add_lines``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store_path = Path(tmpdir) / "test.luxar.zarr"
+
+            dims = Dimensions(
+                [
+                    Dimension("x", unit="um", display=True),
+                    Dimension("y", unit="um", display=True),
+                    Dimension("z", unit="um", display=True),
+                    Dimension("time", unit="s", display=False, range=(0, 9)),
+                ]
+            )
+
+            rng = np.random.RandomState(3)
+            vertices = np.zeros((40, 4), dtype=np.float32)
+            vertices[:, :3] = rng.rand(40, 3).astype(np.float32)
+
+            with LuxarZarrCompiler(store_path) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                # The flat sibling DOES warn on the same data — proof the
+                # trigger condition is met and the ladder's silence is the
+                # guard, not the data.
+                with pytest.warns(UserWarning, match="time"):
+                    scene.add_lines("flat", vertices, widths=0.1, line_type="segments")
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    scene.add_lines(
+                        "laddered",
+                        vertices,
+                        widths=0.1,
+                        line_type="segments",
+                        additive_lod=dict(n_lods=3, method="random", seed=42),
+                    )
+
+            store = zarr.open_group(store_path, mode="r")
+            parent = store["laddered"]
+            assert "extend_to_all" not in parent.attrs
+            for i in range(3):
+                assert "extend_to_all" not in parent[f"additive_{i}"].attrs

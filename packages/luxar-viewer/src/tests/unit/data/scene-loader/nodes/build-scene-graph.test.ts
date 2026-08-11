@@ -51,6 +51,7 @@ vi.mock('../../../../../data/scene-loader/nodes/enumerate-store', () => ({
 
 import { buildSceneGraph } from '../../../../../data/scene-loader/nodes/build-scene-graph';
 import type { ZarrSceneAttrs } from '../../../../../types/zarr';
+import { log } from '../../../../../utils/log';
 
 function makeRootAttrs(): ZarrSceneAttrs {
   return { scene_dimensions: { dimensions: [] } } as unknown as ZarrSceneAttrs;
@@ -143,6 +144,91 @@ describe('buildSceneGraph — sibling order (napari-style insertion order)', () 
     const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
 
     expect(root.children?.[0].children?.map((c) => c.path)).toEqual(['/grp/beta', '/grp/alpha']);
+  });
+});
+
+describe('buildSceneGraph — malformed extend_to_all (#1441)', () => {
+  it('does not throw on a string extend_to_all, and warns once for the node', async () => {
+    // An older producer stamped the unresolved `'all'` sentinel. The log line
+    // interpolates `.join(', ')` EAGERLY, so a string attr used to throw a
+    // TypeError here and abort the whole scene-graph build.
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      enumerateStoreMock.mockResolvedValue([{ path: '/pts', kind: 'group' }]);
+      attrsByPath['/pts'] = { type: 'points', extend_to_all: 'all' };
+
+      const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+      expect(root.children?.[0].path).toBe('/pts');
+      expect(root.children?.[0].type).toBe('points');
+      // The NORMALIZED value must be written back onto the node's attrs: every
+      // downstream consumer (loader-factory's synthesized LOD children, the
+      // spatial-index loaders, announceExtendToAllOnce) reads these attrs, so
+      // leaving the raw `'all'` here would only relocate the TypeError to query
+      // time.
+      expect(root.children?.[0].attrs.extend_to_all).toEqual([]);
+      const messages = warnSpy.mock.calls.map((c) => String(c[1]));
+      expect(messages.some((m) => m.includes('/pts') && m.includes('extend_to_all'))).toBe(true);
+      expect(messages.some((m) => m.includes('not extended'))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('keeps the string entries of a mixed array and warns about the drop', async () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      enumerateStoreMock.mockResolvedValue([{ path: '/pts', kind: 'group' }]);
+      attrsByPath['/pts'] = { type: 'points', extend_to_all: ['Time', 5] };
+
+      const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+      expect(root.children?.[0].path).toBe('/pts');
+      expect(root.children?.[0].attrs.extend_to_all).toEqual(['Time']);
+      const messages = warnSpy.mock.calls.map((c) => String(c[1]));
+      expect(messages.some((m) => m.includes('/pts') && m.includes('Time'))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('stays quiet for a well-formed extend_to_all list', async () => {
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      enumerateStoreMock.mockResolvedValue([{ path: '/pts', kind: 'group' }]);
+      attrsByPath['/pts'] = { type: 'points', extend_to_all: ['Time'] };
+
+      const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+      expect(root.children?.[0].path).toBe('/pts');
+      expect(root.children?.[0].attrs.extend_to_all).toEqual(['Time']);
+      expect(warnSpy.mock.calls.filter((c) => String(c[1]).includes('extend_to_all'))).toHaveLength(
+        0
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('normalizes a bare-node ROOT too (the listing loop never visits it)', async () => {
+    // A detached `.gsplats.zarr` subtree: the file root IS the leaf, so its
+    // attrs go straight to a leaf loader. `deriveNodeViewState` normalizing
+    // again does not help there — `SpatialQueryBuilder` and
+    // `announceExtendToAllOnce` read the node attrs directly.
+    const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      enumerateStoreMock.mockResolvedValue([]);
+      const rootAttrs = { type: 'gsplats', extend_to_all: 'all' } as unknown as ZarrSceneAttrs;
+
+      const root = await buildSceneGraph(makeStubLoc('') as never, rootAttrs, {} as never);
+
+      expect(root.type).toBe('gsplats');
+      expect((root.attrs as { extend_to_all?: unknown }).extend_to_all).toEqual([]);
+      const messages = warnSpy.mock.calls.map((c) => String(c[1]));
+      expect(messages.some((m) => m.includes('extend_to_all'))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
