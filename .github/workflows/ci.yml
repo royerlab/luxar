@@ -9,16 +9,28 @@ on:
     # Nightly full Python matrix. Per-PR CI runs 3.12 only (see the python-tests
     # matrix below); this keeps 3.10/3.11 exercised every day, so a version-specific
     # regression is caught within 24h rather than on every PR.
+    #
+    # The Python matrix is the REASON for the cron, not its scope: a schedule
+    # event has no PR base, so the `changes` job below selects the full suite and
+    # the documentation gate too. Budget it as one whole CI run a day on the
+    # self-hosted box, not as three extra Python legs.
     - cron: '17 9 * * *'
 
 concurrency:
-  # `github.event_name` is in the key ONLY to keep the nightly out of the
-  # push-to-main group. A scheduled run's ref is `refs/heads/main`, the same as
-  # a merge's, so on the bare ref key the next merge would cancel the nightly
-  # outright -- and the nightly is now the only place 3.10/3.11 run at all.
-  # That is not a corner case: over the fortnight before this was written, a
-  # merge landed inside the nightly's ~30min window on 7 days out of 11, so the
-  # full matrix would have been silently killed about two days in three.
+  # `github.event_name` is in the key ONLY to keep the nightly and push-to-main
+  # in separate groups. A scheduled run's ref is `refs/heads/main`, the same as a
+  # merge's, so under one shared group whichever of the two starts SECOND cancels
+  # the other -- and they collide constantly: over the 31 days before this was
+  # written a merge landed inside the nightly's ~30min window on 17 days, and
+  # inside the half hour before it on 12.
+  #
+  # The expensive direction is the cron killing a merge's push run: that run is
+  # the only place the new `main` commit gets the full matrix at all, now that
+  # per-PR CI is 3.12-only (see the python-tests matrix below), and a cron has no
+  # business discarding it. The reverse is milder -- a merge that cancels the
+  # nightly runs the full matrix itself -- but it still leaves "did 3.10/3.11
+  # pass today?" unanswerable at a glance.
+  #
   # Nothing else changes -- PR runs already carry `refs/pull/N/merge` and so
   # were never in the same group as a push, and two runs of the same PR still
   # coalesce (same event, same ref).
@@ -204,7 +216,9 @@ jobs:
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but the heartbeat stayed fresh the whole time,
           # the box is busy, not dead (5 slots; 6 obsidian-routed test jobs on a
-          # push or the nightly, 4 on a PR — draining) — leave the run alone.
+          # push or the nightly, 4 on a PR — and a merge landing during the
+          # nightly now queues both sets at once, since the two no longer cancel
+          # each other — draining) — leave the run alone.
           end=$(( $(date +%s) + 25 * 60 ))
           while [ "$(date +%s)" -lt "$end" ]; do
             queued=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \

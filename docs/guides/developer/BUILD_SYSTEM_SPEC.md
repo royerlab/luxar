@@ -802,10 +802,14 @@ only the *latency* of finding a version-specific break — within 24h rather
 than in the PR that caused it. The trade buys back two of the three legs of the
 slowest job on a box with five self-hosted slots.
 
-Scheduled runs sit in their own `concurrency` group for this reason: they share
-`refs/heads/main` with merge-triggered runs, and `cancel-in-progress` would
-otherwise let a merge landing mid-run cancel the nightly — the one run that
-covers 3.10/3.11.
+Scheduled runs sit in their own `concurrency` group: they share
+`refs/heads/main` with merge-triggered runs, so under one shared group
+`cancel-in-progress` let whichever started second cancel the other. A merge
+landing mid-nightly killed the nightly; a cron firing over an in-flight merge
+killed that merge's push run, which is the only place the new `main` commit gets
+the full matrix at all. The cron fires the whole workflow rather than
+`python-tests` alone — a schedule event has no PR base, so change detection
+selects the full suite and the documentation gate as well.
 
 ## Architecture Notes
 

@@ -19,13 +19,18 @@ moves from "in the offending PR" to "within 24h", against a 3x cut in per-PR
 Python CI.
 
 Scheduled runs get their own `concurrency` group. A cron run's ref is
-`refs/heads/main`, identical to a merge's, so under the shared group and
-`cancel-in-progress: true` the next merge would have cancelled the nightly
-outright — and the nightly is now the only place 3.10/3.11 run other than a
-merge itself. Measured against the fortnight before the change, a merge landed
-inside the nightly's window on 7 days out of 11, so the full matrix would have
-been killed about two days in three. Pull-request runs are unaffected: they
-already carry `refs/pull/N/merge` and were never grouped with a push.
+`refs/heads/main`, identical to a merge's, so under one shared group and
+`cancel-in-progress: true` whichever of the two started second cancelled the
+other — and they collide constantly: over the 31 days before the change a merge
+landed inside the nightly's ~30min window on 17 days, and inside the half hour
+before it on 12. The expensive direction is the cron killing a merge's push run,
+which is the only place the new `main` commit gets the full matrix at all now
+that per-PR CI is 3.12-only; the reverse is milder, since a merge that cancels
+the nightly runs the full matrix itself, but it still leaves "did 3.10/3.11 pass
+today?" unanswerable at a glance. Pull-request runs are unaffected: they already
+carry `refs/pull/N/merge` and were never grouped with a push. Note the cron
+fires the whole workflow, not just `python-tests` — a schedule event has no PR
+base, so change detection selects the full suite and the documentation gate too.
 
 #### An empty LOD 0 no longer blanks a laddered node's slice (#1456)
 
