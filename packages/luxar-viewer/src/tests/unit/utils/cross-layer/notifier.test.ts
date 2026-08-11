@@ -189,6 +189,24 @@ describe('notifier — backend lifecycle', () => {
     warnSpy.mockRestore();
   });
 
+  it('hideSceneIdentityBanner stays silent with no backend — it is teardown, not a drop', () => {
+    // The dispose pipeline clears the backend BEFORE it destroys the
+    // SceneLoaderManager, so the scene-identity watchdog's own dispose always
+    // lands after. Warning there would tell every clean teardown that "the UI
+    // layer never called setNotifierBackend", which is false.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    clearNotifierBackend();
+
+    notifier.hideSceneIdentityBanner();
+    notifier.hideSceneIdentityBanner('unreachable');
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // Showing one still warns: that IS a dropped user-visible message.
+    notifier.showSceneIdentityBanner('changed');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
   it('re-registering after a missing-backend warning resets the warn-once flag', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     clearNotifierBackend();

@@ -356,6 +356,8 @@ vi.mock('../../../utils/cross-layer/notifier', () => ({
     showHelp: vi.fn(),
     hideHelp: vi.fn(),
     clearError: vi.fn(),
+    showSceneIdentityBanner: vi.fn(),
+    hideSceneIdentityBanner: vi.fn(),
   },
 }));
 const mockShowLoading = notifierMocks.showLoading;

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pytest
+import typer
 import yaml
 from typer.testing import CliRunner
 
@@ -3192,6 +3193,288 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
+    def test_radial_method_is_accepted_and_reveals_outward(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`-m radial` builds a real ladder whose shells grow outward.
+
+        `radial` was invisible to this command until ``VALID_ADDITIVE_METHODS``
+        stopped being a hand-copied tuple, so this pins the CLI wiring — and it
+        checks the OUTPUT, not just the exit code: a method that were silently
+        ignored would also exit 0.
+        """
+        from luxar.gsplats.io import load_gsplats
+
+        out = tmp_path / "reveal.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "-m",
+                "radial",
+                "--n-lods",
+                "4",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert out.exists()
+
+        subs = load_gsplats(out).additive_sublods
+        assert len(subs) > 1, "expected a real multi-level ladder"
+        arrs = [np.asarray(s.centers, dtype=np.float64) for s in subs]
+        allc = np.concatenate(arrs)
+        centre = (allc.min(axis=0) + allc.max(axis=0)) / 2.0
+        # PER-SHELL bounds, not a cumulative maximum. This assertion used to be
+        # `cum_max == sorted(cum_max)` over cumulative prefixes, which is true of
+        # EVERY ordering by construction — it had no teeth, and the trailing
+        # `cum_max[0] < cum_max[-1]` only showed the globally farthest splat was
+        # not in the first chunk. Requiring each shell to start no closer than the
+        # previous one ended is the property only a radial ordering has; verified
+        # by mutation (a "radial silently ignored" mutant passes the old form and
+        # fails this one).
+        bounds = [
+            (
+                float(np.linalg.norm(a - centre, axis=1).min()),
+                float(np.linalg.norm(a - centre, axis=1).max()),
+            )
+            for a in arrs
+        ]
+        for i in range(1, len(bounds)):
+            assert bounds[i][0] >= bounds[i - 1][1] - 1e-6, (
+                f"shell {i} starts at r={bounds[i][0]:.3f} but shell {i - 1} "
+                f"reached r={bounds[i - 1][1]:.3f} — shells are not nested: {bounds}"
+            )
+        # And the ladder must span a real range, so a degenerate single-radius
+        # fixture cannot satisfy the above vacuously.
+        assert bounds[-1][1] > bounds[0][1], bounds
+
+    def test_radial_ladder_carries_no_energy_stamps(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """A reveal must not be `1/e(k)`-brightened, so it is authored unstamped.
+
+        Paired with a sensitivity control below on the same fixture: without it,
+        this would still pass if stamping broke everywhere.
+        """
+        import zarr
+
+        out = tmp_path / "reveal.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            # fmt: off
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "-m",
+                "radial",
+                "--n-lods",
+                "4",
+            ],
+            # fmt: on
+        )
+        assert result.exit_code == 0, result.output
+
+        root = zarr.open(str(out), mode="r")
+        n = int(root.attrs["n_additive_sublods"])
+        for i in range(n):
+            stats = dict(root[f"additive_{i}"].attrs.get("lod_stats", {}))
+            assert "energy_fraction_cum" not in stats, f"additive_{i} was stamped"
+            # Provenance still recorded — only the brightness keys are dropped.
+            assert stats.get("lod_method") == "radial"
+        assert "reference_energy" not in dict(root.attrs.get("level_stats", {}))
+
+    def test_non_reveal_ladder_is_stamped_control(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """SENSITIVITY CONTROL for the test above — same fixture, same ladder
+        shape, an energy-ordered method, which MUST carry the stamps."""
+        import zarr
+
+        out = tmp_path / "energy.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            # fmt: off
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "-m",
+                "self_energy",
+                "--n-lods",
+                "4",
+            ],
+            # fmt: on
+        )
+        assert result.exit_code == 0, result.output
+
+        root = zarr.open(str(out), mode="r")
+        n = int(root.attrs["n_additive_sublods"])
+        for i in range(n):
+            stats = dict(root[f"additive_{i}"].attrs.get("lod_stats", {}))
+            assert "energy_fraction_cum" in stats, f"additive_{i} is unstamped"
+        assert "reference_energy" in dict(root.attrs["level_stats"])
+
+    def test_reveal_centre_relocates_the_first_shell(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """`--reveal-centre` must change the OUTPUT, not merely be accepted.
+
+        Pinned to a corner, the first shell must sit closer to that corner than
+        the default (bbox-centred) ladder's first shell does.
+        """
+        from luxar.gsplats.io import load_gsplats
+
+        corner = np.array([0.0, 0.0, 0.0])
+
+        def first_shell_dist_to_corner(path: Path) -> float:
+            arrs = [
+                np.asarray(s.centers, dtype=np.float64)
+                for s in load_gsplats(path).additive_sublods
+            ]
+            return float(np.linalg.norm(arrs[0] - corner, axis=1).mean())
+
+        default_out = tmp_path / "default.gsplats.zarr"
+        pinned_out = tmp_path / "pinned.gsplats.zarr"
+        base = ["gsplat", "lod", str(medium_gsplats)]
+        tail = ["--recipe", "stream", "-m", "radial", "--n-lods", "4"]
+
+        assert runner.invoke(app, base + [str(default_out)] + tail).exit_code == 0
+        pinned = runner.invoke(
+            app, base + [str(pinned_out)] + tail + ["--reveal-centre", "0,0,0"]
+        )
+        assert pinned.exit_code == 0, pinned.output
+
+        assert first_shell_dist_to_corner(pinned_out) < first_shell_dist_to_corner(
+            default_out
+        )
+
+    def test_reveal_knobs_rejected_without_radial(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Reveal knobs under a non-reveal ordering are an error, not a no-op.
+
+        Silently ignoring them would hand back an energy-ordered ladder while the
+        user believed they had asked for a repositioned reveal.
+        """
+        for flag, value in (("--reveal-centre", "0,0,0"), ("--spatial-dims", "0,1")):
+            out = tmp_path / f"x{flag}.gsplats.zarr"
+            result = runner.invoke(
+                app,
+                # fmt: off
+                [
+                    "gsplat",
+                    "lod",
+                    str(medium_gsplats),
+                    str(out),
+                    "--recipe",
+                    "stream",
+                    flag,
+                    value,
+                ],
+                # fmt: on
+            )
+            assert result.exit_code != 0, f"{flag} was silently accepted"
+            assert not out.exists()
+
+    def test_spatial_dims_out_of_range_rejected(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            # fmt: off
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "-m",
+                "radial",
+                "--spatial-dims",
+                "0,1,5",
+            ],
+            # fmt: on
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_reveal_centre_length_must_match_spatial_dims(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """The centre carries one coordinate per measured axis."""
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            # fmt: off
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(out),
+                "--recipe",
+                "stream",
+                "-m",
+                "radial",
+                "--spatial-dims",
+                "0,1",
+                "--reveal-centre",
+                "1,2,3",
+            ],
+            # fmt: on
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
+    def test_spatial_dims_preserves_the_listed_order(self) -> None:
+        """`--spatial-dims` must NOT sort — the order pairs with `--reveal-centre`.
+
+        It went through `sorted(set(...))`, so `--spatial-dims 2,0 --reveal-centre
+        10,20` silently meant "axis 0 centred at 10, axis 2 at 20" rather than the
+        pairing the user typed. Deliberately unlike `--coarsen-dims`, where a
+        barrier SET is order-free.
+        """
+        from luxar.cli.lod import _parse_reveal_spatial_dims
+
+        assert _parse_reveal_spatial_dims("2,0", 3) == [2, 0]
+        assert _parse_reveal_spatial_dims("0,2", 3) == [0, 2]
+
+    @pytest.mark.parametrize(
+        "spec", ["nan,0,0", "inf,0,0", "0,-inf,0"], ids=["nan", "inf", "-inf"]
+    )
+    def test_reveal_centre_rejects_non_finite_coordinates(self, spec: str) -> None:
+        """`float("nan")` parses happily, so this needed an explicit check.
+
+        With a non-finite centre every distance is non-finite; they all compare
+        equal under the stable argsort, so the ladder comes out in input order and
+        the user gets no reveal and no error.
+        """
+        from luxar.cli.lod import _parse_reveal_centre
+
+        with pytest.raises(typer.BadParameter, match="finite"):
+            _parse_reveal_centre(spec)
+
+    def test_spatial_dims_rejects_duplicates(self) -> None:
+        """A duplicate was silently collapsed by `set()`; it now errors, because a
+        repeat would count that axis twice in the distance."""
+        from luxar.cli.lod import _parse_reveal_spatial_dims
+
+        with pytest.raises(typer.BadParameter, match="must not repeat"):
+            _parse_reveal_spatial_dims("0,0", 3)
+
     def test_coarsen_dims_rejected_for_additive(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -4978,6 +5261,99 @@ class TestAdditiveCommand:
         # source's stale stats (n_lods=4) — a blind meta copy regressed this.
         lvl_stats = loaded.substitutive_levels[0].stats
         assert lvl_stats.get("lod_n_lods") == 2, lvl_stats
+
+    def test_re_laddering_re_derives_the_reveal_stamp_rule(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Re-laddering an already-radial ladder re-decides the stamps from the
+        NEW method — it never inherits the old one's suppression or lack of it.
+
+        This is what makes the no-energy-stamps rule safe to state
+        unconditionally: there is no route by which a suppressed reveal ladder
+        quietly acquires stamps, or by which an energy-ordered rebuild quietly
+        loses them. Both directions are asserted, because the second is the
+        sensitivity control for the first — without it, "no stamps" could just
+        mean this command never stamps anything.
+        """
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        radial = tmp_path / "radial.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "additive",
+                    str(medium_gsplats),
+                    str(radial),
+                    "-m",
+                    "radial",
+                ],
+            ).exit_code
+            == 0
+        )
+
+        def stamps(path: Path) -> tuple[str | None, list[float | None], object]:
+            data = GSplatData.load(path, include_stats=True)
+            subs = data.additive_sublods
+            return (
+                subs[0].stats.get("lod_method"),
+                [s.stats.get("energy_fraction_cum") for s in subs],
+                data.substitutive_levels[0].stats.get("reference_energy"),
+            )
+
+        method, e_cum, ref = stamps(radial)
+        assert method == "radial"
+        assert e_cum == [None] * len(e_cum), e_cum
+        assert ref is None
+
+        # Re-ladder the REVEAL as a reveal again: still unstamped.
+        again = tmp_path / "again.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app, ["gsplat", "additive", str(radial), str(again), "-m", "radial"]
+            ).exit_code
+            == 0
+        )
+        method, e_cum, ref = stamps(again)
+        assert method == "radial"
+        assert e_cum == [None] * len(e_cum), e_cum
+        assert ref is None
+
+        # Sensitivity control: re-ladder the SAME reveal with an energy-ordered
+        # method. The stamps must come back, and the method must no longer be a
+        # reveal — proving the assertions above track the method, not the command.
+        energy = tmp_path / "energy.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "additive", str(radial), str(energy), "-m", "self_energy"],
+            ).exit_code
+            == 0
+        )
+        method, e_cum, ref = stamps(energy)
+        assert method == "self_energy"
+        assert all(v is not None for v in e_cum), e_cum
+        assert ref is not None
+
+        # The direction that actually exercises the source-stats merge: the
+        # input already CARRIES a weight, so suppressing the fresh one is not
+        # enough — the merge that preserves source-only stat entries must not
+        # carry the stale `reference_energy` back over the reveal's omission.
+        # (The arms above all start from a source with no weight, so they pass
+        # either way; this one fails without the drop in `_ladder_leaf`.)
+        from_stamped = tmp_path / "from_stamped.gsplats.zarr"
+        assert (
+            runner.invoke(
+                app,
+                ["gsplat", "additive", str(energy), str(from_stamped), "-m", "radial"],
+            ).exit_code
+            == 0
+        )
+        method, e_cum, ref = stamps(from_stamped)
+        assert method == "radial"
+        assert e_cum == [None] * len(e_cum), e_cum
+        assert ref is None, ref
 
 
 class TestFlattenCommand:

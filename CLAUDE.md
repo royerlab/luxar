@@ -224,6 +224,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 ```bash
 luxar demo                       # List the 80 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
+luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 # Demos keep heavyweight packages OUT of the core install, so a fresh checkout
 # lists every demo but cannot run them all. Report-only `deps` exits 1 for an
@@ -446,6 +447,15 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
 # additive default method `auto`: greedy (provably (1-1/e)-optimal at every
 # prefix) at N <= 5000, else `self_energy` (cheap O(N log N)); override with -m.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy
+# `-m radial` = the REVEAL: orders concentric shells around the node's own bbox
+# centre (NOT the scene origin), so a streaming prefix grows outward from the
+# middle. Authoring only — no viewer changes, nothing about how data is DISPLAYED.
+# Available on GSplats, Points and Lines (on Lines it orders whole polylines, so
+# every prefix keeps valid segment topology). A radial ladder deliberately carries
+# NO energy stamps: the viewer brightens an incomplete ladder by 1/e(k), which is
+# backwards for a reveal (a partial object at FULL brightness, not a dim whole).
+# Knobs: reveal_centre / spatial_dims (Python), --reveal-centre / --spatial-dims.
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -m radial --n-lods 6
 # STREAMING breakpoints: `-b stream:C` = geometric ladder (first chunk C splats,
 # then doubling), sized per part/level. Or derive C from a download budget with
 # `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override;

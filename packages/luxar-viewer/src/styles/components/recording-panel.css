@@ -30,32 +30,35 @@
 
 /* The extra `.luxar-recording-panel` prefix raises specificity to (0,3,0) so
    the record red beats the light-theme `[data-theme=light] .luxar-gui__button`
-   (0,2,0) tie WITHOUT `!important`. `#fff` text is a fixed white-on-red
-   affordance (do not tokenize — --luxar-text-inverse is dark in the dark theme). */
+   (0,2,0) tie WITHOUT `!important`. */
 .luxar-recording-panel .luxar-recording-btn .luxar-gui__button {
-  background: var(--luxar-error);
-  color: #fff;
-  border: none;
+  /* Record keeps its red identity, but as the house accent-tint chip
+     (color-mix fill + border, red text) rather than a solid slab — a solid
+     error-red button read as an alarm, not an action. The solid red is
+     reserved for the LIVE recording state (the indicator pill's dot). */
+  background: color-mix(in srgb, var(--luxar-error) 14%, transparent);
+  color: var(--luxar-error);
+  border: 1px solid color-mix(in srgb, var(--luxar-error) 45%, transparent);
   border-radius: var(--luxar-radius-md);
-  font-size: var(--luxar-text-lg);
+  font-size: var(--luxar-text-md);
   font-weight: var(--luxar-font-semibold);
-  padding: var(--luxar-spacing-6) var(--luxar-spacing-8);
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-8);
   cursor: pointer;
   transition:
     background 0.2s,
-    transform 0.1s;
+    border-color 0.2s;
   width: 100%;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
 }
 
 .luxar-recording-panel .luxar-recording-btn .luxar-gui__button:hover {
-  background: color-mix(in srgb, var(--luxar-error) 85%, #000);
-  transform: scale(1.02);
+  background: color-mix(in srgb, var(--luxar-error) 24%, transparent);
+  border-color: color-mix(in srgb, var(--luxar-error) 70%, transparent);
 }
 
 .luxar-recording-panel .luxar-recording-btn .luxar-gui__button:active {
-  transform: scale(0.98);
+  background: color-mix(in srgb, var(--luxar-error) 32%, transparent);
 }
 
 /* ========== Recording Indicator ========== */
@@ -77,22 +80,25 @@
   z-index: 9999;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-radius: 20px;
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
+  gap: var(--luxar-spacing-4);
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-8);
+  /* Badge variant of the shared surface recipe (pill-shaped). */
+  border-radius: var(--luxar-radius-full);
+  background: var(--luxar-bg-secondary);
+  border: 1px solid var(--luxar-border-default);
+  color: var(--luxar-text-primary);
   font-family: var(--luxar-font-base, system-ui, sans-serif);
   font-size: var(--luxar-text-sm, 14px);
   cursor: pointer;
   user-select: none;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  transition: background 0.2s;
+  backdrop-filter: var(--luxar-blur-md);
+  -webkit-backdrop-filter: var(--luxar-blur-md);
+  box-shadow: var(--luxar-shadow-md);
+  transition: border-color 0.2s;
 }
 
 .luxar-recording-indicator:hover {
-  background: rgba(0, 0, 0, 0.9);
+  border-color: var(--luxar-border-strong);
 }
 
 .luxar-recording-indicator__dot {
@@ -106,7 +112,7 @@
 
 .luxar-recording-indicator__text {
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.04em;
 }
 
 .luxar-recording-indicator__time {
@@ -201,12 +207,6 @@
 }
 
 /* ========== Theme Overrides ========== */
-
-[data-theme='light'] .luxar-recording-indicator {
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--luxar-text-primary);
-  box-shadow: var(--luxar-shadow-md);
-}
 
 [data-theme='light'] .luxar-recording-confirm__dialog {
   background: rgba(255, 255, 255, 0.98);

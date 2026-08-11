@@ -118,6 +118,22 @@ the network and payload, not the geometry type, so this is the one place both
 - `stream_cuts(n, chunk, max_levels=...)`: Cumulative geometric cuts `[c, 2c, 4c, …, n]` over `n` elements
 - `sibling_aware_stream_breakpoints(...)`: Raise a `stream:C` ladder's first chunk for a leaf that has a coarser sibling in its lod group
 
+### `lod_methods.py`
+The additive-LOD **ordering-method registry** — the single source of truth for
+which orderings exist. Sibling of `lod_breakpoints.py` and here for the same
+reason: the implementation lives in `luxar.gsplats.lod.additive`, but the CLI
+needs the list too, and importing anything under `luxar.gsplats` executes that
+package's `__init__`, which adds ~600 ms on top of the CLI's own ~250 ms import — a 3.4x multiplier on `luxar --help`, stable over 3 runs.
+A stdlib-only leaf module is free to import from either side, so the two can share
+one list instead of hand-copying it — they previously held two literal tuples with
+no consistency test, and the copies had already diverged.
+
+**Key Names:**
+- `GSPLAT_ADDITIVE_METHODS` / `GSPLAT_ADDITIVE_CHOICES`: the implemented GSPLAT orderings, and the same set plus the size-adaptive `auto` sentinel accepted at the API/CLI boundary. Prefixed because the ELEMENT-side registry (`core/group/lod/group.py::ADDITIVE_METHODS`) is a different list — only `random` and `radial` overlap — and both are used as `if method not in ...` gates, so an unprefixed collision would let a wrong import silently accept or reject the wrong methods
+- `GSPLAT_ADDITIVE_CHOICES_HELP`: `auto|greedy|…` rendered for `--method` help strings, so help text cannot fall out of date
+- `MethodName` / `AutoOrMethod`: the `Literal` types, re-exported from `gsplats.lod.additive` for its existing importers
+- `REVEAL_METHODS` / `is_reveal_method()`: which orderings are a *reveal* (currently `radial`) rather than a contribution ranking. A reveal's ladder must carry no energy stamps, because the viewer brightens an incomplete ladder by `1/e(k)` — right for an approximation, backwards for a partial object rendered at full brightness. Shared by the gsplat ladder and `core.group.lod.group.additive_level_stats` so the rule is written once for all geometries.
+
 ### `paths.py`
 Path utilities for Luxar dataset generation.
 
@@ -203,6 +219,47 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - Configurable parameters
 - Git LFS data loading with local cache fallback
 - Educational examples of Luxar features
+
+### `process.py`
+Deterministic teardown for long-lived child processes (stdlib-only). Owns the
+lifecycle of the subprocess trees `luxar demo run` spawns so Ctrl-C (or
+SIGTERM/SIGHUP) never orphans a `luxar serve` on its port.
+
+**Key Functions:**
+- `run_child_process()`: Spawn a command, wait for it, and tear it (and its
+  whole process group, when isolated) down on every exit path via a
+  SIGINT → SIGTERM → SIGKILL escalation; optional `on_spawn` hook receives the
+  child PID (= new pgid when isolated)
+- `terminate_process_group()`: The same escalation for a group discovered
+  after the fact (used by `luxar demo stop`); True only once the group is
+  provably finished — an unreaped zombie counts as gone, `EPERM` (someone
+  else's group) never does
+- `can_kill_process_groups()`: Whether POSIX process-group signalling exists
+- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`
+  — a `ps`-free process table (empty, meaning *unknown*, off Linux)
+
+### `demo_runs.py`
+Discovery + kill engine behind `luxar demo stop` (stdlib-only): find every
+running demo — even one forgotten in another terminal — and free its ports.
+
+**Key Functions:**
+- `register_run()` / `unregister_run()`: JSON pidfile per launch under
+  `~/.cache/luxar/running/`, written by `demo run`'s `on_spawn` hook and
+  removed on exit (so the registry only ever names survivors)
+- `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
+  strays — a process that *leads its own group* and is genuinely running
+  `python -m luxar.demos.demo_*`; prunes dead/hijacked
+  entries, never returns the caller's own process group. Falls back to
+  `proc_table()` when `ps` is missing, so the identity check that keeps a
+  recycled pgid alive-and-innocent never silently disappears. Off POSIX, where
+  neither exists, a pid listing (`tasklist`) still prunes a record left behind
+  by a reboot or a hard-killed owner
+- `stop_run()`: Tear one run's process group down via `terminate_process_group`,
+  re-validating the group at kill time; returns False without signalling
+  anything off POSIX, where a recorded pid cannot be checked before a hard
+  terminate
+- `describe_port_holder()`: Best-effort "port N is held by demo 'X'" hint
+  for `pick_port`'s busy-port warning
 
 ## Usage Examples
 

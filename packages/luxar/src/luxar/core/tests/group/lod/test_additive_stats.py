@@ -279,3 +279,104 @@ class TestLinesAdditiveStamps:
         # Deliberately a different currency from points/gsplats; the key
         # documents that so nobody compares them across geometries.
         assert level_stats["energy_kind"] == "lines-tube-volume"
+
+
+class TestRevealLaddersCarryNoEnergyStamps:
+    """A ``radial`` reveal ladder must be stamped with counts but NOT energy.
+
+    The viewer multiplies a laddered node's brightness by ``1/e(k)`` while the
+    ladder is incomplete, to keep a dim partial prefix looking like the finished
+    object. That is right for an energy-ordered ladder and exactly wrong for a
+    reveal: a radial prefix is a *partial object at full brightness*, so an inner
+    shell holding 5% of the energy would be blown out ~20x and then dim as the
+    object completes — the inverse of growing in. The compensation is gated on
+    the BLENDING MODE and never on geometry type, so the only place to stop it is
+    to omit the stamps at authoring time.
+
+    Every test here asserts an ABSENCE, so every one is paired with a
+    sensitivity control: the same builder, the same data, a non-reveal method,
+    which must SHOW the stamp the reveal case lacks. Without that pairing these
+    would all still pass if the stamping broke wholesale, or if the fixture
+    happened to carry zero energy.
+    """
+
+    _KW = dict(breakpoints_kind="counts", energy_kind="points-luminance-volume")
+
+    def test_helper_omits_both_stamps_for_radial(self) -> None:
+        per_level, ref, parent = additive_level_stats(
+            [1.0, 2.0, 1.0], [10, 20, 10], method="radial", **self._KW
+        )
+
+        assert ref is None
+        assert "reference_energy" not in parent
+        for i, s in enumerate(per_level):
+            assert "energy_fraction_cum" not in s, f"level {i} was stamped"
+
+    def test_helper_stamps_the_same_input_under_a_non_reveal_method(self) -> None:
+        # SENSITIVITY CONTROL for the test above: identical energies and counts,
+        # so the only thing that can explain the difference is the method.
+        per_level, ref, parent = additive_level_stats(
+            [1.0, 2.0, 1.0], [10, 20, 10], method="self_energy", **self._KW
+        )
+
+        assert ref == pytest.approx(4.0)
+        assert parent["reference_energy"] == pytest.approx(4.0)
+        assert all("energy_fraction_cum" in s for s in per_level)
+
+    def test_radial_still_records_counts_and_method_as_provenance(self) -> None:
+        # Suppression is surgical: it drops the two stamps brightness keys off
+        # and keeps the bookkeeping, so `luxar gsplat info` can still report
+        # what produced the ladder.
+        per_level, _ref, parent = additive_level_stats(
+            [1.0, 2.0], [10, 20], method="radial", **self._KW
+        )
+
+        assert [s["lod_method"] for s in per_level] == ["radial", "radial"]
+        assert [s["lod_cumulative_n"] for s in per_level] == [10, 30]
+        assert parent["lod_method"] == "radial"
+        assert parent["lod_n_lods"] == 2
+
+    def test_points_reveal_ladder_is_unstamped_on_disk(self, tmp_path) -> None:
+        grp, _ = TestPointsAdditiveStamps._build(tmp_path, method="radial")
+
+        stamps = _sublod_stamps(grp)
+        assert len(stamps) > 1, "expected a real multi-level ladder to inspect"
+        for i, s in enumerate(stamps):
+            assert "energy_fraction_cum" not in s, f"additive_{i} was stamped"
+        assert "reference_energy" not in dict(grp.attrs.get("level_stats", {}))
+
+    def test_points_control_same_data_random_method_is_stamped(self, tmp_path) -> None:
+        # SENSITIVITY CONTROL: `_build`'s default method is `random`, so this is
+        # the same positions/colors/radii and the same `stream:250` ladder.
+        grp, _ = TestPointsAdditiveStamps._build(tmp_path)
+
+        stamps = _sublod_stamps(grp)
+        assert all("energy_fraction_cum" in s for s in stamps)
+        assert dict(grp.attrs["level_stats"])["reference_energy"] > 0
+
+    def test_lines_reveal_ladder_is_unstamped_on_disk(self, tmp_path) -> None:
+        grp, _ = TestLinesAdditiveStamps._build(tmp_path, method="radial")
+
+        stamps = _sublod_stamps(grp)
+        assert len(stamps) > 1, "expected a real multi-level ladder to inspect"
+        for i, s in enumerate(stamps):
+            assert "energy_fraction_cum" not in s, f"additive_{i} was stamped"
+        assert "reference_energy" not in dict(grp.attrs.get("level_stats", {}))
+
+    def test_lines_control_same_data_random_method_is_stamped(self, tmp_path) -> None:
+        # SENSITIVITY CONTROL, as for points above.
+        grp, _ = TestLinesAdditiveStamps._build(tmp_path)
+
+        stamps = _sublod_stamps(grp)
+        assert all("energy_fraction_cum" in s for s in stamps)
+        assert dict(grp.attrs["level_stats"])["reference_energy"] > 0
+
+    def test_reveal_ladder_still_has_the_levels_it_should(self, tmp_path) -> None:
+        # Suppressing stamps must not have suppressed the LADDER. A reveal whose
+        # levels silently collapsed to one would also be "unstamped", and every
+        # assertion above would pass.
+        grp, n = TestPointsAdditiveStamps._build(tmp_path, method="radial")
+
+        stamps = _sublod_stamps(grp)
+        assert sum(s["lod_n_elements"] for s in stamps) == n
+        assert stamps[-1]["lod_cumulative_n"] == n

@@ -19,7 +19,11 @@ This package splits cleanly into two layers:
   takes `substitutive_lod=` only.
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are pure-NumPy
-ordering primitives shared by the Points and Lines resolvers.
+ordering primitives shared by the Points and Lines resolvers, and `reveal.py` is a
+third such primitive — the concentric-shell scorer behind `method="radial"`, plus
+the resolvers that decide which columns may be shell dimensions. It depends on
+nothing in this package (`group.py` imports *it*), which is what let it come out
+of `group.py` cleanly.
 
 ## File structure
 
@@ -30,6 +34,7 @@ lod/
 ├── lines.py            # Lines additive-LOD (per-polyline) ordering + ladder + resolver
 ├── gsplats.py           # GSplats substitutive + additive axis resolvers
 ├── mesh.py             # Mesh substitutive axis resolver (decimation, not lift-to-gsplats)
+├── reveal.py           # Concentric-shell reveal: radial scorer + spatial-dims resolvers
 ├── spatial_uniform.py  # Stratified-grid sampler (default spatial-uniform ordering)
 └── poisson_disk.py     # Bridson blue-noise sampler (opt-in alternative)
 ```
@@ -176,7 +181,18 @@ finest child, not the baked coarse gsplat levels; and a node `gamma` ≠ 1 is no
 reproduced on the coarse levels (colormap mode applies gamma to the scalar
 *pre-LUT* on the finest child, whereas the baked-colour gsplats get gamma applied
 to RGB — fundamentally different, so they diverge at `gamma` ≠ 1). (`scalars`
-without a `colormap` still raises.)
+without a `colormap` still raises.) A **uniform** `colors` — an RGB(A) tuple or
+a `(1, c)` row — is broadcast onto every coarse level, alpha included, so it
+renders the same at every LOD level (#1444); the one inexactness is an alpha
+ABOVE `ALPHA_CLAMP = 511/512`, which the merge's optical-depth round-trip caps —
+an authored 1.0 (or 0.999) reaches the coarse levels as 0.998, a ≤0.2% step the
+finest child does not have. At or below the clamp the round-trip is exact.
+A **per-element** `(N, 4)` RGBA is still refused by the lift, because
+the substitutive merge is untested on a varying alpha (drop the alpha column, or
+use `partition=` / `additive_lod=`). Colour dtype follows the leaf's rule —
+floating, uint8 or uint16 — and any other (an `int64` array, say) is refused
+before the lift builds anything, rather than baking a near-black coarse level
+the encoder then rejects at the finest child.
 
 ### Lines (`lines.py`)
 
@@ -242,8 +258,12 @@ fabricate phantom edges, so its topology cannot be preserved either way. Only
 `segments` gets a composed additive ladder. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
-Points). All `line_type`s (segments/polyline/loop/indexed) are supported for the
-substitutive pyramid itself; only `segments` also receives a composed additive ladder.
+Points, and the same uniform-vs-per-element RGBA rule: a uniform colour is
+broadcast to the beads with its alpha, a per-element `(N, 4)` is refused —
+uniformity is judged once, per VERTEX, so a line set that collapses to a single
+bead cannot re-present a per-element colour as a uniform row). All `line_type`s
+(segments/polyline/loop/indexed) are supported for the substitutive pyramid
+itself; only `segments` also receives a composed additive ladder.
 Degenerate-width segments are dropped; bead allocation is bounded both
 per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
 (`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a

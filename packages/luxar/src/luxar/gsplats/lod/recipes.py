@@ -43,6 +43,7 @@ Two return shapes (see :data:`RecipeResult`):
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Callable, List, Literal, Optional, Union, get_args
 
@@ -70,6 +71,7 @@ from luxar.gsplats.tree import (
     GSplatPartition,
     iter_leaves,
 )
+from luxar.utils.lod_methods import is_reveal_method
 
 #: The recipe vocabulary, ordered by dataset scale.
 RecipeName = Literal[
@@ -127,6 +129,10 @@ class RecipeParams:
     # stream (additive prefix) ladder — every recipe ladders by default
     n_lods: int = 4
     additive_method: AutoOrMethod = "auto"
+    # `additive_method="radial"` only — the concentric-shell reveal. Defaults:
+    # the bbox centre, over the non-degenerate axes.
+    reveal_centre: Optional[Sequence[float]] = None
+    spatial_dims: Optional[Sequence[int]] = None
     breakpoints: BreakpointSpec = "equal-count"
     truncation_sigmas: float = 3.0
     max_n_dense: int = 2000
@@ -204,6 +210,8 @@ def build_stream(data: GSplatData, params: RecipeParams) -> GSplatData:
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,
+        reveal_centre=params.reveal_centre,
+        spatial_dims=params.spatial_dims,
     )
 
 
@@ -255,6 +263,8 @@ def build_levels_matrix(data: GSplatData, params: RecipeParams) -> GSplatData:
         coarsen_dims=params.coarsen_dims,
         n_additive_lods=params.n_lods,
         additive_method=params.additive_method,
+        additive_reveal_centre=params.reveal_centre,
+        additive_spatial_dims=params.spatial_dims,
         breakpoints=params.breakpoints,
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
@@ -373,6 +383,8 @@ def _substitutive_for_part(
                 max_n_dense=params.max_n_dense,
                 seed=None if params.seed is None else params.seed + s,
                 substitutive_level=s,
+                reveal_centre=params.reveal_centre,
+                spatial_dims=params.spatial_dims,
             )
     # Build each part's lod group with viewport-relative coverage_fraction
     # thresholds. These are PARTITIONED ladders, and here the reason is GEOMETRIC:
@@ -493,7 +505,17 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         # weighted-quality aggregation.
         cap_stats = capped.substitutive_levels[-1].stats
         leaf_stats = coarse_leaf.meta.setdefault("stats", {})
-        for key in ("quality", "reference_energy"):
+        # Not `reference_energy` on a REVEAL ladder: `_ladder_for_part` above
+        # deliberately left the cap with no per-rung `energy_fraction_cum`, and w
+        # is the weight for exactly those fractions — re-attaching it here would
+        # put back the half-written pair `make_additive_lod` just removed. Q is a
+        # standalone readout and still goes on.
+        keys = (
+            ("quality",)
+            if _is_reveal_ladder(coarse_leaf)
+            else ("quality", "reference_energy")
+        )
+        for key in keys:
             if key in cap_stats:
                 leaf_stats[key] = cap_stats[key]
         # The fine parts ARE the group's finest content: quality 1.0 by
@@ -521,6 +543,20 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     coarse_leaf.meta["coverage_fraction"] = coarse_cov
     fine_partition.meta["coverage_fraction"] = fine_cov
     return group
+
+
+def _is_reveal_ladder(node: GSplatNode) -> bool:
+    """Was ``node``'s additive ladder built by a REVEAL ordering?
+
+    Read off the ladder's own ``lod_method`` provenance (which a reveal DOES
+    carry — only the energy keys are omitted) rather than off
+    ``params.additive_method``, which may still be the unresolved ``auto``.
+    """
+    sublods = getattr(node, "additive_sublods", None) or []
+    return any(
+        is_reveal_method(str((getattr(sub, "stats", None) or {}).get("lod_method")))
+        for sub in sublods
+    )
 
 
 def _ladder_for_part(
@@ -558,6 +594,8 @@ def _ladder_for_part(
         truncation_sigmas=params.truncation_sigmas,
         max_n_dense=params.max_n_dense,
         seed=params.seed,
+        reveal_centre=params.reveal_centre,
+        spatial_dims=params.spatial_dims,
     )
     return laddered.tree
 
