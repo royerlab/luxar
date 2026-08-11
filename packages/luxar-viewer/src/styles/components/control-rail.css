@@ -460,7 +460,7 @@
 .luxar-control-rail-hint {
   position: absolute;
   /* Same unified gutter as the popovers and docked panels. */
-  left: 72px;
+  left: 73px;
   top: 50%;
   transform: translateY(-50%);
   max-width: 232px;
@@ -521,17 +521,17 @@
    docking into a tray beside the rail is the planned follow-up. */
 .luxar-has-control-rail .luxar-gui,
 .luxar-has-control-rail .luxar-layers-panel {
-  /* One gutter everywhere: rail right edge (12px inset + 50px rail = 62px)
-     plus the SAME 10px gap the popovers/flyouts use (left: calc(100% + 10px)),
-     so docked panels and rail popovers share one left edge. */
-  left: 72px !important;
+  /* One gutter everywhere: this equals the popovers' computed left edge
+     (rail box incl. border + their 10px gap resolves to 73px), so docked
+     panels and rail popovers share one exact left edge. */
+  left: 73px !important;
 }
 
 /* The debug console (logs) defaults to the lower-left and IS draggable, so
    only shift its default position (no !important) — the inline `left` it sets
    while dragging still wins, keeping it movable. */
 .luxar-has-control-rail .luxar-debug-console {
-  left: 72px;
+  left: 73px;
 }
 
 .luxar-control-rail-hint::before {
