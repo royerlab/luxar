@@ -26,7 +26,9 @@
   border-radius: var(--luxar-radius-lg);
   font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-md);
-  z-index: 150;
+  /* Above in-canvas widgets (z-base), deliberately below every panel layer
+     (z-dropdown) so the console never covers interactive controls. */
+  z-index: calc(var(--luxar-z-base) + 50);
   backdrop-filter: var(--luxar-blur-md);
   box-shadow: var(--luxar-shadow-lg);
 
@@ -81,13 +83,11 @@
 
 /* Header */
 .luxar-debug-console__header {
-  padding: var(--luxar-spacing-8);
-  padding-bottom: var(--luxar-spacing-3);
-  margin-bottom: var(--luxar-spacing-5);
-  border-bottom: 1px solid var(--luxar-border-strong);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  /* Structural extras only — recipe from the shared .luxar-panel-header.
+     Own horizontal/top padding (the console body manages its own). */
+  padding-top: var(--luxar-spacing-8);
+  padding-right: var(--luxar-spacing-8);
+  padding-left: var(--luxar-spacing-8);
 }
 
 .luxar-debug-console__title {
@@ -125,31 +125,8 @@
   font-size: var(--luxar-text-sm);
 }
 
-.luxar-debug-console__close-btn {
-  background: none;
-  border: none;
-  color: var(--luxar-text-muted);
-  font-size: var(--luxar-text-3xl);
-  cursor: pointer;
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--luxar-transition-normal);
-}
-
-.luxar-debug-console__close-btn:hover {
-  color: var(--luxar-text-primary);
-}
-
 .luxar-debug-console__clear-btn:hover,
 .luxar-debug-console__copy-btn:hover {
-  color: var(--luxar-text-primary);
-}
-
-.luxar-debug-console__close-btn:hover {
   color: var(--luxar-text-primary);
 }
 
@@ -239,12 +216,12 @@
 
 .luxar-console-message-warn {
   color: var(--luxar-warning);
-  background: rgba(255, 193, 7, 0.1);
+  background: color-mix(in srgb, var(--luxar-warning) 10%, transparent);
 }
 
 .luxar-console-message-error {
   color: var(--luxar-error);
-  background: rgba(244, 67, 54, 0.1);
+  background: color-mix(in srgb, var(--luxar-error) 10%, transparent);
 }
 
 .luxar-console-message-debug {
@@ -295,14 +272,16 @@
   background: rgba(0, 0, 0, 0.05);
 }
 
-[data-theme='light'] .luxar-debug-console__close-btn {
-  color: var(--luxar-text-muted);
-}
-
-[data-theme='light'] .luxar-debug-console__close-btn:hover {
-  color: var(--luxar-text-primary);
-}
-
 [data-theme='light'] .luxar-console-message:hover {
   background: rgba(0, 0, 0, 0.03);
+}
+
+/* Respect a user's reduced-motion preference (WCAG 2.3.3): drop the
+   transitions this file declares (transition is not inherited). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-debug-console__copy-btn,
+  .luxar-debug-console__close-btn,
+  .luxar-console-message {
+    transition: none;
+  }
 }

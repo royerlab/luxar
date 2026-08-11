@@ -731,3 +731,32 @@ def test_quality_stamps_adaptive_parts():
         assert stats[0]["reference_energy"] == pytest.approx(
             stats[-1]["reference_energy"]
         )
+
+
+def test_overview_cap_keeps_no_energy_weight_under_a_reveal_ordering():
+    """The `overview` cap must not get its `reference_energy` re-attached.
+
+    `_ladder_for_part` builds the cap's ladder and (for a reveal) leaves it with
+    no per-rung `energy_fraction_cum` and no leaf weight. The quality block then
+    re-attaches the capped reduction's `quality` AND `reference_energy` — which
+    put the half-written pair straight back. `quality` is a standalone readout and
+    still belongs there; the weight does not.
+    """
+    data = _make_random_gsplat(n=400)
+
+    revealed = build_recipe(
+        data, "overview", _params(max_elements=120, additive_method="radial")
+    )
+    coarse, _ = revealed.children
+    cap_stats = coarse.meta.get("stats", {})
+    assert "quality" in cap_stats, "the cap must keep its measured Q"
+    assert "reference_energy" not in cap_stats
+
+    # Control: the same build under an energy ordering keeps both, so this is
+    # scoped to reveals rather than a blanket removal.
+    ordered = build_recipe(
+        data, "overview", _params(max_elements=120, additive_method="self_energy")
+    )
+    ordered_cap_stats = ordered.children[0].meta.get("stats", {})
+    assert "quality" in ordered_cap_stats
+    assert "reference_energy" in ordered_cap_stats

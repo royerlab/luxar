@@ -7,15 +7,17 @@ don't need a DOM or a navigator to test.
 
 ## Contents
 
-| File           | Purpose                                                                                               |
-| -------------- | ----------------------------------------------------------------------------------------------------- |
-| `url-utils.ts` | `extractBaseUrl(url, origin)` / `extractPath(url)` — pure URL parsing for the browser's initial state |
+| File           | Purpose                                                                                                          |
+| -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `url-utils.ts` | `extractBaseUrl(url, origin)` / `extractPath(url)` — pure URL parsing for the browser's initial state            |
+| `icons.ts`     | `BROWSER_ICONS` — stroke SVG glyph set (zarr/folder/file/home/search/close/edit/alert/chevron) in the rail style |
 
 ## Public surface
 
 ```typescript
 export function extractBaseUrl(url: string, origin: string): string;
 export function extractPath(url: string): string;
+export const BROWSER_ICONS: Record<string, string>;
 ```
 
 `extractBaseUrl` computes the directory to list when the browser opens:

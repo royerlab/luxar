@@ -70,10 +70,13 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_line_join()`: Validate the lines-only join style at degree-2 polyline joints (`none`, `miter`)
 - `validate_colormap()`: Validate a colormap name (resolved via `colormaps.registry`) or LUT array (N, 3)
 - `validate_category_indices()`: Validate category index arrays
+- `validate_finite_reveal_coords()`: Refuse NaN/inf coordinates feeding a `radial` reveal ordering (they make every distance non-finite, so the stable argsort silently leaves the ladder in input order)
+- `validate_integral_axis_indices()`: Refuse a fractional `spatial_dims` entry before `int()` truncates it to a different column than the one named
 
 Note: all of the above are re-exported at the package level except
-`validate_intensity`, `validate_offset`, `validate_layer`, `validate_visible`
-and `validate_colormap`, which must be imported directly from
+`validate_intensity`, `validate_offset`, `validate_layer`, `validate_visible`,
+`validate_colormap`, `validate_finite_reveal_coords` and
+`validate_integral_axis_indices`, which must be imported directly from
 `luxar.validation.types`.
 
 **Type Guards:**

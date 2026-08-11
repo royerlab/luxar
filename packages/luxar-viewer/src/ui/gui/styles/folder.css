@@ -81,3 +81,11 @@
 .luxar-gui__folder--closed > .luxar-gui__children {
   display: none;
 }
+
+/* Respect a user's reduced-motion preference (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-gui__folder-title,
+  .luxar-gui__folder-caret {
+    transition: none;
+  }
+}

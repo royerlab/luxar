@@ -72,6 +72,8 @@ luxar demo info lorenz            # Full details for one demo
 luxar demo run lorenz             # Generate + open the viewer
 luxar demo run 3                  # Run by table index
 luxar demo run lorenz -- --no-serve --points=100000  # Forward args to the demo
+luxar demo stop                   # Stop running demos and free their ports
+luxar demo stop lorenz --dry-run  # List one demo's live runs, stop nothing
 luxar demo cache list             # Inventory ~/.cache/luxar demo caches
 luxar demo cache clear lorenz --dry-run   # Preview a cache clear
 luxar demo deps                         # Which optional demo deps are missing?
@@ -335,7 +337,7 @@ luxar gsplat additive in.gsplats.zarr out.gsplats.zarr -b stream:14000
 luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4         # classic equal-count
 ```
 
-**Options**: `--n-lods` (default 4, equal-count), `--method/-m` (auto/greedy/self_energy/mass/amplitude/spectral/random ordering), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
+**Options**: `--n-lods` (default 4, equal-count), `--method/-m` (auto/greedy/self_energy/mass/amplitude/spectral/random/radial ordering; `radial` reveals outward from the bbox centre and carries no energy stamps), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
 
 #### `luxar gsplat flatten`
 Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one flat matrix-shaped leaf. Use for compatibility with tools that expect a flat `.gsplats.zarr`, or before rebuilding a new global LOD from a tiled/partitioned result.
