@@ -249,3 +249,69 @@ def test_sigkill_reaches_signal_ignoring_child() -> None:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=5)
+
+
+# ───────────────────────── process table / zombies ───────────────────────────
+_HAS_PROC = os.path.isdir("/proc")
+linux_only = pytest.mark.skipif(not _HAS_PROC, reason="requires /proc (Linux)")
+
+
+@linux_only
+def test_proc_table_lists_this_process() -> None:
+    rows = process.proc_table()
+    mine = [row for row in rows if row[0] == os.getpid()]
+    assert len(mine) == 1
+    _pid, pgid, state, command = mine[0]
+    assert pgid == os.getpgrp()
+    assert state != "Z"
+    assert "python" in command.lower()
+
+
+@posix_only
+@linux_only
+def test_teardown_does_not_wait_out_an_unreaped_zombie() -> None:
+    """A dead-but-unreaped child must not hold the escalation ladder open.
+
+    `killpg(pgid, 0)` still succeeds for a zombie, so without looking at the
+    process state every interrupted `demo run` sat through the full
+    SIGINT (5s) + SIGTERM (3s) ladder before returning.
+    """
+    import subprocess
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+        # Wait for the corpse to appear — Popen has not reaped it, so the
+        # group still answers killpg(0) with a zombie in it.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            states = [s for _p, g, s, _c in process.proc_table() if g == proc.pid]
+            if states == ["Z"]:
+                break
+            time.sleep(0.05)
+        assert states == ["Z"], f"expected a zombie group, saw {states}"
+
+        start = time.monotonic()
+        _teardown(proc, pgid=proc.pid, interrupt_timeout=5.0, term_timeout=3.0)
+        assert time.monotonic() - start < 2.0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+@posix_only
+def test_group_owned_by_another_user_is_never_reported_stopped(monkeypatch) -> None:
+    """EPERM means "alive and not ours" — reporting it as stopped would lie."""
+
+    def denied(pgid: int, sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(process.os, "killpg", denied)
+    assert process._group_gone_probe(4321)() is False
+    stopped = process.terminate_process_group(
+        4321, interrupt_timeout=0.05, term_timeout=0.05
+    )
+    assert stopped is False

@@ -438,6 +438,19 @@
   z-index: var(--luxar-z-tooltip);
 }
 
+/* ========== Keyboard Focus (embed-safe) ==========
+   The global :focus-visible ring lives in reset.css, which ships only with
+   standalone.css — embedders importing index.css alone would get NO keyboard
+   focus indication. This rule restores it for every control inside a Luxar
+   panel, keyed off the same .luxar-glass-surface marker the themes use (all
+   interactive panels carry it). Components with richer focus styles (rail
+   buttons/chips, inputs whose border switches to --luxar-border-focus)
+   override this at equal specificity later in the import order. */
+.luxar-glass-surface :focus-visible {
+  outline: 2px solid var(--luxar-border-focus);
+  outline-offset: 1px;
+}
+
 /* ========== Panel header (shared recipe) ==========
    THE header treatment for every panel (UI Design Guide §7.3): title row
    with the standard rhythm (6px to the rule, 10px to the content) closed

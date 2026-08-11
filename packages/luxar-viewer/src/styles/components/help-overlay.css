@@ -38,7 +38,10 @@
 
   /* NO overflow here - allows pseudo-elements for glass effect */
   overflow: visible;
-  outline: none !important;
+  /* The root is a tabindex="-1" focus-trap container — programmatic focus
+     lands here on open, where a ring around the whole panel is noise. Plain
+     (non-!important) so descendant :focus-visible rules are unaffected. */
+  outline: none;
 }
 
 /**
@@ -205,4 +208,12 @@
 /* Theme-specific overrides */
 [data-theme='light'] .luxar-help-overlay {
   background: rgba(255, 255, 255, 0.95);
+}
+
+/* Respect a user's reduced-motion preference (WCAG 2.3.3): drop the
+   transitions this file declares (transition is not inherited). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-help-overlay__close-btn {
+    transition: none;
+  }
 }

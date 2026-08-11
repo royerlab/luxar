@@ -115,3 +115,11 @@
 }
 
 /* Glass themes - see src/styles/themes/{frosted,liquid}-glass.css */
+
+/* Respect a user's reduced-motion preference (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-gui,
+  .luxar-gui__close-btn {
+    transition: none;
+  }
+}
