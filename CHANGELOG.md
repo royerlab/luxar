@@ -24,6 +24,28 @@ ports to match. A demo passing an explicit `--port` /
 still resolves the rare same-slot hash collision by shifting up with its
 usual warning.
 
+#### Browser tabs name the scene they show
+
+Every viewer tab was titled "Luxar Player – 3D Scene Viewer", so a row of
+open demo tabs was indistinguishable — the accomplice of the stale-tab trap.
+Two-step title chain, applied to `document.title`: a scene's authored
+`viewer_config.title` (new Python `ViewerConfig` field) wins; otherwise the
+viewer uses the new `?title=` URL parameter, which serve-family commands
+(`luxar serve --viewer` / `--open`, and therefore every `luxar demo run`)
+derive from the dataset's file name (`dataset_title`, compound suffixes like
+`.luxar.zarr` stripped, including archive-wrapped ones like
+`.gsplats.zarr.zip`). Zero demo edits required — all 80 demos get named tabs
+for free. Switching datasets inside the viewer drops `?title=` from the
+address bar and retitles the tab after the dataset you switched to (falling
+back to the page title when the URL names no store): both the URL parameter
+and an authored title name the scene you just left, so leaving either in
+place is exactly the stale tab this set out to fix. A tab reloaded after such
+a switch (or a link shared from it) carries no `?title=` any more, so the
+viewer falls back to the store name in `?src=`. `document.title` belongs to
+the host page, so `LuxarApp.dispose()` hands the page's own `<title>` back —
+an embedder that removes the viewer is not left named after a torn-down
+scene.
+
 #### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
 
 Three of its four tests gated on `capabilities.apiSurface !== 'webgpu'` alone
@@ -54,6 +76,45 @@ function anywhere, and what it proves (the WebGPU arm of
 backend. It is gated on the `apiSurface` instead, since a page that drops all
 the way to a plain `WebGLRenderer` takes the other arm. Retitled and commented
 so it claims nothing about WGSL.
+
+#### Tests — a lazy mesh LOD level is pinned out of the per-slice sweep (#1356)
+
+A mesh LOD level that registers its loader joins the scene-wide `updateView`
+sweep, which then re-projects and re-commits the full-resolution surface on every
+scrub — even while the level is hidden — and gates the cheap coarse level's new
+timepoint behind it. (Re-projects, not re-fetches: the whole-node loader serves
+every later `updateView` from its one cached decode. Two neighbouring comments
+overstated this as a re-fetch and are corrected here too.) That is the exact
+failure deferring the level exists to avoid, and #1356 reported it against the
+mesh cheap/expensive split.
+
+The registration itself is already correct: #1351 landed with
+`registerMeshLoader` in the eager `loadMeshNode`'s `finally`, symmetric with the
+three sibling loaders, and `load-mesh-node.test.ts` pins the three timing cases
+against the real loader functions and a real registry — that spec, not this
+change, is what would fail if the defect were re-introduced. What was missing was the other
+half of the chain. The lod-group spec's registry stub had no `registerMeshLoader`
+at all, so the mesh defer test could not make the negative assertion its
+gsplats/points/lines peers already make, and a regression in the wrapper would
+have surfaced as `not a function` rather than a named invariant. It now asserts
+it, before activation and again after the level reaches `ready`; the second is
+not redundant, since only it can see a register call made from inside the shared
+`attachLazyChild` thunk. The nested-group symmetry parametrization is widened
+from three geometry types to four for the same reason.
+
+Two comments said the opposite of what the code does, which is how the report
+came about: the lod-group defer branch claimed the activation thunk runs "the
+expensive tail (and registration)", and `MeshCheapLoad.loader` claimed "the
+expensive half" registers. Neither is true of any of the four loaders. A third
+overstated its scope rather than inverting it: `attachLazyChild`'s doc claimed no
+lazy level ever joins the sweep, which is true of a lazy LEAF but not of a
+deferred nested GROUP — that one's `runExpensive` is the `loadChildren`
+recursion, so its subtree leaves register themselves on activation like any other
+leaf.
+
+One more mesh coverage residual, in the same vein: the freshness helpers' `isFresh`
+type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
+which has counted mesh since it became a legal ladder level. Widened to four.
 
 #### Scene-identity watchdog — a tab that no longer shows what its address serves says so
 

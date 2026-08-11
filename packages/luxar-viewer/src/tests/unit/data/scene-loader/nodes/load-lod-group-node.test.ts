@@ -174,12 +174,13 @@ function makeLinesChildNode(
 /**
  * A nested group child (e.g. multiscale's fine kind=partition branch). The
  * ``displayType`` lets a single test prove the deferral is geometry-agnostic —
- * a partition/lod wrapper of points or lines defers identically to gsplats.
+ * a partition/lod wrapper of points, lines or mesh defers identically to
+ * gsplats.
  */
 function makeGroupChildNode(
   path: string,
   coverageFraction: number,
-  displayType: 'gsplats' | 'points' | 'lines' = 'gsplats',
+  displayType: 'gsplats' | 'points' | 'lines' | 'mesh' = 'gsplats',
   kind: 'partition' | 'lod' = 'partition',
   positionBounds: { min: number[]; max: number[] } = { min: [0, 0, 0], max: [1, 1, 1] }
 ): SceneNode {
@@ -231,6 +232,7 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
       registerGSplatsLoader: vi.fn(),
       registerPointsLoader: vi.fn(),
       registerLinesLoader: vi.fn(),
+      registerMeshLoader: vi.fn(),
       unregisterPointsLoader: vi.fn(),
       unregisterLinesLoader: vi.fn(),
     } as never,
@@ -434,11 +436,20 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(ctx.kickRefinementIfIdle).not.toHaveBeenCalled();
   });
 
-  // Three-way symmetry: a nested kind=partition / kind=lod wrapper defers
-  // identically regardless of the inner geometry (gsplats / points / lines).
-  // The deferral branches on the wrapper's kind, never the leaf type, so all
-  // three node types stay symmetric. Parametrized to guard that invariant.
-  it.each(['gsplats', 'points', 'lines'] as const)(
+  // Four-way symmetry: a nested kind=partition / kind=lod wrapper defers
+  // identically regardless of the inner geometry. loadLodGroupNode never reads
+  // `display_type` here at all — the deferral branches on the wrapper node's
+  // `type === 'group'` and its `kind`, never on the leaf type underneath — and
+  // that geometry-agnosticism is the invariant this parametrization guards.
+  // The mesh row is a real authored shape, not a hypothetical:
+  // `add_lod_group(…).add_partition_group(display_type='mesh',
+  // coverage_fraction=…)` filled with `add_mesh` parts writes exactly the node
+  // below — a kind=partition wrapper carrying the threshold, under a kind=lod
+  // parent the writer back-fills to display_type='mesh'. (The shorthand
+  // `lod.add_mesh(…, partition=…)` writes the same tree but puts
+  // `coverage_fraction` on the PARTS, not the wrapper, so it is the explicit
+  // route above that produces the shape this test models.)
+  it.each(['gsplats', 'points', 'lines', 'mesh'] as const)(
     'defers a non-leaf group child (display_type=%s) and loads its subtree on activation',
     async (displayType) => {
       attachStubChildren();
@@ -999,11 +1010,28 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
 
     expect(loadMeshNodeCheapMock).toHaveBeenCalledTimes(1);
     expect(loadMeshNodeExpensiveMock).not.toHaveBeenCalled();
+    // Sibling-symmetric with the gsplats/points/lines defer tests above: a lazy
+    // mesh level must never land in `registry.meshLoaders`. One that does joins
+    // the scene-wide per-slice sweep, which re-projects and re-commits the whole
+    // full-resolution surface on every scrub — including while the level is
+    // hidden — and gates the cheap coarse level's commit behind it (#1356).
+    // SCOPE, so this is not read for more than it is: load-mesh-node is
+    // module-mocked here, so these two assertions pin only that the LOD-GROUP
+    // side never registers. The loader side — `loadMeshNodeExpensive` does not
+    // register, `loadMeshNode` does — is what actually guards #1356, and it is
+    // pinned against the real functions and a real registry in
+    // load-mesh-node.test.ts.
+    expect(ctx.registry.registerMeshLoader).not.toHaveBeenCalled();
 
     const ln = reg.get('/lod')!.children[1];
     ln.ensureLoaded!();
     await vi.waitFor(() => expect(ln.ready).toBe(true));
     expect(loadMeshNodeExpensiveMock).toHaveBeenCalledTimes(1);
+    // Re-checked after a full activation to `ready`, and not redundant: the
+    // pre-activation assertion cannot see a register call made from inside the
+    // `attachLazyChild` thunk, which is where the wrapper would most plausibly
+    // regress. The invariant spans the level's whole lifetime.
+    expect(ctx.registry.registerMeshLoader).not.toHaveBeenCalled();
   });
 
   it('gives a deferred mesh level a release thunk, even though it has no pooled buffer', async () => {
