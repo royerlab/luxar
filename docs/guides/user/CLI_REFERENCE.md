@@ -51,6 +51,7 @@ luxar demo list          # List all demos (key, needs, status)
 luxar demo info          # Full details for one demo
 luxar demo run           # Generate a demo and open it in the viewer (forwards -- args)
 luxar demo run-all       # Generate every demo (batch)
+luxar demo stop          # Stop running demos and free their ports (--dry-run to list)
 luxar demo deps          # Optional dependencies (--install, --extra, --only MODULE)
 luxar demo cache list    # Inventory the ~/.cache/luxar demo caches
 luxar demo cache clear   # Clear demo caches (--dry-run to preview)
@@ -59,6 +60,17 @@ luxar demo cache clear   # Clear demo caches (--dry-run to preview)
 Report-only `demo deps` exits 1 for any missing or outdated row. Generic
 `--install` manages Luxar extras; use `--only MODULE --install` to install one
 exact constrained requirement, including a dependency outside every extra.
+
+`demo stop` clears demos left running in forgotten terminals — the usual cause
+of a "port busy" warning and a browser tab that still shows an older
+scene. It finds runs via the registry `demo run` maintains (plus a
+process-table sweep for strays), lists them, asks for confirmation (`-y` to
+skip), and tears each one down with the same SIGINT → SIGTERM → SIGKILL
+escalation Ctrl-C uses. `luxar demo stop <key>` stops just one demo;
+`--dry-run` only lists. On platforms without POSIX process groups it lists the
+recorded runs and prints the command to stop each by hand rather than signalling
+a pid it cannot first verify still belongs to the demo; once that process is
+gone the record drops itself from the next listing.
 
 ## `luxar gsplat`
 
