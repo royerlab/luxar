@@ -104,6 +104,7 @@ describe('readUrlParams', () => {
   it('parses linePrimitive, rejecting unknown values as "no override"', () => {
     expect(readUrlParams('?linePrimitive=screen-space').linePrimitive).toBe('screen-space');
     expect(readUrlParams('?linePrimitive=volumetric').linePrimitive).toBe('volumetric');
+    expect(readUrlParams('?linePrimitive=capsule').linePrimitive).toBe('capsule');
     // Case- and whitespace-insensitive, like the other enum params.
     expect(readUrlParams('?linePrimitive=VOLUMETRIC').linePrimitive).toBe('volumetric');
     // Unrecognised values must never silently select a primitive.

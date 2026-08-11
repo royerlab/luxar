@@ -19,7 +19,11 @@ This package splits cleanly into two layers:
   takes `substitutive_lod=` only.
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are pure-NumPy
-ordering primitives shared by the Points and Lines resolvers.
+ordering primitives shared by the Points and Lines resolvers, and `reveal.py` is a
+third such primitive — the concentric-shell scorer behind `method="radial"`, plus
+the resolvers that decide which columns may be shell dimensions. It depends on
+nothing in this package (`group.py` imports *it*), which is what let it come out
+of `group.py` cleanly.
 
 ## File structure
 
@@ -30,6 +34,7 @@ lod/
 ├── lines.py            # Lines additive-LOD (per-polyline) ordering + ladder + resolver
 ├── gsplats.py           # GSplats substitutive + additive axis resolvers
 ├── mesh.py             # Mesh substitutive axis resolver (decimation, not lift-to-gsplats)
+├── reveal.py           # Concentric-shell reveal: radial scorer + spatial-dims resolvers
 ├── spatial_uniform.py  # Stratified-grid sampler (default spatial-uniform ordering)
 └── poisson_disk.py     # Bridson blue-noise sampler (opt-in alternative)
 ```

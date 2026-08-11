@@ -101,7 +101,7 @@ describe('ThemeManager', () => {
     it.each([
       ['dark', '#111111'],
       ['light', '#ffffff'],
-      ['frosted-glass', 'rgba(255, 255, 255, 0.15)'],
+      ['frosted-glass', 'rgba(28, 30, 36, 0.5)'],
     ])('sets --luxar-bg-primary correctly for theme %s', (themeId, expectedBg) => {
       const manager = ThemeManager.getInstance();
       manager.setTheme(themeId);

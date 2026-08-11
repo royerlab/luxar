@@ -25,6 +25,13 @@ _DEMOS_DIR = Path(__file__).parent
 # two constants equal.
 DEMO_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 
+# Sub-directories of the cache root that are NOT caches. `luxar demo stop`'s
+# pidfile registry lives in `running/` (luxar.utils.demo_runs.DEMO_RUNS_DIR):
+# its entries name LIVE demo process groups, so listing it as an unclaimed
+# cache would invite `demo cache clear --orphans` to delete the record of what
+# is still running. A unit test pins the name against DEMO_RUNS_DIR.
+NON_CACHE_DIRS = frozenset({"running"})
+
 # Closed vocabularies for DEMO_META fields. The enforcement test in
 # tests/test_demo_meta.py validates every demo file against these.
 # category/geometry mirror scripts/gallery/manifest.json's vocabulary
@@ -341,10 +348,12 @@ def dir_size_bytes(path: Path) -> int:
 
 
 def inventory_caches(cache_root: Optional[Path] = None) -> list[CacheEntry]:
-    """Every directory under the cache root, mapped to the demos claiming it.
+    """Every cache directory under the cache root, mapped to the demos claiming it.
 
     Directories claimed by no demo's ``caches`` list are reported with an
     empty ``demo_keys`` tuple (orphans — e.g. leftovers from renamed demos).
+    :data:`NON_CACHE_DIRS` is skipped entirely: those hold live state, not
+    cached bytes.
     """
     root = cache_root if cache_root is not None else DEMO_CACHE_ROOT
     if not root.exists():
@@ -362,6 +371,6 @@ def inventory_caches(cache_root: Optional[Path] = None) -> list[CacheEntry]:
             demo_keys=tuple(sorted(claims.get(subdir.name, ()))),
         )
         for subdir in sorted(root.iterdir())
-        if subdir.is_dir()
+        if subdir.is_dir() and subdir.name not in NON_CACHE_DIRS
     ]
     return entries

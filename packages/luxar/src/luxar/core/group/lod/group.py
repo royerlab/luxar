@@ -68,6 +68,7 @@ from arbol import aprint
 
 from ....typing_utils.geometry_capabilities import require_lod_display_type
 from ....validation.types import validate_truncation_radius
+from .reveal import is_reveal_additive_method, pop_reveal_knobs
 
 if TYPE_CHECKING:
     import numpy as np
@@ -870,6 +871,18 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
 DEFAULT_ADDITIVE_METHOD: Literal["random"] = "random"
 DEFAULT_ADDITIVE_N_LODS: int = 4
 
+#: Every accepted ``additive_lod={"method": ...}`` value, in one place. The
+#: per-geometry Literals (``points.PointsMethodName`` / ``lines.LinesMethodName``)
+#: enumerate the same names for the type checker; this tuple is what actually
+#: rejects user input, so a name added there and not here is silently unusable.
+ADDITIVE_METHODS: tuple[str, ...] = (
+    "random",
+    "salience",
+    "spatial-uniform",
+    "poisson-disk",
+    "radial",
+)
+
 
 def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
     """Normalize the ``additive_lod=`` kwarg into a spec dict (or ``None``).
@@ -882,12 +895,16 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
     if spec is None or spec is False:
         return None
     if spec is True:
+        # Same KEY SET as the dict branch below — a consumer reading
+        # spec["reveal_centre"] must not depend on which branch produced it.
         return {
             "method": DEFAULT_ADDITIVE_METHOD,
             "n_lods": DEFAULT_ADDITIVE_N_LODS,
             "counts": None,
             "seed": None,
             "salience_kind": "size",
+            "reveal_centre": None,
+            "spatial_dims": None,
         }
     if not isinstance(spec, dict):
         raise TypeError(
@@ -898,16 +915,9 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
     kwargs.pop("recompute", None)
 
     method = kwargs.pop("method", DEFAULT_ADDITIVE_METHOD)
-    if method not in (
-        "random",
-        "salience",
-        "spatial-uniform",
-        "poisson-disk",
-    ):
-        raise ValueError(
-            "method must be one of 'random' / 'salience' / 'spatial-uniform' "
-            f"/ 'poisson-disk'; got {method!r}"
-        )
+    if method not in ADDITIVE_METHODS:
+        listed = " / ".join(repr(m) for m in ADDITIVE_METHODS)
+        raise ValueError(f"method must be one of {listed}; got {method!r}")
 
     n_lods = int(kwargs.pop("n_lods", DEFAULT_ADDITIVE_N_LODS))
     if n_lods < 1:
@@ -946,11 +956,14 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
             f"salience_kind must be 'size' or 'energy'; got {salience_kind!r}"
         )
 
+    reveal_centre, spatial_dims = pop_reveal_knobs(kwargs, method)
+
     if kwargs:
         raise ValueError(
             f"additive_lod for {geometry}: unrecognized keys "
             f"{sorted(kwargs)}. Valid keys: method, n_lods, counts, "
-            f"breakpoints, seed, salience_kind, recompute."
+            f"breakpoints, seed, salience_kind, reveal_centre, spatial_dims, "
+            f"recompute."
         )
 
     return {
@@ -959,6 +972,8 @@ def resolve_additive_axis(spec: Any, geometry: str) -> Optional[dict]:
         "counts": counts,
         "seed": seed,
         "salience_kind": salience_kind,
+        "reveal_centre": reveal_centre,
+        "spatial_dims": spatial_dims,
     }
 
 
@@ -1024,10 +1039,28 @@ def additive_level_stats(
     Returns:
         ``(per_level_lod_stats, reference_energy, parent_level_stats)``.
         ``reference_energy`` is ``None`` — and no ``energy_fraction_cum`` is
-        stamped — when the total energy is not positive and finite (all-black
-        colors, zero radii). That is deliberate: an absent stamp makes the
-        viewer fall back to its count rule, whereas a fabricated 0.0 would make
-        it release swaps on data that carries no energy at all.
+        stamped — in two cases:
+
+        * the total energy is not positive and finite (all-black colors, zero
+          radii). An absent stamp makes the viewer fall back to its count rule,
+          whereas a fabricated 0.0 would make it release swaps on data that
+          carries no energy at all;
+        * ``method`` orders a REVEAL (:func:`is_reveal_additive_method`). A
+          radial prefix is a *partial object at full brightness*, not a dim
+          version of the whole, so the viewer's ``1/e(k)`` energy compensation
+          would blow the innermost shell out (up to 10× — ``ENERGY_FLOOR`` caps
+          the boost) and then dim it as the object completes — the exact inverse
+          of growing in. The compensation is gated on the BLENDING MODE, never on
+          geometry type, so authoring-time omission is the only place to stop it.
+          Measured: it reaches a leaf only via the viewer's ``kind=lod`` group
+          registry, so it bites inside a lod group and is inert on a bare leaf.
+          The rule stays unconditional because ``method`` already covers both —
+          a reveal ladder authored under a ``kind=lod`` group is exactly where
+          the stamps would bite, and no path can smuggle them back in (every
+          ladder rebuild re-consults the predicate).
+
+        ``lod_method`` and the count fields are still stamped either way: they
+        are provenance, and nothing keys brightness off them.
     """
     if len(level_energies) != len(level_counts):
         raise ValueError(
@@ -1036,7 +1069,12 @@ def additive_level_stats(
         )
 
     total = float(sum(level_energies))
-    usable = total > 0.0 and total == total and total != float("inf")
+    usable = (
+        total > 0.0
+        and total == total
+        and total != float("inf")
+        and not is_reveal_additive_method(method)
+    )
 
     per_level: List[Dict[str, Any]] = []
     cum_energy = 0.0
@@ -1269,7 +1307,13 @@ def gsplat_additive_lod_from(
     * ``method`` is NOT carried over. The Points/Lines methods name orderings in
       the element domain (``spatial-uniform`` over point positions); the coarse
       children of a substitutive ladder are merged Gaussian beads, where the
-      bead-domain orderings apply.
+      bead-domain orderings apply. Consequence worth knowing for
+      ``method="radial"``: only the FINEST child (the original element leaf)
+      reveals outward — the coarse bead levels get energy-ordered ladders, so
+      they fill in and are ``1/e(k)``-compensated, which is correct for them.
+      Verified on a composed Points node: the two coarse gsplats children carry
+      stamped ``self_energy`` ladders while the points leaf carries an unstamped
+      ``radial`` one, so the both-or-neither stamp contract holds per level.
     * ``self_energy``, not ``auto``. ``auto`` routes levels of <= 5000 splats to
       the submodular ``greedy``, whose sparse-Gram build is a pure-Python
       per-pair loop scaling with OVERLAP DENSITY — and coarse levels of a lifted

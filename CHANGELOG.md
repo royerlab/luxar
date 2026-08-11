@@ -6,6 +6,166 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Viewer stylesheets: a phantom radius token, magic z-indexes, duplicated rgba
+
+Three kinds of drift in the viewer CSS, all mechanical and all chosen to be
+pixel-identical (or imperceptibly close) in the dark theme. The colormap
+legend asked for `--luxar-radius-xs`, which no theme emits — the radius scale
+is none/sm/md/lg/full — so the `2px` fallback literal had been quietly in
+charge; it is now an intentional, documented literal (half of `radius-sm`, so
+a 12px-tall gradient bar does not read as a pill). Layer z-indexes are stated
+against the token scale instead of magic numbers: the debug console's `150`
+becomes `calc(z-base + 50)` (same value, now with its intent written down —
+above the in-canvas widgets, below every panel), the toast moves to
+`calc(z-tooltip + 1000)`, and the dimension-slider context menu drops from
+`10000` to the popover tier it actually belongs to. The recording panel keeps
+its absolute magnitudes: its documented job is to beat unknown third-party
+host UI, so those values are load-bearing — and the toast comment now says so
+rather than claiming to sit above everything. Finally, raw `rgba()` that was
+just re-spelling a token becomes `color-mix()` on the token itself: the debug
+console's warn/error row tints (byte-identical in dark), the monitor
+scene-graph's active-level highlight and kind badge (a selection state, so it
+follows the theme's highlight accent — purple under the glass themes), and the
+loading indicator's hardcoded black chrome and white spinner, which stop
+rendering as a black box in the light theme. That indicator takes the overlay
+scrim token rather than the panel one — it is the one box in the file with no
+`.luxar-glass-surface` to tint it, and the panel background is a translucent
+white under both glass themes.
+
+#### Domain-scoped CI: a language suite runs only when that language changed
+
+Every pull request used to run every suite. A one-line TypeScript change paid
+for the full Python matrix; a Go launcher tweak paid for a WASM build and a
+viewer bundle. The `changes` job now classifies the diff into four language
+domains (`dom_py`, `dom_ts`, `dom_rust`, `dom_go`) and each job runs its
+expensive steps only for the domain(s) it covers. The mapping is a hierarchy,
+not a partition: `typescript-tests` and `release-readiness` select on
+TypeScript **or** Rust (they build WASM and run `cargo test`), and
+`wheel-viewer` selects on Python, TypeScript **or** Rust (it bundles the built
+viewer into the wheel).
+
+Classification names every INPUT of a gated check, not just the obvious source
+extensions — a check whose own inputs are unclassified is a check that skips
+for exactly the change it exists to catch. So `dom_py`, which hosts the
+cross-language gates, also owns `format-contract/contract.yaml` and its
+generated TypeScript half, the viewer `package.json` (the other end of the
+version-consistency check), and the `demos/data` tree with its manifest. And
+`.github/workflows/ci.yml` selects all four domains: it defines how every suite
+is invoked, so an edit that breaks a command or a condition is caught by the
+run that contains it rather than by the next unrelated PR in that language.
+
+Nothing wedges under strict branch protection: a job whose domain is untouched
+still runs (checkout plus skipped steps) and reports its required context green
+in seconds, exactly as the previous docs-only fast path did — which this
+subsumes, since a Markdown change touches no domain. The conditions are written
+`dom_x != 'false'` rather than `== 'true'` so the gate keeps failing safe: if
+the classifier itself dies, its outputs read empty and every suite runs.
+
+What this gives up is latency, not coverage: a break that only shows across a
+domain boundary — a Python encoder change the viewer's generated fixtures can
+no longer decode — is caught by the merge's push run, which has no PR base and
+runs everything, rather than by the pull request itself.
+
+#### Per-PR CI gates on Python 3.12; the full matrix runs nightly and on main
+
+`python-tests` was a three-leg matrix (3.10/3.11/3.12) on every pull request,
+and it is the slowest job in the workflow (~27min a leg) on a self-hosted box
+with five slots. Branch protection has only ever required the `3.12` context,
+so the other two legs cost two thirds of the Python CI budget to gate
+nothing. A pull request now runs `3.12` alone; `3.10`/`3.11` still run on every
+push to `main` and on a nightly schedule. The supported floor is unchanged —
+what is given up is the latency of catching a version-specific break, which
+moves from "in the offending PR" to "within 24h", against a 3x cut in per-PR
+Python CI.
+
+Scheduled runs get their own `concurrency` group. A cron run's ref is
+`refs/heads/main`, identical to a merge's, so under one shared group and
+`cancel-in-progress: true` whichever of the two started second cancelled the
+other — and they collide constantly: over the 31 days before the change a merge
+landed inside the nightly's ~30min window on 17 days, and inside the half hour
+before it on 12. The expensive direction is the cron killing a merge's push run,
+which is the only place the new `main` commit gets the full matrix at all now
+that per-PR CI is 3.12-only; the reverse is milder, since a merge that cancels
+the nightly runs the full matrix itself, but it still leaves "did 3.10/3.11 pass
+today?" unanswerable at a glance. Pull-request runs are unaffected: they already
+carry `refs/pull/N/merge` and were never grouped with a push. Note the cron
+fires the whole workflow, not just `python-tests` — a schedule event has no PR
+base, so change detection selects the full suite and the documentation gate too.
+
+#### Capsule line primitive behind `?linePrimitive=capsule` (#1352)
+
+A third line primitive, built after the G1 gate measured the exact
+volumetric primitive at 2.7–5× the quad's frame cost on the 10M-segment
+scenarios: the capsule keeps the volumetric primitive's two behavioural wins
+— direction-stable near-axial rendering (an end-on segment is a stable round
+disc, never a flickering sliver) and seamless joins — at quad-class cost
+(measured 1.04–1.11× the quad on the same worst case, parity at vsync
+elsewhere). The model is deliberately relaxed rather than exact: each
+fragment shades a compact quartic bump `(1 − p²)^n` of the 2D
+point-to-segment distance in **pixel space**, evaluated on stencil-local
+interpolated coordinates (`distance² = y² + max(0, −x, x−L)²` — no
+projection, no sqrt, no transcendentals), with the drawn radius at the 2σ
+support of the quad's Gaussian-equivalent σ and the sharpness knob mapped to
+the exponent (`n = 2^(3−4s)`). Every end is a round cap; interior
+polyline joints keep each leg's half of the joint disc, partitioned along
+the joint bisector via the volumetric primitive's joint-code partner
+machinery — the two half-discs tile the disc exactly at any bend angle (no
+notch, no chopped miter tip, no double-bright overlap). The cut is
+confined to the cap region (overlapping rod bodies at a bend's inner
+corner both render, like the physical union), fades smoothly over a
+bend-scaled band the vertex stage reserves stencil for (so the rasterizer
+cannot chop the ramp part-way down and hand back the very step it removes),
+and the partner endpoint is near-plane-clipped before projecting — together
+these keep zoomed-in joints seamless, the regime where both the quad and the
+first capsule iteration showed hard seams and wedges. Which ends cut at all
+is the shared joint-code rule the other two primitives use, so a free end
+and a degree-≥3 hub keep their whole round cap, while a butt cut — a
+slice-clipped end, a joint vertex behind the near plane, an exactly straight
+joint — is hard, with nothing drawn past the endpoint line. The per-fragment radius interpolates linearly across the
+stencil (perspective-correct for constant-width tubes), which keeps
+silhouettes straight under extreme foreshortening. One profile serves every blending mode (the
+capsule is peak-shaped by construction, so there is no peak/sum lane split),
+while the mode tails — volumetric τ mapping with per-element alpha, max-mode
+premultiply, colormap, gamma — are the quad fragment's, unchanged. Both
+backends ship (GLSL pair + TSL twin factory), picking follows the toggle
+with shaders that duplicate the visual stencil/cuts/fold rule so hover
+tracks pixels exactly, and all constants are single-sourced in
+`_shared/line-capsule.ts`. Pinned by 16 new GLSL↔TSL parity fixtures
+(end-on, joints, folds and the width gate, taper, colormap, volumetric
+blend, near-clip straddle, pick twins), codegen snapshots, and unit pins on
+the constants and profile. The default primitive is unchanged; the new
+`packages/luxar/examples/lines_primitive_qa_example.py` grid scene is the
+side-by-side visual QA artifact for the flip decision.
+
+#### The `radial` reveal ordering: a scene that grows outward as it streams
+
+New additive-ladder ordering `radial`, available on GSplats, Points and Lines
+(`luxar gsplat lod ... -m radial`, `additive_lod={"method": "radial"}`). It
+orders concentric shells around the node's own bounding-box centre — not the
+scene origin, so a dataset far from the origin still grows from its own middle
+instead of in from a corner — so the existing streaming machinery paints the
+object outward. **Authoring only: no viewer changes, nothing about how data is
+displayed, only how it is loaded.** The distance spans the spatial axes only, so
+a stacked time/channel column cannot become a shell dimension; `reveal_centre` /
+`spatial_dims` (`--reveal-centre` / `--spatial-dims`) override both. On Lines the
+permutation indexes whole polylines, so every prefix keeps valid segment
+topology. Mesh is left out — it has no additive ladder at all yet.
+
+A radial ladder deliberately carries **no energy stamps**. The viewer multiplies
+an incomplete ladder's brightness by `1/e(k)`, gated on the blending mode and
+never on geometry type; that is right for an energy-ordered prefix and backwards
+for a reveal, whose prefix is a partial object at full brightness rather than a
+dim version of the whole. `REVEAL_METHODS` in the new
+`luxar.utils.lod_methods` registry names which orderings are reveals, and both
+ladder implementations plus `annotate-quality` consult it, so the
+`energy_fraction_cum` / `reference_energy` pair is omitted both-or-neither.
+Accepted cost, stated rather than buried: cross-fade and the `e >= 0.6`
+early-upgrade release read the same stamps, so shells hard-switch.
+
+That registry also replaces four hand-copied method tuples: `radial` was
+invisible to every gsplat CLI surface, and three `--method` help strings still
+advertised only `auto|greedy|self_energy` long after six methods existed.
+
 #### An empty LOD 0 no longer blanks a laddered node's slice (#1456)
 
 All three progressive loaders (Points, Lines, GSplats) latched a terminal
@@ -243,6 +403,31 @@ One more mesh coverage residual, in the same vein: the freshness helpers' `isFre
 type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
 which has counted mesh since it became a legal ladder level. Widened to four.
 
+#### Scene-identity watchdog — a tab that no longer shows what its address serves says so
+
+Local demo/dev servers share ports and come and go, so a long-lived viewer
+tab could silently front a DIFFERENT scene than the one it loaded (another
+server took the port) — or a dead one — with no visual hint. The viewer now
+watches its dataset's identity for the life of the tab: a watchdog re-fetches
+the root `.zattrs` (cache-bypassing) every 15 s and the moment the tab
+regains focus/visibility, comparing `content_hash` (hash-less bare nodes fall
+back to the canonicalized attrs JSON, baselined on what was actually LOADED —
+never on a probe — so even a swap before the first probe is caught). A
+different hash — or a 404 where something else answers the address — raises a
+persistent top banner ("This address now serves a different scene — the view
+below is stale") with a Reload button and stops polling; a server that stops
+answering, times out, or replies with an inconclusive status (401/403 auth
+walls — a presigned source's credential can simply have expired — plus
+408/425/429/5xx) shows a self-clearing "Data server unreachable" banner after
+two consecutive failed probes, and a server that recovers with a different
+scene escalates straight to the changed banner. Only `http(s)` sources are watched; the
+watchdog is started per dataset as soon as the root attrs have been read
+(identity baselined on those attrs, so a swap during a long load is caught
+too) and disposed on dataset switch. New:
+`data/scene-identity-watchdog.ts`, `ui/scene-identity-banner.ts`, and
+optional `showSceneIdentityBanner`/`hideSceneIdentityBanner` methods on the
+cross-layer notifier surface.
+
 #### The scene-dimension check runs before a split, not inside the first child (#1446)
 
 `add_points("pt", positions_400x4, additive_lod={"counts": [200, 400]})` in a
@@ -356,6 +541,42 @@ mutation-verified physics test: the taper's half-max core is ≥2× wider at the
 hard end than the soft end (a LUT wired to a constant row reads ratio ≈ 1 and
 fails). The texture is a lazy singleton built on the first volumetric material
 (~16 KB, ~90 ms); screen-space materials never trigger it.
+
+#### `luxar demo stop` — clear running demos and free their ports
+
+A demo forgotten in another terminal holds its ports, its memory and its GPU
+until someone finds the window. Re-running that same demo then shifts to a
+neighbouring port (its derived pair is stable) while the old browser tab keeps
+serving the older scene. `luxar demo stop` now finds every
+running demo and tears each one's process group down with the same
+SIGINT → SIGTERM → SIGKILL escalation Ctrl-C uses. Discovery is two-source:
+a JSON pidfile registry (`~/.cache/luxar/running/`) that `demo run`/`run-all`
+maintain around each launch, plus a `ps` sweep for `-m luxar.demos.demo_*`
+command lines that catches strays with no registry entry. The listing is
+printed and confirmed before anything dies (`-y` skips; `--dry-run` only
+lists; `stop <key>` targets one demo) — several agents/people may run demos
+on one machine, and "stop everything" must never take a colleague's live
+server down unseen. The `pick_port` "port busy" warning now also names a
+luxar-owned squatter ("Port 8042 is held by demo 'X' (PID N) — run
+`luxar demo stop` to clear it"), so the port shift explains itself.
+Stopping is POSIX-only on purpose: without process groups there is no way to
+ask whether a recorded pid is still the demo before signalling it (on Windows
+`os.kill(pid, 0)` is itself a hard terminate), and a pidfile outlives a reboot,
+so a blind signal would eventually kill whatever innocent process recycled that
+number. There the runs are listed with the command to stop them by hand
+instead — and because a pid listing (`tasklist`) still answers *existence*
+safely even where signal-0 does not, a record left behind by a reboot or a
+hard-killed owner is dropped from the listing instead of being reported as a
+running demo forever.
+Teardown also stops waiting out a corpse: a child that has exited but has not
+been reaped yet still answers `killpg`, which used to hold the whole signal
+ladder open, so an interrupted `demo run` sat there for the full grace period
+before returning. The pidfile directory is live state, not a cache, so
+`demo cache list` skips it — otherwise it would show up as an ORPHAN and
+`demo cache clear --orphans` would offer to delete the record of what is
+still running.
+New: `luxar.utils.demo_runs` (discovery + kill engine),
+`terminate_process_group` / `proc_table` / `on_spawn` in `luxar.utils.process`.
 
 #### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
 

@@ -26,6 +26,7 @@ import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { lineWebGPUFactory, type LineTSLNodes } from './shader-tsl';
 import { volumetricLineWebGPUFactory } from './shader-tsl-volumetric';
+import { capsuleLineWebGPUFactory } from './shader-tsl-capsule';
 import { getLineRadialLUTTexture } from '../_shared/line-integral-lut';
 import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
@@ -307,9 +308,11 @@ export class LineTSLMaterial
     this.rebuildColormapNodes(useColormap);
     // The primitive picks the factory (#1352) — the TSL counterpart of the
     // GLSL twin's shader-source pair selection.
-    const isVolumetric =
-      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) ===
-      'volumetric';
+    const primitive = resolveLinePrimitive(
+      this.userData.linePrimitive as LinePrimitive | undefined
+    );
+    const isVolumetric = primitive === 'volumetric';
+    const isCapsule = primitive === 'capsule';
     // Sharpness radial LUT node (#1352 PR-4): created lazily on the first
     // volumetric rebuild — the singleton texture costs real CPU to build,
     // so screen-space materials must never trigger it. The texture
@@ -317,7 +320,11 @@ export class LineTSLMaterial
     if (isVolumetric && !this.tslNodes.uLineRadialLUT) {
       this.tslNodes.uLineRadialLUT = texture(getLineRadialLUTTexture());
     }
-    const factory = isVolumetric ? volumetricLineWebGPUFactory : lineWebGPUFactory;
+    const factory = isCapsule
+      ? capsuleLineWebGPUFactory
+      : isVolumetric
+        ? volumetricLineWebGPUFactory
+        : lineWebGPUFactory;
     factory(
       this.tslNodes as LineTSLNodes,
       {
