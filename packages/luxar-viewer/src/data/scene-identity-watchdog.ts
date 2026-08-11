@@ -21,14 +21,16 @@
  * Verdicts surface through the cross-layer notifier as a persistent banner
  * (`ui/scene-identity-banner.ts`):
  *
- * - **changed** (different hash, unparseable body, or HTTP error status):
- *   terminal — polling stops, the banner offers Reload. An HTTP error is
- *   "changed" rather than "unreachable" because something IS answering the
- *   address; whatever it is, it no longer serves this scene.
- * - **unreachable** (fetch throws — server gone): shown only after two
- *   consecutive failures so a single blip stays silent, and cleared
- *   automatically when the server answers again (a recovered server that
- *   serves a different scene escalates straight to `changed`).
+ * - **changed** (different hash, unparseable body, or a non-retryable HTTP
+ *   error such as 404): terminal — polling stops, the banner offers Reload.
+ *   An HTTP 404 is "changed" rather than "unreachable" because something IS
+ *   answering the address; whatever it is, it no longer serves this scene.
+ * - **unreachable** (fetch throws, times out, or the server answers with a
+ *   retryable status — 408/425/429/5xx): shown only after two consecutive
+ *   failures so a single blip stays silent, and cleared automatically when
+ *   the server answers again (a recovered server that serves a different
+ *   scene escalates straight to `changed`). A transient overload must never
+ *   latch the terminal verdict: it says nothing about scene identity.
  *
  * Only `http(s)` sources are watched — there is nothing to race against on
  * an in-memory or file-backed store. All timers/listeners are removed by
@@ -44,6 +46,46 @@ const CHECK_INTERVAL_MS = 15_000;
 const MIN_PROBE_SPACING_MS = 2_000;
 /** Consecutive fetch failures before the `unreachable` banner shows. */
 const UNREACHABLE_THRESHOLD = 2;
+/**
+ * Hard cap on a single probe. A server that accepts the connection and then
+ * never answers would otherwise leave the probe pending forever, wedging
+ * `probeInFlight` and silently killing the watchdog for the tab's lifetime.
+ */
+const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * HTTP statuses that mean "ask again later" rather than "someone else is
+ * serving this address". A 429/503 from an overloaded server or a proxy says
+ * nothing about scene identity, so it must not latch the terminal verdict.
+ */
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+/**
+ * Serialize a value with object keys sorted recursively, so two encodings of
+ * the same attributes compare equal regardless of key order.
+ *
+ * The hash-less baseline is taken from the attrs the loader read (which come
+ * from the store's CONSOLIDATED metadata when the dataset has any), while a
+ * probe reads the raw `.zattrs`. zarr writes both key-sorted today, but scene
+ * identity must not hinge on that.
+ *
+ * @param value - Any JSON-serializable value (typically parsed root attrs).
+ * @returns The canonical JSON encoding, or `undefined` for `undefined` input.
+ */
+export function canonicalJson(value: unknown): string | undefined {
+  return JSON.stringify(sortKeysDeep(value));
+}
+
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value === null || typeof value !== 'object') return value;
+  const source = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) sorted[key] = sortKeysDeep(source[key]);
+  return sorted;
+}
 
 export interface SceneIdentityWatchdogOptions {
   /** Dataset base URL (the `?src=` value, trailing slash tolerated). */
@@ -51,7 +93,7 @@ export interface SceneIdentityWatchdogOptions {
   /** `content_hash` of the scene actually loaded (null when absent). */
   expectedContentHash: string | null;
   /**
-   * `JSON.stringify` of the root attrs actually loaded — the identity
+   * {@link canonicalJson} of the root attrs actually loaded — the identity
    * baseline for HASH-LESS scenes (bare nodes), compared against the
    * canonicalized probe body. Baselines on what was loaded, so even a swap
    * before the first probe is caught (a first-probe baseline would adopt
@@ -64,7 +106,12 @@ export interface SceneIdentityWatchdogOptions {
   fetchImpl?: typeof fetch;
 }
 
-type Verdict = 'ok' | 'changed' | 'unreachable';
+/**
+ * Outcome of a single identity probe: the address still serves the loaded
+ * scene (`ok`), serves something else (`changed`), or did not answer
+ * usefully (`unreachable`). The latter two name the banner kinds.
+ */
+export type SceneIdentityVerdict = 'ok' | 'changed' | 'unreachable';
 
 export class SceneIdentityWatchdog {
   private readonly url: string;
@@ -77,6 +124,8 @@ export class SceneIdentityWatchdog {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastProbeAt = 0;
   private probeInFlight = false;
+  /** Abort handle for the probe currently in flight (timeout / disposal). */
+  private inFlightAbort: AbortController | null = null;
   private disposed = false;
   /** Terminal once the address demonstrably serves something else. */
   private changed = false;
@@ -122,6 +171,8 @@ export class SceneIdentityWatchdog {
     }
     window.removeEventListener('focus', this.onWake);
     document.removeEventListener('visibilitychange', this.onWake);
+    // Don't leave a request hanging on a dataset nobody watches anymore.
+    this.inFlightAbort?.abort();
     // A dataset switch must not leave the previous dataset's verdict up.
     notifier.hideSceneIdentityBanner();
   }
@@ -146,16 +197,25 @@ export class SceneIdentityWatchdog {
     }
   }
 
-  private async fetchVerdict(): Promise<Verdict> {
+  private async fetchVerdict(): Promise<SceneIdentityVerdict> {
     let body: string;
+    // Bounded: an abort (timeout or disposal) surfaces as a thrown fetch,
+    // i.e. an ordinary reachability failure.
+    const abort = new AbortController();
+    this.inFlightAbort = abort;
+    const timeout = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
     try {
       const res = await this.fetchImpl(`${this.url}/.zattrs`, {
         cache: 'no-store',
+        signal: abort.signal,
       });
-      if (!res.ok) return 'changed';
+      if (!res.ok) return isRetryableStatus(res.status) ? 'unreachable' : 'changed';
       body = await res.text();
     } catch {
       return 'unreachable';
+    } finally {
+      clearTimeout(timeout);
+      this.inFlightAbort = null;
     }
 
     if (this.expectedHash !== null) {
@@ -166,13 +226,13 @@ export class SceneIdentityWatchdog {
         return 'changed';
       }
     }
-    // Hash-less scene: compare against the attrs actually LOADED (parse +
-    // restringify canonicalizes whitespace; key order survives both parses
-    // of identical server text). Baselining on the loaded attrs — never on
-    // a probe — means even a swap before the first probe is caught.
+    // Hash-less scene: compare against the attrs actually LOADED, both sides
+    // canonicalized (whitespace and key order are not identity). Baselining
+    // on the loaded attrs — never on a probe — means even a swap before the
+    // first probe is caught.
     if (this.expectedAttrsJson !== null) {
       try {
-        return JSON.stringify(JSON.parse(body)) === this.expectedAttrsJson ? 'ok' : 'changed';
+        return canonicalJson(JSON.parse(body)) === this.expectedAttrsJson ? 'ok' : 'changed';
       } catch {
         return 'changed';
       }
@@ -182,7 +242,7 @@ export class SceneIdentityWatchdog {
     return 'ok';
   }
 
-  private apply(verdict: Verdict): void {
+  private apply(verdict: SceneIdentityVerdict): void {
     if (this.disposed) return;
     switch (verdict) {
       case 'ok':

@@ -15,15 +15,17 @@ watches its dataset's identity for the life of the tab: a watchdog re-fetches
 the root `.zattrs` (cache-bypassing) every 15 s and the moment the tab
 regains focus/visibility, comparing `content_hash` (hash-less bare nodes fall
 back to the canonicalized attrs JSON, baselined on what was actually LOADED —
-never on a probe — so even a swap before the first probe is caught). A different hash — or an HTTP error where something
-else answers the address — raises a persistent top banner ("This address now
-serves a different scene — the view below is stale") with a Reload button
-and stops polling; a server that stops answering shows a self-clearing
-"Data server unreachable" banner after two consecutive failed probes, and a
-server that recovers with a different scene escalates straight to the
-changed banner. Only `http(s)` sources are watched; the watchdog is started
-per dataset at the end of scene load (identity baselined on the attrs
-actually loaded) and disposed on dataset switch. New:
+never on a probe — so even a swap before the first probe is caught). A
+different hash — or a 404 where something else answers the address — raises a
+persistent top banner ("This address now serves a different scene — the view
+below is stale") with a Reload button and stops polling; a server that stops
+answering, times out, or replies with a retryable status (408/425/429/5xx)
+shows a self-clearing "Data server unreachable" banner after two consecutive
+failed probes, and a server that recovers with a different scene escalates
+straight to the changed banner. Only `http(s)` sources are watched; the
+watchdog is started per dataset as soon as the root attrs have been read
+(identity baselined on those attrs, so a swap during a long load is caught
+too) and disposed on dataset switch. New:
 `data/scene-identity-watchdog.ts`, `ui/scene-identity-banner.ts`, and
 optional `showSceneIdentityBanner`/`hideSceneIdentityBanner` methods on the
 cross-layer notifier surface.

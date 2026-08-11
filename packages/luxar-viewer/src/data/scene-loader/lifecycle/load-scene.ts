@@ -58,7 +58,7 @@ import { loadOverlayConfigs } from '../../loaders';
 import { buildSceneGraph } from '../nodes/build-scene-graph';
 import { loadSceneNodes } from '../nodes/load-scene-nodes';
 import { reportLoadOutcome } from '../loaders/failure-report';
-import { SceneIdentityWatchdog } from '../../scene-identity-watchdog';
+import { SceneIdentityWatchdog, canonicalJson } from '../../scene-identity-watchdog';
 import type { NodeBuildCtx } from '../nodes/build-ctx';
 
 /**
@@ -272,12 +272,14 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const normalizedUrl = ctx.normalizeURL(url);
   if (SceneIdentityWatchdog.isWatchable(normalizedUrl)) {
     const loadedHash = (sceneAttrs as Record<string, unknown>)?.content_hash;
-    // Hash-less fallback baseline: the attrs we actually loaded, serialized.
+    // Hash-less fallback baseline: the attrs we actually loaded, canonically
+    // serialized (these come from the store's consolidated metadata, the
+    // probe reads the raw `.zattrs` — key order must not decide identity).
     // Root scene attrs are small (KBs); a stringify failure only downgrades
     // the watchdog to reachability-only for this (already hash-less) scene.
     let attrsJson: string | null;
     try {
-      attrsJson = JSON.stringify(sceneAttrs) ?? null;
+      attrsJson = canonicalJson(sceneAttrs) ?? null;
     } catch {
       attrsJson = null;
     }

@@ -24,6 +24,11 @@ import { getViewerContainer } from '../utils/viewer-container';
 
 const BANNER_ID = 'luxar-scene-identity-banner';
 
+/**
+ * Which standing condition the banner reports: the address now serves a
+ * different scene (`changed`, permanent + Reload) or stopped answering
+ * usefully (`unreachable`, cleared on recovery).
+ */
 export type SceneIdentityBannerKind = 'changed' | 'unreachable';
 
 const MESSAGES: Record<SceneIdentityBannerKind, string> = {

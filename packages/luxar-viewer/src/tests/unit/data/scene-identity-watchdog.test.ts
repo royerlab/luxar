@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SceneIdentityWatchdog } from '../../../data/scene-identity-watchdog';
+import { SceneIdentityWatchdog, canonicalJson } from '../../../data/scene-identity-watchdog';
 import { clearNotifierBackend, setNotifierBackend } from '../../../utils/cross-layer/notifier';
 
 const HASH = 'abc123';
@@ -115,7 +115,7 @@ describe('SceneIdentityWatchdog', () => {
     wd.dispose();
   });
 
-  it('HTTP error status and unparseable bodies read as changed', async () => {
+  it('HTTP 404 and unparseable bodies read as changed', async () => {
     const wd = makeWatchdog(async () => new Response('nope', { status: 404 }));
     wd.start();
     await tick(5000);
@@ -128,6 +128,75 @@ describe('SceneIdentityWatchdog', () => {
     await tick(5000);
     expect(banner.shown).toEqual(['changed']);
     wd2.dispose();
+  });
+
+  it('a transient 503 is a reachability failure, not a scene change', async () => {
+    let mode: 'overloaded' | 'up' = 'overloaded';
+    let calls = 0;
+    const wd = makeWatchdog(async () => {
+      calls++;
+      if (mode === 'overloaded') return new Response('busy', { status: 503 });
+      return okResponse(ATTRS);
+    });
+    wd.start();
+    await tick(5000);
+    expect(banner.shown).toEqual([]); // single blip stays silent
+    await tick(5000);
+    expect(banner.shown).toEqual(['unreachable']);
+    // Non-terminal: polling continues and the banner clears on recovery.
+    mode = 'up';
+    await tick(5000);
+    expect(calls).toBe(3);
+    expect(banner.shown).toEqual(['unreachable']);
+    expect(banner.hidden).toContain('unreachable');
+    wd.dispose();
+  });
+
+  it('a probe that never answers times out instead of wedging the watchdog', async () => {
+    const aborted: boolean[] = [];
+    let calls = 0;
+    const wd = makeWatchdog(async (_input, init) => {
+      calls++;
+      // A server that accepts the connection and then goes silent.
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          aborted.push(true);
+          reject(new DOMException('aborted', 'AbortError'));
+        });
+      });
+    });
+    wd.start();
+    await tick(5000);
+    expect(calls).toBe(1);
+    // Ten seconds in, the probe is aborted and counted as a failure...
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(aborted).toEqual([true]);
+    // ...and the next interval tick probes again rather than being blocked
+    // forever by the wedged in-flight guard.
+    await tick(5000);
+    expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(banner.shown).toEqual(['unreachable']);
+    wd.dispose();
+  });
+
+  it('dispose aborts a probe still in flight', async () => {
+    let aborted = false;
+    const wd = makeWatchdog(
+      async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            aborted = true;
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        })
+    );
+    wd.start();
+    await tick(5000);
+    wd.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(aborted).toBe(true);
+    expect(banner.shown).toEqual([]); // a disposed watchdog raises nothing
   });
 
   it('needs two consecutive failures before unreachable, then recovers', async () => {
@@ -181,6 +250,24 @@ describe('SceneIdentityWatchdog', () => {
     expect(banner.shown).toEqual([]);
     await tick(5000); // different structure
     expect(banner.shown).toEqual(['changed']);
+    wd.dispose();
+  });
+
+  it('hash-less identity ignores key order, at every nesting level', async () => {
+    // The baseline comes from the store's consolidated metadata while the
+    // probe reads the raw `.zattrs` — a key-order difference between the two
+    // encodings of the SAME attrs must not read as a different scene.
+    const wd = new SceneIdentityWatchdog({
+      datasetUrl: 'http://127.0.0.1:8000',
+      expectedContentHash: null,
+      expectedAttrsJson: canonicalJson({ b: 1, a: { d: [1, 2], c: 3 } }),
+      intervalMs: 5000,
+      // Served in a different (unsorted) key order than the canonical baseline.
+      fetchImpl: (async () => okResponse('{"b":1,"a":{"d":[1,2],"c":3}}')) as typeof fetch,
+    });
+    wd.start();
+    await tick(5000);
+    expect(banner.shown).toEqual([]);
     wd.dispose();
   });
 
