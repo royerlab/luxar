@@ -42,6 +42,32 @@ def test_register_unregister_roundtrip(tmp_path: Path) -> None:
     unregister_run(None)
 
 
+def test_register_run_publishes_atomically(tmp_path: Path) -> None:
+    """A successful registration leaves the entry and no staging file."""
+    path = register_run("lorenz", 4242, runs_dir=tmp_path)
+    assert path is not None
+    assert [p.name for p in sorted(tmp_path.iterdir())] == ["4242.json"]
+    assert json.loads(path.read_text())["key"] == "lorenz"
+
+
+def test_register_run_never_publishes_a_partial_entry(tmp_path: Path, monkeypatch):
+    """A write that dies mid-flight must leave nothing behind.
+
+    `_registry_runs` deletes every entry it cannot parse, so a torn file would
+    make a concurrent reader drop the record of a demo that is just starting —
+    hence write-to-staging then rename, with the staging file cleaned up.
+    """
+    real_write_text = Path.write_text
+
+    def torn_write(self: Path, data: str, *args, **kwargs):
+        real_write_text(self, data[: len(data) // 2], *args, **kwargs)
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Path, "write_text", torn_write)
+    assert register_run("lorenz", 4242, runs_dir=tmp_path) is None
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_registry_runs_prunes_corrupt_entries(tmp_path: Path) -> None:
     register_run("good", 111, runs_dir=tmp_path)
     (tmp_path / "999.json").write_text("{not json")

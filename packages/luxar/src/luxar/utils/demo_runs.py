@@ -71,9 +71,10 @@ def register_run(
     ``demo stop`` to its sweep fallback.
     """
     runs_dir = runs_dir or DEMO_RUNS_DIR
+    path = runs_dir / f"{pgid}.json"
+    tmp = path.with_suffix(".json.tmp")
     try:
         runs_dir.mkdir(parents=True, exist_ok=True)
-        path = runs_dir / f"{pgid}.json"
         entry = {
             "key": key,
             "pgid": pgid,
@@ -81,9 +82,15 @@ def register_run(
             "started": time.time(),
             "python": sys.executable,
         }
-        path.write_text(json.dumps(entry))
+        # Write-then-rename. `_registry_runs` prunes anything it cannot parse,
+        # so a concurrent reader catching a half-written file would DELETE the
+        # entry of a demo that is only just starting. The staging name is not
+        # `*.json`, so it is invisible to that glob.
+        tmp.write_text(json.dumps(entry))
+        tmp.replace(path)
         return path
     except OSError:
+        unregister_run(tmp)
         return None
 
 
