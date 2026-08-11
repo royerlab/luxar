@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.lines import (
     _indexed_connected_components,
     compute_additive_order_lines,
@@ -207,6 +207,112 @@ class TestComputeAdditiveOrderLines:
         assert len(counts) == 4
 
 
+class TestRadialOrderLines:
+    """``radial`` — the concentric-shell reveal, ordering WHOLE polylines.
+
+    The per-polyline granularity is the point: a prefix of a vertex-ordered
+    reveal would cut polylines in half and leave dangling segment topology,
+    which is the invariant the whole Lines ladder exists to protect.
+    """
+
+    @staticmethod
+    def _fan():
+        """Five 2-vertex segments at x = 1..5, each its own polyline.
+
+        Vertex order is shuffled relative to distance so a pass cannot be
+        explained by the input arriving pre-ordered.
+        """
+        xs = [3.0, 4.0, 2.0, 5.0, 1.0]
+        verts = np.array(
+            [[x, 0.0, 0.0] for x in xs for _ in range(2)], dtype=np.float32
+        )
+        return verts, identify_polylines(len(verts), "segments")
+
+    def test_orders_innermost_polyline_first(self) -> None:
+        verts, polys = self._fan()
+        perm, counts = compute_additive_order_lines(
+            verts, polys, method="radial", reveal_centre=[0.0]
+        )
+
+        # Each polyline's representative is its own bbox centre; here that is
+        # its x. Innermost (x=1, input position 4) must come first.
+        order = [float(verts[polys[i][0], 0]) for i in perm]
+        assert order == [1.0, 2.0, 3.0, 4.0, 5.0]
+        assert counts == []
+
+    def test_permutation_indexes_polylines_not_vertices(self) -> None:
+        # The property that keeps every prefix topologically valid: 10 vertices,
+        # 5 polylines, so a polyline-granular permutation has length 5.
+        verts, polys = self._fan()
+        perm, _ = compute_additive_order_lines(verts, polys, method="radial")
+
+        assert perm.shape == (len(polys),) == (5,)
+        assert sorted(perm.tolist()) == list(range(5))
+
+    def test_non_finite_vertices_are_refused_naming_the_vertices(self) -> None:
+        """The error must blame the VERTICES, not ``reveal_centre``.
+
+        Lines derives its default origin from the vertices, so before the
+        data-side guard a NaN vertex produced a NaN origin that then tripped the
+        scorer's ``reveal_centre must be finite`` check — an error naming a knob
+        the caller never passed. Points and GSplats meanwhile returned input order
+        silently. One shared validator makes all three agree AND report the input
+        the caller actually supplied.
+        """
+        verts, polys = self._fan()
+        verts = verts.copy()
+        verts[3, 0] = float("nan")
+
+        with pytest.raises(ValueError, match="vertices must be finite"):
+            compute_additive_order_lines(verts, polys, method="radial")
+
+    def test_is_translation_invariant(self) -> None:
+        verts, polys = self._fan()
+        far = verts + np.float32(1000.0)
+        near, _ = compute_additive_order_lines(verts, polys, method="radial")
+        moved, _ = compute_additive_order_lines(far, polys, method="radial")
+        np.testing.assert_array_equal(near, moved)
+
+    def test_zero_extent_column_is_not_a_shell_dimension(self) -> None:
+        # A 4-D input whose time column is constant must order identically to
+        # its 3-D equivalent. The Lines path is the one that needed care here:
+        # the per-polyline centre helper is shared with the samplers, which want
+        # only the first 3 columns, while radial needs to SEE the time column in
+        # order to exclude it by extent.
+        verts, polys = self._fan()
+        verts4 = np.hstack([verts, np.full((verts.shape[0], 1), 7.0, dtype=np.float32)])
+        p3, _ = compute_additive_order_lines(verts, polys, method="radial")
+        p4, _ = compute_additive_order_lines(verts4, polys, method="radial")
+        np.testing.assert_array_equal(p3, p4)
+
+    def test_default_centre_is_the_bbox_centre_not_the_origin(self) -> None:
+        verts, polys = self._fan()
+        perm, _ = compute_additive_order_lines(verts, polys, method="radial")
+
+        # bbox centre over x is 3.0, so the x=3 polyline is innermost — not x=1,
+        # which is what an origin-centred implementation would pick.
+        assert float(verts[polys[perm[0]][0], 0]) == 3.0
+
+    def test_default_centre_is_the_vertex_bbox_not_the_representatives(self) -> None:
+        # Unequal polyline lengths separate the two candidate origins, which
+        # equal-length fixtures cannot: one long polyline spanning x=0..100 and
+        # two short ones near x=0. The node's bbox centre is x=50; the bbox of
+        # the per-polyline representatives (50, 0, 4) centres at 25.
+        verts = np.array(
+            [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]  # long: centre 50
+            + [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]  # short: centre 0
+            + [[4.0, 0.0, 0.0], [4.0, 0.0, 0.0]],  # short: centre 4
+            dtype=np.float32,
+        )
+        polys = identify_polylines(len(verts), "segments")
+        perm, _ = compute_additive_order_lines(verts, polys, method="radial")
+
+        # Centred on 50 the long polyline is innermost (|50-50| = 0); centred on
+        # the representatives' own bbox centre 25 it would be second, behind the
+        # x=4 one (|4-25| = 21 < |50-25| = 25).
+        assert perm[0] == 0
+
+
 # ────────────────────────────────────────────────────────────────────────
 # make_additive_lod_lines
 # ────────────────────────────────────────────────────────────────────────
@@ -283,6 +389,78 @@ class TestMakeAdditiveLodLines:
         )
         assert sum(len(L) for L in levels) == 2  # both polylines covered
         assert all(len(L) > 0 for L in levels)  # empty levels dropped
+
+    @staticmethod
+    def _ladder_fan(n=40, span=39.0):
+        xs = np.linspace(0.0, span, n, dtype=np.float32)
+        verts = np.repeat(xs, 2)[:, None] * np.array(
+            [[1.0, 0.0, 0.0]], dtype=np.float32
+        )
+        return verts.astype(np.float32)
+
+    def test_radial_levels_grow_outward(self) -> None:
+        verts = self._ladder_fan()
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", method="radial", n_lods=4
+        )
+
+        assert sum(len(L) for L in levels) == 40
+        # Max distance from the bbox centre must be monotone across levels iff
+        # the ordering really is by distance.
+        centre = (verts[:, 0].min() + verts[:, 0].max()) / 2.0
+        max_r = [
+            float(max(abs(verts[p, 0].mean() - centre) for p in level))
+            for level in levels
+        ]
+        assert max_r == sorted(max_r), max_r
+
+    def test_radial_honours_the_stream_vocabulary(self) -> None:
+        # Guards the same trap as the Points twin: `radial` must NOT be treated
+        # like the samplers, whose natural partition bypasses `counts:`.
+        verts = self._ladder_fan()
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", method="radial", counts=[4, 12, 28]
+        )
+
+        assert [len(L) for L in levels] == [4, 8, 16, 12]
+
+    def test_radial_kwargs_reach_the_scorer_through_the_builder(self) -> None:
+        # Threading test: the centre override must survive the builder.
+        verts = self._ladder_fan()
+        pinned = make_additive_lod_lines(
+            verts,
+            line_type="segments",
+            method="radial",
+            n_lods=4,
+            reveal_centre=[0.0],
+        )
+        first_xs = [float(verts[p, 0].mean()) for p in pinned[0]]
+        assert max(first_xs) < 10.0
+
+        default = make_additive_lod_lines(
+            verts, line_type="segments", method="radial", n_lods=4
+        )
+        default_xs = [float(verts[p, 0].mean()) for p in default[0]]
+        assert min(default_xs) > 10.0 and max(default_xs) < 30.0
+
+    def test_radial_spatial_dims_reach_the_scorer_through_the_builder(self) -> None:
+        verts = self._ladder_fan()
+        # Add an opposing, much larger y spread that would dominate the distance
+        # unless `spatial_dims` restricts it away.
+        ys = np.linspace(500.0, 0.0, verts.shape[0], dtype=np.float32)
+        verts = verts.copy()
+        verts[:, 1] = ys
+
+        restricted = make_additive_lod_lines(
+            verts,
+            line_type="segments",
+            method="radial",
+            n_lods=4,
+            reveal_centre=[0.0],
+            spatial_dims=[0],
+        )
+        first_xs = [float(verts[p, 0].mean()) for p in restricted[0]]
+        assert max(first_xs) < 10.0
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -741,3 +919,237 @@ class TestLinesStreamBreakpoints:
         joined = np.concatenate([m for level in levels for m in level])
         assert joined.size == n
         assert np.array_equal(np.unique(joined), np.arange(n))
+
+
+class TestRevealSpatialDimsFromSceneLines:
+    """``add_lines`` fills ``spatial_dims`` from the scene, like ``add_points``.
+
+    The extent rule alone cannot drop a STACKED time column (it varies across
+    polylines exactly like a spatial axis does), so the adder passes the scene's
+    displayed dims. Six widely-spaced timepoints x two spatial shells at
+    |x| = 1 and 40, symmetric about x = 0 so the shells sit at genuinely
+    different radii from the bbox centre; one 2-vertex segment per (t, x).
+    """
+
+    _TIMES = (0.0, 20.0, 40.0, 60.0, 80.0, 100.0)
+
+    @classmethod
+    def _verts(cls) -> np.ndarray:
+        rows = []
+        for t in cls._TIMES:
+            for x in (1.0, -1.0, 40.0, -40.0):
+                rows.append([t, x, 0.0, 0.0])
+                rows.append([t, x, 1.0, 0.0])
+        return np.asarray(rows, dtype=np.float32)
+
+    @staticmethod
+    def _dims_4d() -> Dimensions:
+        return Dimensions(
+            [
+                Dimension("time", range=(0.0, 100.0), discrete=True, display=False),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+
+    def test_stacked_time_does_not_delay_an_off_centre_timepoint(
+        self, tmp_path
+    ) -> None:
+        verts = self._verts()
+        output = tmp_path / "reveal_lines_4d.luxar.zarr"
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=self._dims_4d())
+            scene.add_lines(
+                "ln",
+                verts,
+                widths=np.full(len(verts), 0.5, np.float32),
+                line_type="segments",
+                additive_lod=dict(method="radial", n_lods=2),
+            )
+
+        from luxar.encoding import ArrayDecoder
+
+        grp = zarr.open(str(output), mode="r")["ln"]
+        assert int(grp.attrs["n_additive_sublods"]) == 2
+        first = np.asarray(
+            ArrayDecoder().decode(grp["additive_0"]["vertices"]), dtype=np.float64
+        )
+        # Level 0 = the inner shell at EVERY timepoint, whole polylines only.
+        assert first.shape[0] == 24
+        np.testing.assert_allclose(np.abs(first[:, 1]), 1.0, atol=1e-2)
+        assert sorted(set(np.round(first[:, 0]).tolist())) == list(self._TIMES)
+
+    def test_a_same_column_count_dim_order_permutation_stays_aligned(
+        self, tmp_path
+    ) -> None:
+        """A permuting ``dim_order`` does not misalign the scene-derived dims.
+
+        ``default_reveal_spatial_dims`` treats a scene-dimension index as a
+        position-column index once the column COUNTS match, which looks unsafe
+        under a ``dim_order`` permutation that preserves the count. It is safe,
+        and this pins why: both adders call ``apply_dim_order_positions`` BEFORE
+        reading ``ndim`` or resolving the reveal dims, and ``apply_dim_order``
+        builds ``np.zeros((N, scene_ndim))`` filled by iterating the SCENE's names
+        — so the array reaching the resolver is already in scene order at scene
+        dimensionality. Authoring the identical geometry column-permuted must
+        therefore give the identical ladder.
+        """
+        canonical = self._verts()  # columns [time, x, y, z]
+        permuted = canonical[:, [1, 2, 3, 0]]  # authored as [x, y, z, time]
+
+        first_of = {}
+        for tag, verts, dim_order in (
+            ("canonical", canonical, None),
+            ("permuted", permuted, ["x", "y", "z", "time"]),
+        ):
+            output = tmp_path / f"reveal_dimorder_{tag}.luxar.zarr"
+            with LuxarZarrCompiler(output) as compiler:
+                scene = compiler.create_scene(dimensions=self._dims_4d())
+                scene.add_lines(
+                    "ln",
+                    verts,
+                    widths=np.full(len(verts), 0.5, np.float32),
+                    line_type="segments",
+                    dim_order=dim_order,
+                    additive_lod=dict(method="radial", n_lods=2),
+                )
+
+            from luxar.encoding import ArrayDecoder
+
+            grp = zarr.open(str(output), mode="r")["ln"]
+            assert int(grp.attrs["n_additive_sublods"]) == 2
+            first_of[tag] = np.asarray(
+                ArrayDecoder().decode(grp["additive_0"]["vertices"]), dtype=np.float64
+            )
+
+        # Same inner shell at every timepoint, in the same scene column order —
+        # i.e. the permutation was normalized away before the reveal was scored.
+        for tag, first in first_of.items():
+            assert first.shape[0] == 24, tag
+            np.testing.assert_allclose(np.abs(first[:, 1]), 1.0, atol=1e-2, err_msg=tag)
+        np.testing.assert_allclose(
+            np.sort(first_of["canonical"], axis=0),
+            np.sort(first_of["permuted"], axis=0),
+            atol=1e-2,
+        )
+
+    def test_derived_shell_axes_write_no_partial_group(self, tmp_path) -> None:
+        """A mismatched ``reveal_centre`` must not strand a partial LOD group.
+
+        The resolver can only cross-check the centre against ``spatial_dims``
+        when the caller names both; here the axes are DERIVED. A planar cloud
+        (constant z) resolves to shell axes ``[0, 1]``, so the natural
+        3-coordinate centre used to raise inside the scorer — which for a
+        substitutive ladder runs while writing the FINEST child, after the
+        wrapper group and every coarse gsplat child are on disk.
+
+        For Lines the derivation runs over the per-polyline bbox CENTRES (the
+        scorer ranks whole polylines), which is what the wrapper now checks.
+        """
+        rng = np.random.RandomState(0)
+        verts = np.zeros((200, 3), dtype=np.float32)
+        verts[:, 0] = rng.uniform(-50, 50, 200)
+        verts[:, 1] = rng.uniform(-50, 50, 200)
+        verts[:, 2] = 7.0  # constant column -> zero extent -> shell axes [0, 1]
+        widths = np.full(len(verts), 0.5, np.float32)
+
+        output = tmp_path / "reveal_lines_partial.luxar.zarr"
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="shell axes resolve to"):
+                scene.add_lines(
+                    "ln",
+                    verts,
+                    widths=widths,
+                    line_type="segments",
+                    substitutive_lod={"levels": 2, "compression_factor": 4},
+                    additive_lod={
+                        "method": "radial",
+                        "reveal_centre": [0.0, 0.0, 7.0],
+                    },
+                )
+        assert not (output / "ln").exists()
+
+        # SENSITIVITY CONTROL: a centre of the matching length still builds.
+        ok = tmp_path / "reveal_lines_ok.luxar.zarr"
+        with LuxarZarrCompiler(ok) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "ln",
+                verts,
+                widths=widths,
+                line_type="segments",
+                substitutive_lod={"levels": 2, "compression_factor": 4},
+                additive_lod={"method": "radial", "reveal_centre": [0.0, 0.0]},
+            )
+        assert (ok / "ln" / "child_2").exists()
+
+    def test_preflight_does_no_work_without_an_explicit_centre(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The wrapper must not derive polyline representatives it will not use.
+
+        The preflight only has something to cross-check when the caller named a
+        ``reveal_centre`` under a reveal ordering. Getting its ``coords`` argument
+        is the expensive part on Lines — ``identify_polylines`` plus
+        ``polyline_bbox_centres`` loop in Python over every polyline (~2.5 s for a
+        400k-vertex ``segments`` node) — and the composed ladder is ON by default,
+        so an unguarded call paid that on every ``add_lines(substitutive_lod=…)``.
+
+        Booby-trap the derivation: the default ladder must never reach it.
+        """
+        from luxar.core.group.lod import lines as lines_lod
+
+        def _boom(*_args, **_kwargs):  # pragma: no cover - must not be called
+            raise AssertionError("polyline representatives derived for a non-reveal")
+
+        monkeypatch.setattr(lines_lod, "polyline_bbox_centres", _boom)
+
+        rng = np.random.RandomState(0)
+        verts = rng.uniform(-50, 50, (200, 3)).astype(np.float32)
+        widths = np.full(len(verts), 0.5, np.float32)
+
+        output = tmp_path / "no_preflight.luxar.zarr"
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "ln",
+                verts,
+                widths=widths,
+                line_type="segments",
+                substitutive_lod={"levels": 2, "compression_factor": 4},
+            )
+        assert (output / "ln" / "child_2").exists()
+
+        # SENSITIVITY CONTROL: the trap DOES fire once a centre is named, so the
+        # test above proves the guard rather than a broken monkeypatch target.
+        trapped = tmp_path / "preflight_runs.luxar.zarr"
+        with LuxarZarrCompiler(trapped) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(AssertionError, match="derived for a non-reveal"):
+                scene.add_lines(
+                    "ln",
+                    verts,
+                    widths=widths,
+                    line_type="segments",
+                    substitutive_lod={"levels": 2, "compression_factor": 4},
+                    additive_lod={
+                        "method": "radial",
+                        "reveal_centre": [0.0, 0.0, 0.0],
+                    },
+                )
+
+    def test_control_the_extent_rule_alone_mixes_the_shells(self) -> None:
+        """Sensitivity control on identical data, through the bare-array API."""
+        verts = self._verts()
+        levels = make_additive_lod_lines(
+            verts,
+            line_type="segments",
+            widths=np.full(len(verts), 0.5, np.float32),
+            method="radial",
+            n_lods=2,
+        )
+        first = np.concatenate([verts[m] for m in levels[0]])
+        assert np.abs(first[:, 1]).max() > 1.0
+        assert sorted(set(np.round(first[:, 0]).tolist())) != list(self._TIMES)

@@ -20,6 +20,7 @@ from luxar.cli.gsplat_ops.batch.recipe_args import (
 from luxar.cli.gsplat_ops.batch.recipe_args import (
     build_merge_recipe_params as _build_merge_recipe_params_impl,
 )
+from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 
 def run_batch_merge_cmd(
@@ -63,8 +64,8 @@ def run_batch_merge_cmd(
     additive_method: Optional[str] = typer.Option(
         None,
         "--additive-method",
-        help="Additive ladder method: auto (default) | greedy | self_energy "
-        "(stream recipe).",
+        help=f"Additive ladder method (stream recipe): {GSPLAT_ADDITIVE_CHOICES_HELP}. "
+        "Default auto.",
     ),
     breakpoints: Optional[str] = typer.Option(
         None,
