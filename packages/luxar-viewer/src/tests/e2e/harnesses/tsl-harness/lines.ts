@@ -19,6 +19,7 @@ import {
   lineWebGPUFactory,
   buildLineTSLNodesFromUniforms,
 } from '../../../../rendering/materials/line/shader-tsl';
+import { getLineRadialLUTTexture } from '../../../../rendering/materials/_shared/line-integral-lut';
 import { LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders';
 import { VOLUMETRIC_LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders-volumetric';
 import { volumetricLinePickWebGPUFactory } from '../../../../rendering/picking/line/pick-volumetric.tsl';
@@ -406,6 +407,26 @@ function buildVisualLineUniforms(
   };
 }
 
+/**
+ * {@link buildVisualLineUniforms} plus the sharpness radial LUT (#1352
+ * PR-4), for the `line-volprim-*` fixtures. Mirrors production, which binds
+ * the LUT iff the material is the volumetric primitive (any blending mode;
+ * peak graphs simply never sample it) — screen-space fixtures stay LUT-free
+ * so the harness never constructs the texture on a path production would
+ * not, and an accidental eager build on the screen-space path stays
+ * observable rather than pre-hidden here.
+ */
+function buildVolprimLineUniforms(
+  texture: THREE.DataTexture,
+  isOrtho: boolean,
+  nearCull = 0.01
+): Record<string, THREE.IUniform> {
+  return {
+    ...buildVisualLineUniforms(texture, isOrtho, nearCull),
+    uLineRadialLUT: { value: getLineRadialLUTTexture() },
+  };
+}
+
 function buildPickLineUniforms(
   texture: THREE.DataTexture,
   isOrtho: boolean,
@@ -749,7 +770,7 @@ function buildFreeEndJoinTexelSource(): LineTexelSource {
 function peakCutEntry(src: LineTexelSource): RegistryEntry {
   return {
     source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () => buildVisualLineUniforms(buildJoinDataTexture(src), true),
+    buildUniforms: () => buildVolprimLineUniforms(buildJoinDataTexture(src), true),
     buildDefines: () => ({ LUXAR_PEAK_PROJECTION: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
     buildTSLMaterial: (uniforms) => {
       const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
@@ -1597,7 +1618,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // soft/soft erf-difference lane.
   'line-volprim-sideon': {
     source: VOLUMETRIC_LINE_SOURCE,
-    buildUniforms: () => buildVisualLineUniforms(buildLineDataTexture(), true),
+    buildUniforms: () => buildVolprimLineUniforms(buildLineDataTexture(), true),
     buildTSLMaterial: (uniforms) => {
       const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
         blendingMode: 'additive',
@@ -1609,6 +1630,72 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
+  // SHARPNESS extremes under additive (#1352 PR-4): every fixture above
+  // rides the default knob 0.5 (β = 2, the LUT row that IS the old
+  // analytic radial), so these two are the only coverage of the LUT's
+  // OTHER rows. `sharp-hard` pins the knob ceiling (β = 16, near-tophat
+  // radial); `sharp-taper` interpolates the knob 0 → 1 ALONG the segment,
+  // driving the per-fragment `sharp` mix through the LUT's v-axis
+  // filtering on both backends at once. Wide so the profile shape spans
+  // many pixels instead of hiding inside edge AA.
+  'line-volprim-sharp-hard': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVolprimLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, {
+          startWidth: 0.3,
+          endWidth: 0.3,
+          startSharpness: 1.0,
+          endSharpness: 1.0,
+        }),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, {
+        startWidth: 0.3,
+        endWidth: 0.3,
+        startSharpness: 1.0,
+        endSharpness: 1.0,
+      }),
+  },
+  'line-volprim-sharp-taper': {
+    source: VOLUMETRIC_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVolprimLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, {
+          startWidth: 0.3,
+          endWidth: 0.3,
+          startSharpness: 0.0,
+          endSharpness: 1.0,
+        }),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, {
+        startWidth: 0.3,
+        endWidth: 0.3,
+        startSharpness: 0.0,
+        endSharpness: 1.0,
+      }),
+  },
   // End-on segment under an ORTHO camera: every fragment's ray is
   // structurally parallel to the axis — the lane the screen-space quad
   // degenerates on (#1352's headline case) and the only fixture that
@@ -1616,7 +1703,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-endon-ortho': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(
+      buildVolprimLineUniforms(
         buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, VOLUMETRIC_LINE_ALPHAS),
         true
       ),
@@ -1638,7 +1725,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-endon-persp': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(buildLineDataTexture([0, 0, 0.5], [0, 0, -0.3]), false),
+      buildVolprimLineUniforms(buildLineDataTexture([0, 0, 0.5], [0, 0, -0.3]), false),
     buildTSLMaterial: (uniforms) => {
       const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
         blendingMode: 'additive',
@@ -1659,7 +1746,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-joint': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
+      buildVolprimLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
     buildTSLMaterial: (uniforms) => {
       const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
         blendingMode: 'additive',
@@ -1685,7 +1772,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-joint-scaled': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(buildJoinDataTexture(buildScaledJoinTexelSource()), true),
+      buildVolprimLineUniforms(buildJoinDataTexture(buildScaledJoinTexelSource()), true),
     buildTSLMaterial: (uniforms) => {
       const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
         blendingMode: 'additive',
@@ -1707,7 +1794,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-peak': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
+      buildVolprimLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
     buildDefines: () => ({ LUXAR_PEAK_PROJECTION: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
     buildTSLMaterial: (uniforms) => {
       const m = volumetricLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
@@ -1738,7 +1825,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-taper': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(
+      buildVolprimLineUniforms(
         buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, REMAP_STYLE),
         true
       ),
@@ -1761,7 +1848,10 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-colormap': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () => ({
-      ...buildVisualLineUniforms(buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]), true),
+      ...buildVolprimLineUniforms(
+        buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]),
+        true
+      ),
       uColormapTex: { value: buildColormapTexture() },
       uScalarMin: { value: 0.0 },
       uScalarScale: { value: 1.0 },
@@ -1798,7 +1888,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-fat-sideon': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(
+      buildVolprimLineUniforms(
         buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
         true
       ),
@@ -1817,7 +1907,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-fat-endon': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(
+      buildVolprimLineUniforms(
         buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
         true
       ),
@@ -1841,7 +1931,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-fat-peak': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () =>
-      buildVisualLineUniforms(
+      buildVolprimLineUniforms(
         buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
         true
       ),
@@ -1965,7 +2055,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-nearclip': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () => ({
-      ...buildVisualLineUniforms(
+      ...buildVolprimLineUniforms(
         buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
           startWidth: 0.002,
           endWidth: 0.002,
@@ -2002,7 +2092,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-volprim-nearclip-joint': {
     source: VOLUMETRIC_LINE_SOURCE,
     buildUniforms: () => ({
-      ...buildVisualLineUniforms(
+      ...buildVolprimLineUniforms(
         buildJoinDataTexture(buildStraddlingJoinTexelSource()),
         false,
         0.35

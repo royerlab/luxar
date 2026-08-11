@@ -2504,6 +2504,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-volprim-colormap',
     'line-volprim-nearclip',
     'line-volprim-nearclip-joint',
+    'line-volprim-sharp-hard',
+    'line-volprim-sharp-taper',
     'line-volprim-fat-sideon',
     'line-volprim-fat-endon',
     'line-volprim-fat-peak',
@@ -2525,6 +2527,104 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       ).toBeLessThan(2.0);
     });
   }
+
+  test('line-volprim-sharp-taper: the sharpness knob reshapes the radial profile (#1352 PR-4)', async ({
+    page,
+  }) => {
+    // Physics pin for the Abel radial LUT, GLSL-only (the parity loop
+    // already holds TSL byte-close to GLSL, so this transfers). The
+    // fixture tapers the knob 0 → 1 along the segment; per the CPU
+    // reference the HALF-MAX radius of the radial profile is q ≈ 0.207
+    // at knob 0.125 (column 20) vs q ≈ 0.685 at knob 0.875 (column 44) —
+    // a 3.3× ratio. Assert ≥ 2× measured in pixels: a LUT wired to a
+    // constant row (or the old analytic radial ignoring the knob) reads
+    // ratio ≈ 1 and fails. Half-max is PER-COLUMN normalized, so the
+    // axial erf window (constant within a side-on ortho column) cancels.
+    await bootHarness(page);
+    const pixels = await runGLSL(page, 'line-volprim-sharp-taper');
+    // The additive tail carries the INTEGRAL in the alpha channel
+    // (fragColor = vec4(color, I·uOpacity)); RGB is the flat colour over
+    // the whole footprint and carries no profile shape. The CLEAR colour's
+    // alpha is 255, so the measurement must run over COVERED pixels only
+    // (any-channel difference from the corner background quadruplet) —
+    // a raw column max would read the background as the brightest "core".
+    const bg = pixels.slice(0, 4);
+    const coreHeight = (col: number): number => {
+      const alphaAt: number[] = [];
+      for (let row = 0; row < 64; row++) {
+        const i = (row * 64 + col) * 4;
+        const covered =
+          pixels[i] !== bg[0] ||
+          pixels[i + 1] !== bg[1] ||
+          pixels[i + 2] !== bg[2] ||
+          pixels[i + 3] !== bg[3];
+        if (covered) alphaAt.push(pixels[i + 3]);
+      }
+      const colMax = Math.max(...alphaAt, 0);
+      expect(colMax, `column ${col} rendered nothing`).toBeGreaterThan(30);
+      return alphaAt.filter((a) => a >= 0.5 * colMax).length;
+    };
+    const soft = coreHeight(20);
+    const hard = coreHeight(44);
+    expect(
+      hard / soft,
+      `half-max core height: knob≈0.875 column ${hard}px vs knob≈0.125 column ${soft}px`
+    ).toBeGreaterThan(2.0);
+  });
+
+  test('line-volprim-sharp-hard: rendered profile matches the CPU Abel model per-row (#1352 PR-4)', async ({
+    page,
+  }) => {
+    // MODEL-REFERENCED, not cross-backend: parity and the footprint pairs
+    // compare the two shaders to EACH OTHER, so a UV-mapping error made
+    // identically on both backends (e.g. dropping the half-texel bias on
+    // both) is invisible to them. This test holds the GLSL render against
+    // `lineRadialProfile` — the same quadrature the texture is built from
+    // — breaking that symmetry; TSL is covered transitively through the
+    // parity loop. Per-row over the center column, normalized to the
+    // column max (cancels aaComp/F/uOpacity, which are row-constant
+    // side-on). Mutation-calibrated: clean reads 0.0028 worst; dropping
+    // LUT_U_BIAS (a half-texel q shift) reads 0.0123 — the 0.007 gate
+    // sits 2.5x above noise and 1.8x below the smallest known mutation.
+    // The model must use sigma_eff (the 3D variance floor at this
+    // fixture's pixel size), not sigma — with plain sigma the clean
+    // deviation triples and the gate loses its margin.
+    await bootHarness(page);
+    const pixels = await runGLSL(page, 'line-volprim-sharp-hard');
+    const { lineRadialProfile } =
+      await import('../../rendering/materials/_shared/line-integral-lut');
+    const { GAUSSIAN_EQUIVALENT_TRUNCATION } =
+      await import('../../rendering/materials/_shared/falloff');
+    const { LINE_SIGMA_PER_WIDTH, LINE_STENCIL_DILATION } =
+      await import('../../rendering/materials/_shared/line-volumetric');
+    // Fixture geometry: width 0.3, ortho scale 64 (32 px per world unit),
+    // 64 px viewport — the segment's center line sits between rows 31/32.
+    const sigma = LINE_SIGMA_PER_WIDTH * 0.3;
+    const pxSize = 2 / 64;
+    const sigmaEff = Math.sqrt(sigma * sigma + LINE_STENCIL_DILATION * pxSize * pxSize);
+    const tSigPx = GAUSSIAN_EQUIVALENT_TRUNCATION * sigmaEff * 32;
+    const col = 32;
+    const bg = pixels.slice(0, 4);
+    const measured: Array<{ row: number; alpha: number }> = [];
+    for (let row = 0; row < 64; row++) {
+      const i = (row * 64 + col) * 4;
+      const covered =
+        pixels[i] !== bg[0] ||
+        pixels[i + 1] !== bg[1] ||
+        pixels[i + 2] !== bg[2] ||
+        pixels[i + 3] !== bg[3];
+      if (covered) measured.push({ row, alpha: pixels[i + 3] });
+    }
+    expect(measured.length, 'covered rows in the center column').toBeGreaterThan(30);
+    const colMax = Math.max(...measured.map((m) => m.alpha));
+    let worst = 0;
+    for (const { row, alpha } of measured) {
+      const q = Math.abs(row - 31.5) / tSigPx;
+      const model = q <= 1 ? lineRadialProfile(q, 1.0) : 0;
+      worst = Math.max(worst, Math.abs(alpha / colMax - model));
+    }
+    expect(worst, 'per-row |rendered/colMax − S(q, knob=1)|').toBeLessThan(0.007);
+  });
 
   test('line-volprim-joint-scaled: a non-uniform model matrix leaves the joint invariant', async ({
     page,

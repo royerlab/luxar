@@ -184,9 +184,11 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `create_time_series_demo()`: Generate time-varying data
 - `launch_viewer()`: Launch the Luxar viewer for a given dataset path
 - `demo_ports()`: Stable per-dataset (data, viewer) port pair derived from the
-  dataset name — demos never contend for 8000/5173 (or each other's ports), so
-  a browser tab left over from one demo can never silently front another
-  demo's server; explicit `--port`/`--viewer-port` in `serve_args` override
+  dataset name — demos never contend for 8000/5173, and no two of them share a
+  full port PAIR, so a browser tab left over from one demo can never silently
+  front another demo's server (two demos may still share only the data port
+  and shift, which is harmless — the viewer URL carries its own `?src=`);
+  explicit `--port`/`--viewer-port` in `serve_args` override
 - `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache

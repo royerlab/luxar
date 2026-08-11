@@ -780,7 +780,11 @@ def load_precomputed_bundle(
 # tab left over from demo A would otherwise silently front demo B's server
 # later (the "I started demo B and got demo A" trap). 499 slots (prime, so
 # stems spread well); `pick_port` inside `serve` still resolves the rare
-# same-slot collision by shifting up with a warning.
+# same-slot collision by shifting up with a warning. Note the guarantee is at
+# the PAIR level: two demos may still land on the same DATA port (15 such
+# pairs among today's bundled outputs) and merely shift, which is harmless —
+# the wrong-scene trap needs BOTH ports to match, since the viewer URL carries
+# its own `?src=` data URL.
 _DEMO_DATA_PORT_BASE = 8001
 _DEMO_VIEWER_PORT_BASE = 5200
 _DEMO_PORT_SLOTS = 499
@@ -797,6 +801,11 @@ def demo_ports(output_path: Union[str, Path]) -> tuple[int, int]:
     ``(data, viewer)`` pair reproduces the very same-URL stale-tab trap this
     derivation exists to prevent. Independent slots square the pair space
     (~249k), making a full-pair collision vanishingly rare.
+
+    The dataset NAME is the identity: two datasets that share a file name in
+    different directories deliberately share a pair (that is what makes a
+    demo's URL stable across output directories), so re-running the same demo
+    from two workspaces still hands the second one a shifted port.
     """
     digest = zlib.crc32(Path(output_path).name.encode("utf-8"))
     data_slot = digest % _DEMO_PORT_SLOTS

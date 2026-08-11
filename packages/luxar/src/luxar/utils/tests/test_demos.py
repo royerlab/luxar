@@ -574,9 +574,12 @@ class TestDemoPorts:
         from luxar.demos import registry
         from luxar.utils.demos import demo_ports
 
+        # Resolve names through the registry's own rule (a stem already ending
+        # in `.zarr` is used verbatim) so the guard keeps checking the names
+        # demos actually serve.
         pairs: dict[tuple[int, int], list[str]] = {}
         for d in registry.iter_demos():
-            for out in d.outputs or [d.key]:
-                pairs.setdefault(demo_ports(f"{out}.luxar.zarr"), []).append(out)
+            for path in registry.demo_output_paths(d, demos_dir=Path("demos")):
+                pairs.setdefault(demo_ports(path), []).append(path.name)
         collisions = {k: v for k, v in pairs.items() if len(v) > 1}
         assert not collisions, f"port-pair collisions: {collisions}"
