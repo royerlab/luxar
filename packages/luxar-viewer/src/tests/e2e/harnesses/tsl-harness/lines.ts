@@ -15,6 +15,10 @@ import * as THREE from 'three';
 import { LINE_SOURCE } from '../../../../rendering/materials/line/shader-glsl';
 import { VOLUMETRIC_LINE_SOURCE } from '../../../../rendering/materials/line/shader-glsl-volumetric';
 import { volumetricLineWebGPUFactory } from '../../../../rendering/materials/line/shader-tsl-volumetric';
+import { CAPSULE_LINE_SOURCE } from '../../../../rendering/materials/line/shader-glsl-capsule';
+import { capsuleLineWebGPUFactory } from '../../../../rendering/materials/line/shader-tsl-capsule';
+import { CAPSULE_LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders-capsule';
+import { capsuleLinePickWebGPUFactory } from '../../../../rendering/picking/line/pick-capsule.tsl';
 import {
   lineWebGPUFactory,
   buildLineTSLNodesFromUniforms,
@@ -818,6 +822,32 @@ function buildScaledJoinTexelSource(): LineTexelSource {
     ...src,
     startPositions: unscale(src.startPositions),
     endPositions: unscale(src.endPositions),
+  };
+}
+
+/**
+ * SHARP-FOLD joint (#1352): two segments sharing a vertex with a ~150°
+ * direction change. Every interior end renders its half of the joint
+ * DISC (round cap partitioned at the bisector), so the wide variant
+ * (width 0.3 ⇒ ~12 px capsule radius at ortho scale 64) fills its fold
+ * tip; the `thin` variant (width 0.02 ⇒ clamped to the 1.5 px floor)
+ * exercises the same path at a hairline-sized joint disc.
+ */
+function buildFoldJoinTexelSource(width: number): LineTexelSource {
+  return {
+    startPositions: new Float32Array([-0.8, 0.35, 0, 0.0, 0.0, 0]),
+    endPositions: new Float32Array([0.0, 0.0, 0, -0.75, -0.5, 0]),
+    startColors: new Float32Array([1, 1, 1, 1, 1, 1]),
+    endColors: new Float32Array([1, 1, 1, 1, 1, 1]),
+    startWidths: new Float32Array([width, width]),
+    endWidths: new Float32Array([width, width]),
+    startSharpness: new Float32Array([0.5, 0.5]),
+    endSharpness: new Float32Array([0.5, 0.5]),
+    segmentLengths: new Float32Array([0.87, 0.9]),
+    // seg0's END joins seg1 (slot 1, shares its START ⇒ code slot+1 = 2);
+    // seg1's START joins seg0 (slot 0, shares its END ⇒ code −(slot+3) = −3).
+    startJointCode: new Float32Array([0, -3]),
+    endJointCode: new Float32Array([2, 0]),
   };
 }
 
@@ -2114,5 +2144,316 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: (m) => buildJoinMesh(buildStraddlingJoinTexelSource(), m),
     buildCamera: buildBehindCamera,
+  },
+  // ============================================================
+  // CAPSULE LINE PRIMITIVE (#1352, ?linePrimitive=capsule).
+  // Gaussian-like quartic profile of the 2D point-to-segment distance —
+  // see _shared/line-capsule.ts. These fixtures pin value-level parity
+  // of the two backends over the capsule's behaviour surface: side-on
+  // ribbon, end-on disc, half-disc bisector joints (gentle and sharp
+  // folds), taper, colormap, max + volumetric mode tails, near-plane
+  // straddling, and the pick twins.
+  // NOTE for snapshot hygiene: append new entries at the END.
+  // ============================================================
+  'line-capsule-sideon': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () => buildVisualLineUniforms(buildLineDataTexture(), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // End-on ortho: the segment projects to a POINT — the capsule's whole
+  // reason to exist. Must render a finite radial disc on both backends.
+  'line-capsule-endon-ortho': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5]), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5]),
+  },
+  'line-capsule-endon-persp': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildLineDataTexture([0, 0, 0.5], [0, 0, -0.3]), false),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [0, 0, 0.5], [0, 0, -0.3]),
+    buildCamera: buildBehindCamera,
+  },
+  // The V joint: partner fetch + 2D bisector cuts on both backends. The
+  // two capsules must tile the bend seamlessly under additive.
+  'line-capsule-joint': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
+  },
+  // ~150° fold, WIDE: the end's half of the joint disc fills the fold
+  // tip (no chopped notch, no double-bright overlap).
+  'line-capsule-fold': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildFoldJoinTexelSource(0.3)), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildJoinMesh(buildFoldJoinTexelSource(0.3), material),
+  },
+  // The same fold, HAIRLINE-thin: the joint disc is hairline-sized (the
+  // 1.5 px AA floor), pinning that a thin fold stays compact.
+  'line-capsule-fold-thin': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildFoldJoinTexelSource(0.02)), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildJoinMesh(buildFoldJoinTexelSource(0.02), material),
+  },
+  // Width taper + endpoint colour/sharpness remap in one (REMAP_STYLE).
+  'line-capsule-taper': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, REMAP_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, REMAP_STYLE),
+  },
+  // Colormap path: interpolated scalar varying + fragment LUT sample.
+  'line-capsule-colormap': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () => ({
+      ...buildVisualLineUniforms(buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]), true),
+      uColormapTex: { value: buildColormapTexture() },
+      uScalarMin: { value: 0.0 },
+      uScalarScale: { value: 1.0 },
+    }),
+    buildDefines: () => ({ USE_COLORMAP: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(
+        buildLineTSLNodesFromUniforms(uniforms, { useColormap: true }),
+        {
+          useColormap: true,
+          blendingMode: 'additive',
+          isOrtho: true,
+        }
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], [0.2, 0.8]),
+  },
+  // MAX mode: the premultiplied-RGB output tail.
+  'line-capsule-max': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () => buildVisualLineUniforms(buildLineDataTexture(), true),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
+        gammaOne: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // VOLUMETRIC blending: the τ tail with per-element alpha optical-depth
+  // mapping (uHasElementAlpha) — mirrors the quad's 'line-volumetric'.
+  'line-capsule-volumetric': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () => ({
+      ...buildVisualLineUniforms(
+        buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], undefined, VOLUMETRIC_LINE_ALPHAS),
+        true
+      ),
+      uOpacity: { value: 0.7 },
+      uAbsorption: { value: 2.0 },
+      uHasElementAlpha: { value: 1 },
+    }),
+    buildDefines: () => ({ LUXAR_VOLUMETRIC: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'volumetric',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [-0.5, 0, 0], [0.5, 0, 0], undefined, VOLUMETRIC_LINE_ALPHAS),
+  },
+  // Near-plane straddling in perspective: the endpoint clip reshapes the
+  // profile domain itself (no behind-eye notion in 2D).
+  'line-capsule-nearclip': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5]), false, 0.35),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5]),
+    buildCamera: buildBehindCamera,
+  },
+  // Near-plane straddling with TAPER + colour gradient: the clipped end
+  // must carry the attribute values interpolated AT the clip parameter,
+  // not the behind-camera endpoint's (width/colour would jump — the
+  // review finding the plain nearclip fixture could not see).
+  'line-capsule-nearclip-taper': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+          startColor: [1.0, 0.1, 0.1],
+          endColor: [0.1, 0.1, 1.0],
+          startWidth: 0.06,
+          endWidth: 0.5,
+          startSharpness: 0.1,
+          endSharpness: 0.9,
+        }),
+        false,
+        0.35
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+        startColor: [1.0, 0.1, 0.1],
+        endColor: [0.1, 0.1, 1.0],
+        startWidth: 0.06,
+        endWidth: 0.5,
+        startSharpness: 0.1,
+        endSharpness: 0.9,
+      }),
+    buildCamera: buildBehindCamera,
+  },
+  // FAT side-on: the footprint-sensitivity twin of the pick fixture below.
+  'line-capsule-fat': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+  },
+  // === Capsule PICK twins: same stencil + profile, pick output contract ===
+  'line-capsule-pick-sideon': {
+    source: CAPSULE_LINE_PICK_SOURCE,
+    buildUniforms: () =>
+      buildPickLineUniforms(
+        buildLineDataTexture(undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) =>
+      capsuleLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, undefined, undefined, undefined, undefined, FOOTPRINT_STYLE),
+  },
+  'line-capsule-pick-endon': {
+    source: CAPSULE_LINE_PICK_SOURCE,
+    buildUniforms: () =>
+      buildPickLineUniforms(
+        buildLineDataTexture([0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
+        true
+      ),
+    buildTSLMaterial: (uniforms) =>
+      capsuleLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 0.3], [0, 0, -0.5], undefined, undefined, FOOTPRINT_STYLE),
+  },
+  'line-capsule-pick-joint': {
+    source: CAPSULE_LINE_PICK_SOURCE,
+    buildUniforms: () => buildPickLineUniforms(buildJoinDataTexture(buildJoinTexelSource()), true),
+    buildTSLMaterial: (uniforms) =>
+      capsuleLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
+    buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
   },
 };

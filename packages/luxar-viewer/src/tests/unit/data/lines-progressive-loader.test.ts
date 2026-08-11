@@ -60,6 +60,13 @@ function makeLodData(
     /** Widen colors to 4 channels (per-vertex alpha column). */
     rgba?: boolean;
     sharpness?: boolean;
+    scalars?: boolean;
+    /**
+     * Per-level marker written into colors/scalars so a merged ladder's rows
+     * can be traced back to the level they came from. Omitted (the default)
+     * keeps each field's historical fill value.
+     */
+    mark?: number;
   } = {}
 ): LoadedLinesData {
   const positions = new Float32Array(vertexCount * ndim);
@@ -72,13 +79,14 @@ function makeLodData(
   }
   const widths = new Float32Array(vertexCount).fill(1);
   const colorK = options.rgba ? 4 : 3;
+  const mark = options.mark;
   let colors: Float32Array | Uint8Array | Uint16Array | null = null;
   if (options.color === 'uint8') {
-    colors = new Uint8Array(vertexCount * colorK).fill(128);
+    colors = new Uint8Array(vertexCount * colorK).fill(mark ?? 128);
   } else if (options.color === 'uint16') {
-    colors = new Uint16Array(vertexCount * colorK).fill(32000);
+    colors = new Uint16Array(vertexCount * colorK).fill(mark ?? 32000);
   } else if (options.color === 'float32') {
-    colors = new Float32Array(vertexCount * colorK).fill(0.5);
+    colors = new Float32Array(vertexCount * colorK).fill(mark ?? 0.5);
   }
   if (colors && options.rgba) {
     // Distinct per-vertex alphas so stride slips are detectable.
@@ -94,10 +102,21 @@ function makeLodData(
     colors,
     ...(colors && options.rgba ? { colorComponents: 4 as const } : {}),
     sharpness,
+    ...(options.scalars ? { scalars: new Float32Array(vertexCount).fill(mark ?? 1) } : {}),
     segmentCount,
     vertexCount,
     ndim,
   };
+}
+
+/**
+ * A level the current slice culls to zero, shaped like the real thing:
+ * `createEmptyLinesData` (lines/projection.ts) OMITS `scalars` entirely
+ * (absent, not zero-length) — the asymmetry that made an empty level strip the
+ * merged ladder's scalars and suppress the colormap node-wide (#1456).
+ */
+function makeEmptyLodData(): LoadedLinesData {
+  return makeLodData(0, 0);
 }
 
 function makeSubLoader(
@@ -283,17 +302,121 @@ describe('LinesProgressiveLoader', () => {
     });
   });
 
-  describe('LOD 0 short-circuit', () => {
-    it('stops after LOD 0 if it returns 0 segments', async () => {
+  describe('empty LOD levels (#1456)', () => {
+    it('streams PAST an empty LOD 0 to the levels that DO have segments', async () => {
+      // THE regression. This loader exists only for ADDITIVE ladders, whose
+      // levels are disjoint increments of one permutation — LOD 0 is a small
+      // SUBSET of the node, so a hidden-dimension slice that none of ITS
+      // vertices lands on is ordinary and says nothing about levels 1..n-1.
+      // The loader used to latch a terminal "empty ladder" on an empty LOD 0
+      // and break, so such a slice rendered NOTHING even though the higher
+      // levels held plenty of geometry right there.
+      lodA.updateView.mockResolvedValue(makeEmptyLodData());
+      const result = await loader.loadLines(baseViewState);
+      expect(lodB.updateView).toHaveBeenCalled();
+      expect(lodC.updateView).toHaveBeenCalled();
+      expect(result.segmentCount).toBeGreaterThan(0);
+    });
+
+    it("keeps the surviving levels' scalars across an empty LOD 0", async () => {
+      // An empty level is an ABSTAINER, not a veto. `createEmptyLinesData`
+      // OMITS `scalars`, and `concatOptionalField` is all-or-nothing, so
+      // without the abstainer rule one empty level stripped the merged
+      // ladder's scalars — `data-processor-lines.ts`'s
+      // `hasScalars = !!data.scalars` then flips false and the colormap is
+      // suppressed node-wide. (`colors` and `sharpness` were already safe:
+      // they use the find-first + fill-for-missing pattern, not the
+      // all-or-nothing helper. Pinned below so a white fill can never be
+      // mistaken for the real thing.)
+      const attrs = { color: 'uint8' as const, scalars: true };
+      lodA.updateView.mockResolvedValue(makeEmptyLodData());
+      lodB.updateView.mockResolvedValue(makeLodData(10, 5, 3, { ...attrs, mark: 11 }));
+      lodC.updateView.mockResolvedValue(makeLodData(4, 2, 3, { ...attrs, mark: 22 }));
+
+      const r = await loader.loadLines(baseViewState);
+
+      expect(r.vertexCount).toBe(14); // 0 + 10 + 4
+      expect(r.scalars).toHaveLength(14);
+      expect(r.scalars![0]).toBeCloseTo(11);
+      expect(r.scalars![9]).toBeCloseTo(11);
+      expect(r.scalars![10]).toBeCloseTo(22);
+      expect(r.colors).toBeInstanceOf(Uint8Array);
+      expect(r.colors).toHaveLength(14 * 3);
+      expect(Array.from(r.colors!.slice(0, 3))).toEqual([11, 11, 11]);
+      expect(Array.from(r.colors!.slice(10 * 3, 10 * 3 + 3))).toEqual([22, 22, 22]);
+    });
+
+    it('keeps scalars when the empty level lands in the MIDDLE of the ladder', async () => {
+      // Same defect, and this half of it predates #1456: the old short-circuit
+      // only fired at level 0, so a ladder whose level 1 was culled to zero
+      // already lost its scalars.
+      const attrs = { color: 'uint8' as const, scalars: true };
+      lodA.updateView.mockResolvedValue(makeLodData(20, 10, 3, { ...attrs, mark: 11 }));
+      lodB.updateView.mockResolvedValue(makeEmptyLodData());
+      lodC.updateView.mockResolvedValue(makeLodData(4, 2, 3, { ...attrs, mark: 22 }));
+
+      const r = await loader.loadLines(baseViewState);
+
+      expect(r.vertexCount).toBe(24); // 20 + 0 + 4
+      expect(r.scalars).toHaveLength(24);
+      expect(r.scalars![0]).toBeCloseTo(11);
+      // The empty level occupies no vertices, so level 2 starts right after
+      // level 0 — a stray zero-row offset would show up here.
+      expect(r.scalars![20]).toBeCloseTo(22);
+      expect(Array.from(r.colors!.slice(20 * 3, 20 * 3 + 3))).toEqual([22, 22, 22]);
+    });
+
+    it('keeps hasMoreLODs true after an empty LOD 0 while levels remain unloaded', async () => {
+      // Level 1 is a cache miss, so the refine pass stops with 2 of 3 levels
+      // loaded. An empty LOD 0 must not be mistaken for a finished ladder:
+      // refinement has to stay scheduled, and the next pass resumes at level 2.
       lodA.updateView.mockResolvedValue(makeLodData(0, 0));
+      lodB.updateViewWithResidency.mockImplementation(async () => ({
+        data: makeLodData(10, 5, 3, { color: 'uint8' }),
+        allResident: false,
+      }));
       await loader.loadLines(baseViewState);
+      expect(loader.loadedLODCount).toBe(2);
+      expect(loader.hasMoreLODs).toBe(true);
+
+      await loader.loadLines(baseViewState);
+      expect(lodC.updateView).toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
+    });
+
+    it('still prefetches the next level after an empty LOD 0', async () => {
+      // A playback budget stops the pass at the LOD-0 first-paint floor. The
+      // level that actually holds this slice's geometry is the one still to
+      // come, so skipping prefetch would leave it cold.
+      lodA.updateView.mockResolvedValue(makeLodData(0, 0));
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+      expect(loader.loadedLODCount).toBe(1);
+      expect(lodB.prefetchChunks).toHaveBeenCalled();
+    });
+
+    it('walks EVERY level even when they all come back empty', async () => {
+      // The wholly empty slice. The loop must still visit all three levels
+      // rather than infer their emptiness from level 0 — in an additive ladder
+      // that inference is unsound (#1456), and the only way to know a slice is
+      // empty is to look. Afterwards the ladder is complete, so nothing is left
+      // to refine.
+      lodA.updateView.mockResolvedValue(makeEmptyLodData());
+      lodB.updateView.mockResolvedValue(makeEmptyLodData());
+      lodC.updateView.mockResolvedValue(makeEmptyLodData());
+
+      const result = await loader.loadLines(baseViewState);
+
       expect(lodA.updateView).toHaveBeenCalled();
-      expect(lodB.updateView).not.toHaveBeenCalled();
-      expect(lodC.updateView).not.toHaveBeenCalled();
+      expect(lodB.updateView).toHaveBeenCalled();
+      expect(lodC.updateView).toHaveBeenCalled();
+      expect(result.segmentCount).toBe(0);
+      expect(loader.loadedLODCount).toBe(3);
+      expect(loader.hasMoreLODs).toBe(false);
     });
   });
 
-  describe('S-cache restored EMPTY prefix (terminal re-derivation)', () => {
+  describe('S-cache restored ladders', () => {
     const viewA: LinesViewState = {
       displayDims: [0, 1, 2],
       slicePosition: [0, 0, 0, 0],
@@ -305,16 +428,47 @@ describe('LinesProgressiveLoader', () => {
       tolerance: [0, 0, 0, 0],
     };
 
-    it('does not re-stream higher LODs when a restored prefix has an empty LOD 0', async () => {
-      // Scrub away from an empty slice (the departure store snapshots the
-      // [empty-LOD0] 1-level ladder), then scrub back: the restore path
-      // must RE-DERIVE the terminal flag from the restored prefix — the
-      // level===0 empty check only fires for freshly LOADED levels, so
-      // without re-derivation the loop resumes at startLevel=1 and
-      // re-fetches every higher (equally empty) LOD on every revisit.
+    it('streams on from a restored PREFIX whose LOD 0 is empty', async () => {
+      // A playback budget caps the pass at LOD 0 and stores that 1-level
+      // prefix. Scrubbing back restores it — and an empty restored LOD 0 is
+      // exactly as uninformative as a freshly loaded one (#1456): the levels
+      // the prefix never reached are disjoint increments that may well
+      // intersect this slice, so the loop must resume at level 1. Concluding
+      // "terminal" from `restored[0]` alone stranded the slice blank.
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const a = makeSubLoader(makeLodData(0, 0));
       const b = makeSubLoader(makeLodData(10, 5, 3, { color: 'uint8' }));
+      const l = new LinesProgressiveLoader(
+        [a, b] as unknown as LinesSpatialIndexLoader[],
+        2,
+        '/l-empty-prefix',
+        undefined,
+        sc
+      );
+
+      await l.updateView({ ...viewA, frameBudgetMs: 10 }); // LOD 0 only, prefix stored
+      expect(l.loadedLODCount).toBe(1);
+      await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move away
+
+      a.updateViewWithResidency.mockClear();
+      b.updateViewWithResidency.mockClear();
+      const restored = await l.loadLines(viewA); // scrub back, no budget
+
+      expect(a.updateViewWithResidency).not.toHaveBeenCalled(); // served from the S-cache
+      expect(b.updateViewWithResidency).toHaveBeenCalled(); // …and streamed on
+      expect(restored.segmentCount).toBe(5);
+    });
+
+    it('does not re-walk a restored FULL empty ladder', async () => {
+      // An all-empty ladder is still a ladder: it must be STORED (it measures 0
+      // bytes, which the cache accepts) and RESTORED, so the full-restore
+      // short-circuit fires on the revisit and no level is queried again. If a
+      // future cache change ever refused the 0-byte snapshot, `restored` would
+      // come back null and this revisit would re-walk all of it — which is what
+      // these assertions catch.
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const a = makeSubLoader(makeEmptyLodData());
+      const b = makeSubLoader(makeEmptyLodData());
       const l = new LinesProgressiveLoader(
         [a, b] as unknown as LinesSpatialIndexLoader[],
         2,
@@ -323,24 +477,17 @@ describe('LinesProgressiveLoader', () => {
         sc
       );
 
-      await l.loadLines(viewA); // empty LOD 0 → terminal 1-level ladder
-      expect(l.hasMoreLODs).toBe(false);
-      // The DISCOVERY pass itself must not prefetch the (empty) next LOD —
-      // prefetch goes through prefetchChunks, a separate surface from
-      // updateViewWithResidency, so pin it explicitly.
-      expect(b.prefetchChunks).not.toHaveBeenCalled();
-      await l.loadLines(viewB); // departure: stores viewA's ladder
+      await l.loadLines(viewA); // both levels empty → complete ladder, stored
+      expect(l.loadedLODCount).toBe(2);
+      await l.loadLines(viewB); // move away
 
       a.updateViewWithResidency.mockClear();
       b.updateViewWithResidency.mockClear();
-      await l.loadLines(viewA); // revisit the empty slice
+      const revisited = await l.loadLines(viewA); // revisit the empty slice
 
-      // Restored from the S-cache (LOD 0 not re-fetched)…
       expect(a.updateViewWithResidency).not.toHaveBeenCalled();
-      // …and the restored empty prefix is TERMINAL: no higher-LOD fetch,
-      // and refinement stays off.
       expect(b.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(b.prefetchChunks).not.toHaveBeenCalled();
+      expect(revisited.segmentCount).toBe(0);
       expect(l.hasMoreLODs).toBe(false);
     });
   });
@@ -701,9 +848,12 @@ describe('LinesProgressiveLoader', () => {
 
   describe('concatenation', () => {
     it('returns a single part as-is when only one LOD is loaded', async () => {
-      lodA.updateView.mockResolvedValue(makeLodData(0, 0));
-      const result = await loader.loadLines(baseViewState);
-      expect(result.segmentCount).toBe(0);
+      // A playback budget caps the pass at the LOD-0 first-paint floor — the
+      // single-part state of every ladder. (It used to be provoked with an
+      // empty LOD 0, which no longer stops the loop: #1456.)
+      const result = await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+      expect(loader.loadedLODCount).toBe(1);
+      expect(result.segmentCount).toBe(10);
     });
 
     it('concatenates positions / segments / widths across multiple LODs', async () => {

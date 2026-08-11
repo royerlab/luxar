@@ -58,6 +58,19 @@ describe('showError - ARIA Attributes', () => {
     expect(message?.textContent).toBe('Custom error message');
   });
 
+  it('renders the header icon as a decorative inline SVG, not a text glyph', () => {
+    // The ⚠️ emoji this replaced was announced by screen readers and drew
+    // in a platform-dependent font. The SVG must be aria-hidden (the title
+    // carries the meaning) and contribute no text of its own.
+    showError('Test error message');
+    const icon = document.querySelector('.luxar-error-dialog__icon');
+
+    expect(icon?.textContent).toBe('');
+    const svg = icon?.querySelector('svg');
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('should replace existing errors instead of stacking', () => {
     showError('First error');
     showError('Second error');

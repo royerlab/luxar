@@ -588,6 +588,61 @@ describe('renderSceneGraphTree — kind badges', () => {
   });
 });
 
+describe('renderSceneGraphTree — node glyphs', () => {
+  const NODE_TYPES: SceneGraphNode['type'][] = [
+    'scene',
+    'group',
+    'points',
+    'lines',
+    'gsplats',
+    'mesh',
+  ];
+
+  /** Render a one-node tree and return the contents of its icon slot. */
+  function glyphOf(node: Partial<SceneGraphNode>): string {
+    const root = { path: '/n', name: 'n', type: 'group', children: [], ...node } as SceneGraphNode;
+    const html = renderSceneGraphTree(
+      {
+        root,
+        totalNodes: 1,
+        nodesByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+        totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+        visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      },
+      new Set(),
+      new Map()
+    );
+    const match = html.match(/<span class="luxar-scene-graph__icon">([\s\S]*?)<\/span>/);
+    expect(match).not.toBeNull();
+    return match![1].trim();
+  }
+
+  it('draws every node type as an inline stroke glyph, never an emoji', () => {
+    for (const type of NODE_TYPES) {
+      const glyph = glyphOf({ type });
+      expect(glyph).toMatch(/^<svg class="luxar-micon"/);
+      // Emoji render differently on every platform (and were what this
+      // slot used to hold), so the markup must stay plain ASCII.
+      expect(glyph).not.toMatch(/[^\x20-\x7E]/);
+    }
+  });
+
+  it('gives each node type its own glyph — the type distinction the neutral names dropped', () => {
+    // Names are no longer per-type coloured, so the glyph is the ONLY
+    // thing telling a points layer from a lines or mesh one. A
+    // copy-paste that maps two types to the same icon must fail here.
+    const glyphs = NODE_TYPES.map((type) => glyphOf({ type }));
+    expect(new Set(glyphs).size).toBe(NODE_TYPES.length);
+  });
+
+  it('marks kind=lod and kind=partition groups distinctly from a plain group', () => {
+    const folder = glyphOf({ type: 'group' });
+    const lod = glyphOf({ type: 'group', kind: 'lod' });
+    const partition = glyphOf({ type: 'group', kind: 'partition' });
+    expect(new Set([folder, lod, partition]).size).toBe(3);
+  });
+});
+
 describe('nodeStatsContent — per-type element counts in the scene tree', () => {
   const node = (o: Record<string, unknown>) =>
     ({ path: '/n', name: 'n', type: 'group', children: [], hasSpatialIndex: false, ...o }) as never;

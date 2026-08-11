@@ -28,6 +28,11 @@ from arbol import aprint
 _CAN_KILLPG = hasattr(os, "killpg") and hasattr(os, "getpgid")
 
 
+def can_kill_process_groups() -> bool:
+    """True where process-group signalling (``os.killpg``) is available."""
+    return _CAN_KILLPG
+
+
 def run_child_process(
     cmd: Sequence[str],
     *,
@@ -35,6 +40,7 @@ def run_child_process(
     isolate_group: bool = True,
     interrupt_timeout: float = 5.0,
     term_timeout: float = 3.0,
+    on_spawn: Optional[Callable[[int], None]] = None,
 ) -> int:
     """Spawn ``cmd``, wait for it, and own its teardown on every exit path.
 
@@ -52,6 +58,10 @@ def run_child_process(
             SIGTERM.
         term_timeout: Seconds to wait after SIGTERM before escalating to
             SIGKILL (also the reap timeout for the direct child).
+        on_spawn: Called with the child's PID right after the spawn (when
+            isolated, that PID is also the new process-group id). Used by
+            ``demo run`` to register the run for ``luxar demo stop``; failures
+            are swallowed so bookkeeping can never break the launch.
 
     Returns:
         The child's exit code (signal death mapped to ``128 + n``), or ``130``
@@ -59,6 +69,8 @@ def run_child_process(
     """
     isolate = isolate_group and _CAN_KILLPG
     proc = subprocess.Popen(list(cmd), start_new_session=isolate)
+    if on_spawn is not None:
+        _safe(on_spawn, proc.pid)
     # A session leader's process-group id equals its pid; capture it so the
     # group can still be signalled after the direct child has been reaped
     # (grandchildren may outlive it). The whole body below the spawn is inside
@@ -138,6 +150,86 @@ def _exit_code(returncode: Optional[int]) -> int:
 _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
+def proc_table() -> list[tuple[int, int, str, str]]:
+    """Best-effort ``(pid, pgid, state, command)`` rows read from ``/proc``.
+
+    A stdlib stand-in for ``ps``: no subprocess, and it still answers on the
+    slim containers where ``procps`` is not installed. Returns ``[]`` where
+    ``/proc`` is absent (macOS, Windows) — callers must read that as "process
+    table unknown", never as "nothing is running".
+    """
+    rows: list[tuple[int, int, str, str]] = []
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return rows
+    for name in names:
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            # /proc/<pid>/stat is "pid (comm) state ppid pgrp …"; comm can
+            # itself contain spaces and parentheses, so split after the LAST
+            # ')' — everything before it is untrustworthy for field indexing.
+            with open(f"/proc/{pid}/stat", "rb") as handle:
+                fields = handle.read().rsplit(b")", 1)[1].split()
+            with open(f"/proc/{pid}/cmdline", "rb") as handle:
+                argv = handle.read()
+        except (OSError, IndexError):
+            continue  # exited mid-scan, or not ours to read
+        try:
+            state, pgid = fields[0].decode(), int(fields[2])
+        except (IndexError, ValueError, UnicodeDecodeError):
+            continue
+        command = " ".join(argv.decode("utf-8", "replace").split("\0")).strip()
+        rows.append((pid, pgid, state, command))
+    return rows
+
+
+def _group_has_live_member(pgid: int) -> bool:
+    """True unless every member of ``pgid`` is an unreaped zombie.
+
+    ``killpg(pgid, 0)`` still succeeds for a group whose processes have all
+    exited but whose corpses their parent has not collected yet. A zombie
+    holds no port, no memory and no file descriptor, so counting one as "still
+    running" would make teardown burn the whole signal ladder and then report
+    failure for a group it did kill. Answered from ``/proc``; where the table
+    (or this group) cannot be seen there, assume the group is alive.
+    """
+    states = [state for _pid, p, state, _cmd in proc_table() if p == pgid]
+    return not states or any(state != "Z" for state in states)
+
+
+def _group_gone_probe(pgid: int, recheck: float = 0.5) -> Callable[[], bool]:
+    """Build a "is this group finished?" probe cheap enough to poll in a loop.
+
+    ``killpg(pgid, 0)`` (microseconds) answers most calls; the process-table
+    read that looks past unreaped zombies costs milliseconds, so it is re-run
+    at most every ``recheck`` seconds and its answer cached in between.
+
+    Signalling permission is part of the answer: ``EPERM`` means the group is
+    alive and owned by someone else, which must never be reported as gone.
+    """
+    last = 0.0
+    zombies_only = False
+
+    def gone() -> bool:
+        """True once nothing in the group can still run."""
+        nonlocal last, zombies_only
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        except OSError:
+            return False  # EPERM &co: alive, and not ours to signal
+        now = time.monotonic()
+        if now - last >= recheck:
+            last, zombies_only = now, not _group_has_live_member(pgid)
+        return zombies_only
+
+    return gone
+
+
 def _teardown(
     proc: "subprocess.Popen[bytes]",
     pgid: Optional[int],
@@ -150,16 +242,22 @@ def _teardown(
     only fires for lingering grandchildren; because a process group cannot be
     reused while any member is alive, the pgid we hold cannot have been
     recycled by then, so the kill targets our own subtree only.
+
+    On the Ctrl-C path the direct child is NOT yet reaped (it is reaped below,
+    after the escalation), so its corpse sits in the group as a zombie — hence
+    the zombie-aware probe, without which every interrupted ``demo run`` would
+    sit through the full SIGINT → SIGTERM → SIGKILL ladder before returning.
     """
     if pgid is not None:
+        gone = _group_gone_probe(pgid)
 
         def send(sig: int) -> None:
             """Deliver ``sig`` to the child's whole process group."""
             _killpg(pgid, sig)
 
         def alive() -> bool:
-            """True while any member of the child process group survives."""
-            return _killpg(pgid, 0)
+            """True while a member of the child process group is still running."""
+            return not gone()
 
     else:
 
@@ -171,6 +269,19 @@ def _teardown(
             """True while the direct child PID is still running."""
             return proc.poll() is None
 
+    _escalate(send, alive, interrupt_timeout, term_timeout)
+
+    # Reap our direct child so it does not linger as a zombie.
+    _safe(proc.wait, timeout=term_timeout)
+
+
+def _escalate(
+    send: Callable[[int], None],
+    alive: Callable[[], bool],
+    interrupt_timeout: float,
+    term_timeout: float,
+) -> None:
+    """Drive the SIGINT → SIGTERM → SIGKILL ladder until ``alive()`` is False."""
     try:
         for sig, grace in (
             (signal.SIGINT, interrupt_timeout),
@@ -192,8 +303,49 @@ def _teardown(
         if alive():
             send(_SIGKILL)
 
-    # Reap our direct child so it does not linger as a zombie.
-    _safe(proc.wait, timeout=term_timeout)
+
+def terminate_process_group(
+    pgid: int,
+    *,
+    interrupt_timeout: float = 5.0,
+    term_timeout: float = 3.0,
+) -> bool:
+    """Kill a whole process group we did not spawn; True once it is gone.
+
+    The ``luxar demo stop`` counterpart of :func:`run_child_process`'s owned
+    teardown: the same graceful escalation, but targeting a group discovered
+    after the fact (a forgotten or orphaned demo). There is no direct child to
+    reap here — the group's own parent (or init, once orphaned) does that, and
+    until it does the corpses linger as zombies the probe must see past — so
+    after SIGKILL we only wait briefly for the group to drain before
+    reporting. Returns False off POSIX or when the group survives SIGKILL
+    (e.g. a process owned by another user, which we cannot signal at all).
+    """
+    if not _CAN_KILLPG:
+        return False
+    # killpg(0, sig) signals the CALLER'S own group and negative/1 values are
+    # kill(2) wildcards or undefined — never forward them, whatever a corrupt
+    # registry entry claims.
+    if pgid <= 1:
+        return False
+    gone = _group_gone_probe(pgid)
+    if gone():
+        return True  # already gone
+
+    def send(sig: int) -> None:
+        """Deliver ``sig`` to the target group."""
+        _killpg(pgid, sig)
+
+    def alive() -> bool:
+        """True while a member of the target group is still running."""
+        return not gone()
+
+    _escalate(send, alive, interrupt_timeout, term_timeout)
+    # Give SIGKILL a moment to land before declaring the group stuck.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not gone():
+        time.sleep(0.05)
+    return gone()
 
 
 def _killpg(pgid: int, sig: int) -> bool:
