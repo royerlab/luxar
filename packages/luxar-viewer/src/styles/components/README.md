@@ -9,12 +9,13 @@ Every selector here is scoped under a `.luxar-*` class so the rules are
 safe to ship inside a host page without leaking into the embedder's
 chrome. Colors, spacing, radii, and shadows reference the
 `--luxar-*` CSS custom properties injected at runtime by the
-`ThemeManager` (see `../../themes/`) — hardcoded palette values and
-`!important` are allowed only as documented exceptions (reduced-motion
-overrides, the control-rail docking overrides, and state-forcing rules
-that must beat inline styles); see the
+`ThemeManager` (see `../../themes/`). The two escape hatches have separate
+policies: a hardcoded palette value needs an inline comment justifying it,
+while `!important` is confined to three categories (reduced-motion
+overrides, the control-rail docking overrides, and state-forcing rules that
+must beat inline styles). See the
 [UI Design Guide](../../../../../docs/guides/developer/UI_DESIGN_GUIDE.md)
-§13/§15 for the sanctioned list.
+§13 for both rules and §15 for the existing exceptions.
 
 ## Files
 

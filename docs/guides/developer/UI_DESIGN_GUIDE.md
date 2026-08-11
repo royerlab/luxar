@@ -210,7 +210,7 @@ Key color differences:
 
 | | dark | light | frosted-glass | liquid-glass |
 | --- | --- | --- | --- | --- |
-| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(255,255,255,0.12)` (a dark frost, pending #1480) | `rgba(255,255,255,0.15)` |
+| `bg.secondary` (panel) | `rgba(30,30,30,0.95)` | `rgba(250,250,250,0.95)` | `rgba(255,255,255,0.12)` — a 12% white tint; becomes a dark frost in #1480 (pending) | `rgba(255,255,255,0.15)` |
 | `highlight` | `#00a0ff` (blue) | `#0277bd` (blue) | `rgba(88,86,214,1)` (indigo) | `rgba(88,86,214,1)` (indigo) |
 | `border.focus` | green `rgba(76,175,80,0.5)` | green | **blue** `rgba(0,122,255,0.6)` | **blue** `rgba(0,122,255,0.5)` |
 | `interactive.*` base | white alpha | black alpha | white alpha | bluish-gray `rgba(120,120,128,…)` |
@@ -553,10 +553,11 @@ brackets because "fit" owns them).
 
 ### 9.3 Rendered size ladder
 
-`19px` rail buttons · `18px` chips · `15px` GUI/layers rows · `13px` section
-titles & micon default · `12px` tabs/inline · `9px` compact alerts (plus a
-`17px` list-row rung pending #1472). Icons at ≤13px may carry
-`opacity: 0.75–0.9` at rest.
+`28px` hero glyphs (error dialog, cache-disabled empty state) · `19px` rail
+buttons · `18px` chips · `15px` GUI/layers rows · `13px` section titles &
+micon default · `12px` tabs/inline and scene-graph node glyphs · `9px`
+compact alerts (plus a `17px` list-row rung pending #1472). Icons at ≤13px
+may carry `opacity: 0.75–0.9` at rest.
 
 ---
 
@@ -724,9 +725,10 @@ The following existing code contradicts this guide. It is listed so nobody
 mistakes it for precedent; migrate opportunistically when touching these
 files. (Inventory verified 2026-08-11.) A four-tranche modernization campaign
 addresses most of it — #1476 a11y, #1478 token hygiene, #1479 emoji→icons,
-#1480 accent migration — but **all four are still open, so every entry below
-is live on this branch**. Each is annotated with the PR that will close it;
-delete the entry as that PR merges.
+#1480 accent migration. **#1479 has landed**, so its entries are already
+deleted below; **#1476, #1478 and #1480 are still open, so everything that
+remains here is live on this branch.** Each entry is annotated with the PR
+that will close it; delete the entry as that PR merges.
 
 ### 15.1 Green-as-interactive (§6.4 violations) — pending #1480
 
@@ -746,13 +748,13 @@ delete the entry as that PR merges.
 - Monitor: active tab tinted success rather than highlight
   (`data-loading-monitor.css`).
 
-### 15.2 Emoji still in the DOM (§9 violations) — pending #1479 / #1472
+### 15.2 Emoji still in the DOM (§9 violations) — pending #1472
 
-- Monitor templates: `⚠`, `🚫`, scene-graph node glyphs `🌐📁⚬╱🔮⬡`, `🎚️🧩`
-  (`ui/data-loading-monitor/templates.ts`).
-- Error overlay: `⚠️`, `💡` (`ui/error-overlay.ts`).
-- Dataset browser `🌌📁📄` (`ui/dataset-browser.ts`) — #1472 replaces them
-  with stroke `BROWSER_ICONS`.
+- Dataset browser `🌌📁📄` (`ui/dataset-browser.ts`) — the last emoji left in
+  the tree; #1472 replaces them with stroke `BROWSER_ICONS`.
+
+(#1479 already converted the monitor templates and the error overlay to
+stroke SVG, and dropped the per-type scene-graph name tints with them.)
 
 ### 15.3 Hardcoded values / phantom tokens — largely pending #1478 / #1480
 
@@ -769,8 +771,8 @@ delete the entry as that PR merges.
   entirely (raw rgba/blur/radius) — the largest single drift.
 - Assorted raw `rgba()` duplicating tokens: the GUI library's
   `rgba(0, 0, 0, …)` control fills (`ui/gui/styles/controller.css`),
-  debug-console warn/error tints,
-  monitor hairlines/mesh-purple `#9b59b6`/kind-badge blue, error-dialog
+  debug-console warn/error tints, monitor hairlines and the
+  `rgba(120,170,255,…)` kind-badge/active-level blue, error-dialog
   spinner chrome, `color: white` in overlay-layer and dimension-sliders.
 - Legacy px letter-spacing (`0.3px`/`0.5px`) and the tick-less legacy
   `.luxar-section-title` recipe in monitor/layers CSS.
@@ -791,6 +793,9 @@ delete the entry as that PR merges.
 
 - Two icon contracts exist by design (§9.1 rail vs §9.2 monitor micro) — do
   not invent a third.
+- `error-overlay.ts` keeps its one warning glyph as a module-local
+  `ALERT_ICON` const rather than an `icons.ts` module (§13). Fine for a
+  single glyph; a second one there means promoting it to a module.
 - Layers-panel selection uses `--luxar-info`; everything else uses
   `--luxar-highlight`. New selection UIs use highlight.
 
