@@ -6,6 +6,32 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Per-PR CI gates on Python 3.12; the full matrix runs nightly and on main
+
+`python-tests` was a three-leg matrix (3.10/3.11/3.12) on every pull request,
+and it is the slowest job in the workflow (~27min a leg) on a self-hosted box
+with five slots. Branch protection has only ever required the `3.12` context,
+so the other two legs cost two thirds of the Python CI budget to gate
+nothing. A pull request now runs `3.12` alone; `3.10`/`3.11` still run on every
+push to `main` and on a nightly schedule. The supported floor is unchanged —
+what is given up is the latency of catching a version-specific break, which
+moves from "in the offending PR" to "within 24h", against a 3x cut in per-PR
+Python CI.
+
+Scheduled runs get their own `concurrency` group. A cron run's ref is
+`refs/heads/main`, identical to a merge's, so under one shared group and
+`cancel-in-progress: true` whichever of the two started second cancelled the
+other — and they collide constantly: over the 31 days before the change a merge
+landed inside the nightly's ~30min window on 17 days, and inside the half hour
+before it on 12. The expensive direction is the cron killing a merge's push run,
+which is the only place the new `main` commit gets the full matrix at all now
+that per-PR CI is 3.12-only; the reverse is milder, since a merge that cancels
+the nightly runs the full matrix itself, but it still leaves "did 3.10/3.11 pass
+today?" unanswerable at a glance. Pull-request runs are unaffected: they already
+carry `refs/pull/N/merge` and were never grouped with a push. Note the cron
+fires the whole workflow, not just `python-tests` — a schedule event has no PR
+base, so change detection selects the full suite and the documentation gate too.
+
 #### Capsule line primitive behind `?linePrimitive=capsule` (#1352)
 
 A third line primitive, built after the G1 gate measured the exact
