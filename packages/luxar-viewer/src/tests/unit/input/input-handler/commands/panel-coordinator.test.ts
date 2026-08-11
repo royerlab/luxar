@@ -21,6 +21,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const notifierMocks = vi.hoisted(() => ({
   hideHelp: vi.fn(),
   clearError: vi.fn(),
+  showSceneIdentityBanner: vi.fn(),
+  hideSceneIdentityBanner: vi.fn(),
 }));
 vi.mock('../../../../../utils/cross-layer/notifier', () => ({
   notifier: {
