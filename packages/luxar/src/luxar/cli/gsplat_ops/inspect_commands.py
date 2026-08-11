@@ -876,16 +876,29 @@ def annotate_quality(
             aprint(f"Leaves stamped: {len(report.leaves)}")
             for leaf in report.leaves:
                 e_str = ", ".join(f"{e:.3f}" for e in leaf.energy_fraction_cum)
+                # `w=none` where no weight was written: a REVEAL ladder carries
+                # neither half of the e/w pair, and printing the number we
+                # computed would read as one that reached the store.
+                w_str = (
+                    "none"
+                    if leaf.reference_energy is None
+                    else f"{leaf.reference_energy:.4g}"
+                )
                 aprint(
                     f"  {leaf.path or '/'}: {leaf.n_splats:,} splats, "
-                    f"w={leaf.reference_energy:.4g}, e(k)=[{e_str}]"
+                    f"w={w_str}, e(k)=[{e_str}]"
                 )
             if with_quality:
                 aprint(f"Levels measured: {len(report.levels)}")
                 for lev in report.levels:
+                    lw = (
+                        "none"
+                        if lev.reference_energy is None
+                        else f"{lev.reference_energy:.4g}"
+                    )
                     aprint(
                         f"  {lev.path or '/'}: {lev.n_splats:,} splats, "
-                        f"Q={lev.quality:.4f}, w={lev.reference_energy:.4g}"
+                        f"Q={lev.quality:.4f}, w={lw}"
                     )
             if dry_run:
                 aprint("Dry run: nothing written.")

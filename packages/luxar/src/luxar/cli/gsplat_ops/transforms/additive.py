@@ -11,6 +11,36 @@ from arbol import aprint, asection
 from ..encoding import _resolve_encoding_mode
 
 
+def _merged_leaf_meta(src_meta: dict, new_meta: dict) -> dict:
+    """Fold a re-laddered leaf's fresh meta over its source's.
+
+    Keeps the FRESHLY-computed ladder stats (``lod_n_lods`` / ``lod_cutpoints`` /
+    ``lod_breakpoints_kind``) — a blind ``meta=dict(leaf.meta)`` would restore the
+    SOURCE leaf's stale ladder stats when re-laddering. Source-only keys (e.g. a
+    stamped ``coverage_fraction``) are preserved; per-key, ``stats`` merges so
+    source-only stat entries survive but ladder keys take the fresh values.
+
+    The one entry that must NOT survive that merge is ``reference_energy`` when
+    the fresh ladder omitted it: a reveal (``-m radial``) carries neither half of
+    the e/w pair, so inheriting the source's weight would restore exactly the
+    half-written stamp :func:`~luxar.gsplats.lod.additive.make_additive_lod` just
+    removed. Only the reveal path omits w, so the drop is a no-op for every other
+    method.
+
+    Module-level rather than nested in :func:`run_additive_dataset` so its
+    branches do not count against that function's C901 budget.
+    """
+    merged = {**src_meta, **new_meta}
+    src_stats = src_meta.get("stats")
+    new_stats = new_meta.get("stats")
+    if isinstance(src_stats, dict) and isinstance(new_stats, dict):
+        stats = {**src_stats, **new_stats}
+        if "reference_energy" not in new_stats:
+            stats.pop("reference_energy", None)
+        merged["stats"] = stats
+    return merged
+
+
 def run_additive_dataset(
     *,
     input_path: Path,
@@ -142,19 +172,10 @@ def run_additive_dataset(
                         breakpoints=clamp_counts_breakpoints(bp, n),
                     )
                     new_leaf = laddered.tree
-                    # Merge meta, keeping the FRESHLY-computed ladder stats
-                    # (lod_n_lods/lod_cutpoints/lod_breakpoints_kind) — a blind
-                    # `meta=dict(leaf.meta)` would restore the SOURCE leaf's
-                    # stale ladder stats when re-laddering. Source-only keys
-                    # (e.g. a stamped `coverage_fraction`) are preserved;
-                    # per-key, `stats` merges so source-only stat entries
-                    # survive but ladder keys take the fresh values.
-                    merged = {**leaf.meta, **new_leaf.meta}
-                    src_stats = leaf.meta.get("stats")
-                    new_stats = new_leaf.meta.get("stats")
-                    if isinstance(src_stats, dict) and isinstance(new_stats, dict):
-                        merged["stats"] = {**src_stats, **new_stats}
-                    return replace(new_leaf, meta=merged)
+                    return replace(
+                        new_leaf,
+                        meta=_merged_leaf_meta(leaf.meta, new_leaf.meta),
+                    )
 
                 result = map_leaves(node, _ladder_leaf)
                 ladder_sizes = sorted(
