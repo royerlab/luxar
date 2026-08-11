@@ -210,31 +210,25 @@ const RECT_HEIGHT_TOLERANCE_PX = 2;
 const EXPECTED_LINE_SEGMENTS = 120 + 16 + 40 + 20 + 9;
 
 /**
- * Floor on the zigzag band's axial flux p05.
+ * Floor on the zigzag band's axial flux p05 — the SECONDARY gate.
  *
- * The bend bands are gated on outlier COUNTS below (at most two of each, both
- * measuring 0), not on a fraction. The zigzag needs this
- * second gate because its wedge is far too wide for the local-median metric
- * to see: unmitred it scored only 0.076% dark, and its flux p05 is what
- * actually responded — 0.780 unmitred against 0.985 mitred (2026-08-07),
- * with the straight bands at 1.000.
+ * The zigzag's primary regression detector is the outlier count above it:
+ * unmitred rendering scores 30 dark outliers against the ceiling of 2
+ * (15×). The flux floor exists because the zigzag's uncovered wedge is far
+ * too wide for the local-median metric alone — unmitred it scored only
+ * 0.076% dark while its flux p05 collapsed to 0.780.
  *
- * 0.9 is the same floor the straight bands hold, and it brackets the whole
- * join-free envelope: the measured unmitred 0.780 sits 0.12 below it, and
- * even an IDEAL join-free zigzag only models to 0.898 — still under the
- * floor. So a regression to unmitred rendering fails here even if the
- * outlier counts somehow did not, while the mitred 0.985 clears it with
- * 0.085 to spare. Both margins are the headroom for GPU, driver and
- * resolution differences — do not raise the floor into the upper one, and do
- * not lower it into the lower one.
+ * Re-baselined at the #1352 flip for the capsule's ROUND joins: the
+ * capsule measures 0.895 (a round join genuinely carries less column flux
+ * through a square corner than the quad's miter did — 0.985; the
+ * volumetric reference's joins are round too), and the unmitred pathology
+ * measures 0.780. The floor sits between them at 0.85 — 0.045 of headroom
+ * above the pathology-side margin of 0.070; the two margins are the
+ * allowance for GPU, driver and resolution differences. If the capsule
+ * drops below the floor, that is a real joint regression, not noise; if a
+ * future primitive measures materially above 0.895, re-derive both
+ * margins rather than keeping this value.
  */
-// Re-baselined for the capsule default (#1352 flip): the capsule's
-// half-disc joint is ROUND, so a 90° corner genuinely carries less
-// column flux than the quad's square miter did — measured 0.895 capsule
-// vs 0.985 quad-mitred vs 0.780 unmitred (the pathology this floor
-// exists to catch). 0.85 keeps ~9x the capsule's margin over unmitred
-// while allowing the round-join geometry; the volumetric reference's
-// joins are round too.
 const ZIGZAG_FLUX_P05_FLOOR = 0.85;
 
 /**
@@ -485,8 +479,13 @@ test.describe('Line-joint artifact measurement (#790)', () => {
     // (Making the two sides agree exactly means subtracting in NDC and scaling
     // afterwards in both shader backends — see `_shared/glsl-lib.ts`.)
     //
-    // Positive control, run 2026-08-07: re-pointing this spec's URL at
-    // `&lineJoin=none` reproduces 4.941% dark / 3.520% bright on the curve and
+    // Positive control, run 2026-08-07 and re-verified at the #1352 flip:
+    // the control must pin the QUAD explicitly —
+    // `&linePrimitive=screen-space&lineJoin=none` — because `?lineJoin=`
+    // is a NO-OP on the default capsule (it partitions every interior
+    // joint unconditionally); against the default the URL reproduces the
+    // passing run exactly. With the quad pinned, `&lineJoin=none`
+    // reproduces 4.941% dark / 3.520% bright on the curve and
     // drops the zigzag's flux p05 to 0.780, so all five assertions below fail
     // without the join geometry. They are a regression detector, not a
     // tautology — if you widen them, re-run that A/B before believing the

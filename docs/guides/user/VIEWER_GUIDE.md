@@ -62,8 +62,8 @@ Append parameters to the viewer URL to control startup behavior.
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
 | `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). For deterministic E2E/visual runs. |
-| `lineJoin` | `none` \| `miter` | Force the line join style for the session, overriding each node's authored `join` attribute. Unrecognised values mean "no override". |
-| `linePrimitive` | `screen-space` \| `volumetric` | Select the line rendering primitive (#1352). `volumetric` draws each segment as its true 3D density — exact end-on viewing, single-covered joints via bisector cuts (the rasterized miter is truncated past a 90° turn); sum modes integrate the density along each view ray. Default `screen-space` (today's quad). |
+| `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there; both are scheduled for removal with the legacy primitives. |
+| `linePrimitive` | `capsule` \| `screen-space` \| `volumetric` | Select the line rendering primitive (#1352). Default **`capsule`**: a gaussian-like profile of the 2D point-to-segment distance — stable round discs end-on, seamless bisector-partitioned joints, quad-class cost. `screen-space` is the legacy quad; `volumetric` draws each segment as its true 3D density (exact but several times slower). Both legacy primitives are scheduled for removal. |
 
 Flag parameters do not take a value; their presence activates the feature.
 
