@@ -155,10 +155,12 @@ def _reject_labels_on_a_grafted_wrapper(
       branch below already treats as "not a tiling" for its anchor choice), and
       it labelled correctly before this gate existed. Note ``gsplat lod --recipe
       tiles`` on a small dataset does NOT: it emits a one-part partition of a
-      LADDERED leaf, which the sub-LOD half below refuses. A one-child wrapper
-      nesting another wrapper is
-      not exempted: the recursion reaches the inner wrapper, which has >1 leaf
-      and refuses at its own level.
+      LADDERED leaf, which the sub-LOD half below refuses. ``iter_leaves``
+      recurses, so nesting smuggles nothing past this: a one-child wrapper
+      around a MULTI-leaf wrapper counts every leaf underneath and is refused
+      HERE, at the entry call, naming the caller's node — the recursion never
+      runs. A one-child wrapper whose whole nest still resolves to a single flat
+      leaf is exempt for the reason above: that one leaf holds every splat.
     * ONE SUB-LOD — because ``write_gsplat_leaf_subtree``, where a laddered leaf
       goes, has no labels channel at all. Exempting a laddered leaf would make
       this gate's contract a lie: the refusal then comes from inside ``part_0``

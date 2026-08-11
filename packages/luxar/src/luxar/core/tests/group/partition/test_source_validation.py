@@ -939,6 +939,36 @@ class TestGraftedSubtreeRefusesLabels:
         assert "labels is not supported on a grafted multi-node" in str(split)
         assert "g" not in compiler.store
 
+    def test_a_one_child_wrapper_around_a_multi_leaf_one_is_refused_at_the_top(
+        self, tmp_path: Any
+    ) -> None:
+        """Nesting smuggles nothing past the gate, and does not move the blame.
+
+        ``iter_leaves`` recurses, so a wrapper with a single CHILD that is itself
+        a multi-leaf wrapper is counted by its leaves and refused at the ENTRY
+        call — naming ``g``, the caller's node, not the inner ``part_0``. Without
+        this the leaf-count rule could just as well be read as a child count, and
+        the recursion would be doing the refusing one level down (with the outer
+        wrapper already on disk, i.e. the strand this gate exists to prevent).
+        """
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        compiler, scene, path = open_scene(tmp_path, "graft_nested_labels.luxar.zarr")
+        node = GSplatPartition(
+            children=[
+                GSplatLodGroup(children=list(_nested_partition_tree(3).children))
+            ],
+            max_elements=8,
+        )
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, labels=LABELS))
+
+        assert str(split).startswith("Could not add gsplats 'g': ")
+        assert "part_0" not in str(split)
+        assert "labels is not supported on a grafted multi-node" in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
 
 def _laddered_leaf(n_per_sublod: int = 4, n_sublods: int = 2) -> Any:
     """One leaf carrying an ADDITIVE LADDER — what ``gsplat lod`` writes.
@@ -1095,6 +1125,33 @@ class TestASingleFlatLeafGraftStillLabels:
         compiler.finalize()
 
         assert zarr.open_group(path, mode="r")["g"].attrs[attr] is True
+
+    @pytest.mark.parametrize("channel,kwargs,attr", LABEL_KWARGS)
+    def test_a_nest_that_still_resolves_to_one_leaf_labels_that_leaf(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], attr: str
+    ) -> None:
+        """Leaf count is counted through the nesting, in BOTH directions.
+
+        The refusal side of that is pinned in the sibling class; this is the
+        exemption side. Two wrappers deep, but still one leaf holding every splat,
+        so the correspondence is exact and the labels ride down to it.
+        """
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_nest1_{channel}.luxar.zarr"
+        )
+        leaf = _nested_partition_tree(3, (N_LABELLED,)).children[0]
+        node = GSplatPartition(
+            children=[GSplatLodGroup(children=[leaf])], max_elements=N_LABELLED
+        )
+
+        _graft(scene, name="g", node=node, **kwargs)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"]["part_0"].attrs["kind"] == "lod"
+        assert store["g"]["part_0"]["child_0"].attrs[attr] is True
 
     @pytest.mark.parametrize("channel", ["labels", "image_labels"])
     def test_an_explicit_none_still_grafts_a_multi_part_partition(
