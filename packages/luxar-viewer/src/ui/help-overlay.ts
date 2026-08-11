@@ -245,12 +245,15 @@ export function showHelpOverlay() {
   footerNote.className = 'luxar-help-overlay__footer';
   footerNote.textContent = 'Click anywhere or press Esc to close';
 
-  // Create scroll wrapper (separates scrolling from glass effect container)
+  // Scroll wrapper (separates scrolling from the glass-effect container,
+  // §7.4). The header stays OUTSIDE it, pinned at the top of the panel —
+  // only the sections and footer scroll.
   const scrollWrapper = document.createElement('div');
   scrollWrapper.className = 'luxar-help-overlay__scroll';
-  scrollWrapper.appendChild(header);
   scrollWrapper.appendChild(controlsList);
   scrollWrapper.appendChild(footerNote);
+
+  helpDiv.appendChild(header);
 
   helpDiv.appendChild(scrollWrapper);
 
