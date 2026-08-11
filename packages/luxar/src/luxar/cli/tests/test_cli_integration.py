@@ -278,7 +278,12 @@ class TestServeIntegration:
         captured: dict[str, str] = {}
 
         def fake_serve_viewer(
-            host, port, data_url=None, open_browser_flag=True, cors_origin="local"
+            host,
+            port,
+            data_url=None,
+            open_browser_flag=True,
+            cors_origin="local",
+            title=None,
         ):
             captured["viewer"] = cors_origin
 
