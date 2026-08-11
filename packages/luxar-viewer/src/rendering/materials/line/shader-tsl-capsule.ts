@@ -443,9 +443,9 @@ export function capsuleLineWebGPUFactory(
       }
     );
     Discard(cutFade.lessThanEqual(0.0));
-    // Squared distance in the local frame; cut ends are rods (no cap term).
-    // TRUE point-to-segment distance: every end is capped (a free end
-    // keeps the whole disc, a cut end its half of the joint disc).
+    // Squared distance in the local frame — the TRUE point-to-segment
+    // distance, cap term included at BOTH ends: every end is capped (a free
+    // end keeps the whole disc, a cut end its half of the joint disc).
     const oxA: TSLNode = x.negate().toVar();
     const oxB: TSLNode = x.sub(vMeta.x).toVar();
     const ox: TSLNode = max(max(oxA, oxB), 0.0).toVar();

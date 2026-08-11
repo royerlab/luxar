@@ -44,7 +44,7 @@ premultiply, colormap, gamma — are the quad fragment's, unchanged. Both
 backends ship (GLSL pair + TSL twin factory), picking follows the toggle
 with shaders that duplicate the visual stencil/cuts/fold rule so hover
 tracks pixels exactly, and all constants are single-sourced in
-`_shared/line-capsule.ts`. Pinned by 15 new GLSL↔TSL parity fixtures
+`_shared/line-capsule.ts`. Pinned by 16 new GLSL↔TSL parity fixtures
 (end-on, joints, folds and the width gate, taper, colormap, volumetric
 blend, near-clip straddle, pick twins), codegen snapshots, and unit pins on
 the constants and profile. The default primitive is unchanged; the new

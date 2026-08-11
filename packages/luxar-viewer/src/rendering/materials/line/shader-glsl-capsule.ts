@@ -419,10 +419,10 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
           : smoothstep(0.0, 1.0, 1.0 - (x - vMeta.x) / fadeLenB);
       }
       if (cutFade <= 0.0) discard;
-      // Squared distance in the local frame; at cut ends the ROD continues
-      // to the cut line (no cap overshoot term there).
-      // TRUE point-to-segment distance: every end is capped (a free end
-      // keeps the whole disc, a cut end its half of the joint disc).
+      // Squared distance in the local frame — the TRUE point-to-segment
+      // distance, cap term included at BOTH ends: every end is capped (a
+      // free end keeps the whole disc, a cut end its half of the joint
+      // disc, carved out of that same cap by the bisector above).
       float ox = max(max(-x, x - vMeta.x), 0.0);
       float q = (y * y + ox * ox) / (rPx * rPx);
       float w = 1.0 - q;
