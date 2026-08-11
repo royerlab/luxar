@@ -4033,7 +4033,7 @@ class TestLODCommand:
                 "stream",
                 "--n-lods",
                 "2",
-                "--method",
+                "--add-method",
                 "self_energy",
             ],
         )
@@ -4141,7 +4141,7 @@ class TestLODCommand:
                 "2",
                 "--n-lods",
                 "2",
-                "--method",
+                "--add-method",
                 "self_energy",
                 "--device",
                 "cpu",
@@ -4394,7 +4394,7 @@ class TestLODCommand:
                 "stream",
                 "--n-lods",
                 "2",
-                "--method",
+                "--add-method",
                 "self_energy",
                 "--quiet",
             ],
@@ -4603,7 +4603,7 @@ class TestLODCommand:
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
         """`--recipe levels -m kmeans` (a substitutive algorithm name fed
-        to the ADDITIVE --method) still points the user to --substitutive-method
+        to the ADDITIVE --add-method) still points the user to --subst-method
         via the method-value validation."""
         out = tmp_path / "o.gsplats.zarr"
         result = runner.invoke(
@@ -4620,7 +4620,7 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code != 0
-        assert "--substitutive-method" in self._io(result)
+        assert "--subst-method" in self._io(result)
 
     def test_count_growing_recipe_fitting_count_matches_leaves(
         self, runner: CliRunner, tmp_path: Path

@@ -308,7 +308,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe flat
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     --breakpoints energy:0.5,0.9,0.99,1.0                                  # cumulative energy fractions
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --add-method self_energy
 
 # tiles / overview — BSP parts each with an additive ladder; overview
 # adds a coarse substitutive cap (far view) above the tiled fine branch
@@ -318,7 +318,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --compressio
 
 # levels — synthesised representative levels (substitutive pyramid)
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 \
-    --substitutive-method kmeans-lloyd --lloyd-iters 5
+    --subst-method kmeans-lloyd --lloyd-iters 5
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 
 # volume re-fit — warm-start re-fit each coarse level against the SOURCE volume
@@ -337,7 +337,7 @@ luxar gsplat additive in.gsplats.zarr out.gsplats.zarr -b stream:14000
 luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4         # classic equal-count
 ```
 
-**Options**: `--n-lods` (default 4, equal-count), `--method/-m` (auto/greedy/self_energy/mass/amplitude/spectral/random/radial ordering; `radial` reveals outward from the bbox centre and carries no energy stamps), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
+**Options**: `--n-lods` (default 4, equal-count), `--add-method/-m` (auto/greedy/self_energy/mass/amplitude/spectral/random/radial ordering; `radial` reveals outward from the bbox centre and carries no energy stamps), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
 
 #### `luxar gsplat flatten`
 Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one flat matrix-shaped leaf. Use for compatibility with tools that expect a flat `.gsplats.zarr`, or before rebuilding a new global LOD from a tiled/partitioned result.

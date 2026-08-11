@@ -63,7 +63,7 @@ def run_batch_merge_cmd(
     ),
     additive_method: Optional[str] = typer.Option(
         None,
-        "--additive-method",
+        "--add-method",
         help=f"Additive ladder method (stream recipe): {GSPLAT_ADDITIVE_CHOICES_HELP}. "
         "Default auto.",
     ),
@@ -101,7 +101,7 @@ def run_batch_merge_cmd(
         None, "-L", "--levels", help="Substitutive level count (levels recipe)."
     ),
     substitutive_method: Optional[str] = typer.Option(
-        None, "--substitutive-method", help="Substitutive coarsening method."
+        None, "--subst-method", help="Substitutive coarsening method."
     ),
     coarsen_dims: Optional[str] = typer.Option(
         None,
@@ -228,14 +228,14 @@ def run_batch_merge_cmd(
             eff_recipe,
             {
                 "--n-lods": n_lods,
-                "--additive-method": additive_method,
+                "--add-method": additive_method,
                 "--breakpoints": breakpoints,
                 "--target-ms": target_ms,
                 "--bandwidth-mbps": bandwidth_mbps,
                 "--bytes-per-splat": bytes_per_splat,
                 "--compression-factor": compression_factor,
                 "--levels": levels,
-                "--substitutive-method": substitutive_method,
+                "--subst-method": substitutive_method,
                 "--coarsen-dims": coarsen_dims,
             },
             _MERGE_OPTION_TOKENS_IMPL,

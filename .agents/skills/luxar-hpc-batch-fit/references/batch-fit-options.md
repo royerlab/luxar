@@ -49,8 +49,8 @@ DC-offset (clip at 0) before normalization, so amplitudes are background-relativ
 
 ## Shared per-part LOD at merge time (baked into the merge job)
 `--merge-recipe` (`stream` → tiles topology; `levels` → adaptive; default
-bare-leaf parts) + `--merge-n-lods`, `--merge-additive-method`, `--merge-breakpoints`,
-`--merge-compression-factor`, `--merge-levels`, `--merge-substitutive-method`,
+bare-leaf parts) + `--merge-n-lods`, `--merge-add-method`, `--merge-breakpoints`,
+`--merge-compression-factor`, `--merge-levels`, `--merge-subst-method`,
 `--merge-coarsen-dims` (default spatial only; stacked-timepoint axis stays a barrier).
 `--channel-colors "#ff0080,#00ff00"` for per-channel merge. LOD switch thresholds
 are auto-derived (`coverage_fraction`, no knob — the `--merge-lod-method` flag
@@ -113,8 +113,8 @@ Default = memory-safe `kind=partition` (one part per spatial tile, streamed).
 | `--recipe` | plan default | per-part LOD: `stream` (tiles) / `levels` (adaptive) |
 | `--force` | off | re-merge even if outputs exist |
 | `--channel-colors` | manifest | override per-channel colors |
-| `--n-lods` / `--additive-method` / `--breakpoints` | — | [stream] knobs |
-| `-K`/`--compression-factor`, `-L`/`--levels`, `--substitutive-method`, `--coarsen-dims` | — | [levels] knobs |
+| `--n-lods` / `--add-method` / `--breakpoints` | — | [stream] knobs |
+| `-K`/`--compression-factor`, `-L`/`--levels`, `--subst-method`, `--coarsen-dims` | — | [levels] knobs |
 
 NOTE: at the `merge` command the knobs are bare (`--n-lods`, `-K`, `-L`); the
 `--merge-*`-prefixed forms are only on `submit`/`run`.
