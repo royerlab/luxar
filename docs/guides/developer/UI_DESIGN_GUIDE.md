@@ -598,10 +598,14 @@ Every interactive element defines, in this order:
    hover affordances (directory chevrons) go from `opacity: 0` → `0.7`.
 3. **Active/selected** — highlight accent per §6.2.
 4. **Focus** — `:focus-visible { outline: 2px solid var(--luxar-border-focus);
-   outline-offset: 1–2px }` (negative offset inside dense lists). Because the
-   global focus ring ships only in `standalone.css`, **every focusable
-   component must declare this itself** or embedded viewers lose keyboard
-   affordance. Never `outline: none` without a visible replacement.
+   outline-offset: 1–2px }` (negative offset inside dense lists). The
+   embed-safe baseline ring is `.luxar-glass-surface :focus-visible` in
+   `base/utilities.css` (PR #1476) — it covers every control inside a glass
+   panel even when only `index.css` is imported; components with richer focus
+   styles override it later in the import order. Text inputs may substitute a
+   `--luxar-border-focus` border-color switch. Never `outline: none` without
+   a visible replacement (a `tabindex="-1"` focus-trap *container* is the one
+   sanctioned exception).
 5. **Disabled** — `opacity: 0.3–0.4`, `cursor: not-allowed` or `default`,
    `pointer-events: none` where semantics allow.
 
@@ -678,9 +682,12 @@ Further requirements:
 
 The following existing code contradicts this guide. It is listed so nobody
 mistakes it for precedent; migrate opportunistically when touching these
-files. (Inventory verified 2026-08-11.)
+files. (Inventory verified 2026-08-11; the four-tranche modernization
+campaign — #1476 a11y, #1478 token hygiene, #1479 emoji→icons, #1480 accent
+migration — addresses most of it. Entries below are annotated with their
+fixing PR and should be DELETED as those PRs merge.)
 
-### 15.1 Green-as-interactive (§6.4 violations)
+### 15.1 Green-as-interactive (§6.4 violations) — fixed by #1480
 
 - GUI library: slider thumbs, number-input text, checkbox `accent-color`,
   select focus borders, scrollbar thumb (`ui/gui/styles/gui.css`,
@@ -693,20 +700,23 @@ files. (Inventory verified 2026-08-11.)
 - Monitor: active tab tinted success rather than highlight
   (`data-loading-monitor.css`).
 
-### 15.2 Emoji still in the DOM (§9 violations)
+### 15.2 Emoji still in the DOM (§9 violations) — fixed by #1479 / #1472
 
 - Monitor templates: `⚠`, `🚫`, scene-graph node glyphs `🌐📁⚬╱🔮⬡`, `🎚️🧩`
   (`ui/data-loading-monitor/templates.ts`).
 - Error overlay: `⚠️`, `💡` (`ui/error-overlay.ts`).
 - Dataset browser `🌌📁📄` — fixed by PR #1472 (stroke `BROWSER_ICONS`).
 
-### 15.3 Hardcoded values / phantom tokens
+### 15.3 Hardcoded values / phantom tokens — largely fixed by #1478 / #1480
 
 - `colormap-legend.css` references the **non-existent** `--luxar-radius-xs`
   (falls back to its literal).
 - Raw z-indexes: `150` (debug console), `10000` (toast, dimension-slider
-  menu), `9999/10000/100000` (recording panel — has a documented rationale),
-  `1/2` (layers-panel thumb stacking).
+  menu) — tokenized in #1478. NOT drift (correction to the original
+  inventory): the recording panel's `9999/10000/100000` stay literal by
+  design (their magnitude beats unknown third-party host UI — documented in
+  the file header), and small local stacking indexes (`1/2/10` inside a
+  positioned parent) are not layer tokens.
 - Recording panel indicator/confirm dialog bypasses the surface recipe
   entirely (raw rgba/blur/radius) — the largest single drift.
 - Assorted raw `rgba()` duplicating tokens: debug-console warn/error tints,
@@ -715,17 +725,17 @@ files. (Inventory verified 2026-08-11.)
 - Legacy px letter-spacing (`0.3px`/`0.5px`) and the tick-less legacy
   `.luxar-section-title` recipe in monitor/layers CSS.
 
-### 15.4 Accessibility gaps
+### 15.4 Accessibility gaps — fixed by #1476
 
 - `help-overlay.css` sets `outline: none !important` on the panel root (the
   one unjustified `!important`).
 - GUI slider/select/input focus removes the outline without a visible
   replacement.
-- `prefers-reduced-motion` not yet honored by: GUI library styles,
-  layers-panel, debug-console, toast, help-overlay, overlay-layer transitions.
-- Focus-visible relies on `reset.css` (standalone-only) almost everywhere
-  outside the rail/monitor — embedded viewers currently lose most focus rings
-  (§12.4).
+- `prefers-reduced-motion` gaps (GUI library, layers panel, toast, debug
+  console, help overlay, overlay fade) — closed in #1476.
+- The standalone-only focus ring (embedded viewers losing keyboard
+  affordance) — closed by the `.luxar-glass-surface :focus-visible` utility
+  in #1476 (§12.4).
 
 ### 15.5 Divergent contracts (tolerated, bounded)
 
