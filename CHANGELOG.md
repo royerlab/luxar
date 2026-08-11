@@ -6,6 +6,52 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### An empty LOD 0 no longer blanks a laddered node's slice (#1456)
+
+All three progressive loaders (Points, Lines, GSplats) latched a terminal
+"empty ladder" the moment LOD 0 committed zero elements: the streaming loop
+broke, `hasMoreLODs` went false and the prefetch was skipped, so refinement
+never looked at the higher levels. The justification — "LODs are spatially
+coextensive" — is false for these loaders. They are constructed *only* for
+**additive** ladders (`createProgressive{Points,Lines,GSplats}Loader` each
+iterate the `additive_<i>` subgroups), whose levels are **disjoint
+increments** of one permutation rather than coarse-to-fine resamplings of the
+same elements. `additive_0` is a small *subset* of the node — a few thousand
+elements under `-b stream:C` / `--target-ms` / the `gsplat additive` default,
+i.e. the recommended ladder shape — so a hidden-dimension slice that none of
+*its* members lands on says nothing at all about levels 1..n-1. Such a slice
+rendered **nothing** even when the later levels held plenty of geometry right
+there.
+
+Making those levels reachable exposed a second defect on the same path: a
+zero-element level *vetoed the merged ladder's optional attributes*. The
+canonical empty payloads **omit** their optional fields rather than emitting
+zero-length arrays, and `concatOptionalField` was all-or-nothing, so one culled
+level stripped those fields from the levels that did have data.
+`createEmptyPointsData` omits `colors`, `radii`, `sharpness` and `scalars` — all
+four route through that helper — so the recovered Points slice would have
+rendered white, uniformly-sized and colormap-less, a quieter wrong answer than
+the blank one it replaced. For Lines it is narrower: only `scalars` goes through
+the helper (there is no `radii` field, and `colors`/`sharpness` merge via the
+bespoke fill-for-missing path), so the loss there was the colormap alone.
+GSplats was never affected. Zero-row parts now **abstain**: contributing no
+rows, they get no vote on which attributes the merge carries, and no say in its
+dtype. That also fixes the same defect for an empty level in the *middle* of a
+ladder, which was reachable before this change.
+
+The terminal-empty-ladder flag is gone rather than repaired. Once an empty level
+can no longer stop the loop, the only state the flag could describe is a fully
+resident ladder — and every consequence it used to carry is already covered
+there: the streaming loop is a no-op at `startLevel === nLods`, `prefetchNextLOD`
+self-guards on the same count, `hasMoreLODs` reports false on it, and the
+SliceCache store returns at its upgrade-if-longer check. Keeping it would have
+been ~60 lines of comment guarding one cache `peek`. There is no per-pass cost
+change — `loadedLODs` accumulates and `startLevel` resumes from its length, so
+each level is queried once per view, not once per pass. Per *view* an empty
+slice now issues `nLods` sub-loader queries instead of 1; they resolve to zero
+ranges and fetch no chunks, so there is no network cost, and the resulting
+all-empty ladder is cached like any other.
+
 #### Demos serve on per-dataset derived ports, not 8000/5173
 
 Every demo used to contend for the same default ports, so with several demos
@@ -45,6 +91,38 @@ viewer falls back to the store name in `?src=`. `document.title` belongs to
 the host page, so `LuxarApp.dispose()` hands the page's own `<title>` back —
 an embedder that removes the viewer is not left named after a torn-down
 scene.
+
+#### L-system forest 2.0: a growing, seasonal forest on all four geometry types (#1460)
+
+The `forest` demo is rebuilt into the flagship synthetic scene. Two
+non-displayed dimensions make it navigable in time: `growth` (six stages,
+each a genuine re-derivation of every tree at increasing iteration depth —
+development IS successive derivation — with per-tree stagger so maturity
+rolls across the field in waves) and `season` (the same forest re-coloured
+and re-dressed: blossom, green, fire, frost). All four geometry types share
+the frame: an fBm-heightfield **Mesh** terrain with per-season vertex colours
+(snow in winter), eight tree species as merged indexed **Lines** nodes (one
+Layers-panel row per species; per-vertex hover labels carry species /
+instance / season / stage; `normal` blending so trunks occlude), volumetric
+**GSplat** foliage oriented along its parent branches (hand-packed 5D
+Cholesky factors with near-zero sigma on the two stacked axes), and
+**Points** accents pinned to their season and extended over growth (summer
+fireflies, winter frost sparkle, spring petals). The grammars gain the three
+ABOP ingredients that separate fractal twigs from recognisable trees —
+stochastic productions, tropism (gravity droop for willow and palm fronds,
+upward phototropism for the columnar poplar, applied only at branch depth
+>= 1 so trunks stay straight), and an apical-leader symbol for Honda's
+monopodial conifer, whose lower whorls are older and therefore naturally
+longer. Species placement follows eco-zones on the terrain (conifers climb
+ridges, willows and palms keep wet feet). Presentation is authored:
+explicit ACES, a forest-edge opening camera on the autumn/ancient slice,
+season/growth-conditional captions, and a grammar card showing the actual
+production rules next to the forest they built. The computed bundle is
+cached under `~/.cache/luxar/forest` for instant warm regeneration. One
+authoring lesson is now written down in the demo: Luxar stores LINEAR
+colours, so palettes designed as sRGB intents must be linearized (`c**2.2`)
+or every bark reads pastel and a bright ground plane hazes the scene
+through bloom.
 
 #### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
 
