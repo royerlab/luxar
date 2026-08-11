@@ -95,9 +95,10 @@ All colors, spacing, and effects are CSS custom properties with the
 inline-style specificity). Component CSS must reference tokens, never
 hardcoded values (sanctioned exceptions are listed in §15).
 
-The full vocabulary is **87 variables** (count them with a grep over
-`themeToCSSVariables` when in doubt). Dark-theme values shown; other themes
-override per §4.
+The full vocabulary is **87 variables** (count them with
+`grep -c "'--luxar" src/themes/theme-manager.ts` — that reports 88, one of
+which is the `startsWith('--luxar-')` guard in the theme-wipe loop, not a
+token). Dark-theme values shown; other themes override per §4.
 
 ### 3.1 Color tokens
 
@@ -183,8 +184,12 @@ exist). This is the single most common authoring mistake.
 | `--luxar-z-popover` | 3000 | Rail popovers/flyouts, first-run hint |
 | `--luxar-z-tooltip` | 4000 | Tooltips |
 
-Use the tokens. The historical raw z-indexes still in the tree (§15) are debt,
-not precedent.
+Use the tokens. Two surfaces need a tier the scale doesn't name and express it
+as arithmetic *on* the tokens rather than a magic number — the debug console at
+`calc(var(--luxar-z-base) + 50)` (above canvas widgets, below every panel) and
+the toast at `calc(var(--luxar-z-tooltip) + 1000)` (above everything the scale
+defines). That is the sanctioned escape hatch; a bare literal is not. The
+historical raw z-indexes still in the tree (§15) are debt, not precedent.
 
 ---
 
@@ -239,10 +244,16 @@ Design consequences:
   panel lands near `#6b6d71`, which gives roughly **4.9:1 against
   `text-primary`** (clears WCAG AA 4.5:1 for the 13px body text), **~3.7:1
   against `text-secondary`** and **~2.5:1 against `text-muted`**. So: body copy
-  and any load-bearing value go in `text-primary`; `secondary`/`muted` are for
-  labels, hints and idle icons that are not the only carrier of meaning (§12).
-  Never lighten a glass panel tint without re-running that worst-case
-  composite.
+  and any load-bearing value go in `text-primary` — that is the only rank that
+  clears AA against the worst-case backdrop. The `secondary`/`muted` ranks are
+  the quiet-instrument micro-voice (§8.3) and are still in use for labels,
+  hints and idle icons, but be clear-eyed about what they are: below AA for
+  normal-size text (1.4.3), and `muted` is below the 3:1 non-text floor
+  (1.4.11) for a meaning-bearing icon. Pairing them with a second signal
+  satisfies "color is not the only cue" (1.4.1) — a *different* criterion; it
+  does not exempt text from 1.4.3. Treat the gap as tracked debt (§15.2), not
+  as a licence to push more meaning down a rank. Never lighten a glass panel
+  tint without re-running that worst-case composite.
 - Blur tokens differ radically per theme by design: frosted-glass IS its blur;
   liquid-glass barely blurs because refraction + tint do the work.
 
@@ -615,10 +626,17 @@ Real `<kbd>` elements: mono, `--luxar-text-xs`, `line-height: 1`,
 (`flex: 0 0 118px`, right-justified) + `text-secondary` description,
 baseline-aligned.
 
+The `4px` is a **sanctioned literal, not an oversight** (§15.1): `radius-sm`
+is 4px in dark/light but 8px in frosted-glass and 12px in liquid-glass, which
+on an ~18px-tall chip is a pill, not a keycap. Chip corners are deliberately
+theme-invariant.
+
 ### 8.5 `<code>` chips
 
 Inline paths/extensions: mono, `--luxar-text-xs`,
-`background: var(--luxar-bg-tertiary)`, `padding: 1px 4px`, radius 3–4px.
+`background: var(--luxar-bg-tertiary)`, `padding: 1px 4px`, `border-radius:
+3px` — the same theme-invariant-corner exception as §8.4, one step tighter
+because the chip has no border to carry the shape.
 
 ---
 
@@ -787,7 +805,10 @@ Further requirements:
 - Never steal focus asynchronously: an auto-focus that fires after an await
   must first check the user hasn't focused something else.
 - Reduced motion per §10.4. Color is never the only signal (pair with dimming,
-  ticks, text).
+  ticks, text) — and note that satisfying *that* rule says nothing about
+  contrast: text still needs its own ratio (§4, §15.2). Load-bearing copy goes
+  in `text-primary`, the only rank that clears AA against a worst-case
+  backdrop.
 
 ---
 
@@ -853,10 +874,11 @@ files. (Inventory verified 2026-08-11.) A modernization campaign closed most of
 it: #1476 (a11y), #1478 (token hygiene), #1479 (emoji→stroke icons), #1472
 (the dataset browser) and #1480 (accent migration + the shared panel recipes)
 have all landed, so their entries are deleted below —
-**green-as-interactive, emoji-in-the-DOM, the phantom radius token and the
-magic layer z-indexes are gone from the tree entirely.** Everything below is
-live on `main`; each entry names the PR that will close it where one exists,
-and the entry goes away as that PR merges.
+**green-as-interactive, emoji-in-the-DOM and the phantom radius token are gone
+from the tree entirely**, and the only raw *layer* z-index left is the overlay
+container (§15.1). Everything below is live on `main`; each entry names the PR
+that will close it where one exists, and the entry goes away as that PR
+merges.
 
 ### 15.1 Hardcoded values / phantom tokens
 
@@ -864,9 +886,18 @@ and the entry goes away as that PR merges.
   recording panel's `9999/10000/100000` z-indexes stay literal on purpose —
   their magnitude beats unknown third-party host UI (documented in the file
   header); small local stacking indexes (`1/2/10` inside a positioned parent)
-  are not layer tokens; and `colormap-legend.css`'s `2px` gradient radius is
-  an intentional, documented literal (half of `radius-sm` — there is no
-  `--luxar-radius-xs`), no longer a phantom-token fallback.
+  are not layer tokens; the two off-scale tiers are written *against* the
+  tokens with a stated reason (`calc(var(--luxar-z-base) + 50)` for the debug
+  console, `calc(var(--luxar-z-tooltip) + 1000)` for the toast — §3.5); the
+  `<kbd>`/`<code>` chip radii are deliberate literals (§8.4/§8.5); and
+  `colormap-legend.css`'s `2px` gradient radius is an intentional, documented
+  literal (half of `radius-sm` — there is no `--luxar-radius-xs`), no longer a
+  phantom-token fallback.
+- The one raw layer z-index left: `overlay-layer.css`'s `.luxar-overlay`
+  container at `z-index: 5`. It is a *global* layer (screen-space overlays
+  between the canvas and all UI), not a local stacking index, and it sits
+  below `--luxar-z-base` — a tier the scale doesn't name. Give it a token
+  (or a comment justifying the literal) when that file is next touched.
 - The recording **stop-confirm** dialog (`recording-panel.css`) is on the
   surface tokens now but still isn't a `luxar-glass-surface`, blurs with a raw
   `blur(2px)` instead of a blur token, spaces itself in raw px, and carries a
@@ -887,10 +918,12 @@ and the entry goes away as that PR merges.
   §9.2 micon one — a new banner-like surface should get a component
   stylesheet and the §9.1 contract, not copy this.
 - Assorted raw `rgba()` duplicating tokens: the GUI library's
-  `rgba(0, 0, 0, …)` control fills (`ui/gui/styles/controller.css`),
-  debug-console warn/error tints, monitor hairlines and the
-  `rgba(120,170,255,…)` kind-badge/active-level blue, error-dialog
-  spinner chrome, `color: white` in overlay-layer and dimension-sliders.
+  `rgba(0, 0, 0, …)` control fills (`ui/gui/styles/controller.css`), the
+  monitor's hairlines and inset fills, the error dialog's guidance
+  `code`/`kbd` chips (raw `rgba()` where §8.5 wants `bg-tertiary`), and
+  `color: white` in overlay-layer and dimension-sliders. (#1478 took the
+  debug-console warn/error tints, the scene-graph kind-badge/active-level
+  blue and the loading-indicator chrome off raw values — don't re-file those.)
 - The tick-less legacy `.luxar-section-title` recipe in
   `data-loading-monitor.css` (§8.3 rank 1 is the current one).
 
@@ -903,6 +936,16 @@ and the entry goes away as that PR merges.
   close. Its `aria-modal="true"` therefore over-promises. Wiring `trapFocus`
   into `open()`/`close()` is the fix — #1508 does exactly that; this entry
   goes away when it merges.
+- **Sub-AA micro-label contrast on the glass themes.** Measured against the
+  worst-case backdrop (§4), `text-secondary` lands at ~3.7:1 and `text-muted`
+  at ~2.5:1 on a frosted-glass panel; WCAG 1.4.3 wants 4.5:1 for text this
+  size and 1.4.11 wants 3:1 for a meaning-bearing icon. Only `text-primary`
+  (~4.9:1) clears. This is the whole quiet-instrument label hierarchy (§8.3
+  ranks 2–3), so it is a design-level gap rather than a one-file fix: closing
+  it means lifting the `text.secondary`/`text.muted` alphas in the two glass
+  themes (and re-checking them against a dark scene, where the same tokens
+  must not glare), or darkening `bg.secondary` further. Until then, no new
+  surface may put load-bearing copy below `text-primary`.
 
 (#1476 closed the ring/reduced-motion gaps — the embed-safe
 `.luxar-glass-surface :focus-visible` baseline (§12.4), the GUI slider's missing
@@ -942,10 +985,12 @@ The dimension-slider animation menu (`dimension-sliders.ts::showContextMenu`,
 `.luxar-dimension-slider__context-menu`) hand-rolls the cursor-anchored menu
 that §7.8's shared widget now owns: right algorithm (clamped fixed position,
 next-tick outside-click, Escape) but zero menu ARIA, no roving focus, no
-focus return, and a `fadeIn` entry animation. Migrate it onto
-`openContextMenu()` when next touched — carefully: its BEM classes and
-behavior are pinned by `dimension-animation.spec.ts`, so the E2E pins move in
-the same PR. Until then it is not the pattern to copy (§7.8 is).
+focus return, and an opacity `luxar-fade-in` entry where §10.2 wants
+transform-only (legal only because the menu is not a glass surface, §7.8).
+Migrate it onto `openContextMenu()` when next touched — carefully: its BEM
+classes and behavior are pinned by `dimension-animation.spec.ts`
+(`src/tests/e2e/`), so the E2E pins move in the same PR. Until then it is not
+the pattern to copy (§7.8 is).
 
 ---
 
