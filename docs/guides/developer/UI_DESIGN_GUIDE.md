@@ -530,8 +530,10 @@ Behavioral contract, uniform across adopters (layers panel, help overlay):
   nothing.
 - **Zero matches shows a note** ("No layers match." / "No shortcuts match."),
   centered, `text-muted`, `--luxar-text-sm` — a silently collapsed list reads
-  as broken. The note lives outside the list container so rebuilds never wipe
-  it.
+  as broken. In a panel that rebuilds its list incrementally (the layers
+  panel's `renderList()`), the note must live OUTSIDE the rebuilt container
+  so rebuilds never wipe it; a surface rebuilt whole per open (the help
+  overlay) may keep it inline.
 - **Escape is two-stage**: with a query it clears and stays (stopPropagation);
   empty, it falls through to the panel's own close.
 - **Keystrokes must not leak** to global shortcuts while the input has focus.
