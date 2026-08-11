@@ -647,7 +647,7 @@ void main() {
 						if ( ( nodeVar129 > 4.0 ) ) {
 
 							nodeVar171 = clamp( ( ( ( nodeVar136 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar137 ), 1.5, nodeUniform25 );
-							nodeVar172 = ( ( ( ( abs( ( 1.0 - ( nodeVar171 / max( nodeVar117, 0.0001 ) ) ) ) > 0.02 ) || ( nodeVar118 > ( nodeVar117 * ( 1.0 + 0.02 ) ) ) ) || ( nodeVar165 < ( nodeVar117 * 2.0 ) ) ) || ( dot( nodeVar166, nodeVar127 ) > 0.5 ) );
+							nodeVar172 = ( ( ( abs( ( 1.0 - ( nodeVar171 / max( nodeVar117, 0.0001 ) ) ) ) > 0.02 ) || ( nodeVar118 > ( nodeVar117 * ( 1.0 + 0.02 ) ) ) ) || ( nodeVar165 < ( nodeVar117 * 2.0 ) ) );
 
 							if ( nodeVar172 ) {
 
@@ -822,7 +822,7 @@ void main() {
 						if ( ( nodeVar129 > 4.0 ) ) {
 
 							nodeVar206 = clamp( ( ( ( nodeVar136 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar137 ), 1.5, nodeUniform25 );
-							nodeVar207 = ( ( ( ( abs( ( 1.0 - ( nodeVar206 / max( nodeVar118, 0.0001 ) ) ) ) > 0.02 ) || ( nodeVar117 > ( nodeVar118 * ( 1.0 + 0.02 ) ) ) ) || ( nodeVar200 < ( nodeVar118 * 2.0 ) ) ) || ( dot( nodeVar201, nodeVar127 ) < -0.5 ) );
+							nodeVar207 = ( ( ( abs( ( 1.0 - ( nodeVar206 / max( nodeVar118, 0.0001 ) ) ) ) > 0.02 ) || ( nodeVar117 > ( nodeVar118 * ( 1.0 + 0.02 ) ) ) ) || ( nodeVar200 < ( nodeVar118 * 2.0 ) ) );
 
 							if ( nodeVar207 ) {
 

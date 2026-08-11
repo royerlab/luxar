@@ -185,14 +185,19 @@ export function capsuleJointRenderLeg(
   // Packet per the vertex stage (width gate assumed passed; callers use
   // radii above CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).
   const rpFar = partner.rFar;
-  // Packet gate (#1495): either leg tapering (both directions), a short
-  // partner, or a turn past 120° all defeat the hard cut's assumption
-  // that the partner covers my foreign side.
+  // Packet gate (#1495): either leg tapering (both directions) or a
+  // short partner defeats the hard cut's assumption that the partner
+  // covers my foreign side. No angle clause: a LONG congruent partner
+  // covers even a hairpin to within 2% of peak (measured over a
+  // 130–170° × taper × length grid — its doubled-back rod nearly
+  // coincides with mine), and the hairpin cases that genuinely chop are
+  // all short-partner cases. The own-widening clause looks redundant
+  // with the symmetric ratio seen from the PARTNER's side, but each
+  // leg's gate must stand alone: the partner may be width-gated off.
   const hasPacket =
     Math.abs(1 - rpFar / Math.max(leg.rJoint, 1e-4)) > CAPSULE_JOINT_DEFICIT_GATE ||
     leg.rFar > leg.rJoint * (1 + CAPSULE_JOINT_DEFICIT_GATE) ||
-    partner.length < 2 * leg.rJoint ||
-    qx > 0.5;
+    partner.length < 2 * leg.rJoint;
   const g = (rpFar - leg.rJoint) / partner.length;
 
   const side = nx * x + ny * y;

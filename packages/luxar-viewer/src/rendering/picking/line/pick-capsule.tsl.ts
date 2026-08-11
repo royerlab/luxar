@@ -82,8 +82,9 @@ export function capsuleLinePickWebGPUFactory(
   // (abLen px, capFlags = interiorA + 2·interiorB, rA px, rB px)
   const vMeta: TSLNode = varying(vec4(1.0, 0.0, 1.0, 1.0)).setInterpolation('flat');
   // .xy = bisector-cut normal (my side negative); .z = the DEFICIT
-  // packet: the partner's radius gradient (px/px), stored only when
-  // negative beyond the congruence gate; 0 = hard cut.
+  // packet: the partner's radius gradient (px/px, either sign); .w = its
+  // projected length, doubling as packet validity (0 = hard cut) — the
+  // gate opens for every deficit source (#1495).
   const vCutA2: TSLNode = varying(vec4(-1.0, 0.0, 0.0, 0.0)).setInterpolation('flat');
   const vCutB2: TSLNode = varying(vec4(1.0, 0.0, 0.0, 0.0)).setInterpolation('flat');
   // (tc clamps per vertex; see #1494 and the GLSL twin).
@@ -272,7 +273,6 @@ export function capsuleLinePickWebGPUFactory(
                   .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
                   .or(rB.greaterThan(rA.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
                   .or(ql.lessThan(rA.mul(2.0)))
-                  .or(dot(qhat, u).greaterThan(0.5))
                   .toVar();
                 If(needPacketA, () => {
                   cutA.z.assign(rpFarA.sub(rA).div(ql));
@@ -330,7 +330,6 @@ export function capsuleLinePickWebGPUFactory(
                   .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
                   .or(rA.greaterThan(rB.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
                   .or(ql.lessThan(rB.mul(2.0)))
-                  .or(dot(qhat, u).lessThan(-0.5))
                   .toVar();
                 If(needPacketB, () => {
                   cutB.z.assign(rpFarB.sub(rB).div(ql));

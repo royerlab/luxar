@@ -180,17 +180,30 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
   it('constant-width and widening cases (#1495): the gate opens for every deficit source', () => {
     // The review's rows: a one-sided gate (thinning partner only) left all
     // of these hard-chopping, down to −0.861 of peak at 160°/ql=2.
+    // Angle convention: leg(-t) puts the partner t degrees FROM STRAIGHT
+    // (straight continuation of the own leg at 180° is 0°) — the same
+    // convention as the congruent rows above. The first cut of these rows
+    // used the angle BETWEEN the legs by mistake, which made every row a
+    // near-straight joint the old gate already handled — the sweep passed
+    // verbatim with the fix reverted (#1497). Bounds are ±0.03: gated,
+    // every configuration measures within ±0.02 of max(mine, partner);
+    // with the one-sided gate these rows chop to −0.86.
     const cases: Array<[string, CapsuleJointLeg, CapsuleJointLeg]> = [
-      ['const partner 120° ql2', leg(180, 10, 10, 60), leg(-60, 10, 10, 2)],
-      ['const partner 160° ql2', leg(180, 10, 10, 60), leg(-20, 10, 10, 2)],
-      ['const partner 160° ql15', leg(180, 10, 10, 60), leg(-20, 10, 10, 15)],
-      ['widening partner 150°', leg(180, 10, 10, 60), leg(-30, 10, 30, 30)],
-      ['widening own leg 160°', leg(180, 10, 20, 60), leg(-20, 10, 10, 60)],
+      ['const partner 120° ql2', leg(180, 10, 10, 60), leg(-120, 10, 10, 2)],
+      ['const partner 160° ql2', leg(180, 10, 10, 60), leg(-160, 10, 10, 2)],
+      ['const partner 160° ql15', leg(180, 10, 10, 60), leg(-160, 10, 10, 15)],
+      ['widening partner 150°', leg(180, 10, 10, 60), leg(-150, 10, 30, 30)],
+      ['widening own leg 160°', leg(180, 10, 20, 60), leg(-160, 10, 10, 60)],
+      // LONG constant partner at a hairpin gets NO packet by design: its
+      // doubled-back rod nearly coincides with mine, so the hard cut
+      // holds within ~2% of peak (the accepted residual; a 130–170° grid
+      // measured −0.0203 worst without any angle clause).
+      ['const partner 160° ql60 (no packet)', leg(180, 10, 10, 60), leg(-160, 10, 10, 60)],
     ];
     for (const [name, a, b] of cases) {
       const { minErr, maxErr } = capsuleJointCompositionError(a, b);
-      expect(minErr, `${name} min`).toBeGreaterThan(-0.13);
-      expect(maxErr, `${name} max`).toBeLessThan(0.06);
+      expect(minErr, `${name} min`).toBeGreaterThan(-0.03);
+      expect(maxErr, `${name} max`).toBeLessThan(0.03);
     }
   });
 

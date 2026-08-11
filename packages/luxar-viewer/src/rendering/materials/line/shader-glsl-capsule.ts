@@ -93,9 +93,9 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     // perpendicular butt ((-1,0) at A, (1,0) at B).
     // .xy = the 2D bisector-cut normal (my side negative); .z = the
     // DEFICIT packet: the partner leg's radius gradient in px/px along
-    // its axis, stored ONLY when negative beyond the congruence gate
-    // (a thinning partner is the one case whose missing light I must
-    // render — see the fragment's deficit rule). 0 = hard cut.
+    // its axis (either sign); .w = its projected length in px, which
+    // doubles as packet validity (0 = hard cut). The packet gate opens
+    // for every deficit source — see _shared/line-capsule.ts and #1495.
     flat out vec4 vCutA2;
     flat out vec4 vCutB2;
     out float vW;           // clip w (divides vLocal in the fragment)
@@ -281,17 +281,17 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                     rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
                   }
                   rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                  // Packet gate (#1495): a hard cut is only exact when the
-                  // partner actually covers my foreign side — which fails
-                  // whenever EITHER leg tapers (both directions), the
-                  // partner is short relative to the joint disc, or the
-                  // turn is sharper than 120° (the partner's rod exits
-                  // the disc region).
+                  // Packet gate (#1495): a hard cut is only exact when
+                  // the partner actually covers my foreign side — which
+                  // fails whenever EITHER leg tapers (both directions) or
+                  // the partner is short relative to the joint disc. A
+                  // long congruent partner covers even a hairpin to
+                  // within 2% of peak (its doubled-back rod nearly
+                  // coincides with mine), so no angle clause is needed.
                   bool needPacketA =
                     abs(1.0 - rpFarA / max(rA, 1e-4)) > ${G.DEFICIT_GATE} ||
                     rB > rA * (1.0 + ${G.DEFICIT_GATE}) ||
-                    ql < 2.0 * rA ||
-                    dot(qq / ql, u) > 0.5;
+                    ql < 2.0 * rA;
                   if (needPacketA) {
                     cutA.z = (rpFarA - rA) / ql;
                     cutA.w = ql;
@@ -350,17 +350,17 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                     rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
                   }
                   rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                  // Packet gate (#1495): a hard cut is only exact when the
-                  // partner actually covers my foreign side — which fails
-                  // whenever EITHER leg tapers (both directions), the
-                  // partner is short relative to the joint disc, or the
-                  // turn is sharper than 120° (the partner's rod exits
-                  // the disc region).
+                  // Packet gate (#1495): a hard cut is only exact when
+                  // the partner actually covers my foreign side — which
+                  // fails whenever EITHER leg tapers (both directions) or
+                  // the partner is short relative to the joint disc. A
+                  // long congruent partner covers even a hairpin to
+                  // within 2% of peak (its doubled-back rod nearly
+                  // coincides with mine), so no angle clause is needed.
                   bool needPacketB =
                     abs(1.0 - rpFarB / max(rB, 1e-4)) > ${G.DEFICIT_GATE} ||
                     rA > rB * (1.0 + ${G.DEFICIT_GATE}) ||
-                    ql < 2.0 * rB ||
-                    dot(qq / ql, u) < -0.5;
+                    ql < 2.0 * rB;
                   if (needPacketB) {
                     cutB.z = (rpFarB - rB) / ql;
                     cutB.w = ql;
