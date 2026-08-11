@@ -474,6 +474,12 @@ becomes drawable; today both sets include `mesh`.
   wrapper; the BSP cuts face centroids (`max_elements` counts faces, no triangle
   split), and each part re-indexes its own vertices — cut ones duplicated,
   per-vertex attributes gathered. See `docs/specs/MESH_NODE_SPEC.md` §9.2.
+- `add_mesh(additive_lod=True | {"n_lods": N, …})` → a **reveal** ladder of
+  `additive_<i>/` levels inside the leaf, each holding one concentric shell of
+  faces, innermost first, so the surface grows outward from its centre as it
+  streams. **Authoring + format only for now**: the viewer's loader factory still
+  refuses a mesh node declaring `n_additive_sublods > 1`, so such a scene does not
+  display until that follow-up ships.
 - Progressive writing (data written immediately to Zarr)
 
 **What a mesh does NOT have**, and why the absences are structural rather than
@@ -481,24 +487,33 @@ gaps:
 - **No per-element size.** A triangle's extent comes from its own vertices, so
   there is no radius/width/covariance analogue — and a mesh contributes *zero*
   extent padding to scene bounds.
-- **No *additive* LOD ladder, but substitutive levels DO work** — and keeping the
-  two flavours apart is the whole story. The *additive* prefix ladder reduces a set
-  of independent elements, which a connected surface is not: a prefix of an index
-  buffer is a surface with holes, not a coarser one, so it is excluded on
-  principle. *Substitutive* levels make no independence assumption — a level is an
-  independently-authored `(vertices, faces)` pair chosen by `coverage_fraction` —
-  and were missing only a producer. That producer is `luxar.mesh.decimate`, so
-  `add_mesh(substitutive_lod=…)` now writes a `kind=lod` group of progressively
-  decimated surfaces. Its vocabulary is shorter than the sibling adders'
-  (`core/group/lod/mesh.py`): no `truncation_radius` / `max_aspect` / `device` /
-  `seed`, because those exist only for geometries that coarsen by lifting to
-  gsplats. `partition=` and `substitutive_lod=` cannot be combined, exactly as for
-  Points / Lines.
+- **No additive ladder over an *arbitrary* order** — the restriction that survived,
+  now that both LOD flavours have producers. A *substitutive* level is an
+  independently-authored `(vertices, faces)` pair chosen by `coverage_fraction`, and
+  `luxar.mesh.decimate` produces them, so `add_mesh(substitutive_lod=…)` writes a
+  `kind=lod` group of progressively decimated surfaces. Its vocabulary is shorter
+  than the sibling adders' (`core/group/lod/mesh.py`): no `truncation_radius` /
+  `max_aspect` / `device` / `seed`, because those exist only for geometries that
+  coarsen by lifting to gsplats. An *additive* level is a prefix, and a prefix of an
+  arbitrarily ordered index buffer is a surface with **holes** rather than a coarser
+  one — so `add_mesh(additive_lod=…)` accepts `method="radial"` and nothing else: a
+  spatially coherent **reveal**, whose every prefix is a contiguous partial surface
+  at full brightness. `"random"` / `"salience"` and the element samplers stay
+  refused, as do `salience_kind` and `seed`, and the ladder carries no energy stamps
+  by construction (see `core/group/lod/mesh.py::MESH_ADDITIVE_METHODS`). No two of
+  `partition=` / `substitutive_lod=` / `additive_lod=` can be combined yet; each
+  pairing is refused by name.
+- **No labels on a reveal ladder.** The three sibling ladders write one union label
+  CSR on the parent spanning the levels; a mesh level re-indexes its own vertices,
+  so a boundary vertex occupies a slot in several levels and that union index space
+  does not exist. `additive_lod=` with `labels` / `image_labels` degrades to a plain
+  leaf with a `UserWarning` (the data is kept, the ladder is not). Labels survive
+  intact on the `substitutive_lod=` and `partition=` paths.
 - **No spatial index** (`ordering` is always `"none"`; the viewer loads a mesh
   whole, so a chunk index has nothing to skip).
 
-Each remaining absence is refused with an explanation — including
-`additive_lod=`, `blending_mode='volumetric'`, and adding a mesh under a
+Each remaining absence is refused with an explanation — including a non-reveal
+`additive_lod=` method, `blending_mode='volumetric'`, and adding a mesh under a
 `kind=partition` group that declares some other `display_type` — rather than
 silently degrading. A `kind=lod` parent and a `display_type='mesh'`
 `kind=partition` parent are both *accepted*: those are exactly the shapes

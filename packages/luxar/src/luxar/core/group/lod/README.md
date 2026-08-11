@@ -15,8 +15,9 @@ This package splits cleanly into two layers:
 - **Per-geometry axis resolvers** (`points.py`, `lines.py`, `gsplats.py`,
   `mesh.py`) — one peer per leaf type, interpreting the `additive_lod=` /
   `substitutive_lod=` (and, for gsplats, `lod_group=`) convenience kwargs that
-  `add_points` / `add_lines` / `add_gsplats_from_data` / `add_mesh` accept; mesh
-  takes `substitutive_lod=` only.
+  `add_points` / `add_lines` / `add_gsplats_from_data` / `add_mesh` accept. All four
+  take both axes; mesh's vocabulary is the shortest — decimation rather than a lift,
+  and a **reveal-only** additive axis.
 
 The two sampler modules (`spatial_uniform.py`, `poisson_disk.py`) are pure-NumPy
 ordering primitives shared by the Points and Lines resolvers, and `reveal.py` is a
@@ -33,7 +34,7 @@ lod/
 ├── points.py           # Points additive-LOD ordering + ladder construction + resolver
 ├── lines.py            # Lines additive-LOD (per-polyline) ordering + ladder + resolver
 ├── gsplats.py           # GSplats substitutive + additive axis resolvers
-├── mesh.py             # Mesh substitutive axis resolver (decimation, not lift-to-gsplats)
+├── mesh.py             # Mesh axes: substitutive (decimation, not lift-to-gsplats) + additive (reveal only)
 ├── reveal.py           # Concentric-shell reveal: radial scorer + spatial-dims resolvers
 ├── spatial_uniform.py  # Stratified-grid sampler (default spatial-uniform ordering)
 └── poisson_disk.py     # Bridson blue-noise sampler (opt-in alternative)
@@ -98,8 +99,9 @@ self-calibrates to whatever monitor/window the viewer runs in.
 
 All four resolvers share a `None | bool | dict` value vocabulary for the
 convenience kwargs, but the semantics differ per geometry. Mesh's differs most —
-it decimates instead of lifting to gsplats, so it rejects the four lift-only keys;
-see the `mesh.py` module docstring.
+it decimates instead of lifting to gsplats, so it rejects the four lift-only keys,
+and its additive axis accepts one method (`radial`) instead of five; see the
+`mesh.py` module docstring and the Mesh section below.
 
 ### Points (`points.py`)
 
@@ -300,6 +302,57 @@ resolvers:
 
 Convention throughout: the **finest** substitutive level is index 0; LOD-group
 children are stored coarsest→finest (finest last).
+
+### Mesh (`mesh.py`)
+
+The one geometry whose resolvers are NOT wrappers over the shared ones, because a
+surface coarsens by decimation rather than by reducing a Gaussian mixture. Both
+axes therefore have a narrower vocabulary, and the keys they refuse are refused
+**by name with the reason** — every one of them is a reasonable thing to have
+tried after reading the Points docs.
+
+- `resolve_substitutive_axis_mesh(spec)` — the `substitutive_lod=` axis. Keys:
+  `compression_factor` (`K`), `levels` (`n_lods`), `method`
+  (`{'auto', 'cluster'}`; `auto` → `cluster` today), `coverage_fractions`,
+  `coarsen_dims`. Refuses `truncation_radius` / `max_aspect` / `device` / `seed` —
+  all four exist only for a lift to gsplats. `coarsen_dims` is the authoring name
+  for the decimator's `spatial_dims`. `add_mesh_substitutive_lod_wrapper_impl`
+  (`adders/mesh.py`) then decimates via `luxar.mesh.decimate.decimate_cluster` and
+  assembles a `kind=lod` group whose finest child is the original surface.
+- `resolve_additive_axis_mesh(spec)` — the `additive_lod=` axis. Keys: `method`,
+  `n_lods`, `counts` (alias `breakpoints`), `reveal_centre`, `spatial_dims`.
+  `MESH_ADDITIVE_METHODS` is `{"radial"}` and that is the whole design: a prefix of
+  an arbitrarily ordered index buffer is a surface with **holes**, not a coarser
+  one, so `random` / `salience` and the two samplers are refused with that
+  argument, as are `salience_kind` (a triangle has no independent energy) and
+  `seed` (a reveal is deterministic). `'energy:'` breakpoints are refused for the
+  same absence — left alone they would silently degrade to equal-count splits.
+  `make_additive_lod_mesh(...)` returns DISJOINT **face**-index groups, coarsest
+  (innermost shell) first, whose union is every face exactly once; the adder
+  re-indexes each through `luxar.mesh.split.split_mesh_by_faces` and
+  `add_mesh_multi_lod_wrapper_impl` writes them as `additive_<i>/` levels.
+
+Two consequences of the reveal-only restriction, which is the tell that it is the
+right cut rather than a convenient one:
+
+1. **No energy stamps, by construction.** `additive_level_stats` already suppresses
+   `energy_fraction_cum` / `reference_energy` for every reveal method, so the
+   viewer's `1/e(k)` brightness compensation — gated on the BLENDING MODE and never
+   on geometry type — cannot reach a mesh ladder and blow out its innermost shell.
+   Restricting the method set IS the enforcement; nothing has to remember to
+   suppress anything.
+2. **Vertex duplication stays far below the unwelded worst case.** Each level
+   re-indexes its own vertices, so a boundary vertex is stored once per level that
+   touches it. Concentric shells share a closed boundary curve, so duplication
+   scales with that curve; a random order duplicates nearly every interior vertex.
+   Measured on a 288-triangle plane at 4 levels: **1.66 for the reveal vs 2.95 for
+   a random order of the same faces**.
+
+Neither axis composes with the other or with `partition=` yet — each pairing is
+refused by name in `adders/mesh.py`, where Points and Lines compose both. Labels
+are refused on the additive axis only (the adder degrades to a plain leaf with a
+`UserWarning`): a level re-indexes its own vertices, so there is no single index
+space for the union label CSR the sibling ladders write on their parent.
 
 ## Samplers
 

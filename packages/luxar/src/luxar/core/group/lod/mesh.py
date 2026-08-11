@@ -1,4 +1,4 @@
-"""Mesh substitutive-LOD axis resolver.
+"""Mesh LOD axis resolvers — substitutive (decimation) and additive (reveal).
 
 The Mesh sibling of :mod:`luxar.core.group.lod.points` /
 :mod:`luxar.core.group.lod.lines` — and, unlike those two, **not** a thin
@@ -42,7 +42,10 @@ where the two names meet.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 from .group import (
     DEFAULT_MESH_SUBSTITUTIVE_METHOD,
@@ -222,4 +225,335 @@ def resolve_substitutive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-__all__ = ["resolve_substitutive_axis_mesh"]
+#: The additive orderings a mesh accepts — reveals, and only reveals.
+#:
+#: This is the shortest vocabulary in the codebase and the restriction is the
+#: whole design, so it is worth stating why rather than treating it as
+#: unfinished work.
+#:
+#: **A prefix of a face set is a surface with holes in it.** For Points and Lines
+#: a prefix is a sparser SAMPLE of the same object — fewer stars, fewer
+#: streamlines — which is an honest coarse approximation, so `random` and
+#: `salience` are meaningful there. Take a random half of a mesh's triangles and
+#: you do not get a coarser surface; you get confetti. The one family of orderings
+#: that yields a presentable prefix is the spatially coherent one: a reveal, whose
+#: every prefix is a contiguous partial object at full brightness that grows.
+#: That is a statement about surfaces, not about how much work has been done —
+#: `luxar.mesh.decimate` is where "coarser surface" lives, and it is the
+#: substitutive axis above.
+#:
+#: Two independent consequences fall out, which is the tell that the restriction
+#: is the right cut rather than a convenient one:
+#:
+#: 1. **No energy stamps, by construction.**
+#:    :func:`~luxar.core.group.lod.group.additive_level_stats` already suppresses
+#:    them for reveal methods, so a mesh ladder cannot reach the hazard §9.1 of
+#:    MESH_NODE_SPEC warns about — the viewer's ``1/e(k)`` brightness
+#:    compensation is gated on the BLENDING MODE and never on geometry type,
+#:    which would blow out an inner shell and then dim it as the surface
+#:    completes. Nothing here has to remember to suppress anything; restricting
+#:    the method set is the enforcement.
+#: 2. **Vertex duplication stays far below the unwelded worst case.** Each level
+#:    re-indexes its own faces (:func:`luxar.mesh.split.split_mesh_by_faces`), so
+#:    a vertex on a level boundary is stored once per level that touches it.
+#:    Concentric shells share a closed boundary curve, so the duplication scales
+#:    with that curve rather than with the face count; a random order duplicates
+#:    almost every interior vertex and approaches the 3x ceiling of a fully
+#:    unwelded soup. MEASURED on a 288-triangle plane, 4 levels: **1.66 for the
+#:    reveal vs 2.95 for a random order of the same faces** — so "bounded near 1"
+#:    would overstate it (a 12x12 grid is nearly all boundary at this level
+#:    count), but the gap is the point, and it widens as the mesh gets finer
+#:    relative to the level count.
+MESH_ADDITIVE_METHODS: frozenset[str] = frozenset({"radial"})
+
+#: Unlike the element geometries — whose default is ``random`` — a mesh's default
+#: IS the only accepted value, so ``additive_lod=True`` means "reveal outward from
+#: the surface's own bbox centre".
+DEFAULT_MESH_ADDITIVE_METHOD: str = "radial"
+
+#: Keys the element (Points/Lines) additive vocabulary accepts and mesh cannot,
+#: each with the reason. Same shape and purpose as :data:`_LIFT_ONLY_KEYS` above:
+#: every one of these is a reasonable thing to have tried after reading the Points
+#: docs, so the error names the mechanism rather than saying "unrecognized key".
+_ELEMENT_ONLY_ADDITIVE_KEYS: Dict[str, str] = {
+    "salience_kind": (
+        "it chooses whether an element's rank comes from its size or its "
+        "radiometric energy, and both are properties of an independently-emitting "
+        "element; a triangle's contribution is its share of a surface, and "
+        "ranking triangles by it produces holes rather than a dimmer surface"
+    ),
+    "seed": (
+        "the only ordering a mesh accepts is deterministic — a reveal sorts by "
+        "distance from a centre, so there is no sampling and no RNG to fix"
+    ),
+}
+
+
+def _reject_element_only_additive_keys(kwargs: Dict[str, Any]) -> None:
+    """Refuse :data:`_ELEMENT_ONLY_ADDITIVE_KEYS` with the reason each cannot apply.
+
+    Run BEFORE the generic unknown-key sweep so these get their explanation rather
+    than being lumped in with typos — the same ordering, and the same reason for
+    it, as :func:`_reject_lift_only_keys`.
+    """
+    for key, why in _ELEMENT_ONLY_ADDITIVE_KEYS.items():
+        if key in kwargs:
+            raise ValueError(
+                f"additive_lod for Mesh: {key!r} does not apply to a mesh — "
+                f"{why}. It is valid for Points/Lines, whose elements emit "
+                "independently; a mesh reveals a connected surface."
+            )
+
+
+def _pop_mesh_breakpoints(kwargs: Dict[str, Any]) -> Any:
+    """Pop and validate the ``counts``/``breakpoints`` alias pair for a mesh ladder.
+
+    Extracted from :func:`resolve_additive_axis_mesh` rather than inlined for the
+    same reason :func:`~luxar.core.group.lod.reveal.pop_reveal_knobs` was extracted
+    from the shared resolver: the block is four branches of self-contained
+    validation and it pushed the resolver to C901 11, which the complexity ratchet
+    counts as a new regression (the gate is "no worse", not "under the limit").
+
+    Mutates ``kwargs``, so the caller's leftover-keys sweep still catches typos.
+    """
+    from ....utils.lod_breakpoints import validate_element_breakpoints
+
+    if "counts" in kwargs and "breakpoints" in kwargs:
+        raise ValueError(
+            "additive_lod for Mesh: pass either 'counts' or 'breakpoints', not both "
+            "(they are aliases)"
+        )
+    counts = kwargs.pop("counts", kwargs.pop("breakpoints", None))
+    if isinstance(counts, str) and counts.strip().startswith("energy:"):
+        # Refused rather than let through: the parser only honours energy
+        # fractions when it is HANDED an energy array, and a mesh has none — the
+        # same absence that restricts the method set. Left alone this would fall
+        # back to equal-count splits and silently ignore the fractions asked for.
+        raise ValueError(
+            "additive_lod for Mesh: 'energy:' breakpoints need a per-element "
+            "energy to integrate, and a mesh has none — a triangle's brightness "
+            "is a property of the surface it belongs to, not of the triangle. Use "
+            "'stream:<c>' for a geometric ladder, an explicit count list, or "
+            "n_lods for equal-count levels."
+        )
+    if counts is not None and not isinstance(counts, str):
+        counts = [int(c) for c in counts]
+    if counts is not None:
+        # At RESOLVE time, not write time: under a substitutive ladder or a
+        # partition the wrapper group is already on disk before its children are
+        # written, so a late raise leaves a partial group behind. Same reason
+        # `pop_reveal_knobs` validates early.
+        validate_element_breakpoints(counts)
+    return counts
+
+
+def resolve_additive_axis_mesh(spec: Any) -> Optional[Dict[str, Any]]:
+    """Normalize a mesh ``additive_lod=`` kwarg into a spec dict (or ``None``).
+
+    Vocabulary:
+
+    * ``None`` / ``False`` → no-op (the caller writes a plain mesh leaf).
+    * ``True`` / ``dict()`` → defaults (``method="radial"``, 4 levels).
+    * ``dict(...)`` → keys ``method``, ``n_lods``, ``counts`` (alias
+      ``breakpoints``), ``reveal_centre``, ``spatial_dims``.
+
+    ``method`` accepts only :data:`MESH_ADDITIVE_METHODS` — see its docstring for
+    why that is one name and not an omission.
+
+    Deliberately NOT a wrapper over
+    :func:`~luxar.core.group.lod.group.resolve_additive_axis`, for the same reason
+    :func:`resolve_substitutive_axis_mesh` is not one over its shared peer:
+    widening the shared vocabulary would mean accepting words that quietly do
+    nothing. Two keys are refused by name and three of the five methods are
+    refused with the surface argument, so the overlap with the shared resolver is
+    the mechanical part (breakpoints, reveal knobs) and those helpers are called
+    directly rather than copied.
+
+    Raises:
+        TypeError: If ``spec`` is neither ``None``, a bool, nor a dict.
+        ValueError: On an out-of-range value, an unknown key, a non-reveal
+            ``method``, or one of :data:`_ELEMENT_ONLY_ADDITIVE_KEYS`.
+    """
+    from .group import DEFAULT_ADDITIVE_N_LODS
+    from .reveal import pop_reveal_knobs
+
+    if spec is None or spec is False:
+        return None
+    if spec is True:
+        spec = {}
+    if not isinstance(spec, dict):
+        raise TypeError(
+            f"additive_lod must be None, bool, or dict; got {type(spec).__name__}"
+        )
+    kwargs = dict(spec)
+
+    _reject_element_only_additive_keys(kwargs)
+
+    method = str(kwargs.pop("method", DEFAULT_MESH_ADDITIVE_METHOD)).replace("_", "-")
+    if method not in MESH_ADDITIVE_METHODS:
+        raise ValueError(
+            f"additive_lod for Mesh: method must be one of "
+            f"{sorted(MESH_ADDITIVE_METHODS)}; got {method!r}. A prefix of a face "
+            "set is a surface with HOLES in it, not a coarser surface, so only a "
+            "spatially coherent reveal yields a presentable prefix — 'random' and "
+            "'salience' would scatter triangles, and the samplers "
+            "('spatial-uniform', 'poisson-disk') thin an element cloud, which a "
+            "connected surface is not. To make a mesh genuinely coarser, use "
+            "substitutive_lod= (decimation)."
+        )
+
+    n_lods = int(kwargs.pop("n_lods", DEFAULT_ADDITIVE_N_LODS))
+    if n_lods < 1:
+        raise ValueError(f"n_lods must be >= 1, got {n_lods}")
+
+    counts = _pop_mesh_breakpoints(kwargs)
+
+    reveal_centre, spatial_dims = pop_reveal_knobs(kwargs, method)
+
+    if kwargs:
+        raise ValueError(
+            f"additive_lod for Mesh: unrecognized keys {sorted(kwargs)}. "
+            "Valid keys: method, n_lods, counts, breakpoints, reveal_centre, "
+            "spatial_dims. (A mesh's vocabulary is SHORTER than Points/Lines — "
+            "see MESH_ADDITIVE_METHODS for why only a reveal applies to a "
+            "surface.)"
+        )
+
+    return {
+        "method": method,
+        "n_lods": n_lods,
+        "counts": counts,
+        "reveal_centre": reveal_centre,
+        "spatial_dims": spatial_dims,
+    }
+
+
+def compute_additive_order_mesh(
+    vertices: "NDArray",
+    faces: "NDArray",
+    *,
+    method: str = DEFAULT_MESH_ADDITIVE_METHOD,
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
+) -> "NDArray":
+    """Order a mesh's FACES for a reveal, returning a permutation of face indices.
+
+    One representative per face — its centroid — scored by
+    :func:`~luxar.core.group.lod.reveal.radial_element_score` and sorted
+    ASCENDING, so the nearest shell to the centre comes first. Ascending is
+    correct and unusual: the score is a distance, not a contribution to maximise.
+
+    Follows the LINES call pattern rather than the Points one: centroids are
+    DERIVED representatives whose bounding box is not the vertex bounding box (it
+    is strictly inside it), so the centre has to be resolved against the vertices
+    up front via :func:`~luxar.core.group.lod.reveal.resolve_reveal_centre`. Left
+    to the scorer's own default, a reveal would grow from the centre of the
+    centroid cloud instead of the centre of the surface — close on a symmetric
+    mesh and visibly off on an asymmetric one.
+
+    Args:
+        vertices: ``(V, D)`` vertex coordinates.
+        faces: ``(F, 3)`` triangle indices.
+        method: Must be in :data:`MESH_ADDITIVE_METHODS`.
+        reveal_centre: Explicit centre, ``D`` values (or the scored subset).
+        spatial_dims: Which columns the distance is measured over.
+
+    Returns:
+        ``(F,)`` face permutation, ``np.intp``.
+    """
+    import numpy as np
+
+    from ....mesh.split import face_centroids
+    from .reveal import radial_element_score, resolve_reveal_centre
+
+    if method not in MESH_ADDITIVE_METHODS:
+        raise ValueError(
+            f"unknown mesh additive method {method!r}; expected one of "
+            f"{sorted(MESH_ADDITIVE_METHODS)}"
+        )
+
+    faces_arr = np.asarray(faces).reshape(-1, 3)
+    if faces_arr.shape[0] == 0:
+        return np.empty(0, dtype=np.intp)
+
+    centroids = face_centroids(np.asarray(vertices), faces_arr.astype(np.uint32))
+    centre = resolve_reveal_centre(
+        reveal_centre, np.asarray(vertices), centroids, spatial_dims
+    )
+    scores = radial_element_score(centroids, centre, spatial_dims)
+    return np.argsort(scores, kind="stable").astype(np.intp)
+
+
+def make_additive_lod_mesh(
+    vertices: "NDArray",
+    faces: "NDArray",
+    *,
+    method: str = DEFAULT_MESH_ADDITIVE_METHOD,
+    n_lods: int = 4,
+    counts: Any = None,
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
+) -> "List[NDArray]":
+    """Split a mesh's faces into additive levels — a reveal ladder.
+
+    Returns DISJOINT face-index groups, coarsest first, whose union is every face
+    exactly once. That is deliberately the same contract
+    :func:`luxar.mesh.split.split_mesh_by_faces` enforces, so each level can be
+    re-indexed by it without a second partition check: an additive ladder's levels
+    ARE a partition of the faces, and the viewer forms level *i* by concatenating
+    groups 0..i.
+
+    Levels are cumulative *when concatenated*, not individually — level 1 holds
+    only the faces level 0 does not, exactly as the Points and Lines ladders slice
+    their permutations.
+
+    An empty mesh returns ``[]`` and a single level returns one group; both let the
+    caller fall through to a plain leaf rather than writing a one-level ladder.
+    """
+    import numpy as np
+
+    # Cross-module private import, matching `lines.py`'s reuse of
+    # `_energy_breakpoints_to_counts`: the breakpoint vocabulary is shared and
+    # copying it is how the five `--method` help strings rotted.
+    from .points import _parse_breakpoints_spec
+
+    faces_arr = np.asarray(faces).reshape(-1, 3)
+    n_faces = int(faces_arr.shape[0])
+    if n_faces == 0:
+        return []
+
+    perm = compute_additive_order_mesh(
+        vertices,
+        faces_arr,
+        method=method,
+        reveal_centre=reveal_centre,
+        spatial_dims=spatial_dims,
+    )
+
+    # No `energy=`/`perm=` arguments: energy breakpoints are refused up front by
+    # `resolve_additive_axis_mesh`, so nothing here can need them.
+    level_counts = _parse_breakpoints_spec(counts, n_faces)
+    if level_counts is None:
+        base, extra = divmod(n_faces, max(1, n_lods))
+        level_counts = [base + (1 if i < extra else 0) for i in range(max(1, n_lods))]
+
+    levels: "List[NDArray]" = []
+    start = 0
+    for count in level_counts:
+        stop = min(start + int(count), n_faces)
+        if stop > start:
+            levels.append(perm[start:stop])
+        start = stop
+        if start >= n_faces:
+            break
+    return levels
+
+
+__all__ = [
+    "DEFAULT_MESH_ADDITIVE_METHOD",
+    "compute_additive_order_mesh",
+    "make_additive_lod_mesh",
+    "MESH_ADDITIVE_METHODS",
+    "resolve_additive_axis_mesh",
+    "resolve_substitutive_axis_mesh",
+]

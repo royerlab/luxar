@@ -381,31 +381,40 @@ def test_non_mesh_under_a_mesh_partition_group_is_rejected(tmp_path) -> None:
             part.add_lines("part_1", pos, np.ones(2, dtype=np.float32))
 
 
-def test_additive_ladder_is_still_refused_with_its_own_reason(tmp_path) -> None:
-    """The two flavours were never refused for the same reason, and still are not.
+def test_only_the_arbitrary_order_half_of_additive_is_refused(tmp_path) -> None:
+    """The refusal narrowed to what it always meant, and kept naming ITS reason.
 
     The message spent months telling users that SUBSTITUTIVE LOD reduces
-    independent elements and is therefore impossible for a surface. Only the
-    additive flavour works that way, and the distinction turned out to be the
-    whole story: substitutive levels needed a decimator and now have one, while an
-    additive prefix of an index buffer is a *holed* surface and can never be a
-    coarse one.
+    independent elements and is therefore impossible for a surface; then that an
+    ADDITIVE ladder is impossible at all. Both were too broad, and the true
+    statement is narrower than either: a prefix of an *arbitrarily ordered* index
+    buffer is a holed surface. A spatially coherent REVEAL has no such problem —
+    every prefix is a contiguous partial surface — so ``additive_lod=True`` writes a
+    ladder now, and only the non-reveal methods are refused.
 
-    So the surviving refusal must keep naming ITS reason, and must not have been
-    widened back into a blanket "mesh has no LOD".
+    Pinned as a PAIR so neither half can rot alone: the accepted spelling must
+    write, and the refused one must still say "holes" rather than something
+    vaguer.
     """
     with LuxarZarrCompiler(tmp_path / "why.luxar.zarr") as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        # The reveal is accepted (the tetrahedron is too small to ladder into 4
+        # non-empty face groups plus stay a ladder, so this only pins acceptance —
+        # the ladder's shape is pinned by the reveal tests at the end of the file).
+        assert scene.add_mesh("m", _V, _F, additive_lod=True) is not None
+
         with pytest.raises(ValueError) as excinfo:
-            scene.add_mesh("m", _V, _F, additive_lod=True)
+            scene.add_mesh("m_random", _V, _F, additive_lod={"method": "random"})
 
     message = str(excinfo.value)
     assert "additive_lod" in message
-    # Excluded on principle: a prefix of an index buffer is a holed surface.
-    assert "holes" in message
+    # Excluded on principle: a prefix of an arbitrary order is a holed surface.
+    assert "HOLES" in message or "holes" in message
     # And NOT by appeal to a missing producer — that was the substitutive arm's
     # reason, and it no longer applies to anything.
     assert "no producer" not in message
+    # It must point at the flavour that DOES make a surface coarser.
+    assert "substitutive_lod" in message
 
 
 def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
@@ -442,32 +451,36 @@ def test_mesh_rejects_hand_supplied_energy_stamps(tmp_path) -> None:
         assert scene.add_mesh("plain", _V, _F, opacity=0.5) is not None
 
 
-def test_mesh_names_the_reason_for_the_lod_parameters(tmp_path) -> None:
-    """``add_mesh(additive_lod=…)`` must not answer like a typo.
+def test_every_sibling_structural_parameter_is_bound_by_name() -> None:
+    """No structural knob may reach ``**attrs`` and answer like a typo.
 
-    ``additive_lod`` is a real parameter on the sibling adders, so a caller
-    reaching for it on a mesh spelled a real feature correctly. Without a refusal
-    of its own it falls into ``**attrs`` and comes back as "Unknown node attribute
-    … The viewer would silently ignore it. Remove it or use a supported
-    attribute". Right outcome, misleading reason.
+    The hazard this pins: a parameter ``add_mesh`` does not BIND lands in ``**attrs``
+    and comes back as "Unknown node attribute … The viewer would silently ignore it.
+    Remove it or use a supported attribute" — a typo diagnostic for a caller who
+    spelled a real sibling feature correctly.
+
+    All three are bound now (``substitutive_lod`` when the decimator landed,
+    ``partition`` when the splitter did, ``additive_lod`` with the reveal ladder), so
+    ``_UNSUPPORTED_STRUCTURE_PARAMS`` is empty. The table survives as the extension
+    point, and this test is what makes adding a FOURTH unbound knob a visible
+    decision rather than a silent typo diagnostic: either bind it, or put it in the
+    table with its reason.
     """
-    # `substitutive_lod` left this table when the decimator landed and `partition`
-    # when the splitter did — both are real mesh parameters now, covered by
-    # `test_mesh_substitutive_lod.py` and the partition tests below.
-    # `additive_lod` is the one that can never apply to a surface.
-    reasons = {
-        "additive_lod": "holes",
-    }
-    with LuxarZarrCompiler(tmp_path / "params.luxar.zarr") as compiler:
-        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        for key, reason in reasons.items():
-            with pytest.raises(ValueError) as excinfo:
-                scene.add_mesh(f"m_{key}", _V, _F, **{key: True})
-            message = str(excinfo.value)
-            assert key in message
-            assert reason in message
-            assert "Unknown node attribute" not in message
-            assert "Did you mean" not in message
+    import inspect
+
+    from luxar.core.group.adders.mesh import _UNSUPPORTED_STRUCTURE_PARAMS
+    from luxar.core.group.group import Group
+
+    parameters = inspect.signature(Group.add_mesh).parameters
+    for key in ("additive_lod", "substitutive_lod", "partition"):
+        assert key in parameters, f"{key} must be bound by name, not ride **attrs"
+        assert key not in _UNSUPPORTED_STRUCTURE_PARAMS
+
+    # Anything still in the table must carry a reason worth printing — the whole
+    # point of the table over the generic unknown-attr message.
+    for key, reason in _UNSUPPORTED_STRUCTURE_PARAMS.items():
+        assert key not in parameters, f"{key} is bound, so its table row is dead"
+        assert len(reason) > 20
 
 
 def test_partition_group_accepts_mesh_display_type(tmp_path) -> None:
@@ -1737,3 +1750,504 @@ def test_partition_shares_a_window_NARROWER_than_the_field(tmp_path) -> None:
     assert len(parts) > 1
     ranges = {tuple(node[p].attrs["scalar_data_range"]) for p in parts}
     assert ranges == {(-10.0, 10.0)}, f"parts window on different ranges: {ranges}"
+
+
+# =============================================================================
+# additive_lod — the reveal ladder (concentric shells of faces)
+# =============================================================================
+
+
+def _grid_mesh(n: int = 13):
+    """An ``n x n`` welded vertex grid triangulated into ``2(n-1)^2`` faces.
+
+    Deliberately not the module's tetrahedron: a reveal ladder needs enough faces
+    at enough distinct radii to produce several non-empty shells, and it needs
+    V != F so a per-vertex assertion cannot pass by coincidence. Centred on the
+    origin so the reveal's default centre (the surface bbox centre) is (0, 0, 0)
+    and "distance from the centre" is just the coordinate norm.
+    """
+    axis = np.linspace(-6.0, 6.0, n)
+    gx, gy = np.meshgrid(axis, axis, indexing="ij")
+    vertices = np.stack([gx.ravel(), gy.ravel(), np.zeros(gx.size)], axis=1).astype(
+        np.float32
+    )
+    faces = []
+    for i in range(n - 1):
+        for j in range(n - 1):
+            a, b = i * n + j, i * n + j + 1
+            c, d = a + n, a + n + 1
+            faces.append([a, b, d])
+            faces.append([a, d, c])
+    return vertices, np.asarray(faces, dtype=np.uint32)
+
+
+def _key(vertex) -> tuple:
+    """A quantization-tolerant lookup key for a grid vertex coordinate.
+
+    The writer stores coordinates as quantized fixed-point, so a stored ``0.0``
+    reads back as ``1e-4``. The reveal fixtures are unit-spaced grids, so rounding
+    to 2 decimals is orders of magnitude coarser than the quantization error and
+    orders finer than the spacing — exact identity, with no float equality.
+    """
+    return tuple(float(round(float(c), 2)) for c in vertex)
+
+
+def _write_ladder(tmp_path, name="surf", n_grid=13, **kwargs):
+    """Write one reveal-laddered mesh and return ``(store_path, vertices, faces)``."""
+    vertices, faces = _grid_mesh(n_grid)
+    store = tmp_path / f"{name}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(name, vertices, faces, **kwargs)
+    return store, vertices, faces
+
+
+def test_additive_lod_writes_a_ladder_of_face_shells(tmp_path) -> None:
+    """The parent advertises the ladder and the levels partition the faces.
+
+    The face-count SUM is the load-bearing half: levels are cumulative only when
+    concatenated, so a bug that made each level a cumulative prefix (rather than
+    the increment) would still render correctly at the finest level and silently
+    triple the store. Summing to exactly F is what rules that out.
+    """
+    store, _vertices, faces = _write_ladder(tmp_path, additive_lod={"n_lods": 4})
+    parent = zarr.open_group(str(store), mode="r")["surf"]
+
+    assert parent.attrs["type"] == "mesh"
+    n_levels = int(parent.attrs["n_additive_sublods"])
+    assert n_levels == 4
+    # A ladder lives INSIDE the leaf, so the node is a mesh and not a kind=lod
+    # or kind=partition group.
+    assert "kind" not in parent.attrs
+
+    level_faces = []
+    for i in range(n_levels):
+        assert f"additive_{i}" in parent, f"missing additive_{i}"
+        level = parent[f"additive_{i}"]
+        assert level.attrs["type"] == "mesh"
+        level_faces.append(int(level.attrs["n_faces"]))
+
+    assert sum(level_faces) == int(faces.shape[0])
+    assert all(count > 0 for count in level_faces)
+    # And the parent's totals are the sums over levels (vertices exceed the source
+    # count by the shell-boundary duplication the re-indexing costs).
+    assert int(parent.attrs["n_faces"]) == int(faces.shape[0])
+    assert int(parent.attrs["n_vertices"]) > 0
+
+
+def test_additive_lod_carries_provenance_stamps_but_no_energy(tmp_path) -> None:
+    """Spec §9.1: a mesh reveal ladder must carry NO energy stamps, end to end.
+
+    It matters because the viewer's ``1/e(k)`` brightness compensation is gated on
+    the BLENDING MODE and never on geometry type: applied to a reveal it would blow
+    out the innermost shell and then dim it as the surface completes — the exact
+    inverse of growing in.
+
+    WHICH LATCH THIS ACTUALLY PINS. There are two, both real:
+
+    1. the mesh wrapper hands ``additive_level_stats`` all-zero level energies,
+       because a triangle has no independent radiometric energy, and the stats
+       helper's ``usable`` flag requires a positive total; and
+    2. that same flag independently excludes every reveal method.
+
+    (1) is the operative one here — neutering ``is_reveal_method`` leaves this test
+    green, which is how the mistake was caught: an earlier version of this
+    docstring claimed to verify (2). This test is therefore an END-TO-END property
+    check, and (2) is pinned in isolation by
+    ``test_reveal_method_alone_suppresses_energy_stamps`` below. Keeping both
+    latches is deliberate — (2) is what holds if a future mesh channel ever makes a
+    non-zero energy meaningful.
+
+    SENSITIVITY CONTROL: the stamps that ARE expected are asserted present in the
+    same loop. Without them "no energy_fraction_cum" would pass just as well against
+    a ladder that wrote no ``lod_stats`` at all, or against a store with no levels.
+    """
+    store, _v, _f = _write_ladder(tmp_path, additive_lod={"n_lods": 4})
+    parent = zarr.open_group(str(store), mode="r")["surf"]
+
+    parent_stats = dict(parent.attrs["level_stats"])
+    assert "reference_energy" not in parent_stats
+    # Control: the parent's non-energy provenance IS there, so the absence above is
+    # a suppressed field and not a missing dict.
+    assert parent_stats["lod_method"] == "radial"
+    assert parent_stats["lod_n_lods"] == 4
+    assert parent_stats["lod_breakpoints_kind"] == "equal-count"
+    # Names the currency as absent rather than leaving the reader to infer it.
+    assert parent_stats["energy_kind"] == "mesh-reveal-no-energy"
+
+    seen = 0
+    for i in range(int(parent.attrs["n_additive_sublods"])):
+        stats = dict(parent[f"additive_{i}"].attrs["lod_stats"])
+        assert "energy_fraction_cum" not in stats
+        # Controls, per level.
+        assert stats["lod_method"] == "radial"
+        assert stats["lod_level"] == i
+        assert stats["lod_n_elements"] > 0
+        assert stats["lod_cumulative_n"] > 0
+        seen += 1
+    assert seen == 4, "no level was inspected — the assertions above were vacuous"
+
+
+def test_reveal_method_alone_suppresses_energy_stamps() -> None:
+    """Latch (2) in isolation: the reveal METHOD suppresses stamps by itself.
+
+    Called directly with a POSITIVE energy total, so the mesh wrapper's all-zero
+    energies cannot be what does the work. Paired with a sensitivity control on the
+    same call shape — a non-reveal method over the identical energies must produce
+    both stamps — because without it this passes against a helper that never stamps
+    anything at all.
+
+    This is the test that fails if ``is_reveal_method`` is neutered; the end-to-end
+    ladder test above does not, which is why both exist.
+    """
+    from luxar.core.group.lod.group import additive_level_stats
+
+    energies = [1.0, 2.0, 3.0]
+    counts = [4, 4, 4]
+
+    per_level, reference, parent = additive_level_stats(
+        energies,
+        counts,
+        method="radial",
+        breakpoints_kind="equal-count",
+        energy_kind="x",
+    )
+    assert reference is None
+    assert "reference_energy" not in parent
+    assert all("energy_fraction_cum" not in lvl for lvl in per_level)
+
+    # Sensitivity control: same energies, a contribution-ranking method.
+    per_level_c, reference_c, parent_c = additive_level_stats(
+        energies,
+        counts,
+        method="salience",
+        breakpoints_kind="equal-count",
+        energy_kind="x",
+    )
+    assert reference_c == 6.0
+    assert parent_c["reference_energy"] == 6.0
+    assert all("energy_fraction_cum" in lvl for lvl in per_level_c)
+
+
+def test_additive_lod_shells_grow_outward(tmp_path) -> None:
+    """Each level's farthest face is at least as far out as the previous level's.
+
+    This is the whole reason a mesh admits an additive ladder at all: every prefix
+    must be a CONTIGUOUS partial surface. An ordering bug (descending sort, or
+    scoring the centroid cloud's own centre instead of the surface's) reverses or
+    scrambles this while still producing a valid partition of the faces, so the
+    face-count test above would not notice.
+    """
+    store, _v, _f = _write_ladder(tmp_path, additive_lod={"n_lods": 4})
+    scene = LuxarScene.load(store)
+    centre = np.zeros(3, dtype=np.float64)
+
+    previous_max = -1.0
+    radii = []
+    for i in range(4):
+        data = scene.get_mesh(f"surf/additive_{i}")
+        centroids = data.vertices[data.faces].mean(axis=1)
+        level_max = float(np.linalg.norm(centroids - centre, axis=1).max())
+        radii.append(level_max)
+        assert level_max >= previous_max, f"level {i} shrank inward: {radii}"
+        previous_max = level_max
+
+    # Sensitivity control: a constant sequence would satisfy ">=" trivially, so
+    # require the ladder to actually span a range of radii.
+    assert radii[-1] > radii[0] * 1.5, f"shells barely grew: {radii}"
+
+
+def test_additive_lod_slices_per_vertex_channels_per_level(tmp_path) -> None:
+    """Each level's per-vertex arrays are as long as that level's vertex table.
+
+    A level is a RE-INDEXING, not a slice, so this is the assertion that catches
+    the mesh-specific failure: handing a level the whole ``(V, 3)`` colors array
+    while its faces address only its own gathered ``Vi`` vertices. The writer would
+    accept it (the counts happen to be validated against the array it was given),
+    and the surface would render with colours belonging to other vertices.
+    """
+    vertices, faces = _grid_mesh(13)
+    n_source = int(vertices.shape[0])
+    # Per-vertex colors that vary with position, so a mis-paired gather is visible
+    # in the VALUES and not only in the lengths.
+    colors = np.zeros((n_source, 3), dtype=np.uint8)
+    colors[:, 0] = np.linspace(0, 255, n_source).astype(np.uint8)
+    normals = np.tile(np.array([[0.0, 0.0, 1.0]], np.float32), (n_source, 1))
+
+    store = tmp_path / "channels.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(
+            "surf",
+            vertices,
+            faces,
+            normals=normals,
+            normal_dims=(0, 1, 2),
+            colors=colors,
+            additive_lod={"n_lods": 4},
+        )
+
+    # Coordinate → source row, so each level's gathered values can be checked
+    # against the source WITHOUT relying on the gather map under test. The grid's
+    # coordinates are unique, which is what makes this a lookup. Rounded to 2
+    # decimals because the writer stores coordinates as quantized fixed-point (a
+    # stored 0.0 comes back as 1e-4); the grid's spacing is 1.0, so 2 decimals is
+    # far coarser than the quantization and far finer than the spacing.
+    source_row = {_key(v): i for i, v in enumerate(vertices.astype(np.float64))}
+    assert len(source_row) == n_source
+
+    loaded = LuxarScene.load(store)
+    for i in range(4):
+        data = loaded.get_mesh(f"surf/additive_{i}")
+        n_level = int(data.vertices.shape[0])
+        assert n_level < n_source, "a shell should not gather the whole table"
+        assert data.colors is not None and data.colors.shape[0] == n_level
+        assert data.normals is not None and data.normals.shape[0] == n_level
+        assert data.normal_dims == [0, 1, 2]
+        # Faces address this level's own table and nothing beyond it.
+        assert int(data.faces.max()) < n_level
+        # And the gathered ramp still belongs to the vertex it sits next to: a
+        # length-only check would pass against any permutation of the right size.
+        for row, vertex in enumerate(data.vertices.astype(np.float64)):
+            expected = int(colors[source_row[_key(vertex)], 0])
+            assert abs(int(data.colors[row, 0]) - expected) <= 1
+
+
+def test_additive_lod_refuses_composition_with_substitutive_lod(tmp_path) -> None:
+    """Additive-under-substitutive is not implemented for mesh, and says so.
+
+    Points and Lines DO compose the two, so the message must explain the mesh-side
+    obstacle rather than implying the combination is meaningless.
+    """
+    vertices, faces = _grid_mesh(9)
+    with LuxarZarrCompiler(tmp_path / "c1.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError) as excinfo:
+            scene.add_mesh(
+                "surf", vertices, faces, additive_lod=True, substitutive_lod=True
+            )
+    message = str(excinfo.value)
+    assert "additive_lod" in message and "substitutive_lod" in message
+    assert "not implemented" in message
+    # Not re-wrapped as "Could not add mesh": it is an argument error, raised
+    # outside the adder's write funnel, exactly like its partition sibling.
+    assert not message.startswith("Could not add mesh")
+
+
+def test_additive_lod_refuses_composition_with_partition(tmp_path) -> None:
+    """A kind=partition of per-part reveal ladders is not implemented either."""
+    vertices, faces = _grid_mesh(9)
+    with LuxarZarrCompiler(tmp_path / "c2.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError) as excinfo:
+            scene.add_mesh("surf", vertices, faces, additive_lod=True, partition=True)
+    message = str(excinfo.value)
+    assert "additive_lod" in message and "partition" in message
+    assert "not implemented" in message
+
+    # `False` is the documented no-op spelling on both sides, so neither trips the
+    # guard — a call that asked for exactly one feature must still work.
+    with LuxarZarrCompiler(tmp_path / "c3.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        assert (
+            scene.add_mesh(
+                "a", vertices, faces, additive_lod={"n_lods": 3}, partition=False
+            )
+            is not None
+        )
+        assert (
+            scene.add_mesh(
+                "b", vertices, faces, additive_lod=False, partition={"max_elements": 20}
+            )
+            is not None
+        )
+
+
+def test_additive_lod_still_refuses_hand_supplied_stamps(tmp_path) -> None:
+    """The ladder writes ``level_stats`` / ``lod_stats``, so a caller may not.
+
+    The energy-stamp guard runs BEFORE the ladder branch, so what it refuses is
+    only ever a hand-supplied value — never the ladder's own. Both spellings stay
+    refused with the ladder available, which is what keeps the guard from being
+    quietly widened into "the ladder is refused too" or narrowed to nothing.
+    """
+    vertices, faces = _grid_mesh(9)
+    with LuxarZarrCompiler(tmp_path / "stamps2.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        for key in ("level_stats", "lod_stats"):
+            with pytest.raises(ValueError, match="energy"):
+                scene.add_mesh(
+                    f"m_{key}",
+                    vertices,
+                    faces,
+                    additive_lod=True,
+                    **{key: {"reference_energy": 1.0}},
+                )
+        # Control: the same call without the hand-supplied stamp writes a ladder,
+        # so the refusal above is about the key and not about `additive_lod=`.
+        assert scene.add_mesh("ok", vertices, faces, additive_lod=True) is not None
+
+
+@pytest.mark.parametrize("channel", ["labels", "image_labels"])
+def test_additive_lod_degrades_to_a_flat_leaf_for_labelled_meshes(
+    tmp_path, channel
+) -> None:
+    """Labels win over the ladder, with a warning — never silently dropped.
+
+    A mesh level re-indexes its own vertices, so one source vertex occupies a slot
+    in several levels and there is no single index space for a union label CSR to
+    describe (the three sibling ladders have one, which is why they can carry
+    labels). Refusing the LADDER rather than the labels keeps the data the caller
+    supplied; warning is what tells them the ladder they asked for is not there.
+    """
+    vertices, faces = _grid_mesh(9)
+    n = int(vertices.shape[0])
+    kwargs = (
+        {"labels": [f"v{i}" for i in range(n)]}
+        if channel == "labels"
+        else {"image_labels": {i: np.zeros((2, 2, 3), np.uint8) for i in range(n)}}
+    )
+
+    store = tmp_path / f"lab_{channel}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.warns(UserWarning, match="reveal ladder cannot be honoured"):
+            scene.add_mesh("surf", vertices, faces, additive_lod=True, **kwargs)
+
+    node = zarr.open_group(str(store), mode="r")["surf"]
+    assert "additive_0" not in node
+    assert "n_additive_sublods" not in node.attrs
+    # The channel the ladder yielded to is actually there.
+    assert "vertices" in node
+    flag = "has_labels" if channel == "labels" else "has_image_labels"
+    assert node.attrs.get(flag) is True
+
+
+def test_a_single_level_ladder_falls_through_to_a_flat_leaf(tmp_path) -> None:
+    """``n_lods=1`` is a ladder in name only, so a plain leaf is written.
+
+    Same degenerate-path behaviour as the Points and Lines branches: a one-level
+    ladder costs a wrapper and an index level for nothing.
+    """
+    vertices, faces = _grid_mesh(9)
+    store = tmp_path / "one.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        node = scene.add_mesh("surf", vertices, faces, additive_lod={"n_lods": 1})
+
+    assert isinstance(node, Mesh)
+    group = zarr.open_group(str(store), mode="r")["surf"]
+    assert "additive_0" not in group
+    assert "n_additive_sublods" not in group.attrs
+    # A real leaf, with its own arrays and the full face count.
+    assert "vertices" in group and "faces" in group
+    assert int(group.attrs["n_faces"]) == int(faces.shape[0])
+
+
+def test_additive_ladder_round_trips_through_the_reader(tmp_path) -> None:
+    """The reader agrees with the writer about the ladder and its levels.
+
+    The parent is a mesh node with no arrays of its own, so a reader that treated
+    it as a leaf would raise; the levels are ordinary mesh nodes. Reassembling the
+    levels must reproduce the source triangle SET, which is the end-to-end
+    statement that the re-indexing is lossless.
+    """
+    store, vertices, faces = _write_ladder(tmp_path, additive_lod={"n_lods": 4})
+    scene = LuxarScene.load(store)
+
+    assert scene.list_meshes() == ["surf"]
+    metadata = scene.get_node_metadata("surf")
+    assert metadata["n_additive_sublods"] == 4
+    assert metadata["n_faces"] == int(faces.shape[0])
+    # No union label CSR on the parent — deliberately absent for a mesh ladder.
+    assert metadata.get("has_labels") is not True
+
+    reassembled = set()
+    for i in range(4):
+        data = scene.get_mesh(f"surf/additive_{i}")
+        # Map the level's renumbered faces back to source vertex COORDINATES; the
+        # source indices are not recoverable (that is the point of re-indexing).
+        level_vertices = data.vertices.astype(np.float64)
+        for triangle in data.faces:
+            reassembled.add(tuple(sorted(_key(level_vertices[c]) for c in triangle)))
+
+    source_vertices = vertices.astype(np.float64)
+    expected = {
+        tuple(sorted(_key(source_vertices[c]) for c in triangle)) for triangle in faces
+    }
+    assert reassembled == expected
+
+
+def test_additive_lod_stamps_ONE_scalar_window_on_every_level(tmp_path) -> None:
+    """Every shell shares one ``scalar_data_range`` — the whole field's.
+
+    The same rule the substitutive and partition wrappers follow, and it matters
+    here for the same reason: the viewer windows a node's colormap on that node's
+    OWN stamped range, so a shell that stamped its own subset min/max would render
+    the same scalar value as a different colour from its neighbour, and a shell
+    whose subset is constant would stamp a degenerate ``[v, v]`` the viewer maps to
+    the LUT midpoint. A radial reveal makes this near-certain rather than a corner
+    case: shells are spatially contiguous, so any scalar field with spatial
+    structure has a different range in each one.
+    """
+    vertices, faces = _grid_mesh(13)
+    scalars = np.linspace(-5.0, 25.0, vertices.shape[0]).astype(np.float32)
+
+    store = tmp_path / "win.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(
+            "surf",
+            vertices,
+            faces,
+            scalars=scalars,
+            colormap="viridis",
+            additive_lod={"n_lods": 4},
+        )
+
+    parent = zarr.open_group(str(store), mode="r")["surf"]
+    ranges = {
+        tuple(parent[f"additive_{i}"].attrs["scalar_data_range"]) for i in range(4)
+    }
+    assert ranges == {(-5.0, 25.0)}, f"levels window on different ranges: {ranges}"
+    # Restated on purpose: a shared window is the fix, a non-degenerate one is what
+    # makes the colormap usable at all.
+    assert all(lo < hi for lo, hi in ranges)
+
+
+def test_additive_lod_propagates_a_resolved_extend_to_all(tmp_path) -> None:
+    """``extend_to_all="all"`` reaches the parent AND every level, resolved.
+
+    Two failure modes in one assertion. The writer stamps the value VERBATIM, so an
+    unresolved ``"all"`` sentinel would reach disk where the viewer expects
+    dimension names. And mesh resolves ``extend_to_all`` into ``attrs`` BEFORE it
+    dispatches its structural branches, while the wrapper also takes it by name —
+    so a ladder that forwarded the whole attrs dict would die with "multiple values
+    for keyword argument", which is exactly how this broke for the partition branch.
+    """
+    from luxar import Dimension
+
+    vertices, faces = _grid_mesh(11)
+    dims = Dimensions(
+        [
+            Dimension("x", unit="um", range=(-10, 10), display=True),
+            Dimension("y", unit="um", range=(-10, 10), display=True),
+            Dimension("z", unit="um", range=(-10, 10), display=True),
+            Dimension("t", unit="s", range=(0, 0), display=False),
+        ]
+    )
+    store = tmp_path / "ext.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh(
+            "surf",
+            np.hstack([vertices, np.zeros((vertices.shape[0], 1), np.float32)]),
+            faces,
+            additive_lod={"n_lods": 3},
+            extend_to_all="all",
+        )
+
+    parent = zarr.open_group(str(store), mode="r")["surf"]
+    assert parent.attrs["extend_to_all"] == ["t"]
+    for i in range(3):
+        assert parent[f"additive_{i}"].attrs["extend_to_all"] == ["t"]

@@ -6,6 +6,55 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Mesh gets an additive ladder, and it is a reveal (Python authoring)
+
+`add_mesh(additive_lod=…)` now writes `additive_<i>/` levels inside the leaf,
+each holding one concentric shell of **faces**, innermost first — so a large
+surface grows outward from its centre as it streams instead of appearing
+all-at-once. Mesh was the one geometry type with no additive axis, refused on
+the grounds that a prefix of an index buffer is a surface with *holes* rather
+than a coarser one. That argument is true of an **arbitrary** order and only of
+an arbitrary order: a spatially coherent reveal has a contiguous partial
+surface at every prefix. So the refusal narrowed rather than lifted —
+`MESH_ADDITIVE_METHODS` is `{"radial"}`, and `random` / `salience` / the two
+element samplers are still refused with the holes argument, as are
+`salience_kind` (a triangle has no independent energy) and `seed` (a reveal is
+deterministic). `substitutive_lod=` remains the way to make a surface genuinely
+coarser.
+
+Two consequences fall out of the restriction, which is what marks it as the
+right cut rather than a convenient one. **No energy stamps, by construction**:
+`additive_level_stats` already suppresses `energy_fraction_cum` /
+`reference_energy` for every reveal method, so the viewer's `1/e(k)` brightness
+compensation — gated on the blending mode and never on geometry type — cannot
+reach a mesh ladder and blow out its innermost shell before dimming it as the
+surface completes. The adder's existing energy-stamp guard is unchanged and
+still refuses *hand-supplied* `level_stats` / `lod_stats`; only its message
+needed correcting. **Vertex duplication stays modest**: each level re-indexes
+its own vertices (`luxar.mesh.split.split_mesh_by_faces`), and concentric
+shells share a closed boundary curve, so the cost scales with that curve —
+measured 1.66x on a 288-triangle plane at 4 levels, against 2.95x for a random
+order of the same faces.
+
+The new writer `write_mesh_multi_lod` is the one place the four ladders differ
+in kind: it writes **no union label CSR** and refuses a level carrying
+`labels`. Its three siblings put one CSR on the parent spanning the levels,
+which works because their elements are independent rows; a mesh level
+re-indexes, so one source vertex maps to slots in several levels and that union
+index space is ill-defined. `additive_lod=` alongside `labels` or
+`image_labels` therefore degrades to a plain leaf with a `UserWarning` — the
+data is kept, the ladder is not — and labels ride the `substitutive_lod=` and
+`partition=` paths intact. `additive_lod=` also cannot yet be combined with
+`substitutive_lod=` or `partition=`; both pairings are refused by name with the
+mesh-side obstacle spelled out, where Points and Lines compose both.
+
+Viewer support is a separate follow-up, and until it lands the two halves are
+coupled: `data/scene-loader/loaders/loader-factory.ts` currently REFUSES a mesh
+node declaring `n_additive_sublods > 1` (deliberately, so a store could not
+quietly render only its coarsest shell), so a mesh ladder authored today does
+not load in the viewer yet. Treat `additive_lod=` on a mesh as
+authoring-and-format only for now.
+
 #### Viewer stylesheets: a phantom radius token, magic z-indexes, duplicated rgba
 
 Three kinds of drift in the viewer CSS, all mechanical and all chosen to be
