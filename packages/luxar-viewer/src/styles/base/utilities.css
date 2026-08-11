@@ -513,6 +513,57 @@
   stroke-linejoin: round;
 }
 
+/* ========== Panel filter field (shared recipe) ==========
+   Live type-to-filter row for list-bearing panels (dataset browser anatomy
+   generalized): relative wrapper, 13px stroke search icon, input on the
+   neutral interactive fill with the theme-owned focus border. */
+.luxar-panel-filter {
+  position: relative;
+}
+
+.luxar-panel-filter__icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--luxar-text-muted);
+}
+
+.luxar-panel-filter__icon svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-panel-filter__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-4) var(--luxar-spacing-2) 30px;
+  background: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-md);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-panel-filter__input::placeholder {
+  color: var(--luxar-text-muted);
+}
+
+.luxar-panel-filter__input:focus {
+  outline: none;
+  border-color: var(--luxar-border-focus);
+  background: var(--luxar-interactive-hover);
+}
+
 /* ========== Panel entry motion (shared recipe) ==========
    Transform-only scale-settle for every floating surface (UI Design Guide
    §10.2). Deliberately NO opacity — animating opacity on a glass root breaks

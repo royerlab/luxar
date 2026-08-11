@@ -62,6 +62,17 @@
   margin: 0;
 }
 
+/* Live layer filter (shared .luxar-panel-filter recipe). */
+.luxar-layers-panel__filter {
+  flex-shrink: 0;
+  padding: 0 var(--luxar-spacing-8) var(--luxar-spacing-3);
+}
+
+/* Rows hidden by the live filter keep their DOM (indices stay valid). */
+.luxar-layer-row--filtered {
+  display: none;
+}
+
 /* ========== Layer List ========== */
 
 .luxar-layers-panel__list {

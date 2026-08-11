@@ -88,6 +88,10 @@ export class LayersPanel {
 
   private panelEl: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
+  /** Live filter over layer names; only rendered when the scene has many layers. */
+  private filterWrapEl: HTMLElement | null = null;
+  private filterInputEl: HTMLInputElement | null = null;
+  private filterText = '';
   private visible = false;
   /**
    * Tracks every event listener attached during buildPanel/renderList
@@ -370,6 +374,42 @@ export class LayersPanel {
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
+    // Live layer filter (shared .luxar-panel-filter recipe). Hidden for the
+    // common small scene — renderList() shows it above the threshold.
+    const filterWrap = document.createElement('div');
+    filterWrap.className = 'luxar-layers-panel__filter luxar-panel-filter';
+    filterWrap.style.display = 'none';
+    const filterIcon = document.createElement('span');
+    filterIcon.className = 'luxar-panel-filter__icon';
+    filterIcon.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L21 21"/></svg>';
+    filterIcon.setAttribute('aria-hidden', 'true');
+    const filterInput = document.createElement('input');
+    filterInput.type = 'text';
+    filterInput.className = 'luxar-panel-filter__input';
+    filterInput.placeholder = 'Filter layers…';
+    filterInput.setAttribute('aria-label', 'Filter layers by name');
+    filterInput.autocomplete = 'off';
+    this.events.on(filterInput, 'input', () => {
+      this.filterText = filterInput.value;
+      this.applyRowFilter();
+    });
+    this.events.on(filterInput, 'keydown', (e) => {
+      // Escape with a query clears it and stays; an empty Escape falls
+      // through to the panel-coordinator (closes the panel) as before.
+      if ((e as KeyboardEvent).key === 'Escape' && filterInput.value) {
+        e.stopPropagation();
+        filterInput.value = '';
+        this.filterText = '';
+        this.applyRowFilter();
+      }
+    });
+    filterWrap.appendChild(filterIcon);
+    filterWrap.appendChild(filterInput);
+    this.filterWrapEl = filterWrap;
+    this.filterInputEl = filterInput;
+    panel.appendChild(filterWrap);
+
     // Layer list (scrollable). ARIA listbox semantics so keyboard users can
     // navigate rows with ArrowUp/ArrowDown and select with Enter/Space.
     // Multi-select via Ctrl/Cmd/Shift is reflected with aria-multiselectable.
@@ -441,7 +481,38 @@ export class LayersPanel {
     // of early-returning on an unchanged signature (e.g. after resetAllLayers()
     // while a failure persists).
     this.lastFailedLoadsSignature = null;
-    this.updateRowErrorStates();
+    this.updateRowErrorStates(); // Filter affordance only pays for itself on layer-heavy scenes.
+    if (this.filterWrapEl) {
+      const show = layers.length > LayersPanel.FILTER_THRESHOLD;
+      this.filterWrapEl.style.display = show ? '' : 'none';
+      if (!show && this.filterInputEl) {
+        this.filterInputEl.value = '';
+        this.filterText = '';
+      }
+    }
+    this.applyRowFilter();
+  }
+
+  /** Scenes with more layers than this get the live name filter. */
+  private static readonly FILTER_THRESHOLD = 8;
+
+  /**
+   * Apply the live name filter to the rows (case-insensitive substring).
+   * Hidden rows keep their DOM (state indices stay valid) and are skipped
+   * by the listbox arrow navigation.
+   */
+  private applyRowFilter(): void {
+    const q = this.filterText.trim().toLowerCase();
+    for (const [path, row] of this.rowElements) {
+      const layer = this.state.getLayer(path);
+      const match = !q || (layer?.name ?? '').toLowerCase().includes(q);
+      row.classList.toggle('luxar-layer-row--filtered', !match);
+    }
+  }
+
+  /** True when the row for a path is hidden by the live filter. */
+  private isRowFiltered(path: string): boolean {
+    return this.rowElements.get(path)?.classList.contains('luxar-layer-row--filtered') ?? false;
   }
 
   /** Update selection highlights and visibility classes without rebuilding DOM */
@@ -658,14 +729,23 @@ export class LayersPanel {
     // (and selects on simple navigation), Enter/Space select with the
     // current modifier.
     this.events.on(row, 'keydown', (e) => {
-      const layers = this.state.getLayers();
+      // Navigate over the VISIBLE rows only — the live filter hides rows via
+      // a class while keeping their DOM, so index math runs on the filtered
+      // list.
+      const layers = this.state.getLayers().filter((l) => !this.isRowFiltered(l.path));
       const idx = layers.findIndex((l) => l.path === layer.path);
       if (idx < 0) return;
 
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
         e.preventDefault();
         const nextIdx =
-          e.key === 'ArrowDown' ? Math.min(layers.length - 1, idx + 1) : Math.max(0, idx - 1);
+          e.key === 'ArrowDown'
+            ? Math.min(layers.length - 1, idx + 1)
+            : e.key === 'ArrowUp'
+              ? Math.max(0, idx - 1)
+              : e.key === 'Home'
+                ? 0
+                : layers.length - 1;
         const next = layers[nextIdx];
         const nextRow = this.rowElements.get(next.path);
         if (nextRow) {
