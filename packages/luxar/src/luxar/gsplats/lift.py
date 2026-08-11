@@ -129,8 +129,13 @@ def compute_ray_integral_factor(truncation_radius: float) -> float:
 _LEAF_COLOR_INT_DTYPES = (np.dtype("uint8"), np.dtype("uint16"))
 
 
-def _reject_unwritable_color_dtype(colors: NDArray, context: str) -> None:
+def _reject_unwritable_color_dtype(
+    colors: Union[NDArray, Sequence[float], None], context: str
+) -> None:
     """Refuse a colour dtype the leaf write would reject, before anything is WRITTEN.
+
+    ``None`` is a no-op (no colours, nothing to refuse), so callers can run this
+    unconditionally.
 
     Same rule as the leaf, deliberately not a new one. Without this the lift
     happily normalises e.g. an ``int64`` colour by ``iinfo(int64).max`` (≈1e-19,
@@ -143,7 +148,9 @@ def _reject_unwritable_color_dtype(colors: NDArray, context: str) -> None:
     path this runs after sigma, the zero-radius mask and the Cholesky
     allocation — all in-memory work, none of it on disk.)
     """
-    dtype = colors.dtype
+    if colors is None:
+        return
+    dtype = np.asarray(colors).dtype
     if np.issubdtype(dtype, np.floating) or dtype in _LEAF_COLOR_INT_DTYPES:
         return
     raise ValueError(
@@ -219,6 +226,25 @@ def _expand_uniform_colors(
     return np.broadcast_to(row, (n_elements, row.shape[1])), True
 
 
+def _resolve_uniform_colors(
+    colors: Union[NDArray, Sequence[float], None],
+    n_elements: int,
+    declared: Optional[bool],
+) -> "tuple[Any, bool]":
+    """Settle whether ``colors`` is the uniform form, expanding it if so.
+
+    ``declared`` is a caller's already-final verdict (see the ``_uniform_colors``
+    parameter of :func:`lift_points_to_gsplats`): supplied, it is taken verbatim
+    and ``colors`` is passed through untouched — no re-classification, no
+    expansion. Otherwise the verdict is :func:`_expand_uniform_colors`'s.
+    """
+    if declared is not None:
+        return colors, bool(declared)
+    if colors is None:
+        return colors, False
+    return _expand_uniform_colors(colors, n_elements)
+
+
 def lift_points_to_gsplats(
     positions: NDArray,
     radii: Union[NDArray, float],
@@ -292,12 +318,7 @@ def lift_points_to_gsplats(
     # already classified them (`_uniform_colors` supplied) is trusted verbatim —
     # re-classifying here would read a caller's one-row per-element array as the
     # uniform form and admit an alpha column it must not.
-    if _uniform_colors is not None:
-        uniform_colors = bool(_uniform_colors)
-    else:
-        uniform_colors = False
-        if colors is not None:
-            colors, uniform_colors = _expand_uniform_colors(colors, n)
+    colors, uniform_colors = _resolve_uniform_colors(colors, n, _uniform_colors)
 
     radii_arr = np.broadcast_to(np.asarray(radii, dtype=np.float64), (n,)).astype(
         np.float64
@@ -495,12 +516,10 @@ def lift_lines_to_gsplats(
     # Uniform colours BEFORE the per-vertex gather below (`c[pairs[:, 0]]`),
     # which would otherwise read a 3/4-component broadcast row as if its
     # components were vertex rows and raise a bare IndexError (#1444).
-    uniform_colors = False
-    if colors is not None:
-        colors, uniform_colors = _expand_uniform_colors(colors, n_vertices)
-        # Leaf dtype rule up front, so a per-element int64 colour fails before
-        # the (potentially huge) bead expansion rather than inside it.
-        _reject_unwritable_color_dtype(np.asarray(colors), "colors")
+    colors, uniform_colors = _resolve_uniform_colors(colors, n_vertices, None)
+    # Leaf dtype rule up front, so a per-element int64 colour fails before the
+    # (potentially huge) bead expansion rather than inside it.
+    _reject_unwritable_color_dtype(colors, "colors")
 
     def _empty() -> GSplatData:
         return lift_points_to_gsplats(
