@@ -25,6 +25,15 @@ wrappers refused only from inside ``child_0`` — after the ``kind=lod`` group w
 already on disk. Each case asserts message parity with the flat call AND an empty
 store; the controls assert the hoist did not multiply the per-dimension range
 ``UserWarning`` across levels.
+
+The third and last section is the same bug class one step further out (#1471),
+and it is where the pattern breaks: ``labels`` / ``image_labels`` on a
+multi-CHILD gsplats wrapper cannot be hoisted at all, only REFUSED. Every
+substitutive level is its own set of merged representative splats with its own
+count, so no single list has a per-element correspondence to slice — which is
+why those cases assert a new message rather than parity with a flat one, and why
+the precedence tests matter more here: the refusal has no flat counterpart, so it
+must sit BELOW every check that does.
 """
 
 from __future__ import annotations
@@ -39,11 +48,16 @@ import zarr
 from luxar.io.reader import LuxarScene
 
 from ..conftest import (
+    IMAGE_LABELS,
+    LABEL_KWARGS,
+    LABELS,
+    N_LABELLED,
     assert_same_refusal,
     assert_uniform,
     bad_ndim_positions,
     cholesky_rows_nd,
     count_range_warnings,
+    finalized_group_keys,
     open_ranged_scene,
     open_scene,
     random_positions,
@@ -1373,4 +1387,356 @@ class TestGSplatsLodGroupRankGuard:
         with pytest.raises(ValueError, match=r"Centers must have shape \(N, D\)"):
             scene.add_gsplats_from_data("g", data)
 
+        assert "g" not in compiler.store
+
+
+# ---------------------------------------------------------------------------
+# labels / image_labels on a multi-child gsplats wrapper (#1471)
+# ---------------------------------------------------------------------------
+
+# 8 finest / 2 coarsest splats — the issue's own shape. Neither channel is a
+# named kwarg of ``add_gsplats_from_data``: both are named params of the LEAF
+# adder only, so they arrive inside ``**attrs`` and rode into every child through
+# ``child_attrs``, unsliced. The fixtures themselves live in ``../conftest`` —
+# the graft half of this gate is in the partition/ sibling and states them once.
+_N_FINE = N_LABELLED
+
+# All three doors into the multi-substitutive branch. ``default`` (the kwarg
+# omitted entirely, auto-lowering a stored pyramid) is the one
+# ``add_gsplats_from_file`` uses for every matrix-shaped file, so it is the most
+# likely real-world door and must not be the untested one. ``compute`` needs a
+# FLAT input by construction: compute kwargs on data that already has stored
+# levels are refused outright ("Pass recompute=True to override the stored
+# pyramid"), which would make the case test that refusal instead.
+_LOD_GROUP_ROUTES = [
+    ("explicit", lambda: _multi_substitutive_3d_data(), {"lod_group": True}),
+    ("default", lambda: _multi_substitutive_3d_data(), {}),
+    (
+        "compute",
+        lambda: _multi_substitutive_3d_data().at_substitutive(0),
+        {"lod_group": {"levels": 2, "compression_factor": 4}},
+    ),
+]
+
+
+class TestGSplatsLodGroupRefusesLabels:
+    """A substitutive ladder cannot carry per-element labels at all (#1471).
+
+    Unlike every other case in this file the fix is a REFUSAL, not a hoist: each
+    level is its own set of merged representative splats with its own count, so
+    no single list has a per-element correspondence to carry.
+
+    The two channels stranded slightly different wreckage, and the worse one is
+    ``image_labels``. Pre-fix with ``labels``: ``Could not add gsplats 'child_0':
+    labels: Labels length (8) must match element count (2)``, leaving ``g`` as a
+    CHILDLESS ``kind=lod`` group that survives ``finalize()``. Pre-fix with
+    ``image_labels``: the same shape of message, but the labels are written after
+    the geometry, so ``child_0`` is left HALF-WRITTEN — ``amplitudes``,
+    ``centers``, ``cholesky_factors_diag``/``_offdiag`` and ``chunk_bounds`` all
+    on disk under the stranded wrapper. Both halves are asserted separately: the
+    message (which named the wrong node and the wrong fault) and the store.
+    """
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    @pytest.mark.parametrize("route,make_data,route_kwargs", _LOD_GROUP_ROUTES)
+    def test_refused_up_front_with_nothing_written(
+        self,
+        tmp_path: Any,
+        channel: str,
+        kwargs: Dict[str, Any],
+        _attr: str,
+        route: str,
+        make_data: Any,
+        route_kwargs: Dict[str, Any],
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"lg_{channel}_{route}.luxar.zarr")
+        data = make_data()
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data("g", data, **route_kwargs, **kwargs)
+        )
+
+        assert isinstance(split, ValueError)
+        # The hand-written prefix names the CALLER's node, not an internal child.
+        assert str(split).startswith("Could not add gsplats 'g': ")
+        assert "child_0" not in str(split)
+        assert (
+            f"{channel} is not supported on a multi-level substitutive pyramid "
+            "(auto-lowered to a kind=lod group)" in str(split)
+        )
+        # The three halves the message must state: why, this door's own remedy,
+        # and the general one. The REMEDY assertion matters as much as the
+        # structure one — the two doors' constants exist so their wording cannot
+        # drift, and without this a swap between them passes silently.
+        assert "no single list has a per-element correspondence" in str(split)
+        assert "lod_group=False" in str(split)
+        assert "add_lod_group()" in str(split)
+        assert "g" not in compiler.store
+        # And no stranded wrapper — childless or half-written — survives finalize.
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    def test_labels_outranks_image_labels_when_both_are_passed(
+        self, tmp_path: Any
+    ) -> None:
+        """Deterministic tie-break: ``labels`` is asked first, so it is reported.
+
+        Both are refused for the identical reason, so which one is named is
+        arbitrary on the merits — but it must not be arbitrary in practice. The
+        order is the leaf adder's signature order (``labels`` then
+        ``image_labels``).
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_both_labels.luxar.zarr")
+        data = _multi_substitutive_3d_data()
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                data,
+                lod_group=True,
+                labels=LABELS,
+                image_labels=IMAGE_LABELS,
+            )
+        )
+
+        assert "labels is not supported" in str(split)
+        assert "image_labels is not supported" not in str(split)
+        assert "g" not in compiler.store
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    @pytest.mark.parametrize("fault", ["dim_order", "colours", "column_count"])
+    def test_a_flat_parity_fault_still_outranks_the_labels_refusal(
+        self,
+        tmp_path: Any,
+        channel: str,
+        kwargs: Dict[str, Any],
+        _attr: str,
+        fault: str,
+    ) -> None:
+        """Precedence control: the refusal is LAST in the gate, and must stay there.
+
+        Every other check in the gate mirrors a fault the FLAT path reports at
+        that position; this one has no flat counterpart at all (the flat path
+        ACCEPTS ``labels`` and validates it last, in the writer sweep). Ranked any
+        higher it would answer ``labels is not supported …`` where the flat path
+        answers something else, silently changing what the #1446 parity assertions
+        elsewhere in this file mean.
+
+        Parametrized over all THREE preceding checks — the ``dim_order`` spec, the
+        colours/colormap exclusion and the column count — because pinning only one
+        of them leaves a mutant that hops the labels raise above the other two
+        alive. (The rank guard is the fourth and cannot be combined: 1-D centers
+        make every other fault unreachable.)
+        """
+        compiler, scene, _ = open_scene(tmp_path, f"lg_{channel}_{fault}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"lg_{channel}_{fault}_flat.luxar.zarr")
+        if fault == "dim_order":
+            data = _multi_substitutive_3d_data()
+            extra: Dict[str, Any] = {"dim_order": ["X", "Y", "X"]}
+            expected = "dim_order has duplicate names"
+        elif fault == "colours":
+            data = _coloured_multi_substitutive_data(3)
+            extra = {"colormap": "viridis"}
+            expected = "Cannot specify both 'colors' and 'colormap'"
+        else:
+            data = _multi_substitutive_4d_data()
+            extra = {}
+            expected = "centers array has 4 columns"
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                colors=data.colors,
+                **extra,
+                **kwargs,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, **extra, **kwargs
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert expected in str(split)
+        assert "is not supported on a multi-level substitutive" not in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_structural_kwarg_fault_outranks_the_labels_refusal(
+        self, tmp_path: Any
+    ) -> None:
+        """``coverage_fraction`` is refused ABOVE the whole gate, labels included.
+
+        The documented precedence in ``add_gsplats_from_data``'s docstring, with
+        no test until now.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_cov_labels.luxar.zarr")
+        data = _multi_substitutive_3d_data()
+
+        with pytest.raises(ValueError, match="coverage_fraction must not be passed"):
+            scene.add_gsplats_from_data(
+                "g", data, lod_group=True, coverage_fraction=0.5, labels=LABELS
+            )
+
+        assert "g" not in compiler.store
+
+    def test_an_empty_labels_list_is_refused_rather_than_read_as_absent(
+        self, tmp_path: Any
+    ) -> None:
+        """``[]`` is not None, so it is a labels REQUEST — and an impossible one."""
+        compiler, scene, _ = open_scene(tmp_path, "lg_empty_labels.luxar.zarr")
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", _multi_substitutive_3d_data(), lod_group=True, labels=[]
+            )
+        )
+
+        assert "labels is not supported" in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_numpy_image_labels_array_is_refused_like_a_list(
+        self, tmp_path: Any
+    ) -> None:
+        """``image_labels`` accepts several container types; the gate is truthy-free.
+
+        An ``is not None`` test rather than a truth test, so a numpy array — whose
+        ``__bool__`` raises on more than one element — cannot slip past.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_np_image_labels.luxar.zarr")
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                _multi_substitutive_3d_data(),
+                lod_group=True,
+                image_labels=np.zeros((_N_FINE, 2, 2, 3), dtype=np.uint8),
+            )
+        )
+
+        assert "image_labels is not supported" in str(split)
+        assert "g" not in compiler.store
+
+
+class TestAnExplicitNoneMeansNoLabels:
+    """``labels=None`` must be indistinguishable from omitting it (#1471).
+
+    ``labels=maybe_labels`` is an idiomatic call form, and the gate correctly
+    reads None as "absent" — but the KEY survived in ``**attrs`` and rode into
+    ``child_attrs``. ``validate_render_attrs`` rejects an unknown key by NAME and
+    never looks at its value, so any child that took the additive-ladder writer
+    (``write_gsplat_leaf_subtree``) raised ``Unknown node attribute 'labels'``
+    from inside ``child_0`` with the ``kind=lod`` wrapper already on disk —
+    exactly the strand #1471 is about, reached by a call that asked for no labels
+    at all. Stock ``gsplat lod --recipe levels`` output hits this without any
+    ``additive_lod=`` of its own, since its per-level stream ladders are on by
+    default.
+
+    Only the ``with_ladder`` params are true pre-fix failures. The ``plain`` two
+    are CONTROLS: a single-sublod child is written by ``Group.add_gsplats``,
+    which binds ``labels`` as a named param, so the stray key never reaches an
+    attr validator and they pass with the strip removed. They are here so the
+    normalisation cannot be "fixed" by making the plain path refuse instead.
+    """
+
+    @pytest.mark.parametrize("channel", ["labels", "image_labels"])
+    @pytest.mark.parametrize(
+        "case,extra",
+        [("with_ladder", {"additive_lod": {"n_lods": 2}}), ("plain", {})],
+    )
+    def test_none_writes_the_whole_ladder_normally(
+        self, tmp_path: Any, channel: str, case: str, extra: Dict[str, Any]
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, f"none_{channel}_{case}.luxar.zarr"
+        )
+
+        scene.add_gsplats_from_data(
+            "g",
+            _multi_substitutive_3d_data(),
+            lod_group=True,
+            **extra,
+            **{channel: None},
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs["kind"] == "lod"
+        # The bug's signature was a wrapper with NO children at all.
+        assert sorted(store["g"].group_keys()) == ["child_0", "child_1"]
+
+
+class TestLabelsStillWorkWhereTheyAlwaysDid:
+    """The negatives: only MULTI-child gsplats wrappers are closed (#1471)."""
+
+    @pytest.mark.parametrize("channel,kwargs,attr", LABEL_KWARGS)
+    def test_lod_group_false_collapses_to_a_labelled_finest_leaf(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], attr: str
+    ) -> None:
+        """``lod_group=False`` writes ONE leaf carrying all 8 splats — still labelled.
+
+        This is the escape hatch the refusal names, so it has to keep working.
+        """
+        compiler, scene, path = open_scene(tmp_path, f"lg_false_{channel}.luxar.zarr")
+        data = _multi_substitutive_3d_data()
+
+        scene.add_gsplats_from_data("g", data, lod_group=False, **kwargs)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") != "lod"
+        assert store["g"].attrs[attr] is True
+
+    @pytest.mark.parametrize("channel,kwargs,attr", LABEL_KWARGS)
+    def test_a_single_level_gsplatdata_is_untouched(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], attr: str
+    ) -> None:
+        """A one-level ``GSplatData`` never enters the multi-substitutive branch."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+
+        compiler, scene, path = open_scene(tmp_path, f"single_{channel}.luxar.zarr")
+        data = GSplatData(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=random_positions(_N_FINE, seed=71),
+                    amplitudes=np.ones(_N_FINE, dtype=np.float32),
+                    cholesky_factors=cholesky_rows_nd(_N_FINE, 3),
+                )
+            ]
+        )
+
+        scene.add_gsplats_from_data("g", data, **kwargs)
+        compiler.finalize()
+
+        assert zarr.open_group(path, mode="r")["g"].attrs[attr] is True
+
+
+class TestTheGsplatsAdditiveLadderStillHasNoLabelsChannel:
+    """Not a #1471 door: this path already refused, and for a different reason."""
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_the_additive_ladder_keeps_its_own_pre_existing_answer(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        """``additive_lod=`` on gsplats has NO labels channel — and still says so.
+
+        ``write_gsplat_leaf_subtree`` documents labels as a leaf-only scene
+        feature that stays on ``write_gsplats``, so the ladder path answers with
+        the unknown-attr refusal (the ladder-union label support of
+        ``validate_ladder_labels`` is Points/Lines only). #1471 did not touch that
+        path; this pins that it did not drift into the new wording either.
+        """
+        compiler, scene, _ = open_scene(tmp_path, f"add_{channel}.luxar.zarr")
+        data = _multi_substitutive_3d_data().at_substitutive(0)
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, additive_lod={"n_lods": 2}, **kwargs
+            )
+        )
+
+        assert f"Unknown node attribute '{channel}'" in str(split)
+        assert "is not supported on a multi-level substitutive" not in str(split)
         assert "g" not in compiler.store

@@ -446,7 +446,13 @@ These methods automatically handle:
 - Extracting arrays from GSplatData objects
 - Loading data from .gsplats.zarr archives
 - Passing all data (centers, amplitudes, cholesky_factors, colors) to add_gsplats()
-- Preserving optional attributes (colors, labels) when present
+- Preserving optional attributes (colors, labels) when present — `labels` /
+  `image_labels` only on a single leaf with NO additive ladder, though: a
+  multi-LEAF result (a multi-level substitutive pyramid, or a grafted multi-part
+  `kind=lod` / `kind=partition` subtree) refuses them, because each leaf holds
+  its own set of splats and no one list has a per-element correspondence to
+  slice (#1471); a single laddered leaf is refused too, because the additive
+  writer has no labels channel at all (`gsplat flatten` collapses the ladder)
 
 ### 7b. Mesh (`mesh.py`)
 
