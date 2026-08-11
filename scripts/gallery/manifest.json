@@ -493,7 +493,7 @@
     {
       "id": "forest",
       "title": "Forest",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "synthetic",
       "script": "demo_lsystem_forest.py",
       "dataset": "datasets/demos/forest.luxar.zarr"
