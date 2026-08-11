@@ -319,12 +319,12 @@ Comprehensive showcase of the point sharpness feature: gradient from peaky (0.0)
 
 ---
 
-#### demo_lsystem_forest.py - L-System Tree Forest (Lines Demo)
-Beautiful procedural forest using L-system grammars to showcase the **Lines** node type.
+#### demo_lsystem_forest.py - L-System Forest: a Year in a Growing Forest (All Four Geometry Types)
+The flagship synthetic scene: a terrain-planted procedural forest scrubbable through time on two non-displayed dimensions — `growth` (six stages, each a genuine re-derivation of every tree at increasing iteration depth, staggered per tree so maturity rolls across the field in waves) and `season` (spring blossom, summer green, autumn fire, winter frost). All four geometry types share the frame: a shaded fBm-heightfield **Mesh** terrain (snow in winter), eight tree species as merged indexed **Lines** nodes (one Layers-panel row per species, per-vertex hover labels with species/instance/season/stage), volumetric **GSplat** foliage clouds oriented along their parent branches (blossom splats in spring, fire palette in autumn, evergreen conifers in winter), and **Points** accents (summer fireflies, winter frost sparkle, spring petals, each pinned to its season and extended over growth).
 
-**Run**: `luxar demo run forest [-- --iterations=6] [-- --trees=16]`
+**Run**: `luxar demo run forest [-- --trees=800] [-- --iterations=5]`
 
-**Demonstrates**: **Lines node type** as an indexed branching network with shared joint vertices, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes, and a `layer=True` `trees` container group so the hundreds of per-tree nodes reach the Layers panel as one composite row.
+**Demonstrates**: stochastic L-system productions, tropism (ABOP §1.7 — gravity droop for the willow and palm, upward phototropism for the columnar poplar, applied only at branch depth >= 1 so trunks stay straight), apical dominance via a leader symbol (Honda's monopodial conifer), indexed line networks with shared joint vertices and `normal` blending (trunks occlude), hand-packed 5D gsplat Cholesky factors for stacked categorical axes, `extend_to_all` + `fill` for season-pinned props, per-season mesh vertex colors, season/growth-conditional overlays (`visible_range`), a grammar card showing the actual production rules, an authored `ViewerConfig` (explicit ACES, forest-edge opening camera, autumn/ancient opening slice), and `cache_computed` for instant warm regeneration.
 
 ---
 
