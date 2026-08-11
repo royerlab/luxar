@@ -50,11 +50,12 @@ the exponent (`n = 2^(3−4s)`). Every end is a round cap; interior
 polyline joints keep each leg's half of the joint disc, partitioned along
 the joint bisector via the volumetric primitive's joint-code partner
 machinery — the two half-discs tile the disc exactly at any bend angle (no
-notch, no chopped miter tip, no double-bright overlap). The cut is a
-HARD partition across the full joint plane — exact tiling with zero
-overlap and zero double-count (a briefly-shipped soft foreign-side fade
-was reverted after live QA showed it double-counting over the partner's
-body as bright wedges at every zoomed joint) —
+notch, no chopped miter tip, no double-bright overlap). The cut spans the full
+joint plane and composes by the DEFICIT rule over a 1 px AA ramp: each
+leg renders max(mine − partner, 0) on the partner's side, so the pair
+composes to max(mine, partner) — an exact zero-double-count partition
+for congruent legs, and exactly the missing light where a partner tapers
+away or perspective-diverges —
 and the partner endpoint is near-plane-clipped before projecting — together
 these keep zoomed-in joints seamless, the regime where both the quad and the
 first capsule iteration showed hard seams and wedges. Which ends cut at all

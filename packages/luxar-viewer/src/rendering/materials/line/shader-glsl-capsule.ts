@@ -78,7 +78,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     // the fragment reads everything pre-blended by the rasterizer instead
     // of projecting/mixing per pixel (relaxation 3 in _shared/line-capsule).
     //
-    // GEOMETRY varyings (vLocal, vR) are SCREEN-SPACE quantities, but
+    // GEOMETRY varyings (vLocal) are SCREEN-SPACE quantities, but
     // default varying interpolation is perspective-correct — hyperbolic in
     // screen space whenever the two ends have different clip w (and with a
     // triangle-diagonal kink). GLSL ES 3.0 has no noperspective qualifier,
@@ -95,10 +95,14 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     // its axis, stored ONLY when negative beyond the congruence gate
     // (a thinning partner is the one case whose missing light I must
     // render — see the fragment's deficit rule). 0 = hard cut.
-    flat out vec3 vCutA2;
-    flat out vec3 vCutB2;
-    out float vR;           // capsule radius in px × clip w (screen-linear)
-    out float vW;           // clip w (divides vLocal/vR in the fragment)
+    flat out vec4 vCutA2;
+    flat out vec4 vCutB2;
+    // My own endpoint radii (rA, rB) in px: the fragment computes the
+    // EXACT drawn radius from them (a linear varying cannot — its
+    // interpolation spans the cap extensions; the root of #1494), and the
+    // partner's radius at the shared vertex is the matching entry.
+    flat out vec2 vREnd;
+    out float vW;           // clip w (divides vLocal in the fragment)
     out float vFade;        // nearFade × thin-width energy compensation
     out float vAlpha;       // per-element alpha (raw — volumetric gates it)
     out float vSharp;
@@ -149,8 +153,9 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       if ((uIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vLocal = vec2(0.0); vMeta = vec3(1.0, 0.0, 0.0);
-        vCutA2 = vec3(-1.0, 0.0, 0.0); vCutB2 = vec3(1.0, 0.0, 0.0);
-        vR = 1.0; vW = 1.0; vFade = 0.0; vAlpha = 1.0; vSharp = 0.5;
+        vCutA2 = vec4(-1.0, 0.0, 0.0, 0.0); vCutB2 = vec4(1.0, 0.0, 0.0, 0.0);
+        vREnd = vec2(1.0);
+        vW = 1.0; vFade = 0.0; vAlpha = 1.0; vSharp = 0.5;
         #ifdef USE_COLORMAP
         vScalar = 0.0;
         #else
@@ -232,8 +237,9 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       // seamless, notch-free, and double-bright-free at any bend angle
       // and any zoom. Stencil reach at a cut end is |ny|·rMax (the kept
       // half-disc's axial extent), so joints cost LESS fill than caps.
-      vec3 cutA = vec3(-1.0, 0.0, 0.0);
-      vec3 cutB = vec3(1.0, 0.0, 0.0);
+      vec4 cutA = vec4(-1.0, 0.0, 0.0, 0.0);
+      vec4 cutB = vec4(1.0, 0.0, 0.0, 0.0);
+      vREnd = vec2(rA, rB);
       float extA = rMax;
       float extB = rMax;
       if (interiorA > 0.5) {
@@ -261,16 +267,15 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
             if (nl > 1e-3) {
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
-              // Snap the cut normal to a 1/1024 grid: the two legs compute
-              // the plane from independently projected (and possibly
-              // differently optimized) expressions, and sub-ulp
-              // disagreement leaves a hairline BOTH sides discard — dark
-              // pinpricks at every joint vertex. Snapping is symmetric
-              // under negation, so the partner lands on the bit-identical
-              // plane and the half-discs tile exactly.
+              // Snap the cut normal to a 1/1024 grid. NOTE the honest
+              // rationale: each leg snaps in its OWN (u, v) basis, so the
+              // two planes still disagree by up to ~1e-3 rad — the AA ramp
+              // is what actually kills the boundary speckle; the snap just
+              // keeps the residual plane disagreement ≲0.05 px of the 1 px
+              // ramp.
               nLoc = round(nLoc * 1024.0) / 1024.0;
               if (nLoc.x < -1e-3) {
-                cutA = vec3(nLoc, 0.0);
+                cutA = vec4(nLoc, 0.0, 0.0);
                 // Width gate (see _shared/line-capsule.ts): hairline
                 // joints skip the packet — a deficit there is sub-pixel.
                 if (rMax > ${G.PACKET_MIN_R}) {
@@ -287,8 +292,15 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                   // gradient beyond the gate) needs the deficit rule.
                   if (deficitA > ${G.DEFICIT_GATE}) {
                     cutA.z = (rpFarA - rA) / ql;
+                    cutA.w = ql;
+                    // The deficit term's support is bounded by MY OWN
+                    // capsule (it renders max(mine − partner, 0) ≤ mine),
+                    // so the full disc reach covers it at any partner
+                    // length or taper (#1488).
+                    extA = rMax + ${G.APRON};
+                  } else {
+                    extA = abs(nLoc.y) * rMax + ${G.APRON};
                   }
-                  extA = max(abs(nLoc.y), deficitA) * rMax + ${G.APRON};
                 } else {
                   extA = abs(nLoc.y) * rMax + ${G.APRON};
                 }
@@ -324,7 +336,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               nLoc = round(nLoc * 1024.0) / 1024.0;
               if (nLoc.x > 1e-3) {
-                cutB = vec3(nLoc, 0.0);
+                cutB = vec4(nLoc, 0.0, 0.0);
                 // Width gate (see _shared/line-capsule.ts): hairline
                 // joints skip the packet — a deficit there is sub-pixel.
                 if (rMax > ${G.PACKET_MIN_R}) {
@@ -341,8 +353,15 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                   // gradient beyond the gate) needs the deficit rule.
                   if (deficitB > ${G.DEFICIT_GATE}) {
                     cutB.z = (rpFarB - rB) / ql;
+                    cutB.w = ql;
+                    // The deficit term's support is bounded by MY OWN
+                    // capsule (it renders max(mine − partner, 0) ≤ mine),
+                    // so the full disc reach covers it at any partner
+                    // length or taper (#1488).
+                    extB = rMax + ${G.APRON};
+                  } else {
+                    extB = abs(nLoc.y) * rMax + ${G.APRON};
                   }
-                  extB = max(abs(nLoc.y), deficitB) * rMax + ${G.APRON};
                 } else {
                   extB = abs(nLoc.y) * rMax + ${G.APRON};
                 }
@@ -376,7 +395,6 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       // exactly linear in screen x). Interpolating 1/r² instead bends the
       // rim quadratically inward — a hard concave silhouette at strong
       // taper (the zoomed near-axial case).
-      vR = mix(rA, rB, tc);
       // nearFade at the segment's own depth × the thin-width energy
       // compensation (the AA radius floor fattens sub-1.5px lines; scale
       // intensity down so additive totals stay width-linear — the quad's
@@ -399,7 +417,6 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       float wMix = max(clipMix.w, 1e-6);
       // Screen-linear geometry varyings (see the declaration note).
       vLocal = vec2(lx, ly) * wMix;
-      vR = vR * wMix;
       vW = wMix;
       vec2 ndc = corner / uResolution * 2.0 - 1.0;
       gl_Position = vec4(ndc * wMix, clipMix.z, wMix);
@@ -423,9 +440,9 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
 
     in vec2 vLocal;
     flat in vec3 vMeta;
-    flat in vec3 vCutA2;
-    flat in vec3 vCutB2;
-    in float vR;
+    flat in vec4 vCutA2;
+    flat in vec4 vCutB2;
+    flat in vec2 vREnd;
     in float vW;
     in float vFade;
     in float vAlpha;
@@ -443,18 +460,23 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     // partner's radius GRADIENT: the partner's axis is the reflection of
     // my inward axis mDir across the cut plane (q = m − 2(m·n)n — exact,
     // both normals being normalize(q − m) up to sign), its radius at the
-    // vertex equals my own interpolated radius (vR is CONSTANT across a
     // cap region, where the deficit rule fires), and it is treated as an
     // unbounded tapering rod (its far cap only matters where both
     // profiles are ~0). Same profile family as ours; the sharpness knob
     // comes from our fragment — the joint region is local.
-    float luxarPartnerProfile(vec2 rel, vec3 cut, float mSign, float rEnd, float sharp) {
+    float luxarPartnerProfile(vec4 cut, vec2 rel, float mSign, float rEnd, float sharp) {
       vec2 n = cut.xy;
+      // Partner axis = my inward axis reflected across the cut plane
+      // (q = m − 2(m·n)n — exact; both cut normals are normalize(q − m)
+      // up to sign).
       vec2 qdir = vec2(mSign - 2.0 * (mSign * n.x) * n.x, -2.0 * (mSign * n.x) * n.y);
       float xp = dot(rel, qdir);
       float yp2 = max(dot(rel, rel) - xp * xp, 0.0);
-      float rp = max(rEnd + cut.z * max(xp, 0.0), 1e-4);
-      float op = max(-xp, 0.0);
+      // Radius from the SHARED VERTEX radius (rEnd, #1494) tapered by
+      // the packed gradient, FROZEN past the partner's far end; the far
+      // cap term closes the rod there (#1490).
+      float rp = max(rEnd + cut.z * clamp(xp, 0.0, cut.w), 1e-4);
+      float op = max(max(-xp, xp - cut.w), 0.0);
       float qp = (yp2 + op * op) / (rp * rp);
       float wp = 1.0 - qp;
       if (wp <= 0.0) return 0.0;
@@ -472,7 +494,14 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       // endpoint: where the two rod BODIES genuinely overlap (the inner
       // corner of a bend) both render, matching the physical union the
       // volumetric primitive integrates (and additive sums it, correctly).
-      float rPx = max(vR * invW, 1e-4);
+      // EXACT per-fragment radius: mix of the endpoint radii clamped to
+      // the segment span — a varying cannot represent this (its linear
+      // interpolation spans the cap extensions, so a short stub's drawn
+      // radius at its own endpoint drifts; the deeper root of #1494).
+      float rPx = max(
+        mix(vREnd.x, vREnd.y, clamp(x / max(vMeta.x, 1e-4), 0.0, 1.0)),
+        1e-4
+      );
       // Squared distance in the local frame — the TRUE point-to-segment
       // distance, cap term included at BOTH ends: every end is capped (a
       // free end keeps the whole disc, a cut end its half of the joint
@@ -512,8 +541,11 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
         if (sideA > -0.5) {
           float coverA = clamp(0.5 - sideA, 0.0, 1.0);
           float defA = 0.0;
-          if (vCutA2.z < 0.0) {
-            defA = max(profile - luxarPartnerProfile(vec2(x, y), vCutA2, 1.0, rPx, vSharp), 0.0);
+          if (vCutA2.w > 0.0) {
+            defA = max(
+              profile - luxarPartnerProfile(vCutA2, vec2(x, y), 1.0, vREnd.x, vSharp),
+              0.0
+            );
           }
           profile = profile * coverA + defA * (1.0 - coverA);
           if (profile <= 0.0) discard;
@@ -524,9 +556,9 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
         if (sideB > -0.5) {
           float coverB = clamp(0.5 - sideB, 0.0, 1.0);
           float defB = 0.0;
-          if (vCutB2.z < 0.0) {
+          if (vCutB2.w > 0.0) {
             defB = max(
-              profile - luxarPartnerProfile(vec2(x - vMeta.x, y), vCutB2, -1.0, rPx, vSharp),
+              profile - luxarPartnerProfile(vCutB2, vec2(x - vMeta.x, y), -1.0, vREnd.y, vSharp),
               0.0
             );
           }

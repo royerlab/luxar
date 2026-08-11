@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
 import { GAUSSIAN_EQUIVALENT_TRUNCATION } from '../../../../rendering/materials/_shared/falloff';
 import {
   CAPSULE_MIN_RADIUS_PX,
+  type CapsuleJointLeg,
+  capsuleJointCompositionError,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_SUPPORT_SIGMA,
   capsuleProfile,
@@ -62,16 +64,20 @@ describe('capsule constants', () => {
       // independently per leg — speckles), and a non-negative gradient
       // packet contributes no deficit (hard cut via the zero blend).
       expect(src).toContain('clamp(0.5 - sideA, 0.0, 1.0)');
-      expect(src).toContain('if (vCutA2.z < 0.0) {');
+      // Packet validity = a positive packed partner length.
+      expect(src).toContain('if (vCutA2.w > 0.0) {');
     }
     for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
       // Stencil reach covers the kept half-disc PLUS the partner's taper
       // deficit (the disc half the deficit rule now renders).
-      expect(src).toMatch(/ext[AB] = max\(abs\(nLoc\.y\), deficit[AB]\) \* rMax/);
+      // Full-disc reach when a packet exists (#1488): the deficit term is
+      // bounded by my own profile, so my own support bounds its support.
+      expect(src).toMatch(/ext[AB] = rMax \+ /);
       // The partner packet carries the far radius from the SAME texels,
-      // packed as a radius GRADIENT into the cut varying's third lane.
+      // packed as a radius GRADIENT + projected LENGTH in the cut varying.
       expect(src).toContain('sanitizeNonNegative(far.w, 0.0)');
       expect(src).toMatch(/cut[AB]\.z = \(rpFar[AB] - r[AB]\) \/ ql;/);
+      expect(src).toMatch(/cut[AB]\.w = ql;/);
     }
   });
 
@@ -122,6 +128,65 @@ describe('capsuleProfile (CPU reference)', () => {
         expect(val).toBeLessThanOrEqual(prev + 1e-12);
         prev = val;
       }
+    }
+  });
+});
+
+describe('joint composition — the rendered pair tracks max(mine, partner)', () => {
+  // The numeric sweep the #1487 review asked for: none of #1494 (wrong
+  // vertex radius), #1488 (reach shortfall) or #1490 (missing far cap)
+  // were visible to source-substring pins; all three blow these bounds.
+  const leg = (
+    angleDeg: number,
+    rJoint: number,
+    rFar: number,
+    length: number
+  ): CapsuleJointLeg => ({
+    dir: [Math.cos((angleDeg * Math.PI) / 180), Math.sin((angleDeg * Math.PI) / 180)],
+    rJoint,
+    rFar,
+    length,
+  });
+
+  it('congruent legs: the AA ramp costs ≤2.5% of peak and never over-brightens', () => {
+    for (const turn of [20, 60, 120]) {
+      const { minErr, maxErr } = capsuleJointCompositionError(
+        leg(180, 10, 10, 60),
+        leg(-turn, 10, 10, 60)
+      );
+      expect(minErr, `turn ${turn}° min`).toBeGreaterThan(-0.025);
+      expect(maxErr, `turn ${turn}° max`).toBeLessThan(0.005);
+    }
+  });
+
+  it('tapered own leg (the #1494 rows): bounded now that rEnd is the vertex radius', () => {
+    // Review table, θ = 60°, vertex radius 10, partner tapering 10 → 5
+    // over 30 px: shipped-before errors reached −0.478 / +0.263.
+    for (const [rFar, len] of [
+      [4, 20],
+      [4, 60],
+      [20, 20],
+      [20, 60],
+    ] as const) {
+      const { minErr, maxErr } = capsuleJointCompositionError(
+        leg(180, 10, rFar, len),
+        leg(-60, 10, 5, 30)
+      );
+      expect(minErr, `own 10→${rFar}/L${len} min`).toBeGreaterThan(-0.13);
+      expect(maxErr, `own 10→${rFar}/L${len} max`).toBeLessThan(0.06);
+    }
+  });
+
+  it('short partners (#1488/#1490): no chopped disc, no double-count', () => {
+    // Constant-width own leg isolates these two; before the fixes the
+    // chop reached −0.306 and the excess +0.859 at ql = 2 px.
+    for (const ql of [2, 4, 8, 15, 40]) {
+      const { minErr, maxErr } = capsuleJointCompositionError(
+        leg(180, 10, 10, 60),
+        leg(-60, 10, 5, ql)
+      );
+      expect(minErr, `ql ${ql} min`).toBeGreaterThan(-0.13);
+      expect(maxErr, `ql ${ql} max`).toBeLessThan(0.06);
     }
   });
 });

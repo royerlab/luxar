@@ -425,18 +425,21 @@ of the joint disc — the cap region (beyond the endpoint) is partitioned along 
 bisector, the line through the shared vertex with 2D normal
 `normalize(q̂ − m̂)` in pixel space (the partner's normal is the exact
 negation, so the two half-discs tile the disc exactly at ANY bend angle —
-no notch, no chopped miter tip, no double-bright overlap). The cut is HARD and
-spans the full joint plane (cap and body): exact tiling, zero overlap,
-zero double-count — the same domain partition the volumetric primitive
-integrates per ray. (A soft foreign-side fade was shipped briefly and
-reverted: any nonzero foreign-side contribution double-counts over the
-partner's body, which reads as bright wedges at every joint once zoomed.
-The hard cut's residual cost is a subtle brightness gradient along the
-cut at EXTREME oblique zoom, where the two legs' apparent radii genuinely
-diverge — 2D-intrinsic; only 3D resolves it.) The partner's far endpoint
-is near-plane-clipped toward the joint vertex before projecting (a
-behind-eye projection flips and would poison the cut normal), with a
-joint vertex behind the near plane keeping the perpendicular butt. The per-fragment radius interpolates LINEARLY across
+no notch, no chopped miter tip, no double-bright overlap). The cut spans the
+full joint plane (cap and body) and composes by the DEFICIT rule over a
+1 px AA ramp: on the partner's side each leg renders
+`max(mine − partner, 0)`, so the additive pair composes to
+`max(mine, partner)`. Congruent legs (the common case, and the only case
+the fill benchmarks exercise) gate to an exact zero-double-count
+partition — the same domain partition the volumetric primitive
+integrates per ray — while tapered or perspective-diverged partners get
+exactly the light a pure partition would chop (a fat vertex's disc keeps
+the half a thin neighbour cannot render; the numeric composition sweep in
+`line-capsule.test.ts` pins the three reconstruction errors of
+#1494/#1488/#1490). The partner's far endpoint is near-plane-clipped
+toward the joint vertex before projecting (a behind-eye projection flips
+and would poison the cut normal), with a joint vertex behind the near
+plane keeping the perpendicular butt. The per-fragment radius interpolates LINEARLY across
 the stencil (`vR`) — a constant-width tube's pixel radius is exactly
 linear in screen x (1/depth is perspective-linear), so this keeps
 silhouettes straight and rims soft under extreme foreshortening.

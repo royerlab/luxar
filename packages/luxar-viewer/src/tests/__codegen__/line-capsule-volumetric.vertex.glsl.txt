@@ -76,14 +76,14 @@ uniform sampler2D nodeUniform10;
 
 // varyings
 flat  out vec3 nodeVarying0;
-flat  out vec3 nodeVarying1;
-flat  out vec3 nodeVarying2;
-out float nodeVarying3;
+flat  out vec2 nodeVarying1;
+flat  out vec4 nodeVarying2;
+flat  out vec4 nodeVarying3;
 out float nodeVarying4;
 out float nodeVarying5;
-out vec3 nodeVarying6;
-out vec2 nodeVarying7;
-out float nodeVarying8;
+out float nodeVarying6;
+out vec3 nodeVarying7;
+out vec2 nodeVarying8;
 out float nodeVarying9;
 
 
@@ -169,8 +169,8 @@ vec2 nodeVar130;
 vec2 nodeVar131;
 vec2 nodeVar132;
 float nodeVar133;
-vec3 nodeVar134;
-vec3 nodeVar135;
+vec4 nodeVar134;
+vec4 nodeVar135;
 float nodeVar136;
 float nodeVar137;
 float nodeVar138;
@@ -256,11 +256,10 @@ float nodeVar217;
 float nodeVar218;
 float nodeVar219;
 float nodeVar220;
-float nodeVar221;
-vec4 nodeVar222;
-float nodeVar223;
-vec2 nodeVar224;
-vec4 nodeVar225;
+vec4 nodeVar221;
+float nodeVar222;
+vec2 nodeVar223;
+vec4 nodeVar224;
 
 // codes
 
@@ -275,15 +274,15 @@ void main() {
 
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform1 );
 	nodeVarying9 = 1.0;
-	nodeVarying7 = vec2( 0.0, 0.0 );
-	nodeVarying8 = 1.0;
+	nodeVarying8 = vec2( 0.0, 0.0 );
+	nodeVarying1 = vec2( 1.0, 1.0 );
 	nodeVarying0 = vec3( 1.0, 0.0, 0.0 );
-	nodeVarying5 = 0.5;
-	nodeVarying1 = vec3( -1.0, 0.0, 0.0 );
-	nodeVarying2 = vec3( 1.0, 0.0, 0.0 );
-	nodeVarying3 = 1.0;
-	nodeVarying6 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying6 = 0.5;
+	nodeVarying2 = vec4( -1.0, 0.0, 0.0, 0.0 );
+	nodeVarying3 = vec4( 1.0, 0.0, 0.0, 0.0 );
 	nodeVarying4 = 1.0;
+	nodeVarying7 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying5 = 1.0;
 	nodeVar60 = ( ( ( int( aSortedIndex ) * ( 1 - int( nodeUniform9 ) ) ) + ( int( aSortedIndexB ) * int( nodeUniform9 ) ) ) * 6 );
 	nodeVar61 = int( textureSize( nodeUniform10, 0 ).x );
 	nodeVar62 = ( nodeVar60 % nodeVar61 );
@@ -488,8 +487,8 @@ void main() {
 	nodeVar131 = nodeVar130;
 	nodeVar132 = vec2( ( - nodeVar131.y ), nodeVar131.x );
 	nodeVar133 = ( max( nodeVar121, nodeVar122 ) + 0.5 );
-	nodeVar134 = vec3( -1.0, 0.0, 0.0 );
-	nodeVar135 = vec3( 1.0, 0.0, 0.0 );
+	nodeVar134 = vec4( -1.0, 0.0, 0.0, 0.0 );
+	nodeVar135 = vec4( 1.0, 0.0, 0.0, 0.0 );
 	nodeVar136 = nodeVar133;
 	nodeVar137 = nodeVar133;
 	nodeVar138 = nodeVar124;
@@ -605,7 +604,7 @@ void main() {
 
 					if ( ( nodeVar172.x < -0.001 ) ) {
 
-						nodeVar134 = vec3( nodeVar172, 0.0 );
+						nodeVar134 = vec4( nodeVar172, 0.0, 0.0 );
 
 						if ( ( nodeVar133 > 4.0 ) ) {
 
@@ -615,11 +614,17 @@ void main() {
 							if ( ( nodeVar174 > 0.02 ) ) {
 
 								nodeVar134.z = ( ( nodeVar173 - nodeVar121 ) / nodeVar167 );
+								nodeVar134.w = nodeVar167;
+								nodeVar136 = ( nodeVar133 + 0.5 );
+
+
+							} else {
+
+								nodeVar136 = ( ( abs( nodeVar172.y ) * nodeVar133 ) + 0.5 );
 
 
 							}
 
-							nodeVar136 = ( ( max( abs( nodeVar172.y ), nodeVar174 ) * nodeVar133 ) + 0.5 );
 
 
 						} else {
@@ -764,7 +769,7 @@ void main() {
 
 					if ( ( nodeVar205.x > 0.001 ) ) {
 
-						nodeVar135 = vec3( nodeVar205, 0.0 );
+						nodeVar135 = vec4( nodeVar205, 0.0, 0.0 );
 
 						if ( ( nodeVar133 > 4.0 ) ) {
 
@@ -774,11 +779,17 @@ void main() {
 							if ( ( nodeVar207 > 0.02 ) ) {
 
 								nodeVar135.z = ( ( nodeVar206 - nodeVar122 ) / nodeVar200 );
+								nodeVar135.w = nodeVar200;
+								nodeVar137 = ( nodeVar133 + 0.5 );
+
+
+							} else {
+
+								nodeVar137 = ( ( abs( nodeVar205.y ) * nodeVar133 ) + 0.5 );
 
 
 							}
 
-							nodeVar137 = ( ( max( abs( nodeVar205.y ), nodeVar207 ) * nodeVar133 ) + 0.5 );
 
 
 						} else {
@@ -841,17 +852,29 @@ void main() {
 
 	nodeVar213 = nodeVar212;
 	nodeVar214 = mix( nodeVar103, nodeVar104, nodeVar213 );
-	nodeVar215 = mix( nodeVar121, nodeVar122, nodeVar213 );
-	nodeVar216 = mix( nodeVar119, nodeVar120, nodeVar213 );
-	nodeVar217 = min( ( nodeVar216 / 1.5 ), 1.0 );
-	nodeVar218 = 1.0;
+	nodeVar215 = mix( nodeVar119, nodeVar120, nodeVar213 );
+	nodeVar216 = min( ( nodeVar215 / 1.5 ), 1.0 );
+	nodeVar217 = 1.0;
 	nodeVarying0 = vec3( nodeVar128, nodeVar138, nodeVar139 );
-	nodeVarying1 = nodeVar134;
-	nodeVarying2 = nodeVar135;
+	nodeVarying1 = vec2( nodeVar121, nodeVar122 );
+	nodeVarying2 = nodeVar134;
+	nodeVarying3 = nodeVar135;
 
 	if ( nodeVar98 ) {
 
-		nodeVar219 = 0.0;
+		nodeVar218 = 0.0;
+
+	} else {
+
+		nodeVar218 = 1.0;
+
+	}
+
+	nodeVarying4 = ( ( nodeVar217 * nodeVar216 ) * nodeVar218 );
+
+	if ( ( ( nodeVar93.z < 1e30 ) && ( nodeVar93.z > -1e30 ) ) ) {
+
+		nodeVar219 = min( max( nodeVar93.z, 0.0 ), 1.0 );
 
 	} else {
 
@@ -859,11 +882,10 @@ void main() {
 
 	}
 
-	nodeVarying3 = ( ( nodeVar218 * nodeVar217 ) * nodeVar219 );
 
-	if ( ( ( nodeVar93.z < 1e30 ) && ( nodeVar93.z > -1e30 ) ) ) {
+	if ( ( ( nodeVar93.w < 1e30 ) && ( nodeVar93.w > -1e30 ) ) ) {
 
-		nodeVar220 = min( max( nodeVar93.z, 0.0 ), 1.0 );
+		nodeVar220 = min( max( nodeVar93.w, 0.0 ), 1.0 );
 
 	} else {
 
@@ -871,38 +893,26 @@ void main() {
 
 	}
 
-
-	if ( ( ( nodeVar93.w < 1e30 ) && ( nodeVar93.w > -1e30 ) ) ) {
-
-		nodeVar221 = min( max( nodeVar93.w, 0.0 ), 1.0 );
-
-	} else {
-
-		nodeVar221 = 1.0;
-
-	}
-
-	nodeVarying4 = mix( nodeVar220, nodeVar221, nodeVar214 );
-	nodeVarying5 = mix( nodeVar110, nodeVar112, nodeVar214 );
-	nodeVarying6 = mix( nodeVar78.xyz, nodeVar83.xyz, nodeVar214 );
-	nodeVar222 = mix( nodeVar113, nodeVar114, nodeVar213 );
-	nodeVar223 = max( nodeVar222.w, 0.000001 );
-	nodeVarying7 = ( vec2( nodeVar209, nodeVar210 ) * vec2( nodeVar223 ) );
-	nodeVarying8 = ( nodeVar215 * nodeVar223 );
-	nodeVarying9 = nodeVar223;
-	nodeVar224 = ( ( ( nodeVar211 / nodeUniform24 ) * vec2( 2.0 ) ) - vec2( 1.0 ) );
-	nodeVar225 = vec4( 0.0, 0.0, -2.0, 1.0 );
+	nodeVarying5 = mix( nodeVar219, nodeVar220, nodeVar214 );
+	nodeVarying6 = mix( nodeVar110, nodeVar112, nodeVar214 );
+	nodeVarying7 = mix( nodeVar78.xyz, nodeVar83.xyz, nodeVar214 );
+	nodeVar221 = mix( nodeVar113, nodeVar114, nodeVar213 );
+	nodeVar222 = max( nodeVar221.w, 0.000001 );
+	nodeVarying8 = ( vec2( nodeVar209, nodeVar210 ) * vec2( nodeVar222 ) );
+	nodeVarying9 = nodeVar222;
+	nodeVar223 = ( ( ( nodeVar211 / nodeUniform24 ) * vec2( 2.0 ) ) - vec2( 1.0 ) );
+	nodeVar224 = vec4( 0.0, 0.0, -2.0, 1.0 );
 
 	if ( (!nodeVar98) ) {
 
-		nodeVar225 = vec4( ( nodeVar224 * vec2( nodeVar223 ) ), nodeVar222.z, nodeVar223 );
+		nodeVar224 = vec4( ( nodeVar223 * vec2( nodeVar222 ) ), nodeVar221.z, nodeVar222 );
 
 
 	}
 
 
 	// result
-	gl_Position = nodeVar225;
+	gl_Position = nodeVar224;
 
 	gl_PointSize = 1.0;
 
