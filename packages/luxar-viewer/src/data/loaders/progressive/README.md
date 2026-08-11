@@ -40,11 +40,11 @@ Structurally-generic concatenation over any typed array `A`
 (Float32Array, Uint8/16/32Array, Float16Array, …). The output dtype is
 preserved by constructing from the first part's array.
 
-| Symbol                                               | Description                                                                                                                  |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `interface ConcatTypedArray`                         | Minimal structural shape (`length`, `set(array, offset?)`) common to every typed array being concatenated.                   |
-| `concatRequiredField(parts, get, countOf, perItem?)` | Concatenate a **required** field. Allocates `sum(countOf) * perItem` elements and copies each part at a running offset.      |
-| `concatOptionalField(parts, get, countOf, perItem?)` | Concatenate an **optional** field with **all-or-nothing** policy: returns `undefined` unless _every_ part carries the field. |
+| Symbol                                               | Description                                                                                                                                                                       |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `interface ConcatTypedArray`                         | Minimal structural shape (`length`, `set(array, offset?)`) common to every typed array being concatenated.                                                                        |
+| `concatRequiredField(parts, get, countOf, perItem?)` | Concatenate a **required** field. Allocates `sum(countOf) * perItem` elements and copies each part at a running offset.                                                           |
+| `concatOptionalField(parts, get, countOf, perItem?)` | Concatenate an **optional** field with **all-or-nothing** policy: returns `undefined` unless _every_ part carries the field — except that **zero-row parts abstain** (see below). |
 
 `get` extracts the field from a part, `countOf` returns a part's element
 count (rows), and `perItem` is the components per element (e.g. `3` for
@@ -60,6 +60,30 @@ const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
 // Optional: colours only survive if every LOD part has them.
 const colors = concatOptionalField(parts, (p) => p.colors as ColorArray, count, 3);
 ```
+
+**Zero-row parts abstain.** A part with `countOf(p) === 0` contributes no rows,
+so it gets no vote on which optional attributes the merged result carries: it is
+excluded from the presence gate, the copy, and the dtype comparison. This is
+load-bearing because the canonical empty payloads **omit** their optional fields
+rather than emitting zero-length arrays — so without the rule, one slice-culled
+level of an additive ladder stripped those fields from every _other_ level too
+and the node adapters substituted constant fills (issue #1456). What each
+geometry stood to lose differs:
+
+| Geometry | Fields routed through `concatOptionalField` | Lost without the rule                                            |
+| -------- | ------------------------------------------- | ---------------------------------------------------------------- |
+| Points   | `colors`, `radii`, `sharpness`, `scalars`   | all four → white, radius 0.5, sharpness 0.5, colormap suppressed |
+| Lines    | `scalars` only                              | colormap suppressed (`hasScalars` clears)                        |
+| GSplats  | none                                        | nothing — unaffected                                             |
+
+Lines has no `radii` field at all, and its `colors` / `sharpness` are
+present-but-`null` on the empty payload and merge via the bespoke find-first +
+fill-for-missing path in `concatenateLinesData`, not this helper. GSplats'
+empty payload carries zero-length `Float32Array`s for its required fields and
+takes the same fill-for-missing path for colours.
+
+When _every_ part is zero-row the gate falls back to all the parts, so a wholly
+empty ladder yields exactly what it always did.
 
 ### `constants.ts`
 
@@ -97,6 +121,19 @@ for (let level = startLevel; level < nLods; level++) {
 This is what keeps timelapse playback responsive (coarse-but-fast first
 loop) while the background prefetch fills the SliceCache toward full
 ladders so later loops are higher-quality — still fast.
+
+**An empty level never ends the loop.** These loaders exist only for
+_additive_ ladders, whose levels are disjoint increments of one permutation
+(`additive_0` is a small subset — a few thousand elements under
+`-b stream:C` / `--target-ms`), not coarse-to-fine resamplings of the same
+elements. A hidden-dimension slice that no LOD-0 element lands on says
+nothing whatever about levels 1..n-1, which may hold plenty of geometry
+right there. Each loader therefore streams its whole ladder, and a slice is
+known to be empty only once every level has been looked at. (Breaking out on
+an empty LOD 0 — which all three loaders used to do — left such a slice
+permanently blank: issue #1456.) Nothing needs to latch that verdict: a fully
+streamed ladder already reports `hasMoreLODs === false` on its level count, and
+the prefetch and cache store both self-guard on the same count.
 
 ## Consumers
 

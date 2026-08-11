@@ -25,6 +25,112 @@ if TYPE_CHECKING:
     from ..group import Group
 
 
+def _reject_before_wrapper(
+    group: "Group",
+    *,
+    name: str,
+    result: Any,  # GSplatData
+    dim_order: Optional[List[str]],
+    fill: Optional[Dict[str, float]],
+    fill_sigma: Optional[Dict[str, float]],
+    colormap: Any,
+) -> None:
+    """Refuse what is judgeable up front BEFORE the ``kind=lod`` group exists (#1446).
+
+    :func:`add_gsplats_as_lod_group_impl` calls ``add_lod_group`` first and writes
+    children afterwards, so without this the refusal came from inside ``child_0``
+    — blaming an internal child the caller never wrote and leaving ``name`` in the
+    store as a childless ``kind=lod`` group, where the same data with
+    ``lod_group=False`` writes nothing at all. The other two dispatch targets need
+    no such gate: the flat path is ``Group.add_gsplats``, which checks inside its
+    own funnel, and :func:`add_gsplats_multi_lod_impl` validates every sub-LOD
+    while building them, before its single write.
+
+    The ORDER inside the gate copies the flat path's statement order exactly,
+    because that order is what decides which fault a call tripping more than one
+    of them is told about: the rank raise first (the ``(N, D)`` check at the top
+    of ``add_gsplats_impl``), then the ``dim_order`` spec — which the flat path
+    runs while APPLYING the transform, i.e. above everything else — then the
+    colours/colormap exclusion, and the width last. Getting that wrong is the
+    recurring bug here: with the width first the split path answered ``Dimension
+    mismatch …`` where the flat path answered ``Cannot specify both …``; with the
+    colours gate above the ``dim_order`` spec it answered ``Cannot specify both
+    …`` where the flat path answered ``dim_order has 3 names but data has 4
+    columns``. The gate also closes the same stranding class for a
+    colours+colormap call whose width is perfectly fine, which used to reach
+    ``child_0`` with the wrapper on disk.
+
+    WHAT else is checkable up front depends on ``dim_order``. Without one, the
+    incoming column count must already equal the scene's, which is exactly
+    ``validate_dimension_count`` (rank guard included). With one, the
+    post-transform width is ``scene_ndim`` by construction (``apply_dim_order``
+    allocates it that way), so the count check can never fire downstream — what
+    fires there instead is one of the SPEC refusals: ``dim_order``'s
+    length-vs-columns, duplicate names, a name absent from the scene, a bad
+    ``fill`` key (all in ``validate_dim_order_spec``) or a bad ``fill_sigma`` key
+    (``validate_fill_sigma_keys``). All of them are judged from the spec plus the
+    column count alone, so all of them are checkable here. Everything left
+    downstream genuinely needs the transformed per-level arrays.
+
+    Called from INSIDE the multi-substitutive branch, below the
+    ``coverage_fraction`` refusal, so that structural-kwarg fault outranks
+    everything here — the same shape as the ordering inside the gate itself. The
+    cost is that an invalid call still pays for the substitutive resolve above;
+    correct-precedence-first is the deliberate trade.
+
+    ``TypeError`` is caught alongside ``ValueError`` because the spec validators
+    can raise it on a non-sequence ``dim_order`` (``len()`` of an int), and the
+    leaf adders' funnel converts both to a ``ValueError`` — a split path that
+    leaked the raw ``TypeError`` would diverge in exception TYPE, which is
+    precisely what the parity tests compare. The ``Could not add gsplats
+    '<name>': `` prefix is applied by hand because this module has no try/except
+    funnel of its own; it is byte-identical to what ``add_gsplats_impl``
+    produces, which the #1446 tests pin against a direct ``add_gsplats`` call.
+    """
+    from ...scene.dim_order import validate_dim_order_spec
+    from ...scene.validation import validate_array_rank
+    from ..dim_order import validate_fill_sigma_keys
+
+    centers = result.centers
+    try:
+        # The flat path's first statement, and it also makes ``shape[1]`` below
+        # safe: ``AdditiveSubLOD`` accepts 1-D centers, so a bare ``IndexError``
+        # would otherwise escape this funnel.
+        validate_array_rank(centers, "centers")
+        if dim_order is not None:
+            # Same order as the flat path, which applies dim_order to the centers
+            # (spec + fill) before it embeds the Cholesky factors (fill_sigma) —
+            # and does both BEFORE it reaches its colours/colormap gate.
+            scene = group._find_scene()
+            validate_dim_order_spec(scene, dim_order, centers.shape[1], fill)
+            validate_fill_sigma_keys(scene, dim_order, fill_sigma)
+        # Asked of EVERY level's ladder, not just ``result.colors`` (which is the
+        # FINEST level's — what the flat path would forward as ``colors=``): each
+        # child is written through an adder that refuses colours+colormap in its
+        # own right, so a pyramid whose finest level is uncoloured and whose
+        # coarse level is not would pass a finest-only gate and then raise from
+        # inside that coarse child, with the wrapper already on disk — the exact
+        # stranding this function exists to prevent. Same ``any`` question
+        # ``add_gsplats_multi_lod_impl`` asks of its sub-LODs.
+        has_colors = any(
+            sub.colors is not None
+            for level in result.substitutive_levels
+            for sub in level.additive_sublods
+        )
+        if has_colors and colormap is not None:
+            raise ValueError(
+                "Cannot specify both 'colors' and 'colormap'. Use one or the other."
+            )
+        if dim_order is None:
+            # Under a ``dim_order`` there is nothing left to count: the
+            # post-transform width is ``scene_ndim`` by construction (see above).
+            group._find_scene()._validate_dimension_count(
+                centers, name, data_type="centers"
+            )
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Could not add gsplats '{name}': {e}") from e
+
+
 def add_gsplats_from_data_impl(
     group: "Group",
     *,
@@ -82,6 +188,15 @@ def add_gsplats_from_data_impl(
                 "per-child (or set via lod_group=dict(coverage_fractions="
                 "[...]))."
             )
+        _reject_before_wrapper(
+            group,
+            name=name,
+            result=result,
+            dim_order=dim_order,
+            fill=fill,
+            fill_sigma=fill_sigma,
+            colormap=attrs.get("colormap"),
+        )
         return add_gsplats_as_lod_group_impl(
             group,
             name=name,
