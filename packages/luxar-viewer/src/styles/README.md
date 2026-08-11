@@ -60,6 +60,12 @@ Tailwind-like utility classes, all prefixed with `luxar-`:
 - **Spacing**: `luxar-gap-2`, `luxar-p-4`, `luxar-m-2`
 - **Display**: `luxar-hidden`, `luxar-block`, `luxar-inline-flex`
 
+Plus two shared **panel recipes** (not atomic utilities — add them alongside a
+panel's own BEM class, and do not restate them per-panel):
+
+- `luxar-panel-header` — the title row: flex, standard rhythm, hairline rule
+- `luxar-panel-close` — the 28x28 close affordance with the stroke SVG contract
+
 ## Component Styles
 
 Each UI component has a dedicated CSS file:
