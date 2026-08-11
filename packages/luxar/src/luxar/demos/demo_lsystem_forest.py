@@ -49,7 +49,7 @@ genuine re-derivation of every tree at an increasing iteration count plus
 maturity-scaled length/width — development IS successive derivation steps.
 Saplings are short and thin, not masked-out subsets of the adult. Because
 segment counts grow roughly geometrically per iteration, the sum over all
-six stages costs only ~1.5x the final stage alone.
+six stages costs only ~2.3x the final stage alone.
 
 Usage:
     luxar demo run forest [-- --trees=800] [-- --iterations=5]
@@ -129,7 +129,7 @@ STACKED_AXIS_SIGMA = 1e-6
 
 #: Bump when the generation logic changes in a way that must invalidate
 #: cached bundles (also passed as `version=` to :func:`cache_computed`).
-SCENE_VERSION = 5
+SCENE_VERSION = 7
 
 
 def _maturity_length_scale(m: float) -> float:
@@ -180,6 +180,22 @@ def _rotate_vec(v: Vec3, k: Vec3, c: float, s: float) -> Vec3:
     )
 
 
+def _rotate_frame_vec(v: Vec3, k: Vec3, c: float, s: float) -> Vec3:
+    """:func:`_rotate_vec`, then re-normalize — for turtle FRAME vectors.
+
+    Rodrigues assumes a unit axis, and the axis here is itself a frame
+    vector. Without per-step normalization the ~1e-16 float error per
+    rotation compounds GEOMETRICALLY (a slightly short axis shrinks the
+    other two vectors, which later serve as slightly shorter axes...):
+    measured, a random command string collapses the frame to zero within
+    ~250 rotations. Pinning the norm after every step keeps the error
+    additive and negligible for any realistic derivation.
+    """
+    x, y, z = _rotate_vec(v, k, c, s)
+    inv = 1.0 / math.sqrt(x * x + y * y + z * z)
+    return (x * inv, y * inv, z * inv)
+
+
 def _bend_toward(frame: list[Vec3], tropism: Vec3, strength: float) -> None:
     """Bend the turtle frame toward ``tropism`` (ABOP §1.7), in place.
 
@@ -199,7 +215,7 @@ def _bend_toward(frame: list[Vec3], tropism: Vec3, strength: float) -> None:
     angle = strength * norm
     c, s = math.cos(angle), math.sin(angle)
     for j in range(3):
-        frame[j] = _rotate_vec(frame[j], axis, c, s)
+        frame[j] = _rotate_frame_vec(frame[j], axis, c, s)
 
 
 @dataclass
@@ -308,7 +324,7 @@ class LSystem:
                 c, s = math.cos(angle), math.sin(angle)
                 for j in range(3):
                     if j != axis_index:
-                        frame[j] = _rotate_vec(frame[j], axis, c, s)
+                        frame[j] = _rotate_frame_vec(frame[j], axis, c, s)
             elif char == "[":
                 stack.append(
                     (pos, (frame[0], frame[1], frame[2]), depth, vertex_index, length)
@@ -378,16 +394,13 @@ def vary_lsystem(
 RGB = tuple[float, float, float]
 
 
-def _linear(color: RGB) -> RGB:
-    """sRGB-intent -> linear-light. Luxar stores LINEAR colours (the
-    classical-splat importers convert sRGB DC colours the same way); a
-    palette authored as perceived-sRGB values and written raw comes out
-    ~1/2.2-power brighter — pastel bark, washed-out ground."""
-    return (color[0] ** 2.2, color[1] ** 2.2, color[2] ** 2.2)
-
-
 def _linear_rgb(colors: np.ndarray) -> np.ndarray:
-    """Vectorised :func:`_linear` for (N, 3) arrays."""
+    """sRGB-intent -> linear-light for (N, 3) arrays. Luxar stores LINEAR
+    colours (the classical-splat importers convert sRGB DC colours the same
+    way); a palette authored as perceived-sRGB values and written raw comes
+    out ~1/2.2-power brighter — pastel bark, washed-out ground. Applied
+    exactly once per colour path, as the LAST step before the array lands
+    in the bundle."""
     return np.clip(colors, 0.0, 1.0) ** 2.2
 
 
@@ -590,14 +603,17 @@ SPECIES: tuple[Species, ...] = (
                 "B": [(0.7, "F[^F][&F]FB"), (0.3, "FF[&F]B")],
             },
             angle=np.radians(24),
-            length=0.45,
+            # Stature: without the longer internodes a "conifer" tops out
+            # around 2.4 m while the maples reach 10 m — the ridge species
+            # read as shrubs and the eco-zone silhouette collapses.
+            length=0.58,
             width=0.14,
             width_decay=0.6,
             length_decay=0.82,
             randomness=0.18,
             tropism=(0.0, 0.0, -1.0),
             tropism_strength=0.06,
-            leader_scale=1.5,
+            leader_scale=1.7,
         ),
         weight=0.17,
         bark=(0.28, 0.18, 0.11),
@@ -1731,6 +1747,9 @@ def _author_scene(scene: Any, bundle: dict[str, Any]) -> None:
                 for season in range(4)
             ]
         ).astype(np.uint32)
+        # The one node WITHOUT hover labels, deliberately: the ground is
+        # under the cursor almost everywhere, and a terrain tooltip would
+        # fire constantly and compete with the per-tree labels.
         scene.add_mesh(
             "Terrain",
             vertices4,

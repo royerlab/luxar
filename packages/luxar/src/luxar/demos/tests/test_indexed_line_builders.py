@@ -213,10 +213,17 @@ def test_lsystem_stochastic_expansion_is_seeded_and_normalized() -> None:
 
 
 def test_lsystem_tropism_bends_branches_not_the_trunk() -> None:
-    """Tropism applies only at branching depth >= 1: trunks stay straight."""
-    straight = forest.LSystem(axiom="FFFF[+FFFF]", rules={}, randomness=0.0)
+    """Tropism applies only at branching depth >= 1: trunks stay straight.
+
+    The trunk is TILTED (leading ``+``) on purpose: a vertical trunk is
+    antiparallel to the gravity tropism, where the bend is a no-op anyway
+    (``H x T = 0``), so a vertical-trunk assertion would stay green even
+    with the depth gate deleted.
+    """
+    axiom = "+FFFF[+FFFF]"
+    straight = forest.LSystem(axiom=axiom, rules={}, randomness=0.0)
     drooped = forest.LSystem(
-        axiom="FFFF[+FFFF]",
+        axiom=axiom,
         rules={},
         randomness=0.0,
         tropism=(0.0, 0.0, -1.0),
@@ -234,6 +241,54 @@ def test_lsystem_tropism_bends_branches_not_the_trunk() -> None:
     tip_straight = v_straight[e_straight[d_drooped >= 1][-1, 1]]
     tip_drooped = v_drooped[e_drooped[d_drooped >= 1][-1, 1]]
     assert tip_drooped[2] < tip_straight[2]
+
+
+def test_lsystem_frame_survives_long_derivations() -> None:
+    """Regression: frame vectors must stay unit through long command paths.
+
+    Rodrigues rotation about a frame vector assumes a UNIT axis; without
+    per-step renormalization the ~1e-16 float error per rotation compounds
+    geometrically and the frame collapses to zero within ~250 rotations
+    (measured), shrinking every drawn segment along the way.
+    """
+    lsystem = forest.LSystem(
+        axiom="F" + "+F-F^F&F/F\\F" * 200,  # 1,200 rotations along ONE path
+        rules={},
+        randomness=0.3,
+    )
+    vertices, edges, _, _ = forest.derive_tree(lsystem, iterations=0, seed=5)
+    segments = (
+        vertices[edges[:, 1].astype(np.int64)] - vertices[edges[:, 0].astype(np.int64)]
+    )
+    lengths = np.linalg.norm(segments, axis=1)
+    assert float(lengths.min()) > 0.999, "heading norm decayed along the walk"
+    assert float(lengths.max()) < 1.001
+
+
+def test_forest_foliage_cholesky_packs_the_5d_tril_layout() -> None:
+    """The hand-packed 15-wide factors reproduce the intended covariance."""
+    dirs = np.array([[0.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
+    sigma_along = np.array([0.5, 0.4])
+    sigma_perp = np.array([0.3, 0.2])
+    packed = forest._pack_spatial_cholesky_5d(
+        forest._foliage_cholesky(dirs, sigma_along, sigma_perp)
+    )
+    assert packed.shape == (2, 15)
+    for k in range(2):
+        lower = np.zeros((5, 5))
+        lower[np.tril_indices(5)] = packed[k]
+        cov = lower @ lower.T
+        # Stacked (season, growth) axes: near-zero isotropic, no cross terms.
+        np.testing.assert_allclose(
+            np.diag(cov)[:2], forest.STACKED_AXIS_SIGMA**2, rtol=1e-5
+        )
+        assert np.all(cov[:2, 2:] == 0.0)
+        # Spatial block: principal sigmas are exactly (along, perp, perp).
+        eigenvalues = np.linalg.eigvalsh(cov[2:, 2:])
+        np.testing.assert_allclose(
+            np.sqrt(eigenvalues.max()), sigma_along[k], atol=1e-6
+        )
+        np.testing.assert_allclose(np.sqrt(eigenvalues.min()), sigma_perp[k], atol=1e-6)
 
 
 class _RecordingScene:
