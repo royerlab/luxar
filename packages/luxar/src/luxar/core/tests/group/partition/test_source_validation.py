@@ -29,7 +29,7 @@ writes nothing at all. The LOD half of that gate is in the lod/ sibling.
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 import numpy as np
 import pytest
@@ -38,12 +38,16 @@ import zarr
 from luxar.io.reader import LuxarScene
 
 from ..conftest import (
+    LABEL_KWARGS,
+    LABELS,
+    N_LABELLED,
     assert_same_refusal,
     assert_uniform,
     bad_ndim_positions,
     cholesky_rows,
     cholesky_rows_nd,
     count_range_warnings,
+    finalized_group_keys,
     open_ranged_scene,
     open_scene,
     random_positions,
@@ -762,13 +766,18 @@ class TestPartitionRangeWarningsAreNotMultipliedByTheHoist:
         assert count_range_warnings(records) == 3 * len(parts)
 
 
-def _nested_partition_tree(ndim: int) -> Any:
-    """A ``kind=partition`` root of two leaves — deliberately NOT matrix-shaped.
+def _nested_partition_tree(ndim: int, counts: Sequence[int] = (8, 6)) -> Any:
+    """A ``kind=partition`` root of ``counts`` leaves — deliberately NOT matrix-shaped.
 
     ``add_gsplats_from_file`` sends every MATRIX-shaped tree (a bare leaf, an
     additive ladder, or a ``kind=lod`` of leaves) down
     ``add_gsplats_from_data_impl``, so only a genuinely nested tree like this one
     reaches ``graft_gsplat_node`` — which is the door that used to strand.
+
+    ``counts`` is parametrized for the #1471 labels suite below, which needs a
+    part pair whose sizes COLLIDE with the label count (the silent-mis-write
+    case) and a ONE-part partition (which must keep labelling normally). The
+    default reproduces the original two-leaf ``(8, 6)`` shape exactly.
     """
     from luxar.gsplats.gsplat_data import AdditiveSubLOD
     from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
@@ -784,7 +793,10 @@ def _nested_partition_tree(ndim: int) -> Any:
             ]
         )
 
-    return GSplatPartition(children=[leaf(8, 91), leaf(6, 92)], max_elements=8)
+    return GSplatPartition(
+        children=[leaf(n, 91 + i) for i, n in enumerate(counts)],
+        max_elements=int(max(counts)),
+    )
 
 
 class TestGraftedFileDimensionCount:
@@ -847,3 +859,323 @@ class TestGraftedFileDimensionCount:
         store = zarr.open_group(path, mode="r")
         assert store["g"].attrs.get("kind") == "partition"
         assert len(list(store["g"].group_keys())) == 2
+
+
+# ---------------------------------------------------------------------------
+# labels / image_labels on a GRAFTED subtree (#1471)
+# ---------------------------------------------------------------------------
+#
+# The graft half of the #1471 gate; its ``lod_group=`` half is in the lod/
+# sibling, which is also where the shared reasoning lives. It belongs here for
+# the same reason ``TestGraftedFileDimensionCount`` above does: the shape that
+# reaches ``graft_gsplat_node`` at all is a non-matrix-shaped one, i.e. a
+# ``kind=partition``, and it reuses this module's ``_nested_partition_tree``.
+
+
+def _graft(scene: Any, **kwargs: Any) -> Any:
+    from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+
+    return graft_gsplat_node(scene, **kwargs)
+
+
+class TestGraftedSubtreeRefusesLabels:
+    """A multi-leaf graft cannot carry per-element labels either (#1471).
+
+    ``graft_gsplat_node`` builds its wrappers by calling ``add_lod_group`` /
+    ``add_partition_group`` DIRECTLY, so it never meets the ``from_data`` gate —
+    and it is the door for every shape that gate cannot see (``gsplat lod
+    --recipe tiles|overview|adaptive``, ``gsplat partition``, a ``batch-fit
+    merge`` kind=partition). Measured pre-fix, BOTH failure modes:
+
+    * mismatched — ``Could not add gsplats 'part_0': labels: Labels length (8)
+      must match element count (5)``, with ``g`` on disk as a childless
+      ``kind=partition`` that survives ``finalize()``;
+    * SILENT — a list whose length happens to equal a part's own count raised
+      nothing at all and was written onto EVERY part, identical lists,
+      ``has_labels: True`` on both. Worse than the crash, and ``refusal()`` is
+      what catches it (the call SUCCEEDED, so the store assertion never ran).
+    """
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    @pytest.mark.parametrize("counts", [(8, 6), (N_LABELLED, N_LABELLED)])
+    def test_a_multi_part_graft_is_refused_before_the_wrapper_exists(
+        self,
+        tmp_path: Any,
+        channel: str,
+        kwargs: Dict[str, Any],
+        _attr: str,
+        counts: Sequence[int],
+    ) -> None:
+        tag = "x".join(str(c) for c in counts)
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_{channel}_{tag}.luxar.zarr"
+        )
+
+        split = refusal(
+            lambda: _graft(
+                scene, name="g", node=_nested_partition_tree(3, counts), **kwargs
+            )
+        )
+
+        assert str(split).startswith("Could not add gsplats 'g': ")
+        assert "part_0" not in str(split)
+        assert f"{channel} is not supported on a grafted multi-node" in str(split)
+        # The remedy half, pinned as tightly as the structure half: the two doors'
+        # constants exist so their wording cannot drift, and asserting only the
+        # structure lets a swap between them pass.
+        assert "gsplat flatten" in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    def test_a_multi_leaf_lod_graft_is_refused_too(self, tmp_path: Any) -> None:
+        """The other container kind, refused by the same leaf-count statement."""
+        from luxar.gsplats.tree import GSplatLodGroup
+
+        compiler, scene, _ = open_scene(tmp_path, "graft_lod_labels.luxar.zarr")
+        node = GSplatLodGroup(children=list(_nested_partition_tree(3).children))
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, labels=LABELS))
+
+        assert "labels is not supported on a grafted multi-node" in str(split)
+        assert "g" not in compiler.store
+
+
+def _laddered_leaf(n_per_sublod: int = 4, n_sublods: int = 2) -> Any:
+    """One leaf carrying an ADDITIVE LADDER — what ``gsplat lod`` writes.
+
+    (A plain ``gsplat fit`` writes a FLAT leaf: its ``--recipe`` defaults to
+    None. The ladder arrives with ``lod``, on every recipe, unless
+    ``--no-additive``.)
+
+    ``_nested_partition_tree``'s leaves are single-sub-LOD on purpose (the #1446
+    cases they were built for care only about column count), so the laddered
+    variant is stated here, where the difference is the point.
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.tree import GSplatLeaf
+
+    return GSplatLeaf(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=random_positions(n_per_sublod, seed=95 + i),
+                amplitudes=np.ones(n_per_sublod, dtype=np.float32),
+                cholesky_factors=cholesky_rows_nd(n_per_sublod, 3),
+            )
+            for i in range(n_sublods)
+        ]
+    )
+
+
+class TestALadderedLeafIsRefusedForItsOwnReason:
+    """One leaf is not enough — it must also be FLAT (#1471).
+
+    The gate's contract is "nothing is written when the call is refused", and a
+    one-leaf exemption breaks it for a LADDERED leaf: the write goes to
+    ``write_gsplat_leaf_subtree``, which has no labels channel at all, so the
+    refusal used to arrive from inside ``part_0`` with the one-part wrapper
+    already on disk (measured: ``Could not add gsplats 'part_0': Unknown node
+    attribute 'labels'``, ``g`` a childless ``kind=partition`` surviving
+    ``finalize()``). Not a corner case — ``--recipe tiles`` carries a stream
+    ladder by DEFAULT, so a one-part tiles file plus ``labels=`` lands here.
+
+    The message is deliberately NOT the shared wrapper template: there is one
+    leaf holding every splat, so its "no per-element correspondence, cannot be
+    sliced" argument would read as nonsense. The fault is that the writer has
+    nowhere to put them.
+    """
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_a_one_part_partition_of_a_laddered_leaf_is_refused(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        from luxar.gsplats.tree import GSplatPartition
+
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_ladder_{channel}.luxar.zarr"
+        )
+        node = GSplatPartition(children=[_laddered_leaf()], max_elements=8)
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, **kwargs))
+
+        assert str(split).startswith("Could not add gsplats 'g': ")
+        assert "part_0" not in str(split)
+        assert f"{channel} is not supported on a gsplats additive ladder" in str(split)
+        assert "no labels channel" in str(split)
+        # The wrapper template's argument must NOT be borrowed here: there is one
+        # leaf holding every splat, so nothing is being sliced or mis-paired.
+        assert "per-element correspondence" not in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_a_bare_laddered_leaf_graft_gets_the_same_answer(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        """Reachable only by calling the graft directly, and its answer CHANGED.
+
+        ``add_gsplats_from_file`` never sends a bare laddered leaf here (it is
+        matrix-shaped, so it takes the data path), but ``graft_gsplat_node`` is
+        called directly by tests and by the recursion. Before #1471 it answered
+        ``Unknown node attribute 'labels'`` from the leaf's own write; it now
+        answers with the ladder reason, from the gate. Nothing was written either
+        way — a bare leaf creates no wrapper — so this is a message improvement,
+        not a strand fix. Pinned so the two one-leaf shapes cannot drift apart.
+        """
+        compiler, scene, _ = open_scene(
+            tmp_path, f"graft_bare_ladder_{channel}.luxar.zarr"
+        )
+
+        split = refusal(
+            lambda: _graft(scene, name="g", node=_laddered_leaf(), **kwargs)
+        )
+
+        assert f"{channel} is not supported on a gsplats additive ladder" in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_laddered_leaf_without_labels_still_grafts(self, tmp_path: Any) -> None:
+        """Non-vacuity: the gate did not break the ordinary laddered graft."""
+        from luxar.gsplats.tree import GSplatPartition
+
+        compiler, scene, path = open_scene(tmp_path, "graft_ladder_ok.luxar.zarr")
+        node = GSplatPartition(children=[_laddered_leaf()], max_elements=8)
+
+        _graft(scene, name="g", node=node)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs["kind"] == "partition"
+        assert sorted(store["g"].group_keys()) == ["part_0"]
+        assert int(store["g"]["part_0"].attrs["n_additive_sublods"]) == 2
+
+
+class TestASingleFlatLeafGraftStillLabels:
+    """The gate exempts a single FLAT leaf — leaf count AND sub-LOD count (#1471).
+
+    A wrapper resolving to a single leaf has an exact per-element
+    correspondence, because that one leaf holds every splat. ``luxar gsplat
+    partition in out --parts 1`` emits exactly that shape (a one-part
+    ``kind=partition`` of a flat leaf, which the graft's own partition branch
+    already special-cases as "not a tiling"), and it labelled correctly before
+    #1471. (``gsplat lod --recipe tiles`` on a small dataset emits the LADDERED
+    variant, refused below.)
+    Refusing it would be a regression, and every sentence of the wrapper message
+    would be false there. The laddered variant of the same shape is refused for
+    its own reason — see the sibling class.
+    """
+
+    @pytest.mark.parametrize("channel,kwargs,attr", LABEL_KWARGS)
+    def test_a_one_part_partition_still_labels(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], attr: str
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_1part_{channel}.luxar.zarr"
+        )
+
+        _graft(
+            scene,
+            name="g",
+            node=_nested_partition_tree(3, (N_LABELLED,)),
+            **kwargs,
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs["kind"] == "partition"
+        assert sorted(store["g"].group_keys()) == ["part_0"]
+        assert store["g"]["part_0"].attrs[attr] is True
+
+    @pytest.mark.parametrize("channel,kwargs,attr", LABEL_KWARGS)
+    def test_a_bare_leaf_graft_still_labels(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], attr: str
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"graft_leaf_{channel}.luxar.zarr")
+        leaf = _nested_partition_tree(3, (N_LABELLED,)).children[0]
+
+        _graft(scene, name="g", node=leaf, **kwargs)
+        compiler.finalize()
+
+        assert zarr.open_group(path, mode="r")["g"].attrs[attr] is True
+
+    @pytest.mark.parametrize("channel", ["labels", "image_labels"])
+    def test_an_explicit_none_still_grafts_a_multi_part_partition(
+        self, tmp_path: Any, channel: str
+    ) -> None:
+        """The graft door's half of the None normalisation (see the lod/ sibling)."""
+        compiler, scene, path = open_scene(tmp_path, f"graft_none_{channel}.luxar.zarr")
+
+        _graft(scene, name="g", node=_nested_partition_tree(3), **{channel: None})
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs["kind"] == "partition"
+        assert sorted(store["g"].group_keys()) == ["part_0", "part_1"]
+
+
+class TestTheGraftGateIsReachedThroughThePublicFileDoor:
+    """Everything above calls ``graft_gsplat_node``; this proves the door reaches it.
+
+    ``TestGraftedFileDimensionCount`` sets the precedent — a real
+    ``.gsplats.zarr`` on disk, embedded with ``scene.add_gsplats_from_file``.
+    Without a case at that level nothing pins that the PUBLIC entry point
+    actually arrives at the gate, only that the private function refuses.
+    """
+
+    @staticmethod
+    def _write(tmp_path: Any, ndim: int = 3) -> str:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import is_matrix_shaped
+
+        node = _nested_partition_tree(ndim)
+        # The premise: a matrix-shaped tree would take the data path instead.
+        assert not is_matrix_shaped(node)
+        file_path = str(tmp_path / f"nested_{ndim}d.gsplats.zarr")
+        write_gsplats_tree(file_path, node)
+        return file_path
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_add_gsplats_from_file_refuses_and_writes_nothing(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        file_path = self._write(tmp_path)
+        compiler, scene, path = open_scene(tmp_path, f"file_{channel}.luxar.zarr")
+
+        split = refusal(lambda: scene.add_gsplats_from_file("g", file_path, **kwargs))
+
+        assert f"{channel} is not supported on a grafted multi-node" in str(split)
+        assert "part_0" not in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize(
+        "fault,extra,expected",
+        [
+            ("column_count", {}, "centers array has 4 columns"),
+            (
+                "dim_order",
+                {"dim_order": ["X", "Y", "Z"]},
+                "dim_order / fill / fill_sigma are not supported",
+            ),
+        ],
+    )
+    def test_the_pre_graft_checks_still_outrank_the_labels_refusal(
+        self, tmp_path: Any, fault: str, extra: Dict[str, Any], expected: str
+    ) -> None:
+        """Precedence at the file door: both #1446-era checks sit above the gate.
+
+        The labels refusal lives INSIDE ``graft_gsplat_node``, below the
+        ``dim_order`` / ``fill`` / ``fill_sigma`` refusal and below the stored
+        column-count check — the same "no flat counterpart, so rank it last"
+        placement the lod/ half documents.
+        """
+        # 4 columns in a 3-dimension scene for the count fault; the dim_order one
+        # is refused before the width is ever looked at, so its file is fine.
+        file_path = self._write(tmp_path, ndim=4 if fault == "column_count" else 3)
+        compiler, scene, _ = open_scene(tmp_path, f"file_prec_{fault}.luxar.zarr")
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_file("g", file_path, labels=LABELS, **extra)
+        )
+
+        assert expected in str(split)
+        assert "is not supported on a grafted multi-node" not in str(split)
+        assert "g" not in compiler.store

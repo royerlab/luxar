@@ -11,7 +11,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
 
-from .from_data import add_gsplats_from_data_impl
+from .from_data import (
+    GRAFT_REMEDY,
+    GRAFT_STRUCTURE,
+    add_gsplats_from_data_impl,
+    labels_on_a_laddered_leaf_reason,
+    labels_on_wrapper_reason,
+    strip_absent_label_kwargs,
+)
 
 if TYPE_CHECKING:
     from ...gsplats import GSplats
@@ -122,6 +129,88 @@ def add_gsplats_from_file_impl(
     )
 
 
+def _reject_labels_on_a_grafted_wrapper(
+    name: str, node: Any, attrs: Dict[str, Any]
+) -> None:
+    """The graft door's half of the #1471 labels gate, run before any wrapper.
+
+    :func:`graft_gsplat_node` builds its wrappers by calling ``add_lod_group`` /
+    ``add_partition_group`` DIRECTLY, so it never meets
+    ``from_data._reject_before_wrapper`` — and it is the door for every shape that
+    gate cannot see (``gsplat lod --recipe tiles|overview|adaptive``, ``gsplat
+    partition``, a ``batch-fit merge`` kind=partition). BOTH failure modes were
+    live here: a wrong-length list refused from inside ``part_0`` with a childless
+    ``kind=partition`` already on disk, and — worse — a list whose length HAPPENS
+    to equal a part's own count is passed through whole by
+    ``slice_optional_array`` and written onto EVERY part, silently, with no error
+    at all.
+
+    What is exempted is exactly what CAN carry labels: one leaf, with one
+    additive sub-LOD. Both halves are load-bearing.
+
+    * ONE LEAF, not "a leaf node" — a wrapper resolving to a single leaf still
+      has an exact per-element correspondence, because that leaf holds every
+      splat. ``luxar gsplat partition in out --parts 1`` emits exactly that (a
+      ``kind=partition`` of one part holding a flat leaf, which the partition
+      branch below already treats as "not a tiling" for its anchor choice), and
+      it labelled correctly before this gate existed. Note ``gsplat lod --recipe
+      tiles`` on a small dataset does NOT: it emits a one-part partition of a
+      LADDERED leaf, which the sub-LOD half below refuses. A one-child wrapper
+      nesting another wrapper is
+      not exempted: the recursion reaches the inner wrapper, which has >1 leaf
+      and refuses at its own level.
+    * ONE SUB-LOD — because ``write_gsplat_leaf_subtree``, where a laddered leaf
+      goes, has no labels channel at all. Exempting a laddered leaf would make
+      this gate's contract a lie: the refusal then comes from inside ``part_0``
+      one level down, with the one-part wrapper already on disk. That is a
+      DIFFERENT fault, so it gets :func:`labels_on_a_laddered_leaf_reason`
+      instead of the shared wrapper template, whose slicing argument would read
+      as nonsense for a single leaf.
+
+    Why multi-leaf cannot simply SLICE the way ``add_gsplats(partition=…)`` does:
+    that path slices because it is handed the BSP ``parts: List[np.ndarray]`` it
+    just computed. A stored :class:`~luxar.gsplats.tree.GSplatPartition` carries
+    no per-part index arrays, so the only correspondence definable here would be
+    implicit leaf-CONCATENATION order — precisely the storage-order coupling this
+    gate exists to remove. ``gsplat flatten`` is an adequate remedy for the same
+    reason: it emits that concatenation order (and collapses each leaf's ladder
+    on the way), so the list a caller would have had to guess is exactly the list
+    that works on the flattened file.
+
+    Extracted to its own function rather than inlined so ``graft_gsplat_node``
+    stays under the C901 limit the complexity ratchet enforces.
+    """
+    from luxar.gsplats.tree import iter_leaves
+
+    # Defensive only — every terminal write under a graft funnels through
+    # ``add_gsplats_from_data_impl``, which strips at the top of its own body.
+    # Kept so this function's own ``is not None`` test reads the same normalised
+    # attrs its callers will, rather than depending on that.
+    strip_absent_label_kwargs(attrs)
+    # ``labels`` before ``image_labels`` (the leaf adders' signature order), so a
+    # call passing both is answered deterministically — same tie-break as the
+    # ``lod_group=`` half of the gate.
+    kwarg = next(
+        (k for k in ("labels", "image_labels") if attrs.get(k) is not None), None
+    )
+    if kwarg is None:
+        return
+
+    leaves = iter_leaves(node)
+    only = next(leaves, None)
+    if only is None:
+        return  # no leaves at all — nothing this gate can say about it
+    if next(leaves, None) is not None:
+        reason = labels_on_wrapper_reason(kwarg, GRAFT_STRUCTURE, GRAFT_REMEDY)
+    elif len(only.additive_sublods) > 1:
+        reason = labels_on_a_laddered_leaf_reason(kwarg)
+    else:
+        return  # one flat leaf — the one shape that can carry them
+    # Prefixed by hand: this module has no try/except funnel, and its sibling
+    # checks already report the prefixed form.
+    raise ValueError(f"Could not add gsplats '{name}': {reason}")
+
+
 def graft_gsplat_node(
     group: "Group",
     *,
@@ -167,6 +256,8 @@ def graft_gsplat_node(
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
     from ..compositing import COMPOSITING_ATTRS
+
+    _reject_labels_on_a_grafted_wrapper(name, node, attrs)
 
     if isinstance(node, GSplatLeaf):
         # Matrix-shaped → the normal data path. A graft preserves the file's own

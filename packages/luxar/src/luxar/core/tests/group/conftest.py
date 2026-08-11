@@ -9,7 +9,7 @@ so the existing test modules in these directories are unaffected.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Set, Tuple
 
 import numpy as np
 
@@ -113,6 +113,38 @@ def count_range_warnings(records: Any) -> int:
     not multiply the warning half of ``validate_data_dimensions``.
     """
     return sum(1 for r in records if "outside declared range" in str(r.message))
+
+
+# --------------------------------------------------------------------------
+# Shared by the two halves of the #1471 labels-refusal suite (lod/ + partition/)
+# --------------------------------------------------------------------------
+
+#: Element count both halves build their labelled fixtures around.
+N_LABELLED = 8
+LABELS = [f"l{i}" for i in range(N_LABELLED)]
+IMAGE_LABELS = [np.zeros((2, 2, 3), dtype=np.uint8) for _ in range(N_LABELLED)]
+
+#: ``(kwarg name, call kwargs, the writer attr that proves it reached disk)``.
+#: Parametrizing over this is what keeps the two channels' verdicts identical —
+#: ``image_labels`` was the one the original fix nearly missed, since it is not a
+#: named kwarg anywhere above the leaf adders either.
+LABEL_KWARGS = [
+    ("labels", {"labels": LABELS}, "has_labels"),
+    ("image_labels", {"image_labels": IMAGE_LABELS}, "has_image_labels"),
+]
+
+
+def finalized_group_keys(compiler: Any, path: str) -> Set[str]:
+    """Finalize and return the scene's top-level group names.
+
+    The second half of every #1471 stranding assertion: a wrapper written and
+    then abandoned mid-write is not merely present in the live store, it SURVIVES
+    ``finalize()`` into the delivered scene.
+    """
+    import zarr
+
+    compiler.finalize()
+    return set(zarr.open_group(path, mode="r").group_keys())
 
 
 def refusal(call: Callable[[], Any]) -> Exception:
