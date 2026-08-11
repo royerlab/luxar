@@ -118,6 +118,7 @@ Features
    guides/user/E2E_TESTING_GUIDE
    guides/developer/JSDOC_STYLE_GUIDE
    guides/developer/CONSOLE_OUTPUT_STYLE
+   guides/developer/UI_DESIGN_GUIDE
    guides/developer/NETWORK_SIMULATION_SPEC
    guides/developer/ERROR_HANDLING_GUIDE
    guides/developer/DEBUG_INTERFACE_GUIDE

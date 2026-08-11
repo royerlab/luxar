@@ -58,7 +58,7 @@ Tailwind-like utility classes, all prefixed with `luxar-`:
 
 - **Flex alignment**: `luxar-items-center`, `luxar-items-start`, `luxar-justify-between`
 - **Spacing**: `luxar-gap-2`, `luxar-p-4`, `luxar-m-2`
-- **Display**: `luxar-hidden`, `luxar-block`, `luxar-inline-flex`
+- **Display**: `luxar-hidden`, `luxar-block`, `luxar-inline-block`
 
 Plus two shared **panel recipes** (not atomic utilities — add them alongside a
 panel's own BEM class, and do not restate them per-panel):
@@ -101,12 +101,20 @@ These files are activated by the `ThemeManager` when the corresponding theme is 
 ## Conventions
 
 - All custom classes use the `luxar-` prefix to avoid conflicts
-- Component styles reference CSS custom properties, never hardcoded colors
+- Component styles reference CSS custom properties rather than hardcoded
+  colors; the literals still in the tree are inventoried in the
+  [UI Design Guide](../../../../docs/guides/developer/UI_DESIGN_GUIDE.md)
+  §15.1–15.5 (drift, migrate it) and §15.6 (sanctioned, leave it)
 - Scrollbar styling is dark-theme optimized via `::-webkit-scrollbar`
-- No `!important` overrides — cascade order handles specificity
+- `!important` only in the three sanctioned categories (reduced-motion
+  overrides, control-rail docking overrides, overlay state-forcing) — see the
+  [UI Design Guide](../../../../docs/guides/developer/UI_DESIGN_GUIDE.md) §13
 
 ## See Also
 
+- [UI Design Guide](../../../../docs/guides/developer/UI_DESIGN_GUIDE.md) —
+  **the authoritative visual-design ground truth** (tokens, surface recipes,
+  color semantics, iconography, motion, a11y, drift inventory)
 - [base/](./base/README.md) — Layout primitives, typography, utility classes
 - [components/](./components/README.md) — Per-UI-surface component styles
 - [themes/](./themes/) — Named theme overrides (`frosted-glass.css`, `liquid-glass.css`)
