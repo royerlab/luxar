@@ -22,10 +22,15 @@ export const frostedGlassTheme: Theme = {
 
   colors: {
     background: {
-      // Bright frosted glass with high opacity and heavy blur
-      primary: 'rgba(255, 255, 255, 0.15)', // Subtle white tint
-      secondary: 'rgba(255, 255, 255, 0.12)', // Even more subtle
-      tertiary: 'rgba(255, 255, 255, 0.08)', // Very subtle glass layer
+      // DARK frost. The panel tint must guarantee text contrast over ANY
+      // scene: with the old white tint (rgba(255,255,255,0.12)) a bright
+      // backdrop blurred straight through and white text became unreadable.
+      // A ~65% dark tint over the blur keeps the frosted character while
+      // bounding the worst-case backdrop at ~4.4:1 against text-primary —
+      // the same trick liquid-glass plays with its dark ::after layer.
+      primary: 'rgba(28, 30, 36, 0.5)', // App background tint
+      secondary: 'rgba(28, 30, 36, 0.65)', // Panel surface (contrast floor)
+      tertiary: 'rgba(255, 255, 255, 0.07)', // Inset lift on the dark frost
       overlay: 'rgba(0, 0, 0, 0.6)', // Darker overlay for modals
     },
     text: {

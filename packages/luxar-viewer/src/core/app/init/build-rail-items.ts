@@ -63,6 +63,23 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     recordingPanel,
   } = deps;
 
+  // Rendering, Layers, and Recording all dock at the same spot beside the
+  // rail (left: 78px), so the rail opens ONE of them at a time — activating
+  // one closes the others instead of stacking panels. Keyboard shortcuts
+  // are deliberately not routed through this: power users may still stack
+  // panels explicitly via R/L/T.
+  const closeOtherLeftPanels = (except: 'render' | 'layers' | 'recording'): void => {
+    if (except !== 'render' && renderingControls.isVisible()) {
+      ui.commands.toggleRenderingControls();
+    }
+    if (except !== 'layers' && layersPanel.isVisible()) {
+      ui.panels.getLayersPanel()?.toggle();
+    }
+    if (except !== 'recording' && recordingPanel.isVisible()) {
+      ui.panels.getRecordingPanel()?.toggle();
+    }
+  };
+
   return [
     {
       id: 'help',
@@ -158,7 +175,10 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Rendering',
       shortcut: 'R',
       icon: RAIL_ICONS.render,
-      activate: () => ui.commands.toggleRenderingControls(),
+      activate: () => {
+        if (!renderingControls.isVisible()) closeOtherLeftPanels('render');
+        ui.commands.toggleRenderingControls();
+      },
       isActive: () => renderingControls.isVisible(),
     },
     {
@@ -166,7 +186,10 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Layers',
       shortcut: 'L',
       icon: RAIL_ICONS.layers,
-      activate: () => ui.panels.getLayersPanel()?.toggle(),
+      activate: () => {
+        if (!layersPanel.isVisible()) closeOtherLeftPanels('layers');
+        ui.panels.getLayersPanel()?.toggle();
+      },
       isActive: () => layersPanel.isVisible(),
       // Grayed + non-clickable until the scene actually has layers (nodes with
       // layer=true). Refreshed on the 'luxar-layers-changed' event after load.
@@ -193,7 +216,10 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
       title: 'Recording',
       shortcut: 'T',
       icon: RAIL_ICONS.recording,
-      activate: () => ui.panels.getRecordingPanel()?.toggle(),
+      activate: () => {
+        if (!recordingPanel.isVisible()) closeOtherLeftPanels('recording');
+        ui.panels.getRecordingPanel()?.toggle();
+      },
       isActive: () => recordingPanel.isVisible(),
       separatorBefore: true,
     },

@@ -33,29 +33,33 @@
    (0,2,0) tie WITHOUT `!important`. `#fff` text is a fixed white-on-red
    affordance (do not tokenize — --luxar-text-inverse is dark in the dark theme). */
 .luxar-recording-panel .luxar-recording-btn .luxar-gui__button {
-  background: var(--luxar-error);
-  color: #fff;
-  border: none;
+  /* Record keeps its red identity, but as the house accent-tint chip
+     (color-mix fill + border, red text) rather than a solid slab — a solid
+     error-red button read as an alarm, not an action. The solid red is
+     reserved for the LIVE recording state (the indicator pill's dot). */
+  background: color-mix(in srgb, var(--luxar-error) 14%, transparent);
+  color: var(--luxar-error);
+  border: 1px solid color-mix(in srgb, var(--luxar-error) 45%, transparent);
   border-radius: var(--luxar-radius-md);
-  font-size: var(--luxar-text-lg);
+  font-size: var(--luxar-text-md);
   font-weight: var(--luxar-font-semibold);
-  padding: var(--luxar-spacing-6) var(--luxar-spacing-8);
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-8);
   cursor: pointer;
   transition:
     background 0.2s,
-    transform 0.1s;
+    border-color 0.2s;
   width: 100%;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 
 .luxar-recording-panel .luxar-recording-btn .luxar-gui__button:hover {
-  background: color-mix(in srgb, var(--luxar-error) 85%, #000);
-  transform: scale(1.02);
+  background: color-mix(in srgb, var(--luxar-error) 24%, transparent);
+  border-color: color-mix(in srgb, var(--luxar-error) 70%, transparent);
 }
 
 .luxar-recording-panel .luxar-recording-btn .luxar-gui__button:active {
-  transform: scale(0.98);
+  background: color-mix(in srgb, var(--luxar-error) 32%, transparent);
 }
 
 /* ========== Recording Indicator ========== */
