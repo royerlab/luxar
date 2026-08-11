@@ -100,6 +100,7 @@ export class LayersPanel {
   /** Live filter over layer names; only rendered when the scene has many layers. */
   private filterWrapEl: HTMLElement | null = null;
   private filterInputEl: HTMLInputElement | null = null;
+  private noMatchesEl: HTMLElement | null = null;
   private filterText = '';
   private visible = false;
   /**
@@ -631,6 +632,7 @@ export class LayersPanel {
     this.panelEl?.remove();
     this.panelEl = null;
     this.listEl = null;
+    this.noMatchesEl = null;
   }
 
   // ─── DOM Construction ──────────────────────────────────
@@ -712,6 +714,16 @@ export class LayersPanel {
     list.setAttribute('aria-multiselectable', 'true');
     this.listEl = list;
     panel.appendChild(list);
+
+    // Zero-match note (same affordance as the help overlay's) — without it a
+    // fully-filtered list just collapses and reads as broken. Lives OUTSIDE
+    // the list so renderList() rebuilds never wipe it.
+    const noMatches = document.createElement('div');
+    noMatches.className = 'luxar-layers-panel__no-matches';
+    noMatches.textContent = 'No layers match.';
+    noMatches.style.display = 'none';
+    this.noMatchesEl = noMatches;
+    panel.appendChild(noMatches);
 
     // Controls section
     const controls = document.createElement('div');
@@ -824,10 +836,15 @@ export class LayersPanel {
    */
   private applyRowFilter(): void {
     const q = this.filterText.trim().toLowerCase();
+    let anyVisible = false;
     for (const [path, row] of this.rowElements) {
       const layer = this.state.getLayer(path);
       const match = !q || (layer?.name ?? '').toLowerCase().includes(q);
       row.classList.toggle('luxar-layer-row--filtered', !match);
+      if (match) anyVisible = true;
+    }
+    if (this.noMatchesEl) {
+      this.noMatchesEl.style.display = anyVisible || !q ? 'none' : '';
     }
   }
 
