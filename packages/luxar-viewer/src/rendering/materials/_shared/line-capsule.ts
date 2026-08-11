@@ -32,10 +32,10 @@
  * the two half-discs tile the disc exactly at any bend angle). The cut is
  * confined to the cap region: where the two rod BODIES genuinely overlap
  * (the inner corner of a bend) both legs render, matching the physical
- * union. The foreign-side cap contribution fades over
- * `CAPSULE_CUT_FADE_RADIUS_FRACTION` of the radius instead of a hard cut,
- * so the hand-off to the partner's body is C0 — sub-pixel at normal
- * widths, smooth when zoomed in. The partner's far endpoint is
+ * union. The foreign-side cap contribution fades (smoothstep,
+ * bend-scaled — see `CAPSULE_CUT_FADE_RADIUS_FRACTION`) instead of
+ * cutting hard, so the hand-off to the partner's body is C0 — sub-pixel
+ * at normal widths, smooth when zoomed in. The partner's far endpoint is
  * near-plane-clipped toward the joint vertex before projecting (a
  * behind-eye projection flips and poisons the cut normal), and a joint
  * vertex behind the near plane keeps the perpendicular butt.
@@ -63,10 +63,17 @@ export const CAPSULE_STENCIL_APRON_PX = 0.5;
 
 /**
  * Foreign-side cap fade length as a fraction of the end radius: my cap
- * region on the PARTNER's side of the joint bisector fades out over this
- * fraction of axial overhang instead of a hard cut — C0 with the
- * partner's body at its endpoint line (no chevron edge when zoomed) and
- * with my own half-disc at the bisector. Sub-pixel at normal widths.
+ * region on the PARTNER's side of the joint bisector fades out
+ * (smoothstep) over `fraction × max(|n.y|, 0.25) × radius` of axial
+ * overhang instead of a hard cut — C0 with the partner's body at its
+ * endpoint line (no chevron edge when zoomed) and with my own half-disc
+ * at the bisector. The |n.y| bend scaling keeps a near-straight joint's
+ * fade (a genuine double-count band — the partner's body already covers
+ * there) short, while a real bend fades exactly where the two legs'
+ * apparent radii genuinely diverge in 2D; the 0.25 floor keeps the fade
+ * from collapsing to a hard seam at shallow projected bends. Sub-pixel
+ * at normal widths. The joint stencil reach accounts for the fade band
+ * (`(|n.y| + fraction·max(|n.y|, 0.25))·rMax`).
  */
 export const CAPSULE_CUT_FADE_RADIUS_FRACTION = 0.25;
 

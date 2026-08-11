@@ -37,6 +37,7 @@ import {
   min,
   clamp,
   mix,
+  smoothstep,
   length,
   exp,
   exp2,
@@ -300,7 +301,12 @@ export function capsuleLineWebGPUFactory(
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.lessThan(-1e-3), () => {
               cutA.assign(nLoc);
-              extA.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
+              extA.assign(
+                abs(nLoc.y)
+                  .add(max(abs(nLoc.y), float(0.25)).mul(CAPSULE_CUT_FADE_RADIUS_FRACTION))
+                  .mul(rMax)
+                  .add(CAPSULE_STENCIL_APRON_PX)
+              );
             });
           }).Else(() => {
             // Near-hairpin: the bisector is degenerate — plain round cap.
@@ -326,7 +332,12 @@ export function capsuleLineWebGPUFactory(
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.greaterThan(1e-3), () => {
               cutB.assign(nLoc);
-              extB.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
+              extB.assign(
+                abs(nLoc.y)
+                  .add(max(abs(nLoc.y), float(0.25)).mul(CAPSULE_CUT_FADE_RADIUS_FRACTION))
+                  .mul(rMax)
+                  .add(CAPSULE_STENCIL_APRON_PX)
+              );
             });
           }).Else(() => {
             // Near-hairpin (see end A).
@@ -393,8 +404,8 @@ export function capsuleLineWebGPUFactory(
     const x: TSLNode = vLocal.x.mul(invW).toVar();
     const y: TSLNode = vLocal.y.mul(invW).toVar();
     // Bisector-cut sides (my side negative); straight joints = butt.
-    // Foreign-side cap fade (see the GLSL twin): C0 hand-off to the
-    // partner's body instead of a hard cut edge.
+    // Foreign-side cap fade, bend-scaled (see the GLSL twin's note): a
+    // straight joint is an exact butt; a bend fades over |n.y|·fraction·r.
     const rPx: TSLNode = max(vR.mul(invW), float(1e-4)).toVar();
     const cutFade: TSLNode = float(1.0).toVar();
     If(
@@ -403,9 +414,11 @@ export function capsuleLineWebGPUFactory(
         .and(x.lessThan(0.0))
         .and(vCutA2.x.mul(x).add(vCutA2.y.mul(y)).greaterThan(0.0)),
       () => {
-        cutFade.mulAssign(
-          clamp(float(1.0).add(x.div(rPx.mul(CAPSULE_CUT_FADE_RADIUS_FRACTION))), 0.0, 1.0)
-        );
+        const fadeLenA: TSLNode = rPx
+          .mul(CAPSULE_CUT_FADE_RADIUS_FRACTION)
+          .mul(max(abs(vCutA2.y), float(0.25)))
+          .toVar();
+        cutFade.mulAssign(smoothstep(0.0, 1.0, float(1.0).add(x.div(fadeLenA))));
       }
     );
     If(
@@ -414,13 +427,11 @@ export function capsuleLineWebGPUFactory(
         .and(x.greaterThan(vMeta.x))
         .and(vCutB2.x.mul(x.sub(vMeta.x)).add(vCutB2.y.mul(y)).greaterThan(0.0)),
       () => {
-        cutFade.mulAssign(
-          clamp(
-            float(1.0).sub(x.sub(vMeta.x).div(rPx.mul(CAPSULE_CUT_FADE_RADIUS_FRACTION))),
-            0.0,
-            1.0
-          )
-        );
+        const fadeLenB: TSLNode = rPx
+          .mul(CAPSULE_CUT_FADE_RADIUS_FRACTION)
+          .mul(max(abs(vCutB2.y), float(0.25)))
+          .toVar();
+        cutFade.mulAssign(smoothstep(0.0, 1.0, float(1.0).sub(x.sub(vMeta.x).div(fadeLenB))));
       }
     );
     Discard(cutFade.lessThanEqual(0.0));

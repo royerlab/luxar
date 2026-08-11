@@ -424,9 +424,11 @@ no notch, no chopped miter tip, no double-bright overlap). Three
 refinements make this hold at extreme zoom as well as at normal widths:
 the cut is confined to the cap region, so where the two rod BODIES
 genuinely overlap (the inner corner of a bend) both legs render — matching
-the physical union; the foreign-side cap contribution fades over a quarter
-radius (`CAPSULE_CUT_FADE_RADIUS_FRACTION`) instead of a hard cut, keeping
-the hand-off to the partner's body C0 (sub-pixel at normal widths); and
+the physical union; the foreign-side cap contribution fades smoothly over a
+bend-scaled fraction of the radius (`CAPSULE_CUT_FADE_RADIUS_FRACTION`)
+instead of a hard cut, keeping the hand-off to the partner's body C0
+(sub-pixel at normal widths, and collapsing toward an exact butt at
+straight joints where any foreign contribution would double-count); and
 the partner's far endpoint is near-plane-clipped toward the joint vertex
 before projecting (a behind-eye projection flips and would poison the cut
 normal), with a joint vertex behind the near plane keeping the

@@ -244,7 +244,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x < -1e-3) {
                 cutA = nLoc;
-                extA = abs(nLoc.y) * rMax + ${G.APRON};
+                extA = (abs(nLoc.y) + ${G.CUT_FADE} * max(abs(nLoc.y), 0.25)) * rMax + ${G.APRON};
               }
             } else {
               // Near-hairpin: the bisector is degenerate — plain round cap
@@ -277,7 +277,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x > 1e-3) {
                 cutB = nLoc;
-                extB = abs(nLoc.y) * rMax + ${G.APRON};
+                extB = (abs(nLoc.y) + ${G.CUT_FADE} * max(abs(nLoc.y), 0.25)) * rMax + ${G.APRON};
               }
             } else {
               // Near-hairpin (see end A).
@@ -382,17 +382,21 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       // corner of a bend) both render, matching the physical union the
       // volumetric primitive integrates (and additive sums it, correctly).
       // Foreign-side cap fade: my cap region on the PARTNER's side of the
-      // joint bisector fades out over a quarter radius of axial overhang
-      // instead of a hard cut — C0 with the partner's body at its endpoint
-      // line (no chevron edge) and with my own half-disc at the bisector.
-      // Sub-pixel at normal widths; smooth and wide when zoomed in.
+      // joint bisector fades out instead of cutting hard. The fade length
+      // scales with the BEND (|n.y| = sin of the projected half-turn): a
+      // straight joint fades over zero length — an exact butt, no
+      // double-count band — while a real bend gets its fade exactly where
+      // the two legs' apparent radii genuinely diverge (the 2D ambiguity
+      // a hard partition renders as a visible seam when zoomed).
       float rPx = max(vR * invW, 1e-4);
       float cutFade = 1.0;
       if (vMeta.y > 0.5 && x < 0.0 && (vCutA2.x * x + vCutA2.y * y) > 0.0) {
-        cutFade *= clamp(1.0 + x / (${G.CUT_FADE} * rPx), 0.0, 1.0);
+        float fadeLenA = ${G.CUT_FADE} * rPx * max(abs(vCutA2.y), 0.25);
+        cutFade *= smoothstep(0.0, 1.0, 1.0 + x / fadeLenA);
       }
       if (vMeta.z > 0.5 && x > vMeta.x && (vCutB2.x * (x - vMeta.x) + vCutB2.y * y) > 0.0) {
-        cutFade *= clamp(1.0 - (x - vMeta.x) / (${G.CUT_FADE} * rPx), 0.0, 1.0);
+        float fadeLenB = ${G.CUT_FADE} * rPx * max(abs(vCutB2.y), 0.25);
+        cutFade *= smoothstep(0.0, 1.0, 1.0 - (x - vMeta.x) / fadeLenB);
       }
       if (cutFade <= 0.0) discard;
       // Squared distance in the local frame; at cut ends the ROD continues
