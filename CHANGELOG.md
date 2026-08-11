@@ -6,6 +6,123 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Per-PR CI gates on Python 3.12; the full matrix runs nightly and on main
+
+`python-tests` was a three-leg matrix (3.10/3.11/3.12) on every pull request,
+and it is the slowest job in the workflow (~27min a leg) on a self-hosted box
+with five slots. Branch protection has only ever required the `3.12` context,
+so the other two legs cost two thirds of the Python CI budget to gate
+nothing. A pull request now runs `3.12` alone; `3.10`/`3.11` still run on every
+push to `main` and on a nightly schedule. The supported floor is unchanged —
+what is given up is the latency of catching a version-specific break, which
+moves from "in the offending PR" to "within 24h", against a 3x cut in per-PR
+Python CI.
+
+Scheduled runs get their own `concurrency` group. A cron run's ref is
+`refs/heads/main`, identical to a merge's, so under one shared group and
+`cancel-in-progress: true` whichever of the two started second cancelled the
+other — and they collide constantly: over the 31 days before the change a merge
+landed inside the nightly's ~30min window on 17 days, and inside the half hour
+before it on 12. The expensive direction is the cron killing a merge's push run,
+which is the only place the new `main` commit gets the full matrix at all now
+that per-PR CI is 3.12-only; the reverse is milder, since a merge that cancels
+the nightly runs the full matrix itself, but it still leaves "did 3.10/3.11 pass
+today?" unanswerable at a glance. Pull-request runs are unaffected: they already
+carry `refs/pull/N/merge` and were never grouped with a push. Note the cron
+fires the whole workflow, not just `python-tests` — a schedule event has no PR
+base, so change detection selects the full suite and the documentation gate too.
+
+#### Capsule line primitive behind `?linePrimitive=capsule` (#1352)
+
+A third line primitive, built after the G1 gate measured the exact
+volumetric primitive at 2.7–5× the quad's frame cost on the 10M-segment
+scenarios: the capsule keeps the volumetric primitive's two behavioural wins
+— direction-stable near-axial rendering (an end-on segment is a stable round
+disc, never a flickering sliver) and seamless joins — at quad-class cost
+(measured 1.04–1.11× the quad on the same worst case, parity at vsync
+elsewhere). The model is deliberately relaxed rather than exact: each
+fragment shades a compact quartic bump `(1 − p²)^n` of the 2D
+point-to-segment distance in **pixel space**, evaluated on stencil-local
+interpolated coordinates (`distance² = y² + max(0, −x, x−L)²` — no
+projection, no sqrt, no transcendentals), with the drawn radius at the 2σ
+support of the quad's Gaussian-equivalent σ and the sharpness knob mapped to
+the exponent (`n = 2^(3−4s)`). Every end is a round cap; interior
+polyline joints keep each leg's half of the joint disc, partitioned along
+the joint bisector via the volumetric primitive's joint-code partner
+machinery — the two half-discs tile the disc exactly at any bend angle (no
+notch, no chopped miter tip, no double-bright overlap). The cut is
+confined to the cap region (overlapping rod bodies at a bend's inner
+corner both render, like the physical union), fades smoothly over a
+bend-scaled band the vertex stage reserves stencil for (so the rasterizer
+cannot chop the ramp part-way down and hand back the very step it removes),
+and the partner endpoint is near-plane-clipped before projecting — together
+these keep zoomed-in joints seamless, the regime where both the quad and the
+first capsule iteration showed hard seams and wedges. Which ends cut at all
+is the shared joint-code rule the other two primitives use, so a free end
+and a degree-≥3 hub keep their whole round cap, while a butt cut — a
+slice-clipped end, a joint vertex behind the near plane, an exactly straight
+joint — is hard, with nothing drawn past the endpoint line. The per-fragment radius interpolates linearly across the
+stencil (perspective-correct for constant-width tubes), which keeps
+silhouettes straight under extreme foreshortening. One profile serves every blending mode (the
+capsule is peak-shaped by construction, so there is no peak/sum lane split),
+while the mode tails — volumetric τ mapping with per-element alpha, max-mode
+premultiply, colormap, gamma — are the quad fragment's, unchanged. Both
+backends ship (GLSL pair + TSL twin factory), picking follows the toggle
+with shaders that duplicate the visual stencil/cuts/fold rule so hover
+tracks pixels exactly, and all constants are single-sourced in
+`_shared/line-capsule.ts`. Pinned by 16 new GLSL↔TSL parity fixtures
+(end-on, joints, folds and the width gate, taper, colormap, volumetric
+blend, near-clip straddle, pick twins), codegen snapshots, and unit pins on
+the constants and profile. The default primitive is unchanged; the new
+`packages/luxar/examples/lines_primitive_qa_example.py` grid scene is the
+side-by-side visual QA artifact for the flip decision.
+
+#### An empty LOD 0 no longer blanks a laddered node's slice (#1456)
+
+All three progressive loaders (Points, Lines, GSplats) latched a terminal
+"empty ladder" the moment LOD 0 committed zero elements: the streaming loop
+broke, `hasMoreLODs` went false and the prefetch was skipped, so refinement
+never looked at the higher levels. The justification — "LODs are spatially
+coextensive" — is false for these loaders. They are constructed *only* for
+**additive** ladders (`createProgressive{Points,Lines,GSplats}Loader` each
+iterate the `additive_<i>` subgroups), whose levels are **disjoint
+increments** of one permutation rather than coarse-to-fine resamplings of the
+same elements. `additive_0` is a small *subset* of the node — a few thousand
+elements under `-b stream:C` / `--target-ms` / the `gsplat additive` default,
+i.e. the recommended ladder shape — so a hidden-dimension slice that none of
+*its* members lands on says nothing at all about levels 1..n-1. Such a slice
+rendered **nothing** even when the later levels held plenty of geometry right
+there.
+
+Making those levels reachable exposed a second defect on the same path: a
+zero-element level *vetoed the merged ladder's optional attributes*. The
+canonical empty payloads **omit** their optional fields rather than emitting
+zero-length arrays, and `concatOptionalField` was all-or-nothing, so one culled
+level stripped those fields from the levels that did have data.
+`createEmptyPointsData` omits `colors`, `radii`, `sharpness` and `scalars` — all
+four route through that helper — so the recovered Points slice would have
+rendered white, uniformly-sized and colormap-less, a quieter wrong answer than
+the blank one it replaced. For Lines it is narrower: only `scalars` goes through
+the helper (there is no `radii` field, and `colors`/`sharpness` merge via the
+bespoke fill-for-missing path), so the loss there was the colormap alone.
+GSplats was never affected. Zero-row parts now **abstain**: contributing no
+rows, they get no vote on which attributes the merge carries, and no say in its
+dtype. That also fixes the same defect for an empty level in the *middle* of a
+ladder, which was reachable before this change.
+
+The terminal-empty-ladder flag is gone rather than repaired. Once an empty level
+can no longer stop the loop, the only state the flag could describe is a fully
+resident ladder — and every consequence it used to carry is already covered
+there: the streaming loop is a no-op at `startLevel === nLods`, `prefetchNextLOD`
+self-guards on the same count, `hasMoreLODs` reports false on it, and the
+SliceCache store returns at its upgrade-if-longer check. Keeping it would have
+been ~60 lines of comment guarding one cache `peek`. There is no per-pass cost
+change — `loadedLODs` accumulates and `startLevel` resumes from its length, so
+each level is queried once per view, not once per pass. Per *view* an empty
+slice now issues `nLods` sub-loader queries instead of 1; they resolve to zero
+ranges and fetch no chunks, so there is no network cost, and the resulting
+all-empty ladder is cached like any other.
+
 #### Demos serve on per-dataset derived ports, not 8000/5173
 
 Every demo used to contend for the same default ports, so with several demos
@@ -45,6 +162,38 @@ viewer falls back to the store name in `?src=`. `document.title` belongs to
 the host page, so `LuxarApp.dispose()` hands the page's own `<title>` back —
 an embedder that removes the viewer is not left named after a torn-down
 scene.
+
+#### L-system forest 2.0: a growing, seasonal forest on all four geometry types (#1460)
+
+The `forest` demo is rebuilt into the flagship synthetic scene. Two
+non-displayed dimensions make it navigable in time: `growth` (six stages,
+each a genuine re-derivation of every tree at increasing iteration depth —
+development IS successive derivation — with per-tree stagger so maturity
+rolls across the field in waves) and `season` (the same forest re-coloured
+and re-dressed: blossom, green, fire, frost). All four geometry types share
+the frame: an fBm-heightfield **Mesh** terrain with per-season vertex colours
+(snow in winter), eight tree species as merged indexed **Lines** nodes (one
+Layers-panel row per species; per-vertex hover labels carry species /
+instance / season / stage; `normal` blending so trunks occlude), volumetric
+**GSplat** foliage oriented along its parent branches (hand-packed 5D
+Cholesky factors with near-zero sigma on the two stacked axes), and
+**Points** accents pinned to their season and extended over growth (summer
+fireflies, winter frost sparkle, spring petals). The grammars gain the three
+ABOP ingredients that separate fractal twigs from recognisable trees —
+stochastic productions, tropism (gravity droop for willow and palm fronds,
+upward phototropism for the columnar poplar, applied only at branch depth
+>= 1 so trunks stay straight), and an apical-leader symbol for Honda's
+monopodial conifer, whose lower whorls are older and therefore naturally
+longer. Species placement follows eco-zones on the terrain (conifers climb
+ridges, willows and palms keep wet feet). Presentation is authored:
+explicit ACES, a forest-edge opening camera on the autumn/ancient slice,
+season/growth-conditional captions, and a grammar card showing the actual
+production rules next to the forest they built. The computed bundle is
+cached under `~/.cache/luxar/forest` for instant warm regeneration. One
+authoring lesson is now written down in the demo: Luxar stores LINEAR
+colours, so palettes designed as sRGB intents must be linearized (`c**2.2`)
+or every bark reads pastel and a bright ground plane hazes the scene
+through bloom.
 
 #### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
 
@@ -115,6 +264,81 @@ leaf.
 One more mesh coverage residual, in the same vein: the freshness helpers' `isFresh`
 type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
 which has counted mesh since it became a legal ladder level. Widened to four.
+
+#### The scene-dimension check runs before a split, not inside the first child (#1446)
+
+`add_points("pt", positions_400x4, additive_lod={"counts": [200, 400]})` in a
+3-dimension scene was ACCEPTED, writing `pt/additive_0` and `pt/additive_1` at
+ndim=4 — a node whose column count contradicts the scene it lives in. The same call
+without `additive_lod=` refuses with `positions array has 4 columns, but scene has 3
+dimensions`. `add_lines(…, additive_lod=…)` did the same (visible once the input has
+more than one polyline; a single one degenerates to a single level and falls through
+to the flat write, which does refuse). The `partition=` / `substitutive_lod=` /
+`lod_group=` wrappers did refuse, but only from inside `part_0` / `child_0` —
+blaming an internal child the caller never wrote, and leaving a childless
+`kind=partition` / `kind=lod` group in the store where the flat path writes nothing
+at all. One cause for all of it: `_validate_data_dimensions` sat BELOW the split
+branches in `add_points`, `add_lines` and `add_gsplats`, so no split path ever ran
+it on the caller's own array.
+
+The hard column-count raise is now its own `validate_dimension_count`, called above
+those branches (and above `add_gsplats_from_data`'s `kind=lod` dispatch) once the
+`dim_order` transform that decides the final column count has been applied. Only
+that half moved: `validate_data_dimensions` still calls it first and keeps the
+per-dimension out-of-range `UserWarning` where it was, so warning counts are
+unchanged for every existing caller — hoisting the whole validator would have fired
+that warning once for the source array on top of once per part or level. The count
+check stays BELOW each adder's colours/colormap gate, and below the
+multi-substitutive `coverage_fraction` refusal, so those keep precedence over a
+width fault on every path, as they already did. What the hoist does reorder is the
+kwarg checks that live INSIDE a branch — a malformed `partition=` / `additive_lod=`
+/ `substitutive_lod=` spec, the `image_labels`-with-`partition` ban, the Lines
+`indices` topology check: a call that gets one of those AND the column count wrong
+now hears about the width first. Both orderings refuse and neither writes anything
+(measured, store empty either way), and the width now precedes them on the flat
+path too, so the two paths still answer such a call identically. Mesh needed no
+change: it has validated vertices above its own structural branches since the
+branches were added.
+
+Under a `dim_order` the facts to check up front are different ones. The
+post-transform width is the scene's by construction — `apply_dim_order` allocates
+`(N, scene_ndim)` — so the count check can never fire downstream; what raised from
+inside `child_0` was one of six spec refusals: `dim_order`'s length vs the data's
+columns, duplicate names, a name absent from the scene, a `fill` key that is
+unknown or already mapped, and the two `fill_sigma` equivalents. None of them look
+at the arrays, so the whole preamble is now `validate_dim_order_spec` (plus
+`validate_fill_sigma_keys` for the gsplats-only pair), called by `apply_dim_order` /
+`apply_dim_order_cholesky` as before AND at the same pre-dispatch point — which
+closes `add_gsplats_from_data(..., lod_group=…, dim_order=…)`, the call shape the
+method's own docstring demonstrates, for every one of them. A `dim_order` that is
+not a sequence at all is covered too: that raises `TypeError`, which the pre-dispatch
+gate converts exactly as the leaf adders' funnel does, so the two paths agree on the
+exception type as well as the text.
+
+The `lod_group=` gate covers the colours/colormap exclusion too, in the position the
+three leaf adders give it: above the width check, below the `dim_order` spec (which
+an adder runs while applying the transform) — both so a call that trips several of
+these hears the same answer either way, and because a colours+colormap call with a
+perfectly good width was stranding a childless `kind=lod` group all by itself. It
+asks that question of EVERY level's ladder
+rather than of `GSplatData.colors`, which is the finest level's: a pyramid whose
+finest level is uncoloured and whose coarse level is not would otherwise pass the
+gate and strand the wrapper from inside that coarse child.
+
+`add_gsplats_from_file` is covered on both of its doors. A MATRIX-shaped store — a
+bare leaf, an additive ladder, or a `kind=lod` of leaves, which is what a plain fit
+and the `levels` / `stream` recipes write — is dispatched down
+`add_gsplats_from_data`, so the gate above already answers for it. A genuinely
+nested one (a `kind=partition` root, or a lod group with non-leaf children) has no
+flat equivalent and is GRAFTED node-for-node, and `graft_gsplat_node` builds the
+whole wrapper chain from the on-disk tree before the first leaf is added — measured
+`Could not add gsplats 'part_0': …` with the target name already on disk as a
+childless `kind=partition`. So the width is now checked against the stored tree at
+the graft entry, below the `dim_order` / `fill` / `fill_sigma` refusal that path
+already raises. One leaf answers for the subtree: a graft applies no `dim_order`
+(it refuses the kwarg outright), so the stored width must already be the scene's,
+and `GSplatLodGroup` / `GSplatPartition` both reject mixed-`ndim` children in
+`__post_init__`, recursively.
 
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 
@@ -268,11 +492,12 @@ written last, after every coarse gsplat level, so a wrong-length channel used to
 strand a partial `kind=lod` node.
 
 What is guaranteed is that the per-element CHANNEL verdict is the same with and
-without a wrapper. The gate deliberately sits above the positions / dimension /
-attr checks, so a call that ALSO trips one of those — a NaN coordinate, a wrong
-column count, an unknown attr — now reports the channel fault first on the split
-paths where the plain leaf reports the other one. Both refuse and neither writes;
-only the message differs.
+without a wrapper. The gate deliberately sits above the positions / attr checks, so
+a call that ALSO trips one of those — a NaN coordinate, an unknown attr — now
+reports the channel fault first on the split paths where the plain leaf reports the
+other one. Both refuse and neither writes; only the message differs. (A wrong
+column count was in that list too until #1446 above moved the dimension-count check
+above the split branches, so it now precedes this gate on both paths.)
 
 The Lines `indices` list had the same hole one channel over, and it is closed the
 same way. An `(E, 3)` array is refused by the flat writer, but the split paths reach
@@ -941,7 +1166,6 @@ wasn't enough: `aprint` doesn't flush and Python block-buffers a piped stdout,
 while Playwright's timeout path SIGKILLs the process group — so the data server
 now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
 behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
-
 
 #### Mesh gets substitutive LOD
 

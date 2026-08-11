@@ -140,6 +140,11 @@ describe('bootstrapStandalone', () => {
         });
         expect(resolveLinePrimitive()).toBe('volumetric');
         expect(resolveLineJoin()).toBe(0); // 'none'
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: { ...EMPTY_PARAMS, linePrimitive: 'capsule' },
+        });
+        expect(resolveLinePrimitive()).toBe('capsule');
       } finally {
         setLinePrimitiveOverride(null);
         setLineJoinOverride(null);

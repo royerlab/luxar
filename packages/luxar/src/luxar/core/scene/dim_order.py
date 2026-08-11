@@ -14,6 +14,58 @@ if TYPE_CHECKING:
     from .scene import Scene
 
 
+def validate_dim_order_spec(
+    scene: "Scene",
+    dim_order: List[str],
+    data_ndim: int,
+    fill: Optional[Dict[str, float]] = None,
+) -> None:
+    """Validate a ``dim_order`` (+ ``fill``) against the scene, without the data.
+
+    The whole validation preamble of :func:`apply_dim_order`, in its original
+    order — length vs data columns, duplicate names, names present in the scene,
+    then ``fill`` keys — extracted whole so it can also run BEFORE a split path
+    creates its wrapper group. ``apply_dim_order`` still calls it first, so every
+    message is unchanged; nothing here touches the array beyond its column count.
+
+    Why a split path needs it: under a ``dim_order`` the post-transform width is
+    ``scene_ndim`` by construction (``apply_dim_order`` allocates it that way), so
+    the scene-dimension count check can never fire downstream. What DOES fire
+    downstream — from inside ``child_0``, after the wrapper is on disk — is one of
+    these five refusals. Checking them up front is what makes the
+    ``lod_group=`` + ``dim_order=`` combination refuse against the caller's own
+    node with nothing written (#1446).
+    """
+    if len(dim_order) != data_ndim:
+        raise ValueError(
+            f"dim_order has {len(dim_order)} names but data has "
+            f"{data_ndim} columns. They must match."
+        )
+
+    scene_names = scene._dimensions.names
+
+    # Validate names exist in scene dimensions and are unique
+    if len(set(dim_order)) != len(dim_order):
+        raise ValueError(f"dim_order has duplicate names: {dim_order}")
+    for name in dim_order:
+        if name not in scene_names:
+            raise ValueError(
+                f"dim_order name '{name}' not found in scene dimensions {scene_names}"
+            )
+
+    # Validate fill keys are valid dim names and not in dim_order
+    for name in fill or {}:
+        if name not in scene_names:
+            raise ValueError(
+                f"fill key '{name}' not found in scene dimensions {scene_names}"
+            )
+        if name in dim_order:
+            raise ValueError(
+                f"fill key '{name}' is already in dim_order — cannot "
+                f"both map a data column and fill a fixed value"
+            )
+
+
 def apply_dim_order(
     scene: "Scene",
     positions: np.ndarray,
@@ -31,35 +83,10 @@ def apply_dim_order(
 
     scene_names = scene._dimensions.names
     scene_ndim = scene._dimensions.ndim
-    data_ndim = positions.shape[1]
 
-    # Validate dim_order length matches data columns
-    if len(dim_order) != data_ndim:
-        raise ValueError(
-            f"dim_order has {len(dim_order)} names but data has "
-            f"{data_ndim} columns. They must match."
-        )
-
-    # Validate names exist in scene dimensions and are unique
-    if len(set(dim_order)) != len(dim_order):
-        raise ValueError(f"dim_order has duplicate names: {dim_order}")
-    for name in dim_order:
-        if name not in scene_names:
-            raise ValueError(
-                f"dim_order name '{name}' not found in scene dimensions {scene_names}"
-            )
-
-    # Validate fill keys are valid dim names and not in dim_order
-    for name in fill:
-        if name not in scene_names:
-            raise ValueError(
-                f"fill key '{name}' not found in scene dimensions {scene_names}"
-            )
-        if name in dim_order:
-            raise ValueError(
-                f"fill key '{name}' is already in dim_order — cannot "
-                f"both map a data column and fill a fixed value"
-            )
+    # Everything that can be judged from the spec alone (see the validator: the
+    # split paths run the same function before they create a wrapper group).
+    validate_dim_order_spec(scene, dim_order, positions.shape[1], fill)
 
     # Build the mapping: for each scene dim, which data column (or fill)
     N = positions.shape[0]
