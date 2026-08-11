@@ -120,7 +120,7 @@ Options:
 
 Output:
     - Scene saved to: demos/gsplats_3d_kidney_multichannel_layers.luxar.zarr
-    - Automatically opens in browser at http://localhost:8000
+    - Automatically opens in your browser on the demo's own derived port
 
 """
 

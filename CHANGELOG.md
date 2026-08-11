@@ -6,6 +6,24 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Demos serve on per-dataset derived ports, not 8000/5173
+
+Every demo used to contend for the same default ports, so with several demos
+(or several agents) on one machine, whichever came second silently shifted to
+8001/5174 — and a browser tab left over from demo A could later front demo
+B's server at the very same URL, showing the wrong scene with full
+confidence. `launch_viewer` now derives a stable `(data, viewer)` port pair
+from the dataset's file name (`demo_ports`, ranges 8001–8499 / 5200–5698,
+disjoint from the bare `luxar serve` defaults): no two demos share a full port
+pair — hence never a URL — and re-running the same demo lands on the same URL,
+so concurrent demos stop stepping on each other. Two demos can still draw the
+same *data* port and shift with the usual warning; that is harmless, because
+the viewer URL carries its own `?src=` and the wrong-scene trap needs both
+ports to match. A demo passing an explicit `--port` /
+`--viewer-port` through `serve_args` keeps full control, and `pick_port`
+still resolves the rare same-slot hash collision by shifting up with its
+usual warning.
+
 #### Scene-identity watchdog — a tab that no longer shows what its address serves says so
 
 Local demo/dev servers share ports and come and go, so a long-lived viewer
