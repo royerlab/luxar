@@ -25,6 +25,7 @@ import type { SceneNode, ViewState } from '../../data-loader-types';
 import {
   hasOwnProperties,
   getOrComputeExtendedTolerance,
+  normalizeExtendDims,
   validateExtendDims,
 } from './extend-tolerance';
 import { computeWorldNdTransform, invertNdTransformForQuery } from '../../transforms/nd-transform';
@@ -52,7 +53,10 @@ export function deriveNodeViewState(
   sceneGraph: SceneNode | null,
   opts: DeriveOpts
 ): DerivedNodeViewState {
-  const extendDims: string[] = attrs?.extend_to_all ?? [];
+  // Never trust the raw attr shape: a malformed `extend_to_all` (e.g. an
+  // unresolved `'all'` sentinel from an older producer) would otherwise be
+  // treated as a string[] and blow up the whole per-cycle derivation.
+  const extendDims: string[] = normalizeExtendDims(attrs?.extend_to_all);
 
   let isFullyExtended = false;
   let derived: ViewState = {
