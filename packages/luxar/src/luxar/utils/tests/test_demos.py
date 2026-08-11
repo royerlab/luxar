@@ -548,6 +548,13 @@ class TestDemoPorts:
         assert cmd[cmd.index("--port") + 1] == "9000"
         assert "--viewer-port" in cmd  # unpinned half still derived
 
+        # The short spelling pins too — Click keeps the LAST occurrence of a
+        # repeated option, so a missed pin would silently override the demo.
+        for pinned in (["-p", "9100"], ["-p9100"]):
+            cmd = _serve_command("x.luxar.zarr", open_browser=False, serve_args=pinned)
+            assert "--port" not in cmd
+            assert "--viewer-port" in cmd
+
         cmd = _serve_command(
             "x.luxar.zarr",
             open_browser=False,
@@ -556,3 +563,20 @@ class TestDemoPorts:
         assert not any(a == "--viewer-port" for a in cmd[cmd.index("--viewer") :][1:])
         assert "--viewer-port=6000" in cmd
         assert "--port" in cmd  # unpinned half still derived
+
+    def test_bundled_demo_table_has_no_full_pair_collisions(self) -> None:
+        """No two bundled demo outputs share a full (data, viewer) pair.
+
+        An identical pair reproduces the same-URL stale-tab trap this
+        derivation exists to prevent. If adding a demo trips this, rename the
+        output or widen the slot ranges.
+        """
+        from luxar.demos import registry
+        from luxar.utils.demos import demo_ports
+
+        pairs: dict[tuple[int, int], list[str]] = {}
+        for d in registry.iter_demos():
+            for out in d.outputs or [d.key]:
+                pairs.setdefault(demo_ports(f"{out}.luxar.zarr"), []).append(out)
+        collisions = {k: v for k, v in pairs.items() if len(v) > 1}
+        assert not collisions, f"port-pair collisions: {collisions}"

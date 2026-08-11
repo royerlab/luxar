@@ -791,10 +791,17 @@ def demo_ports(output_path: Union[str, Path]) -> tuple[int, int]:
 
     Derived from the dataset's file name, so re-running the same demo lands on
     the same URL (an old tab for that demo stays valid after a reload) while
-    different demos get different URLs.
+    different demos get different URLs. The two slots are drawn from
+    INDEPENDENT hash digits: with one shared slot, ~1/6 of the bundled demo
+    names collided pairwise (birthday at 499 slots), and an identical
+    ``(data, viewer)`` pair reproduces the very same-URL stale-tab trap this
+    derivation exists to prevent. Independent slots square the pair space
+    (~249k), making a full-pair collision vanishingly rare.
     """
-    slot = zlib.crc32(Path(output_path).name.encode("utf-8")) % _DEMO_PORT_SLOTS
-    return _DEMO_DATA_PORT_BASE + slot, _DEMO_VIEWER_PORT_BASE + slot
+    digest = zlib.crc32(Path(output_path).name.encode("utf-8"))
+    data_slot = digest % _DEMO_PORT_SLOTS
+    viewer_slot = (digest // _DEMO_PORT_SLOTS) % _DEMO_PORT_SLOTS
+    return _DEMO_DATA_PORT_BASE + data_slot, _DEMO_VIEWER_PORT_BASE + viewer_slot
 
 
 def _serve_command(
@@ -812,7 +819,18 @@ def _serve_command(
     cmd = [sys.executable, "-m", "luxar", "serve", str(output_path), "--viewer"]
     cmd.extend(args)
     data_port, viewer_port = demo_ports(output_path)
-    if not any(a == "--port" or a.startswith("--port=") for a in args):
+    # `serve` also spells the data port `-p` (separate or attached, `-p 9` /
+    # `-p9`), and Click silently keeps the LAST occurrence of a repeated
+    # option — so missing a pinned spelling here would OVERRIDE the demo's
+    # explicit choice with the derived port. No other serve option starts
+    # with `-p`.
+    data_pinned = any(
+        a == "--port"
+        or a.startswith("--port=")
+        or (a.startswith("-p") and not a.startswith("--"))
+        for a in args
+    )
+    if not data_pinned:
         cmd.extend(["--port", str(data_port)])
     if not any(a == "--viewer-port" or a.startswith("--viewer-port=") for a in args):
         cmd.extend(["--viewer-port", str(viewer_port)])
