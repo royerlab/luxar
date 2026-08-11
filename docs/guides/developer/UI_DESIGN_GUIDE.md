@@ -283,9 +283,16 @@ These are load-bearing; violating any of them visibly breaks a theme:
    at negative z-index with `inset: 0`; `overflow: hidden` clips them dead.
    Therefore: panel root = `overflow: visible` + `max-height`, and scrolling
    is delegated to an inner `__scroll` wrapper (§7.4).
-3. **Never animate `opacity` on the panel root.** It creates a compositing
-   context that breaks the liquid-glass SVG filter. Entry motion must be
-   transform-only (§10.2); fade the *scrim*, not the panel.
+3. **Never attach entry/exit `opacity` animations to the surface root.**
+   Transient opacity ramps on panel open/close are the recorded liquid-glass
+   regression class — four component files carry "animation removed" comments
+   from exactly this bug. Entry motion must be transform-only (§10.2); fade
+   the *scrim* or an inner wrapper, not the panel. Note the boundary of this
+   rule: a *steady* translucent resting state with opacity transitions
+   between rest points is proven in production — the control rail lives at
+   `opacity: 0.55/0.12/1` and renders its glass correctly in every theme
+   (fractional opacity does create a compositing context, but a stable one;
+   it is the transient animation-time churn that broke the SVG filter).
 4. **SVG filters don't work reliably on pseudo-elements** — that's why the
    refraction layer is a real div. Don't "simplify" it back into a pseudo.
 5. **Native `<option>` popups can't be glassed** (OS-layer rendering, no
@@ -548,9 +555,12 @@ ease`) over `all` in hot paths (long lists).
   Never animate `opacity` on a glass surface root (§5.1.3).
 - Scrims and non-glass transients (toasts, badges): opacity fades are fine.
 - The rail collapse/expand animates transform + opacity over
-  `0.28s cubic-bezier(0.2, 0.7, 0.2, 1)` (the rail can fade because resting
-  translucency is its design, and its fade is a transition on the root's
-  `opacity` property, not a keyframe entry animation).
+  `0.28s cubic-bezier(0.2, 0.7, 0.2, 1)`. The rail is the sanctioned
+  steady-translucency exception to §5.1.3: its resting state is already
+  fractional opacity (a stable compositing context, verified rendering
+  correctly under liquid-glass), and it transitions between rest points
+  rather than fading in from nothing on entry. Do not cite it as precedent
+  for entry fades on ordinary panels.
 
 ### 10.3 Staggered reveals (data panels)
 
