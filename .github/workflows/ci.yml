@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly full Python matrix. Per-PR CI runs 3.12 only (see the python-tests
+    # matrix below); this keeps 3.10/3.11 exercised every day, so a version-specific
+    # regression is caught within 24h rather than on every PR.
+    - cron: '17 9 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -322,7 +327,11 @@ jobs:
       # you need when the legs genuinely differ.
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        # Per-PR runs 3.12 ONLY (the required gate under branch protection); the
+        # full 3.10/3.11/3.12 matrix runs on push-to-main and the nightly schedule
+        # above. Cuts per-PR Python CI ~3x (5 self-hosted runners were the ceiling)
+        # while still catching version-specific breaks daily.
+        python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.10", "3.11", "3.12"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
       # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
