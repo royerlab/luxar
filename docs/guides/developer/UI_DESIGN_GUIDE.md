@@ -69,7 +69,8 @@ browser** (`src/ui/dataset-browser.ts` + `styles/components/dataset-browser.css`
 | Rail/panel icons | `src/ui/control-rail/icons.ts` (`RAIL_ICONS`) |
 | Monitor icons | `src/ui/data-loading-monitor/templates.ts` (`MONITOR_ICONS`) |
 | Dataset-browser icons | `src/ui/dataset-browser/icons.ts` (`BROWSER_ICONS`) |
-| Shared panel header/close recipes | `src/styles/base/utilities.css` (`.luxar-panel-header`, `.luxar-panel-close`) |
+| Shared panel header/close recipes | `src/styles/base/utilities.css` (`.luxar-panel-header`, `.luxar-panel-close`; #1508 adds `.luxar-panel-filter`, `.luxar-panel-pop`) |
+| Shared context-menu widget (pending #1508) | `src/ui/overlay-widgets/context-menu.ts` + `styles/components/context-menu.css` |
 | Modal focus trap | `src/ui/help-overlay/focus-trap.ts` (`trapFocus`) — shared by help overlay and error overlay |
 | Native `<select>` chrome | `src/styles/components/select-menu.css` — the single place `<option>` colors may be styled |
 
@@ -499,6 +500,69 @@ Thumbs and `accent-color` are `--luxar-highlight`; the mono values are
 `text-primary` (instrument voice, not an accent); focus goes through
 `--luxar-border-focus`.
 
+### 7.7 The panel filter row (pending #1508)
+
+Type-to-filter for list-bearing panels is **one shared recipe**,
+`.luxar-panel-filter` (+ `__icon`, `__input`) in `styles/base/utilities.css` —
+the dataset browser's search anatomy generalized: a `position: relative`
+wrapper, a 13px stroke search icon (§9.1 contract) absolutely placed at the
+left, and an input on `interactive-default` that moves to the
+`--luxar-border-focus` border (with the documented fallback — the token is
+optional on `ThemeBorderColors`) and `interactive-hover` fill on focus.
+Behavioral contract, uniform across adopters (layers panel, help overlay):
+
+- **Filtering hides, never rebuilds.** Rows keep their DOM and get a
+  `--filtered` modifier (`display: none`); indices and listeners stay valid,
+  and keyboard list navigation must skip hidden rows. The modifier must be
+  declared AFTER the base row rule — equal specificity means source order
+  decides, and the wrong order leaves the filter toggling a class that does
+  nothing.
+- **Zero matches shows a note** ("No layers match." / "No shortcuts match."),
+  centered, `text-muted`, `--luxar-text-sm` — a silently collapsed list reads
+  as broken. The note lives outside the list container so rebuilds never wipe
+  it.
+- **Escape is two-stage**: with a query it clears and stays (stopPropagation);
+  empty, it falls through to the panel's own close.
+- **Keystrokes must not leak** to global shortcuts while the input has focus.
+- Panels whose list is usually short gate the row on a threshold (the layers
+  panel shows it above 8 layers) — a filter over four rows is noise.
+
+### 7.8 Context menus (pending #1508)
+
+Cursor-anchored right-click menus are **one shared widget**,
+`openContextMenu()` in `src/ui/overlay-widgets/context-menu.ts` +
+`styles/components/context-menu.css` — do not hand-roll another (the
+dimension-slider menu predates it; §15.5). Surface: the popover tier of §7.1
+(`bg-secondary`, hairline `border-strong`, `radius-md`, `shadow-xl`,
+`blur-md`, `z-popover`), transform-only entry pop. Deliberately **not** a
+`luxar-glass-surface`: menus are transient cursor popovers (the same
+precedent as the dimension menu), which is also what makes the root's
+`overflow-y: auto` legal (§5.1.2 binds glass roots only).
+
+Non-negotiables the widget already implements — a new menu gets them by
+construction:
+
+- Full menu ARIA: `role="menu"` / `menuitem` / `menuitemradio` +
+  `aria-checked`; `aria-haspopup="menu"` + `aria-expanded` on submenu openers
+  AND on the opener element in the invoking panel.
+- Roving focus: ArrowUp/Down wrap, Home/End, disabled items skipped; focus
+  returns to the opener on close; Escape closes one level, Tab dismisses.
+- One side-flyout submenu level (ArrowRight opens, ArrowLeft retracts).
+- Viewport containment is position AND size: the menu clamps into the
+  viewport and caps its height to it (`overflow-y: auto`), so a long submenu
+  (the full colormap list) scrolls instead of pinning off-screen; keyboard
+  focus scrolls items into view.
+- Dismissal: Escape, outside `pointerdown` (attached next tick so the opening
+  right-click doesn't self-dismiss), opener re-invocation. One menu at a
+  time, module-wide.
+- Radio state: an 8px dot, hollow on `border-strong`, filled
+  `--luxar-highlight` when checked (interactive accent, §6 — checked state is
+  a selection, not a health signal).
+- Invoking panels `preventDefault()` the native menu over glass, offer
+  Shift+F10 / the ContextMenu key as the keyboard path, and right-click
+  selects the row under the cursor unless it is already in the selection
+  (Finder/napari convention).
+
 ---
 
 ## 8. Typography
@@ -615,6 +679,14 @@ ease`) over `all` in hot paths (long lists).
 - Panels/modals: **transform-only** scale-settle, e.g.
   `scale(0.975) → scale(1)` over `0.15–0.2s cubic-bezier(0.2, 0.7, 0.2, 1)`.
   Never animate `opacity` on a glass surface root (§5.1.3).
+  **(pending #1508)** This is a shared recipe: add `.luxar-panel-pop`
+  (`styles/base/utilities.css`) beside the panel's BEM class — CSS animations
+  restart on `display: none → block`, so toggled panels re-pop with zero JS.
+  A surface whose resting transform is not identity (the rail flyout's
+  `translateY(-50%)`, the dimension sliders' `translateX(-50%)`) must NOT use
+  the generic class — `animation` composes by replacing the `transform`
+  channel, which would yank it out of position for a frame; give it a
+  composed keyframe in its own CSS (`translate…(-50%) scale(…)`) instead.
 - Scrims and genuinely **non-glass** transients (badges, frameless in-canvas
   widgets): opacity fades are fine. **The toast is not one of them** — it
   carries `luxar-glass-surface` (`ui/toast.ts:17`), so §5.1.3 governs its
@@ -778,24 +850,23 @@ Further requirements:
 The following existing code contradicts this guide. It is listed so nobody
 mistakes it for precedent; migrate opportunistically when touching these
 files. (Inventory verified 2026-08-11.) A modernization campaign closed most of
-it: #1476 (a11y), #1479 (emoji→stroke icons), #1472 (the dataset browser) and
-#1480 (accent migration + the shared panel recipes) have all landed, so their
-entries are deleted below — **green-as-interactive and emoji-in-the-DOM are
-gone from the tree entirely.** #1478 (token hygiene) is the one tranche still
-open. Everything below is live on `main`; each entry names the PR that will
-close it where one exists, and the entry goes away as that PR merges.
+it: #1476 (a11y), #1478 (token hygiene), #1479 (emoji→stroke icons), #1472
+(the dataset browser) and #1480 (accent migration + the shared panel recipes)
+have all landed, so their entries are deleted below —
+**green-as-interactive, emoji-in-the-DOM, the phantom radius token and the
+magic layer z-indexes are gone from the tree entirely.** Everything below is
+live on `main`; each entry names the PR that will close it where one exists,
+and the entry goes away as that PR merges.
 
-### 15.1 Hardcoded values / phantom tokens — largely pending #1478
+### 15.1 Hardcoded values / phantom tokens
 
-- `colormap-legend.css` references the **non-existent** `--luxar-radius-xs`
-  (falls back to its literal).
-- Raw z-indexes: `150` (debug console), `10000` (toast, dimension-slider
-  menu), `5` (the `overlay-layer.css` container — a global layer, not a local
-  stacking index) — tokenized by #1478. NOT drift (correction to the original
-  inventory): the recording panel's `9999/10000/100000` stay literal by
-  design (their magnitude beats unknown third-party host UI — documented in
-  the file header), and small local stacking indexes (`1/2/10` inside a
-  positioned parent) are not layer tokens.
+- NOT drift, by design (kept here so §3.5 audits don't re-flag them): the
+  recording panel's `9999/10000/100000` z-indexes stay literal on purpose —
+  their magnitude beats unknown third-party host UI (documented in the file
+  header); small local stacking indexes (`1/2/10` inside a positioned parent)
+  are not layer tokens; and `colormap-legend.css`'s `2px` gradient radius is
+  an intentional, documented literal (half of `radius-sm` — there is no
+  `--luxar-radius-xs`), no longer a phantom-token fallback.
 - The recording **stop-confirm** dialog (`recording-panel.css`) is on the
   surface tokens now but still isn't a `luxar-glass-surface`, blurs with a raw
   `blur(2px)` instead of a blur token, spaces itself in raw px, and carries a
@@ -830,7 +901,8 @@ close it where one exists, and the entry goes away as that PR merges.
   dataset browser places initial focus on its filter field but leaves Tab free
   to walk out behind the panel, and does not restore focus to the opener on
   close. Its `aria-modal="true"` therefore over-promises. Wiring `trapFocus`
-  into `open()`/`close()` is the fix.
+  into `open()`/`close()` is the fix — #1508 does exactly that; this entry
+  goes away when it merges.
 
 (#1476 closed the ring/reduced-motion gaps — the embed-safe
 `.luxar-glass-surface :focus-visible` baseline (§12.4), the GUI slider's missing
@@ -863,6 +935,17 @@ last stylesheet that lacked one.)
   `overflow-y: auto` instead of delegating to an inner `__scroll` wrapper
   (§5.1.2/§7.4), and sits at `--luxar-z-base` rather than the `dropdown`
   layer its placement implies (§3.5).
+
+### 15.5 Private context menu predating the shared widget
+
+The dimension-slider animation menu (`dimension-sliders.ts::showContextMenu`,
+`.luxar-dimension-slider__context-menu`) hand-rolls the cursor-anchored menu
+that §7.8's shared widget now owns: right algorithm (clamped fixed position,
+next-tick outside-click, Escape) but zero menu ARIA, no roving focus, no
+focus return, and a `fadeIn` entry animation. Migrate it onto
+`openContextMenu()` when next touched — carefully: its BEM classes and
+behavior are pinned by `dimension-animation.spec.ts`, so the E2E pins move in
+the same PR. Until then it is not the pattern to copy (§7.8 is).
 
 ---
 
