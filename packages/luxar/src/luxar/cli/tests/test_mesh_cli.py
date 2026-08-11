@@ -12,6 +12,7 @@ carries across, and what it refuses before it deletes anything.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -33,6 +34,26 @@ from luxar.mesh.interop.tests._synthetic import (
 
 runner = CliRunner()
 GT = make_ground_truth()
+
+_ANSI = re.compile(r"\x1b\[[0-9;:]*[A-Za-z]")
+
+
+def _plain(text: str) -> str:
+    """CLI output as flat text: no ANSI codes, no wrap-induced line breaks.
+
+    Rich renders an error panel with colour and hard-wraps it to the console
+    width, and it decides whether to colourise from the *environment* — off
+    under a plain pytest run, on when something sets `FORCE_COLOR` (as CI
+    does). So `"--subst-method cluster" in result.output` is environment-
+    dependent: locally the flag arrives intact, in CI it arrives as
+    ``\\x1b[1;36m-\\x1b[0m\\x1b[1;36m-subst\\x1b[0m…``.
+
+    A POSITIVE assertion against raw output therefore fails only in CI — and,
+    worse, a NEGATIVE one ("this flag is not mentioned") passes everywhere for
+    the wrong reason, because the escape codes guarantee no match. Normalise
+    before asserting either way.
+    """
+    return re.sub(r"\s+", " ", _ANSI.sub("", text))
 
 
 @pytest.fixture(scope="module")
@@ -419,10 +440,13 @@ class TestMeshLod:
             ],
         )
         assert old.exit_code != 0
-        assert "--subst-method cluster" in old.output, old.output
+        pointer = _plain(old.output)
+        assert "--subst-method cluster" in pointer, pointer
         # The pointer must NOT send a mesh user to `--add-method`: that is the
-        # gsplat replacement for the bare flag, and mesh has no additive ladder.
-        assert "--add-method" not in old.output, old.output
+        # gsplat replacement for the bare flag, and mesh's bare `--method` was
+        # the substitutive one. Asserted on the normalised text, or Rich's
+        # escape codes make the absence unfalsifiable — see `_plain`.
+        assert "--add-method" not in pointer, pointer
         assert not (tmp_path / "old.luxar.zarr").exists()
 
     def test_overwrite_DOES_replace_an_existing_output(self, tmp_path: Path) -> None:
