@@ -130,7 +130,88 @@ compute_additive_order(
 | `self_energy` | sort by $\|\phi_i\|^2 \propto a_i^2 |\Sigma_i|^{1/2}$ desc | $O(N\log N)$  | sometimes         | no                  |
 | `spectral`    | sort by $|u_1[i]|$ desc                                   | sparse Gram   | no                | no                  |
 | `greedy`      | matching pursuit; sparse / dense fallback                 | sparse Gram   | yes               | yes ($1-1/e$)       |
+| `radial`      | sort by distance from the bbox centre **asc**              | $O(N\log N)$  | n/a — a reveal    | n/a — a reveal      |
 | `auto`        | size-adaptive: `greedy` if `N ≤ 5000` else `self_energy`  | (see chosen)  | (see chosen)      | (see chosen)        |
+
+### `radial` — the reveal
+
+Every other method above ranks splats by how much they *contribute*, so a prefix
+is a low-quality approximation of the whole scene. `radial` is categorically
+different: it orders by distance from the object's own bounding-box centre, so a
+prefix is a **complete rendering of the inner part of the object** and successive
+prefixes grow outward as concentric shells. Streaming a `radial` ladder makes a
+scene appear to grow from its middle. That is purely an authoring choice — the
+viewer needs no changes and does nothing special with it.
+
+Three consequences, each load-bearing:
+
+- **It is the only ASCENDING sort.** Its score is a distance, not a contribution
+  to maximise. Every neighbouring branch in `compute_additive_order` sorts
+  `-score`.
+- **The centre is the bounding-box centre, not the scene origin**, so a dataset
+  sitting far from the origin still reveals from its own middle rather than from
+  one corner. Override with `reveal_centre`.
+- **A `radial` ladder carries NO energy stamps** (`energy_fraction_cum` per
+  sub-LOD, `reference_energy` on the leaf), and this is enforced at authoring
+  time. The viewer multiplies brightness by `1/e(k)` while a ladder is
+  incomplete — correct for an approximation, backwards for a reveal, where an
+  inner shell is blown out and then *dims* as the object completes. The boost is
+  capped at 10× by `ENERGY_FLOOR`. The compensation is gated on the blending mode
+  and never on geometry type, so omitting the stamps is the only place to stop it.
+  **Where it actually bites:** `applyLodFade` is the sole consumer and the
+  `kind=lod` group registry is its sole caller, so the stamps matter for a ladder
+  *inside* a lod group (`levels`/`adaptive`/`overview`, which carry stream ladders
+  by default) and are inert on a bare `stream`/`flat` leaf. Measured on a
+  throttled server: a bare leaf renders byte-identically stamped or not, while
+  inside a `levels` group the stamped arm is 1.87× brighter in mean luma until
+  the ladder completes. The rule is unconditional regardless, because the method
+  already distinguishes both cases: `--recipe levels|adaptive|overview -m radial`
+  writes reveal ladders *inside* a lod group (stamps bite) and `--recipe stream -m
+  radial` writes a bare one (stamps inert). Nothing can smuggle stamps back in
+  either — `gsplat additive` and `lod --recipe levels` both DISCARD an input
+  ladder and re-derive from the method they are given (verified).
+  Consequence to know about: cross-fade and the `e >= 0.6` early-upgrade release
+  are therefore also inactive for a reveal, so shells hard-switch.
+
+Distance is measured only over the axes with non-zero **covariance** extent
+(`GSplatData._nondegenerate_axes`), so a stacked time/channel axis — built with
+`sigma=0` — cannot become a shell dimension (the splats furthest in time would
+otherwise land at the end of the ladder). Override with `spatial_dims`.
+
+#### On a PARTITIONED recipe, pass `--reveal-centre` explicitly
+
+With `tiles` / `overview` / `adaptive`, the ladder is built **per part**, and the
+default centre is each part's *own* bounding box. So `-m radial` without a centre
+gives **N independent local reveals** — the object appears to grow from every tile's
+middle at once — not one reveal growing from the object's middle. Measured on a
+4-part BSP of a ball (mean distance of the first shell, per part):
+
+| | → own part centre | → global centre |
+|---|---|---|
+| no `--reveal-centre` | **16.3–17.6** (part avg 27–28) | 35–36 (part avg 37) |
+| `--reveal-centre 0,0,0` | 24–25 (part avg 27–28) | **24–26** (part avg 37) |
+
+Both behaviours are useful and this is a deliberate default, not an oversight:
+per-part centres make each *visible* tile paint its own middle first, which is the
+right thing when tiles are frustum-culled and streamed independently. But if you
+want the whole object to grow from one point, **pass the centre**:
+
+```bash
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr \
+    --recipe tiles -m radial --reveal-centre 0,0,0
+```
+
+The `batch-fit` path (`--merge-additive-method radial`) accepts the method but has
+**no** centre override — its manifest is string-keyed and the two knobs are not
+plumbed — so a batch merge always produces per-part reveals. Use `gsplat lod` if you
+need a global one.
+
+The same `radial` method, with the same two knobs and the same no-stamps rule, is
+available on Points and Lines — see `core/group/lod/`. On Lines it orders whole
+polylines by their own centre, so every prefix keeps valid segment topology.
+Those two have no covariance to read, so their shell axes come from the scene's
+displayed dims (`resolve_reveal_spatial_dims`), falling back to non-zero
+positional extent when the positions are not scene-aligned.
 
 `auto` is the default. It resolves (via `resolve_additive_method`) to `greedy`
 for `N ≤ _AUTO_ADDITIVE_MAX_N` (= 5000) and to `self_energy` above it. Rationale:

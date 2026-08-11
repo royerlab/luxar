@@ -20,6 +20,10 @@ vi.mock('../../../ui/help-overlay', () => ({
 import { showLoadingIndicator, hideLoadingIndicator } from '../../../ui/loading-indicator';
 import { cleanupUI } from '../../../ui/ui-cleanup';
 import { hideHelpOverlay } from '../../../ui/help-overlay';
+import {
+  showSceneIdentityBanner,
+  hideSceneIdentityBanner,
+} from '../../../ui/scene-identity-banner';
 
 beforeEach(() => {
   document.body.innerHTML = '';
@@ -93,6 +97,24 @@ describe('cleanupUI', () => {
   it('invokes hideHelpOverlay', () => {
     cleanupUI();
     expect(hideHelpOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes a standing scene-identity banner and resets its shown state', () => {
+    // The watchdog that raised the banner only disposes with the
+    // SceneLoaderManager, which the dispose pipeline tears down AFTER it has
+    // cleared the notifier backend — so cleanupUI is the last point that can
+    // actually remove the node. Leaving it behind strands a red banner in an
+    // embedder's DOM, and the stale shown-kind then suppresses the next one.
+    showSceneIdentityBanner('changed');
+    expect(document.getElementById('luxar-scene-identity-banner')).not.toBeNull();
+
+    cleanupUI();
+    expect(document.getElementById('luxar-scene-identity-banner')).toBeNull();
+
+    // Shown-kind reset: the same kind renders again rather than no-op-ing.
+    showSceneIdentityBanner('changed');
+    expect(document.getElementById('luxar-scene-identity-banner')).not.toBeNull();
+    hideSceneIdentityBanner();
   });
 
   it('is idempotent — second call with nothing present is a no-op', () => {

@@ -111,6 +111,35 @@ the constants and profile. The default primitive is unchanged; the new
 `packages/luxar/examples/lines_primitive_qa_example.py` grid scene is the
 side-by-side visual QA artifact for the flip decision.
 
+#### The `radial` reveal ordering: a scene that grows outward as it streams
+
+New additive-ladder ordering `radial`, available on GSplats, Points and Lines
+(`luxar gsplat lod ... -m radial`, `additive_lod={"method": "radial"}`). It
+orders concentric shells around the node's own bounding-box centre — not the
+scene origin, so a dataset far from the origin still grows from its own middle
+instead of in from a corner — so the existing streaming machinery paints the
+object outward. **Authoring only: no viewer changes, nothing about how data is
+displayed, only how it is loaded.** The distance spans the spatial axes only, so
+a stacked time/channel column cannot become a shell dimension; `reveal_centre` /
+`spatial_dims` (`--reveal-centre` / `--spatial-dims`) override both. On Lines the
+permutation indexes whole polylines, so every prefix keeps valid segment
+topology. Mesh is left out — it has no additive ladder at all yet.
+
+A radial ladder deliberately carries **no energy stamps**. The viewer multiplies
+an incomplete ladder's brightness by `1/e(k)`, gated on the blending mode and
+never on geometry type; that is right for an energy-ordered prefix and backwards
+for a reveal, whose prefix is a partial object at full brightness rather than a
+dim version of the whole. `REVEAL_METHODS` in the new
+`luxar.utils.lod_methods` registry names which orderings are reveals, and both
+ladder implementations plus `annotate-quality` consult it, so the
+`energy_fraction_cum` / `reference_energy` pair is omitted both-or-neither.
+Accepted cost, stated rather than buried: cross-fade and the `e >= 0.6`
+early-upgrade release read the same stamps, so shells hard-switch.
+
+That registry also replaces four hand-copied method tuples: `radial` was
+invisible to every gsplat CLI surface, and three `--method` help strings still
+advertised only `auto|greedy|self_energy` long after six methods existed.
+
 #### An empty LOD 0 no longer blanks a laddered node's slice (#1456)
 
 All three progressive loaders (Points, Lines, GSplats) latched a terminal
@@ -298,6 +327,31 @@ leaf.
 One more mesh coverage residual, in the same vein: the freshness helpers' `isFresh`
 type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
 which has counted mesh since it became a legal ladder level. Widened to four.
+
+#### Scene-identity watchdog — a tab that no longer shows what its address serves says so
+
+Local demo/dev servers share ports and come and go, so a long-lived viewer
+tab could silently front a DIFFERENT scene than the one it loaded (another
+server took the port) — or a dead one — with no visual hint. The viewer now
+watches its dataset's identity for the life of the tab: a watchdog re-fetches
+the root `.zattrs` (cache-bypassing) every 15 s and the moment the tab
+regains focus/visibility, comparing `content_hash` (hash-less bare nodes fall
+back to the canonicalized attrs JSON, baselined on what was actually LOADED —
+never on a probe — so even a swap before the first probe is caught). A
+different hash — or a 404 where something else answers the address — raises a
+persistent top banner ("This address now serves a different scene — the view
+below is stale") with a Reload button and stops polling; a server that stops
+answering, times out, or replies with an inconclusive status (401/403 auth
+walls — a presigned source's credential can simply have expired — plus
+408/425/429/5xx) shows a self-clearing "Data server unreachable" banner after
+two consecutive failed probes, and a server that recovers with a different
+scene escalates straight to the changed banner. Only `http(s)` sources are watched; the
+watchdog is started per dataset as soon as the root attrs have been read
+(identity baselined on those attrs, so a swap during a long load is caught
+too) and disposed on dataset switch. New:
+`data/scene-identity-watchdog.ts`, `ui/scene-identity-banner.ts`, and
+optional `showSceneIdentityBanner`/`hideSceneIdentityBanner` methods on the
+cross-layer notifier surface.
 
 #### The scene-dimension check runs before a split, not inside the first child (#1446)
 
