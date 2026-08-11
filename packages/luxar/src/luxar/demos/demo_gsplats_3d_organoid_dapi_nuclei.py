@@ -110,7 +110,7 @@ Use --recompute to re-fit from scratch (requires network + GPU).
 Output:
     - Scene saved to: demos/gsplats_3d_organoid_dapi_nuclei.luxar.zarr
     - Cache saved to: ~/.cache/luxar/gsplats_dapi/dapi.gsplats.zarr.zip
-    - Automatically opens in browser at http://localhost:8000
+    - Automatically opens in your browser on the demo's own derived port
 
 Controls:
     - Mouse drag to rotate
