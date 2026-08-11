@@ -269,12 +269,12 @@ export function showHelpOverlay() {
   const applyHelpFilter = (): void => {
     const q = filterInput.value.trim().toLowerCase();
     let anyVisible = false;
-    for (const section of controlsList.querySelectorAll<HTMLElement>(
-      '.luxar-help-overlay__section'
+    for (const section of Array.from(
+      controlsList.querySelectorAll<HTMLElement>('.luxar-help-overlay__section')
     )) {
       let sectionVisible = false;
-      for (const item of section.querySelectorAll<HTMLElement>(
-        '.luxar-help-overlay__row, .luxar-help-overlay__tip'
+      for (const item of Array.from(
+        section.querySelectorAll<HTMLElement>('.luxar-help-overlay__row, .luxar-help-overlay__tip')
       )) {
         const match = !q || (item.textContent ?? '').toLowerCase().includes(q);
         item.style.display = match ? '' : 'none';

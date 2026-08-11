@@ -26,6 +26,11 @@ import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-s
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
+import { openContextMenu, type ContextMenuItem } from '../overlay-widgets/context-menu';
+import { BLENDING_MODES } from '../../rendering/blending-state';
+import type { BlendingMode } from '../../rendering';
+import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
+import { resolveLayerBlendingMode } from './layer-state';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LayerApplyEngine } from './layer-apply';
@@ -55,6 +60,10 @@ const ERROR_ICON =
 export class LayersPanel {
   private container: HTMLElement;
   private rootGroup: THREE.Group | null = null;
+  /** Late-bound per-layer camera framing (SceneManager.fitCameraToObject). */
+  private cameraFramer: ((obj: THREE.Object3D) => boolean) | null = null;
+  /** Close handle of the open context menu, if any. */
+  private contextMenuClose: (() => void) | null = null;
   private sceneGraph: SceneNode | null = null;
   private animationController: AnimationController;
 
@@ -296,12 +305,283 @@ export class LayersPanel {
     this.updateRowErrorStates();
   }
 
+  /**
+   * Inject the per-layer camera framer (the app wires
+   * SceneManager.fitCameraToObject, same late-binding pattern as the
+   * failed-loads provider). Null disables the "Frame camera" menu item.
+   */
+  setCameraFramer(framer: ((obj: THREE.Object3D) => boolean) | null): void {
+    this.cameraFramer = framer;
+  }
+
   /** Inject a callback that marks the GPU pick buffer dirty (PickingSystem.markDirty). Late-bound so it survives per-dataset picking re-creation. */
   setPickBufferInvalidator(fn: (() => void) | null): void {
     this.pickBufferInvalidator = fn;
   }
 
+  // ====================================================================
+  // Right-click context menus (shared openContextMenu utility)
+  // ====================================================================
+
+  /**
+   * Open the eye / row / header menu. `layerPath` is null for the header
+   * menu. The opener gets aria-expanded while the menu is up; focus returns
+   * to it on close (the utility handles both via onClose/focus-restore).
+   */
+  private openLayerContextMenu(
+    kind: 'eye' | 'row' | 'header',
+    layerPath: string | null,
+    x: number,
+    y: number,
+    opener: HTMLElement | null
+  ): void {
+    this.contextMenuClose?.();
+    const layer = layerPath ? this.state.getLayer(layerPath) : undefined;
+    const items =
+      kind === 'header' || !layer
+        ? this.buildHeaderMenuItems()
+        : kind === 'eye'
+          ? this.buildEyeMenuItems(layer)
+          : this.buildRowMenuItems(layer);
+    opener?.setAttribute('aria-expanded', 'true');
+    this.contextMenuClose = openContextMenu({
+      x,
+      y,
+      ariaLabel:
+        kind === 'header' ? 'Layers panel actions' : `Layer actions for ${layer?.name ?? ''}`,
+      items,
+      onClose: () => {
+        opener?.setAttribute('aria-expanded', 'false');
+        this.contextMenuClose = null;
+      },
+    });
+  }
+
+  /** Eye button: visibility verbs only. */
+  private buildEyeMenuItems(layer: LayerInfo): ContextMenuItem[] {
+    const soloed = this.state.soloedPath === layer.path;
+    return [
+      {
+        label: soloed ? 'Un-solo (restore visibility)' : 'Solo — hide all others',
+        kind: 'radio',
+        checked: soloed,
+        action: () => this.soloLayer(layer.path),
+      },
+      { label: 'Show all layers', action: () => this.setAllVisible(true) },
+      { label: 'Hide all layers', action: () => this.setAllVisible(false) },
+      { label: 'Invert visibility', action: () => this.invertVisibility() },
+    ];
+  }
+
+  /** Row: layer verbs + appearance submenus. */
+  private buildRowMenuItems(layer: LayerInfo): ContextMenuItem[] {
+    const soloed = this.state.soloedPath === layer.path;
+    const obj = this.rootGroup?.getObjectByName(layer.path) ?? null;
+    const items: ContextMenuItem[] = [
+      {
+        label: soloed ? 'Un-solo (restore visibility)' : 'Solo — hide all others',
+        kind: 'radio',
+        checked: soloed,
+        action: () => this.soloLayer(layer.path),
+      },
+      {
+        label: 'Frame camera on layer',
+        disabled: !obj || !this.cameraFramer,
+        action: () => {
+          if (obj) this.cameraFramer?.(obj);
+        },
+      },
+      {
+        label: 'Reset this layer',
+        action: () => this.resetLayer(layer.path),
+      },
+      {
+        label: 'Copy layer path',
+        action: () => {
+          void navigator.clipboard?.writeText(layer.path);
+        },
+      },
+    ];
+    if (layer.supportsColormap) {
+      const current = this.state.getLayer(layer.path)?.colormap;
+      const sub: ContextMenuItem[] = [
+        {
+          label: '(direct colors)',
+          kind: 'radio',
+          checked: !current,
+          action: () => this.setLayerColormap(layer.path, undefined),
+        },
+      ];
+      for (const names of Object.values(COLORMAP_CATEGORIES)) {
+        for (const name of names) {
+          sub.push({
+            label: name,
+            kind: 'radio',
+            checked: current === name,
+            action: () => this.setLayerColormap(layer.path, name),
+          });
+        }
+      }
+      items.push({ label: 'Colormap', separatorBefore: true, submenu: sub });
+    }
+    items.push({
+      label: 'Blending',
+      separatorBefore: !layer.supportsColormap,
+      submenu: BLENDING_MODES.map((mode) => ({
+        label: mode,
+        kind: 'radio' as const,
+        checked: this.state.getLayer(layer.path)?.blendingMode === mode,
+        action: () => this.setLayerBlending(layer.path, mode),
+      })),
+    });
+    items.push({
+      label: 'Apply appearance to all layers',
+      action: () => this.applyAppearanceToAll(layer.path),
+    });
+    return items;
+  }
+
+  private buildHeaderMenuItems(): ContextMenuItem[] {
+    return [
+      { label: 'Show all layers', action: () => this.setAllVisible(true) },
+      { label: 'Hide all layers', action: () => this.setAllVisible(false) },
+      { label: 'Invert visibility', action: () => this.invertVisibility() },
+      { label: 'Reset all layers', separatorBefore: true, action: () => this.resetAllLayers() },
+    ];
+  }
+
+  // ---- menu actions ----
+
+  /** Push every layer's current state.visible into the scene objects. */
+  private applyAllVisibilities(): void {
+    for (const l of this.state.getLayers()) {
+      this.applyEngine.applyVisibility(l.path, l.visible);
+    }
+  }
+
+  private soloLayer(path: string): void {
+    this.state.solo(path);
+    this.applyAllVisibilities();
+  }
+
+  private setAllVisible(visible: boolean): void {
+    this.state.setVisibleMany(this.state.getLayers().map((l) => ({ path: l.path, visible })));
+    this.applyAllVisibilities();
+  }
+
+  private invertVisibility(): void {
+    this.state.setVisibleMany(
+      this.state.getLayers().map((l) => ({ path: l.path, visible: !l.visible }))
+    );
+    this.applyAllVisibilities();
+  }
+
+  /**
+   * Reset ONE layer to its authored state. Re-derives the LayerInfo with a
+   * throwaway LayerStateManager over the kept scene graph (deliberately not
+   * factoring the private walkSceneGraph derivation — this reuses it
+   * verbatim, so reset can never drift from load), preserves selection, and
+   * patches only this row (renderList would drop focus and reset the
+   * failed-loads signature).
+   */
+  private resetLayer(path: string): void {
+    if (!this.sceneGraph) return;
+    const live = this.state.getLayer(path);
+    if (!live) return;
+    const scratch = new LayerStateManager();
+    scratch.initFromSceneGraph(this.sceneGraph);
+    const fresh = scratch.getLayer(path);
+    scratch.dispose();
+    if (!fresh) return;
+    const selected = live.selected;
+    Object.assign(live, fresh, { selected });
+    this.applyEngine.applyVisibility(path, live.visible);
+    this.applyEngine.applyColormap(live);
+    this.applyEngine.applyMeshAppearance(live);
+    this.applyEngine.applyBlendingMode(live);
+    this.refreshRowVisual(path);
+    this.controls.render();
+  }
+
+  /** Sync one row's eye icon + hidden class to the live state (no rebuild). */
+  private refreshRowVisual(path: string): void {
+    const row = this.rowElements.get(path);
+    const live = this.state.getLayer(path);
+    if (!row || !live) return;
+    row.classList.toggle('luxar-layer-row--hidden', !live.visible);
+    const eye = row.querySelector<HTMLElement>('.luxar-layer-row__eye');
+    if (eye) {
+      eye.innerHTML = live.visible ? EYE_ICON : EYE_OFF_ICON;
+      const tooltip = live.visible ? 'Hide layer' : 'Show layer';
+      eye.title = tooltip;
+      eye.setAttribute('aria-label', `${tooltip}: ${live.name}`);
+      eye.setAttribute('aria-pressed', live.visible ? 'true' : 'false');
+    }
+  }
+
+  /**
+   * Set one layer's colormap with the fail-closed contract the dropdown
+   * uses (layer-controls): re-default the window on off↔on flips BEFORE
+   * applying, and if the C1 guard rejects the palette on every leaf, drop
+   * it and restore the identity window rather than leaving contradictory
+   * state.
+   */
+  private setLayerColormap(path: string, cmName: string | undefined): void {
+    const live = this.state.getLayer(path);
+    if (!live) return;
+    const wasColormapped = live.scalarWindow;
+    live.colormap = cmName;
+    if (wasColormapped !== !!cmName) {
+      this.state.setColormapWindow(path, !!cmName);
+    }
+    if (!this.applyEngine.applyColormap(live) && cmName) {
+      live.colormap = undefined;
+      this.state.setColormapWindow(path, false);
+      this.applyEngine.applyColormap(live);
+    }
+    this.controls.render();
+  }
+
+  /** Set one layer's blending mode (resolved per type, explicit ownership). */
+  private setLayerBlending(path: string, mode: BlendingMode): void {
+    const live = this.state.getLayer(path);
+    if (!live) return;
+    live.blendingMode = resolveLayerBlendingMode(live.type, mode);
+    live.blendingModeExplicit = true;
+    this.applyEngine.applyBlendingMode(live);
+    this.controls.render();
+  }
+
+  /**
+   * Copy the source layer's appearance to every other layer, type-gated:
+   * display window clamped into each target's data bounds, gamma verbatim,
+   * blending resolved per target type, colormap only where supported.
+   * Mesh-only knobs and volumetric-only absorption are deliberately not
+   * copied.
+   */
+  private applyAppearanceToAll(sourcePath: string): void {
+    const src = this.state.getLayer(sourcePath);
+    if (!src) return;
+    for (const l of this.state.getLayers()) {
+      if (l.path === sourcePath) continue;
+      const min = Math.max(src.displayMin, l.dataMin);
+      const max = Math.min(src.displayMax, l.dataMax);
+      if (min < max) {
+        this.state.setDisplayRange(l.path, min, max);
+        this.applyEngine.applyDisplayRange(l);
+      }
+      this.state.setGamma(l.path, src.gamma);
+      this.applyEngine.applyGamma(l);
+      l.blendingMode = resolveLayerBlendingMode(l.type, src.blendingMode);
+      l.blendingModeExplicit = true;
+      this.applyEngine.applyBlendingMode(l);
+      if (l.supportsColormap) this.setLayerColormap(l.path, src.colormap);
+    }
+    this.controls.render();
+  }
+
   dispose(): void {
+    this.contextMenuClose?.();
     this.clear();
     this.state.dispose();
   }
@@ -426,6 +706,35 @@ export class LayersPanel {
     controls.className = 'luxar-layers-panel__controls';
     panel.appendChild(controls);
 
+    // Right-click menus. ONE delegated listener: always suppress the native
+    // menu over the glass surface (the rail's rationale), then route to the
+    // eye / row / header menu. Right-clicking an unselected row selects it
+    // first (Finder/napari convention); an already-selected row keeps the
+    // current multi-selection.
+    this.events.on(panel, 'contextmenu', (e) => {
+      e.preventDefault();
+      const me = e as MouseEvent;
+      const target = me.target as HTMLElement;
+      const eye = target.closest('.luxar-layer-row__eye') as HTMLElement | null;
+      const row = target.closest('.luxar-layer-row') as HTMLElement | null;
+      const header = target.closest('.luxar-layers-panel__header') as HTMLElement | null;
+      if (row) {
+        const path = row.dataset.layerPath;
+        const layer = path ? this.state.getLayer(path) : undefined;
+        if (!layer) return;
+        if (!layer.selected) this.state.select(layer.path, 'single');
+        this.openLayerContextMenu(
+          eye ? 'eye' : 'row',
+          layer.path,
+          me.clientX,
+          me.clientY,
+          eye ?? row
+        );
+      } else if (header) {
+        this.openLayerContextMenu('header', null, me.clientX, me.clientY, header);
+      }
+    });
+
     this.container.appendChild(panel);
 
     // Track panel size changes to keep the GUI positioned below
@@ -543,6 +852,7 @@ export class LayersPanel {
         eyeBtn.title = tooltip;
         eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
         eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
+        eyeBtn.setAttribute('aria-haspopup', 'menu');
       }
     }
 
@@ -650,6 +960,12 @@ export class LayersPanel {
     row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
     row.setAttribute('aria-label', `${layer.name} (${layer.type})`);
     row.tabIndex = -1; // updateRowHighlights() promotes the active one to 0
+    // Context-menu affordances. The menu itself renders OUTSIDE the listbox
+    // (role="option" permits no role="menu" descendant) — these attributes
+    // only announce it. The row aria-label above is test-pinned; never fold
+    // menu state into it.
+    row.dataset.layerPath = layer.path;
+    row.setAttribute('aria-haspopup', 'menu');
 
     // Eye toggle — visibility is independent of selection. <button> already
     // has role=button, is focusable, and triggers click on Space/Enter, so we
@@ -758,6 +1074,14 @@ export class LayersPanel {
         if (e.ctrlKey || e.metaKey) mode = 'add';
         else if (e.shiftKey) mode = 'range';
         this.state.select(layer.path, mode);
+      } else if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') {
+        // Keyboard parity for the right-click menu, anchored at the row.
+        e.preventDefault();
+        const live = this.state.getLayer(layer.path);
+        if (!live) return;
+        if (!live.selected) this.state.select(layer.path, 'single');
+        const r = row.getBoundingClientRect();
+        this.openLayerContextMenu('row', layer.path, r.left + 12, r.bottom - 4, row);
       }
     });
 

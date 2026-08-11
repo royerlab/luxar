@@ -92,6 +92,9 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
       // collapsed monitor. After initFromScene: its clear() resets any prior
       // provider first.
       ports.layersPanel.setFailedLoadsProvider(sceneLoader.getFailedLoadsProvider());
+      // Per-layer "Frame camera" context-menu action (same late-binding
+      // pattern as the provider above).
+      ports.layersPanel.setCameraFramer((obj) => ports.sceneManager.fitCameraToObject(obj));
     }
   }
   // Notify on-screen affordances (the control rail's Layers button gates its

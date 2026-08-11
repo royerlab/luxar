@@ -1,0 +1,105 @@
+/**
+ * Shared context menu (UI Design Guide §7) — cursor-anchored right-click
+ * menus built by ui/overlay-widgets/context-menu.ts. Popover-tier surface
+ * with full menu ARIA; one side-flyout submenu level.
+ */
+
+.luxar-context-menu {
+  position: fixed;
+  min-width: 190px;
+  padding: var(--luxar-spacing-2);
+  z-index: var(--luxar-z-popover);
+  background: var(--luxar-bg-secondary);
+  backdrop-filter: var(--luxar-blur-md);
+  -webkit-backdrop-filter: var(--luxar-blur-md);
+  border: 1px solid var(--luxar-border-strong);
+  border-radius: var(--luxar-radius-md);
+  box-shadow: var(--luxar-shadow-xl);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  /* Transform-only entry (glass-safe, §10.2). */
+  animation: luxar-panel-pop-kf 0.12s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.luxar-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-4);
+  width: 100%;
+  padding: 5px 9px;
+  border: none;
+  background: none;
+  color: var(--luxar-text-primary);
+  border-radius: var(--luxar-radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* Menu convention: the focused/hovered item is highlighted by fill (roving
+   focus), not by an outline ring. */
+.luxar-context-menu__item:hover:not(:disabled),
+.luxar-context-menu__item:focus {
+  background: var(--luxar-interactive-hover);
+  outline: none;
+}
+
+.luxar-context-menu__item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.luxar-context-menu__icon svg,
+.luxar-context-menu__sub-arrow svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-context-menu__icon {
+  color: var(--luxar-text-muted);
+}
+
+.luxar-context-menu__label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.luxar-context-menu__sub-arrow {
+  margin-left: auto;
+  color: var(--luxar-text-muted);
+}
+
+/* menuitemradio state dot: hollow when off, highlight-filled when checked. */
+.luxar-context-menu__radio {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--luxar-radius-full);
+  border: 1px solid var(--luxar-border-strong);
+}
+
+.luxar-context-menu__item[aria-checked='true'] .luxar-context-menu__radio {
+  background: var(--luxar-highlight);
+  border-color: var(--luxar-highlight);
+}
+
+.luxar-context-menu__sep {
+  height: 1px;
+  margin: var(--luxar-spacing-2) var(--luxar-spacing-3);
+  background: var(--luxar-border-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luxar-context-menu {
+    animation: none;
+  }
+}
