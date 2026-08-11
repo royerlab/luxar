@@ -58,15 +58,17 @@ describe('capsule constants', () => {
       expect(src).not.toContain('smoothstep');
       expect(src).toContain('luxarPartnerProfile');
       expect(src).toContain('if (profile <= 0.0) discard;');
-      // No usable partner (packet length 0) still cuts hard.
-      expect(src).toContain('if (vJointA.z < 0.5) discard;');
+      // No usable partner (non-negative gradient packet) still cuts hard.
+      expect(src).toContain('if (vCutA2.z >= 0.0) discard;');
     }
     for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
       // Stencil reach covers the kept half-disc PLUS the partner's taper
       // deficit (the disc half the deficit rule now renders).
       expect(src).toMatch(/ext[AB] = max\(abs\(nLoc\.y\), deficit[AB]\) \* rMax/);
-      // The partner packet carries the far radius from the SAME texels.
+      // The partner packet carries the far radius from the SAME texels,
+      // packed as a radius GRADIENT into the cut varying's third lane.
       expect(src).toContain('sanitizeNonNegative(far.w, 0.0)');
+      expect(src).toMatch(/cut[AB]\.z = \(rpFar[AB] - r[AB]\) \/ ql;/);
     }
   });
 

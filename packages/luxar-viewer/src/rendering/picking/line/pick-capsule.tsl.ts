@@ -78,14 +78,11 @@ export function capsuleLinePickWebGPUFactory(
   // ---- Varyings ----
   const vLocal: TSLNode = varying(vec2(0.0, 0.0));
   const vMeta: TSLNode = varying(vec3(1.0, 0.0, 0.0)).setInterpolation('flat');
-  const vCutA2: TSLNode = varying(vec2(-1.0, 0.0)).setInterpolation('flat');
-  const vCutB2: TSLNode = varying(vec2(1.0, 0.0)).setInterpolation('flat');
-  // Joint packets for the DEFICIT rule (see the fragment): partner axis
-  // direction in my local frame (.xy), projected length px (.z; 0 = no
-  // usable partner -> hard cut), far radius px (.w); vREnd = my end radii.
-  const vJointA: TSLNode = varying(vec4(0.0, 0.0, 0.0, 0.0)).setInterpolation('flat');
-  const vJointB: TSLNode = varying(vec4(0.0, 0.0, 0.0, 0.0)).setInterpolation('flat');
-  const vREnd: TSLNode = varying(vec2(1.0, 1.0)).setInterpolation('flat');
+  // .xy = bisector-cut normal (my side negative); .z = the DEFICIT
+  // packet: the partner's radius gradient (px/px), stored only when
+  // negative beyond the congruence gate; 0 = hard cut.
+  const vCutA2: TSLNode = varying(vec3(-1.0, 0.0, 0.0)).setInterpolation('flat');
+  const vCutB2: TSLNode = varying(vec3(1.0, 0.0, 0.0)).setInterpolation('flat');
   const vR: TSLNode = varying(float(1.0));
   const vW: TSLNode = varying(float(1.0));
   const vFade: TSLNode = varying(float(1.0));
@@ -189,8 +186,8 @@ export function capsuleLinePickWebGPUFactory(
     const v: TSLNode = vec2(u.y.negate(), u.x).toVar();
     const rMax: TSLNode = max(rA, rB).add(CAPSULE_STENCIL_APRON_PX).toVar();
 
-    const cutA: TSLNode = vec2(-1.0, 0.0).toVar();
-    const cutB: TSLNode = vec2(1.0, 0.0).toVar();
+    const cutA: TSLNode = vec3(-1.0, 0.0, 0.0).toVar();
+    const cutB: TSLNode = vec3(1.0, 0.0, 0.0).toVar();
     const extA: TSLNode = rMax.toVar();
     const extB: TSLNode = rMax.toVar();
     const capA: TSLNode = interiorA.toVar();
@@ -250,7 +247,7 @@ export function capsuleLinePickWebGPUFactory(
             const n2: TSLNode = nRaw.div(nl).toVar();
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.lessThan(-1e-3), () => {
-              cutA.assign(nLoc);
+              cutA.assign(vec3(nLoc, 0.0));
               // Width gate (see _shared/line-capsule.ts).
               If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX), () => {
                 const rpFarA: TSLNode = clamp(
@@ -270,7 +267,7 @@ export function capsuleLinePickWebGPUFactory(
                 ).toVar();
                 // Congruence gate (see _shared/line-capsule.ts).
                 If(deficitA.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
-                  vJointA.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarA));
+                  cutA.z.assign(rpFarA.sub(rA).div(ql));
                 });
                 extA.assign(max(abs(nLoc.y), deficitA).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
               }).Else(() => {
@@ -299,7 +296,7 @@ export function capsuleLinePickWebGPUFactory(
             const n2: TSLNode = nRaw.div(nl).toVar();
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.greaterThan(1e-3), () => {
-              cutB.assign(nLoc);
+              cutB.assign(vec3(nLoc, 0.0));
               // Width gate (see _shared/line-capsule.ts).
               If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX), () => {
                 const rpFarB: TSLNode = clamp(
@@ -318,7 +315,7 @@ export function capsuleLinePickWebGPUFactory(
                   1.0
                 ).toVar();
                 If(deficitB.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
-                  vJointB.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarB));
+                  cutB.z.assign(rpFarB.sub(rB).div(ql));
                 });
                 extB.assign(max(abs(nLoc.y), deficitB).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
               }).Else(() => {
@@ -354,7 +351,6 @@ export function capsuleLinePickWebGPUFactory(
       : perspectiveNearFadeStaticTSL(false, mix(mvA.z, mvB.z, tc), nearCull).toVar();
 
     vMeta.assign(vec3(abLen, capA, capB));
-    vREnd.assign(vec2(rA, rB));
     vCutA2.assign(cutA);
     vCutB2.assign(cutB);
     vFade.assign(fade.mul(widthScale).mul(culled.select(float(0.0), float(1.0))));
@@ -402,12 +398,21 @@ export function capsuleLinePickWebGPUFactory(
     // composes to max(mine, partner) — exact partition for congruent legs,
     // and a fat vertex's disc no longer loses its far half to a thin
     // neighbour. Packet length 0 = no usable partner: hard cut.
-    const partnerProfile = (rel: TSLNode, joint: TSLNode, rEnd: TSLNode): TSLNode => {
-      const xp: TSLNode = dot(rel, joint.xy).toVar();
+    const partnerProfile = (rel: TSLNode, cut: TSLNode, mSign: number, rEnd: TSLNode): TSLNode => {
+      // Partner axis = my inward axis reflected across the cut plane
+      // (exact); radius at the vertex = my own interpolated radius (vR is
+      // constant across a cap region); unbounded tapering rod beyond.
+      const nx: TSLNode = cut.x.toVar();
+      const ny: TSLNode = cut.y.toVar();
+      const proj: TSLNode = nx.mul(mSign).toVar();
+      const qdir: TSLNode = vec2(
+        float(mSign).sub(proj.mul(nx).mul(2.0)),
+        proj.mul(ny).mul(-2.0)
+      ).toVar();
+      const xp: TSLNode = dot(rel, qdir).toVar();
       const yp2: TSLNode = max(dot(rel, rel).sub(xp.mul(xp)), 0.0).toVar();
-      const tp: TSLNode = clamp(xp.div(max(joint.z, float(1e-4))), 0.0, 1.0).toVar();
-      const rp: TSLNode = max(mix(rEnd, joint.w, tp), float(1e-4)).toVar();
-      const op: TSLNode = max(max(xp.negate(), xp.sub(joint.z)), 0.0).toVar();
+      const rp: TSLNode = max(rEnd.add(cut.z.mul(max(xp, 0.0))), float(1e-4)).toVar();
+      const op: TSLNode = max(xp.negate(), 0.0).toVar();
       const qp: TSLNode = yp2.add(op.mul(op)).div(rp.mul(rp)).toVar();
       const wp: TSLNode = max(float(1.0).sub(qp), 0.0).toVar();
       return abs(vSharp.sub(0.5))
@@ -416,8 +421,8 @@ export function capsuleLinePickWebGPUFactory(
         .toVar();
     };
     If(vMeta.y.greaterThan(0.5).and(vCutA2.x.mul(x).add(vCutA2.y.mul(y)).greaterThan(0.0)), () => {
-      Discard(vJointA.z.lessThan(0.5));
-      profile.subAssign(partnerProfile(vec2(x, y), vJointA, vREnd.x));
+      Discard(vCutA2.z.greaterThanEqual(0.0));
+      profile.subAssign(partnerProfile(vec2(x, y), vCutA2, 1.0, rPx));
       Discard(profile.lessThanEqual(0.0));
     });
     If(
@@ -425,8 +430,8 @@ export function capsuleLinePickWebGPUFactory(
         .greaterThan(0.5)
         .and(vCutB2.x.mul(x.sub(vMeta.x)).add(vCutB2.y.mul(y)).greaterThan(0.0)),
       () => {
-        Discard(vJointB.z.lessThan(0.5));
-        profile.subAssign(partnerProfile(vec2(x.sub(vMeta.x), y), vJointB, vREnd.y));
+        Discard(vCutB2.z.greaterThanEqual(0.0));
+        profile.subAssign(partnerProfile(vec2(x.sub(vMeta.x), y), vCutB2, -1.0, rPx));
         Discard(profile.lessThanEqual(0.0));
       }
     );

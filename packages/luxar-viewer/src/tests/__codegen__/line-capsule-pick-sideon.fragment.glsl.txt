@@ -69,19 +69,16 @@ layout( std140 ) uniform object {
 
 
 // varyings
-flat  in vec4 nodeVarying0;
-flat  in vec4 nodeVarying1;
+flat  in vec3 nodeVarying0;
+flat  in vec3 nodeVarying1;
 flat  in vec3 nodeVarying2;
-flat  in vec2 nodeVarying3;
-flat  in vec2 nodeVarying4;
-flat  in vec2 nodeVarying5;
+in float nodeVarying3;
+in float nodeVarying4;
+in vec2 nodeVarying5;
 in float nodeVarying6;
 in float nodeVarying7;
-in vec2 nodeVarying8;
-in float nodeVarying9;
-in float nodeVarying10;
-flat  in float nodeVarying11;
-flat  in vec2 nodeVarying12;
+flat  in float nodeVarying8;
+flat  in vec2 nodeVarying9;
 
 
 // vars
@@ -99,29 +96,35 @@ float nodeVar9;
 float nodeVar10;
 float nodeVar11;
 float nodeVar12;
-vec2 nodeVar13;
+float nodeVar13;
 float nodeVar14;
 float nodeVar15;
-float nodeVar16;
-float nodeVar17;
+vec2 nodeVar16;
+vec2 nodeVar17;
 float nodeVar18;
 float nodeVar19;
 float nodeVar20;
 float nodeVar21;
 float nodeVar22;
-vec2 nodeVar23;
+float nodeVar23;
 float nodeVar24;
 float nodeVar25;
 float nodeVar26;
 float nodeVar27;
 float nodeVar28;
-float nodeVar29;
-float nodeVar30;
+vec2 nodeVar29;
+vec2 nodeVar30;
 float nodeVar31;
 float nodeVar32;
+float nodeVar33;
+float nodeVar34;
+float nodeVar35;
+float nodeVar36;
+float nodeVar37;
+float nodeVar38;
 float lineCapsulePickBrightness;
 vec4 Output;
-vec4 nodeVar36;
+vec4 nodeVar42;
 
 // codes
 
@@ -131,12 +134,12 @@ void main() {
 	// flow
 	// code
 
-	nodeVar0 = ( 1.0 / max( nodeVarying10, 1e-9 ) );
-	nodeVar1 = ( nodeVarying8.x * nodeVar0 );
-	nodeVar2 = ( nodeVarying8.y * nodeVar0 );
-	nodeVar3 = max( ( nodeVarying9 * nodeVar0 ), 0.0001 );
+	nodeVar0 = ( 1.0 / max( nodeVarying7, 1e-9 ) );
+	nodeVar1 = ( nodeVarying5.x * nodeVar0 );
+	nodeVar2 = ( nodeVarying5.y * nodeVar0 );
+	nodeVar3 = max( ( nodeVarying6 * nodeVar0 ), 0.0001 );
 	nodeVar4 = ( - nodeVar1 );
-	nodeVar5 = ( nodeVar1 - nodeVarying2.x );
+	nodeVar5 = ( nodeVar1 - nodeVarying0.x );
 	nodeVar6 = max( max( nodeVar4, nodeVar5 ), 0.0 );
 	nodeVar7 = ( ( ( nodeVar2 * nodeVar2 ) + ( nodeVar6 * nodeVar6 ) ) / ( nodeVar3 * nodeVar3 ) );
 	nodeVar8 = ( 1.0 - nodeVar7 );
@@ -149,9 +152,9 @@ void main() {
 	}
 
 	nodeVar9 = ( nodeVar8 * nodeVar8 );
-	nodeVar10 = pow( nodeVar8, exp2( ( 3.0 - ( nodeVarying7 * 4.0 ) ) ) );
+	nodeVar10 = pow( nodeVar8, exp2( ( 3.0 - ( nodeVarying4 * 4.0 ) ) ) );
 
-	if ( ( abs( ( nodeVarying7 - 0.5 ) ) < 0.001 ) ) {
+	if ( ( abs( ( nodeVarying4 - 0.5 ) ) < 0.001 ) ) {
 
 		nodeVar11 = nodeVar9;
 
@@ -163,37 +166,40 @@ void main() {
 
 	nodeVar12 = nodeVar11;
 
-	if ( ( ( nodeVarying2.y > 0.5 ) && ( ( ( nodeVarying4.x * nodeVar1 ) + ( nodeVarying4.y * nodeVar2 ) ) > 0.0 ) ) ) {
+	if ( ( ( nodeVarying0.y > 0.5 ) && ( ( ( nodeVarying1.x * nodeVar1 ) + ( nodeVarying1.y * nodeVar2 ) ) > 0.0 ) ) ) {
 
 
-		if ( ( nodeVarying0.z < 0.5 ) ) {
+		if ( ( nodeVarying1.z >= 0.0 ) ) {
 
 			discard;
 
 
 		}
 
-		nodeVar13 = vec2( nodeVar1, nodeVar2 );
-		nodeVar14 = dot( nodeVar13, nodeVarying0.xy );
-		nodeVar15 = max( ( dot( nodeVar13, nodeVar13 ) - ( nodeVar14 * nodeVar14 ) ), 0.0 );
-		nodeVar16 = clamp( ( nodeVar14 / max( nodeVarying0.z, 0.0001 ) ), 0.0, 1.0 );
-		nodeVar17 = max( mix( nodeVarying3.x, nodeVarying0.w, nodeVar16 ), 0.0001 );
-		nodeVar18 = max( max( ( - nodeVar14 ), ( nodeVar14 - nodeVarying0.z ) ), 0.0 );
-		nodeVar19 = ( ( nodeVar15 + ( nodeVar18 * nodeVar18 ) ) / ( nodeVar17 * nodeVar17 ) );
-		nodeVar20 = max( ( 1.0 - nodeVar19 ), 0.0 );
+		nodeVar13 = nodeVarying1.x;
+		nodeVar14 = nodeVarying1.y;
+		nodeVar15 = ( nodeVar13 * 1.0 );
+		nodeVar16 = vec2( ( 1.0 - ( ( nodeVar15 * nodeVar13 ) * 2.0 ) ), ( ( nodeVar15 * nodeVar14 ) * -2.0 ) );
+		nodeVar17 = vec2( nodeVar1, nodeVar2 );
+		nodeVar18 = dot( nodeVar17, nodeVar16 );
+		nodeVar19 = max( ( dot( nodeVar17, nodeVar17 ) - ( nodeVar18 * nodeVar18 ) ), 0.0 );
+		nodeVar20 = max( ( nodeVar3 + ( nodeVarying1.z * max( nodeVar18, 0.0 ) ) ), 0.0001 );
+		nodeVar21 = max( ( - nodeVar18 ), 0.0 );
+		nodeVar22 = ( ( nodeVar19 + ( nodeVar21 * nodeVar21 ) ) / ( nodeVar20 * nodeVar20 ) );
+		nodeVar23 = max( ( 1.0 - nodeVar22 ), 0.0 );
 
-		if ( ( abs( ( nodeVarying7 - 0.5 ) ) < 0.001 ) ) {
+		if ( ( abs( ( nodeVarying4 - 0.5 ) ) < 0.001 ) ) {
 
-			nodeVar21 = ( nodeVar20 * nodeVar20 );
+			nodeVar24 = ( nodeVar23 * nodeVar23 );
 
 		} else {
 
-			nodeVar21 = pow( nodeVar20, exp2( ( 3.0 - ( nodeVarying7 * 4.0 ) ) ) );
+			nodeVar24 = pow( nodeVar23, exp2( ( 3.0 - ( nodeVarying4 * 4.0 ) ) ) );
 
 		}
 
-		nodeVar22 = nodeVar21;
-		nodeVar12 = ( nodeVar12 - nodeVar22 );
+		nodeVar25 = nodeVar24;
+		nodeVar12 = ( nodeVar12 - nodeVar25 );
 
 		if ( ( nodeVar12 <= 0.0 ) ) {
 
@@ -207,37 +213,40 @@ void main() {
 	}
 
 
-	if ( ( ( nodeVarying2.z > 0.5 ) && ( ( ( nodeVarying5.x * ( nodeVar1 - nodeVarying2.x ) ) + ( nodeVarying5.y * nodeVar2 ) ) > 0.0 ) ) ) {
+	if ( ( ( nodeVarying0.z > 0.5 ) && ( ( ( nodeVarying2.x * ( nodeVar1 - nodeVarying0.x ) ) + ( nodeVarying2.y * nodeVar2 ) ) > 0.0 ) ) ) {
 
 
-		if ( ( nodeVarying1.z < 0.5 ) ) {
+		if ( ( nodeVarying2.z >= 0.0 ) ) {
 
 			discard;
 
 
 		}
 
-		nodeVar23 = vec2( ( nodeVar1 - nodeVarying2.x ), nodeVar2 );
-		nodeVar24 = dot( nodeVar23, nodeVarying1.xy );
-		nodeVar25 = max( ( dot( nodeVar23, nodeVar23 ) - ( nodeVar24 * nodeVar24 ) ), 0.0 );
-		nodeVar26 = clamp( ( nodeVar24 / max( nodeVarying1.z, 0.0001 ) ), 0.0, 1.0 );
-		nodeVar27 = max( mix( nodeVarying3.y, nodeVarying1.w, nodeVar26 ), 0.0001 );
-		nodeVar28 = max( max( ( - nodeVar24 ), ( nodeVar24 - nodeVarying1.z ) ), 0.0 );
-		nodeVar29 = ( ( nodeVar25 + ( nodeVar28 * nodeVar28 ) ) / ( nodeVar27 * nodeVar27 ) );
-		nodeVar30 = max( ( 1.0 - nodeVar29 ), 0.0 );
+		nodeVar26 = nodeVarying2.x;
+		nodeVar27 = nodeVarying2.y;
+		nodeVar28 = ( nodeVar26 * -1.0 );
+		nodeVar29 = vec2( ( -1.0 - ( ( nodeVar28 * nodeVar26 ) * 2.0 ) ), ( ( nodeVar28 * nodeVar27 ) * -2.0 ) );
+		nodeVar30 = vec2( ( nodeVar1 - nodeVarying0.x ), nodeVar2 );
+		nodeVar31 = dot( nodeVar30, nodeVar29 );
+		nodeVar32 = max( ( dot( nodeVar30, nodeVar30 ) - ( nodeVar31 * nodeVar31 ) ), 0.0 );
+		nodeVar33 = max( ( nodeVar3 + ( nodeVarying2.z * max( nodeVar31, 0.0 ) ) ), 0.0001 );
+		nodeVar34 = max( ( - nodeVar31 ), 0.0 );
+		nodeVar35 = ( ( nodeVar32 + ( nodeVar34 * nodeVar34 ) ) / ( nodeVar33 * nodeVar33 ) );
+		nodeVar36 = max( ( 1.0 - nodeVar35 ), 0.0 );
 
-		if ( ( abs( ( nodeVarying7 - 0.5 ) ) < 0.001 ) ) {
+		if ( ( abs( ( nodeVarying4 - 0.5 ) ) < 0.001 ) ) {
 
-			nodeVar31 = ( nodeVar30 * nodeVar30 );
+			nodeVar37 = ( nodeVar36 * nodeVar36 );
 
 		} else {
 
-			nodeVar31 = pow( nodeVar30, exp2( ( 3.0 - ( nodeVarying7 * 4.0 ) ) ) );
+			nodeVar37 = pow( nodeVar36, exp2( ( 3.0 - ( nodeVarying4 * 4.0 ) ) ) );
 
 		}
 
-		nodeVar32 = nodeVar31;
-		nodeVar12 = ( nodeVar12 - nodeVar32 );
+		nodeVar38 = nodeVar37;
+		nodeVar12 = ( nodeVar12 - nodeVar38 );
 
 		if ( ( nodeVar12 <= 0.0 ) ) {
 
@@ -250,7 +259,7 @@ void main() {
 
 	}
 
-	lineCapsulePickBrightness = ( nodeVar12 * nodeVarying6 );
+	lineCapsulePickBrightness = ( nodeVar12 * nodeVarying3 );
 
 	if ( ( lineCapsulePickBrightness < 0.0001 ) ) {
 
@@ -259,13 +268,13 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( nodeVarying11, nodeVarying12.x, lineCapsulePickBrightness, nodeVarying12.y );
+	DiffuseColor = vec4( nodeVarying8, nodeVarying9.x, lineCapsulePickBrightness, nodeVarying9.y );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform4 );
-	nodeVar36 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar36;
+	nodeVar42 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar42;
 	gl_FragDepth = ( 1.0 - clamp( lineCapsulePickBrightness, 0.0, 1.0 ) );
 
 	// result
-	fragColor = nodeVar36;
+	fragColor = nodeVar42;
 
 }

@@ -66,11 +66,10 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     // see the visual twin's declaration note).
     out vec2 vLocal;
     flat out vec3 vMeta;
-    flat out vec2 vCutA2;
-    flat out vec2 vCutB2;
-    flat out vec4 vJointA;
-    flat out vec4 vJointB;
-    flat out vec2 vREnd;
+    // .xy = bisector-cut normal; .z = partner radius gradient packet
+    // (mirrors the visual capsule exactly).
+    flat out vec3 vCutA2;
+    flat out vec3 vCutB2;
     out float vR;
     out float vW;
     out float vFade;
@@ -117,8 +116,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       if ((uIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vLocal = vec2(0.0); vMeta = vec3(1.0, 0.0, 0.0);
-        vCutA2 = vec2(-1.0, 0.0); vCutB2 = vec2(1.0, 0.0);
-        vJointA = vec4(0.0); vJointB = vec4(0.0); vREnd = vec2(1.0);
+        vCutA2 = vec3(-1.0, 0.0, 0.0); vCutB2 = vec3(1.0, 0.0, 0.0);
         vR = 1.0; vW = 1.0; vFade = 0.0; vSharp = 0.5;
         return;
       }
@@ -176,13 +174,10 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vec2 u = abLen > 1e-4 ? ab / abLen : vec2(1.0, 0.0);
       vec2 v = vec2(-u.y, u.x);
       float rMax = max(rA, rB) + ${G.APRON};
-      vec2 cutA = vec2(-1.0, 0.0);
-      vec2 cutB = vec2(1.0, 0.0);
+      vec3 cutA = vec3(-1.0, 0.0, 0.0);
+      vec3 cutB = vec3(1.0, 0.0, 0.0);
       float extA = rMax;
       float extB = rMax;
-      vJointA = vec4(0.0);
-      vJointB = vec4(0.0);
-      vREnd = vec2(rA, rB);
       if (interiorA > 0.5) {
         extA = ${G.APRON};
         // Mirrors the visual capsule exactly (or hover desyncs from
@@ -205,9 +200,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x < -1e-3) {
-                cutA = nLoc;
-                // Width gate (see _shared/line-capsule.ts): hairline joints
-                // skip the packet math — a deficit there is sub-pixel.
+                cutA = vec3(nLoc, 0.0);
                 if (rMax > ${G.PACKET_MIN_R}) {
                   float wFarA = farA.w;
                   float rpFarA;
@@ -219,7 +212,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
                   rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
                   float deficitA = clamp(1.0 - rpFarA / max(rA, 1e-4), 0.0, 1.0);
                   if (deficitA > ${G.DEFICIT_GATE}) {
-                    vJointA = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarA);
+                    cutA.z = (rpFarA - rA) / ql;
                   }
                   extA = max(abs(nLoc.y), deficitA) * rMax + ${G.APRON};
                 } else {
@@ -254,7 +247,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x > 1e-3) {
-                cutB = nLoc;
+                cutB = vec3(nLoc, 0.0);
                 if (rMax > ${G.PACKET_MIN_R}) {
                   float wFarB = farB.w;
                   float rpFarB;
@@ -266,7 +259,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
                   rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
                   float deficitB = clamp(1.0 - rpFarB / max(rB, 1e-4), 0.0, 1.0);
                   if (deficitB > ${G.DEFICIT_GATE}) {
-                    vJointB = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarB);
+                    cutB.z = (rpFarB - rB) / ql;
                   }
                   extB = max(abs(nLoc.y), deficitB) * rMax + ${G.APRON};
                 } else {
@@ -316,11 +309,8 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
 
     in vec2 vLocal;
     flat in vec3 vMeta;
-    flat in vec2 vCutA2;
-    flat in vec2 vCutB2;
-    flat in vec4 vJointA;
-    flat in vec4 vJointB;
-    flat in vec2 vREnd;
+    flat in vec3 vCutA2;
+    flat in vec3 vCutB2;
     in float vR;
     in float vW;
     in float vFade;
@@ -332,12 +322,13 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
 
     // The PARTNER leg's profile at a pixel offset rel from the shared
     // vertex — mirrors the visual capsule exactly (hover must track pixels).
-    float luxarPartnerProfile(vec2 rel, vec4 joint, float rEnd, float sharp) {
-      float xp = dot(rel, joint.xy);
+    float luxarPartnerProfile(vec2 rel, vec3 cut, float mSign, float rEnd, float sharp) {
+      vec2 n = cut.xy;
+      vec2 qdir = vec2(mSign - 2.0 * (mSign * n.x) * n.x, -2.0 * (mSign * n.x) * n.y);
+      float xp = dot(rel, qdir);
       float yp2 = max(dot(rel, rel) - xp * xp, 0.0);
-      float tp = clamp(xp / max(joint.z, 1e-4), 0.0, 1.0);
-      float rp = max(mix(rEnd, joint.w, tp), 1e-4);
-      float op = max(max(-xp, xp - joint.z), 0.0);
+      float rp = max(rEnd + cut.z * max(xp, 0.0), 1e-4);
+      float op = max(-xp, 0.0);
       float qp = (yp2 + op * op) / (rp * rp);
       float wp = 1.0 - qp;
       if (wp <= 0.0) return 0.0;
@@ -362,13 +353,13 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
 
       // Joint DEFICIT rule (mirrors the visual capsule; see its note).
       if (vMeta.y > 0.5 && (vCutA2.x * x + vCutA2.y * y) > 0.0) {
-        if (vJointA.z < 0.5) discard;
-        profile -= luxarPartnerProfile(vec2(x, y), vJointA, vREnd.x, vSharp);
+        if (vCutA2.z >= 0.0) discard;
+        profile -= luxarPartnerProfile(vec2(x, y), vCutA2, 1.0, rPx, vSharp);
         if (profile <= 0.0) discard;
       }
       if (vMeta.z > 0.5 && (vCutB2.x * (x - vMeta.x) + vCutB2.y * y) > 0.0) {
-        if (vJointB.z < 0.5) discard;
-        profile -= luxarPartnerProfile(vec2(x - vMeta.x, y), vJointB, vREnd.y, vSharp);
+        if (vCutB2.z >= 0.0) discard;
+        profile -= luxarPartnerProfile(vec2(x - vMeta.x, y), vCutB2, -1.0, rPx, vSharp);
         if (profile <= 0.0) discard;
       }
       float brightness = profile * vFade;

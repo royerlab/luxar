@@ -90,15 +90,13 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     // 2D bisector-cut normals at interior joints, in stencil-local
     // coordinates. My side is NEGATIVE; a straight joint degrades to the
     // perpendicular butt ((-1,0) at A, (1,0) at B).
-    flat out vec2 vCutA2;
-    flat out vec2 vCutB2;
-    // Joint packets for the DEFICIT rule (see the fragment): the partner
-    // leg's axis direction in my local frame (.xy), its projected length
-    // in px (.z; 0 = no usable partner → hard cut), and its radius at its
-    // far end in px (.w). vREnd carries my own end radii (rA, rB).
-    flat out vec4 vJointA;
-    flat out vec4 vJointB;
-    flat out vec2 vREnd;
+    // .xy = the 2D bisector-cut normal (my side negative); .z = the
+    // DEFICIT packet: the partner leg's radius gradient in px/px along
+    // its axis, stored ONLY when negative beyond the congruence gate
+    // (a thinning partner is the one case whose missing light I must
+    // render — see the fragment's deficit rule). 0 = hard cut.
+    flat out vec3 vCutA2;
+    flat out vec3 vCutB2;
     out float vR;           // capsule radius in px × clip w (screen-linear)
     out float vW;           // clip w (divides vLocal/vR in the fragment)
     out float vFade;        // nearFade × thin-width energy compensation
@@ -151,8 +149,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       if ((uIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vLocal = vec2(0.0); vMeta = vec3(1.0, 0.0, 0.0);
-        vCutA2 = vec2(-1.0, 0.0); vCutB2 = vec2(1.0, 0.0);
-        vJointA = vec4(0.0); vJointB = vec4(0.0); vREnd = vec2(1.0);
+        vCutA2 = vec3(-1.0, 0.0, 0.0); vCutB2 = vec3(1.0, 0.0, 0.0);
         vR = 1.0; vW = 1.0; vFade = 0.0; vAlpha = 1.0; vSharp = 0.5;
         #ifdef USE_COLORMAP
         vScalar = 0.0;
@@ -235,13 +232,10 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       // seamless, notch-free, and double-bright-free at any bend angle
       // and any zoom. Stencil reach at a cut end is |ny|·rMax (the kept
       // half-disc's axial extent), so joints cost LESS fill than caps.
-      vec2 cutA = vec2(-1.0, 0.0);
-      vec2 cutB = vec2(1.0, 0.0);
+      vec3 cutA = vec3(-1.0, 0.0, 0.0);
+      vec3 cutB = vec3(1.0, 0.0, 0.0);
       float extA = rMax;
       float extB = rMax;
-      vJointA = vec4(0.0);
-      vJointB = vec4(0.0);
-      vREnd = vec2(rA, rB);
       if (interiorA > 0.5) {
         extA = ${G.APRON};
         // Joint vertex behind the near plane (my A end was clipped): the
@@ -268,29 +262,23 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x < -1e-3) {
-                cutA = nLoc;
-                // Width gate (see _shared/line-capsule.ts): hairline joints
-                // skip the packet math — a deficit there is sub-pixel.
+                cutA = vec3(nLoc, 0.0);
+                // Width gate (see _shared/line-capsule.ts): hairline
+                // joints skip the packet — a deficit there is sub-pixel.
                 if (rMax > ${G.PACKET_MIN_R}) {
-                  // Partner radius at its (possibly clipped) far point, same
-                  // formula as our own ends; width at a clipped far point is
-                  // the mix along the partner's span.
                   float wFarA = farA.w;
                   float rpFarA;
                   if (uIsOrtho == 1) {
                     rpFarA = wFarA * uOrthoLineScale * ${G.RADIUS_FACTOR};
                   } else {
-                    float farDepthEffA = max(-mvFarA.z, nearCull);
-                    rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / farDepthEffA;
+                    rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
                   }
                   rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                  // Reach: the kept half-disc (|ny|·rMax) PLUS whatever of my
-                  // cap the partner cannot cover (its taper deficit).
                   float deficitA = clamp(1.0 - rpFarA / max(rA, 1e-4), 0.0, 1.0);
-                  // Congruence gate (see _shared/line-capsule.ts): an empty
-                  // packet keeps the cheap hard cut where the deficit is ~0.
+                  // Congruence gate: only a thinning partner (negative
+                  // gradient beyond the gate) needs the deficit rule.
                   if (deficitA > ${G.DEFICIT_GATE}) {
-                    vJointA = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarA);
+                    cutA.z = (rpFarA - rA) / ql;
                   }
                   extA = max(abs(nLoc.y), deficitA) * rMax + ${G.APRON};
                 } else {
@@ -327,20 +315,23 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x > 1e-3) {
-                cutB = nLoc;
+                cutB = vec3(nLoc, 0.0);
+                // Width gate (see _shared/line-capsule.ts): hairline
+                // joints skip the packet — a deficit there is sub-pixel.
                 if (rMax > ${G.PACKET_MIN_R}) {
                   float wFarB = farB.w;
                   float rpFarB;
                   if (uIsOrtho == 1) {
                     rpFarB = wFarB * uOrthoLineScale * ${G.RADIUS_FACTOR};
                   } else {
-                    float farDepthEffB = max(-mvFarB.z, nearCull);
-                    rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / farDepthEffB;
+                    rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
                   }
                   rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
                   float deficitB = clamp(1.0 - rpFarB / max(rB, 1e-4), 0.0, 1.0);
+                  // Congruence gate: only a thinning partner (negative
+                  // gradient beyond the gate) needs the deficit rule.
                   if (deficitB > ${G.DEFICIT_GATE}) {
-                    vJointB = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarB);
+                    cutB.z = (rpFarB - rB) / ql;
                   }
                   extB = max(abs(nLoc.y), deficitB) * rMax + ${G.APRON};
                 } else {
@@ -423,11 +414,8 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
 
     in vec2 vLocal;
     flat in vec3 vMeta;
-    flat in vec2 vCutA2;
-    flat in vec2 vCutB2;
-    flat in vec4 vJointA;
-    flat in vec4 vJointB;
-    flat in vec2 vREnd;
+    flat in vec3 vCutA2;
+    flat in vec3 vCutB2;
     in float vR;
     in float vW;
     in float vFade;
@@ -442,17 +430,22 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     out vec4 fragColor;
 
     // The PARTNER leg's profile at a pixel offset rel from the shared
-    // vertex (my local frame): rebuild its tapered capsule field from the
-    // joint packet (axis direction .xy, projected length .z, far radius
-    // .w) and the shared vertex radius rEnd. Same profile family as ours
-    // (the sharpness knob is taken from OUR fragment — the joint region is
-    // local, so the difference is negligible).
-    float luxarPartnerProfile(vec2 rel, vec4 joint, float rEnd, float sharp) {
-      float xp = dot(rel, joint.xy);
+    // vertex (my local frame), rebuilt from just the cut normal and the
+    // partner's radius GRADIENT: the partner's axis is the reflection of
+    // my inward axis mDir across the cut plane (q = m − 2(m·n)n — exact,
+    // both normals being normalize(q − m) up to sign), its radius at the
+    // vertex equals my own interpolated radius (vR is CONSTANT across a
+    // cap region, where the deficit rule fires), and it is treated as an
+    // unbounded tapering rod (its far cap only matters where both
+    // profiles are ~0). Same profile family as ours; the sharpness knob
+    // comes from our fragment — the joint region is local.
+    float luxarPartnerProfile(vec2 rel, vec3 cut, float mSign, float rEnd, float sharp) {
+      vec2 n = cut.xy;
+      vec2 qdir = vec2(mSign - 2.0 * (mSign * n.x) * n.x, -2.0 * (mSign * n.x) * n.y);
+      float xp = dot(rel, qdir);
       float yp2 = max(dot(rel, rel) - xp * xp, 0.0);
-      float tp = clamp(xp / max(joint.z, 1e-4), 0.0, 1.0);
-      float rp = max(mix(rEnd, joint.w, tp), 1e-4);
-      float op = max(max(-xp, xp - joint.z), 0.0);
+      float rp = max(rEnd + cut.z * max(xp, 0.0), 1e-4);
+      float op = max(-xp, 0.0);
       float qp = (yp2 + op * op) / (rp * rp);
       float wp = 1.0 - qp;
       if (wp <= 0.0) return 0.0;
@@ -499,13 +492,13 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       // means no usable partner (slice clip, behind-near joint, decode
       // failure) — hard cut, nothing drawn past the plane.
       if (vMeta.y > 0.5 && (vCutA2.x * x + vCutA2.y * y) > 0.0) {
-        if (vJointA.z < 0.5) discard;
-        profile -= luxarPartnerProfile(vec2(x, y), vJointA, vREnd.x, vSharp);
+        if (vCutA2.z >= 0.0) discard;
+        profile -= luxarPartnerProfile(vec2(x, y), vCutA2, 1.0, rPx, vSharp);
         if (profile <= 0.0) discard;
       }
       if (vMeta.z > 0.5 && (vCutB2.x * (x - vMeta.x) + vCutB2.y * y) > 0.0) {
-        if (vJointB.z < 0.5) discard;
-        profile -= luxarPartnerProfile(vec2(x - vMeta.x, y), vJointB, vREnd.y, vSharp);
+        if (vCutB2.z >= 0.0) discard;
+        profile -= luxarPartnerProfile(vec2(x - vMeta.x, y), vCutB2, -1.0, rPx, vSharp);
         if (profile <= 0.0) discard;
       }
       float intensity = profile * vFade;
