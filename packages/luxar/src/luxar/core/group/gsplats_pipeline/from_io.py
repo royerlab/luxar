@@ -88,6 +88,35 @@ def add_gsplats_from_file_impl(
             "subtree). Re-author the file in the target scene dims, or embed a "
             "matrix-shaped (leaf / additive / kind=lod) file instead."
         )
+
+    # Scene-dimension COUNT check on the STORED tree, before the graft creates
+    # any wrapper group (#1446) — the file door's counterpart of the check the
+    # three leaf adders run above their split branches. Without it the refusal
+    # came from inside ``part_0`` / ``child_0``, blaming a child the caller never
+    # wrote and leaving the wrapper chain on disk. Below the ``dim_order``
+    # refusal above, so that kwarg fault keeps precedence, as everywhere else.
+    #
+    # The first leaf's centers speak for the whole subtree: the graft applies no
+    # ``dim_order`` (just refused), so the stored width must already be the
+    # scene's, and both container nodes reject mixed-``ndim`` children in
+    # ``__post_init__`` — so one ndim per tree, recursively. Every tree has at
+    # least one leaf (both containers require >= 1 child) and every leaf at least
+    # one sub-LOD, both enforced at construction, so neither index can miss.
+    # The ``Could not add gsplats '<name>': `` prefix is applied by hand for the
+    # same reason it is in ``from_data._reject_before_wrapper``: this module has
+    # no try/except funnel, and the matrix-shaped door of this very method reports
+    # the prefixed form, so a bare raise here would make the two halves of
+    # ``add_gsplats_from_file`` word the same fault differently.
+    from luxar.gsplats.tree import iter_leaves
+
+    first_leaf = next(iter_leaves(node))
+    try:
+        group._find_scene()._validate_dimension_count(
+            first_leaf.additive_sublods[0].centers, name, data_type="centers"
+        )
+    except ValueError as e:
+        raise ValueError(f"Could not add gsplats '{name}': {e}") from e
+
     return graft_gsplat_node(
         group, name=name, node=node, parent=parent, extend_to_all=extend_to_all, **attrs
     )

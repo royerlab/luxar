@@ -72,6 +72,8 @@ luxar demo info lorenz            # Full details for one demo
 luxar demo run lorenz             # Generate + open the viewer
 luxar demo run 3                  # Run by table index
 luxar demo run lorenz -- --no-serve --points=100000  # Forward args to the demo
+luxar demo stop                   # Stop running demos and free their ports
+luxar demo stop lorenz --dry-run  # List one demo's live runs, stop nothing
 luxar demo cache list             # Inventory ~/.cache/luxar demo caches
 luxar demo cache clear lorenz --dry-run   # Preview a cache clear
 luxar demo deps                         # Which optional demo deps are missing?

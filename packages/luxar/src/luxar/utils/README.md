@@ -204,6 +204,47 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - Git LFS data loading with local cache fallback
 - Educational examples of Luxar features
 
+### `process.py`
+Deterministic teardown for long-lived child processes (stdlib-only). Owns the
+lifecycle of the subprocess trees `luxar demo run` spawns so Ctrl-C (or
+SIGTERM/SIGHUP) never orphans a `luxar serve` on its port.
+
+**Key Functions:**
+- `run_child_process()`: Spawn a command, wait for it, and tear it (and its
+  whole process group, when isolated) down on every exit path via a
+  SIGINT → SIGTERM → SIGKILL escalation; optional `on_spawn` hook receives the
+  child PID (= new pgid when isolated)
+- `terminate_process_group()`: The same escalation for a group discovered
+  after the fact (used by `luxar demo stop`); True only once the group is
+  provably finished — an unreaped zombie counts as gone, `EPERM` (someone
+  else's group) never does
+- `can_kill_process_groups()`: Whether POSIX process-group signalling exists
+- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`
+  — a `ps`-free process table (empty, meaning *unknown*, off Linux)
+
+### `demo_runs.py`
+Discovery + kill engine behind `luxar demo stop` (stdlib-only): find every
+running demo — even one forgotten in another terminal — and free its ports.
+
+**Key Functions:**
+- `register_run()` / `unregister_run()`: JSON pidfile per launch under
+  `~/.cache/luxar/running/`, written by `demo run`'s `on_spawn` hook and
+  removed on exit (so the registry only ever names survivors)
+- `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
+  strays — a process that *leads its own group* and is genuinely running
+  `python -m luxar.demos.demo_*`; prunes dead/hijacked
+  entries, never returns the caller's own process group. Falls back to
+  `proc_table()` when `ps` is missing, so the identity check that keeps a
+  recycled pgid alive-and-innocent never silently disappears. Off POSIX, where
+  neither exists, a pid listing (`tasklist`) still prunes a record left behind
+  by a reboot or a hard-killed owner
+- `stop_run()`: Tear one run's process group down via `terminate_process_group`,
+  re-validating the group at kill time; returns False without signalling
+  anything off POSIX, where a recorded pid cannot be checked before a hard
+  terminate
+- `describe_port_holder()`: Best-effort "port N is held by demo 'X'" hint
+  for `pick_port`'s busy-port warning
+
 ## Usage Examples
 
 ### Creating Demo Scenes

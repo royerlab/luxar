@@ -22,6 +22,12 @@ describe('renderFailedLoadsBanner', () => {
     expect(html).toContain('>Retry<');
   });
 
+  it('leads with the inline alert glyph rather than a platform-dependent emoji', () => {
+    const html = renderFailedLoadsBanner(['/p'], false);
+    expect(html).toContain('<span class="luxar-failed-loads__label"><svg class="luxar-micon"');
+    expect(html).not.toContain('⚠');
+  });
+
   it('singularizes for one failure', () => {
     expect(renderFailedLoadsBanner(['/p'], false)).toContain('1 failed load<');
   });
