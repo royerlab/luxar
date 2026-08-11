@@ -40,7 +40,9 @@ export interface NotifierBackend {
   /**
    * Persistent scene-identity banner (see `ui/scene-identity-banner.ts`).
    * Optional so existing minimal backends (tests, embedders) stay valid;
-   * calls degrade to the missing-backend warning when absent.
+   * calls then degrade to a silent no-op. `show` additionally warns when NO
+   * backend at all is registered (a user-visible message was dropped);
+   * `hide` never does — it only ever runs during teardown.
    */
   showSceneIdentityBanner?(kind: 'changed' | 'unreachable'): void;
   hideSceneIdentityBanner?(onlyKind?: 'changed' | 'unreachable'): void;
@@ -117,10 +119,17 @@ export const notifier = {
     if (backend) backend.showSceneIdentityBanner?.(kind);
     else warnIfMissing('showSceneIdentityBanner');
   },
-  /** Hide the scene-identity banner (optionally only a specific kind). */
+  /**
+   * Hide the scene-identity banner (optionally only a specific kind).
+   *
+   * Never warns about a missing backend: this is teardown, not a dropped
+   * message. The app dispose pipeline clears the backend before it destroys
+   * the SceneLoaderManager, so the watchdog's own dispose necessarily lands
+   * after — and "there is no UI left to clear" is the expected state there,
+   * not the misconfiguration `warnIfMissing` reports.
+   */
   hideSceneIdentityBanner(onlyKind?: 'changed' | 'unreachable'): void {
-    if (backend) backend.hideSceneIdentityBanner?.(onlyKind);
-    else warnIfMissing('hideSceneIdentityBanner');
+    backend?.hideSceneIdentityBanner?.(onlyKind);
   },
 };
 
