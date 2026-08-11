@@ -1,9 +1,11 @@
 """Scene-side validation helpers for data nodes.
 
-Three free functions called by ``Group``'s leaf adders:
+Five free functions called by ``Group``'s leaf adders:
 
 * :func:`resolve_extend_to_all` — interpret the ``extend_to_all=`` kwarg.
 * :func:`analyze_extend_candidates` — detect non-spatial dims with a single value.
+* :func:`validate_array_rank` — the 2-D ``(N, D)`` shape raise on its own.
+* :func:`validate_dimension_count` — the hard column-count raise on its own.
 * :func:`validate_data_dimensions` — enforce dimensionality + range bounds.
 
 The Scene class keeps method stubs that just forward; this module holds
@@ -110,19 +112,51 @@ def analyze_extend_candidates(scene: "Scene", positions: np.ndarray) -> List[str
     return candidates
 
 
-def validate_data_dimensions(
+def validate_array_rank(positions: np.ndarray, data_type: str = "positions") -> None:
+    """Raise unless the data array is 2-D ``(N, D)``.
+
+    Its own function only so the message has ONE home: the split paths need the
+    rank check without the count check (under a ``dim_order`` the incoming width
+    is legitimately not the scene's), and a hand-rolled copy of this sentence
+    there would be held in sync by nothing but discipline.
+    """
+    if positions.ndim != 2:
+        raise ValueError(
+            f"{data_type.capitalize()} must have shape (N, D), "
+            f"got shape {positions.shape}"
+        )
+
+
+def validate_dimension_count(
     scene: "Scene",
     positions: np.ndarray,
     node_name: str,
     data_type: str = "positions",
-    _stacklevel: int = 3,
 ) -> None:
-    """Validate that data dimensions match scene dimensions.
+    """Raise if the data's column count disagrees with the scene's dimensions.
 
-    Performs two levels of validation:
-    1. HARD ERROR: Dimensionality mismatch (data columns != scene dimensions)
-    2. WARNING: Values outside declared dimension ranges
+    This is the HARD half of :func:`validate_data_dimensions`, split out so the
+    split-write paths (``partition=`` / ``additive_lod=`` / ``substitutive_lod=``
+    / ``lod_group=``) can run it on the CALLER's source array before they create
+    any wrapper group, without also re-firing the per-dimension range
+    ``UserWarning`` once per part/level. Cheap (a shape comparison) and
+    idempotent, so calling it twice on the same array is harmless.
+
+    The rank guard is not redundant: the leaf adders reject a non-2-D array
+    before they get here, but ``add_gsplats_from_data`` hands over a
+    ``GSplatData``'s centers, which ``AdditiveSubLOD`` accepts at 1-D — without
+    the guard that reached ``shape[1]`` as a bare ``IndexError`` that escapes the
+    adders' ``except (ValueError, TypeError)`` funnels. It rejects rank >= 3 as
+    well as rank 1, which is stricter than before (a ``(2, 3, 3)`` array used to
+    reach ``shape[1]`` and pass); nothing authored through the adders can be
+    non-2-D by the time it gets here, so the extra strictness only affects the
+    ``GSplatData`` door. The wording matches the rank message of every adder that
+    can actually reach this — Points, Lines and GSplats all say
+    "… must have shape (N, D)". Mesh words its own as "(V, D)", which would NOT
+    match, but mesh rank-checks before it calls here, so that never surfaces.
     """
+    validate_array_rank(positions, data_type)
+
     data_ndim = positions.shape[1]
     scene_ndim = scene._dimensions.ndim
 
@@ -135,6 +169,26 @@ def validate_data_dimensions(
             f"Expected {data_type} shape: (N, {scene_ndim})\n"
             f"Got {data_type} shape: {positions.shape}"
         )
+
+
+def validate_data_dimensions(
+    scene: "Scene",
+    positions: np.ndarray,
+    node_name: str,
+    data_type: str = "positions",
+    _stacklevel: int = 3,
+) -> None:
+    """Validate that data dimensions match scene dimensions.
+
+    Performs two levels of validation:
+    1. HARD ERROR: Dimensionality mismatch (data columns != scene dimensions)
+    2. WARNING: Values outside declared dimension ranges
+
+    The hard error lives in :func:`validate_dimension_count`; it MUST stay the
+    first thing this function does so the raised message is identical whether a
+    caller runs the count check on its own or the full validation.
+    """
+    validate_dimension_count(scene, positions, node_name, data_type)
 
     if positions.shape[0] == 0:
         return
