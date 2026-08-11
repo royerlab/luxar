@@ -786,7 +786,7 @@ def _coloured_multi_substitutive_data(ndim: int) -> Any:
             else random_positions(n, seed=seed)
         ),
         lambda n: cholesky_rows_nd(n, ndim),
-        colors_for=lambda n: np.zeros((n, 3), dtype=np.float32),
+        colors_for=lambda n, _level: np.zeros((n, 3), dtype=np.float32),
     )
 
 
@@ -862,6 +862,39 @@ class TestGSplatsLodGroupColoursGate:
         )
 
         assert_same_refusal(flat, split)
+        assert "child_0" not in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_colour_on_a_coarse_level_alone_is_seen_by_the_gate(
+        self, tmp_path: Any
+    ) -> None:
+        """Only the COARSE level carries colours — the finest carries none.
+
+        ``GSplatData.colors`` is the FINEST level's ladder merged, so a gate that
+        asked only that question passed this call, and the coarsest child (written
+        first) then raised ``Could not add gsplats 'child_0': Cannot specify both
+        …`` with ``g`` already on disk as a childless ``kind=lod`` group. Measured
+        in exactly that shape before the gate was widened to every level. No flat
+        twin: a single leaf cannot express per-level colours, so the assertions
+        are the blamed node and the empty store.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_colour_coarse.luxar.zarr")
+        data = _multi_substitutive_data(
+            lambda n, seed: random_positions(n, seed=seed),
+            lambda n: cholesky_rows_nd(n, 3),
+            colors_for=lambda n, level_index: (
+                None if level_index == 0 else np.zeros((n, 3), dtype=np.float32)
+            ),
+        )
+        assert data.colors is None, "the finest level must be the uncoloured one"
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, colormap="viridis"
+            )
+        )
+
+        assert "both 'colors' and 'colormap'" in str(split)
         assert "child_0" not in str(split)
         assert "g" not in compiler.store
 
@@ -990,7 +1023,9 @@ def _multi_substitutive_data(
                     centers=centers_for(n, seed),
                     amplitudes=np.ones(n, dtype=np.float32),
                     cholesky_factors=chol_for(n),
-                    colors=None if colors_for is None else colors_for(n),
+                    # ``colors_for`` takes the level index as well as the count so
+                    # a case can colour ONE level (see the coarse-only case).
+                    colors=None if colors_for is None else colors_for(n, level_index),
                 )
             ],
             compression_factor=compression_factor,

@@ -87,9 +87,20 @@ def _reject_before_wrapper(
 
     centers = result.centers
     try:
-        # ``result.colors`` is what the flat path forwards as ``colors=`` (the
-        # finest level's), so this asks the same question of the same values.
-        if result.colors is not None and colormap is not None:
+        # Asked of EVERY level's ladder, not just ``result.colors`` (which is the
+        # FINEST level's — what the flat path would forward as ``colors=``): each
+        # child is written through an adder that refuses colours+colormap in its
+        # own right, so a pyramid whose finest level is uncoloured and whose
+        # coarse level is not would pass a finest-only gate and then raise from
+        # inside that coarse child, with the wrapper already on disk — the exact
+        # stranding this function exists to prevent. Same ``any`` question
+        # ``add_gsplats_multi_lod_impl`` asks of its sub-LODs.
+        has_colors = any(
+            sub.colors is not None
+            for level in result.substitutive_levels
+            for sub in level.additive_sublods
+        )
+        if has_colors and colormap is not None:
             raise ValueError(
                 "Cannot specify both 'colors' and 'colormap'. Use one or the other."
             )
