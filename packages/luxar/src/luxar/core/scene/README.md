@@ -150,8 +150,10 @@ Five free functions invoked by `Group`'s leaf adders through `Scene`'s stubs:
   multi-substitutive branch instead, below the `coverage_fraction` refusal so that
   kwarg fault keeps precedence, and still above `add_lod_group`. That gate also
   runs the `dim_order`/`fill`/`fill_sigma` spec checks and the colours/colormap
-  exclusion, in the leaf adders' order (colours first), so no in-memory fault it
-  can see leaves a childless wrapper behind. `add_gsplats_from_file` is covered on
+  exclusion, in the flat path's own statement order (rank, then the `dim_order`
+  spec — which the adder runs while applying the transform — then colours, then
+  the width), so no in-memory fault it can see leaves a childless wrapper behind
+  and a multi-fault call is told about the same one on both paths. `add_gsplats_from_file` is covered on
   both of its doors: a matrix-shaped store (leaf / additive ladder / `kind=lod` of
   leaves) is dispatched down `add_gsplats_from_data` and inherits that gate, while a
   genuinely nested one — a `kind=partition` root, or a lod group with non-leaf

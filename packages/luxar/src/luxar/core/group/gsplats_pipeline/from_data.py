@@ -46,13 +46,19 @@ def _reject_before_wrapper(
     own funnel, and :func:`add_gsplats_multi_lod_impl` validates every sub-LOD
     while building them, before its single write.
 
-    The colours/colormap exclusion goes FIRST, exactly as it does at the top of
-    the three leaf adders: it is a kwarg fault, and kwarg faults outrank input
-    faults everywhere else in this codebase. Checking the width first would make
-    ``lod_group=`` disagree with its own flat path about which fault a call that
-    trips both is told about — the one invariant this whole change is for. It also
-    closes the same stranding class for a colours+colormap call whose width is
-    perfectly fine, which used to reach ``child_0`` with the wrapper on disk.
+    The ORDER inside the gate copies the flat path's statement order exactly,
+    because that order is what decides which fault a call tripping more than one
+    of them is told about: the rank raise first (the ``(N, D)`` check at the top
+    of ``add_gsplats_impl``), then the ``dim_order`` spec — which the flat path
+    runs while APPLYING the transform, i.e. above everything else — then the
+    colours/colormap exclusion, and the width last. Getting that wrong is the
+    recurring bug here: with the width first the split path answered ``Dimension
+    mismatch …`` where the flat path answered ``Cannot specify both …``; with the
+    colours gate above the ``dim_order`` spec it answered ``Cannot specify both
+    …`` where the flat path answered ``dim_order has 3 names but data has 4
+    columns``. The gate also closes the same stranding class for a
+    colours+colormap call whose width is perfectly fine, which used to reach
+    ``child_0`` with the wrapper on disk.
 
     WHAT else is checkable up front depends on ``dim_order``. Without one, the
     incoming column count must already equal the scene's, which is exactly
@@ -87,6 +93,17 @@ def _reject_before_wrapper(
 
     centers = result.centers
     try:
+        # The flat path's first statement, and it also makes ``shape[1]`` below
+        # safe: ``AdditiveSubLOD`` accepts 1-D centers, so a bare ``IndexError``
+        # would otherwise escape this funnel.
+        validate_array_rank(centers, "centers")
+        if dim_order is not None:
+            # Same order as the flat path, which applies dim_order to the centers
+            # (spec + fill) before it embeds the Cholesky factors (fill_sigma) —
+            # and does both BEFORE it reaches its colours/colormap gate.
+            scene = group._find_scene()
+            validate_dim_order_spec(scene, dim_order, centers.shape[1], fill)
+            validate_fill_sigma_keys(scene, dim_order, fill_sigma)
         # Asked of EVERY level's ladder, not just ``result.colors`` (which is the
         # FINEST level's — what the flat path would forward as ``colors=``): each
         # child is written through an adder that refuses colours+colormap in its
@@ -104,14 +121,9 @@ def _reject_before_wrapper(
             raise ValueError(
                 "Cannot specify both 'colors' and 'colormap'. Use one or the other."
             )
-        if dim_order is not None:
-            validate_array_rank(centers, "centers")
-            # Same order as the flat path, which applies dim_order to the centers
-            # (spec + fill) before it embeds the Cholesky factors (fill_sigma).
-            scene = group._find_scene()
-            validate_dim_order_spec(scene, dim_order, centers.shape[1], fill)
-            validate_fill_sigma_keys(scene, dim_order, fill_sigma)
-        else:
+        if dim_order is None:
+            # Under a ``dim_order`` there is nothing left to count: the
+            # post-transform width is ``scene_ndim`` by construction (see above).
             group._find_scene()._validate_dimension_count(
                 centers, name, data_type="centers"
             )

@@ -192,11 +192,12 @@ not a sequence at all is covered too: that raises `TypeError`, which the pre-dis
 gate converts exactly as the leaf adders' funnel does, so the two paths agree on the
 exception type as well as the text.
 
-The `lod_group=` gate covers the colours/colormap exclusion too, first and above
-everything else, exactly as the three leaf adders order it — both so a call that
-trips colours AND width hears the same answer either way, and because a
-colours+colormap call with a perfectly good width was stranding a childless
-`kind=lod` group all by itself. It asks that question of EVERY level's ladder
+The `lod_group=` gate covers the colours/colormap exclusion too, in the position the
+three leaf adders give it: above the width check, below the `dim_order` spec (which
+an adder runs while applying the transform) — both so a call that trips several of
+these hears the same answer either way, and because a colours+colormap call with a
+perfectly good width was stranding a childless `kind=lod` group all by itself. It
+asks that question of EVERY level's ladder
 rather than of `GSplatData.colors`, which is the finest level's: a pyramid whose
 finest level is uncoloured and whose coarse level is not would otherwise pass the
 gate and strand the wrapper from inside that coarse child.

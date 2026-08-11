@@ -865,6 +865,45 @@ class TestGSplatsLodGroupColoursGate:
         assert "child_0" not in str(split)
         assert "g" not in compiler.store
 
+    def test_a_dim_order_fault_outranks_the_colours_fault(self, tmp_path: Any) -> None:
+        """Three faults deep: the ``dim_order`` spec wins, flat and split alike.
+
+        The flat path applies ``dim_order`` (spec + ``fill``, then ``fill_sigma``)
+        while transforming the arrays, which is ABOVE its colours/colormap gate —
+        so a call carrying colours, a ``colormap`` and a bad ``dim_order`` hears
+        about the ``dim_order``. Measured with the colours gate first (the shape
+        this landed in briefly): the split path answered ``Cannot specify both
+        'colors' and 'colormap'`` where the flat path answered ``dim_order has 3
+        names but data has 4 columns``. Together with
+        :meth:`test_a_colours_fault_outranks_a_width_fault` this pins the whole
+        order — dim_order spec, then colours, then width.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_colour_dimorder.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lg_colour_dimorder_flat.luxar.zarr")
+        data = _coloured_multi_substitutive_data(4)
+        dim_order = ["X", "Y", "Z"]
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                colors=data.colors,
+                colormap="viridis",
+                dim_order=dim_order,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, colormap="viridis", dim_order=dim_order
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "dim_order has 3 names but data has 4 columns" in str(split)
+        assert "g" not in compiler.store
+
     def test_a_colour_on_a_coarse_level_alone_is_seen_by_the_gate(
         self, tmp_path: Any
     ) -> None:
