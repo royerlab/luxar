@@ -350,9 +350,18 @@ def stop_run(run: DemoRun) -> bool:
             return True
         gone = terminate_process_group(run.pgid)
     elif run.pid:
-        # Windows degrade: no process groups — terminate the registered owner.
+        # Windows degrade: no process groups, so only single PIDs can be
+        # signalled — and there `os.kill` is a hard TerminateProcess, not a
+        # request. Aim it at the DEMO process (the pid `on_spawn` recorded,
+        # spelled `pgid` because that is what it is on POSIX), never at the
+        # `demo run` owner: terminating the owner would kill the one process
+        # whose teardown could clean up, leaving the demo itself — the heavy
+        # one, holding the memory and the GPU — running. The owner then exits
+        # by itself, exactly as on the group path. A `luxar serve` grandchild
+        # can still survive this — reaching a whole tree there needs a job
+        # object — so the port may stay held until it is closed by hand.
         try:
-            os.kill(run.pid, signal.SIGTERM)
+            os.kill(run.pgid, signal.SIGTERM)
             gone = True
         except ProcessLookupError:
             gone = True  # already dead: prune the stale entry

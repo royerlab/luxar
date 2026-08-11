@@ -402,13 +402,16 @@ def test_ps_snapshot_falls_back_to_proc_when_ps_is_missing(monkeypatch) -> None:
     assert mine[0][1] == os.getpgrp()
 
 
-def test_non_posix_keeps_registry_and_stops_by_owner_pid(
+def test_non_posix_keeps_registry_and_stops_the_demo_not_its_owner(
     tmp_path: Path, monkeypatch
 ) -> None:
     """Off-POSIX there are no process groups — discovery must still work.
 
     Pruning every entry there would both hide running demos and delete the
-    registry that `stop_run`'s owner-pid fallback needs.
+    registry that `stop_run`'s single-pid fallback needs. And that fallback
+    must signal the DEMO, not the `demo run` owner: `os.kill` on Windows is a
+    hard terminate, so killing the owner would only remove the process whose
+    teardown could clean up and leave the demo itself running.
     """
     monkeypatch.setattr(demo_runs, "can_kill_process_groups", lambda: False)
     monkeypatch.setattr(demo_runs, "_ps_snapshot", list)
@@ -424,7 +427,8 @@ def test_non_posix_keeps_registry_and_stops_by_owner_pid(
         demo_runs.os, "kill", lambda pid, sig: signalled.append((pid, sig))
     )
     assert stop_run(runs[0]) is True
-    assert signalled == [(os.getpid(), demo_runs.signal.SIGTERM)]
+    assert signalled == [(4242, demo_runs.signal.SIGTERM)]
+    assert os.getpid() not in [pid for pid, _sig in signalled]
     assert not path.exists()
 
 
