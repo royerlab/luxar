@@ -773,13 +773,34 @@ A pull request whose changed files are **all** Markdown (`*.md`) or under `docs/
 skips the heavy CI steps: the `changes` job classifies the diff, and the gated
 jobs (`python-tests`, `typescript-tests`, `release-readiness`, `go-launcher`)
 still run but short-circuit their expensive steps, so the required status
-contexts (`python-tests (3.10/3.11/3.12)`, `typescript-tests`,
-`release-readiness`) report an explicit green success in seconds instead of a
-grey "skipped". Any non-doc file — or a push to `main` — runs the full suite,
-and the gate fails safe: if the `changes` job itself fails, the gated jobs fall
-back to the full suite rather than skipping. Rename detection is disabled in
-the classifier (`git diff --no-renames`) so moving code onto a `docs/` or
-`*.md` path never hides a non-doc deletion.
+contexts (`python-tests (3.12)`, `typescript-tests`, `release-readiness`,
+`wheel-viewer`, `docs-quality`) report an explicit green success in seconds
+instead of a grey "skipped". Any non-doc file — or a push to `main` — runs the
+full suite, and the gate fails safe: if the `changes` job itself fails, the
+gated jobs fall back to the full suite rather than skipping. Rename detection
+is disabled in the classifier (`git diff --no-renames`) so moving code onto a
+`docs/` or `*.md` path never hides a non-doc deletion.
+
+### Which Python versions CI runs
+
+`python-tests` is a matrix, but not the same matrix on every event:
+
+| Event | Python legs |
+|-------|-------------|
+| `pull_request` | `3.12` only — the one required status context |
+| `push` to `main` | `3.10`, `3.11`, `3.12` |
+| nightly `schedule` (09:17 UTC) | `3.10`, `3.11`, `3.12` |
+
+The supported floor is still 3.10 (`requires-python`), so 3.10/3.11 stay
+exercised every day and on every merge; what the per-PR matrix gives up is
+only the *latency* of finding a version-specific break — within 24h rather
+than in the PR that caused it. The trade buys back two of the three legs of the
+slowest job on a box with four self-hosted slots.
+
+Scheduled runs sit in their own `concurrency` group for this reason: they share
+`refs/heads/main` with merge-triggered runs, and `cancel-in-progress` would
+otherwise let a merge landing mid-run cancel the nightly — the one run that
+covers 3.10/3.11.
 
 ## Architecture Notes
 

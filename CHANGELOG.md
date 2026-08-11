@@ -6,6 +6,27 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Per-PR CI gates on Python 3.12; the full matrix runs nightly and on main
+
+`python-tests` was a three-leg matrix (3.10/3.11/3.12) on every pull request,
+and it is the slowest job in the workflow (~27min a leg) on a self-hosted box
+with four slots. Branch protection has only ever required the `3.12` context,
+so the other two legs cost three quarters of the Python CI budget to gate
+nothing. A pull request now runs `3.12` alone; `3.10`/`3.11` still run on every
+push to `main` and on a nightly schedule. The supported floor is unchanged —
+what is given up is the latency of catching a version-specific break, which
+moves from "in the offending PR" to "within 24h", against a 3x cut in per-PR
+Python CI.
+
+Scheduled runs get their own `concurrency` group. A cron run's ref is
+`refs/heads/main`, identical to a merge's, so under the shared group and
+`cancel-in-progress: true` the next merge would have cancelled the nightly
+outright — and the nightly is now the only place 3.10/3.11 run other than a
+merge itself. Measured against the fortnight before the change, a merge landed
+inside the nightly's window on 7 days out of 11, so the full matrix would have
+been killed about two days in three. Pull-request runs are unaffected: they
+already carry `refs/pull/N/merge` and were never grouped with a push.
+
 #### An empty LOD 0 no longer blanks a laddered node's slice (#1456)
 
 All three progressive loaders (Points, Lines, GSplats) latched a terminal
