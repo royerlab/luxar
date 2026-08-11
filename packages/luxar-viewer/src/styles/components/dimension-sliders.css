@@ -370,7 +370,9 @@
   border-radius: var(--luxar-radius-md);
   box-shadow: var(--luxar-shadow-lg);
   backdrop-filter: var(--luxar-blur-md);
-  z-index: 10000;
+  /* A context menu is popover-layer chrome (the sliders panel itself sits at
+     z-base, so any popover-tier value clears it). */
+  z-index: var(--luxar-z-popover);
   padding: var(--luxar-spacing-2);
   opacity: 0;
   animation: luxar-fade-in 0.15s ease forwards;
