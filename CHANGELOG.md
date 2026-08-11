@@ -62,6 +62,86 @@ from the on-disk tree before the first leaf is added, so a stored `.gsplats.zarr
 whose width disagrees with the scene still refuses from `child_0` / `part_0` with the
 wrappers already written. Unchanged by this work, and left for a follow-up.
 
+#### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
+
+Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,
+luminous, volumetric) rendered every line at β = 2 regardless of the per-vertex
+sharpness knob — the closed-form ray integral exists only for the Gaussian, and
+PR-2 documented the gap. The knob now works: the sum fragments' RADIAL factor is
+sampled from a shared 128×65 R16F LUT (the odd height puts the default knob
+exactly on the β = 2 row) of `S(q, s)` — the shifted+normalized
+untruncated Abel transform of the repo profile `exp(−K·rad^β)`, `β = 2^(6s−2)` —
+so the line-of-sight-integrated cross-section has the true general-β SHAPE
+(every row stays normalized to 1 at q = 0 — deliberately: the side-on core
+matches the screen-space quad at any knob, the A/B calibration anchor). The
+AXIAL erf window deliberately stays β = 2 (a cap-local approximation, exact for
+an infinite rod — the trade recorded in the #1352 plan). Peak modes were already
+exact and are untouched.
+
+Two properties carry the design. The β = 2 row of the LUT equals the former
+analytic radial as a function (the Abel transform of a Gaussian is a Gaussian),
+so the fragments sample the LUT unconditionally — there is no analytic/LUT seam
+anywhere on the knob axis. Rendered default-sharpness values go through R16F
+storage + bilinear filtering, so they match the old in-shader evaluation within
+the half-float budget (≤ 8e-4, test-pinned — at most one 8-bit quantization step
+near a rounding threshold), not byte-exactly. And every
+row is pinned to exactly 0 at q = 1, so the vertex stencil's truncation radius
+covers the profile at every sharpness. The CPU reference
+(`_shared/line-integral-lut.ts`) integrates by tanh-sinh quadrature — converged
+well beyond the texture's half-float precision across the whole knob range
+(worst self-convergence 3.2e-5, at β = 16; ≤ 5e-15 elsewhere, including the
+β < 1 cusp a plain compactified trapezoid stalls on) — and the unit tests hold
+the β = 2 row to the
+analytic radial, every row's monotonicity and endpoints, both axes' resolution
+adequacy against denser rebuilds, and the half-float storage error. New parity
+fixtures pin the knob extremes cross-backend (`line-volprim-sharp-hard`) and the
+along-segment knob interpolation (`line-volprim-sharp-taper`), plus a
+mutation-verified physics test: the taper's half-max core is ≥2× wider at the
+hard end than the soft end (a LUT wired to a constant row reads ratio ≈ 1 and
+fails). The texture is a lazy singleton built on the first volumetric material
+(~16 KB, ~90 ms); screen-space materials never trigger it.
+
+#### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
+
+The volumetric line primitive (#1426) gains its picking pass, so the flag now
+covers a complete interaction vertical: with `?linePrimitive=volumetric`, the
+line pick materials — GLSL and TSL alike — build a pick shader that rasterizes
+the SAME stadium stencil the visual pass draws (bisector-cut overhang,
+depth-tilt disc reach, coverage fade) and shades it with the visual shader's
+**peak capsule lane, unconditionally**. Picking wants the hotspot on the
+centerline regardless of the visual blending mode, and the peak formulation is
+exact for any sharpness β with none of the sum lanes' integral machinery — a
+pick buffer needs a brightness ordering, not radiometry. The output contract is
+unchanged from the screen-space pick shader (`nodeId`/split element id/
+brightness, brightness-as-depth), so nothing downstream of the pick buffer
+changes. End-on segments — the degenerate case the primitive exists to fix —
+now pick as the finite disc they render as, where the screen-space pick quad
+degenerates to a sliver.
+
+No call-site plumbing was needed: the pick material constructors resolve the
+primitive from the same `?linePrimitive=` session override the visual
+materials read, so the two can never disagree about which stencil they
+rasterize. With the flag off, both pick materials are byte-identical to
+before (pinned by unit test).
+
+The pick/visible footprint contract is pinned by a new parity-spec family on
+deliberately FAT fixtures (half-width ≈ 19 px, so a σ-level divergence moves
+the boundary several pixels instead of hiding in quantisation): the pick
+footprint must equal the peak-mode visual footprint EXACTLY up to a 1-px
+quantisation ribbon (and the end-on additive disc likewise), and must be a
+SUBSET of the side-on additive footprint — the sum family's separable
+radial·axial coverage keeps dim corner crescents past the endpoints that no
+capsule reaches, which is documented physics, while pickable-but-invisible is
+never allowed. Mutation-verified: a 20% pick-σ deflation (the visible-but-not-
+hoverable bug class) fails all three pairs at 244/156 off-ribbon pixels and
+2× the difference belt, against zero clean; a stencil-only inflation measured
+the reverse direction structurally bounded at < 2 px by the capsule's own
+brightness floor. Cross-backend parity gets four new pick fixtures
+(side-on / end-on / a straddling perspective end-on that is the only one
+building the TSL perspective pick graph / V-joint, the joint reaching the
+partner fetch and the ray-domain cut interval), all under the existing
+≤ 2.0 covered-pixel gate.
+
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 
 `add_points("g", positions_200, colors=colors_100, partition={"max_elements": 100})`
@@ -327,7 +407,7 @@ reference validated against brute numerical quadrature
 (`line-volumetric-integral.test.ts`: exact lanes < 0.6%, error envelopes
 pinned with sensitivity controls), and both shader backends mirror it —
 GLSL as a second source pair (the codebase's first genuine shader-source
-selection) and TSL as a twin factory, with eleven `line-volprim-*` parity
+selection) and TSL as a twin factory, with twelve `line-volprim-*` parity
 fixtures pinning pixel-level backend agreement, including the partner
 fetch, the mixed-lane splits, the peak capsule, the fragment-stage
 colormap LUT, a near-plane-straddling telephoto disc, and a straddling
@@ -342,6 +422,22 @@ polynomial. With the flag off, the screen-space pipeline is byte-identical
 (unit-asserted) and codegen snapshots are unchanged. Picking and the
 sum-mode sharpness LUT follow in later #1352 parts; the flip to
 volumetric-by-default is gated on the full perf + visual A/B (G1).
+
+Real WebGPU is verified for the primitive, not assumed: `renderTSL` grew
+a `native: true` mode (WGSL codegen + Dawn execution instead of the
+forced-WebGL backend; it fails closed by asserting the live backend after
+`init()`, since `navigator.gpu` exists even where no adapter does and the
+renderer would otherwise fall back to WebGL silently), and on Apple
+Metal 3 every `line-volprim-*` fixture renders **exactly** its GLSL image
+— mean covered-pixel diff 0.000 across all twelve, with the native
+readback's row flip folded into `renderTSL` itself so both modes return
+the same convention.
+The scaled-joint fixture doubles as the model-matrix regression from the
+PR review: the same joint authored under a non-uniform `mesh.scale`
+composes back to the identical world geometry, so its render must equal
+the unscaled joint's on each backend independently — object-space
+partner normalization (the reviewed bug) fails it at 1.8× the gate,
+while cross-backend parity alone would have let that bug through.
 
 #### A stale WASM build now names the kernel it is missing (#1412)
 
@@ -752,7 +848,6 @@ wasn't enough: `aprint` doesn't flush and Python block-buffers a piped stdout,
 while Playwright's timeout path SIGKILLs the process group — so the data server
 now runs with `PYTHONUNBUFFERED=1` and the line is out before the kill. Default
 behaviour is otherwise unchanged — a gallery sweep stays quiet. (#1380)
-
 
 #### Mesh gets substitutive LOD
 

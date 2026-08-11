@@ -341,11 +341,18 @@ near fade is already ramping there.
 End-on viewing is exact (the screen-space quad degenerates there), and the
 sum output is normalized by σ√2π so a long segment's side-on core matches
 the quad's core intensity exactly — the calibration that makes the session
-A/B meaningful. Sharpness in sum modes is β=2 regardless of the knob (the
-closed form is Gaussian-only; the LUT is #1352 PR-4); peak modes honour β.
-Picking still uses the screen-space footprint while the flag is off-default
-(#1352 PR-3). The primitive is BUILD-time: it selects the GLSL source pair /
-TSL factory at material construction and never changes on a live material.
+A/B meaningful. Sharpness: peak modes honour β exactly (pointwise profile);
+sum modes sample the general-β RADIAL from the shared Abel LUT
+(`_shared/line-integral-lut.ts`, #1352 PR-4 — the β=2 row is identically the
+old analytic radial, so the LUT is sampled unconditionally with no seam)
+while the AXIAL erf window stays β=2 (Gaussian-only closed form; cap-local
+approximation, exact for an infinite rod).
+Picking follows the toggle too (#1352 PR-3): with the flag on, the pick
+materials build the volumetric pick shaders — the same stadium stencil with
+the peak capsule lane used unconditionally (see
+`../../picking/line/README.md`). The primitive is BUILD-time: it selects the
+GLSL source pair / TSL factory at material construction and never changes on
+a live material.
 
 ### `ray-integral.ts` — the same integral, a second time
 
@@ -492,6 +499,6 @@ they remain the readable reference even after the TSL path stabilises.
 - `../../README.md` — Rendering package overview and where line materials sit in the pipeline
 - `../../line-geometry.ts` — `InstancedBufferGeometry` builder, the 6-texel layout, and the fused texel writer this shader reads
 - `../../material-manager.ts` — creates the per-node line materials and owns the camera-broadcast loop
-- `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage screen-space expansion math
+- `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage expansion math of whichever primitive the session resolves (screen-space quad or volumetric stadium)
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
 - `../../../tests/e2e/line-join-artifact.spec.ts` / `../../../tests/helpers/line-join-metrics.ts` — the joint-artifact acceptance measurement described above (#780 / #785 / #790)
