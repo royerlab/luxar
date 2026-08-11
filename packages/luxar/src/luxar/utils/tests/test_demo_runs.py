@@ -120,6 +120,58 @@ def test_sweep_dedupes_by_group() -> None:
     assert sum(r.pgid == 100 for r in _sweep_runs(doubled)) == 1
 
 
+def _space_path_python(tmp_path: Path) -> Path:
+    """An interpreter path with a space in it, like a macOS hatch env's."""
+    exe = tmp_path / "Application Support" / "hatch" / "bin" / "python3.12"
+    exe.parent.mkdir(parents=True)
+    exe.touch()
+    return exe
+
+
+def test_sweep_matches_interpreter_path_containing_spaces(tmp_path: Path) -> None:
+    """`ps` unquotes argv, so a spacey interpreter path arrives split up.
+
+    `hatch run luxar demo run …` on macOS spawns exactly this (environments
+    live under `~/Library/Application Support/`), and reading only the first
+    whitespace token would hide the demo from `demo stop` entirely.
+    """
+    exe = _space_path_python(tmp_path)
+    snapshot = [(700, 700, f"{exe} -m luxar.demos.demo_lorenz")]
+    assert {(r.key, r.pgid) for r in _sweep_runs(snapshot)} == {("lorenz", 700)}
+
+
+def test_spacey_mention_of_python_is_not_an_interpreter(tmp_path: Path) -> None:
+    """Rejoining tokens must not turn another program's argument into python.
+
+    A candidate only counts when it is a file that exists here, so an editor
+    (or anything else) merely *naming* a python keeps being ignored.
+    """
+    exe = _space_path_python(tmp_path)
+    snapshot = [
+        (701, 701, f"less {exe} -m luxar.demos.demo_lorenz"),
+        (702, 702, "/nope/My Env/bin/python -m luxar.demos.demo_lorenz"),
+    ]
+    assert _sweep_runs(snapshot) == []
+
+
+def test_live_entry_with_spacey_interpreter_is_not_pruned(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The pid-reuse guard must recognise such a group as a live demo."""
+    exe = _space_path_python(tmp_path)
+    monkeypatch.setattr(
+        demo_runs,
+        "_ps_snapshot",
+        lambda: [(703, 703, f"{exe} -m luxar.demos.demo_lorenz")],
+    )
+    path = register_run("lorenz", 703, runs_dir=tmp_path)
+    assert path is not None
+    assert [(r.key, r.pgid) for r in discover_runs(runs_dir=tmp_path)] == [
+        ("lorenz", 703)
+    ]
+    assert path.exists()
+
+
 def test_discover_prefers_registry_over_sweep(tmp_path: Path, monkeypatch) -> None:
     """The same group discovered both ways yields ONE run, with the exact key."""
     monkeypatch.setattr(demo_runs, "_ps_snapshot", lambda: list(_SNAPSHOT))

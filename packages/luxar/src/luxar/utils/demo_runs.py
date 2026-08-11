@@ -175,6 +175,38 @@ _PY_OPTS_WITH_ARG = frozenset({"-W", "-X"})
 # line is the program's own argv: a code string, end-of-options, or stdin.
 _PY_RUN_SELECTORS = frozenset({"-c", "--", "-"})
 
+# How many extra whitespace-split tokens an interpreter path may be rejoined
+# from (see `_interpreter_arg_start`) — one or two spaces is what real install
+# prefixes have, and the bound keeps the scan cheap on every other process.
+_MAX_EXE_TOKENS = 5
+
+
+def _interpreter_arg_start(tokens: list[str]) -> Optional[int]:
+    """Index of the first interpreter *argument*, or None if this isn't python.
+
+    ``ps`` renders argv space-joined and unquoted, so an interpreter path that
+    itself CONTAINS a space arrives split across tokens — which is not exotic:
+    a macOS hatch environment lives under ``~/Library/Application Support/``,
+    so ``hatch run luxar demo run …`` spawns exactly such a command line.
+    Reading only ``tokens[0]`` there sees ``…/Library/Application``, decides
+    the process is not python, and the demo becomes invisible to ``demo stop``
+    — worse, its registry entry is pruned as a dead group.
+
+    So rejoin tokens until the candidate both names a python AND is a file on
+    this machine. The existence check is what keeps this from loosening the
+    guard: ``less /opt/x/python -m luxar.demos.demo_x`` only ever produces the
+    candidate ``"less /opt/x/python"``, which is not a path that exists.
+    """
+    if "python" in Path(tokens[0]).name.lower():
+        return 1
+    for end in range(2, min(len(tokens), _MAX_EXE_TOKENS) + 1):
+        if tokens[end - 1].startswith("-"):
+            break  # an option: the executable ended before this token
+        candidate = " ".join(tokens[:end])
+        if "python" in Path(candidate).name.lower() and os.path.isfile(candidate):
+            return end
+    return None
+
 
 def _python_module_token(command: str) -> Optional[str]:
     """The module a PYTHON invocation runs via ``-m``, or None.
@@ -189,9 +221,11 @@ def _python_module_token(command: str) -> Optional[str]:
     Both ``-m module`` and the attached ``-mmodule`` spelling are handled.
     """
     tokens = command.split()
-    if not tokens or "python" not in Path(tokens[0]).name.lower():
+    if not tokens:
         return None
-    i = 1
+    i = _interpreter_arg_start(tokens)
+    if i is None:
+        return None
     while i < len(tokens):
         tok = tokens[i]
         if tok == "-m":
