@@ -12,7 +12,6 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from typing import Optional, cast
-from urllib.parse import quote
 
 import typer
 import uvicorn
@@ -54,6 +53,7 @@ from .serving import (
 )
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
+    append_title_param,
     check_viewer_built,
     dataset_title,
     ensure_viewer_built,
@@ -320,10 +320,11 @@ def serve(
                 else:
                     aprint("⚠️  Viewer server did not become ready.")
         else:
-            aprint(
-                f"📊 Viewer URL: http://localhost:{viewer_port}/"
-                f"?src=http://{host}:{actual_port}"
+            hint_url = append_title_param(
+                f"http://localhost:{viewer_port}/?src=http://{host}:{actual_port}",
+                dataset_title(serve_path),
             )
+            aprint(f"📊 Viewer URL: {hint_url}")
 
         # Open browser if requested
         if open_browser:
@@ -333,10 +334,10 @@ def serve(
                 aprint("⚠️  Viewer not served; skipping --open.")
             else:
                 data_url = f"http://{host}:{actual_port}"
-                viewer_url = f"http://{host}:{actual_viewer_port}/?src={data_url}"
-                title = dataset_title(serve_path)
-                if title:
-                    viewer_url += f"&title={quote(title)}"
+                viewer_url = append_title_param(
+                    f"http://{host}:{actual_viewer_port}/?src={data_url}",
+                    dataset_title(serve_path),
+                )
                 open_browser_func(viewer_url)
 
         # Wrap the complete ASGI app with network simulation (if enabled)

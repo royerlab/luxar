@@ -144,6 +144,23 @@ describe('bootstrapStandalone', () => {
         setLineJoinOverride(null);
       }
     });
+
+    it('names the browser tab from ?title=, and leaves it alone without one', async () => {
+      const original = document.title;
+      try {
+        document.title = original;
+        await bootstrapStandalone({ canvas: CANVAS, urlParams: { ...EMPTY_PARAMS } });
+        expect(document.title).toBe(original);
+
+        await bootstrapStandalone({
+          canvas: CANVAS,
+          urlParams: { ...EMPTY_PARAMS, title: 'Rivers of Earth' },
+        });
+        expect(document.title).toBe('Rivers of Earth');
+      } finally {
+        document.title = original;
+      }
+    });
   });
 
   describe('opt-in flags', () => {

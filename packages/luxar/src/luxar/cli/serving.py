@@ -18,7 +18,6 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from typing import Any, Callable, MutableMapping, Optional, cast
-from urllib.parse import quote
 
 import uvicorn
 from arbol import aprint
@@ -35,6 +34,7 @@ from .network_simulation import (
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
     _LOCAL_CORS_ORIGIN_REGEX,
+    append_title_param,
     get_viewer_dist_path,
 )
 from .utils import (
@@ -403,11 +403,11 @@ def _serve_viewer(
     if data_url:
         # Strip trailing slash from data_url to prevent double-slash in viewer requests
         data_url_clean = data_url.rstrip("/")
-        viewer_url = f"http://{host}:{port}/?src={data_url_clean}"
-        if title:
-            # Names the browser tab (document.title) so several open viewer
-            # tabs are tellable apart; authored viewer_config.title overrides.
-            viewer_url += f"&title={quote(title)}"
+        # The title names the browser tab (document.title) so several open
+        # viewer tabs are tellable apart; authored viewer_config.title wins.
+        viewer_url = append_title_param(
+            f"http://{host}:{port}/?src={data_url_clean}", title
+        )
     else:
         viewer_url = f"http://{host}:{port}/"
 

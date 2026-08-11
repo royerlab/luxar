@@ -70,8 +70,12 @@ export function applyViewerConfigState(
 
   // --- Browser tab title ---
   // Authored scene identity wins over the ?title= URL fallback applied at
-  // bootstrap, so a tab always names the scene it actually shows.
-  if (viewerConfig.title && viewerConfig.title.trim()) {
+  // bootstrap, so a tab always names the scene it actually shows. The
+  // typeof guard is load-bearing: `viewerConfig` is untyped JSON straight
+  // out of the scene's zarr attributes, and a non-string `title` would
+  // otherwise throw here and abort the rest of the load (theme, dimension
+  // state, and the render loop kicked off after this call).
+  if (typeof viewerConfig.title === 'string' && viewerConfig.title.trim()) {
     ports.setDocumentTitle(viewerConfig.title.trim());
   }
 

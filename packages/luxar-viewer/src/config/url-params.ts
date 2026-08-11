@@ -381,10 +381,15 @@ function normalizeSrcForUrl(src: string): string {
  * centralizing the viewer's URL-writing contract. It returns a path-relative
  * URL suitable for `history.replaceState()`. The `src` is normalized so it
  * never carries a trailing slash.
+ *
+ * `title` is the one parameter that does NOT survive: it names the dataset
+ * the server started with, so carrying it onto a different `src` would make
+ * a shared or reloaded URL title the tab after a scene it no longer shows.
  */
 export function buildDataSourceBrowserUrl(src: string, location: BrowserUrlLocation): string {
   const params = new URLSearchParams(location.search);
   params.set('src', normalizeSrcForUrl(src));
+  params.delete('title');
   const query = params.toString();
   const hash = location.hash ?? '';
   return `${location.pathname}${query ? `?${query}` : ''}${hash}`;

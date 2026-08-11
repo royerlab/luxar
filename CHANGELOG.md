@@ -15,9 +15,10 @@ Two-step title chain, applied to `document.title`: a scene's authored
 viewer uses the new `?title=` URL parameter, which serve-family commands
 (`luxar serve --viewer` / `--open`, and therefore every `luxar demo run`)
 derive from the dataset's file name (`dataset_title`, compound suffixes like
-`.luxar.zarr` stripped). Zero demo edits required — all 80 demos get named
-tabs for free.
-
+`.luxar.zarr` stripped, including archive-wrapped ones like
+`.gsplats.zarr.zip`). Zero demo edits required — all 80 demos get named tabs
+for free. `?title=` is dropped from the address bar when you switch datasets
+in the viewer, since it names the scene the server started with.
 
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 

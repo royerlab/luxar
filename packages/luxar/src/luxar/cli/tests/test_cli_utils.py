@@ -911,6 +911,15 @@ class TestDatasetTitle:
         assert dataset_title("plain.zarr") == "plain"
         assert dataset_title("bundle.ZIP") == "bundle"  # case-insensitive
 
+    def test_strips_archive_wrapped_compound_suffixes(self) -> None:
+        """`gsplat view` and the shipped demos hand us archived stores."""
+        from luxar.cli.utils import dataset_title
+
+        assert dataset_title("desi_dr1.luxar.zarr.zip") == "desi_dr1"
+        assert dataset_title("fit.gsplats.zarr.zip") == "fit"
+        assert dataset_title(Path("/x/fit.gsplats.zarr.tar.gz")) == "fit"
+        assert dataset_title("fit.gsplats.zarr.TGZ") == "fit"
+
     def test_directories_and_plain_names_pass_through(self) -> None:
         from luxar.cli.utils import dataset_title
 
@@ -921,3 +930,14 @@ class TestDatasetTitle:
 
         assert dataset_title(None) is None
         assert dataset_title("") is None
+
+    def test_append_title_param_encodes_and_no_ops(self) -> None:
+        from luxar.cli.utils import append_title_param
+
+        base = "http://127.0.0.1:5173/?src=http://127.0.0.1:8000"
+        assert append_title_param(base, None) == base
+        assert append_title_param(base, "") == base
+        assert (
+            append_title_param(base, "Rivers of Earth & Fjords")
+            == f"{base}&title=Rivers%20of%20Earth%20%26%20Fjords"
+        )

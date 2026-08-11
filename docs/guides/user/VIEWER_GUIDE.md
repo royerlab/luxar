@@ -47,6 +47,7 @@ Append parameters to the viewer URL to control startup behavior.
 |-----------|------|-------------|
 | `src` | string | Zarr dataset URL or local path. |
 | `theme` | string | Initial theme. One of: `light`, `dark`, `liquid-glass`, `frosted-glass`. |
+| `title` | string | Browser tab title (`document.title`). Serve-family commands derive it from the dataset file name; a scene's authored `viewer_config.title` overrides it. Dropped from the URL when you switch datasets in the viewer. |
 | `debug` | flag | Enable the debug interface (developer use). |
 | `no-cache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
 | `no-slice-cache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
