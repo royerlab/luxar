@@ -130,16 +130,18 @@ _LEAF_COLOR_INT_DTYPES = (np.dtype("uint8"), np.dtype("uint16"))
 
 
 def _reject_unwritable_color_dtype(colors: NDArray, context: str) -> None:
-    """Refuse a colour dtype the leaf write would reject, BEFORE anything is built.
+    """Refuse a colour dtype the leaf write would reject, before anything is WRITTEN.
 
     Same rule as the leaf, deliberately not a new one. Without this the lift
     happily normalises e.g. an ``int64`` colour by ``iinfo(int64).max`` (≈1e-19,
     a near-black coarse level), the coarse gsplat children are written, and only
     the FINEST child — written last — trips the encoder's dtype check: a
     ``kind=lod`` node stranded half-written on disk, which is exactly the class
-    the #1437 pre-split gate exists to prevent. Raising here keeps the store
+    the #1437 pre-split gate exists to prevent. Raising here keeps the STORE
     untouched, for the uniform ``(1, c)`` row and the per-element ``(N, c)``
-    array alike.
+    array alike. (Not "before anything is computed": on the per-element points
+    path this runs after sigma, the zero-radius mask and the Cholesky
+    allocation — all in-memory work, none of it on disk.)
     """
     dtype = colors.dtype
     if np.issubdtype(dtype, np.floating) or dtype in _LEAF_COLOR_INT_DTYPES:
@@ -225,7 +227,7 @@ def lift_points_to_gsplats(
     *,
     radius_scale: float = 1.0,
     truncation_radius: float = LIFT_TRUNCATION_RADIUS,
-    _uniform_colors: bool = False,
+    _uniform_colors: Optional[bool] = None,
 ) -> GSplatData:
     """Lift a point cloud to a single-level :class:`GSplatData` of isotropic Gaussians.
 
@@ -260,13 +262,19 @@ def lift_points_to_gsplats(
         Gaussian truncation ``T`` in sigmas. Defaults to
         :data:`LIFT_TRUNCATION_RADIUS` (3.0) — NOT the codebase-wide
         ``DEFAULT_TRUNCATION_RADIUS``; see that constant for why.
-    _uniform_colors : bool
-        PRIVATE. Declares that ``colors`` was already expanded from a uniform
-        RGB(A) value by the caller, which is what admits a 4th (alpha) column.
-        Only :func:`lift_lines_to_gsplats` sets it — it expands per VERTEX and
-        interpolates per bead before calling this function, and interpolating a
-        constant alpha yields that same constant, so the uniformity that makes
-        the alpha safe is preserved.
+    _uniform_colors : bool or None
+        PRIVATE. ``None`` (the default) means "nobody has classified ``colors``
+        yet" and this function resolves it itself. Supplying a bool means the
+        CALLER already resolved uniformity, and its verdict is final: no
+        re-classification happens here, and the bool alone decides whether a 4th
+        (alpha) column is admitted. Only :func:`lift_lines_to_gsplats` supplies
+        it — it classifies per VERTEX and then interpolates per bead, and
+        re-classifying the bead array would misread a one-bead ``(1, 4)`` result
+        as the uniform form and let a genuine per-element RGBA through with an
+        invented (averaged) alpha. Supplying a bool therefore also ASSERTS that
+        ``colors`` is already one row per element: the expansion is skipped
+        along with the classification, and an unexpanded ``(1, c)`` row would
+        reach the zero-radius mask below (which indexes per element).
 
     Returns
     -------
@@ -280,11 +288,16 @@ def lift_points_to_gsplats(
     n, d = pos.shape
 
     # Uniform colours BEFORE the zero-radius mask below (which indexes `colors`
-    # per point and would corrupt a 3/4-component broadcast row).
-    uniform_colors = bool(_uniform_colors)
-    if colors is not None:
-        colors, expanded = _expand_uniform_colors(colors, n)
-        uniform_colors = uniform_colors or expanded
+    # per point and would corrupt a 3/4-component broadcast row). A caller that
+    # already classified them (`_uniform_colors` supplied) is trusted verbatim —
+    # re-classifying here would read a caller's one-row per-element array as the
+    # uniform form and admit an alpha column it must not.
+    if _uniform_colors is not None:
+        uniform_colors = bool(_uniform_colors)
+    else:
+        uniform_colors = False
+        if colors is not None:
+            colors, uniform_colors = _expand_uniform_colors(colors, n)
 
     radii_arr = np.broadcast_to(np.asarray(radii, dtype=np.float64), (n,)).astype(
         np.float64
@@ -352,9 +365,12 @@ def lift_points_to_gsplats(
         # otherwise normalise to near-black here and be refused by the encoder
         # only at the finest child, stranding the coarse levels on disk.
         _reject_unwritable_color_dtype(c, "colors")
-        # order="C" keeps the row-major layout every consumer (and the writer)
-        # expects: `c` may be a 0-stride broadcast view, whose default order="K"
-        # astype would yield a channel-major (Fortran) array instead.
+        # order="C" is cheap insurance, not a fix for a reproduced bug: `c` may
+        # be a 0-stride broadcast view, and the default order="K" astype turns
+        # that into a channel-major (Fortran) array — an odd layout for one
+        # input class only. No downstream breakage was observed without it (the
+        # uniform path collapses to a (1, c) row on disk), and the copy happens
+        # either way, so pin the layout every other input already has.
         if np.issubdtype(c.dtype, np.integer):
             colors_arr = c.astype(np.float32, order="C") / float(np.iinfo(c.dtype).max)
         else:
@@ -462,16 +478,11 @@ def lift_lines_to_gsplats(
     ``colors`` included, so a uniform RGB(A) list/tuple or ``(1, c)`` row is
     broadcast to every vertex, alpha included, before the per-bead
     interpolation (interpolating a constant alpha yields that same constant, so
-    the beads stay uniformly transparent).
-
-    One wrinkle in the "per-element RGBA is refused" contract is bead-count
-    dependent: when the whole line set collapses to exactly ONE bead (a segment
-    far shorter than its width), the per-bead colour array is itself ``(1, 4)``
-    and the inner point lift re-reads it as the uniform form — so a per-element
-    RGBA that would be refused for a longer segment is accepted there, carrying
-    the mean of the two vertex alphas. Only reachable through this function
-    directly: under ``add_lines(substitutive_lod=…)`` such a degenerate set
-    falls back to a flat Lines write. Left as is rather than adding machinery.
+    the beads stay uniformly transparent). Uniformity is decided ONCE, per
+    vertex, and forwarded to the inner point lift: the bead array must never be
+    re-classified, or a line set that collapses to a single bead would present a
+    per-element RGBA as a ``(1, 4)`` "uniform" row and slip an averaged alpha
+    into the coarse levels.
     """
     verts = np.asarray(vertices, dtype=np.float32)
     if verts.ndim != 2:
@@ -588,9 +599,20 @@ def lift_lines_to_gsplats(
         bead_scalars = s0 + t * (s1 - s0)
         # Normalise over the FULL field range (vmin/vmax from all vertices) so the
         # beads share the finest node's scalar_data_range, not a per-segment one.
-        bead_colors = scalars_to_colors(
-            bead_scalars, colormap, vmin=float(s_arr.min()), vmax=float(s_arr.max())
-        )
+        # Over the FINITE vertices only, as `scalars_to_colors` does for its own
+        # default bounds: a single Inf would otherwise collapse the whole tube to
+        # LUT[0], and a NaN/-Inf bound turns every bead index into garbage. The
+        # scene API refuses non-finite scalars upstream; a direct caller of this
+        # function does not go through that gate.
+        finite = np.isfinite(s_arr)
+        vmin = float(s_arr[finite].min()) if finite.any() else 0.0
+        vmax = float(s_arr[finite].max()) if finite.any() else 1.0
+        bead_colors = scalars_to_colors(bead_scalars, colormap, vmin=vmin, vmax=vmax)
+        # A LUT lookup is per-bead by construction, whatever `colors` was: the
+        # vertex verdict does not describe this array. Inert while colormap LUTs
+        # are RGB-only, but an RGBA LUT would otherwise re-open exactly the
+        # per-element-alpha door the vertex classification closes.
+        uniform_colors = False
     elif colors is not None:
         c = np.asarray(colors)
         c0 = c[pairs[:, 0]].astype(np.float64)[seg_idx]

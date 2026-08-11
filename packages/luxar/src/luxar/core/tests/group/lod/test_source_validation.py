@@ -112,7 +112,7 @@ def _lines_kwargs(channel: str, value: Any) -> Dict[str, Any]:
     return kwargs
 
 
-#: The uniform colour forms the flat path accepts, every one of which the
+#: The uniform colour forms the flat path accepts, all four of which the
 #: substitutive wrappers used to refuse downstream in the gsplat lift (#1444),
 #: each paired with the row EVERY level must end up carrying — alpha included,
 #: because gsplats carry per-splat alpha and all three shaders scale intensity
@@ -131,23 +131,26 @@ _BROADCAST_COLORS = [
         np.array([(*_BROADCAST_RGB, _BROADCAST_ALPHA)], dtype=np.float32),
         (*_BROADCAST_RGB, _BROADCAST_ALPHA),
     ),
-    (  # opaque RGBA — the clamped end, see _assert_coarse_levels_carry_color
+    (  # opaque RGBA — above the clamp, see _assert_coarse_levels_carry_color
         (*_BROADCAST_RGB, 1.0),
         (*_BROADCAST_RGB, 1.0),
     ),
-    (  # near-opaque RGBA — clamped too, 1.0 is not the only affected value
-        (*_BROADCAST_RGB, 0.999),
-        (*_BROADCAST_RGB, 0.999),
+    (  # just BELOW the clamp: still bit-exact, which the tolerance split pins
+        (*_BROADCAST_RGB, 0.99),
+        (*_BROADCAST_RGB, 0.99),
     ),
 ]
 
-#: Tolerance for the coarse-level colour check. The merge round-trips a
-#: per-splat alpha through optical depth, whose ``ALPHA_CLAMP = 511/512 ≈
-#: 0.998047`` caps EVERY authored alpha above it — not just 1.0: both 1.0 and
-#: 0.999 come back as 0.998046875 on every coarse level (measured), at most a
-#: 1.95e-3 step the finest child does not have. Alpha at or below 511/512
-#: round-trips exactly. This tolerance admits that step and nothing looser.
+#: The merge round-trips a per-splat alpha through optical depth, which caps it
+#: at ``ALPHA_CLAMP = 511/512``: an authored alpha ABOVE that comes back clamped
+#: on every coarse level (measured: 1.0 → 0.998046875, 0.999 → 0.998046875),
+#: a step the finest child does not have. Anything at or below the clamp — RGB,
+#: alpha 0.5, alpha 0.99 — is bit-exact and is asserted as such, so this
+#: tolerance is reserved for the clamped case and cannot absorb a future drift
+#: elsewhere.
+_ALPHA_CLAMP = 511.0 / 512.0
 _ALPHA_CLAMP_ATOL = 2.5e-3
+_EXACT_ATOL = 1e-6
 
 #: Colours whose dtype the leaf write refuses (COLOR arrays are floating, uint8
 #: or uint16), in both the uniform-row and per-element shapes. Normalising
@@ -169,10 +172,13 @@ def _assert_coarse_levels_carry_color(
     (every merged representative is that same colour), so this is an equality
     check, not a "some colour was written" one — and it covers the alpha column,
     whose loss would be a brightness jump at the LOD seam rather than a refusal.
-    Equality is to within :data:`_ALPHA_CLAMP_ATOL`, the merge's optical-depth
-    clamp at the near-opaque end; RGB and every alpha at or below ``511/512``
-    are exact.
+    Equality is EXACT unless the authored alpha exceeds the merge's
+    optical-depth :data:`_ALPHA_CLAMP`, the only value the round-trip changes.
     """
+    alpha = want[3] if len(want) == 4 else None
+    atol = (
+        _ALPHA_CLAMP_ATOL if alpha is not None and alpha > _ALPHA_CLAMP else _EXACT_ATOL
+    )
     assert coarse, "no coarse gsplat levels were written"
     for child in coarse:
         data = reader.get_gsplats(f"{node}/{child}")
@@ -182,7 +188,7 @@ def _assert_coarse_levels_carry_color(
             f"{child} carries {np.asarray(data.colors).shape[1]} channels, "
             f"expected {len(want)} (a dropped alpha renders 1/alpha too bright)"
         )
-        assert_uniform(data.colors, want, n, atol=_ALPHA_CLAMP_ATOL)
+        assert_uniform(data.colors, want, n, atol=atol)
 
 
 def _n_levels(path: str, node: str) -> int:
@@ -613,6 +619,51 @@ class TestLegalBroadcastFormsStillReachEveryLevel:
         assert_uniform(data.widths, 0.3, _SUB_N)
         assert_uniform(data.colors, want, _SUB_N)
         _assert_coarse_levels_carry_color(reader, "line", children[:-1], want)
+
+    def test_substitutive_one_bead_line_refuses_per_element_rgba(
+        self, tmp_path: Any
+    ) -> None:
+        # A segment far shorter than its width lifts to exactly ONE bead, so the
+        # per-bead colour array is (1, 4). Re-classifying it as the uniform form
+        # would admit a per-element RGBA and bake the MEAN of two different
+        # alphas — a value neither vertex has — into the coarse level. The
+        # vertex-level verdict is final, so this is refused, and nothing lands.
+        compiler, scene, path = open_scene(tmp_path, "one_bead_rgba.luxar.zarr")
+        verts = np.array([[0, 0, 0], [0.001, 0, 0]], dtype=np.float32)
+        varying = np.array([[0.2, 0.4, 0.6, 0.3], [0.2, 0.4, 0.6, 0.9]], np.float32)
+        exc = refusal(
+            lambda: scene.add_lines(
+                "l",
+                verts,
+                widths=10.0,
+                colors=varying,
+                line_type="segments",
+                substitutive_lod=True,
+            )
+        )
+        assert "per-element" in str(exc)
+        assert "l" not in set(zarr.open_group(path, mode="r").group_keys())
+
+        # ... and the uniform twin on the very same geometry still writes, alpha
+        # intact on the coarse gsplat child.
+        scene.add_lines(
+            "ok",
+            verts,
+            widths=10.0,
+            colors=(*_BROADCAST_RGB, _BROADCAST_ALPHA),
+            line_type="segments",
+            substitutive_lod=True,
+        )
+        compiler.finalize()
+        store = zarr.open_group(path, mode="r")
+        assert store["ok"].attrs["kind"] == "lod"
+        children = sorted(store["ok"].group_keys())
+        _assert_coarse_levels_carry_color(
+            LuxarScene.load(path),
+            "ok",
+            children[:-1],
+            (*_BROADCAST_RGB, _BROADCAST_ALPHA),
+        )
 
     @pytest.mark.parametrize("shape,colors", _BAD_DTYPE_COLORS)
     @pytest.mark.parametrize("geometry", ["points", "lines"])

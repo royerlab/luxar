@@ -302,10 +302,13 @@ def validate_points_channels_before_split(
     it is not this gate's parity promise.
 
     The CHANNEL verdict is identical with and without a wrapper. Note the gate
-    runs ABOVE the positions / dimension / attr checks on the split paths, so a
-    call that ALSO trips one of those (a NaN position, a wrong column count, an
-    unknown attr) reports the channel fault first here and the positions/attr
-    fault on the plain-leaf path. Both refuse, and neither writes.
+    runs ABOVE the positions / attr checks on the split paths, so a call that
+    ALSO trips one of those (a NaN position, an unknown attr) reports the
+    channel fault first here and the positions/attr fault on the plain-leaf
+    path. Both refuse, and neither writes. The scene-DIMENSION count is the
+    exception: since #1446 every leaf adder checks it above its split branches,
+    so a wrong column count is reported first on BOTH paths and this gate is
+    never reached (see :func:`validate_labels_before_split`).
 
     Call as the FIRST statement of a wrapper impl, never from a leaf adder — see
     :func:`validate_labels_before_split` for why the placement is load-bearing.
