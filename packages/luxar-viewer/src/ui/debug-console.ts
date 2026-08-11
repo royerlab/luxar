@@ -136,7 +136,7 @@ export class DebugConsole {
    */
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
-    panel.className = 'luxar-debug-console luxar-glass-surface';
+    panel.className = 'luxar-debug-console luxar-glass-surface luxar-panel-pop';
     panel.setAttribute('role', 'region');
     panel.setAttribute('aria-labelledby', 'luxar-debug-console-title');
     // Note: Resize handles are now child elements (not pseudo-elements)

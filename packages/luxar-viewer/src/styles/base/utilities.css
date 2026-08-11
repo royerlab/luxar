@@ -513,8 +513,30 @@
   stroke-linejoin: round;
 }
 
+/* ========== Panel entry motion (shared recipe) ==========
+   Transform-only scale-settle for every floating surface (UI Design Guide
+   §10.2). Deliberately NO opacity — animating opacity on a glass root breaks
+   the liquid-glass SVG filter (§5.1.3). CSS animations restart automatically
+   on display:none → block, so toggled panels re-pop on every open with zero
+   JS. Surfaces whose root already carries a positioning transform (the rail
+   flyout's translateY, the dimension sliders' translateX) must NOT use this
+   class — they get composed keyframes in their own stylesheets. */
+@keyframes luxar-panel-pop-kf {
+  from {
+    transform: scale(0.975);
+  }
+}
+
+.luxar-panel-pop {
+  animation: luxar-panel-pop-kf 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
 /* ========== Reduced Motion ========== */
 @media (prefers-reduced-motion: reduce) {
+  .luxar-panel-pop {
+    animation: none;
+  }
+
   .luxar-panel-close {
     transition: none;
   }
