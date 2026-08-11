@@ -57,8 +57,11 @@ class LeafStamp:
     #: Empty when a nonempty leaf has zero effective energy (no stamp written,
     #: matching the build path).
     energy_fraction_cum: List[float]
-    #: Absolute self-energy weight ``w`` (``Σ aᵢ²·π^{D/2}·|Σᵢ|^{1/2}``).
-    reference_energy: float
+    #: Absolute self-energy weight ``w`` (``Σ aᵢ²·π^{D/2}·|Σᵢ|^{1/2}``), or
+    #: ``None`` when no weight was written — a REVEAL ladder carries neither half
+    #: of the e/w pair, and the report must not name a number the store does not
+    #: hold.
+    reference_energy: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -68,8 +71,9 @@ class LevelStamp:
     path: str
     n_splats: int
     quality: float
-    #: The group-consistent w: the FINEST child's total self-energy.
-    reference_energy: float
+    #: The group-consistent w: the FINEST child's total self-energy. ``None``
+    #: for a reveal child, which carries no weight (see :class:`LeafStamp`).
+    reference_energy: Optional[float]
 
 
 @dataclass
@@ -313,7 +317,8 @@ def _annotate_leaf(
     # make_substitutive_lod), which the e-only pass cannot compute — keep
     # setdefault semantics there (the with_quality pass overwrites it with
     # the correct group value).
-    if e_cum is None and _ladder_is_reveal(sub_groups):
+    reveal = e_cum is None and _ladder_is_reveal(sub_groups)
+    if reveal:
         # Both-or-neither: the sub-LODs above carry no `energy_fraction_cum`, so
         # the leaf must carry no `reference_energy` either — a weight with nothing
         # to weight is a half-written stamp, and the viewer's display gate poisons
@@ -341,7 +346,10 @@ def _annotate_leaf(
             energy_fraction_cum=(
                 [e for e in e_cum if e is not None] if e_cum is not None else []
             ),
-            reference_energy=reference_energy,
+            # `None` only for a reveal, whose weight was ERASED. The
+            # `is_lod_child` skip below also leaves `write_w` False, but there
+            # the leaf keeps the group-consistent weight already on disk.
+            reference_energy=None if reveal else reference_energy,
         )
     )
 
@@ -475,7 +483,8 @@ def _annotate_node(
                     level, ref, max_pair_splats=max_pair_splats, device=device
                 ).quality
             level_stamp: Dict[str, Any] = {"quality": quality}
-            if not _ladder_is_reveal(_ladder_sub_groups(child)):
+            child_is_reveal = _ladder_is_reveal(_ladder_sub_groups(child))
+            if not child_is_reveal:
                 # A reveal child carries no `energy_fraction_cum` (the e-only
                 # pass above erased any), so it must carry no `reference_energy`
                 # either — otherwise this Q pass would put back exactly the
@@ -488,7 +497,7 @@ def _annotate_node(
                     path=str(child.path or "/"),
                     n_splats=n_splats,
                     quality=float(quality),
-                    reference_energy=float(ref_w),
+                    reference_energy=None if child_is_reveal else float(ref_w),
                 )
             )
         return

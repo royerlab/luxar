@@ -45,7 +45,7 @@ from .group import (
     resolve_additive_axis,
 )
 from .poisson_disk import poisson_disk_order
-from .reveal import radial_element_score
+from .reveal import radial_element_score, resolve_reveal_centre
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
@@ -249,7 +249,9 @@ def compute_additive_order_lines(
         n_lods: Consulted only by ``spatial-uniform`` / ``poisson-disk``.
         seed: For ``random``.
         reveal_centre: ``radial`` only — centre of the shells, defaulting to the
-            spatial bounding-box centre of the polyline representatives.
+            spatial bounding-box centre of ``vertices`` (the node's own middle —
+            NOT of the polyline representatives, whose bounding box weighs a
+            long polyline and a short one equally).
         spatial_dims: ``radial`` only — columns the distance is measured over,
             defaulting to the columns with non-zero extent (which drops a
             *constant* time/channel column but not a *stacked* one — see
@@ -313,11 +315,15 @@ def compute_additive_order_lines(
         # Returns an EMPTY natural partition, deliberately — see the Points
         # equivalent: per-level counts would make `make_additive_lod_lines`
         # bypass the caller's `counts:` / `stream:` breakpoints entirely.
+        # The default centre comes from `vertices`, the NODE's own bbox — not
+        # from the bbox of `reps`, in which a long polyline and a short one weigh
+        # the same and pull the origin off the geometry's middle.
+        reps = polyline_bbox_centres(vertices, polylines)
         return (
             np.argsort(
                 radial_element_score(
-                    polyline_bbox_centres(vertices, polylines),
-                    reveal_centre,
+                    reps,
+                    resolve_reveal_centre(reveal_centre, vertices, reps, spatial_dims),
                     spatial_dims,
                 ),
                 kind="stable",
@@ -447,8 +453,7 @@ def make_additive_lod_lines(
           whole-polyline boundaries while honouring the vertex budget even when
           polyline lengths are highly skewed.
         reveal_centre: For ``method='radial'`` — centre of the concentric
-            shells, defaulting to the bounding-box centre of the per-polyline
-            representatives (each polyline's own bbox centre).
+            shells, defaulting to the node's own vertex bounding-box centre.
         spatial_dims: For ``method='radial'`` — the vertex columns the shell
             distance is measured over, defaulting to the columns with non-zero
             extent (which excludes a *constant* time/channel column, but not a

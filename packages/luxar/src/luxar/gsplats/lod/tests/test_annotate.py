@@ -619,6 +619,27 @@ def test_annotate_does_not_energy_stamp_a_reveal_ladder(tmp_path: Path) -> None:
     assert not has_w, "annotate added the paired reference_energy to a reveal ladder"
 
 
+def test_annotate_report_does_not_claim_a_weight_it_erased(tmp_path: Path) -> None:
+    """The report is what the CLI prints, so it must not name a w the store lacks.
+
+    `annotate-quality` erases `reference_energy` from a reveal leaf; reporting the
+    figure it computed anyway printed `w=<number>` under a "Leaves stamped" heading
+    for a leaf that carries no weight at all.
+    """
+    store = _radial_store(tmp_path)
+    report = annotate_quality_store(store, device="cpu")
+
+    assert [leaf.reference_energy for leaf in report.leaves] == [None]
+    assert [leaf.energy_fraction_cum for leaf in report.leaves] == [[]]
+
+    # Sensitivity control: the same builder under an energy ordering DOES report
+    # a weight, so the assertion above cannot pass by the field always being None.
+    energy_store = _radial_store(tmp_path, method="self_energy")
+    _strip_quality_attrs(energy_store)
+    control = annotate_quality_store(energy_store, device="cpu")
+    assert all(leaf.reference_energy is not None for leaf in control.leaves)
+
+
 def test_annotate_repairs_a_wrongly_stamped_reveal_ladder(tmp_path: Path) -> None:
     """Erase, don't merely skip — a store stamped by an older build gets repaired.
 

@@ -6,6 +6,35 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### The `radial` reveal ordering: a scene that grows outward as it streams
+
+New additive-ladder ordering `radial`, available on GSplats, Points and Lines
+(`luxar gsplat lod ... -m radial`, `additive_lod={"method": "radial"}`). It
+orders concentric shells around the node's own bounding-box centre — not the
+scene origin, so a dataset far from the origin still grows from its own middle
+instead of in from a corner — so the existing streaming machinery paints the
+object outward. **Authoring only: no viewer changes, nothing about how data is
+displayed, only how it is loaded.** The distance spans the spatial axes only, so
+a stacked time/channel column cannot become a shell dimension; `reveal_centre` /
+`spatial_dims` (`--reveal-centre` / `--spatial-dims`) override both. On Lines the
+permutation indexes whole polylines, so every prefix keeps valid segment
+topology. Mesh is left out — it has no additive ladder at all yet.
+
+A radial ladder deliberately carries **no energy stamps**. The viewer multiplies
+an incomplete ladder's brightness by `1/e(k)`, gated on the blending mode and
+never on geometry type; that is right for an energy-ordered prefix and backwards
+for a reveal, whose prefix is a partial object at full brightness rather than a
+dim version of the whole. `REVEAL_METHODS` in the new
+`luxar.utils.lod_methods` registry names which orderings are reveals, and both
+ladder implementations plus `annotate-quality` consult it, so the
+`energy_fraction_cum` / `reference_energy` pair is omitted both-or-neither.
+Accepted cost, stated rather than buried: cross-fade and the `e >= 0.6`
+early-upgrade release read the same stamps, so shells hard-switch.
+
+That registry also replaces four hand-copied method tuples: `radial` was
+invisible to every gsplat CLI surface, and three `--method` help strings still
+advertised only `auto|greedy|self_energy` long after six methods existed.
+
 #### Demos serve on per-dataset derived ports, not 8000/5173
 
 Every demo used to contend for the same default ports, so with several demos
