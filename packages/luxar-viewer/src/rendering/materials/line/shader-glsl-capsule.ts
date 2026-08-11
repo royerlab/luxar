@@ -281,10 +281,18 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                     rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
                   }
                   rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                  float deficitA = clamp(1.0 - rpFarA / max(rA, 1e-4), 0.0, 1.0);
-                  // Congruence gate: only a thinning partner (negative
-                  // gradient beyond the gate) needs the deficit rule.
-                  if (deficitA > ${G.DEFICIT_GATE}) {
+                  // Packet gate (#1495): a hard cut is only exact when the
+                  // partner actually covers my foreign side — which fails
+                  // whenever EITHER leg tapers (both directions), the
+                  // partner is short relative to the joint disc, or the
+                  // turn is sharper than 120° (the partner's rod exits
+                  // the disc region).
+                  bool needPacketA =
+                    abs(1.0 - rpFarA / max(rA, 1e-4)) > ${G.DEFICIT_GATE} ||
+                    rB > rA * (1.0 + ${G.DEFICIT_GATE}) ||
+                    ql < 2.0 * rA ||
+                    dot(qq / ql, u) > 0.5;
+                  if (needPacketA) {
                     cutA.z = (rpFarA - rA) / ql;
                     cutA.w = ql;
                     // The deficit term's support is bounded by MY OWN
@@ -342,10 +350,18 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                     rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
                   }
                   rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                  float deficitB = clamp(1.0 - rpFarB / max(rB, 1e-4), 0.0, 1.0);
-                  // Congruence gate: only a thinning partner (negative
-                  // gradient beyond the gate) needs the deficit rule.
-                  if (deficitB > ${G.DEFICIT_GATE}) {
+                  // Packet gate (#1495): a hard cut is only exact when the
+                  // partner actually covers my foreign side — which fails
+                  // whenever EITHER leg tapers (both directions), the
+                  // partner is short relative to the joint disc, or the
+                  // turn is sharper than 120° (the partner's rod exits
+                  // the disc region).
+                  bool needPacketB =
+                    abs(1.0 - rpFarB / max(rB, 1e-4)) > ${G.DEFICIT_GATE} ||
+                    rA > rB * (1.0 + ${G.DEFICIT_GATE}) ||
+                    ql < 2.0 * rB ||
+                    dot(qq / ql, u) < -0.5;
+                  if (needPacketB) {
                     cutB.z = (rpFarB - rB) / ql;
                     cutB.w = ql;
                     // The deficit term's support is bounded by MY OWN

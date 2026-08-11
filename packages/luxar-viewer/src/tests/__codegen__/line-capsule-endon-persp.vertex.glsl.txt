@@ -209,7 +209,7 @@ float nodeVar168;
 vec2 nodeVar169;
 vec2 nodeVar170;
 float nodeVar171;
-float nodeVar172;
+bool nodeVar172;
 bool nodeVar173;
 int nodeVar174;
 int nodeVar175;
@@ -244,7 +244,7 @@ float nodeVar203;
 vec2 nodeVar204;
 vec2 nodeVar205;
 float nodeVar206;
-float nodeVar207;
+bool nodeVar207;
 float nodeVar208;
 float nodeVar209;
 float nodeVar210;
@@ -647,9 +647,9 @@ void main() {
 						if ( ( nodeVar129 > 4.0 ) ) {
 
 							nodeVar171 = clamp( ( ( ( nodeVar136 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar137 ), 1.5, nodeUniform25 );
-							nodeVar172 = clamp( ( 1.0 - ( nodeVar171 / max( nodeVar117, 0.0001 ) ) ), 0.0, 1.0 );
+							nodeVar172 = ( ( ( ( abs( ( 1.0 - ( nodeVar171 / max( nodeVar117, 0.0001 ) ) ) ) > 0.02 ) || ( nodeVar118 > ( nodeVar117 * ( 1.0 + 0.02 ) ) ) ) || ( nodeVar165 < ( nodeVar117 * 2.0 ) ) ) || ( dot( nodeVar166, nodeVar127 ) > 0.5 ) );
 
-							if ( ( nodeVar172 > 0.02 ) ) {
+							if ( nodeVar172 ) {
 
 								nodeVar130.z = ( ( nodeVar171 - nodeVar117 ) / nodeVar165 );
 								nodeVar130.w = nodeVar165;
@@ -822,9 +822,9 @@ void main() {
 						if ( ( nodeVar129 > 4.0 ) ) {
 
 							nodeVar206 = clamp( ( ( ( nodeVar136 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar137 ), 1.5, nodeUniform25 );
-							nodeVar207 = clamp( ( 1.0 - ( nodeVar206 / max( nodeVar118, 0.0001 ) ) ), 0.0, 1.0 );
+							nodeVar207 = ( ( ( ( abs( ( 1.0 - ( nodeVar206 / max( nodeVar118, 0.0001 ) ) ) ) > 0.02 ) || ( nodeVar117 > ( nodeVar118 * ( 1.0 + 0.02 ) ) ) ) || ( nodeVar200 < ( nodeVar118 * 2.0 ) ) ) || ( dot( nodeVar201, nodeVar127 ) < -0.5 ) );
 
-							if ( ( nodeVar207 > 0.02 ) ) {
+							if ( nodeVar207 ) {
 
 								nodeVar131.z = ( ( nodeVar206 - nodeVar118 ) / nodeVar200 );
 								nodeVar131.w = nodeVar200;

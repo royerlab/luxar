@@ -185,8 +185,14 @@ export function capsuleJointRenderLeg(
   // Packet per the vertex stage (width gate assumed passed; callers use
   // radii above CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).
   const rpFar = partner.rFar;
-  const deficit = Math.min(Math.max(1 - rpFar / Math.max(leg.rJoint, 1e-4), 0), 1);
-  const hasPacket = deficit > CAPSULE_JOINT_DEFICIT_GATE;
+  // Packet gate (#1495): either leg tapering (both directions), a short
+  // partner, or a turn past 120° all defeat the hard cut's assumption
+  // that the partner covers my foreign side.
+  const hasPacket =
+    Math.abs(1 - rpFar / Math.max(leg.rJoint, 1e-4)) > CAPSULE_JOINT_DEFICIT_GATE ||
+    leg.rFar > leg.rJoint * (1 + CAPSULE_JOINT_DEFICIT_GATE) ||
+    partner.length < 2 * leg.rJoint ||
+    qx > 0.5;
   const g = (rpFar - leg.rJoint) / partner.length;
 
   const side = nx * x + ny * y;

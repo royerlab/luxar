@@ -267,13 +267,14 @@ export function capsuleLinePickWebGPUFactory(
                   CAPSULE_MIN_RADIUS_PX,
                   uMaxLinePixelWidth
                 ).toVar();
-                const deficitA: TSLNode = clamp(
-                  float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))),
-                  0.0,
-                  1.0
-                ).toVar();
-                // Congruence gate (see _shared/line-capsule.ts).
-                If(deficitA.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
+                // Packet gate (#1495; see the GLSL twin's note).
+                const needPacketA: TSLNode = abs(float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))))
+                  .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
+                  .or(rB.greaterThan(rA.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
+                  .or(ql.lessThan(rA.mul(2.0)))
+                  .or(dot(qhat, u).greaterThan(0.5))
+                  .toVar();
+                If(needPacketA, () => {
                   cutA.z.assign(rpFarA.sub(rA).div(ql));
                   cutA.w.assign(ql);
                   // Full-disc reach: the deficit term ≤ my own profile (#1488).
@@ -324,12 +325,14 @@ export function capsuleLinePickWebGPUFactory(
                   CAPSULE_MIN_RADIUS_PX,
                   uMaxLinePixelWidth
                 ).toVar();
-                const deficitB: TSLNode = clamp(
-                  float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))),
-                  0.0,
-                  1.0
-                ).toVar();
-                If(deficitB.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
+                // Packet gate (#1495; see the GLSL twin's note).
+                const needPacketB: TSLNode = abs(float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))))
+                  .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
+                  .or(rA.greaterThan(rB.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
+                  .or(ql.lessThan(rB.mul(2.0)))
+                  .or(dot(qhat, u).lessThan(-0.5))
+                  .toVar();
+                If(needPacketB, () => {
                   cutB.z.assign(rpFarB.sub(rB).div(ql));
                   cutB.w.assign(ql);
                   // Full-disc reach: the deficit term ≤ my own profile (#1488).
