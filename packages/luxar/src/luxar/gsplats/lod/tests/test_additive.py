@@ -13,6 +13,7 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod import compute_additive_order, make_additive_lod
 from luxar.gsplats.lod.additive import (
     _build_sparse_gram,
+    _radial_score,
     _residual_energy_curve,
     _self_energy_score,
 )
@@ -782,6 +783,31 @@ def test_radial_rejects_a_non_finite_centre(bad: float) -> None:
     data = _make_random_gsplat(n=8, ndim=3, seed=4)
     with pytest.raises(ValueError, match="must be finite"):
         compute_additive_order(data, method="radial", reveal_centre=[bad, 0.0, 0.0])
+
+
+def test_radial_scorer_handles_an_empty_dataset_like_its_element_twin() -> None:
+    """`_radial_score` must not raise on an empty input, for symmetry.
+
+    Scope, stated honestly because it is narrower than it looks: the public
+    `compute_additive_order` ALREADY short-circuits an empty dataset before it
+    dispatches here, so it returns an empty permutation with or without this
+    guard (asserted below as the boundary of the claim). The defect was in the
+    HELPER: called directly it raised out of the default-centre bbox reduction,
+    while the element-side `radial_element_score` — the other implementation of the
+    same ordering — has always returned an empty score. This pins the two
+    together, so the mutation that fails is removing the helper's guard, NOT
+    breaking a user-visible path.
+    """
+    from luxar.core.group.lod.reveal import radial_element_score
+
+    empty = _make_empty_gsplat(ndim=3)
+
+    # The helper itself — the surface that was actually broken.
+    assert _radial_score(empty).shape == (0,)
+    # Its element-side twin, which already agreed.
+    assert radial_element_score(np.empty((0, 3), dtype=np.float64)).shape == (0,)
+    # Boundary of the claim: the public entry point was never affected.
+    assert compute_additive_order(empty, method="radial").shape == (0,)
 
 
 def _sublod_stats(laddered: GSplatData) -> list[dict]:

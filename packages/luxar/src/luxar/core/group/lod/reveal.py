@@ -74,9 +74,23 @@ def default_reveal_spatial_dims(scene: Any, n_cols: int) -> Optional[List[int]]:
     and keep the extent fallback.
 
     Returns ``None`` — meaning "keep the extent fallback" — when there is no
-    dimension metadata, when the positions are not aligned with it (``dim_order``
-    / ``extend_to_all`` reshaped the columns, so a scene-dim index is not a
-    position column), or when every dimension is displayed (nothing to exclude).
+    dimension metadata, when the column count does not match the scene's
+    dimensionality, or when every dimension is displayed (nothing to exclude).
+
+    Why a column-COUNT match is enough to treat a scene-dim index as a column
+    index: ``dim_order`` does not leave a permutation for this function to trip
+    over. Both adders call
+    :func:`~luxar.core.group.dim_order.apply_dim_order_positions` *before* they
+    read ``ndim`` or call this resolver, and
+    :func:`~luxar.core.scene.dim_order.apply_dim_order` builds its output as
+    ``np.zeros((N, scene_ndim))`` filled by iterating ``enumerate(scene_names)``
+    — so the array it returns is already in scene-dimension order at the scene's
+    full dimensionality, and column *i* IS scene dimension *i*. ``extend_to_all``
+    never reshapes the array at all (it is an attr describing broadcast, resolved
+    separately). So the count check is not a proxy for alignment: after that
+    normalization, matching counts means the columns really are the scene's, and
+    a MISmatch means no ``dim_order`` was applied to a differently-shaped array,
+    which is exactly the case that must decline.
     """
     dims = getattr(scene, "_dimensions", None) if scene is not None else None
     if dims is None or int(getattr(dims, "ndim", -1)) != int(n_cols):
@@ -158,6 +172,12 @@ def radial_element_score(
     ``centre`` defaults to the **bounding-box centre of the spatial axes**, not
     the scene origin: a dataset sitting far from the origin would otherwise
     reveal from one corner instead of growing from its own middle.
+
+    For Lines the scored representative is each polyline's own bbox centre, whose
+    bounding box is NOT the node's — so ``add_lines`` must not leave the default
+    to this function. It resolves the origin up front with
+    :func:`resolve_reveal_centre` and passes a concrete ``centre``. Points can use
+    the default, because its representative IS its position.
 
     ``spatial_dims`` defaults to the columns with **non-zero extent** — the
     element-side stand-in for the gsplat path's ``_nondegenerate_axes`` (which is

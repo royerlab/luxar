@@ -944,6 +944,60 @@ class TestRevealSpatialDimsFromSceneLines:
         np.testing.assert_allclose(np.abs(first[:, 1]), 1.0, atol=1e-2)
         assert sorted(set(np.round(first[:, 0]).tolist())) == list(self._TIMES)
 
+    def test_a_same_column_count_dim_order_permutation_stays_aligned(
+        self, tmp_path
+    ) -> None:
+        """A permuting ``dim_order`` does not misalign the scene-derived dims.
+
+        ``default_reveal_spatial_dims`` treats a scene-dimension index as a
+        position-column index once the column COUNTS match, which looks unsafe
+        under a ``dim_order`` permutation that preserves the count. It is safe,
+        and this pins why: both adders call ``apply_dim_order_positions`` BEFORE
+        reading ``ndim`` or resolving the reveal dims, and ``apply_dim_order``
+        builds ``np.zeros((N, scene_ndim))`` filled by iterating the SCENE's names
+        — so the array reaching the resolver is already in scene order at scene
+        dimensionality. Authoring the identical geometry column-permuted must
+        therefore give the identical ladder.
+        """
+        canonical = self._verts()  # columns [time, x, y, z]
+        permuted = canonical[:, [1, 2, 3, 0]]  # authored as [x, y, z, time]
+
+        first_of = {}
+        for tag, verts, dim_order in (
+            ("canonical", canonical, None),
+            ("permuted", permuted, ["x", "y", "z", "time"]),
+        ):
+            output = tmp_path / f"reveal_dimorder_{tag}.luxar.zarr"
+            with LuxarZarrCompiler(output) as compiler:
+                scene = compiler.create_scene(dimensions=self._dims_4d())
+                scene.add_lines(
+                    "ln",
+                    verts,
+                    widths=np.full(len(verts), 0.5, np.float32),
+                    line_type="segments",
+                    dim_order=dim_order,
+                    additive_lod=dict(method="radial", n_lods=2),
+                )
+
+            from luxar.encoding import ArrayDecoder
+
+            grp = zarr.open(str(output), mode="r")["ln"]
+            assert int(grp.attrs["n_additive_sublods"]) == 2
+            first_of[tag] = np.asarray(
+                ArrayDecoder().decode(grp["additive_0"]["vertices"]), dtype=np.float64
+            )
+
+        # Same inner shell at every timepoint, in the same scene column order —
+        # i.e. the permutation was normalized away before the reveal was scored.
+        for tag, first in first_of.items():
+            assert first.shape[0] == 24, tag
+            np.testing.assert_allclose(np.abs(first[:, 1]), 1.0, atol=1e-2, err_msg=tag)
+        np.testing.assert_allclose(
+            np.sort(first_of["canonical"], axis=0),
+            np.sort(first_of["permuted"], axis=0),
+            atol=1e-2,
+        )
+
     def test_control_the_extent_rule_alone_mixes_the_shells(self) -> None:
         """Sensitivity control on identical data, through the bare-array API."""
         verts = self._verts()

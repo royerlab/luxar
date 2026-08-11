@@ -458,6 +458,17 @@ def _radial_score(
     non-finite ``centre`` coordinate is rejected for the same reason: it makes
     every distance NaN/inf, which a stable argsort leaves in input order.
     """
+    if int(np.asarray(data.centers).shape[0]) == 0:
+        # Read the reach precisely: `compute_additive_order` ALREADY short-circuits
+        # an empty dataset before dispatching here, so no public path was broken —
+        # measured, it returns an empty permutation either way. What this fixes is
+        # the HELPER's own contract: called directly it raised "zero-size array to
+        # reduction operation minimum" out of the default-centre bbox below, while
+        # its public element-side twin `radial_element_score` has always returned
+        # an empty score. Same ordering, two implementations, and only one of them
+        # could be called with an empty input — so this is symmetry insurance for a
+        # future caller, not a live-bug fix.
+        return np.empty(0, dtype=np.float64)
     if spatial_dims is None:
         dims = data._nondegenerate_axes()
     else:
