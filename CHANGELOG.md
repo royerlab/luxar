@@ -131,6 +131,46 @@ building the TSL perspective pick graph / V-joint, the joint reaching the
 partner fetch and the ray-domain cut interval), all under the existing
 ≤ 2.0 covered-pixel gate.
 
+#### A laddered node no longer writes the raw `extend_to_all="all"` sentinel (#1441)
+
+`extend_to_all="all"` is an authoring convenience: the Scene expands it to the
+concrete names of the non-displayed dimensions before anything reaches the store,
+so the on-disk value is always a list like `["Time"]`. Every flat leaf adder did
+that expansion. The two additive-LOD (streaming ladder) wrappers did not — they
+handed the raw argument to `write_points_multi_lod` / `write_lines_multi_lod`,
+which stamp it verbatim onto the parent group AND every `additive_<i>/` sub-LOD.
+A laddered node therefore landed on disk carrying the bare string `'all'` while a
+flat sibling authored identically carried `['Time']`. Both wrappers now resolve
+the argument immediately before the writer call. The resolution is guarded on
+`is not None`: an unguarded resolve would add a "these dimensions have single
+values" advisory to a path that never emitted one — once per BSP part under
+`partition=` + `additive_lod=`, advising extension on a dim the layer is meant to
+be sliced by — and attribute it to `Group.add_points` rather than to the user's
+line. That leaves points and lines diverging from the structurally identical
+gsplats wrapper (`gsplats_pipeline/lod_dispatch.py`), which resolves unguarded
+and does warn; the divergence is noted at both sites.
+
+The viewer types that attr as `string[]`, so the malformed value was a hard
+failure rather than a cosmetic one — `'all'` has `.length === 3`, which passes
+every `extendDims.length > 0` gate before something calls `.join` or `.filter` on
+it. `buildSceneGraph` now normalizes the attr once, where it enters the graph,
+and writes the normalized array back onto the node's attrs: a non-array degrades
+to "not extended", while an array keeps its string entries and drops the rest, so
+`["Time", 42]` stays partially extended across `Time`. Either way the node is
+warned about once per load.
+That write-back is what makes the defence real: the synthesized `additive_<i>`
+children built by the loader factory, the three spatial-index loaders, and
+`SpatialQueryBuilder` all read the node attrs, so normalizing only for the log
+line would have moved the `TypeError` from load time to query time.
+The store listing never contains the root, so the root node is coerced
+explicitly alongside the loop — it is a real node for a detached
+`.gsplats.zarr` subtree, whose file root IS the leaf.
+`deriveNodeViewState` normalizes again — silently, since it runs every update
+cycle — for attrs that never came through the graph builder. The `"all"` sentinel
+is deliberately not reinterpreted viewer-side: the displayed-dimension set is
+mutable at runtime, so it would not mean at view time what it meant at author
+time.
+
 #### Every per-element channel is length-checked before a split, not just labels (#1437)
 
 `add_points("g", positions_200, colors=colors_100, partition={"max_elements": 100})`
