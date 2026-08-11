@@ -408,6 +408,42 @@ hard end than the soft end (a LUT wired to a constant row reads ratio ≈ 1 and
 fails). The texture is a lazy singleton built on the first volumetric material
 (~16 KB, ~90 ms); screen-space materials never trigger it.
 
+#### `luxar demo stop` — clear running demos and free their ports
+
+A demo forgotten in another terminal holds its ports, its memory and its GPU
+until someone finds the window. Re-running that same demo then shifts to a
+neighbouring port (its derived pair is stable) while the old browser tab keeps
+serving the older scene. `luxar demo stop` now finds every
+running demo and tears each one's process group down with the same
+SIGINT → SIGTERM → SIGKILL escalation Ctrl-C uses. Discovery is two-source:
+a JSON pidfile registry (`~/.cache/luxar/running/`) that `demo run`/`run-all`
+maintain around each launch, plus a `ps` sweep for `-m luxar.demos.demo_*`
+command lines that catches strays with no registry entry. The listing is
+printed and confirmed before anything dies (`-y` skips; `--dry-run` only
+lists; `stop <key>` targets one demo) — several agents/people may run demos
+on one machine, and "stop everything" must never take a colleague's live
+server down unseen. The `pick_port` "port busy" warning now also names a
+luxar-owned squatter ("Port 8042 is held by demo 'X' (PID N) — run
+`luxar demo stop` to clear it"), so the port shift explains itself.
+Stopping is POSIX-only on purpose: without process groups there is no way to
+ask whether a recorded pid is still the demo before signalling it (on Windows
+`os.kill(pid, 0)` is itself a hard terminate), and a pidfile outlives a reboot,
+so a blind signal would eventually kill whatever innocent process recycled that
+number. There the runs are listed with the command to stop them by hand
+instead — and because a pid listing (`tasklist`) still answers *existence*
+safely even where signal-0 does not, a record left behind by a reboot or a
+hard-killed owner is dropped from the listing instead of being reported as a
+running demo forever.
+Teardown also stops waiting out a corpse: a child that has exited but has not
+been reaped yet still answers `killpg`, which used to hold the whole signal
+ladder open, so an interrupted `demo run` sat there for the full grace period
+before returning. The pidfile directory is live state, not a cache, so
+`demo cache list` skips it — otherwise it would show up as an ORPHAN and
+`demo cache clear --orphans` would offer to delete the record of what is
+still running.
+New: `luxar.utils.demo_runs` (discovery + kill engine),
+`terminate_process_group` / `proc_table` / `on_spawn` in `luxar.utils.process`.
+
 #### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
 
 The volumetric line primitive (#1426) gains its picking pass, so the flag now
