@@ -112,6 +112,21 @@ describe('concat-helpers zero-row abstainer rule', () => {
     expect(concatOptionalField(parts, (p) => p.data, n, 1, 'colors')).toBeUndefined();
   });
 
+  it('a dtype mismatch still names the REAL ladder level past an abstainer', () => {
+    // The abstainer rule hands `concatRequiredField` a filtered subset, so
+    // without an index remap this would blame level 1 (and compare against
+    // "level 0") for a mismatch that actually sits at level 2 — a corrupt-store
+    // diagnostic pointing at the wrong level is worse than none.
+    const parts: Opt[] = [
+      { n: 0 },
+      { data: new Float32Array([0.5]), n: 1 },
+      { data: new Uint8Array([255]), n: 1 },
+    ];
+    expect(() => concatOptionalField(parts, (p) => p.data, n, 1, 'colors')).toThrow(
+      /level 2 carries 'colors' as Uint8Array but level 1 uses Float32Array/
+    );
+  });
+
   it('all-zero-row parts that DO carry the field still yield a zero-length array', () => {
     const parts: Opt[] = [
       { data: new Uint8Array(0), n: 0 },
