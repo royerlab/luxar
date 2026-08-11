@@ -352,8 +352,8 @@ class TestMeshLod:
     ) -> None:
         """`--overwrite` used to delete the destination before validating anything.
 
-        So `--method qem` (a real name, not yet a real tier) removed the output
-        and only then exited 1, having written nothing in its place.
+        So `--subst-method qem` (a real name, not yet a real tier) removed the
+        output and only then exited 1, having written nothing in its place.
         """
         from luxar.cli.mesh_ops.lod_commands import run_lod
 
@@ -374,6 +374,56 @@ class TestMeshLod:
                 overwrite=True,
             )
         assert (out / "keepme.txt").read_text() == "previous output"
+
+    def test_the_renamed_method_flag_works_and_the_old_one_points_at_it(
+        self, tmp_path: Path
+    ) -> None:
+        """`--method` → `--subst-method` (2026-08), with a pointer for the old one.
+
+        Both halves are asserted because either alone is satisfiable by a mistake:
+        the pointer without the new flag means nothing works, and the new flag
+        without the pointer leaves `-m qem` scripts to fail later against the
+        additive flag `-m` will name once mesh has an additive ladder.
+        """
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+
+        ok = runner.invoke(
+            app,
+            [
+                "mesh",
+                "lod",
+                str(source),
+                str(tmp_path / "new.luxar.zarr"),
+                "--subst-method",
+                "cluster",
+            ],
+        )
+        assert ok.exit_code == 0, ok.output
+        assert (
+            LuxarScene.load(tmp_path / "new.luxar.zarr").get_node_metadata("surf")[
+                "kind"
+            ]
+            == "lod"
+        )
+
+        old = runner.invoke(
+            app,
+            [
+                "mesh",
+                "lod",
+                str(source),
+                str(tmp_path / "old.luxar.zarr"),
+                "--method",
+                "cluster",
+            ],
+        )
+        assert old.exit_code != 0
+        assert "--subst-method cluster" in old.output, old.output
+        # The pointer must NOT send a mesh user to `--add-method`: that is the
+        # gsplat replacement for the bare flag, and mesh has no additive ladder.
+        assert "--add-method" not in old.output, old.output
+        assert not (tmp_path / "old.luxar.zarr").exists()
 
     def test_overwrite_DOES_replace_an_existing_output(self, tmp_path: Path) -> None:
         # The twin of the test above, and the one that keeps the deletion honest:

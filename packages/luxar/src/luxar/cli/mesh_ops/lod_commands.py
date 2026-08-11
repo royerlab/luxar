@@ -296,18 +296,29 @@ def lod_command(
     ),
     method: str = typer.Option(
         "auto",
-        "--method",
-        "-m",
+        "--subst-method",
         help=(
             "Decimation method, one of "
             f"{', '.join(sorted(MESH_SUBSTITUTIVE_METHODS))}. 'auto' resolves to "
-            "'cluster' today. NOTE these are NOT the `gsplat lod` methods: those "
-            "reduce a Gaussian mixture, which a surface is not."
+            "'cluster' today. Named `--subst-method` to match `gsplat lod`, where "
+            "it selects the substitutive (level-replacing) reduction — though the "
+            "algorithms differ: these decimate a surface, those reduce a Gaussian "
+            "mixture."
         ),
     ),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace an existing output."
     ),
+    # Declared only so the body can raise a pointer; see `gsplat lod`'s pair of
+    # hidden options for the general reason (typer rejects an unknown option
+    # before the body runs, so an undeclared flag is undiagnosable).
+    #
+    # Mesh needs the pointer MORE than gsplat does, and for a reason unique to it:
+    # `-m` is not merely gone, it is RESERVED — Stage 12 gives mesh an additive
+    # ladder and with it `-m/--add-method`, matching gsplat. So a script that says
+    # `-m qem` will, after that lands, be naming the additive-ordering flag with a
+    # decimation value. Typer's own "No such option: -m" says nothing about that.
+    legacy_method: Optional[str] = typer.Option(None, "--method", hidden=True),
 ) -> None:
     """Build a substitutive LOD ladder for a mesh scene.
 
@@ -324,7 +335,19 @@ def lod_command(
       luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr
       luxar mesh lod scan.luxar.zarr scan_lod.luxar.zarr -L 4 -K 3
       luxar mesh lod multi.luxar.zarr out.luxar.zarr --node surfaces/skull
+      luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr --subst-method qem
     """
+    # NOT routed through `LEGACY_METHOD_FLAGS`, deliberately: that table maps
+    # `--method` → `--add-method`, which is right for every gsplat surface and
+    # WRONG here — mesh's bare `--method` was the substitutive one. One token, two
+    # replacements, decided by the command; a shared table cannot express that,
+    # which is precisely the collision this rename removes from the flag surface.
+    if legacy_method is not None:
+        raise typer.BadParameter(
+            "--method was renamed to --subst-method (2026-08: no method flag is "
+            "bare, and -m is reserved for the additive ordering, as on "
+            f"`gsplat lod`); use --subst-method {legacy_method}."
+        )
     try:
         run_lod(
             input_path=input_path,

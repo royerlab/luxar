@@ -88,7 +88,7 @@ def run_additive_dataset(
         method_norm = (method or "auto").strip().replace("-", "_")
         if method_norm not in VALID_ADDITIVE_METHODS:
             raise typer.BadParameter(
-                f"--method must be one of {list(VALID_ADDITIVE_METHODS)}; "
+                f"--add-method must be one of {list(VALID_ADDITIVE_METHODS)}; "
                 f"got {method!r}"
             )
         validate_streaming_knobs(

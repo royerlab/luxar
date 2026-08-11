@@ -88,3 +88,80 @@ REVEAL_METHODS: frozenset[str] = frozenset({"radial"})
 def is_reveal_method(method: str) -> bool:
     """Whether ``method`` orders a reveal, so its ladder carries no energy stamps."""
     return method in REVEAL_METHODS
+
+
+#: Old → new spellings of the LOD *method* flags (renamed 2026-08-11), so the
+#: additive and substitutive knobs are named symmetrically. Modelled on
+#: :data:`luxar.gsplats.lod.recipes.LEGACY_RECIPE_NAMES` for the CLI half — an old
+#: spelling is rejected with a pointer naming its replacement.
+#:
+#: MANIFEST TRANSLATION IS REQUIRED, and the reason is easy to get backwards (I
+#: did): batch plans persist these knobs to disk under a DASH-LESS key
+#: (``planning.py`` writes ``args["subst-method"]``), which *looks* like a
+#: vocabulary independent of the flags — but ``slurm_gen.py`` turns each stored key
+#: straight into a flag with ``f" --{flag} ..."``. So a manifest written before this
+#: rename emits ``--substitutive-method`` into its merge sbatch command and the
+#: merge job dies on an unknown option. :func:`canonical_method_token` is applied
+#: at EMIT time, exactly as ``canonical_recipe_name`` already is four lines above
+#: it in that file for the identical reason.
+#:
+#: WHY the rename. ``gsplat lod`` had ``-m/--method`` for the ADDITIVE ordering but
+#: ``--substitutive-method`` for the reduction — one qualified, one not — so the
+#: bare name silently meant "additive" on every gsplat surface while ``mesh lod``
+#: used the same bare ``--method`` for its DECIMATION algorithm. Two commands, one
+#: flag name, two different mechanisms. Both are now qualified and neither is bare.
+#:
+#: Spelling notes, since shorter candidates were considered and rejected:
+#: ``--sub-method`` would read as *sub-LOD* (used throughout); ``--stream-method`` /
+#: ``--levels-method`` name one recipe each when the additive ordering applies to
+#: every recipe that ladders (all of them) and ``--levels`` already means a count;
+#: ``--order``/``--ordering`` is taken (``--ordering`` is the spatial index,
+#: ``hilbert|morton|none``).
+#: Keyed on the DASH-LESS token, because that is the form batch manifests persist
+#: and the form ``slurm_gen`` prefixes ``--`` onto. :data:`LEGACY_METHOD_FLAGS` is
+#: derived from it so the CLI and the manifest path cannot disagree about what an
+#: old spelling maps to.
+#:
+#: WHERE a hand-written pointer is warranted, and where typer's own is enough.
+#: Typer already answers an unknown option with "No such option:
+#: --substitutive-method (Possible options: --subst-method)", which is sufficient
+#: whenever the new spelling is a pure abbreviation of the old one. A hidden option
+#: raising a hand-written pointer is added only where the OLD spelling would, or
+#: will, name something with a different meaning — ``gsplat lod``, where bare
+#: ``--method`` meant "additive" and a sibling substitutive flag now exists to be
+#: confused with it, and ``mesh lod``, where ``-m`` returns later bound to the
+#: additive ordering. The other surfaces (``fit``, ``additive``, the three
+#: ``batch-fit`` commands) keep their ``-m`` short form and lean on typer.
+#:
+#: ``luxar mesh lod`` is DELIBERATELY not served by this table and raises its own
+#: pointer. ``method`` maps to ``add-method`` here because on every *gsplat*
+#: surface the bare flag meant the additive ordering — but mesh's bare ``--method``
+#: was its *substitutive* decimation knob, so the same token has two replacements
+#: chosen by the command. A single dict cannot express that, and routing mesh
+#: through it would send users to a flag mesh does not yet have. Do not "unify"
+#: them.
+LEGACY_METHOD_TOKENS: dict[str, str] = {
+    "method": "add-method",
+    "additive-method": "add-method",
+    "substitutive-method": "subst-method",
+    "merge-additive-method": "merge-add-method",
+    "merge-substitutive-method": "merge-subst-method",
+}
+
+#: Flag form of :data:`LEGACY_METHOD_TOKENS` — old → new ``--spelling``.
+LEGACY_METHOD_FLAGS: dict[str, str] = {
+    f"--{old}": f"--{new}" for old, new in LEGACY_METHOD_TOKENS.items()
+}
+
+
+def canonical_method_token(token: str) -> str:
+    """Translate a legacy dash-less method token to its current spelling.
+
+    Identity for current tokens and for unrelated knobs, so a caller can map a
+    whole stored ``merge_recipe_args`` dict through it. Applied at sbatch EMIT
+    time (:mod:`luxar.gsplats.batch.slurm_gen`), mirroring
+    :func:`luxar.gsplats.lod.recipes.canonical_recipe_name`: a manifest from
+    before the rename would otherwise emit ``--substitutive-method`` and the merge
+    job would die on an unknown option.
+    """
+    return LEGACY_METHOD_TOKENS.get(token, token)

@@ -568,12 +568,16 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     # CLI rejects those, so emit the canonical name.
     if manifest.merge_recipe:
         from luxar.gsplats.lod.recipes import canonical_recipe_name
+        from luxar.utils.lod_methods import canonical_method_token
 
         merge_cmd += (
             f" --recipe {shlex.quote(canonical_recipe_name(manifest.merge_recipe))}"
         )
+        # Same legacy-spelling problem as the recipe name above: a manifest
+        # from before the 2026-08 method-flag rename stores `substitutive-method`,
+        # which would emit `--substitutive-method` and die on an unknown option.
         for flag, value in manifest.merge_recipe_args.items():
-            merge_cmd += f" --{flag} {shlex.quote(str(value))}"
+            merge_cmd += f" --{canonical_method_token(flag)} {shlex.quote(str(value))}"
 
     lines.append(merge_cmd)
     lines.append("")

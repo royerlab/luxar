@@ -201,7 +201,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr \
     --recipe tiles -m radial --reveal-centre 0,0,0
 ```
 
-The `batch-fit` path (`--merge-additive-method radial`) accepts the method but has
+The `batch-fit` path (`--merge-add-method radial`) accepts the method but has
 **no** centre override — its manifest is string-keyed and the two knobs are not
 plumbed — so a batch merge always produces per-part reveals. Use `gsplat lod` if you
 need a global one.
