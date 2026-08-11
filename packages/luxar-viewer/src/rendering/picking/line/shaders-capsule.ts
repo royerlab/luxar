@@ -199,6 +199,14 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
             if (nl > 1e-3) {
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
+              // Snap the cut normal to a 1/1024 grid: the two legs compute
+              // the plane from independently projected (and possibly
+              // differently optimized) expressions, and sub-ulp
+              // disagreement leaves a hairline BOTH sides discard — dark
+              // pinpricks at every joint vertex. Snapping is symmetric
+              // under negation, so the partner lands on the bit-identical
+              // plane and the half-discs tile exactly.
+              nLoc = round(nLoc * 1024.0) / 1024.0;
               if (nLoc.x < -1e-3) {
                 cutA = vec3(nLoc, 0.0);
                 if (rMax > ${G.PACKET_MIN_R}) {
@@ -246,6 +254,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
             if (nl > 1e-3) {
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
+              nLoc = round(nLoc * 1024.0) / 1024.0;
               if (nLoc.x > 1e-3) {
                 cutB = vec3(nLoc, 0.0);
                 if (rMax > ${G.PACKET_MIN_R}) {
@@ -352,15 +361,39 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
         : pow(w, exp2(3.0 - 4.0 * vSharp));
 
       // Joint DEFICIT rule (mirrors the visual capsule; see its note).
-      if (vMeta.y > 0.5 && (vCutA2.x * x + vCutA2.y * y) > 0.0) {
-        if (vCutA2.z >= 0.0) discard;
-        profile -= luxarPartnerProfile(vec2(x, y), vCutA2, 1.0, rPx, vSharp);
-        if (profile <= 0.0) discard;
+      // The cut is a 1 px AA RAMP, not a hard step: each leg's fragment
+      // evaluates the plane in its OWN local frame, so pixels within float
+      // noise of the line would otherwise flip independently — sprinkling
+      // black (both discard) and double-bright (both keep) speckles along
+      // every joint. Complementary ramps sum to exactly 1 instead, and
+      // anti-alias the cut for free. The DEFICIT term blends in over the
+      // same ramp: full profile on my side, max(mine − partner, 0) beyond.
+      if (vMeta.y > 0.5) {
+        float sideA = vCutA2.x * x + vCutA2.y * y;
+        if (sideA > -0.5) {
+          float coverA = clamp(0.5 - sideA, 0.0, 1.0);
+          float defA = 0.0;
+          if (vCutA2.z < 0.0) {
+            defA = max(profile - luxarPartnerProfile(vec2(x, y), vCutA2, 1.0, rPx, vSharp), 0.0);
+          }
+          profile = profile * coverA + defA * (1.0 - coverA);
+          if (profile <= 0.0) discard;
+        }
       }
-      if (vMeta.z > 0.5 && (vCutB2.x * (x - vMeta.x) + vCutB2.y * y) > 0.0) {
-        if (vCutB2.z >= 0.0) discard;
-        profile -= luxarPartnerProfile(vec2(x - vMeta.x, y), vCutB2, -1.0, rPx, vSharp);
-        if (profile <= 0.0) discard;
+      if (vMeta.z > 0.5) {
+        float sideB = vCutB2.x * (x - vMeta.x) + vCutB2.y * y;
+        if (sideB > -0.5) {
+          float coverB = clamp(0.5 - sideB, 0.0, 1.0);
+          float defB = 0.0;
+          if (vCutB2.z < 0.0) {
+            defB = max(
+              profile - luxarPartnerProfile(vec2(x - vMeta.x, y), vCutB2, -1.0, rPx, vSharp),
+              0.0
+            );
+          }
+          profile = profile * coverB + defB * (1.0 - coverB);
+          if (profile <= 0.0) discard;
+        }
       }
       float brightness = profile * vFade;
       if (brightness < 1e-4) discard;

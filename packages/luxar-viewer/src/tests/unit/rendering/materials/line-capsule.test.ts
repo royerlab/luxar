@@ -58,8 +58,11 @@ describe('capsule constants', () => {
       expect(src).not.toContain('smoothstep');
       expect(src).toContain('luxarPartnerProfile');
       expect(src).toContain('if (profile <= 0.0) discard;');
-      // No usable partner (non-negative gradient packet) still cuts hard.
-      expect(src).toContain('if (vCutA2.z >= 0.0) discard;');
+      // The cut is a 1 px AA RAMP (hard-step boundary pixels flip
+      // independently per leg — speckles), and a non-negative gradient
+      // packet contributes no deficit (hard cut via the zero blend).
+      expect(src).toContain('clamp(0.5 - sideA, 0.0, 1.0)');
+      expect(src).toContain('if (vCutA2.z < 0.0) {');
     }
     for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
       // Stencil reach covers the kept half-disc PLUS the partner's taper

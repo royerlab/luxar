@@ -27,6 +27,7 @@ import {
   length,
   exp2,
   pow,
+  round,
   dot,
   abs,
   textureSize,
@@ -245,7 +246,11 @@ export function capsuleLinePickWebGPUFactory(
           const nl: TSLNode = length(nRaw).toVar();
           If(nl.greaterThan(1e-3), () => {
             const n2: TSLNode = nRaw.div(nl).toVar();
-            const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
+            // Snap to a 1/1024 grid so both legs land on the bit-identical
+            // cut plane (see the GLSL twin).
+            const nLoc: TSLNode = round(vec2(dot(n2, u), dot(n2, v)).mul(1024.0))
+              .div(1024.0)
+              .toVar();
             If(nLoc.x.lessThan(-1e-3), () => {
               cutA.assign(vec3(nLoc, 0.0));
               // Width gate (see _shared/line-capsule.ts).
@@ -294,7 +299,11 @@ export function capsuleLinePickWebGPUFactory(
           const nl: TSLNode = length(nRaw).toVar();
           If(nl.greaterThan(1e-3), () => {
             const n2: TSLNode = nRaw.div(nl).toVar();
-            const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
+            // Snap to a 1/1024 grid so both legs land on the bit-identical
+            // cut plane (see the GLSL twin).
+            const nLoc: TSLNode = round(vec2(dot(n2, u), dot(n2, v)).mul(1024.0))
+              .div(1024.0)
+              .toVar();
             If(nLoc.x.greaterThan(1e-3), () => {
               cutB.assign(vec3(nLoc, 0.0));
               // Width gate (see _shared/line-capsule.ts).
@@ -420,21 +429,33 @@ export function capsuleLinePickWebGPUFactory(
         .select(wp.mul(wp), pow(wp, exp2(float(3.0).sub(vSharp.mul(4.0)))))
         .toVar();
     };
-    If(vMeta.y.greaterThan(0.5).and(vCutA2.x.mul(x).add(vCutA2.y.mul(y)).greaterThan(0.0)), () => {
-      Discard(vCutA2.z.greaterThanEqual(0.0));
-      profile.subAssign(partnerProfile(vec2(x, y), vCutA2, 1.0, rPx));
-      Discard(profile.lessThanEqual(0.0));
-    });
-    If(
-      vMeta.z
-        .greaterThan(0.5)
-        .and(vCutB2.x.mul(x.sub(vMeta.x)).add(vCutB2.y.mul(y)).greaterThan(0.0)),
-      () => {
-        Discard(vCutB2.z.greaterThanEqual(0.0));
-        profile.subAssign(partnerProfile(vec2(x.sub(vMeta.x), y), vCutB2, -1.0, rPx));
+    // 1 px AA ramp on the cut + deficit blend (see the GLSL twin's note).
+    If(vMeta.y.greaterThan(0.5), () => {
+      const sideA: TSLNode = vCutA2.x.mul(x).add(vCutA2.y.mul(y)).toVar();
+      If(sideA.greaterThan(-0.5), () => {
+        const coverA: TSLNode = clamp(float(0.5).sub(sideA), 0.0, 1.0).toVar();
+        const defA: TSLNode = float(0.0).toVar();
+        If(vCutA2.z.lessThan(0.0), () => {
+          defA.assign(max(profile.sub(partnerProfile(vec2(x, y), vCutA2, 1.0, rPx)), 0.0));
+        });
+        profile.assign(profile.mul(coverA).add(defA.mul(float(1.0).sub(coverA))));
         Discard(profile.lessThanEqual(0.0));
-      }
-    );
+      });
+    });
+    If(vMeta.z.greaterThan(0.5), () => {
+      const sideB: TSLNode = vCutB2.x.mul(x.sub(vMeta.x)).add(vCutB2.y.mul(y)).toVar();
+      If(sideB.greaterThan(-0.5), () => {
+        const coverB: TSLNode = clamp(float(0.5).sub(sideB), 0.0, 1.0).toVar();
+        const defB: TSLNode = float(0.0).toVar();
+        If(vCutB2.z.lessThan(0.0), () => {
+          defB.assign(
+            max(profile.sub(partnerProfile(vec2(x.sub(vMeta.x), y), vCutB2, -1.0, rPx)), 0.0)
+          );
+        });
+        profile.assign(profile.mul(coverB).add(defB.mul(float(1.0).sub(coverB))));
+        Discard(profile.lessThanEqual(0.0));
+      });
+    });
     return profile.mul(vFade);
   }).once();
   const brightness: TSLNode = brightnessShared().toVar('lineCapsulePickBrightness');
