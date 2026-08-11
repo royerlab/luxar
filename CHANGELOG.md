@@ -6,6 +6,51 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Capsule line primitive behind `?linePrimitive=capsule` (#1352)
+
+A third line primitive, built after the G1 gate measured the exact
+volumetric primitive at 2.7–5× the quad's frame cost on the 10M-segment
+scenarios: the capsule keeps the volumetric primitive's two behavioural wins
+— direction-stable near-axial rendering (an end-on segment is a stable round
+disc, never a flickering sliver) and seamless joins — at quad-class cost
+(measured 1.04–1.11× the quad on the same worst case, parity at vsync
+elsewhere). The model is deliberately relaxed rather than exact: each
+fragment shades a compact quartic bump `(1 − p²)^n` of the 2D
+point-to-segment distance in **pixel space**, evaluated on stencil-local
+interpolated coordinates (`distance² = y² + max(0, −x, x−L)²` — no
+projection, no sqrt, no transcendentals), with the drawn radius at the 2σ
+support of the quad's Gaussian-equivalent σ and the sharpness knob mapped to
+the exponent (`n = 2^(3−4s)`). Every end is a round cap; interior
+polyline joints keep each leg's half of the joint disc, partitioned along
+the joint bisector via the volumetric primitive's joint-code partner
+machinery — the two half-discs tile the disc exactly at any bend angle (no
+notch, no chopped miter tip, no double-bright overlap). The cut is
+confined to the cap region (overlapping rod bodies at a bend's inner
+corner both render, like the physical union), fades smoothly over a
+bend-scaled band the vertex stage reserves stencil for (so the rasterizer
+cannot chop the ramp part-way down and hand back the very step it removes),
+and the partner endpoint is near-plane-clipped before projecting — together
+these keep zoomed-in joints seamless, the regime where both the quad and the
+first capsule iteration showed hard seams and wedges. Which ends cut at all
+is the shared joint-code rule the other two primitives use, so a free end
+and a degree-≥3 hub keep their whole round cap, while a butt cut — a
+slice-clipped end, a joint vertex behind the near plane, an exactly straight
+joint — is hard, with nothing drawn past the endpoint line. The per-fragment radius interpolates linearly across the
+stencil (perspective-correct for constant-width tubes), which keeps
+silhouettes straight under extreme foreshortening. One profile serves every blending mode (the
+capsule is peak-shaped by construction, so there is no peak/sum lane split),
+while the mode tails — volumetric τ mapping with per-element alpha, max-mode
+premultiply, colormap, gamma — are the quad fragment's, unchanged. Both
+backends ship (GLSL pair + TSL twin factory), picking follows the toggle
+with shaders that duplicate the visual stencil/cuts/fold rule so hover
+tracks pixels exactly, and all constants are single-sourced in
+`_shared/line-capsule.ts`. Pinned by 16 new GLSL↔TSL parity fixtures
+(end-on, joints, folds and the width gate, taper, colormap, volumetric
+blend, near-clip straddle, pick twins), codegen snapshots, and unit pins on
+the constants and profile. The default primitive is unchanged; the new
+`packages/luxar/examples/lines_primitive_qa_example.py` grid scene is the
+side-by-side visual QA artifact for the flip decision.
+
 #### An empty LOD 0 no longer blanks a laddered node's slice (#1456)
 
 All three progressive loaders (Points, Lines, GSplats) latched a terminal
