@@ -27,7 +27,10 @@ console's warn/error row tints (byte-identical in dark), the monitor
 scene-graph's active-level highlight and kind badge (a selection state, so it
 follows the theme's highlight accent — purple under the glass themes), and the
 loading indicator's hardcoded black chrome and white spinner, which stop
-rendering as a black box in the light theme.
+rendering as a black box in the light theme. That indicator takes the overlay
+scrim token rather than the panel one — it is the one box in the file with no
+`.luxar-glass-surface` to tint it, and the panel background is a translucent
+white under both glass themes.
 
 #### Domain-scoped CI: a language suite runs only when that language changed
 
