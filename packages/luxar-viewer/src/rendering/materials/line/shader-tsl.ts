@@ -188,6 +188,13 @@ export interface LineTSLNodes {
   readonly uColormapTex?: TSLNode;
   readonly uScalarMin?: TSLNode;
   readonly uScalarScale?: TSLNode;
+  /**
+   * Sharpness radial LUT texture node (#1352 PR-4). Required by the
+   * VOLUMETRIC factory's sum-family graphs (which sample it
+   * unconditionally — the β = 2 row is the analytic radial); unused by
+   * the screen-space factory and the volumetric peak graphs.
+   */
+  readonly uLineRadialLUT?: TSLNode;
 }
 
 /**
@@ -879,6 +886,12 @@ export function buildLineTSLNodesFromUniforms(
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
     uAbsorption: uniform((uniforms.uAbsorption?.value as number) ?? 1.0),
     uHasElementAlpha: uniform((uniforms.uHasElementAlpha?.value as number) ?? 0),
+    // Sharpness radial LUT (#1352 PR-4) — bound only when the caller's
+    // record carries it (the volumetric sum graphs require it; building
+    // the singleton costs real CPU, so it is never defaulted here).
+    ...(uniforms.uLineRadialLUT
+      ? { uLineRadialLUT: texture(uniforms.uLineRadialLUT.value as THREE.Texture) }
+      : {}),
   };
   if (!config.useColormap) return base;
   return {

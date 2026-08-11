@@ -19,7 +19,9 @@ import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { linePickWebGPUFactory, type LinePickTSLConfig } from './pick.tsl';
+import { volumetricLinePickWebGPUFactory } from './pick-volumetric.tsl';
 import type { LineJoinStyle } from '../../../types/line-join';
+import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
@@ -72,6 +74,11 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // at build time. MUST match the visual material's value: the two build the
     // same screen-space quad.
     this.userData.lineJoin = config.join;
+    // Line primitive (#1352) — likewise a build-time variant, dispatching
+    // between the screen-space and volumetric pick factories on every
+    // rebuild. Stored unresolved so the ?linePrimitive= session override
+    // resolves at build time, exactly like the visual TSL material.
+    this.userData.linePrimitive = config.primitive;
 
     this.uniforms = {
       // WARNING: a direct `uniforms.uLineTex.value = tex` write does NOT
@@ -94,7 +101,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // matches the visual material and documents intent.
     this.forceSinglePass = true;
 
-    linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
+    this._rebuild();
   }
 
   /**
@@ -105,6 +112,22 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       isOrtho: (this.tslNodes.uIsOrtho.value as number) === 1,
       join: this.userData.lineJoin as LineJoinStyle | undefined,
     };
+  }
+
+  /**
+   * (Re)build the pick graph, dispatching on the line primitive (#1352).
+   * Every build site — constructor, clone, projection-mode flip, texture
+   * rebind — funnels through here so the two factories can never drift.
+   */
+  private _rebuild(): void {
+    const primitive = resolveLinePrimitive(
+      this.userData.linePrimitive as LinePrimitive | undefined
+    );
+    if (primitive === 'volumetric') {
+      volumetricLinePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
+    } else {
+      linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
+    }
   }
 
   /**
@@ -120,8 +143,9 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
   clone(): this {
     const cloned = new LinePickingTSLMaterial({
       nodeId: this.uniforms.uNodeId.value as number,
-      // Graph variant — must ride the CONSTRUCTOR, not a post-hoc copy.
+      // Graph variants — must ride the CONSTRUCTOR, not a post-hoc copy.
       join: this.userData.lineJoin as LineJoinStyle | undefined,
+      primitive: this.userData.linePrimitive as LinePrimitive | undefined,
     });
     // Rebind the line data texture (no-op when still on the placeholder).
     const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;
@@ -139,7 +163,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     if (cloned._currentConfig().isOrtho) {
-      linePickWebGPUFactory(cloned.tslNodes, cloned._currentConfig(), cloned);
+      cloned._rebuild();
       cloned.needsUpdate = true;
     }
     return cloned as this;
@@ -173,7 +197,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     }
     // Rebuild on projection-mode flip so the unused branch drops.
     if (isOrtho !== prevIsOrtho) {
-      linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
+      this._rebuild();
       this.needsUpdate = true;
     }
   }
@@ -191,7 +215,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     if (current === next) return;
     this.tslNodes.uLineTex = texture(next);
     this.uniforms.uLineTex = proxyIUniform(this.tslNodes.uLineTex);
-    linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
+    this._rebuild();
     this.needsUpdate = true;
   }
 }

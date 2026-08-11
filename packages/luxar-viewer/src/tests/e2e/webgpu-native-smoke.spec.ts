@@ -57,7 +57,8 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
     // The gate is the physical backend alone, so both capability
     // fields below stay falsifiable claims about what the viewer
     // derived from it. Skipping on the WebGL2 fallback is deliberate:
-    // that path is covered by the `webgpu-force-webgl` specs.
+    // `?webgpu-force-webgl` pins that path in `renderer-url-param.spec.ts`
+    // and the first `y-orientation.spec.ts` case.
     const probe = await probeWebGPUBackend(page);
     test.skip(!probe.isNative, SKIP_REASON);
     expect(probe.apiSurface).toBe('webgpu');
@@ -139,6 +140,14 @@ test.describe('WebGPU smoke (native-only tests skip on the WebGL2 fallback)', ()
     page,
   }) => {
     const { apiSurface } = await probeWebGPUBackend(page);
+    // Assert BEFORE the skip that the probe actually read a surface.
+    // `probeWebGPUBackend` optional-chains its way to `capabilities`, so
+    // a renamed debug path yields `undefined` — which would skip on the
+    // line below and quietly retire the only automated execution of
+    // `captureHDRPixels` in the repo. `waitForLuxarReady` has already
+    // waited for `getState().initialized`, by which point capabilities
+    // are constructed, so an absent surface is drift, not a fallback.
+    expect(apiSurface, 'probeWebGPUBackend read no apiSurface').toBeDefined();
     test.skip(apiSurface !== 'webgpu', SURFACE_SKIP_REASON);
 
     for (const mode of ['visible-ldr', 'hdr-effects-pre-tone'] as const) {

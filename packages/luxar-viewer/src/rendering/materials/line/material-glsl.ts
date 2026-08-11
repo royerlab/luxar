@@ -21,6 +21,7 @@ import {
   VOLUMETRIC_LINE_FRAGMENT_SHADER,
 } from './shader-glsl-volumetric';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import { getLineRadialLUTTexture } from '../_shared/line-integral-lut';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
@@ -208,6 +209,11 @@ export class LineMaterial
               ...scalarRangeUniformEntries(materialConfig.scalarRange),
             }
           : {}),
+        // Sharpness radial LUT (#1352 PR-4): the volumetric sum lanes
+        // sample it unconditionally. Bound only for the volumetric
+        // primitive — building the singleton costs real CPU, so
+        // screen-space materials must never trigger it.
+        ...(isVolumetricPrimitive ? { uLineRadialLUT: { value: getLineRadialLUTTexture() } } : {}),
       },
 
       vertexShader: isVolumetricPrimitive ? VOLUMETRIC_LINE_VERTEX_SHADER : LINE_VERTEX_SHADER,
