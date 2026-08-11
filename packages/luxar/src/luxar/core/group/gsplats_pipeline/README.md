@@ -82,7 +82,31 @@ Both functions produce a `GSplatData` and hand it to
   first leaf is added, so without that check a mismatched store refused from inside
   `part_0` / `child_0` and left a childless wrapper behind. One leaf answers for the
   whole subtree — a graft applies no `dim_order`, and both container node types
-  reject mixed-`ndim` children at construction.
+  reject mixed-`ndim` children at construction. Directly below that (it is the
+  first statement of `graft_gsplat_node`, so both pre-graft checks outrank it),
+  and for the same fail-before-the-wrapper reason, `_reject_labels_on_a_grafted_wrapper`
+  refuses `labels=` / `image_labels=` (#1471) unless the grafted subtree is
+  **exactly one leaf with exactly one additive sub-LOD** — the one shape that can
+  actually carry them. Leaf COUNT, not node type: a one-part `kind=partition` of
+  a flat leaf still has an exact per-element correspondence, so it keeps
+  labelling normally. But a one-part partition of a LADDERED leaf is refused too,
+  for a different reason and with a different message
+  (`labels_on_a_laddered_leaf_reason`): `write_gsplat_leaf_subtree` has no labels
+  channel at all, so exempting it would push the refusal down into `part_0` with
+  the wrapper already on disk — and `--recipe tiles` carries a stream ladder by
+  DEFAULT, so that is an ordinary call, not a corner case. Multi-leaf
+  cannot be sliced here at all — a stored `GSplatPartition` carries no per-part
+  index arrays, unlike `add_gsplats(partition=…)`, which slices the BSP `parts`
+  it just computed — so the only definable mapping would be implicit
+  leaf-concatenation order, and `gsplat flatten` (which emits exactly that order)
+  is the remedy the message names. Both doors of the gate share one message
+  template, `from_data.labels_on_wrapper_reason(kwarg, structure, remedy)`, with
+  the two `*_STRUCTURE` / `*_REMEDY` constants beside it, so the wording cannot
+  drift apart. `from_data.strip_absent_label_kwargs` runs first on both and
+  DELETES a present-but-`None` key: the leaf adders bind both as named params
+  defaulting to `None`, but inside `**attrs` a `None`-valued key is still an
+  unknown attr to `validate_render_attrs` (which matches by name, never by
+  value), so the idiomatic `labels=maybe_labels` used to strand a wrapper.
 - `add_gsplats_from_volume_impl` — fits in one step. With
   `progressive=True` it calls `fit_progressive_gaussian_splats`
   (honoring `max_splats_per_pass`, `psnr_patience`, `max_passes`);

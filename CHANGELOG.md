@@ -6,31 +6,31 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
-#### A written ground truth for the viewer's visual design
+#### Viewer stylesheets: a phantom radius token, magic z-indexes, duplicated rgba
 
-The viewer's design language — the "quiet instrument" — lived in people's heads
-and in a handful of exemplary files (the control rail, the data-loading
-monitor's end-of-file "Refinement layer" block). Everything else was
-reconstructed by reading whichever panel happened to be nearby, which is how a
-green scrollbar and a solid-green "interactive" slider became precedent.
-
-`docs/guides/developer/UI_DESIGN_GUIDE.md` writes it down and declares itself
-authoritative: the 87 design tokens and their traps (the spacing key is *half*
-the pixel value; `--luxar-blur-*` values are complete `blur()` functions; there
-is no `--luxar-radius-xs`), what differs between the four themes, the
-glass-surface system and the five hard constraints that break a theme when
-violated, colour semantics (`highlight` is interactive, green is *healthy*), the
-surface/header/scroll recipes, typography, the two icon contracts, motion,
-placement, interaction states and a11y, naming, and a checklist for a new
-surface.
-
-Section 15 is a verified inventory of the code that still contradicts the guide,
-so nobody mistakes debt for a pattern. The four modernization tranches it
-catalogued have since landed — a11y hardening (#1476), emoji→stroke icons
-(#1479), the dataset browser (#1472) and the accent migration plus the shared
-panel-header/close recipes (#1480) — so what remains is token hygiene, the
-recording stop-confirm dialog, the scene-identity banner's inline styles, the
-toast's opacity fade on a glass root, and one modal that doesn't yet trap focus.
+Three kinds of drift in the viewer CSS, all mechanical and all chosen to be
+pixel-identical (or imperceptibly close) in the dark theme. The colormap
+legend asked for `--luxar-radius-xs`, which no theme emits — the radius scale
+is none/sm/md/lg/full — so the `2px` fallback literal had been quietly in
+charge; it is now an intentional, documented literal (half of `radius-sm`, so
+a 12px-tall gradient bar does not read as a pill). Layer z-indexes are stated
+against the token scale instead of magic numbers: the debug console's `150`
+becomes `calc(z-base + 50)` (same value, now with its intent written down —
+above the in-canvas widgets, below every panel), the toast moves to
+`calc(z-tooltip + 1000)`, and the dimension-slider context menu drops from
+`10000` to the popover tier it actually belongs to. The recording panel keeps
+its absolute magnitudes: its documented job is to beat unknown third-party
+host UI, so those values are load-bearing — and the toast comment now says so
+rather than claiming to sit above everything. Finally, raw `rgba()` that was
+just re-spelling a token becomes `color-mix()` on the token itself: the debug
+console's warn/error row tints (byte-identical in dark), the monitor
+scene-graph's active-level highlight and kind badge (a selection state, so it
+follows the theme's highlight accent — purple under the glass themes), and the
+loading indicator's hardcoded black chrome and white spinner, which stop
+rendering as a black box in the light theme. That indicator takes the overlay
+scrim token rather than the panel one — it is the one box in the file with no
+`.luxar-glass-surface` to tint it, and the panel background is a translucent
+white under both glass themes.
 
 #### Domain-scoped CI: a language suite runs only when that language changed
 
@@ -211,6 +211,55 @@ each level is queried once per view, not once per pass. Per *view* an empty
 slice now issues `nLods` sub-loader queries instead of 1; they resolve to zero
 ranges and fetch no chunks, so there is no network cost, and the resulting
 all-empty ladder is cached like any other.
+
+#### `substitutive_lod=` accepts a uniform colour, like every other path (#1444)
+
+A bare RGB(A) tuple, or a `(1, c)` row, is a legal and documented broadcast
+colour on the flat path and under `partition=` / `additive_lod=`, but under
+`substitutive_lod=` it was refused: the coarse levels go through the gsplat
+lift, which had no broadcast-colour handling. Points raised a shape complaint
+("colors must be (N, 3) RGB" for a tuple, "Colors count 1 doesn't match centers
+count N" for a `(1, 3)` row); Lines raised a bare `IndexError` from the
+per-vertex colour gather — a raw numpy traceback mentioning neither colours
+nor `substitutive_lod`, and not even caught by `add_lines_impl`'s
+`(ValueError, TypeError)` wrapper. `lift_points_to_gsplats` /
+`lift_lines_to_gsplats` now expand a uniform colour to the element count before
+anything indexes it (before the zero-radius drop for Points, before the
+`pairs` gather for Lines), so every coarse level carries the authored colour —
+the one case a coarse level can honour exactly, every merged representative
+being that same colour. The **alpha column rides along**: gsplats carry
+per-splat alpha end to end (`GSplatData.colors` is `(N, 3)` or `(N, 4)`, the
+writer validates `channels=(3, 4)`, the merge propagates the 4th column, and all
+three shaders scale intensity by it), so dropping it would make the node jump
+`1/alpha` brighter the instant the ladder switches off the finest level —
+exactly the LOD seam that mass-preserving amplitudes, the anisotropy cap and the
+render-light rescale exist to keep flat. A **per-element** `(N, 4)` RGBA stays
+refused by the lift (shape alone cannot tell a constant alpha from a varying
+one, and the substitutive merge is untested on the latter); the 4-column
+allowance applies only to a colour resolved as uniform, and it is resolved
+exactly once — Lines judges its vertices and the inner point lift takes that
+verdict as final, so a line set that collapses to a single bead cannot
+re-present a per-element RGBA as a uniform `(1, 4)` row. (The one inexactness
+is an alpha above `ALPHA_CLAMP = 511/512`, which the merge's optical-depth
+round-trip caps: an authored 1.0 or 0.999 reaches the coarse levels as 0.998,
+a ≤0.2% step, pinned by a test; at or below the clamp it is exact.) Value
+semantics mirror the leaf writer's: a list/tuple's components are taken at face
+value (an integer tuple is never divided by 255, `write_colors`-style), while
+an array keeps the dtype rule — and colour arrays are now held to the dtypes
+the leaf accepts (floating, uint8, uint16) before the lift builds anything.
+Normalising an `int64` array by `iinfo(int64).max` baked a near-black coarse
+level that the encoder rejected only at the finest child, stranding a
+`kind=lod` node with complete coarse children and a half-written finest one — the #1437
+stranding class, and it applied to a per-element array as much as to a uniform
+row. The pre-split gate added in #1437 always accepted the broadcast forms —
+it mirrors the flat verdict — so the two paths now agree end to end on every
+uniform colour. One neighbour in the same lift was hardened while there: the
+Lines `scalars=` + `colormap=` path took its LUT range from all vertex scalars,
+so one non-finite vertex either collapsed the whole tube to the map's first
+colour (`+inf`) or produced a garbage LUT index (`NaN` / `-inf`); the range is
+now taken over the finite vertices only, as `scalars_to_colors` already does for
+its own defaults. Only reachable by calling the lift directly — through the
+scene API the #1437 pre-split gate refuses non-finite scalars first.
 
 #### Demos serve on per-dataset derived ports, not 8000/5173
 

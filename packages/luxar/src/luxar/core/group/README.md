@@ -159,7 +159,23 @@ LOD wrapper builders:
   geometry whose channel validator has no labels channel; Points and Lines get
   the same check from the writer sweep their gates delegate to. Either way it
   belongs to a wrapper's pre-split gate and never to the top of a leaf adder, so
-  the plain-leaf gate order stays exactly as it was.
+  the plain-leaf gate order stays exactly as it was. Multi-CHILD gsplats wrappers
+  cannot use it at all: a multi-level substitutive `lod_group=` on
+  `add_gsplats_from_data`, and any `graft_gsplat_node` subtree holding more than
+  one leaf (`kind=lod` / `kind=partition`), REFUSE `labels=` / `image_labels=`
+  outright (#1471) — each child holds its own set of splats, so no single list
+  has a per-element correspondence to slice, and a list whose length coincides
+  with a part's own count was silently written onto every part. The test is leaf
+  COUNT, not node type: a one-part `kind=partition` of a flat leaf is non-matrix-
+  shaped yet holds every splat, so it still labels. A single LADDERED leaf is
+  refused for a different reason (the additive writer has no labels channel) and
+  so gets its own message, `labels_on_a_laddered_leaf_reason`; the two multi-leaf
+  doors share one template
+  (`gsplats_pipeline.from_data.labels_on_wrapper_reason`). An explicit
+  `labels=None` is normalised away first (`strip_absent_label_kwargs`) so it means
+  "absent" rather than an unknown attr key. Label a single-level node
+  (`lod_group=False`) or a single-leaf file, or hand-build the wrapper and give
+  each child its own labels.
 - `validate_points_channels_before_split(n_points, colors=…, radii=…, sharpness=…,
   scalars=…, labels=…)`, `validate_lines_channels_before_split(n_vertices, widths=…,
   …)`, `validate_gsplats_channels_before_split(centers, amplitudes,
@@ -184,10 +200,13 @@ LOD wrapper builders:
   GSplats via `validate_labels_before_split` (whose validator has no labels
   channel). The GSplats gate also RETURNS the `cholesky_is_uniform` flag its
   validator already computed, so the wrapper does not restate that rule either.
-  Every legal broadcast form the flat path accepts passes the GATE; reaching disk
-  is a separate matter on one path — a broadcast `colors` under
-  `substitutive_lod=` is refused downstream by the gsplat lift, which needs
-  per-element RGB to bake the coarse levels (pre-existing, tracked in #1444).
+  Every legal broadcast form the flat path accepts passes the GATE and reaches
+  disk on every path, `substitutive_lod=` included: the gsplat lift broadcasts a
+  uniform `colors` onto the coarse levels, alpha column and all (gsplats carry
+  per-splat alpha, and every shader scales intensity by it, so a dropped alpha
+  would brighten each coarse level by `1/alpha` at the LOD seam), where it used
+  to refuse it (#1444). A per-element `(N, 4)` RGBA is still refused by the lift
+  — not a broadcast form, so outside this gate's parity promise.
 - `validate_line_indices_before_split(indices, n_vertices, line_type)` — the
   TOPOLOGY half of the Lines gate, and it runs first (mesh validates `faces`
   before any channel for the same reason). Calls the writer's shared
