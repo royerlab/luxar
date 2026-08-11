@@ -143,8 +143,10 @@ def add_lines_impl(
         # (which decides the final column count), and below the colours gate (so
         # a bad colours/colormap combination keeps precedence). Only the count
         # half is hoisted — the per-dimension range ``UserWarning`` stays in the
-        # flat write below so it fires once per user call, not once per
-        # part/level. Do not move it back below the branches.
+        # flat write below, so its count is unchanged (once per dimension per
+        # written leaf; none under an additive ladder) rather than gaining one
+        # more firing here for the source array. Do not move it back below the
+        # branches.
         scene._validate_dimension_count(vert_arr, name, data_type="vertices")
 
         # Substitutive-LOD branch — coarse levels are synthesised gsplats (each

@@ -654,6 +654,27 @@ class TestPointsPartitionDimensionCount:
         assert "4 columns" in str(split)
         assert "p" not in compiler.store
 
+    def test_width_outranks_a_malformed_partition_spec(self, tmp_path: Any) -> None:
+        """The deliberate precedence change the hoist forces, pinned.
+
+        The ``partition=`` spec is validated INSIDE the branch, so before #1446 a
+        call that got both the spec and the column count wrong heard about the
+        spec; the count check now sits above the branch, so the width answers
+        first. Both refuse and neither writes — only the message differs — but
+        the ordering follows from where the check had to go, so state it here
+        rather than let a reader discover it from a surprising message.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "points_part_two_faults.luxar.zarr")
+        positions = bad_ndim_positions(_DIM_N, seed=75)
+
+        split = refusal(
+            lambda: scene.add_points("p", positions, partition={"rule": "bogus"})
+        )
+
+        assert "4 columns" in str(split)
+        assert "bogus" not in str(split)
+        assert "p" not in compiler.store
+
 
 class TestLinesPartitionDimensionCount:
     def test_mismatched_ndim_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:

@@ -218,8 +218,14 @@ per-dimension out-of-range `UserWarning` where it was, so warning counts are
 unchanged for every existing caller — hoisting the whole validator would have fired
 that warning once for the source array on top of once per part or level. The count
 check stays BELOW each adder's colours/colormap gate, and below the
-multi-substitutive `coverage_fraction` refusal, so a structural or kwarg fault keeps
-precedence over a width fault on every path, as it already did. Mesh needed no
+multi-substitutive `coverage_fraction` refusal, so those keep precedence over a
+width fault on every path, as they already did. What the hoist does reorder is the
+kwarg checks that live INSIDE a branch — a malformed `partition=` / `additive_lod=`
+/ `substitutive_lod=` spec, the `image_labels`-with-`partition` ban, the Lines
+`indices` topology check: a call that gets one of those AND the column count wrong
+now hears about the width first. Both orderings refuse and neither writes anything
+(measured, store empty either way), and the width now precedes them on the flat
+path too, so the two paths still answer such a call identically. Mesh needed no
 change: it has validated vertices above its own structural branches since the
 branches were added.
 

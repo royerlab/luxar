@@ -129,8 +129,11 @@ def add_points_impl(
         # (that is what fixes the final column count) and BEFORE any wrapper
         # group is written — do not move it back down. Only the count half is
         # hoisted: the per-dimension range ``UserWarning`` stays in the flat
-        # write below so it still fires exactly once per user call, not once per
-        # part/level. Below the colours gate so a bad colours/colormap
+        # write below, so its count is exactly what it was — once per dimension
+        # per WRITTEN LEAF on the partition/substitutive paths, and none at all
+        # under an additive ladder, whose writer never validates (a pre-existing
+        # gap, pinned by a control test) — instead of gaining one more firing
+        # here for the source array. Below the colours gate so a bad colours/colormap
         # combination keeps precedence over a dimension mismatch (all three
         # adders answer this the same way).
         scene._validate_dimension_count(pos_arr, name, data_type="positions")

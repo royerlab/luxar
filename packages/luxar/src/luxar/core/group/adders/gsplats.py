@@ -111,8 +111,10 @@ def add_gsplats_impl(
         # disk), after the dim_order transform (which decides the final column
         # count), and below the colours gate so that refusal keeps precedence as
         # documented above. Only the count half is hoisted — the per-dimension
-        # range ``UserWarning`` stays in the flat write below so it fires once per
-        # user call, not once per part. Do not move it back below the branch.
+        # range ``UserWarning`` stays in the flat write below, so its count is
+        # unchanged (once per dimension per written leaf) rather than gaining one
+        # more firing here for the source array. Do not move it back below the
+        # branch.
         scene._validate_dimension_count(ctr_arr, name, data_type="centers")
 
         # Apply compiler-level auto-partition heuristic (opt-in; default

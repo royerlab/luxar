@@ -109,10 +109,15 @@ Each `*_impl` walks the same ordered decision tree:
    caller's own array, with the caller's own node name. Placement is load-bearing
    (#1446): above every structural branch below, so a mismatch cannot strand a
    childless wrapper group; after step 2, which is what decides the final column
-   count; and below step 3, so a colours fault keeps precedence. Only the count
-   half is here — the range `UserWarning` half stays in the single-leaf write at
-   step 9, so it still fires once per written leaf rather than once more for the
-   source array.
+   count; and below step 3, so a colours fault keeps precedence. It is ABOVE the
+   kwarg checks that live inside the branches (a malformed `partition=` /
+   `additive_lod=` spec, the `image_labels`-with-`partition` ban, the Lines
+   `indices` topology check), so a call that also trips one of those is told
+   about the width first — on the flat path as well as the split ones, so the two
+   still agree. Only the count half is here — the range `UserWarning` half stays
+   in the single-leaf write at step 9, so it fires once per written leaf (none
+   under an additive ladder, whose writer never validates) rather than once more
+   for the source array.
 5. **Substitutive-LOD branch** (points/lines, when `substitutive_lod` is set):
    delegate to the substitutive wrapper, whose coarse levels are synthesised
    gsplats under a `kind=lod` group. Fires before (auto-)partition.
