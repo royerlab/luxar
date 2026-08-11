@@ -428,9 +428,11 @@ hatch run test.py3.10:cov        # one version
 hatch run test:cov               # all three, sequentially
 ```
 
-CI runs each version as its own parallel job and asserts the interpreter matches
-the matrix leg, so a mismatch fails loudly rather than silently testing one
-version three times (see issue #839).
+CI runs each version it tests as its own parallel job and asserts the interpreter
+matches the matrix leg, so a mismatch fails loudly rather than silently testing
+one version three times (see issue #839). Which versions that is depends on the
+event — a pull request runs 3.12 alone; see "Which Python versions CI runs"
+below.
 
 ### pnpm for TypeScript
 
@@ -771,12 +773,15 @@ For automated environments (GitHub Actions, etc.):
 
 A pull request whose changed files are **all** Markdown (`*.md`) or under `docs/`
 skips the heavy CI steps: the `changes` job classifies the diff, and the gated
-jobs (`python-tests`, `typescript-tests`, `release-readiness`, `go-launcher`)
-still run but short-circuit their expensive steps, so the required status
-contexts (`python-tests (3.12)`, `typescript-tests`, `release-readiness`,
-`wheel-viewer`, `docs-quality`) report an explicit green success in seconds
-instead of a grey "skipped". Any non-doc file — or a push to `main` — runs the
-full suite, and the gate fails safe: if the `changes` job itself fails, the
+jobs (`python-tests`, `typescript-tests`, `release-readiness`, `wheel-viewer`,
+`go-launcher`) still run but short-circuit their expensive steps, so their
+required status contexts (`python-tests (3.12)`, `typescript-tests`,
+`release-readiness`, `wheel-viewer`) report an explicit green success in seconds
+instead of a grey "skipped". `docs-quality`, the fifth required context, is the
+exception: it is gated on `docs_relevant`, not `docs_only`, and a docs-only
+change is by definition documentation-relevant — so it runs the full Sphinx and
+TypeDoc gate, which is the point. Any non-doc file — or a push to `main` — runs
+the full suite, and the gate fails safe: if the `changes` job itself fails, the
 gated jobs fall back to the full suite rather than skipping. Rename detection
 is disabled in the classifier (`git diff --no-renames`) so moving code onto a
 `docs/` or `*.md` path never hides a non-doc deletion.
@@ -795,7 +800,7 @@ The supported floor is still 3.10 (`requires-python`), so 3.10/3.11 stay
 exercised every day and on every merge; what the per-PR matrix gives up is
 only the *latency* of finding a version-specific break — within 24h rather
 than in the PR that caused it. The trade buys back two of the three legs of the
-slowest job on a box with four self-hosted slots.
+slowest job on a box with five self-hosted slots.
 
 Scheduled runs sit in their own `concurrency` group for this reason: they share
 `refs/heads/main` with merge-triggered runs, and `cancel-in-progress` would

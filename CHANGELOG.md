@@ -10,8 +10,8 @@ All notable changes to Luxar are documented in this file.
 
 `python-tests` was a three-leg matrix (3.10/3.11/3.12) on every pull request,
 and it is the slowest job in the workflow (~27min a leg) on a self-hosted box
-with four slots. Branch protection has only ever required the `3.12` context,
-so the other two legs cost three quarters of the Python CI budget to gate
+with five slots. Branch protection has only ever required the `3.12` context,
+so the other two legs cost two thirds of the Python CI budget to gate
 nothing. A pull request now runs `3.12` alone; `3.10`/`3.11` still run on every
 push to `main` and on a nightly schedule. The supported floor is unchanged —
 what is given up is the latency of catching a version-specific break, which

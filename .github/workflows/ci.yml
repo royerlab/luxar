@@ -203,8 +203,8 @@ jobs:
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but the heartbeat stayed fresh the whole time,
-          # the box is busy, not dead (4 slots, 6 obsidian-routed test jobs,
-          # draining) — leave the run alone.
+          # the box is busy, not dead (5 slots; 6 obsidian-routed test jobs on a
+          # push or the nightly, 4 on a PR — draining) — leave the run alone.
           end=$(( $(date +%s) + 25 * 60 ))
           while [ "$(date +%s)" -lt "$end" ]; do
             queued=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
