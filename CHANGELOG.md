@@ -24,6 +24,37 @@ ports to match. A demo passing an explicit `--port` /
 still resolves the rare same-slot hash collision by shifting up with its
 usual warning.
 
+#### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
+
+Three of its four tests gated on `capabilities.apiSurface !== 'webgpu'` alone
+(the fourth also probed the backend, and did skip correctly), but
+`apiSurface` is `'webgpu'` for any active `WebGPURenderer` — *including* one
+whose internal backend has fallen back to WebGL2, which is the documented
+meaning of that field ("which method-signature contract?", not "which GPU
+backend?"). So in headless Playwright chromium, where there is no real adapter,
+those tests did not skip: they ran green on the fallback and reported native
+WebGPU verified for a run that never touched WGSL. The unaligned-width test was
+the starkest — its whole point is to force the 256-byte `bytesPerRow` padding
+path, and on the fallback `compactWebGPUReadbackRows` returns its input
+unchanged, so the assertions passed without the path existing.
+
+The native gate is now one shared `probeWebGPUBackend` helper in the e2e
+helpers, which `y-orientation.spec.ts` also uses — and that is not just
+de-duplication: its inline copy was the negative form too, so it moves from
+fail-open to fail-closed with it. The helper reads the backend's POSITIVE
+`isWebGPUBackend` flag rather than `isWebGLBackend !== true`: a negative tell
+fails OPEN under drift — a renamed flag or a third backend — which is the
+#1449 bug itself. Gating on the physical backend alone also keeps
+`apiSurface === 'webgpu'` a falsifiable assertion instead of a restatement of
+the gate; it is folded into the framebuffer-Y test, and the tautological test
+that only asserted it is gone. The `captureHDRPixels` round-trip is
+deliberately NOT backend-gated — it is the only automated execution of that
+function anywhere, and what it proves (the WebGPU arm of
+`readPixelsCompactAsync`, `length === width * height * 4`) holds on either
+backend. It is gated on the `apiSurface` instead, since a page that drops all
+the way to a plain `WebGLRenderer` takes the other arm. Retitled and commented
+so it claims nothing about WGSL.
+
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 
 Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,

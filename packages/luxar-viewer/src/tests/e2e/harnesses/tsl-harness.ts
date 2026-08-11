@@ -30,8 +30,9 @@
  *   GLSL strings are recoverable for snapshot-diff.
  *
  * Not in scope: real WebGPU dispatch. That requires Chrome stable +
- * `?webgpu=1` and runs in a separate spec. This harness validates
- * the WebGL2 fallback parity, which is what `forceWebGL: true` covers.
+ * `?renderer=webgpu` and runs in a separate spec. This harness
+ * validates the WebGL2 fallback parity, which is what
+ * `forceWebGL: true` covers.
  *
  * @module tests/e2e/harnesses/tsl-harness
  */
