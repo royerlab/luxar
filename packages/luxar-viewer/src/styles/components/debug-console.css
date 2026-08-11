@@ -128,10 +128,6 @@
   color: var(--luxar-text-primary);
 }
 
-.luxar-debug-console__close-btn:hover {
-  color: var(--luxar-text-primary);
-}
-
 .luxar-debug-console__autoscroll {
   color: var(--luxar-text-primary);
   display: flex;
@@ -272,14 +268,6 @@
 
 [data-theme='light'] .luxar-debug-console__filter {
   background: rgba(0, 0, 0, 0.05);
-}
-
-[data-theme='light'] .luxar-debug-console__close-btn {
-  color: var(--luxar-text-muted);
-}
-
-[data-theme='light'] .luxar-debug-console__close-btn:hover {
-  color: var(--luxar-text-primary);
 }
 
 [data-theme='light'] .luxar-console-message:hover {

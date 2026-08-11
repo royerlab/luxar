@@ -30,8 +30,7 @@
 
 /* The extra `.luxar-recording-panel` prefix raises specificity to (0,3,0) so
    the record red beats the light-theme `[data-theme=light] .luxar-gui__button`
-   (0,2,0) tie WITHOUT `!important`. `#fff` text is a fixed white-on-red
-   affordance (do not tokenize — --luxar-text-inverse is dark in the dark theme). */
+   (0,2,0) tie WITHOUT `!important`. */
 .luxar-recording-panel .luxar-recording-btn .luxar-gui__button {
   /* Record keeps its red identity, but as the house accent-tint chip
      (color-mix fill + border, red text) rather than a solid slab — a solid

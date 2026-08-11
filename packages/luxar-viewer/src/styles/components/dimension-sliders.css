@@ -427,9 +427,8 @@
   border-color: rgba(0, 0, 0, 0.15);
 }
 
-[data-theme='light'] .luxar-dimension-slider__context-item:hover {
-  background: var(--luxar-interactive-hover);
-}
+/* No light-theme hover override any more: the base rule already uses the
+   theme-owned --luxar-interactive-hover, which is correct in every theme. */
 
 @media (prefers-reduced-motion: reduce) {
   .luxar-dimension-slider__context-menu {

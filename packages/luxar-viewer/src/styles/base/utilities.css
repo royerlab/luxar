@@ -480,7 +480,12 @@
 }
 
 .luxar-panel-close:focus-visible {
-  outline: 2px solid var(--luxar-border-focus);
+  /* Fallback is mandatory: ThemeBorderColors.focus is optional, and an
+     unresolvable var() makes the whole declaration invalid at computed-value
+     time — outline-style would fall back to `none` and, being the more
+     specific rule, suppress the ring reset.css draws. Same spelling as
+     reset.css / control-rail.css. */
+  outline: 2px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
   outline-offset: 1px;
 }
 

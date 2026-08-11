@@ -64,7 +64,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
   } = deps;
 
   // Rendering, Layers, and Recording all dock at the same spot beside the
-  // rail (left: 78px), so the rail opens ONE floating surface at a time —
+  // rail (left: 73px), so the rail opens ONE floating surface at a time —
   // activating a docked panel closes the other docked panels, and opening
   // any rail popover (Settings, Navigation, Performance, Home) closes the
   // docked panels too (the reverse is automatic: clicking a rail button is
