@@ -151,11 +151,15 @@ Five free functions invoked by `Group`'s leaf adders through `Scene`'s stubs:
   kwarg fault keeps precedence, and still above `add_lod_group`. That gate also
   runs the `dim_order`/`fill`/`fill_sigma` spec checks and the colours/colormap
   exclusion, in the leaf adders' order (colours first), so no in-memory fault it
-  can see leaves a childless wrapper behind. NOT covered:
-  `add_gsplats_from_file`, whose `graft_gsplat_node` builds the whole
-  `kind=lod` / `kind=partition` wrapper chain from the on-disk tree before the
-  first leaf is added, so a stored tree whose width disagrees with the scene still
-  refuses from `child_0` / `part_0` with the wrappers already written.
+  can see leaves a childless wrapper behind. `add_gsplats_from_file` is covered on
+  both of its doors: a matrix-shaped store (leaf / additive ladder / `kind=lod` of
+  leaves) is dispatched down `add_gsplats_from_data` and inherits that gate, while a
+  genuinely nested one — a `kind=partition` root, or a lod group with non-leaf
+  children — is checked against the STORED tree at the `graft_gsplat_node` entry,
+  since the graft builds the whole wrapper chain from the on-disk tree before the
+  first leaf is added. One leaf answers for the subtree there: a graft applies no
+  `dim_order` (it refuses the kwarg), and both container node types reject
+  mixed-`ndim` children at construction.
 - `validate_data_dimensions(scene, positions, node_name, data_type)` — the full
   check the flat write runs: `validate_dimension_count` first, then a
   `UserWarning` per dimension whose values fall outside its declared `range`.

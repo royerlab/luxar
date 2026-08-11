@@ -739,3 +739,90 @@ class TestPartitionRangeWarningsAreNotMultipliedByTheHoist:
         parts = _part_names(path, "p")
         assert len(parts) > 1
         assert count_range_warnings(records) == 3 * len(parts)
+
+
+def _nested_partition_tree(ndim: int) -> Any:
+    """A ``kind=partition`` root of two leaves — deliberately NOT matrix-shaped.
+
+    ``add_gsplats_from_file`` sends every MATRIX-shaped tree (a bare leaf, an
+    additive ladder, or a ``kind=lod`` of leaves) down
+    ``add_gsplats_from_data_impl``, so only a genuinely nested tree like this one
+    reaches ``graft_gsplat_node`` — which is the door that used to strand.
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+
+    def leaf(n: int, seed: int) -> Any:
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=bad_ndim_positions(n, seed=seed, ndim=ndim),
+                    amplitudes=np.ones(n, dtype=np.float32),
+                    cholesky_factors=cholesky_rows_nd(n, ndim),
+                )
+            ]
+        )
+
+    return GSplatPartition(children=[leaf(8, 91), leaf(6, 92)], max_elements=8)
+
+
+class TestGraftedFileDimensionCount:
+    """The file door of the same gate (#1446): a stored tree, not an in-memory one.
+
+    Measured before this check existed: ``Could not add gsplats 'part_0':
+    Dimension mismatch for 'part_0': …`` with the target name already on disk as a
+    childless ``kind=partition`` group. The graft applies no ``dim_order`` (it
+    refuses the kwarg outright), so the stored width must already be the scene's,
+    and both container node types reject mixed-``ndim`` children at construction —
+    which is why one leaf's centers can answer for the whole subtree.
+    """
+
+    def test_a_nested_tree_of_the_wrong_width_leaves_no_childless_wrapper(
+        self, tmp_path: Any
+    ) -> None:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+        from luxar.gsplats.tree import is_matrix_shaped
+
+        node = _nested_partition_tree(4)
+        # The premise of the whole case: a matrix-shaped tree would take the
+        # already-covered data path instead, and the test would prove nothing
+        # about the graft.
+        assert not is_matrix_shaped(node)
+        file_path = str(tmp_path / "nested.gsplats.zarr")
+        write_gsplats_tree(file_path, node)
+
+        compiler, scene, _ = open_scene(tmp_path, "graft_ndim.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "graft_ndim_flat.luxar.zarr")
+        leaf_sub = next(iter(node.children)).additive_sublods[0]
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=leaf_sub.centers,
+                amplitudes=leaf_sub.amplitudes,
+                cholesky_factors=leaf_sub.cholesky_factors,
+            )
+        )
+        split = refusal(lambda: scene.add_gsplats_from_file("g", file_path))
+
+        # Byte-identical to a direct add_gsplats of the same array — the graft
+        # blamed ``part_0`` before, so this is what catches a regression.
+        assert_same_refusal(flat, split)
+        assert "part_0" not in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_matching_width_still_grafts(self, tmp_path: Any) -> None:
+        """Non-vacuity control: the same shape at the scene's width still lands."""
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        node = _nested_partition_tree(3)
+        file_path = str(tmp_path / "nested_ok.gsplats.zarr")
+        write_gsplats_tree(file_path, node)
+
+        compiler, scene, path = open_scene(tmp_path, "graft_ok.luxar.zarr")
+        scene.add_gsplats_from_file("g", file_path)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "partition"
+        assert len(list(store["g"].group_keys())) == 2

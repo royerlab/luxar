@@ -169,11 +169,20 @@ rather than of `GSplatData.colors`, which is the finest level's: a pyramid whose
 finest level is uncoloured and whose coarse level is not would otherwise pass the
 gate and strand the wrapper from inside that coarse child.
 
-This covers the in-memory authoring paths. `add_gsplats_from_file` is NOT covered:
-its `graft_gsplat_node` builds the entire `kind=lod` / `kind=partition` wrapper chain
-from the on-disk tree before the first leaf is added, so a stored `.gsplats.zarr`
-whose width disagrees with the scene still refuses from `child_0` / `part_0` with the
-wrappers already written. Unchanged by this work, and left for a follow-up.
+`add_gsplats_from_file` is covered on both of its doors. A MATRIX-shaped store — a
+bare leaf, an additive ladder, or a `kind=lod` of leaves, which is what a plain fit
+and the `levels` / `stream` recipes write — is dispatched down
+`add_gsplats_from_data`, so the gate above already answers for it. A genuinely
+nested one (a `kind=partition` root, or a lod group with non-leaf children) has no
+flat equivalent and is GRAFTED node-for-node, and `graft_gsplat_node` builds the
+whole wrapper chain from the on-disk tree before the first leaf is added — measured
+`Could not add gsplats 'part_0': …` with the target name already on disk as a
+childless `kind=partition`. So the width is now checked against the stored tree at
+the graft entry, below the `dim_order` / `fill` / `fill_sigma` refusal that path
+already raises. One leaf answers for the subtree: a graft applies no `dim_order`
+(it refuses the kwarg outright), so the stored width must already be the scene's,
+and `GSplatLodGroup` / `GSplatPartition` both reject mixed-`ndim` children in
+`__post_init__`, recursively.
 
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 
