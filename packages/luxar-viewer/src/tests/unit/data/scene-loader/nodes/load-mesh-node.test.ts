@@ -6,7 +6,7 @@
  * non-default level is now cheap-attached and its expensive half runs only on
  * first activation. Registration must therefore stay on the EAGER path — a lazy
  * level that lands in `registry.meshLoaders` joins the per-slice update sweep,
- * which re-fetches and re-commits it on every scrub (even while hidden, and
+ * which re-projects and re-commits it on every scrub (even while hidden, and
  * concurrently with the registry's own `ensureLoaded`), gating each slice change
  * on projecting the full-resolution surface. That is exactly what deferring it
  * exists to avoid, and it is what the sibling loaders' identical structure
