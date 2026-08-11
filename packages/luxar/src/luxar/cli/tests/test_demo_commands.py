@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -1002,10 +1003,26 @@ def test_demo_runs_dir_matches_demo_cache_root() -> None:
     If the demo cache root ever moves, the running-demo registry must move
     with it — this is the guard for that silent divergence.
     """
-    from luxar.demos.registry import DEMO_CACHE_ROOT
+    from luxar.demos.registry import DEMO_CACHE_ROOT, NON_CACHE_DIRS
     from luxar.utils.demo_runs import DEMO_RUNS_DIR
 
     assert DEMO_RUNS_DIR.parent == DEMO_CACHE_ROOT
+    # …and it is not a cache: `cache clear --orphans` must never delete the
+    # record of demos that are still running.
+    assert DEMO_RUNS_DIR.name in NON_CACHE_DIRS
+
+
+def test_running_registry_is_not_inventoried_as_a_cache(tmp_path: Path) -> None:
+    """The pidfile registry is live state, so it is neither listed nor cleared."""
+    from luxar.demos import registry as demo_registry
+
+    (tmp_path / "running").mkdir()
+    (tmp_path / "running" / "4242.json").write_text('{"key": "lorenz", "pgid": 4242}')
+    (tmp_path / "some_cache").mkdir()
+    (tmp_path / "some_cache" / "blob.bin").write_bytes(b"x" * 8)
+
+    entries = demo_registry.inventory_caches(cache_root=tmp_path)
+    assert [e.path.name for e in entries] == ["some_cache"]
 
 
 class TestDemoStop:

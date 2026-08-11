@@ -83,7 +83,10 @@ luxar-owned squatter ("Port 8042 is held by demo 'X' (PID N) — run
 Teardown also stops waiting out a corpse: a child that has exited but has not
 been reaped yet still answers `killpg`, which used to hold the whole signal
 ladder open, so an interrupted `demo run` sat there for the full grace period
-before returning.
+before returning. The pidfile directory is live state, not a cache, so
+`demo cache list` skips it — otherwise it would show up as an ORPHAN and
+`demo cache clear --orphans` would offer to delete the record of what is
+still running.
 New: `luxar.utils.demo_runs` (discovery + kill engine),
 `terminate_process_group` / `proc_table` / `on_spawn` in `luxar.utils.process`.
 

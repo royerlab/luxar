@@ -28,7 +28,7 @@ import json
 import os
 import re
 import signal
-import subprocess  # nosec B404 - fixed argv (ps/lsof), never shell, output parsed
+import subprocess  # nosec B404  # fixed argv (ps/lsof), never shell, parsed
 import sys
 import time
 from dataclasses import dataclass
@@ -139,7 +139,7 @@ def _ps_snapshot() -> list[tuple[int, int, str]]:
     killed, so it is worth a second source before giving up.
     """
     try:
-        out = subprocess.run(  # nosec B603 B607 - fixed argv, no user input
+        out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
             ["ps", "-axww", "-o", "pid=,pgid=,command="],
             capture_output=True,
             text=True,
@@ -343,7 +343,7 @@ def describe_port_holder(port: int) -> Optional[str]:
     wrong demo came up" confusion and an actionable one-liner.
     """
     try:
-        out = subprocess.run(  # nosec B603 B607 - fixed argv, no user input
+        out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
             ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
             capture_output=True,
             text=True,
