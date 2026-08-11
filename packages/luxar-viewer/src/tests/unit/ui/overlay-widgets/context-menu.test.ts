@@ -140,6 +140,23 @@ describe('openContextMenu', () => {
     expect(menuEl()!.style.maxHeight).toBe(`${window.innerHeight - 16}px`);
   });
 
+  it('hovering an item INSIDE the submenu does not retract it (mouse path)', () => {
+    openBasic([{ label: 'Appearance', submenu: [{ label: 'Sub item', action: vi.fn() }] }]);
+    itemByLabel('Appearance')!.click();
+    expect(submenuEl()).not.toBeNull();
+
+    // Moving the pointer onto a submenu entry must keep the submenu open —
+    // the retract-on-hover behavior belongs to plain ROOT items only. (The
+    // regression closed the submenu under the cursor, making every submenu
+    // entry unclickable by mouse.)
+    itemByLabel('Sub item')!.dispatchEvent(new PointerEvent('pointerenter', { bubbles: false }));
+    expect(submenuEl()).not.toBeNull();
+
+    // A plain ROOT item still retracts it.
+    itemByLabel('First')!.dispatchEvent(new PointerEvent('pointerenter', { bubbles: false }));
+    expect(submenuEl()).toBeNull();
+  });
+
   it('an explicit restoreFocus target wins over the activeElement default', () => {
     // The mouse path: right-click does not focus its target first, so the
     // caller passes the opener explicitly and close() must focus IT, not

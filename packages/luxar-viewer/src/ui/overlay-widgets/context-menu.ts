@@ -171,8 +171,13 @@ export function openContextMenu(opts: ContextMenuOptions): () => void {
       });
       if (hasSub) {
         events.on(el, 'pointerenter', () => openSubmenu(item, el));
-      } else {
-        // Entering a plain item retracts any open sibling submenu.
+      } else if (allowSubmenus) {
+        // Entering a plain ROOT item retracts any open sibling submenu.
+        // Only in the root menu: items INSIDE a submenu take this branch
+        // too (their own `hasSub` is forced false), and giving them the
+        // retract handler closes the submenu under the cursor the moment
+        // the pointer reaches it — mouse-clicking any submenu entry
+        // becomes impossible.
         events.on(el, 'pointerenter', () => closeSubmenu());
       }
 

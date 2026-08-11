@@ -2,9 +2,11 @@
  * E2E tests for the Layers Panel
  *
  * Tests the napari-inspired per-layer control panel that opens with the L key.
- * Covers: visibility toggle, selection, blending mode, gamma, and panel lifecycle.
+ * Covers: visibility toggle, selection, blending mode, gamma, context menus,
+ * the live filter's computed-style hiding, and panel lifecycle.
  *
- * Dataset: sharpness_showcase_example.luxar.zarr (8+ point cloud nodes with layer=True)
+ * Dataset: layers_test_example.luxar.zarr (4 layered nodes incl. a composite
+ * group and a visible=False layer — see the DATASET constant below).
  */
 
 import { test, expect } from './fixtures';

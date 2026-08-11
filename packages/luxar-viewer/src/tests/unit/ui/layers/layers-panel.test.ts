@@ -3139,6 +3139,45 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it('the pinned row aria-label survives a menu open/close (only aria-expanded moves)', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    const labelBefore = row.getAttribute('aria-label');
+    expect(labelBefore).toBe('layer0 (points)'); // the E2E/AT-pinned "name (type)" shape
+
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    expect(row.getAttribute('aria-label')).toBe(labelBefore);
+
+    document
+      .querySelector('.luxar-context-menu')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    expect(row.getAttribute('aria-label')).toBe(labelBefore);
+    panel.dispose();
+  });
+
+  it('the roving tab stop moves off a filtered row (listbox stays Tab-reachable)', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('alpha'));
+
+    // The panel's initial tab stop sits on the first row (alpha0). Filter it
+    // out: a display:none row is unfocusable, so leaving tabIndex=0 there
+    // would make the whole listbox unreachable by Tab.
+    const input = container.querySelector<HTMLInputElement>('.luxar-panel-filter__input')!;
+    input.value = 'alpha1';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('.luxar-layer-row'));
+    const tabStops = rows.filter((r) => r.tabIndex === 0);
+    expect(tabStops.length).toBe(1);
+    expect(tabStops[0].classList.contains('luxar-layer-row--filtered')).toBe(false);
+    expect(tabStops[0].textContent).toContain('alpha1');
+    panel.dispose();
+  });
+
   it('Shift+F10 on the focused EYE opens the eye menu, not the row menu', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());

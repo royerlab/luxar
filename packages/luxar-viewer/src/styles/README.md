@@ -73,6 +73,7 @@ Each UI component has a dedicated CSS file:
 | File                       | Component                              |
 | -------------------------- | -------------------------------------- |
 | `colormap-legend.css`      | Colormap legend display                |
+| `context-menu.css`         | Shared right-click context menus       |
 | `control-rail.css`         | Left-edge activity rail and popovers   |
 | `data-loading-monitor.css` | Loading progress indicators            |
 | `dataset-browser.css`      | Directory listing and dataset selector |

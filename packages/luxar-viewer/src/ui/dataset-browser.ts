@@ -852,12 +852,18 @@ export class DatasetBrowser {
   show(): void {
     this.scrim.style.display = '';
     this.panel.style.display = 'flex';
+    // Re-arm the modal focus trap hide() released (no-op when already armed).
+    this.untrapFocus ??= trapFocus(this.panel);
   }
 
   /**
    * Hide the browser panel.
    */
   hide(): void {
+    // Release the trap FIRST: a hidden modal must not keep Tab hostage, and
+    // the trap's cleanup hands focus back to the pre-open element.
+    this.untrapFocus?.();
+    this.untrapFocus = undefined;
     this.scrim.style.display = 'none';
     this.panel.style.display = 'none';
   }
@@ -877,6 +883,7 @@ export class DatasetBrowser {
     // for a path the user backed out of.
     this.navigationGeneration++;
     this.untrapFocus?.();
+    this.untrapFocus = undefined;
     if (this.onClose) {
       this.onClose();
     }

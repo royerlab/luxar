@@ -265,6 +265,10 @@ export class LayersPanel {
 
   hide(): void {
     if (!this.panelEl) return;
+    // The menu is mounted on the viewer container, not the panel — hiding
+    // the panel (L key / rail while a menu is open) must not strand a
+    // floating menu over a hidden panel.
+    this.contextMenuClose?.();
     this.panelEl.style.display = 'none';
     this.visible = false;
     this.repositionGUI();
@@ -393,7 +397,12 @@ export class LayersPanel {
         label: 'Frame camera on layer',
         disabled: !obj || !this.cameraFramer,
         action: () => {
-          if (obj) this.cameraFramer?.(obj);
+          // False = no framable geometry YET (a partition whose parts are
+          // still streaming). The object exists so the item is enabled —
+          // surface the no-op instead of silently doing nothing.
+          if (obj && this.cameraFramer && !this.cameraFramer(obj)) {
+            showToast(`Nothing to frame yet in "${layer.name}" (still loading)`);
+          }
         },
       },
       {
@@ -573,8 +582,14 @@ export class LayersPanel {
    * Copy the source layer's appearance to every other layer, type-gated:
    * display window clamped into each target's data bounds, gamma verbatim,
    * blending resolved per target type, colormap only where supported.
-   * Mesh-only knobs and volumetric-only absorption are deliberately not
-   * copied.
+   * Order matters: the colormap copy runs LAST, so a target whose colormap
+   * mode flips gets that mode's re-defaulted window (via setLayerColormap)
+   * rather than the copied one — a window is only meaningful within one
+   * mode, so carrying it across the flip would mis-scale the new value.
+   * Deliberately NOT copied: mesh-only knobs, volumetric-only absorption,
+   * and opacity/visibility — those are per-layer compositing choices, not
+   * "appearance" (copying opacity would flatten a scene the user balanced
+   * layer-by-layer).
    */
   private applyAppearanceToAll(sourcePath: string): void {
     const src = this.state.getLayer(sourcePath);
@@ -869,6 +884,9 @@ export class LayersPanel {
     if (this.noMatchesEl) {
       this.noMatchesEl.style.display = anyVisible || !q ? 'none' : '';
     }
+    // The filter moves which rows are focusable — re-place the roving tab
+    // stop so it never sits on a display:none row (Tab would skip the list).
+    this.updateRowHighlights();
   }
 
   /** True when the row for a path is hidden by the live filter. */
@@ -888,8 +906,10 @@ export class LayersPanel {
       row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
 
       // First selected row is the keyboard tab stop; others get tabIndex -1
-      // (still focusable programmatically for ArrowUp/Down).
-      if (layer.selected && !hasFocusable) {
+      // (still focusable programmatically for ArrowUp/Down). A row hidden by
+      // the live filter (display: none) is not focusable, so parking the tab
+      // stop on it would make the whole listbox unreachable by Tab.
+      if (layer.selected && !hasFocusable && !this.isRowFiltered(layer.path)) {
         row.tabIndex = 0;
         hasFocusable = true;
       } else {
@@ -908,11 +928,15 @@ export class LayersPanel {
       }
     }
 
-    // If nothing is selected, make the first row the tab stop so users can
-    // enter the listbox with the keyboard.
+    // If nothing (visible) is selected, make the first UNFILTERED row the
+    // tab stop so users can enter the listbox with the keyboard.
     if (!hasFocusable) {
-      const first = this.rowElements.values().next().value as HTMLElement | undefined;
-      if (first) first.tabIndex = 0;
+      for (const [path, row] of this.rowElements) {
+        if (!this.isRowFiltered(path)) {
+          row.tabIndex = 0;
+          break;
+        }
+      }
     }
   }
 
