@@ -6,6 +6,35 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### The `radial` reveal ordering: a scene that grows outward as it streams
+
+New additive-ladder ordering `radial`, available on GSplats, Points and Lines
+(`luxar gsplat lod ... -m radial`, `additive_lod={"method": "radial"}`). It
+orders concentric shells around the node's own bounding-box centre — not the
+scene origin, so a dataset far from the origin still grows from its own middle
+instead of in from a corner — so the existing streaming machinery paints the
+object outward. **Authoring only: no viewer changes, nothing about how data is
+displayed, only how it is loaded.** The distance spans the spatial axes only, so
+a stacked time/channel column cannot become a shell dimension; `reveal_centre` /
+`spatial_dims` (`--reveal-centre` / `--spatial-dims`) override both. On Lines the
+permutation indexes whole polylines, so every prefix keeps valid segment
+topology. Mesh is left out — it has no additive ladder at all yet.
+
+A radial ladder deliberately carries **no energy stamps**. The viewer multiplies
+an incomplete ladder's brightness by `1/e(k)`, gated on the blending mode and
+never on geometry type; that is right for an energy-ordered prefix and backwards
+for a reveal, whose prefix is a partial object at full brightness rather than a
+dim version of the whole. `REVEAL_METHODS` in the new
+`luxar.utils.lod_methods` registry names which orderings are reveals, and both
+ladder implementations plus `annotate-quality` consult it, so the
+`energy_fraction_cum` / `reference_energy` pair is omitted both-or-neither.
+Accepted cost, stated rather than buried: cross-fade and the `e >= 0.6`
+early-upgrade release read the same stamps, so shells hard-switch.
+
+That registry also replaces four hand-copied method tuples: `radial` was
+invisible to every gsplat CLI surface, and three `--method` help strings still
+advertised only `auto|greedy|self_energy` long after six methods existed.
+
 #### Demos serve on per-dataset derived ports, not 8000/5173
 
 Every demo used to contend for the same default ports, so with several demos
@@ -54,6 +83,45 @@ function anywhere, and what it proves (the WebGPU arm of
 backend. It is gated on the `apiSurface` instead, since a page that drops all
 the way to a plain `WebGLRenderer` takes the other arm. Retitled and commented
 so it claims nothing about WGSL.
+
+#### Tests — a lazy mesh LOD level is pinned out of the per-slice sweep (#1356)
+
+A mesh LOD level that registers its loader joins the scene-wide `updateView`
+sweep, which then re-projects and re-commits the full-resolution surface on every
+scrub — even while the level is hidden — and gates the cheap coarse level's new
+timepoint behind it. (Re-projects, not re-fetches: the whole-node loader serves
+every later `updateView` from its one cached decode. Two neighbouring comments
+overstated this as a re-fetch and are corrected here too.) That is the exact
+failure deferring the level exists to avoid, and #1356 reported it against the
+mesh cheap/expensive split.
+
+The registration itself is already correct: #1351 landed with
+`registerMeshLoader` in the eager `loadMeshNode`'s `finally`, symmetric with the
+three sibling loaders, and `load-mesh-node.test.ts` pins the three timing cases
+against the real loader functions and a real registry — that spec, not this
+change, is what would fail if the defect were re-introduced. What was missing was the other
+half of the chain. The lod-group spec's registry stub had no `registerMeshLoader`
+at all, so the mesh defer test could not make the negative assertion its
+gsplats/points/lines peers already make, and a regression in the wrapper would
+have surfaced as `not a function` rather than a named invariant. It now asserts
+it, before activation and again after the level reaches `ready`; the second is
+not redundant, since only it can see a register call made from inside the shared
+`attachLazyChild` thunk. The nested-group symmetry parametrization is widened
+from three geometry types to four for the same reason.
+
+Two comments said the opposite of what the code does, which is how the report
+came about: the lod-group defer branch claimed the activation thunk runs "the
+expensive tail (and registration)", and `MeshCheapLoad.loader` claimed "the
+expensive half" registers. Neither is true of any of the four loaders. A third
+overstated its scope rather than inverting it: `attachLazyChild`'s doc claimed no
+lazy level ever joins the sweep, which is true of a lazy LEAF but not of a
+deferred nested GROUP — that one's `runExpensive` is the `loadChildren`
+recursion, so its subtree leaves register themselves on activation like any other
+leaf.
+
+One more mesh coverage residual, in the same vein: the freshness helpers' `isFresh`
+type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
+which has counted mesh since it became a legal ladder level. Widened to four.
 
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 

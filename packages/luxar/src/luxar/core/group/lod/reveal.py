@@ -157,6 +157,35 @@ def _resolve_score_dims(pts_all: NDArray, spatial_dims: Optional[List[int]]) -> 
     return dims
 
 
+def resolve_reveal_centre(
+    centre: Optional[List[float]],
+    coords: NDArray,
+    scored: NDArray,
+    spatial_dims: Optional[List[int]] = None,
+) -> Optional[List[float]]:
+    """An explicit shell origin, or the bbox centre of ``coords`` over the shell axes.
+
+    ``scored`` is the array :func:`radial_element_score` will be handed — one
+    representative coordinate per element — and decides WHICH columns are shell
+    dimensions, exactly as the scorer would. ``coords`` is the geometry those
+    shells should be centred on.
+
+    The two are the same array for Points, whose representative IS its position,
+    so that geometry can leave the centre to the scorer's own default. This helper
+    exists for Lines: a polyline's representative is its own bbox centre, and the
+    bounding box OF THOSE CENTRES is not the node's. One long polyline spanning
+    x=0…100 plus a short one near x=0 give centres of 50 and 0 — an origin of 25,
+    where the node's own vertex bbox centre is 50. Passing the vertices as
+    ``coords`` keeps the documented contract ("the node's own bbox centre") true
+    for both geometries.
+    """
+    if centre is not None:
+        return centre
+    dims = _resolve_score_dims(np.asarray(scored, dtype=np.float64), spatial_dims)
+    pts = np.asarray(coords, dtype=np.float64)[:, dims]
+    return [float(c) for c in 0.5 * (pts.min(axis=0) + pts.max(axis=0))]
+
+
 def radial_element_score(
     coords: NDArray,
     centre: Optional[List[float]] = None,

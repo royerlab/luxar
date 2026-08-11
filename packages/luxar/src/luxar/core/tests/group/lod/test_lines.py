@@ -276,6 +276,25 @@ class TestRadialOrderLines:
         # which is what an origin-centred implementation would pick.
         assert float(verts[polys[perm[0]][0], 0]) == 3.0
 
+    def test_default_centre_is_the_vertex_bbox_not_the_representatives(self) -> None:
+        # Unequal polyline lengths separate the two candidate origins, which
+        # equal-length fixtures cannot: one long polyline spanning x=0..100 and
+        # two short ones near x=0. The node's bbox centre is x=50; the bbox of
+        # the per-polyline representatives (50, 0, 4) centres at 25.
+        verts = np.array(
+            [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]  # long: centre 50
+            + [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]  # short: centre 0
+            + [[4.0, 0.0, 0.0], [4.0, 0.0, 0.0]],  # short: centre 4
+            dtype=np.float32,
+        )
+        polys = identify_polylines(len(verts), "segments")
+        perm, _ = compute_additive_order_lines(verts, polys, method="radial")
+
+        # Centred on 50 the long polyline is innermost (|50-50| = 0); centred on
+        # the representatives' own bbox centre 25 it would be second, behind the
+        # x=4 one (|4-25| = 21 < |50-25| = 25).
+        assert perm[0] == 0
+
 
 # ────────────────────────────────────────────────────────────────────────
 # make_additive_lod_lines
