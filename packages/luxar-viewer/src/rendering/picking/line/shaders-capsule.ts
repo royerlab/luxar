@@ -57,11 +57,15 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uPerspectiveLineScale;
     uniform float uOrthoLineScale;
 
+    // Geometry varyings are screen-space quantities pre-multiplied by the
+    // corner's clip w and divided by vW in the fragment (screen-linear;
+    // see the visual twin's declaration note).
     out vec2 vLocal;
     flat out vec3 vMeta;
     flat out vec2 vCutA2;
     flat out vec2 vCutB2;
     out float vR;
+    out float vW;
     out float vFade;
     out float vSharp;
     flat out highp float vNodeId;
@@ -106,7 +110,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vLocal = vec2(0.0); vMeta = vec3(1.0, 0.0, 0.0);
         vCutA2 = vec2(-1.0, 0.0); vCutB2 = vec2(1.0, 0.0);
-        vR = 1.0; vFade = 0.0; vSharp = 0.5;
+        vR = 1.0; vW = 1.0; vFade = 0.0; vSharp = 0.5;
         return;
       }
       float tA = 0.0;
@@ -127,6 +131,9 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       float w0 = sanitizeNonNegative(lineT0.w, 0.0);
       float w1 = sanitizeNonNegative(lineT1.w, 0.0);
+      // Endpoint attributes at the CLIPPED span (mirrors the visual twin).
+      float wEffA = mix(w0, w1, tA);
+      float wEffB = mix(w0, w1, tB);
       float s0 = clamp(sanitizeNonNegative(lineT2.w, 0.5), 0.0, 1.0);
       float s1 = clamp(sanitizeNonNegative(lineT3.w, 0.5), 0.0, 1.0);
 
@@ -140,11 +147,11 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float rawA;
       float rawB;
       if (uIsOrtho == 1) {
-        rawA = w0 * uOrthoLineScale * ${G.RADIUS_FACTOR};
-        rawB = w1 * uOrthoLineScale * ${G.RADIUS_FACTOR};
+        rawA = wEffA * uOrthoLineScale * ${G.RADIUS_FACTOR};
+        rawB = wEffB * uOrthoLineScale * ${G.RADIUS_FACTOR};
       } else {
-        rawA = w0 * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
-        rawB = w1 * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
+        rawA = wEffA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
+        rawB = wEffB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
       }
       float rA = clamp(rawA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
       float rB = clamp(rawB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
@@ -232,9 +239,8 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float lx = aQuadCorner.x > 0.0 ? abLen + extB : -extA;
       float ly = aQuadCorner.y * rMax;
       vec2 corner = pA + u * lx + v * ly;
-      vLocal = vec2(lx, ly);
-
       float tc = abLen > 1e-4 ? clamp(lx / abLen, 0.0, 1.0) : 0.5;
+      float tOrig = mix(tA, tB, tc);
       // The RADIUS interpolates linearly in screen space (1/depth is
       // perspective-linear, so a constant-width tube's pixel radius is
       // exactly linear in screen x). Interpolating 1/r² instead bends the
@@ -244,10 +250,13 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float rawC = mix(rawA, rawB, tc);
       float widthScale = min(rawC / ${G.MIN_RADIUS}, 1.0);
       vFade = perspectiveNearFade(uIsOrtho, mix(mvStart.z, mvEnd.z, tc), nearCull) * widthScale;
-      vSharp = mix(s0, s1, tc);
+      vSharp = mix(s0, s1, tOrig);
 
       vec4 clipMix = mix(clipA, clipB, tc);
       float wMix = max(clipMix.w, 1e-6);
+      vLocal = vec2(lx, ly) * wMix;
+      vR = vR * wMix;
+      vW = wMix;
       vec2 ndc = corner / uResolution * 2.0 - 1.0;
       gl_Position = vec4(ndc * wMix, clipMix.z, wMix);
     }
@@ -261,6 +270,7 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     flat in vec2 vCutA2;
     flat in vec2 vCutB2;
     in float vR;
+    in float vW;
     in float vFade;
     in float vSharp;
     flat in highp float vNodeId;
@@ -269,14 +279,15 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     out vec4 fragColor;
 
     void main() {
-      float x = vLocal.x;
-      float y = vLocal.y;
+      float invW = 1.0 / max(vW, 1e-9);
+      float x = vLocal.x * invW;
+      float y = vLocal.y * invW;
       // Foreign-side cap fade: my cap region on the PARTNER's side of the
       // joint bisector fades out over a quarter radius of axial overhang
       // instead of a hard cut — C0 with the partner's body at its endpoint
       // line (no chevron edge) and with my own half-disc at the bisector.
       // Sub-pixel at normal widths; smooth and wide when zoomed in.
-      float rPx = max(vR, 1e-4);
+      float rPx = max(vR * invW, 1e-4);
       float cutFade = 1.0;
       if (vMeta.y > 0.5 && x < 0.0 && (vCutA2.x * x + vCutA2.y * y) > 0.0) {
         cutFade *= clamp(1.0 + x / (${G.CUT_FADE} * rPx), 0.0, 1.0);

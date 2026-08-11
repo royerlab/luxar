@@ -2359,6 +2359,45 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: (m) => buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5]),
     buildCamera: buildBehindCamera,
   },
+  // Near-plane straddling with TAPER + colour gradient: the clipped end
+  // must carry the attribute values interpolated AT the clip parameter,
+  // not the behind-camera endpoint's (width/colour would jump — the
+  // review finding the plain nearclip fixture could not see).
+  'line-capsule-nearclip-taper': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture([0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+          startColor: [1.0, 0.1, 0.1],
+          endColor: [0.1, 0.1, 1.0],
+          startWidth: 0.06,
+          endWidth: 0.5,
+          startSharpness: 0.1,
+          endSharpness: 0.9,
+        }),
+        false,
+        0.35
+      ),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) =>
+      buildLineInstancedMesh(m, [0, 0, 1.5], [0, 0, -0.5], undefined, undefined, {
+        startColor: [1.0, 0.1, 0.1],
+        endColor: [0.1, 0.1, 1.0],
+        startWidth: 0.06,
+        endWidth: 0.5,
+        startSharpness: 0.1,
+        endSharpness: 0.9,
+      }),
+    buildCamera: buildBehindCamera,
+  },
   // FAT side-on: the footprint-sensitivity twin of the pick fixture below.
   'line-capsule-fat': {
     source: CAPSULE_LINE_SOURCE,

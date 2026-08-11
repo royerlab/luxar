@@ -73,14 +73,23 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     // Stencil-LOCAL coordinates + attributes as INTERPOLATED varyings —
     // the fragment reads everything pre-blended by the rasterizer instead
     // of projecting/mixing per pixel (relaxation 3 in _shared/line-capsule).
-    out vec2 vLocal;        // (x: axial px from A, y: perp px)
+    //
+    // GEOMETRY varyings (vLocal, vR) are SCREEN-SPACE quantities, but
+    // default varying interpolation is perspective-correct — hyperbolic in
+    // screen space whenever the two ends have different clip w (and with a
+    // triangle-diagonal kink). GLSL ES 3.0 has no noperspective qualifier,
+    // so they are pre-multiplied by the corner's clip w here and divided
+    // by the interpolated w (vW) in the fragment: PC-interp(a·w)/PC(w) is
+    // exactly screen-linear. Ortho (w = 1) reduces to a no-op.
+    out vec2 vLocal;        // (x: axial px from A, y: perp px) × clip w
     flat out vec3 vMeta;    // abLen px, cutA active, cutB active
     // 2D bisector-cut normals at interior joints, in stencil-local
     // coordinates. My side is NEGATIVE; a straight joint degrades to the
     // perpendicular butt ((-1,0) at A, (1,0) at B).
     flat out vec2 vCutA2;
     flat out vec2 vCutB2;
-    out float vR;           // capsule radius in px (perspective-LINEAR in screen x)
+    out float vR;           // capsule radius in px × clip w (screen-linear)
+    out float vW;           // clip w (divides vLocal/vR in the fragment)
     out float vFade;        // nearFade × thin-width energy compensation
     out float vAlpha;       // per-element alpha (raw — volumetric gates it)
     out float vSharp;
@@ -129,7 +138,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vLocal = vec2(0.0); vMeta = vec3(1.0, 0.0, 0.0);
         vCutA2 = vec2(-1.0, 0.0); vCutB2 = vec2(1.0, 0.0);
-        vR = 1.0; vFade = 0.0; vAlpha = 1.0; vSharp = 0.5;
+        vR = 1.0; vW = 1.0; vFade = 0.0; vAlpha = 1.0; vSharp = 0.5;
         #ifdef USE_COLORMAP
         vScalar = 0.0;
         #else
@@ -158,8 +167,13 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       vec4 lineT3 = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0);
       vec4 lineT5 = texelFetch(uLineTex, ivec2(texel0.x + 5, texel0.y), 0);
 
+      // Endpoint attributes are re-evaluated at the CLIPPED span: a
+      // near-clipped end must carry the values interpolated at tA/tB, not
+      // the behind-camera endpoint's (taper/colour would otherwise jump).
       float w0 = sanitizeNonNegative(lineT0.w, 0.0);
       float w1 = sanitizeNonNegative(lineT1.w, 0.0);
+      float wEffA = mix(w0, w1, tA);
+      float wEffB = mix(w0, w1, tB);
       float s0 = clamp(sanitizeNonNegative(lineT2.w, 0.5), 0.0, 1.0);
       float s1 = clamp(sanitizeNonNegative(lineT3.w, 0.5), 0.0, 1.0);
 
@@ -175,11 +189,11 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       float rawA;
       float rawB;
       if (uIsOrtho == 1) {
-        rawA = w0 * uOrthoLineScale * ${G.RADIUS_FACTOR};
-        rawB = w1 * uOrthoLineScale * ${G.RADIUS_FACTOR};
+        rawA = wEffA * uOrthoLineScale * ${G.RADIUS_FACTOR};
+        rawB = wEffB * uOrthoLineScale * ${G.RADIUS_FACTOR};
       } else {
-        rawA = w0 * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
-        rawB = w1 * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
+        rawA = wEffA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
+        rawB = wEffB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
       }
       float rA = clamp(rawA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
       float rB = clamp(rawB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
@@ -281,12 +295,14 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       float lx = aQuadCorner.x > 0.0 ? abLen + extB : -extA;
       float ly = aQuadCorner.y * rMax;
       vec2 corner = pA + u * lx + v * ly;
-      vLocal = vec2(lx, ly);
 
       // Attribute values AT the corner's clamped axial position; the
       // rasterizer blends them per fragment (the blend spans the cap
       // extensions too — sub-quantization stretch, accepted).
       float tc = abLen > 1e-4 ? clamp(lx / abLen, 0.0, 1.0) : 0.5;
+      // Texel-attribute mixes address the ORIGINAL endpoint values, so a
+      // corner's parameter maps through the clipped span.
+      float tOrig = mix(tA, tB, tc);
       // The RADIUS interpolates linearly in screen space (1/depth is
       // perspective-linear, so a constant-width tube's pixel radius is
       // exactly linear in screen x). Interpolating 1/r² instead bends the
@@ -301,18 +317,22 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       float widthScale = min(rawC / ${G.MIN_RADIUS}, 1.0);
       float fade = perspectiveNearFade(uIsOrtho, mix(mvStart.z, mvEnd.z, tc), nearCull);
       vFade = fade * widthScale;
-      vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tc);
-      vSharp = mix(s0, s1, tc);
+      vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tOrig);
+      vSharp = mix(s0, s1, tOrig);
       #ifdef USE_COLORMAP
-      vScalar = mix(lineT5.x, lineT5.y, tc);
+      vScalar = mix(lineT5.x, lineT5.y, tOrig);
       #else
-      vColor = mix(lineT2.rgb, lineT3.rgb, tc);
+      vColor = mix(lineT2.rgb, lineT3.rgb, tOrig);
       #endif
 
       // Depth interpolates along the segment (clamped to the nearer end
       // across cap extensions) so depth-tested modes compose correctly.
       vec4 clipMix = mix(clipA, clipB, tc);
       float wMix = max(clipMix.w, 1e-6);
+      // Screen-linear geometry varyings (see the declaration note).
+      vLocal = vec2(lx, ly) * wMix;
+      vR = vR * wMix;
+      vW = wMix;
       vec2 ndc = corner / uResolution * 2.0 - 1.0;
       gl_Position = vec4(ndc * wMix, clipMix.z, wMix);
     }
@@ -338,6 +358,7 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     flat in vec2 vCutA2;
     flat in vec2 vCutB2;
     in float vR;
+    in float vW;
     in float vFade;
     in float vAlpha;
     in float vSharp;
@@ -350,8 +371,10 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     out vec4 fragColor;
 
     void main() {
-      float x = vLocal.x;
-      float y = vLocal.y;
+      // Undo the w-premultiplication: screen-linear local coordinates.
+      float invW = 1.0 / max(vW, 1e-9);
+      float x = vLocal.x * invW;
+      float y = vLocal.y * invW;
       // Interior joints: the CAP region (beyond the endpoint) is cut along
       // the joint BISECTOR (my side negative) — the two legs' half-discs
       // tile the joint disc exactly. The cut applies ONLY beyond the
@@ -363,7 +386,7 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       // instead of a hard cut — C0 with the partner's body at its endpoint
       // line (no chevron edge) and with my own half-disc at the bisector.
       // Sub-pixel at normal widths; smooth and wide when zoomed in.
-      float rPx = max(vR, 1e-4);
+      float rPx = max(vR * invW, 1e-4);
       float cutFade = 1.0;
       if (vMeta.y > 0.5 && x < 0.0 && (vCutA2.x * x + vCutA2.y * y) > 0.0) {
         cutFade *= clamp(1.0 + x / (${G.CUT_FADE} * rPx), 0.0, 1.0);
