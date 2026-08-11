@@ -36,6 +36,23 @@ const MESSAGES: Record<SceneIdentityBannerKind, string> = {
   unreachable: 'Data server unreachable — it may have been stopped.',
 };
 
+/**
+ * Banner glyphs in the viewer's stroke-icon language (geometry-only, painted
+ * with `currentColor`), matching the error dialog's header icon.
+ *
+ * Deliberately not emoji: they render in a different font on every platform,
+ * and inside this `role="alert"` element a leading emoji is read out as part
+ * of the announced message. `aria-hidden` — the text carries the meaning.
+ */
+const ICONS: Record<SceneIdentityBannerKind, string> = {
+  /** Warning triangle — same geometry as the error dialog's icon. */
+  changed:
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5L22 20H2L12 3.5z"/><line x1="12" y1="10" x2="12" y2="14.5"/><line x1="12" y1="17.2" x2="12" y2="17.21"/></svg>',
+  /** Severed link — the far end of the connection stopped answering. */
+  unreachable:
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 17H7A5 5 0 0 1 7 7h2.5"/><path d="M14.5 7H17a5 5 0 0 1 3.6 8.5"/><line x1="3.5" y1="3.5" x2="20.5" y2="20.5"/></svg>',
+};
+
 /** The kind currently displayed, or null when no banner is up. */
 let shownKind: SceneIdentityBannerKind | null = null;
 
@@ -57,7 +74,11 @@ export function showSceneIdentityBanner(kind: SceneIdentityBannerKind): void {
   banner.className = 'luxar-glass-surface';
   banner.setAttribute('role', 'alert');
   banner.style.cssText = [
-    'position: absolute',
+    // `fixed`, like every other viewer overlay: a custom embedder container
+    // is promoted to a containing block for fixed descendants, while the
+    // default `document.body` container has no such promotion — an absolute
+    // banner would scroll out of view on a page that scrolls.
+    'position: fixed',
     'top: 12px',
     'left: 50%',
     'transform: translateX(-50%)',
@@ -76,8 +97,13 @@ export function showSceneIdentityBanner(kind: SceneIdentityBannerKind): void {
       : 'background: rgba(150, 110, 20, 0.92); border: 1px solid rgba(255,200,90,0.5)',
   ].join(';');
 
+  const icon = document.createElement('span');
+  icon.style.cssText = 'display: flex; flex: none';
+  icon.innerHTML = ICONS[kind];
+  banner.appendChild(icon);
+
   const text = document.createElement('span');
-  text.textContent = `${kind === 'changed' ? '⚠️' : '\u{1F50C}'} ${MESSAGES[kind]}`;
+  text.textContent = MESSAGES[kind];
   banner.appendChild(text);
 
   if (kind === 'changed') {

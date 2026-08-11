@@ -82,6 +82,27 @@ describe('scene-identity banner', () => {
     expect(banner()).toBe(first);
   });
 
+  it('leads with a decorative stroke glyph, never an emoji', () => {
+    // The banner is role="alert", so its text is announced verbatim — a
+    // leading emoji got read out as part of the message and drew in a
+    // platform-dependent font. Same contract as the error dialog's header
+    // icon: an aria-hidden inline SVG contributing no text of its own.
+    for (const kind of ['changed', 'unreachable'] as const) {
+      hideSceneIdentityBanner();
+      showSceneIdentityBanner(kind);
+      const el = banner()!;
+      const svg = el.querySelector('svg');
+      expect(svg).not.toBeNull();
+      expect(svg!.getAttribute('aria-hidden')).toBe('true');
+      // Announced text is the message alone, and stays plain ASCII apart
+      // from the em dash the copy uses.
+      expect(el.textContent).not.toMatch(/\p{Extended_Pictographic}/u);
+      expect(
+        el.textContent!.trim().startsWith('This') || el.textContent!.trim().startsWith('Data')
+      ).toBe(true);
+    }
+  });
+
   it('only one banner exists at a time', () => {
     showSceneIdentityBanner('unreachable');
     showSceneIdentityBanner('changed');
