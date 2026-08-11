@@ -7,8 +7,9 @@ import { describe, expect, it } from 'vitest';
 
 import { GAUSSIAN_EQUIVALENT_TRUNCATION } from '../../../../rendering/materials/_shared/falloff';
 import {
-  CAPSULE_CUT_FADE_RADIUS_FRACTION,
   CAPSULE_MIN_RADIUS_PX,
+  type CapsuleJointLeg,
+  capsuleJointCompositionError,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_SUPPORT_SIGMA,
   capsuleProfile,
@@ -32,8 +33,7 @@ describe('capsule constants', () => {
     expect(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7)).toBe('0.6590102');
   });
 
-  it('joint constants: quarter-radius cut fade, 1.5 px AA floor', () => {
-    expect(CAPSULE_CUT_FADE_RADIUS_FRACTION).toBe(0.25);
+  it('joint constants: 1.5 px AA floor', () => {
     expect(CAPSULE_MIN_RADIUS_PX).toBe(1.5); // matches the quad's AA floor
   });
 
@@ -43,27 +43,41 @@ describe('capsule constants', () => {
       expect(src).toContain('1.5'); // AA radius floor
     }
     for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
-      // The quartic default path, the sharpness exponent map, and the
-      // foreign-side cut fade fraction.
+      // The quartic default path and the sharpness exponent map.
       expect(src).toContain('w * w');
       expect(src).toContain('exp2(3.0 - 4.0 * vSharp)');
-      expect(src).toContain(CAPSULE_CUT_FADE_RADIUS_FRACTION.toFixed(2));
     }
   });
 
-  it('the two stages agree on the foreign-side fade band', () => {
-    // The fragment shades the bend-scaled fade beyond the endpoint, so the
-    // vertex stage must reserve stencil for it — reserving only the kept
-    // half-disc (|n.y|·rMax) chopped the ramp part-way down at gentle
-    // joints and handed back the hard step the fade exists to remove.
-    const frac = CAPSULE_CUT_FADE_RADIUS_FRACTION.toFixed(2);
-    for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
-      expect(src).toContain(`(abs(nLoc.y) + ${frac} * max(abs(nLoc.y), 0.25)) * rMax`);
-      expect(src).not.toMatch(/ext[AB] = abs\(nLoc\.y\) \* rMax/);
-    }
+  it('the joint composes by the DEFICIT rule: max(mine, partner), no fade', () => {
+    // On the partner's side of the joint bisector the fragment renders
+    // max(mine − partner, 0) — exact partition for congruent legs (zero
+    // double-count: a soft fade was reverted after live QA showed bright
+    // wedges) while a fat vertex's disc keeps the half a thin neighbour
+    // cannot render (live QA showed the pure hard cut chopping it).
     for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
-      expect(src).toContain(`${frac} * rPx * max(abs(vCutA2.y), 0.25)`);
-      expect(src).toContain(`${frac} * rPx * max(abs(vCutB2.y), 0.25)`);
+      expect(src).not.toContain('cutFade');
+      expect(src).not.toContain('smoothstep');
+      expect(src).toContain('luxarPartnerProfile');
+      expect(src).toContain('if (profile <= 0.0) discard;');
+      // The cut is a 1 px AA RAMP (hard-step boundary pixels flip
+      // independently per leg — speckles), and a non-negative gradient
+      // packet contributes no deficit (hard cut via the zero blend).
+      expect(src).toContain('clamp(0.5 - sideA, 0.0, 1.0)');
+      // Packet validity = a positive packed partner length.
+      expect(src).toContain('if (vCutA2.w > 0.0) {');
+    }
+    for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
+      // Stencil reach covers the kept half-disc PLUS the partner's taper
+      // deficit (the disc half the deficit rule now renders).
+      // Full-disc reach when a packet exists (#1488): the deficit term is
+      // bounded by my own profile, so my own support bounds its support.
+      expect(src).toMatch(/ext[AB] = rMax \+ /);
+      // The partner packet carries the far radius from the SAME texels,
+      // packed as a radius GRADIENT + projected LENGTH in the cut varying.
+      expect(src).toContain('sanitizeNonNegative(far.w, 0.0)');
+      expect(src).toMatch(/cut[AB]\.z = \(rpFar[AB] - r[AB]\) \/ ql;/);
+      expect(src).toMatch(/cut[AB]\.w = ql;/);
     }
   });
 
@@ -73,16 +87,6 @@ describe('capsule constants', () => {
     for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
       expect(src).toContain('luxarLineJointCapSuppression(lineT4.y)');
       expect(src).toContain('luxarLineJointCapSuppression(lineT4.z)');
-    }
-  });
-
-  it('a butt cut is hard — nothing draws past the endpoint line', () => {
-    // No bisector (slice-clipped end, behind-near joint vertex, degenerate
-    // partner projection, exactly straight joint) ⇒ no partner body to fade
-    // into, and the vertex stage reserves no fade band there either.
-    for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
-      expect(src).toContain('vCutA2.y == 0.0');
-      expect(src).toContain('vCutB2.y == 0.0');
     }
   });
 
@@ -124,6 +128,110 @@ describe('capsuleProfile (CPU reference)', () => {
         expect(val).toBeLessThanOrEqual(prev + 1e-12);
         prev = val;
       }
+    }
+  });
+});
+
+describe('joint composition — the rendered pair tracks max(mine, partner)', () => {
+  // The numeric sweep the #1487 review asked for: none of #1494 (wrong
+  // vertex radius), #1488 (reach shortfall) or #1490 (missing far cap)
+  // were visible to source-substring pins; all three blow these bounds.
+  const leg = (
+    angleDeg: number,
+    rJoint: number,
+    rFar: number,
+    length: number
+  ): CapsuleJointLeg => ({
+    dir: [Math.cos((angleDeg * Math.PI) / 180), Math.sin((angleDeg * Math.PI) / 180)],
+    rJoint,
+    rFar,
+    length,
+  });
+
+  it('congruent legs: the AA ramp costs ≤2.5% of peak and never over-brightens', () => {
+    for (const turn of [20, 60, 120]) {
+      const { minErr, maxErr } = capsuleJointCompositionError(
+        leg(180, 10, 10, 60),
+        leg(-turn, 10, 10, 60)
+      );
+      expect(minErr, `turn ${turn}° min`).toBeGreaterThan(-0.025);
+      expect(maxErr, `turn ${turn}° max`).toBeLessThan(0.005);
+    }
+  });
+
+  it('tapered own leg (the #1494 rows): bounded now that rEnd is the vertex radius', () => {
+    // Review table, θ = 60°, vertex radius 10, partner tapering 10 → 5
+    // over 30 px: shipped-before errors reached −0.478 / +0.263.
+    for (const [rFar, len] of [
+      [4, 20],
+      [4, 60],
+      [20, 20],
+      [20, 60],
+    ] as const) {
+      const { minErr, maxErr } = capsuleJointCompositionError(
+        leg(180, 10, rFar, len),
+        leg(-60, 10, 5, 30)
+      );
+      expect(minErr, `own 10→${rFar}/L${len} min`).toBeGreaterThan(-0.13);
+      expect(maxErr, `own 10→${rFar}/L${len} max`).toBeLessThan(0.06);
+    }
+  });
+
+  it('constant-width and widening cases (#1495): the gate opens for every deficit source', () => {
+    // The review's rows: a one-sided gate (thinning partner only) left all
+    // of these hard-chopping, down to −0.861 of peak at 160°/ql=2.
+    // Angle convention: leg(-t) puts the partner t degrees FROM STRAIGHT
+    // (straight continuation of the own leg at 180° is 0°) — the same
+    // convention as the congruent rows above. The first cut of these rows
+    // used the angle BETWEEN the legs by mistake, which made every row a
+    // near-straight joint the old gate already handled — the sweep passed
+    // verbatim with the fix reverted (#1497). Bounds are ±0.03: gated,
+    // every configuration measures within ±0.02 of max(mine, partner);
+    // with the one-sided gate these rows chop to −0.86.
+    const cases: Array<[string, CapsuleJointLeg, CapsuleJointLeg]> = [
+      ['const partner 120° ql2', leg(180, 10, 10, 60), leg(-120, 10, 10, 2)],
+      ['const partner 160° ql2', leg(180, 10, 10, 60), leg(-160, 10, 10, 2)],
+      ['const partner 160° ql15', leg(180, 10, 10, 60), leg(-160, 10, 10, 15)],
+      ['widening partner 150°', leg(180, 10, 10, 60), leg(-150, 10, 30, 30)],
+      ['widening own leg 160°', leg(180, 10, 20, 60), leg(-160, 10, 10, 60)],
+      ['const partner 160° ql60', leg(180, 10, 10, 60), leg(-160, 10, 10, 60)],
+      // The #1501 band: a hairpin partner LONGER than the disc (passes
+      // the length clause) but SHORTER than my leg — the bisector splits
+      // my rod lengthwise and only the angle clause opens the packet
+      // (measured to −0.92 without it). These isolate that clause.
+      ['const partner 160° ql20 (#1501)', leg(180, 10, 10, 60), leg(-160, 10, 10, 20)],
+      ['const partner 170° ql25 (#1501)', leg(180, 10, 10, 60), leg(-170, 10, 10, 25)],
+      ['const partner 175° ql20 (#1501)', leg(180, 10, 10, 60), leg(-175, 10, 10, 20)],
+      // BOTH legs long at a near-hairpin (#1502): with the cut spanning
+      // the full stencil, any per-leg quantisation of the plane normal
+      // accumulates with distance along the rod — a 1/1024 snap measured
+      // +0.057 here and ±0.35 at longer legs. Unsnapped it is ~0.
+      ['hairpin, both legs long (#1502)', leg(180, 10, 10, 60), leg(-178.6, 10, 10, 60)],
+      // Thinning partner at a moderate bend: isolates the taper-ratio
+      // clause (constant own leg, long partner, gentle enough that the
+      // sharp clause stays closed). The own-widening clause is the one
+      // clause this model CANNOT isolate: the partner's symmetric ratio
+      // always opens a packet from the other side here, and the clause
+      // exists for the case the model lacks — a width-gated-off partner.
+      ['thinning partner 60° ql30', leg(180, 10, 10, 60), leg(-60, 10, 4, 30)],
+    ];
+    for (const [name, a, b] of cases) {
+      const { minErr, maxErr } = capsuleJointCompositionError(a, b);
+      expect(minErr, `${name} min`).toBeGreaterThan(-0.03);
+      expect(maxErr, `${name} max`).toBeLessThan(0.03);
+    }
+  });
+
+  it('short partners (#1488/#1490): no chopped disc, no double-count', () => {
+    // Constant-width own leg isolates these two; before the fixes the
+    // chop reached −0.306 and the excess +0.859 at ql = 2 px.
+    for (const ql of [2, 4, 8, 15, 40]) {
+      const { minErr, maxErr } = capsuleJointCompositionError(
+        leg(180, 10, 10, 60),
+        leg(-60, 10, 5, ql)
+      );
+      expect(minErr, `ql ${ql} min`).toBeGreaterThan(-0.13);
+      expect(maxErr, `ql ${ql} max`).toBeLessThan(0.06);
     }
   });
 });
