@@ -137,23 +137,37 @@ def test_luxar_path_mention_is_not_a_live_demo(tmp_path: Path, monkeypatch) -> N
 
 
 # ─────────────────────────────── stopping ────────────────────────────────────
-def _spawn_marked_sleeper() -> "subprocess.Popen[bytes]":
-    """An isolated-group child whose ps command line carries a `-m luxar` mark.
+@pytest.fixture(scope="module")
+def marked_python_pkg(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A throwaway `luxar` package whose `python -m` entry point just sleeps.
 
-    The registry's pid-reuse guard requires the `-m luxar` module fingerprint
-    (not a bare "luxar" substring), so the marker argv mimics it. Deliberately
-    NOT `-m luxar.demos.demo_*`: that would make a concurrently running REAL
+    The registry's pid-reuse guard requires a genuine `-m luxar` module
+    *invocation* — an argument that merely mentions the flag is not one — so
+    the stand-in demo has to really be run with `-m`. Deliberately NOT
+    `luxar.demos.demo_*`: that would make a concurrently running REAL
     `luxar demo stop` sweep this test process up as a demo.
     """
+    root = tmp_path_factory.mktemp("marked-python-pkg")
+    pkg = root / "luxar"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "__main__.py").write_text("import time\n\ntime.sleep(120)\n")
+    return root
+
+
+def _spawn_marked_sleeper(pkg_root: Path) -> "subprocess.Popen[bytes]":
+    """An isolated-group child whose ps command line IS `python -m luxar`."""
     return subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(120)", "-m", "luxar"],
+        [sys.executable, "-m", "luxar"],
+        cwd=pkg_root,
+        env={**os.environ, "PYTHONPATH": str(pkg_root)},
         start_new_session=True,
     )
 
 
 @posix_only
-def test_stop_run_kills_live_group(tmp_path: Path) -> None:
-    proc = _spawn_marked_sleeper()
+def test_stop_run_kills_live_group(tmp_path: Path, marked_python_pkg: Path) -> None:
+    proc = _spawn_marked_sleeper(marked_python_pkg)
     try:
         path = register_run("sleeper", proc.pid, runs_dir=tmp_path)
         # Filter to our own group: a real demo running on this machine would
@@ -178,9 +192,9 @@ def test_terminate_process_group_gone_is_true() -> None:
 
 
 @posix_only
-def test_terminate_process_group_sigint_first() -> None:
+def test_terminate_process_group_sigint_first(marked_python_pkg: Path) -> None:
     """A well-behaved child exits on the ladder's first rung (SIGINT)."""
-    proc = _spawn_marked_sleeper()
+    proc = _spawn_marked_sleeper(marked_python_pkg)
     start = time.monotonic()
     try:
         assert terminate_process_group(
@@ -259,6 +273,37 @@ def test_sweep_requires_python_executable() -> None:
         ("real", 7),
         ("attached", 8),
     }
+
+
+def test_sweep_ignores_module_flag_in_program_arguments() -> None:
+    """A `-m` that Python is not acting on is an argument, not a module.
+
+    After `-c` code or a script path the rest of the line belongs to that
+    program — a tool invoked with `-m luxar.demos.demo_x` is not the demo and
+    must not be killed as one. Interpreter options before `-m` (including the
+    `-W value` form, whose argument must be stepped over) stay recognised.
+    """
+    rows = [
+        (10, 10, "/usr/bin/python3 -c 'launch()' -m luxar.demos.demo_fake"),
+        (11, 11, "/usr/bin/python3 /opt/bin/tool.py -m luxar.demos.demo_fake"),
+        (12, 12, "/usr/bin/python3 -W ignore -u -m luxar.demos.demo_real"),
+    ]
+    assert {(r.key, r.pgid) for r in _sweep_runs(rows)} == {("real", 12)}
+
+
+def test_sweep_requires_group_leadership() -> None:
+    """A demo that does not lead its own group is left alone.
+
+    `demo run` isolates every demo it launches, so a matching process whose
+    pgid is somebody else's means the group holds unrelated siblings — a
+    hand-started demo under a shell without job control. Killing that group
+    would take the shell down with it.
+    """
+    rows = [
+        (900, 42, "/usr/bin/python3 -m luxar.demos.demo_shared"),  # shell's group
+        (901, 901, "/usr/bin/python3 -m luxar.demos.demo_own"),  # group leader
+    ]
+    assert {(r.key, r.pgid) for r in _sweep_runs(rows)} == {("own", 901)}
 
 
 def test_registry_guard_requires_python_invocation(tmp_path: Path, monkeypatch) -> None:

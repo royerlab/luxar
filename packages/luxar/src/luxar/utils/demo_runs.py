@@ -160,23 +160,40 @@ def _ps_snapshot() -> list[tuple[int, int, str]]:
     return rows or [(pid, pgid, cmd) for pid, pgid, _state, cmd in proc_table()]
 
 
+# Interpreter options whose argument is a SEPARATE token; stepping over it
+# keeps a `python -W ignore -m luxar.demos.demo_x` recognisable as a demo.
+_PY_OPTS_WITH_ARG = frozenset({"-W", "-X"})
+
+# Tokens after which Python has chosen what to run, so everything left on the
+# line is the program's own argv: a code string, end-of-options, or stdin.
+_PY_RUN_SELECTORS = frozenset({"-c", "--", "-"})
+
+
 def _python_module_token(command: str) -> Optional[str]:
     """The module a PYTHON invocation runs via ``-m``, or None.
 
-    Requires the executable token to look like a Python interpreter before
-    trusting any ``-m`` fingerprint: a ``grep``/``vim``/``less`` whose
-    *arguments* merely mention ``-m luxar.demos.demo_*`` must never be swept
-    up as a demo (or validated as one) and killed. Handles both ``-m module``
-    and the attached ``-mmodule`` spelling.
+    Two things have to hold before a ``-m`` fingerprint is trusted. The
+    executable must look like a Python interpreter — a ``grep``/``vim``/
+    ``less`` whose *arguments* merely mention ``-m luxar.demos.demo_*`` must
+    never be swept up as a demo (or validated as one) and killed. And the
+    ``-m`` must still be an *interpreter* option: once Python has picked ``-c``
+    code, a script path or stdin, the rest of the line is that program's argv,
+    so ``python -c '…' -m luxar.demos.demo_lorenz`` is not running the demo.
+    Both ``-m module`` and the attached ``-mmodule`` spelling are handled.
     """
     tokens = command.split()
     if not tokens or "python" not in Path(tokens[0]).name.lower():
         return None
-    for i, tok in enumerate(tokens[1:], start=1):
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
         if tok == "-m":
             return tokens[i + 1] if i + 1 < len(tokens) else None
         if tok.startswith("-m") and not tok.startswith("--"):
             return tok[2:]
+        if tok in _PY_RUN_SELECTORS or not tok.startswith("-"):
+            return None  # code / stdin / script path: no module is being run
+        i += 2 if tok in _PY_OPTS_WITH_ARG else 1
     return None
 
 
@@ -201,12 +218,19 @@ def _sweep_runs(snapshot: list[tuple[int, int, str]]) -> list[DemoRun]:
     ``isolate_group=True``) is targeted — never the L0 ``luxar demo run``
     owner, whose group is the user's terminal job and must not be signalled.
     Killing the L1 group makes L0's ``run_child_process`` return on its own.
+
+    Group leadership (``pid == pgid``) is *required*, not assumed: the kill is
+    aimed at a whole process group, and a demo that does not lead its own
+    group — one started by hand from a shell without job control, or under a
+    supervisor — shares that group with unrelated siblings which must not die
+    with it. Such a run is left for the user to stop; the registry covers
+    every demo we launched ourselves.
     """
     runs: list[DemoRun] = []
     seen: set[int] = set()
     for pid, pgid, command in snapshot:
         suffix = _demo_module_suffix(command)
-        if suffix is None or pgid in seen:
+        if suffix is None or pid != pgid or pgid in seen:
             continue
         seen.add(pgid)
         runs.append(DemoRun(key=suffix, pgid=pgid, pid=0, started=0.0, source="sweep"))

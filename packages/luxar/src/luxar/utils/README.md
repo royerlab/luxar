@@ -231,7 +231,8 @@ running demo — even one forgotten in another terminal — and free its ports.
   `~/.cache/luxar/running/`, written by `demo run`'s `on_spawn` hook and
   removed on exit (so the registry only ever names survivors)
 - `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
-  strays (`-m luxar.demos.demo_*` command lines); prunes dead/hijacked
+  strays — a process that *leads its own group* and is genuinely running
+  `python -m luxar.demos.demo_*`; prunes dead/hijacked
   entries, never returns the caller's own process group. Falls back to
   `proc_table()` when `ps` is missing, so the identity check that keeps a
   recycled pgid alive-and-innocent never silently disappears
