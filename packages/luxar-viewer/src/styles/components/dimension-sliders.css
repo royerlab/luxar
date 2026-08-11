@@ -98,7 +98,7 @@
 .luxar-dimension-slider__value {
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-md);
-  color: var(--luxar-success);
+  color: var(--luxar-text-primary);
   cursor: help;
 }
 
@@ -141,7 +141,7 @@
   position: absolute;
   width: 16px;
   height: 16px;
-  background: var(--luxar-success);
+  background: var(--luxar-highlight);
   border-radius: 50%;
   top: 50%;
   transform: translateY(-50%);
@@ -202,11 +202,11 @@
 
 .luxar-dimension-dropdown__select:hover {
   background-color: var(--luxar-interactive-hover);
-  border-color: color-mix(in srgb, var(--luxar-success) 50%, transparent);
+  border-color: color-mix(in srgb, var(--luxar-highlight) 50%, transparent);
 }
 
 .luxar-dimension-dropdown__select:focus {
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
   background-color: var(--luxar-interactive-hover);
 }
 
@@ -232,24 +232,24 @@
 
 .luxar-dimension-toggle:hover {
   background: var(--luxar-interactive-hover);
-  border-color: color-mix(in srgb, var(--luxar-success) 50%, transparent);
+  border-color: color-mix(in srgb, var(--luxar-highlight) 50%, transparent);
 }
 
 .luxar-dimension-toggle:focus {
   outline: none;
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 .luxar-dimension-toggle--on {
-  background: var(--luxar-success);
+  background: var(--luxar-highlight);
   color: white;
   font-weight: var(--luxar-font-medium);
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-highlight);
 }
 
 .luxar-dimension-toggle--on:hover {
-  background: color-mix(in srgb, var(--luxar-success) 85%, white);
-  border-color: color-mix(in srgb, var(--luxar-success) 85%, white);
+  background: color-mix(in srgb, var(--luxar-highlight) 85%, white);
+  border-color: color-mix(in srgb, var(--luxar-highlight) 85%, white);
 }
 
 /* ========== Empty State ========== */
@@ -280,7 +280,7 @@
 
 [data-theme='light'] .luxar-dimension-dropdown__select:hover {
   background-color: rgba(0, 0, 0, 0.08);
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-highlight);
 }
 
 [data-theme='light'] .luxar-dimension-dropdown__select:focus {
@@ -297,18 +297,18 @@
 
 [data-theme='light'] .luxar-dimension-toggle:hover {
   background: rgba(0, 0, 0, 0.08);
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-highlight);
 }
 
 [data-theme='light'] .luxar-dimension-toggle--on {
-  background: var(--luxar-success);
+  background: var(--luxar-highlight);
   color: white;
-  border-color: var(--luxar-success);
+  border-color: var(--luxar-highlight);
 }
 
 [data-theme='light'] .luxar-dimension-toggle--on:hover {
-  background: color-mix(in srgb, var(--luxar-success) 85%, white);
-  border-color: color-mix(in srgb, var(--luxar-success) 85%, white);
+  background: color-mix(in srgb, var(--luxar-highlight) 85%, white);
+  border-color: color-mix(in srgb, var(--luxar-highlight) 85%, white);
 }
 
 /* ========== Animation Controls (Compact Layout) ========== */
@@ -324,7 +324,7 @@
   flex-shrink: 0;
 
   /* Theming */
-  background: var(--luxar-success);
+  background: var(--luxar-highlight);
   color: white;
   border: none;
   border-radius: var(--luxar-radius-sm);
@@ -344,7 +344,7 @@
 }
 
 .luxar-dimension-slider__play-btn:hover {
-  background: color-mix(in srgb, var(--luxar-success) 85%, white);
+  background: color-mix(in srgb, var(--luxar-highlight) 85%, white);
   transform: scale(1.05);
 }
 
@@ -408,17 +408,12 @@
 }
 
 .luxar-dimension-slider__context-item:hover {
-  background: var(--luxar-success);
-  color: white;
+  background: var(--luxar-interactive-hover);
 }
 
 .luxar-dimension-slider__context-item--selected {
   font-weight: var(--luxar-font-medium);
-  color: var(--luxar-success);
-}
-
-.luxar-dimension-slider__context-item:hover.luxar-dimension-slider__context-item--selected {
-  color: white;
+  color: var(--luxar-highlight);
 }
 
 .luxar-dimension-slider__context-radio {
@@ -434,10 +429,8 @@
   border-color: rgba(0, 0, 0, 0.15);
 }
 
-[data-theme='light'] .luxar-dimension-slider__context-item:hover {
-  background: var(--luxar-success);
-  color: white;
-}
+/* No light-theme hover override any more: the base rule already uses the
+   theme-owned --luxar-interactive-hover, which is correct in every theme. */
 
 @media (prefers-reduced-motion: reduce) {
   .luxar-dimension-slider__context-menu {

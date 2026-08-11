@@ -140,13 +140,13 @@
   padding: var(--luxar-spacing-6);
   background: rgba(255, 255, 255, 0.05);
   border-radius: var(--luxar-radius-sm);
-  border-left: 3px solid color-mix(in srgb, var(--luxar-success) 50%, transparent);
+  border-left: 3px solid var(--luxar-border-strong);
 }
 
 .luxar-error-dialog__guidance-title {
   font-weight: var(--luxar-font-semibold);
   margin-bottom: var(--luxar-spacing-4);
-  color: var(--luxar-success);
+  color: var(--luxar-text-primary);
 }
 
 .luxar-error-dialog__guidance-content {
@@ -215,7 +215,7 @@
 }
 
 [data-theme='light'] .luxar-error-dialog__guidance-title {
-  color: var(--luxar-success);
+  color: var(--luxar-text-primary);
 }
 
 [data-theme='light'] .luxar-error-dialog__guidance-content {
