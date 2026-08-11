@@ -33,19 +33,17 @@
  * bend angle). Which ends cut at all is the SHARED joint-code rule
  * (`luxarLineJointCapSuppression`): a free end and a degree-≥3 hub keep the
  * whole round cap — a hub has no single partner to tile against — while a
- * slice-clipped end is butt-cut. The cut is
- * confined to the cap region: where the two rod BODIES genuinely overlap
- * (the inner corner of a bend) both legs render, matching the physical
- * union. The foreign-side cap contribution fades (smoothstep,
- * bend-scaled — see `CAPSULE_CUT_FADE_RADIUS_FRACTION`) instead of
- * cutting hard, so the hand-off to the partner's body is C0 — sub-pixel
- * at normal widths, smooth when zoomed in. A BUTT cut — no bisector, i.e.
- * a slice-clipped end, a joint vertex behind the near plane, a degenerate
- * partner projection, or an exactly straight joint — has no partner body
- * beyond the endpoint to fade into and no reserved fade band, so it cuts
- * HARD. The partner's far endpoint is near-plane-clipped toward the joint
- * vertex before projecting (a behind-eye projection flips and poisons the
- * cut normal).
+ * slice-clipped end is butt-cut. The cut is HARD and spans the FULL joint
+ * plane (cap and body): exact tiling, zero overlap, zero double-count —
+ * the same domain partition the volumetric primitive integrates per ray.
+ * (A soft foreign-side fade was shipped briefly and reverted: any nonzero
+ * foreign-side contribution double-counts over the partner's body, which
+ * reads as a bright wedge at every joint once zoomed. The hard cut's
+ * residual cost is a subtle brightness gradient along the cut at EXTREME
+ * oblique zoom, where the two legs' apparent radii genuinely diverge —
+ * 2D-intrinsic; only 3D resolves it.) The partner's far endpoint is
+ * near-plane-clipped toward the joint vertex before projecting (a
+ * behind-eye projection flips and poisons the cut normal).
  *
  * @module rendering/materials/_shared/line-capsule
  */
@@ -67,24 +65,6 @@ export const CAPSULE_MIN_RADIUS_PX = 1.5;
 
 /** Stencil AA apron beyond the profile support, in pixels. */
 export const CAPSULE_STENCIL_APRON_PX = 0.5;
-
-/**
- * Foreign-side cap fade length as a fraction of the end radius: my cap
- * region on the PARTNER's side of the joint bisector fades out
- * (smoothstep) over `fraction × max(|n.y|, 0.25) × radius` of axial
- * overhang instead of a hard cut — C0 with the partner's body at its
- * endpoint line (no chevron edge when zoomed) and with my own half-disc
- * at the bisector. The |n.y| bend scaling keeps a near-straight joint's
- * fade (a genuine double-count band — the partner's body already covers
- * there) short, while a real bend fades exactly where the two legs'
- * apparent radii genuinely diverge in 2D; the 0.25 floor keeps the fade
- * from collapsing to a hard seam at shallow projected bends. Sub-pixel
- * at normal widths. The joint stencil reach accounts for the fade band
- * (`(|n.y| + fraction·max(|n.y|, 0.25))·rMax`) — it is raised only where a
- * bisector was actually found, which is why a butt cut is hard rather than
- * faded (a faded overhang there would just be clipped by the stencil).
- */
-export const CAPSULE_CUT_FADE_RADIUS_FRACTION = 0.25;
 
 /**
  * Sharpness-knob → profile exponent map: `n = 2^(3 − 4s)`. In `(1 − p²)^n`

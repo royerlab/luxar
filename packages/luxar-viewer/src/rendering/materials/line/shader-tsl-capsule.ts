@@ -37,7 +37,6 @@ import {
   min,
   clamp,
   mix,
-  smoothstep,
   length,
   exp,
   exp2,
@@ -52,7 +51,6 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import {
-  CAPSULE_CUT_FADE_RADIUS_FRACTION,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
@@ -133,6 +131,12 @@ export function capsuleLineWebGPUFactory(
   const vMeta: TSLNode = varying(vec3(1.0, 0.0, 0.0)).setInterpolation('flat');
   const vCutA2: TSLNode = varying(vec2(-1.0, 0.0)).setInterpolation('flat');
   const vCutB2: TSLNode = varying(vec2(1.0, 0.0)).setInterpolation('flat');
+  // Joint packets for the DEFICIT rule (see the fragment): partner axis
+  // direction in my local frame (.xy), projected length px (.z; 0 = no
+  // usable partner -> hard cut), far radius px (.w); vREnd = my end radii.
+  const vJointA: TSLNode = varying(vec4(0.0, 0.0, 0.0, 0.0)).setInterpolation('flat');
+  const vJointB: TSLNode = varying(vec4(0.0, 0.0, 0.0, 0.0)).setInterpolation('flat');
+  const vREnd: TSLNode = varying(vec2(1.0, 1.0)).setInterpolation('flat');
   const vR: TSLNode = varying(float(1.0));
   const vW: TSLNode = varying(float(1.0));
   const vFade: TSLNode = varying(float(1.0));
@@ -244,6 +248,8 @@ export function capsuleLineWebGPUFactory(
     const capA: TSLNode = interiorA.toVar();
     const capB: TSLNode = interiorB.toVar();
 
+    const pFarWidth: TSLNode = float(0.0).toVar();
+    const pFarDepth: TSLNode = float(1.0).toVar();
     const partnerFarPx = (code: TSLNode, mvJoint: TSLNode, jointDepth: TSLNode): TSLNode => {
       // Decode the joint code to the partner's FAR endpoint, projected to
       // pixels; .z carries validity (0 when the code is a sentinel). The
@@ -257,9 +263,11 @@ export function capsuleLineWebGPUFactory(
         .toVar();
       const pBase: TSLNode = slot.mul(int(6)).toVar();
       const pt0: TSLNode = ivec2(pBase.mod(lineTexW), pBase.div(lineTexW)).toVar();
-      const pStart: TSLNode = uLineTex.load(pt0).xyz.toVar();
-      const pEnd: TSLNode = uLineTex.load(ivec2(pt0.x.add(int(1)), pt0.y)).xyz.toVar();
-      const farObj: TSLNode = code.greaterThan(0.0).select(pEnd, pStart).toVar();
+      const pStart: TSLNode = uLineTex.load(pt0).toVar();
+      const pEnd: TSLNode = uLineTex.load(ivec2(pt0.x.add(int(1)), pt0.y)).toVar();
+      const farTexel: TSLNode = code.greaterThan(0.0).select(pEnd, pStart).toVar();
+      const farObj: TSLNode = farTexel.xyz.toVar();
+      pFarWidth.assign(sanitizeNonNegative(farTexel.w, 0.0));
       const mvFar: TSLNode = modelViewMatrix.mul(vec4(farObj, 1.0)).toVar();
       if (!isOrtho) {
         const farDepth: TSLNode = mvFar.z.negate().toVar();
@@ -272,6 +280,7 @@ export function capsuleLineWebGPUFactory(
           mvFar.assign(mix(mvJoint, mvFar, tF));
         });
       }
+      pFarDepth.assign(max(mvFar.z.negate(), nearCull));
       const cl: TSLNode = cameraProjectionMatrix.mul(mvFar).toVar();
       const px: TSLNode = cl.xy
         .div(max(cl.w, float(1e-6)))
@@ -299,12 +308,23 @@ export function capsuleLineWebGPUFactory(
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.lessThan(-1e-3), () => {
               cutA.assign(nLoc);
-              extA.assign(
-                abs(nLoc.y)
-                  .add(max(abs(nLoc.y), float(0.25)).mul(CAPSULE_CUT_FADE_RADIUS_FRACTION))
-                  .mul(rMax)
-                  .add(CAPSULE_STENCIL_APRON_PX)
-              );
+              const rpFarA: TSLNode = clamp(
+                isOrtho
+                  ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                  : pFarWidth
+                      .mul(uPerspectiveLineScale)
+                      .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                      .div(pFarDepth),
+                CAPSULE_MIN_RADIUS_PX,
+                uMaxLinePixelWidth
+              ).toVar();
+              vJointA.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarA));
+              const deficitA: TSLNode = clamp(
+                float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))),
+                0.0,
+                1.0
+              ).toVar();
+              extA.assign(max(abs(nLoc.y), deficitA).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
             });
           }).Else(() => {
             // Near-hairpin: the bisector is degenerate — plain round cap.
@@ -330,12 +350,23 @@ export function capsuleLineWebGPUFactory(
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.greaterThan(1e-3), () => {
               cutB.assign(nLoc);
-              extB.assign(
-                abs(nLoc.y)
-                  .add(max(abs(nLoc.y), float(0.25)).mul(CAPSULE_CUT_FADE_RADIUS_FRACTION))
-                  .mul(rMax)
-                  .add(CAPSULE_STENCIL_APRON_PX)
-              );
+              const rpFarB: TSLNode = clamp(
+                isOrtho
+                  ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                  : pFarWidth
+                      .mul(uPerspectiveLineScale)
+                      .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                      .div(pFarDepth),
+                CAPSULE_MIN_RADIUS_PX,
+                uMaxLinePixelWidth
+              ).toVar();
+              vJointB.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarB));
+              const deficitB: TSLNode = clamp(
+                float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))),
+                0.0,
+                1.0
+              ).toVar();
+              extB.assign(max(abs(nLoc.y), deficitB).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
             });
           }).Else(() => {
             // Near-hairpin (see end A).
@@ -368,6 +399,7 @@ export function capsuleLineWebGPUFactory(
       : perspectiveNearFadeStaticTSL(false, mix(mvA.z, mvB.z, tc), nearCull).toVar();
 
     vMeta.assign(vec3(abLen, capA, capB));
+    vREnd.assign(vec2(rA, rB));
     vCutA2.assign(cutA);
     vCutB2.assign(cutB);
 
@@ -402,47 +434,7 @@ export function capsuleLineWebGPUFactory(
     const x: TSLNode = vLocal.x.mul(invW).toVar();
     const y: TSLNode = vLocal.y.mul(invW).toVar();
     // Bisector-cut sides (my side negative); straight joints = butt.
-    // Foreign-side cap fade, bend-scaled (see the GLSL twin's note): a
-    // straight joint is an exact butt; a bend fades over |n.y|·fraction·r.
     const rPx: TSLNode = max(vR.mul(invW), float(1e-4)).toVar();
-    const cutFade: TSLNode = float(1.0).toVar();
-    If(
-      vMeta.y
-        .greaterThan(0.5)
-        .and(x.lessThan(0.0))
-        .and(vCutA2.x.mul(x).add(vCutA2.y.mul(y)).greaterThan(0.0)),
-      () => {
-        const fadeLenA: TSLNode = rPx
-          .mul(CAPSULE_CUT_FADE_RADIUS_FRACTION)
-          .mul(max(abs(vCutA2.y), float(0.25)))
-          .toVar();
-        // A BUTT cut (normal exactly ±(1,0)) has no partner body beyond the
-        // endpoint to fade into and no reserved fade band — cut hard.
-        cutFade.mulAssign(
-          vCutA2.y
-            .equal(0.0)
-            .select(float(0.0), smoothstep(0.0, 1.0, float(1.0).add(x.div(fadeLenA))))
-        );
-      }
-    );
-    If(
-      vMeta.z
-        .greaterThan(0.5)
-        .and(x.greaterThan(vMeta.x))
-        .and(vCutB2.x.mul(x.sub(vMeta.x)).add(vCutB2.y.mul(y)).greaterThan(0.0)),
-      () => {
-        const fadeLenB: TSLNode = rPx
-          .mul(CAPSULE_CUT_FADE_RADIUS_FRACTION)
-          .mul(max(abs(vCutB2.y), float(0.25)))
-          .toVar();
-        cutFade.mulAssign(
-          vCutB2.y
-            .equal(0.0)
-            .select(float(0.0), smoothstep(0.0, 1.0, float(1.0).sub(x.sub(vMeta.x).div(fadeLenB))))
-        );
-      }
-    );
-    Discard(cutFade.lessThanEqual(0.0));
     // Squared distance in the local frame — the TRUE point-to-segment
     // distance, cap term included at BOTH ends: every end is capped (a free
     // end keeps the whole disc, a cut end its half of the joint disc).
@@ -458,7 +450,41 @@ export function capsuleLineWebGPUFactory(
       .lessThan(1e-3)
       .select(w.mul(w).toVar(), pow(w, exp2(float(3.0).sub(vSharp.mul(4.0)))).toVar())
       .toVar();
-    const intensity: TSLNode = profile.mul(vFade).mul(cutFade).toVar();
+
+    // Joint DEFICIT rule (see the GLSL twin's note): on the partner's side
+    // of the joint bisector I render max(mine − partner, 0), so the pair
+    // composes to max(mine, partner) — exact partition for congruent legs,
+    // and a fat vertex's disc no longer loses its far half to a thin
+    // neighbour. Packet length 0 = no usable partner: hard cut.
+    const partnerProfile = (rel: TSLNode, joint: TSLNode, rEnd: TSLNode): TSLNode => {
+      const xp: TSLNode = dot(rel, joint.xy).toVar();
+      const yp2: TSLNode = max(dot(rel, rel).sub(xp.mul(xp)), 0.0).toVar();
+      const tp: TSLNode = clamp(xp.div(max(joint.z, float(1e-4))), 0.0, 1.0).toVar();
+      const rp: TSLNode = max(mix(rEnd, joint.w, tp), float(1e-4)).toVar();
+      const op: TSLNode = max(max(xp.negate(), xp.sub(joint.z)), 0.0).toVar();
+      const qp: TSLNode = yp2.add(op.mul(op)).div(rp.mul(rp)).toVar();
+      const wp: TSLNode = max(float(1.0).sub(qp), 0.0).toVar();
+      return abs(vSharp.sub(0.5))
+        .lessThan(1e-3)
+        .select(wp.mul(wp), pow(wp, exp2(float(3.0).sub(vSharp.mul(4.0)))))
+        .toVar();
+    };
+    If(vMeta.y.greaterThan(0.5).and(vCutA2.x.mul(x).add(vCutA2.y.mul(y)).greaterThan(0.0)), () => {
+      Discard(vJointA.z.lessThan(0.5));
+      profile.subAssign(partnerProfile(vec2(x, y), vJointA, vREnd.x));
+      Discard(profile.lessThanEqual(0.0));
+    });
+    If(
+      vMeta.z
+        .greaterThan(0.5)
+        .and(vCutB2.x.mul(x.sub(vMeta.x)).add(vCutB2.y.mul(y)).greaterThan(0.0)),
+      () => {
+        Discard(vJointB.z.lessThan(0.5));
+        profile.subAssign(partnerProfile(vec2(x.sub(vMeta.x), y), vJointB, vREnd.y));
+        Discard(profile.lessThanEqual(0.0));
+      }
+    );
+    const intensity: TSLNode = profile.mul(vFade).toVar();
 
     let color: TSLNode;
     if (config.useColormap) {

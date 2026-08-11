@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest';
 
 import { GAUSSIAN_EQUIVALENT_TRUNCATION } from '../../../../rendering/materials/_shared/falloff';
 import {
-  CAPSULE_CUT_FADE_RADIUS_FRACTION,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_SUPPORT_SIGMA,
@@ -32,8 +31,7 @@ describe('capsule constants', () => {
     expect(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7)).toBe('0.6590102');
   });
 
-  it('joint constants: quarter-radius cut fade, 1.5 px AA floor', () => {
-    expect(CAPSULE_CUT_FADE_RADIUS_FRACTION).toBe(0.25);
+  it('joint constants: 1.5 px AA floor', () => {
     expect(CAPSULE_MIN_RADIUS_PX).toBe(1.5); // matches the quad's AA floor
   });
 
@@ -43,27 +41,32 @@ describe('capsule constants', () => {
       expect(src).toContain('1.5'); // AA radius floor
     }
     for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
-      // The quartic default path, the sharpness exponent map, and the
-      // foreign-side cut fade fraction.
+      // The quartic default path and the sharpness exponent map.
       expect(src).toContain('w * w');
       expect(src).toContain('exp2(3.0 - 4.0 * vSharp)');
-      expect(src).toContain(CAPSULE_CUT_FADE_RADIUS_FRACTION.toFixed(2));
     }
   });
 
-  it('the two stages agree on the foreign-side fade band', () => {
-    // The fragment shades the bend-scaled fade beyond the endpoint, so the
-    // vertex stage must reserve stencil for it — reserving only the kept
-    // half-disc (|n.y|·rMax) chopped the ramp part-way down at gentle
-    // joints and handed back the hard step the fade exists to remove.
-    const frac = CAPSULE_CUT_FADE_RADIUS_FRACTION.toFixed(2);
-    for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
-      expect(src).toContain(`(abs(nLoc.y) + ${frac} * max(abs(nLoc.y), 0.25)) * rMax`);
-      expect(src).not.toMatch(/ext[AB] = abs\(nLoc\.y\) \* rMax/);
-    }
+  it('the joint composes by the DEFICIT rule: max(mine, partner), no fade', () => {
+    // On the partner's side of the joint bisector the fragment renders
+    // max(mine − partner, 0) — exact partition for congruent legs (zero
+    // double-count: a soft fade was reverted after live QA showed bright
+    // wedges) while a fat vertex's disc keeps the half a thin neighbour
+    // cannot render (live QA showed the pure hard cut chopping it).
     for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
-      expect(src).toContain(`${frac} * rPx * max(abs(vCutA2.y), 0.25)`);
-      expect(src).toContain(`${frac} * rPx * max(abs(vCutB2.y), 0.25)`);
+      expect(src).not.toContain('cutFade');
+      expect(src).not.toContain('smoothstep');
+      expect(src).toContain('luxarPartnerProfile');
+      expect(src).toContain('if (profile <= 0.0) discard;');
+      // No usable partner (packet length 0) still cuts hard.
+      expect(src).toContain('if (vJointA.z < 0.5) discard;');
+    }
+    for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
+      // Stencil reach covers the kept half-disc PLUS the partner's taper
+      // deficit (the disc half the deficit rule now renders).
+      expect(src).toMatch(/ext[AB] = max\(abs\(nLoc\.y\), deficit[AB]\) \* rMax/);
+      // The partner packet carries the far radius from the SAME texels.
+      expect(src).toContain('sanitizeNonNegative(far.w, 0.0)');
     }
   });
 
@@ -73,16 +76,6 @@ describe('capsule constants', () => {
     for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
       expect(src).toContain('luxarLineJointCapSuppression(lineT4.y)');
       expect(src).toContain('luxarLineJointCapSuppression(lineT4.z)');
-    }
-  });
-
-  it('a butt cut is hard — nothing draws past the endpoint line', () => {
-    // No bisector (slice-clipped end, behind-near joint vertex, degenerate
-    // partner projection, exactly straight joint) ⇒ no partner body to fade
-    // into, and the vertex stage reserves no fade band there either.
-    for (const src of [CAPSULE_LINE_FRAGMENT_SHADER, CAPSULE_LINE_PICK_FRAGMENT_SHADER]) {
-      expect(src).toContain('vCutA2.y == 0.0');
-      expect(src).toContain('vCutB2.y == 0.0');
     }
   });
 
