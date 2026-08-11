@@ -89,6 +89,37 @@ describe('SceneIdentityWatchdog', () => {
     wd.dispose();
   });
 
+  it('appends .zattrs to the PATH, keeping a query string and dropping a fragment', async () => {
+    // A presigned/tokenized source carries its credentials in the query, and
+    // the zarr fetch store copies them onto every key it reads — string
+    // concatenation would bury `/.zattrs` inside the query (or behind the
+    // fragment) and 404 the probe into a bogus "different scene" verdict.
+    const urls: string[] = [];
+    const probeUrl = async (datasetUrl: string) => {
+      const wd = new SceneIdentityWatchdog({
+        datasetUrl,
+        expectedContentHash: HASH,
+        intervalMs: 5000,
+        fetchImpl: (async (input: RequestInfo | URL) => {
+          urls.push(String(input));
+          return okResponse(ATTRS);
+        }) as typeof fetch,
+      });
+      wd.start();
+      await tick(5000);
+      wd.dispose();
+    };
+
+    await probeUrl('https://host/scene.zarr?token=abc');
+    await probeUrl('https://host/scene.zarr/?token=abc');
+    await probeUrl('https://host/scene.zarr#frag');
+    expect(urls).toEqual([
+      'https://host/scene.zarr/.zattrs?token=abc',
+      'https://host/scene.zarr/.zattrs?token=abc',
+      'https://host/scene.zarr/.zattrs',
+    ]);
+  });
+
   it('matching hash keeps quiet and clears a prior unreachable banner', async () => {
     const wd = makeWatchdog(async () => okResponse(ATTRS));
     wd.start();

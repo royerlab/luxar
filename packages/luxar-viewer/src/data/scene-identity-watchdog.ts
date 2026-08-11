@@ -78,6 +78,26 @@ export function canonicalJson(value: unknown): string | undefined {
   return JSON.stringify(sortKeysDeep(value));
 }
 
+/**
+ * Build the root `.zattrs` URL for a dataset base URL.
+ *
+ * Appends to the PATH rather than to the raw string, so a query string
+ * survives (presigned / tokenized sources — zarrita's `FetchStore` copies the
+ * base search params onto every key it fetches, so the store does the same)
+ * and a fragment is dropped instead of swallowing the appended path. Falls
+ * back to plain concatenation for anything `URL` cannot parse.
+ */
+function buildAttrsUrl(datasetUrl: string): string {
+  try {
+    const url = new URL(datasetUrl);
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/.zattrs`;
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return `${datasetUrl}/.zattrs`;
+  }
+}
+
 function sortKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeysDeep);
   if (value === null || typeof value !== 'object') return value;
@@ -88,7 +108,11 @@ function sortKeysDeep(value: unknown): unknown {
 }
 
 export interface SceneIdentityWatchdogOptions {
-  /** Dataset base URL (the `?src=` value, trailing slash tolerated). */
+  /**
+   * Dataset base URL (the `?src=` value). A trailing slash, a query string
+   * and a fragment are all tolerated: the probe appends `.zattrs` to the
+   * path, keeps the query, and drops the fragment.
+   */
   datasetUrl: string;
   /** `content_hash` of the scene actually loaded (null when absent). */
   expectedContentHash: string | null;
@@ -115,6 +139,8 @@ export type SceneIdentityVerdict = 'ok' | 'changed' | 'unreachable';
 
 export class SceneIdentityWatchdog {
   private readonly url: string;
+  /** Root `.zattrs` address derived from the dataset URL (query-preserving). */
+  private readonly attrsUrl: string;
   private readonly expectedHash: string | null;
   private readonly expectedAttrsJson: string | null;
   private readonly intervalMs: number;
@@ -137,6 +163,7 @@ export class SceneIdentityWatchdog {
 
   constructor(opts: SceneIdentityWatchdogOptions) {
     this.url = opts.datasetUrl.replace(/\/+$/, '');
+    this.attrsUrl = buildAttrsUrl(this.url);
     this.expectedHash = opts.expectedContentHash;
     this.expectedAttrsJson = opts.expectedAttrsJson ?? null;
     this.intervalMs = opts.intervalMs ?? CHECK_INTERVAL_MS;
@@ -205,7 +232,7 @@ export class SceneIdentityWatchdog {
     this.inFlightAbort = abort;
     const timeout = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
     try {
-      const res = await this.fetchImpl(`${this.url}/.zattrs`, {
+      const res = await this.fetchImpl(this.attrsUrl, {
         cache: 'no-store',
         signal: abort.signal,
       });
