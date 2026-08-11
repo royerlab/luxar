@@ -65,16 +65,12 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     // corner's clip w and divided by vW in the fragment (screen-linear;
     // see the visual twin's declaration note).
     out vec2 vLocal;
-    flat out vec3 vMeta;
+    // (abLen px, capFlags = interiorA + 2·interiorB, rA px, rB px)
+    flat out vec4 vMeta;
     // .xy = bisector-cut normal; .z = partner radius gradient packet
     // (mirrors the visual capsule exactly).
     flat out vec4 vCutA2;
     flat out vec4 vCutB2;
-    // My own endpoint radii (rA, rB) in px: the fragment computes the
-    // EXACT drawn radius from them (a linear varying cannot — its
-    // interpolation spans the cap extensions; the root of #1494), and the
-    // partner's radius at the shared vertex is the matching entry.
-    flat out vec2 vREnd;
     out float vW;
     out float vFade;
     out float vSharp;
@@ -119,9 +115,8 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float endDepth = -mvEnd.z;
       if ((uIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-        vLocal = vec2(0.0); vMeta = vec3(1.0, 0.0, 0.0);
+        vLocal = vec2(0.0); vMeta = vec4(1.0, 0.0, 1.0, 1.0);
         vCutA2 = vec4(-1.0, 0.0, 0.0, 0.0); vCutB2 = vec4(1.0, 0.0, 0.0, 0.0);
-        vREnd = vec2(1.0);
         vW = 1.0; vFade = 0.0; vSharp = 0.5;
         return;
       }
@@ -181,7 +176,6 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float rMax = max(rA, rB) + ${G.APRON};
       vec4 cutA = vec4(-1.0, 0.0, 0.0, 0.0);
       vec4 cutB = vec4(1.0, 0.0, 0.0, 0.0);
-      vREnd = vec2(rA, rB);
       float extA = rMax;
       float extB = rMax;
       if (interiorA > 0.5) {
@@ -304,7 +298,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       }
       vCutA2 = cutA;
       vCutB2 = cutB;
-      vMeta = vec3(abLen, interiorA, interiorB);
+      vMeta = vec4(abLen, interiorA + 2.0 * interiorB, rA, rB);
 
       float lx = aQuadCorner.x > 0.0 ? abLen + extB : -extA;
       float ly = aQuadCorner.y * rMax;
@@ -334,10 +328,9 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
     in vec2 vLocal;
-    flat in vec3 vMeta;
+    flat in vec4 vMeta;
     flat in vec4 vCutA2;
     flat in vec4 vCutB2;
-    flat in vec2 vREnd;
     in float vW;
     in float vFade;
     in float vSharp;
@@ -375,8 +368,10 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // the segment span — a varying cannot represent this (its linear
       // interpolation spans the cap extensions, so a short stub's drawn
       // radius at its own endpoint drifts; the deeper root of #1494).
+      float cutFlagA = mod(vMeta.y, 2.0);
+      float cutFlagB = vMeta.y >= 2.0 ? 1.0 : 0.0;
       float rPx = max(
-        mix(vREnd.x, vREnd.y, clamp(x / max(vMeta.x, 1e-4), 0.0, 1.0)),
+        mix(vMeta.z, vMeta.w, clamp(x / max(vMeta.x, 1e-4), 0.0, 1.0)),
         1e-4
       );
       // TRUE point-to-segment distance: every end is capped (a free end
@@ -398,14 +393,14 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // every joint. Complementary ramps sum to exactly 1 instead, and
       // anti-alias the cut for free. The DEFICIT term blends in over the
       // same ramp: full profile on my side, max(mine − partner, 0) beyond.
-      if (vMeta.y > 0.5) {
+      if (cutFlagA > 0.5) {
         float sideA = vCutA2.x * x + vCutA2.y * y;
         if (sideA > -0.5) {
           float coverA = clamp(0.5 - sideA, 0.0, 1.0);
           float defA = 0.0;
           if (vCutA2.w > 0.0) {
             defA = max(
-              profile - luxarPartnerProfile(vCutA2, vec2(x, y), 1.0, vREnd.x, vSharp),
+              profile - luxarPartnerProfile(vCutA2, vec2(x, y), 1.0, vMeta.z, vSharp),
               0.0
             );
           }
@@ -413,14 +408,14 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
           if (profile <= 0.0) discard;
         }
       }
-      if (vMeta.z > 0.5) {
+      if (cutFlagB > 0.5) {
         float sideB = vCutB2.x * (x - vMeta.x) + vCutB2.y * y;
         if (sideB > -0.5) {
           float coverB = clamp(0.5 - sideB, 0.0, 1.0);
           float defB = 0.0;
           if (vCutB2.w > 0.0) {
             defB = max(
-              profile - luxarPartnerProfile(vCutB2, vec2(x - vMeta.x, y), -1.0, vREnd.y, vSharp),
+              profile - luxarPartnerProfile(vCutB2, vec2(x - vMeta.x, y), -1.0, vMeta.w, vSharp),
               0.0
             );
           }
