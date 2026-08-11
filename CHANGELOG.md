@@ -36,6 +36,45 @@ came about: the lod-group defer branch claimed the activation thunk runs "the
 expensive tail (and registration)", and `MeshCheapLoad.loader` claimed "the
 expensive half" registers. Neither is true of any of the four loaders.
 
+#### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
+
+Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,
+luminous, volumetric) rendered every line at β = 2 regardless of the per-vertex
+sharpness knob — the closed-form ray integral exists only for the Gaussian, and
+PR-2 documented the gap. The knob now works: the sum fragments' RADIAL factor is
+sampled from a shared 128×65 R16F LUT (the odd height puts the default knob
+exactly on the β = 2 row) of `S(q, s)` — the shifted+normalized
+untruncated Abel transform of the repo profile `exp(−K·rad^β)`, `β = 2^(6s−2)` —
+so the line-of-sight-integrated cross-section has the true general-β SHAPE
+(every row stays normalized to 1 at q = 0 — deliberately: the side-on core
+matches the screen-space quad at any knob, the A/B calibration anchor). The
+AXIAL erf window deliberately stays β = 2 (a cap-local approximation, exact for
+an infinite rod — the trade recorded in the #1352 plan). Peak modes were already
+exact and are untouched.
+
+Two properties carry the design. The β = 2 row of the LUT equals the former
+analytic radial as a function (the Abel transform of a Gaussian is a Gaussian),
+so the fragments sample the LUT unconditionally — there is no analytic/LUT seam
+anywhere on the knob axis. Rendered default-sharpness values go through R16F
+storage + bilinear filtering, so they match the old in-shader evaluation within
+the half-float budget (≤ 8e-4, test-pinned — at most one 8-bit quantization step
+near a rounding threshold), not byte-exactly. And every
+row is pinned to exactly 0 at q = 1, so the vertex stencil's truncation radius
+covers the profile at every sharpness. The CPU reference
+(`_shared/line-integral-lut.ts`) integrates by tanh-sinh quadrature — converged
+well beyond the texture's half-float precision across the whole knob range
+(worst self-convergence 3.2e-5, at β = 16; ≤ 5e-15 elsewhere, including the
+β < 1 cusp a plain compactified trapezoid stalls on) — and the unit tests hold
+the β = 2 row to the
+analytic radial, every row's monotonicity and endpoints, both axes' resolution
+adequacy against denser rebuilds, and the half-float storage error. New parity
+fixtures pin the knob extremes cross-backend (`line-volprim-sharp-hard`) and the
+along-segment knob interpolation (`line-volprim-sharp-taper`), plus a
+mutation-verified physics test: the taper's half-max core is ≥2× wider at the
+hard end than the soft end (a LUT wired to a constant row reads ratio ≈ 1 and
+fails). The texture is a lazy singleton built on the first volumetric material
+(~16 KB, ~90 ms); screen-space materials never trigger it.
+
 #### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
 
 The volumetric line primitive (#1426) gains its picking pass, so the flag now

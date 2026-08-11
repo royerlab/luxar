@@ -174,7 +174,8 @@ function makeLinesChildNode(
 /**
  * A nested group child (e.g. multiscale's fine kind=partition branch). The
  * ``displayType`` lets a single test prove the deferral is geometry-agnostic —
- * a partition/lod wrapper of points or lines defers identically to gsplats.
+ * a partition/lod wrapper of points, lines or mesh defers identically to
+ * gsplats.
  */
 function makeGroupChildNode(
   path: string,
