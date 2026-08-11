@@ -768,6 +768,42 @@ def validate_finite_reveal_coords(coords: Any, what: str) -> None:
     )
 
 
+def validate_integral_axis_indices(values: Any, name: str = "spatial_dims") -> None:
+    """Refuse a non-integral axis index before it is silently truncated to one.
+
+    ``int(1.9)`` and ``np.asarray([1.9], dtype=np.intp)`` both give ``1`` without
+    a word, so a fractional entry measures the reveal over a DIFFERENT column than
+    the caller named — and, when ``reveal_centre`` is given too, pairs that centre
+    coordinate with the wrong axis. Every other malformed ``spatial_dims``
+    (empty, negative, repeated, nested, out of range) is already rejected; this
+    was the one that got through wearing a plausible answer.
+
+    Silent on an integer-dtype input (the overwhelmingly common case) and on an
+    empty one, which the callers' own "must not be empty" rule reports better.
+
+    Args:
+        values: The candidate index sequence, before any int conversion.
+        name: Caller-facing name of the argument, for the message.
+
+    Raises:
+        ValueError: If any entry is finite-but-fractional, NaN, or infinite.
+    """
+    arr = np.asarray(values)
+    if np.issubdtype(arr.dtype, np.integer) or arr.size == 0:
+        return
+    bad = [
+        v
+        for v in np.asarray(arr, dtype=np.float64).ravel().tolist()
+        if not float(v).is_integer()
+    ]
+    if bad:
+        raise ValueError(
+            f"{name} must be integer column indices; got non-integral {bad} "
+            f"(truncating would silently measure a different axis than the one "
+            f"named)"
+        )
+
+
 def is_position_array(obj: Any) -> bool:
     """Check if object is a valid position array."""
     try:

@@ -25,7 +25,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ....utils.lod_methods import REVEAL_METHODS, is_reveal_method
-from ....validation.types import validate_finite_reveal_coords
+from ....validation.types import (
+    validate_finite_reveal_coords,
+    validate_integral_axis_indices,
+)
 
 #: Methods that order for a REVEAL rather than for approximation quality, and so
 #: must not carry energy stamps — the viewer's ``1/e(k)`` brightness compensation
@@ -116,9 +119,10 @@ def _resolve_score_dims(pts_all: NDArray, spatial_dims: Optional[List[int]]) -> 
     negative index ALIASES to another column via numpy indexing, a repeat
     DOUBLE-COUNTS that axis in the distance, an empty list scores every
     element 0.0 — degrading the ordering to input order with no indication —
-    and a NESTED sequence makes ``pts_all[:, dims]`` 3-D, so the score comes
+    a NESTED sequence makes ``pts_all[:, dims]`` 3-D, so the score comes
     back ``(N, k)`` and ``argsort`` returns a per-row permutation rather than
-    an ordering of the elements.
+    an ordering of the elements, and a FRACTIONAL index is truncated to a
+    different column than the one named.
     """
     if spatial_dims is None:
         mins_all = pts_all.min(axis=0)
@@ -131,6 +135,7 @@ def _resolve_score_dims(pts_all: NDArray, spatial_dims: Optional[List[int]]) -> 
             dims = np.arange(pts_all.shape[1], dtype=np.intp)
         return dims
 
+    validate_integral_axis_indices(spatial_dims)
     dims = np.asarray(spatial_dims, dtype=np.intp)
     if dims.ndim != 1:
         raise ValueError(
@@ -177,7 +182,11 @@ def _validated_score_dims(
       passed the inf case and missed the NaN one.
     """
     if spatial_dims is None:
+        # The whole-array check already covers every column the derived dims can
+        # select, so this arm returns before the per-column one — re-checking a
+        # slice of an array just proved finite costs an (N, k) copy for nothing.
         validate_finite_reveal_coords(pts_all, what)
+        return _resolve_score_dims(pts_all, None)
     dims = _resolve_score_dims(pts_all, spatial_dims)
     validate_finite_reveal_coords(pts_all[:, dims], what)
     return dims
@@ -335,6 +344,8 @@ def pop_reveal_knobs(
 
     spatial_dims = kwargs.pop("spatial_dims", None)
     if spatial_dims is not None:
+        # Before the `int()` below, which truncates 1.9 to 1 without a word.
+        validate_integral_axis_indices(spatial_dims)
         spatial_dims = [int(d) for d in spatial_dims]
         if not spatial_dims:
             raise ValueError("spatial_dims must not be empty")

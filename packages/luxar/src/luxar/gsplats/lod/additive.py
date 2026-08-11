@@ -65,7 +65,10 @@ from luxar.utils.lod_methods import AutoOrMethod as AutoOrMethod
 from luxar.utils.lod_methods import MethodName as MethodName
 from luxar.utils.lod_methods import is_reveal_method as _is_reveal_method
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
-from luxar.validation.types import validate_finite_reveal_coords
+from luxar.validation.types import (
+    validate_finite_reveal_coords,
+    validate_integral_axis_indices,
+)
 
 # The method registry lives in `luxar.utils.lod_methods` so the CLI can share it
 # without importing this package (`luxar/gsplats/__init__.py` adds ~600 ms on top
@@ -454,8 +457,9 @@ def _radial_score(
     element-side :func:`~luxar.core.group.lod.reveal.radial_element_score`: every
     rejected case silently produced a WRONG ordering instead of an error — a
     negative index ALIASES to another column under numpy indexing, a repeat
-    DOUBLE-COUNTS that axis in the distance, and an empty selection scores every
-    splat 0.0, degrading the ladder to input order with nothing to show it. A
+    DOUBLE-COUNTS that axis in the distance, an empty selection scores every
+    splat 0.0, degrading the ladder to input order with nothing to show it, and a
+    FRACTIONAL index is truncated to a different column than the one named. A
     non-finite ``centre`` coordinate is rejected for the same reason: it makes
     every distance NaN/inf, which a stable argsort leaves in input order.
     """
@@ -473,6 +477,7 @@ def _radial_score(
     if spatial_dims is None:
         dims = data._nondegenerate_axes()
     else:
+        validate_integral_axis_indices(spatial_dims)
         dims = np.asarray(spatial_dims, dtype=np.intp)
         if dims.ndim != 1 or dims.size == 0:
             raise ValueError("spatial_dims must be a non-empty sequence of indices")

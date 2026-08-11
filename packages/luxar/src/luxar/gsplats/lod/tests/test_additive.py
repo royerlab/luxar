@@ -931,17 +931,19 @@ def test_empty_radial_ladder_keeps_both_halves_of_the_pair():
         ([-1], "non-negative"),
         ([0, 0], "must not repeat"),
         ([0, 7], "out of range"),
+        ([1.9], "integer column indices"),
     ],
-    ids=["empty", "negative", "duplicate", "out-of-range"],
+    ids=["empty", "negative", "duplicate", "out-of-range", "fractional"],
 )
 def test_radial_rejects_malformed_spatial_dims(dims: list[int], match: str) -> None:
     """Each of these silently produced a WRONG ordering before being rejected.
 
     A negative index ALIASES to another column under numpy indexing, a repeat
-    DOUBLE-COUNTS that axis in the distance, and an empty selection scores every
-    splat 0.0 — degrading the ladder to input order with nothing to show it. The
-    element-side scorer rejects the same four; the CLI bounds-checks too, but the
-    Python API reaches here directly.
+    DOUBLE-COUNTS that axis in the distance, an empty selection scores every
+    splat 0.0 — degrading the ladder to input order with nothing to show it — and
+    `np.asarray([1.9], dtype=np.intp)` TRUNCATES to axis 1, measuring a different
+    column than the caller named. The element-side scorer rejects the same five;
+    the CLI bounds-checks too, but the Python API reaches here directly.
     """
     data = _make_random_gsplat(n=8, ndim=3, seed=3)
     with pytest.raises(ValueError, match=match):

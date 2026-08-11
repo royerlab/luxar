@@ -221,19 +221,23 @@ class TestRadialOrderPoints:
             ([], "must not be empty"),
             ([-1], "non-negative"),
             ([0, 0], "must not repeat"),
+            ([1.9], "integer column indices"),
         ],
-        ids=["empty", "negative", "duplicate"],
+        ids=["empty", "negative", "duplicate", "fractional"],
     )
     def test_malformed_spatial_dims_raise_rather_than_misorder(
         self, dims: list[int], match: str
     ) -> None:
         """Each of these silently produced a WRONG ordering before being caught.
 
-        `resolve_additive_axis` rejects all three, but this entry point is public
+        `resolve_additive_axis` rejects all four, but this entry point is public
         and bypasses the resolver, so the innermost scorer has to reject them too:
         a negative index ALIASES to another column via numpy indexing, a repeat
-        DOUBLE-COUNTS that axis in the distance, and an empty list scores every
-        element 0.0 — degrading the ordering to input order with no indication.
+        DOUBLE-COUNTS that axis in the distance, an empty list scores every
+        element 0.0 — degrading the ordering to input order with no indication —
+        and a fractional index is TRUNCATED (`[1.9]` -> axis 1), measuring a
+        different column than the one named and, with `reveal_centre`, pairing
+        that centre coordinate with the wrong axis.
         """
         with pytest.raises(ValueError, match=match):
             compute_additive_order_points(self._PTS, method="radial", spatial_dims=dims)
@@ -464,6 +468,9 @@ class TestResolveRevealKnobs:
             ({"method": "radial", "spatial_dims": []}, "must not be empty"),
             ({"method": "radial", "spatial_dims": [0, 0]}, "must not repeat"),
             ({"method": "radial", "spatial_dims": [-1]}, "non-negative"),
+            # `int(1.9)` is 1: without this the spec resolver stored axis 1 and
+            # the node was built measuring a column the caller never named.
+            ({"method": "radial", "spatial_dims": [1.9]}, "integer column indices"),
             ({"method": "random", "reveal_centre": [0.0]}, "only to a\n? *reveal"),
             ({"method": "random", "spatial_dims": [0]}, "only to a\n? *reveal"),
         ],
@@ -472,6 +479,7 @@ class TestResolveRevealKnobs:
             "empty-dims",
             "duplicate-dims",
             "negative-dims",
+            "fractional-dims",
             "centre-without-radial",
             "dims-without-radial",
         ],
