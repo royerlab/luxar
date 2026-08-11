@@ -98,6 +98,12 @@ export interface UrlParams {
   src: string | null;
   /** Theme override (`?theme=light` etc). Null when not provided. */
   theme: string | null;
+  /**
+   * Browser tab title (`?title=...`). `luxar serve --open` derives it from
+   * the dataset file name so several open viewer tabs are tellable apart;
+   * a scene's authored `viewer_config.title` overrides it at load.
+   */
+  title: string | null;
   /** Enable the `window.__luxarDebug` interface (`?debug`). */
   debug: boolean;
   /** Disable all cache layers (`?no-cache`). */
@@ -259,6 +265,7 @@ export function readUrlParams(search?: string): UrlParams {
   return {
     src: normalizeDataSourceUrl(params.get('src')),
     theme: params.get('theme'),
+    title: params.get('title')?.trim() || null,
     debug: params.has('debug'),
     noCache: params.has('no-cache'),
     noSliceCache: params.has('no-slice-cache'),
@@ -374,10 +381,17 @@ function normalizeSrcForUrl(src: string): string {
  * centralizing the viewer's URL-writing contract. It returns a path-relative
  * URL suitable for `history.replaceState()`. The `src` is normalized so it
  * never carries a trailing slash.
+ *
+ * `title` is the one parameter that does NOT survive: it names the dataset
+ * the server started with, so carrying it onto a different `src` would make
+ * a shared or reloaded URL title the tab after a scene it no longer shows.
+ * The live tab is retitled for the incoming dataset at the same moment —
+ * see `core/document-title.ts`.
  */
 export function buildDataSourceBrowserUrl(src: string, location: BrowserUrlLocation): string {
   const params = new URLSearchParams(location.search);
   params.set('src', normalizeSrcForUrl(src));
+  params.delete('title');
   const query = params.toString();
   const hash = location.hash ?? '';
   return `${location.pathname}${query ? `?${query}` : ''}${hash}`;
