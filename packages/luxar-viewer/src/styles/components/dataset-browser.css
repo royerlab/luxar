@@ -1,9 +1,32 @@
 /**
  * Dataset Browser Component Styles
  *
- * Modal panel for navigating and selecting Zarr datasets.
+ * Modal panel for navigating and selecting Zarr datasets, in the viewer's
+ * "quiet instrument" design language: glass surface shared with the control
+ * rail, tick-motif title, stroke icons, borderless list rows, and the blue
+ * highlight accent for interactive states (green stays semantic).
  * Used by DatasetBrowser class in ui/dataset-browser.ts
  */
+
+/* Dimming scrim behind the modal (click-to-close). Fades in alongside the
+   panel; kept as a plain tint (no backdrop blur) so it stays free over the
+   live WebGL canvas. */
+.luxar-dataset-browser-scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--luxar-bg-overlay);
+  z-index: calc(var(--luxar-z-modal) - 1);
+  animation: luxar-dataset-browser-fade 0.15s ease;
+}
+
+@keyframes luxar-dataset-browser-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 
 .luxar-dataset-browser {
   /* Positioning */
@@ -40,15 +63,24 @@
   /* NO overflow - allows pseudo-elements for glass effect */
   overflow: visible;
 
-  /* Animation removed - opacity + animation interferes with SVG filter in liquid glass theme */
-  /* opacity: 0; */
-  /* animation: luxar-fade-in 0.15s ease forwards; */
+  /* Entry motion: transform-only scale-settle. Deliberately NO opacity —
+     animating opacity interferes with the SVG filter in the liquid-glass
+     theme (see the scrim above for the fade). */
+  animation: luxar-dataset-browser-pop 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-/* Header */
+@keyframes luxar-dataset-browser-pop {
+  from {
+    transform: translate(-50%, -50%) scale(0.975);
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* Header — tick-motif micro-header (the viewer's recurring section motif). */
 .luxar-dataset-browser__header {
-  padding: var(--luxar-spacing-10);
-  border-bottom: 1px solid var(--luxar-border-subtle);
+  padding: var(--luxar-spacing-8) var(--luxar-spacing-10) var(--luxar-spacing-4);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -56,35 +88,65 @@
 
 .luxar-dataset-browser__title {
   margin: 0;
-  font-size: var(--luxar-text-2xl);
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-4);
+  font-size: var(--luxar-text-base);
   font-weight: var(--luxar-font-semibold);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--luxar-text-primary);
+}
+
+.luxar-dataset-browser__title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--luxar-success);
+  opacity: 0.55;
 }
 
 .luxar-dataset-browser__close-btn {
-  background: none;
-  border: none;
-  color: var(--luxar-text-muted);
-  font-size: var(--luxar-text-3xl);
-  cursor: pointer;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--luxar-transition-normal);
+  border: none;
+  background: none;
+  color: var(--luxar-text-muted);
+  border-radius: var(--luxar-radius-md);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-dataset-browser__close-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .luxar-dataset-browser__close-btn:hover {
   color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover);
 }
 
-/* Welcome Banner */
+.luxar-dataset-browser__close-btn:focus-visible {
+  outline: 2px solid var(--luxar-border-focus);
+  outline-offset: 1px;
+}
+
+/* Tagline row — quiet guidance (no accent wash), hairline-separated. */
 .luxar-dataset-browser__banner {
-  padding: var(--luxar-spacing-5) var(--luxar-spacing-10);
-  background: color-mix(in srgb, var(--luxar-success) 8%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--luxar-success) 20%, transparent);
-  font-size: var(--luxar-text-md);
+  padding: 0 var(--luxar-spacing-10) var(--luxar-spacing-5);
+  border-bottom: 1px solid var(--luxar-border-subtle);
+  font-size: var(--luxar-text-sm);
   line-height: var(--luxar-line-normal);
   color: var(--luxar-text-secondary);
 }
@@ -96,7 +158,7 @@
   gap: var(--luxar-spacing-4);
 }
 
-/* Two-line tagline block: title on line 1, browse hint on line 2. */
+/* Two-line tagline block: brand line 1, browse hint on line 2. */
 .luxar-dataset-browser__banner-text {
   display: flex;
   flex-direction: column;
@@ -104,79 +166,201 @@
 }
 
 .luxar-dataset-browser__banner-title {
-  color: var(--luxar-success);
+  color: var(--luxar-highlight);
   font-weight: var(--luxar-font-semibold);
 }
 
 .luxar-dataset-browser__banner-description {
-  opacity: 0.7;
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
 }
 
 .luxar-dataset-browser__banner-code {
   /* Theme-aware: bg-tertiary adapts (dark vs light) instead of a fixed black. */
   background: var(--luxar-bg-tertiary);
   padding: 1px 4px;
-  border-radius: 2px;
+  border-radius: 3px;
   font-size: var(--luxar-text-xs);
   font-family: var(--luxar-font-mono);
 }
 
 .luxar-dataset-browser__banner-kbd {
-  background: var(--luxar-interactive-default);
-  padding: 1px 4px;
-  border-radius: 2px;
   font-family: var(--luxar-font-mono);
+  background: var(--luxar-bg-tertiary);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 .luxar-dataset-browser__banner-help {
   font-size: var(--luxar-text-xs);
-  opacity: 0.6;
+  color: var(--luxar-text-muted);
+  white-space: nowrap;
 }
 
-/* Breadcrumb Navigation */
+/* Breadcrumb Navigation — quiet chip trail on the panel surface (no tinted
+   strip), with the manual-path toggle at the right edge. */
 .luxar-dataset-browser__breadcrumb {
-  padding: var(--luxar-spacing-2) var(--luxar-spacing-10);
-  background: var(--luxar-bg-tertiary);
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-8);
   border-bottom: 1px solid var(--luxar-border-subtle);
   font-size: var(--luxar-text-sm);
   display: flex;
   align-items: center;
   gap: var(--luxar-spacing-4);
+  min-height: 26px;
+}
+
+.luxar-dataset-browser__breadcrumb-trail {
+  display: flex;
+  align-items: center;
+  gap: var(--luxar-spacing-1);
   overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .luxar-dataset-browser__breadcrumb-link {
-  color: var(--luxar-success);
-  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--luxar-spacing-2);
+  padding: 3px 7px;
+  border: none;
+  background: none;
+  border-radius: var(--luxar-radius-sm);
+  color: var(--luxar-text-secondary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  white-space: nowrap;
   cursor: pointer;
   transition: var(--luxar-transition-fast);
 }
 
 .luxar-dataset-browser__breadcrumb-link:hover {
-  text-decoration: underline;
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover);
+}
+
+.luxar-dataset-browser__breadcrumb-link:focus-visible {
+  outline: 2px solid var(--luxar-border-focus);
+  outline-offset: 1px;
+}
+
+.luxar-dataset-browser__breadcrumb-home svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .luxar-dataset-browser__breadcrumb-separator {
   color: var(--luxar-text-muted);
+  opacity: 0.6;
 }
 
 .luxar-dataset-browser__breadcrumb-current {
   color: var(--luxar-text-primary);
+  font-weight: var(--luxar-font-medium);
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+/* Manual-path toggle (pencil) pinned to the row's right edge. */
+.luxar-dataset-browser__path-edit {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--luxar-text-muted);
+  border-radius: var(--luxar-radius-sm);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-dataset-browser__path-edit svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-dataset-browser__path-edit:hover {
+  color: var(--luxar-text-primary);
+  background: var(--luxar-interactive-hover);
+}
+
+.luxar-dataset-browser__path-edit:focus-visible {
+  outline: 2px solid var(--luxar-border-focus);
+  outline-offset: 1px;
+}
+
+/* Inline path editor (swaps in for the crumb trail). */
+.luxar-dataset-browser__path-input {
+  flex: 1;
+  box-sizing: border-box;
+  padding: 4px 9px;
+  background: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-sm);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-mono);
+  font-size: var(--luxar-text-sm);
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-dataset-browser__path-input::placeholder {
+  color: var(--luxar-text-muted);
+}
+
+.luxar-dataset-browser__path-input:focus {
+  outline: none;
+  border-color: var(--luxar-border-focus);
+  background: var(--luxar-interactive-hover);
 }
 
 /* Search / Filter Bar */
 .luxar-dataset-browser__search {
-  padding: var(--luxar-spacing-3) var(--luxar-spacing-10);
+  position: relative;
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-8);
   border-bottom: 1px solid var(--luxar-border-subtle);
+}
+
+.luxar-dataset-browser__search-icon {
+  position: absolute;
+  left: calc(var(--luxar-spacing-8) + 9px);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--luxar-text-muted);
+}
+
+.luxar-dataset-browser__search-icon svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .luxar-dataset-browser__search-input {
   width: 100%;
   box-sizing: border-box;
-  padding: var(--luxar-spacing-2) var(--luxar-spacing-4);
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-4) var(--luxar-spacing-2) 30px;
   background: var(--luxar-interactive-default);
   border: 1px solid var(--luxar-border-default);
-  border-radius: var(--luxar-radius-sm);
+  border-radius: var(--luxar-radius-md);
   color: var(--luxar-text-primary);
   font-family: var(--luxar-font-base);
   font-size: var(--luxar-text-sm);
@@ -197,73 +381,216 @@
 .luxar-dataset-browser__content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--luxar-spacing-10);
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-6);
+
+  /* Quiet scrollbar — neutral, not accent-colored (help-overlay recipe). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--luxar-border-strong) transparent;
 }
 
+.luxar-dataset-browser__content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.luxar-dataset-browser__content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.luxar-dataset-browser__content::-webkit-scrollbar-thumb {
+  background: var(--luxar-border-strong);
+  border-radius: var(--luxar-radius-full);
+}
+
+/* Loading — shimmering skeleton rows in place of the incoming listing. */
 .luxar-dataset-browser__loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--luxar-spacing-2);
+  padding: var(--luxar-spacing-2);
+}
+
+.luxar-dataset-browser__skeleton-row {
+  height: 30px;
+  border-radius: var(--luxar-radius-md);
+  background: linear-gradient(
+    100deg,
+    var(--luxar-interactive-default) 40%,
+    var(--luxar-interactive-hover) 50%,
+    var(--luxar-interactive-default) 60%
+  );
+  background-size: 200% 100%;
+  animation: luxar-dataset-browser-shimmer 1.2s ease-in-out infinite;
+}
+
+.luxar-dataset-browser__skeleton-row:nth-child(2) {
+  opacity: 0.7;
+}
+
+.luxar-dataset-browser__skeleton-row:nth-child(3) {
+  opacity: 0.4;
+}
+
+@keyframes luxar-dataset-browser-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Error state */
+.luxar-dataset-browser__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--luxar-spacing-3);
   text-align: center;
-  padding: var(--luxar-spacing-20);
+  padding: var(--luxar-spacing-16) var(--luxar-spacing-10);
   color: var(--luxar-text-secondary);
 }
 
-.luxar-dataset-browser__error {
-  text-align: center;
-  padding: var(--luxar-spacing-20);
+.luxar-dataset-browser__error-icon {
   color: var(--luxar-error);
+  opacity: 0.8;
+}
+
+.luxar-dataset-browser__error-icon svg {
+  width: 28px;
+  height: 28px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-dataset-browser__error-title {
+  margin: 0;
+  font-size: var(--luxar-text-base);
+  color: var(--luxar-text-primary);
 }
 
 .luxar-dataset-browser__error-details {
-  font-size: var(--luxar-text-md);
-  margin-top: var(--luxar-spacing-5);
+  margin: 0;
+  font-size: var(--luxar-text-xs);
+  font-family: var(--luxar-font-mono);
   color: var(--luxar-text-secondary);
+  overflow-wrap: anywhere;
 }
 
-/* File List */
+.luxar-dataset-browser__error-retry {
+  margin-top: var(--luxar-spacing-3);
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-8);
+  background: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-md);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-dataset-browser__error-retry:hover {
+  background: var(--luxar-interactive-hover);
+}
+
+/* File List — borderless rows; hover tint carries the interaction. */
 .luxar-dataset-browser__file-list {
   display: flex;
   flex-direction: column;
-  gap: var(--luxar-spacing-1);
+  gap: 1px;
 }
 
 .luxar-dataset-browser__file-item {
-  /* Tight vertical padding keeps rows compact; the icon/name font sizes
-     are unchanged. line-height:1 stops the tall emoji line-box from
-     re-inflating the row height. */
-  padding: var(--luxar-spacing-2) var(--luxar-spacing-6);
+  /* Tight vertical padding keeps rows compact; line-height:1 stops a tall
+     icon line-box from re-inflating the row height. */
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-5);
   line-height: 1;
-  background: var(--luxar-bg-tertiary);
-  border-radius: var(--luxar-radius-sm);
+  border-radius: var(--luxar-radius-md);
   cursor: pointer;
-  transition: var(--luxar-transition-normal);
+  transition: background-color 0.1s ease;
   display: flex;
   align-items: center;
-  gap: var(--luxar-spacing-6);
+  gap: var(--luxar-spacing-5);
 }
 
 .luxar-dataset-browser__file-item:hover {
-  background: color-mix(in srgb, var(--luxar-success) 20%, transparent);
+  background: var(--luxar-interactive-hover);
 }
 
+.luxar-dataset-browser__file-item:focus-visible {
+  outline: 2px solid var(--luxar-border-focus);
+  outline-offset: -2px;
+}
+
+/* Currently loaded dataset — highlight tint (inset ring avoids layout shift). */
 .luxar-dataset-browser__file-item--current {
-  background: color-mix(in srgb, var(--luxar-success) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--luxar-success) 40%, transparent);
+  background: color-mix(in srgb, var(--luxar-highlight) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--luxar-highlight) 35%, transparent);
 }
 
 .luxar-dataset-browser__file-item--current:hover {
-  background: color-mix(in srgb, var(--luxar-success) 20%, transparent);
+  background: color-mix(in srgb, var(--luxar-highlight) 18%, transparent);
 }
 
 .luxar-dataset-browser__file-icon {
-  font-size: var(--luxar-text-2xl);
-  line-height: 1;
+  display: grid;
+  place-items: center;
+  color: var(--luxar-text-muted);
+}
+
+.luxar-dataset-browser__file-icon svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-dataset-browser__file-icon--zarr {
+  color: var(--luxar-highlight);
 }
 
 .luxar-dataset-browser__file-name {
   flex: 1;
-  font-size: var(--luxar-text-sm);
+  font-size: var(--luxar-text-base);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Badges */
+/* Directory rows: quiet "navigates deeper" chevron, revealed on hover. */
+.luxar-dataset-browser__chevron {
+  display: grid;
+  place-items: center;
+  color: var(--luxar-text-muted);
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.luxar-dataset-browser__chevron svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-dataset-browser__file-item:hover .luxar-dataset-browser__chevron,
+.luxar-dataset-browser__file-item:focus-visible .luxar-dataset-browser__chevron {
+  opacity: 0.7;
+}
+
+/* Badges — quiet outline chips (accent-tinted, not solid fills). */
 .luxar-dataset-browser__badges {
   display: flex;
   gap: var(--luxar-spacing-3);
@@ -271,23 +598,78 @@
 }
 
 .luxar-dataset-browser__badge {
-  background: var(--luxar-success);
-  color: white;
-  padding: var(--luxar-spacing-1) var(--luxar-spacing-3);
+  background: color-mix(in srgb, var(--luxar-highlight) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--luxar-highlight) 40%, transparent);
+  color: var(--luxar-highlight);
+  padding: 2px 6px;
   border-radius: var(--luxar-radius-sm);
   font-size: var(--luxar-text-xs);
   font-weight: var(--luxar-font-semibold);
+  letter-spacing: 0.05em;
+  line-height: 1;
 }
 
+/* LOADED is a state, not a type — semantic success. */
 .luxar-dataset-browser__badge--loaded {
-  background: var(--luxar-info);
+  background: color-mix(in srgb, var(--luxar-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--luxar-success) 45%, transparent);
+  color: var(--luxar-success);
 }
 
 /* Empty State */
 .luxar-dataset-browser__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--luxar-spacing-3);
   text-align: center;
-  padding: var(--luxar-spacing-20);
+  padding: var(--luxar-spacing-20) var(--luxar-spacing-10);
   color: var(--luxar-text-secondary);
+}
+
+.luxar-dataset-browser__empty-icon {
+  color: var(--luxar-text-muted);
+  opacity: 0.55;
+}
+
+.luxar-dataset-browser__empty-icon svg {
+  width: 32px;
+  height: 32px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-dataset-browser__empty-title {
+  margin: 0;
+  font-size: var(--luxar-text-base);
+  color: var(--luxar-text-primary);
+}
+
+.luxar-dataset-browser__empty-hint {
+  margin: 0;
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+}
+
+.luxar-dataset-browser__empty-action {
+  margin-top: var(--luxar-spacing-3);
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-8);
+  background: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-md);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  cursor: pointer;
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-dataset-browser__empty-action:hover {
+  background: var(--luxar-interactive-hover);
 }
 
 /* Manual Entry Form */
@@ -298,6 +680,7 @@
 }
 
 .luxar-dataset-browser__manual-entry-title {
+  display: block;
   font-size: var(--luxar-text-base);
   margin-bottom: var(--luxar-spacing-10);
   color: var(--luxar-text-primary);
@@ -306,63 +689,66 @@
 .luxar-dataset-browser__manual-entry-input {
   width: 100%;
   max-width: 400px;
-  padding: var(--luxar-spacing-5);
+  box-sizing: border-box;
+  padding: var(--luxar-spacing-4) var(--luxar-spacing-5);
   background: var(--luxar-interactive-default);
   border: 1px solid var(--luxar-border-default);
-  border-radius: var(--luxar-radius-sm);
+  border-radius: var(--luxar-radius-md);
   color: var(--luxar-text-primary);
   font-family: var(--luxar-font-mono);
-  font-size: var(--luxar-text-lg);
-  margin-bottom: var(--luxar-spacing-4);
+  font-size: var(--luxar-text-md);
+  margin-bottom: var(--luxar-spacing-6);
+  transition: var(--luxar-transition-fast);
 }
 
-.luxar-dataset-browser__manual-entry-buttons {
-  margin-top: var(--luxar-spacing-10);
-  display: flex;
-  gap: var(--luxar-spacing-5);
-  justify-content: center;
+.luxar-dataset-browser__manual-entry-input:focus {
+  outline: none;
+  border-color: var(--luxar-border-focus);
+  background: var(--luxar-interactive-hover);
 }
 
 .luxar-dataset-browser__manual-entry-btn {
   padding: var(--luxar-spacing-2) var(--luxar-spacing-10);
-  background: var(--luxar-success);
-  color: white;
-  border: none;
-  border-radius: var(--luxar-radius-sm);
+  background: color-mix(in srgb, var(--luxar-highlight) 22%, transparent);
+  color: var(--luxar-text-primary);
+  border: 1px solid color-mix(in srgb, var(--luxar-highlight) 50%, transparent);
+  border-radius: var(--luxar-radius-md);
   cursor: pointer;
-  font-size: var(--luxar-text-lg);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-md);
   transition: var(--luxar-transition-fast);
 }
 
 .luxar-dataset-browser__manual-entry-btn:hover {
-  background: var(--luxar-success);
-  filter: brightness(1.15);
+  background: color-mix(in srgb, var(--luxar-highlight) 32%, transparent);
 }
 
-.luxar-dataset-browser__manual-entry-btn--cancel {
-  background: var(--luxar-interactive-default);
-  border: 1px solid var(--luxar-border-default);
-  color: var(--luxar-text-primary);
-}
-
-.luxar-dataset-browser__manual-entry-btn--cancel:hover {
-  background: var(--luxar-interactive-hover);
+.luxar-dataset-browser__manual-entry-btn:focus-visible {
+  outline: 2px solid var(--luxar-border-focus);
+  outline-offset: 1px;
 }
 
 .luxar-dataset-browser__manual-entry-tip {
   margin-top: var(--luxar-spacing-10);
-  font-size: var(--luxar-text-md);
-  color: var(--luxar-text-secondary);
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
 }
 
 /* Status Bar */
 .luxar-dataset-browser__status {
-  padding: var(--luxar-spacing-2) var(--luxar-spacing-10);
+  padding: var(--luxar-spacing-3) var(--luxar-spacing-10);
   border-top: 1px solid var(--luxar-border-subtle);
-  font-size: var(--luxar-text-md);
+  font-size: var(--luxar-text-xs);
   color: var(--luxar-text-secondary);
   display: flex;
   justify-content: space-between;
+  align-items: center;
+}
+
+/* Listing-detection strategy — quiet mono footnote (details in the tooltip). */
+.luxar-dataset-browser__status-detection {
+  font-family: var(--luxar-font-mono);
+  color: var(--luxar-text-muted);
 }
 
 /* Theme Overrides */
@@ -370,24 +756,19 @@
   background: rgba(255, 255, 255, 0.98);
 }
 
-[data-theme='light'] .luxar-dataset-browser__breadcrumb {
-  background: rgba(0, 0, 0, 0.03);
-}
-
-[data-theme='light'] .luxar-dataset-browser__close-btn {
-  color: var(--luxar-text-muted);
-}
-
-[data-theme='light'] .luxar-dataset-browser__close-btn:hover {
-  color: var(--luxar-text-primary);
-}
-
-[data-theme='light'] .luxar-dataset-browser__file-item:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
-
 [data-theme='light'] .luxar-dataset-browser__manual-entry-input,
-[data-theme='light'] .luxar-dataset-browser__search-input {
+[data-theme='light'] .luxar-dataset-browser__search-input,
+[data-theme='light'] .luxar-dataset-browser__path-input {
   background: rgba(0, 0, 0, 0.03);
   border-color: rgba(0, 0, 0, 0.2);
+}
+
+/* Respect a user's reduced-motion preference: no entry pop, no scrim fade,
+   no skeleton shimmer (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-dataset-browser,
+  .luxar-dataset-browser-scrim,
+  .luxar-dataset-browser__skeleton-row {
+    animation: none;
+  }
 }
