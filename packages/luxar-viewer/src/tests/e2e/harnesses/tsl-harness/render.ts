@@ -1,9 +1,10 @@
 /**
  * Render executors for the TSL ↔ GLSL parity harness: `renderGLSL`
  * drives the GLSL3 `ShaderMaterial` path through `THREE.WebGLRenderer`;
- * `renderTSL` drives the NodeMaterial path through
- * `WebGPURenderer({ forceWebGL: true })` and captures the generated
- * shader strings for the codegen-snapshot spec.
+ * `renderTSL` drives the NodeMaterial path through `WebGPURenderer` —
+ * forced onto the WebGL backend by default (real WebGPU opt-in via
+ * `{ native: true }`) — and captures the generated shader strings for
+ * the codegen-snapshot spec.
  *
  * @module tests/e2e/harnesses/tsl-harness/render
  */
@@ -95,9 +96,9 @@ export function renderGLSL(shaderName: string): Uint8Array {
 }
 
 /**
- * Render the TSL path of a registered shader via
- * `WebGPURenderer({ forceWebGL: true })` and return both the readback
- * pixels and the generated GLSL strings.
+ * Render the TSL path of a registered shader via `WebGPURenderer`
+ * (WebGL backend by default; real WebGPU with `{ native: true }`) and
+ * return both the readback pixels and the generated shader strings.
  *
  * Capturing the GLSL strings requires walking the `WebGLBackend`'s
  * pipeline cache after the render completes — there's no public
@@ -105,7 +106,8 @@ export function renderGLSL(shaderName: string): Uint8Array {
  * `NodeBuilderState` that the backend stashes per-RenderObject.
  */
 export async function renderTSL(
-  shaderName: string
+  shaderName: string,
+  opts: { native?: boolean } = {}
 ): Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }> {
   const entry = SHADER_REGISTRY[shaderName];
   if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
@@ -118,11 +120,43 @@ export async function renderTSL(
     ? entry.buildTSLMaterial(uniforms)
     : (entry.source.webgpu(uniforms) as THREE.Material);
 
+  // `native: true` runs the graph on REAL WebGPU (WGSL codegen + Dawn/Metal
+  // execution) instead of the WebGL backend — the pixel-equivalence probe
+  // for browsers with a working adapter (system Chrome). The mode must
+  // FAIL CLOSED: `navigator.gpu` exists even in Playwright's bundled
+  // Chromium with WebGPU off (its requestAdapter() just yields nothing),
+  // and WebGPURenderer does NOT reject there — its `getFallback` swaps in
+  // the WebGL backend with only a console warning, which would silently
+  // hand back a WebGL image with a spurious row flip on top. So the real
+  // guard is the backend-identity assertion AFTER init() below (#1449);
+  // the navigator.gpu check just gives a clearer error where the API is
+  // absent outright. The raw native readback is Y-FLIPPED relative to the
+  // WebGL paths', so the flip is applied before returning — both modes
+  // hand back the same bottom-up row convention and compare directly
+  // against renderGLSL (verified 2026-08 on Apple Metal 3, where every
+  // line-volprim-* fixture matched its GLSL render EXACTLY — mean-covered
+  // diff 0.000).
+  if (opts.native && !('gpu' in navigator)) {
+    throw new Error('native WebGPU requested but navigator.gpu is unavailable');
+  }
   const { WebGPURenderer } = await import('three/webgpu');
-  const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: true });
+  const renderer = new WebGPURenderer({
+    antialias: false,
+    alpha: false,
+    forceWebGL: !opts.native,
+  });
   renderer.setPixelRatio(1);
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
   await renderer.init();
+  if (opts.native) {
+    const backend = (renderer as unknown as { backend?: { isWebGPUBackend?: boolean } }).backend;
+    if (!backend?.isWebGPUBackend) {
+      renderer.dispose();
+      throw new Error(
+        'native WebGPU requested but the renderer fell back to WebGL (no usable adapter)'
+      );
+    }
+  }
 
   // Capture the generated GLSL / WGSL strings by patching the renderer's
   // NodeManager. `_createNodeBuilderState(nodeBuilder)` is called by
@@ -186,6 +220,19 @@ export async function renderTSL(
   // The renderer returns its own typed array — copy into Uint8Array so
   // the rest of the harness treats both paths uniformly.
   const pixels = new Uint8Array(readback.buffer.slice(0));
+  if (opts.native) {
+    // Normalize the native readback to the WebGL bottom-up row order
+    // (see the note above `renderer` construction).
+    const rowBytes = HARNESS_SIZE * 4;
+    const tmp = new Uint8Array(rowBytes);
+    for (let y = 0; y < HARNESS_SIZE >> 1; y++) {
+      const top = y * rowBytes;
+      const bot = (HARNESS_SIZE - 1 - y) * rowBytes;
+      tmp.set(pixels.subarray(top, top + rowBytes));
+      pixels.copyWithin(top, bot, bot + rowBytes);
+      pixels.set(tmp, bot);
+    }
+  }
 
   const vertexShader = capturedRef.value?.vertex ?? '';
   const fragmentShader = capturedRef.value?.fragment ?? '';
