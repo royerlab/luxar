@@ -64,7 +64,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     // Geometry varyings are screen-space quantities pre-multiplied by the
     // corner's clip w and divided by vW in the fragment (screen-linear;
     // see the visual twin's declaration note).
-    out vec2 vLocal;
+    out vec3 vLocal;
     // (abLen px, capFlags = interiorA + 2·interiorB, rA px, rB px)
     flat out vec4 vMeta;
     // .xy = bisector-cut normal; .z = partner radius gradient packet
@@ -115,7 +115,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float endDepth = -mvEnd.z;
       if ((uIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-        vLocal = vec2(0.0); vMeta = vec4(1.0, 0.0, 1.0, 1.0);
+        vLocal = vec3(0.0); vMeta = vec4(1.0, 0.0, 1.0, 1.0);
         vCutA2 = vec4(-1.0, 0.0, 0.0, 0.0); vCutB2 = vec4(1.0, 0.0, 0.0, 0.0);
         vW = 1.0; vFade = 0.0; vSharp = 0.5;
         return;
@@ -317,7 +317,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       vec4 clipMix = mix(clipA, clipB, tc);
       float wMix = max(clipMix.w, 1e-6);
-      vLocal = vec2(lx, ly) * wMix;
+      vLocal = vec3(lx, ly, 1.0 / max(abLen, 1e-4)) * wMix;
       vW = wMix;
       vec2 ndc = corner / uResolution * 2.0 - 1.0;
       gl_Position = vec4(ndc * wMix, clipMix.z, wMix);
@@ -327,7 +327,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
-    in vec2 vLocal;
+    in vec3 vLocal;
     flat in vec4 vMeta;
     flat in vec4 vCutA2;
     flat in vec4 vCutB2;
@@ -370,10 +370,15 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // radius at its own endpoint drifts; the deeper root of #1494).
       float cutFlagA = mod(vMeta.y, 2.0);
       float cutFlagB = vMeta.y >= 2.0 ? 1.0 : 0.0;
-      float rPx = max(
-        mix(vMeta.z, vMeta.w, clamp(x / max(vMeta.x, 1e-4), 0.0, 1.0)),
-        1e-4
-      );
+      // EXACT per-fragment radius without a divide: 1/abLen rides the
+      // vLocal lane, and constant-width segments (the fill/thin-heavy
+      // cases) take a mix-free fast path.
+      float rPx;
+      if (vMeta.z == vMeta.w) {
+        rPx = max(vMeta.z, 1e-4);
+      } else {
+        rPx = max(mix(vMeta.z, vMeta.w, clamp(x * (vLocal.z * invW), 0.0, 1.0)), 1e-4);
+      }
       // TRUE point-to-segment distance: every end is capped (a free end
       // keeps the whole disc, a cut end its half of the joint disc).
       float ox = max(max(-x, x - vMeta.x), 0.0);

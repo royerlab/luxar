@@ -82,7 +82,7 @@ out float nodeVarying3;
 out float nodeVarying4;
 out float nodeVarying5;
 out vec3 nodeVarying6;
-out vec2 nodeVarying7;
+out vec3 nodeVarying7;
 out float nodeVarying8;
 
 
@@ -273,7 +273,7 @@ void main() {
 
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform1 );
 	nodeVarying8 = 1.0;
-	nodeVarying7 = vec2( 0.0, 0.0 );
+	nodeVarying7 = vec3( 0.0, 0.0, 0.0 );
 	nodeVarying0 = vec4( 1.0, 0.0, 1.0, 1.0 );
 	nodeVarying5 = 0.5;
 	nodeVarying1 = vec4( -1.0, 0.0, 0.0, 0.0 );
@@ -895,7 +895,7 @@ void main() {
 	nodeVarying6 = mix( nodeVar81.xyz, nodeVar86.xyz, nodeVar217 );
 	nodeVar224 = mix( nodeVar116, nodeVar117, nodeVar216 );
 	nodeVar225 = max( nodeVar224.w, 0.000001 );
-	nodeVarying7 = ( vec2( nodeVar212, nodeVar213 ) * vec2( nodeVar225 ) );
+	nodeVarying7 = ( vec3( nodeVar212, nodeVar213, ( 1.0 / max( nodeVar131, 0.0001 ) ) ) * vec3( nodeVar225 ) );
 	nodeVarying8 = nodeVar225;
 	nodeVar226 = ( ( ( nodeVar214 / nodeUniform24 ) * vec2( 2.0 ) ) - vec2( 1.0 ) );
 	nodeVar227 = vec4( 0.0, 0.0, -2.0, 1.0 );

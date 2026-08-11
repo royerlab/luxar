@@ -74,7 +74,7 @@ flat  in vec4 nodeVarying1;
 flat  in vec4 nodeVarying2;
 in float nodeVarying3;
 in float nodeVarying4;
-in vec2 nodeVarying5;
+in vec3 nodeVarying5;
 in float nodeVarying6;
 flat  in float nodeVarying7;
 flat  in vec2 nodeVarying8;
@@ -158,7 +158,20 @@ void main() {
 	}
 
 	nodeVar5 = nodeVar4;
-	nodeVar6 = max( mix( nodeVarying0.z, nodeVarying0.w, clamp( ( nodeVar1 / max( nodeVarying0.x, 0.0001 ) ), 0.0, 1.0 ) ), 0.0001 );
+	nodeVar6 = 0.0;
+
+	if ( ( nodeVarying0.z == nodeVarying0.w ) ) {
+
+		nodeVar6 = max( nodeVarying0.z, 0.0001 );
+
+
+	} else {
+
+		nodeVar6 = max( mix( nodeVarying0.z, nodeVarying0.w, clamp( ( nodeVar1 * ( nodeVarying5.z * nodeVar0 ) ), 0.0, 1.0 ) ), 0.0001 );
+
+
+	}
+
 	nodeVar7 = ( - nodeVar1 );
 	nodeVar8 = ( nodeVar1 - nodeVarying0.x );
 	nodeVar9 = max( max( nodeVar7, nodeVar8 ), 0.0 );

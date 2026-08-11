@@ -131,7 +131,7 @@ export function capsuleLineWebGPUFactory(
   // corner's clip w and divided by vW in the fragment — screen-linear
   // (default interpolation is perspective-correct = hyperbolic in screen
   // space; see the GLSL twin's declaration note).
-  const vLocal: TSLNode = varying(vec2(0.0, 0.0));
+  const vLocal: TSLNode = varying(vec3(0.0, 0.0, 0.0));
   // (abLen px, capFlags = interiorA + 2·interiorB, rA px, rB px)
   const vMeta: TSLNode = varying(vec4(1.0, 0.0, 1.0, 1.0)).setInterpolation('flat');
   // .xy = bisector-cut normal (my side negative); .z = the DEFICIT
@@ -443,7 +443,7 @@ export function capsuleLineWebGPUFactory(
     // Depth interpolates along the segment; culled segments collapse.
     const clipMix: TSLNode = mix(clipA, clipB, tc).toVar();
     const wMix: TSLNode = max(clipMix.w, float(1e-6)).toVar();
-    vLocal.assign(vec2(lx, ly).mul(wMix));
+    vLocal.assign(vec3(lx, ly, float(1.0).div(max(abLen, float(1e-4)))).mul(wMix));
     vW.assign(wMix);
     const ndc: TSLNode = corner.div(uResolution).mul(2.0).sub(1.0).toVar();
     const clipPosOut: TSLNode = vec4(0.0, 0.0, -2.0, 1.0).toVar();
@@ -468,10 +468,15 @@ export function capsuleLineWebGPUFactory(
     // twin's note — a linear varying cannot represent this).
     const cutFlagA: TSLNode = mod(vMeta.y, 2.0).toVar();
     const cutFlagB: TSLNode = vMeta.y.greaterThanEqual(2.0).select(float(1.0), float(0.0)).toVar();
-    const rPx: TSLNode = max(
-      mix(vMeta.z, vMeta.w, clamp(x.div(max(vMeta.x, float(1e-4))), 0.0, 1.0)),
-      float(1e-4)
-    ).toVar();
+    // Div-free exact radius (see the GLSL twin); constant-width fast path.
+    const rPx: TSLNode = float(0.0).toVar();
+    If(vMeta.z.equal(vMeta.w), () => {
+      rPx.assign(max(vMeta.z, float(1e-4)));
+    }).Else(() => {
+      rPx.assign(
+        max(mix(vMeta.z, vMeta.w, clamp(x.mul(vLocal.z.mul(invW)), 0.0, 1.0)), float(1e-4))
+      );
+    });
     // Squared distance in the local frame — the TRUE point-to-segment
     // distance, cap term included at BOTH ends: every end is capped (a free
     // end keeps the whole disc, a cut end its half of the joint disc).
