@@ -231,6 +231,49 @@ class TestRadialOrderPoints:
                 self._PTS, method="radial", reveal_centre=[0.0, 0.0]
             )
 
+    def test_nested_spatial_dims_raise_rather_than_misorder(self) -> None:
+        """A nested `spatial_dims` used to survive every scalar check.
+
+        `[[0, 1]]` passes the empty / negative / repeat / range guards, then
+        `pts[:, dims]` becomes 3-D, the score comes back `(N, 2)`, and `argsort`
+        returns a per-ROW permutation — not an ordering of the elements at all.
+        The gsplat scorer has always rejected it; this entry point is public and
+        bypasses the resolver, so it has to as well.
+        """
+        with pytest.raises(ValueError, match="1-D sequence"):
+            compute_additive_order_points(
+                self._PTS, method="radial", spatial_dims=[[0, 1]]
+            )
+
+    @pytest.mark.parametrize(
+        "bad", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"]
+    )
+    def test_non_finite_centre_raises_rather_than_no_op(self, bad: float) -> None:
+        """A non-finite centre makes every distance non-finite.
+
+        They then all compare equal under the stable argsort, so the ladder comes
+        out in INPUT order — the same silent degradation an empty `spatial_dims`
+        used to cause, and rejected the same way.
+        """
+        with pytest.raises(ValueError, match="must be finite"):
+            compute_additive_order_points(
+                self._PTS, method="radial", reveal_centre=[bad, 0.0, 0.0]
+            )
+
+    def test_spec_rejects_a_non_finite_centre_before_anything_is_written(self) -> None:
+        """The resolver rejects it too, not just the scorer.
+
+        Under a substitutive ladder the wrapper `kind=lod` group exists on disk
+        before the scorer runs, so a raise from the scorer alone would leave a
+        partial group behind.
+        """
+        from luxar.core.group.lod.points import resolve_additive_axis_points
+
+        with pytest.raises(ValueError, match="must be finite"):
+            resolve_additive_axis_points(
+                {"method": "radial", "reveal_centre": [float("nan"), 0.0, 0.0]}
+            )
+
     def test_works_in_2d_unlike_the_samplers(self) -> None:
         # `spatial-uniform` / `poisson-disk` demand d >= 3; a distance does not,
         # and 2D scenes are a first-class authoring path.
