@@ -316,7 +316,7 @@ def pop_reveal_knobs(
     Extracted from :func:`~luxar.core.group.lod.group.resolve_additive_axis` to
     keep that function under the
     C901 ratchet — its validation is branchy (two optional keys, four shape rules,
-    one cross-check) and self-contained.
+    two cross-checks) and self-contained.
 
     Validated at RESOLVE time rather than write time, for the same reason as
     ``counts``: under a substitutive ladder the wrapper group already exists on
@@ -364,5 +364,24 @@ def pop_reveal_knobs(
             "additive_lod: 'reveal_centre' / 'spatial_dims' apply only to a "
             f"reveal ordering ({' / '.join(sorted(REVEAL_ADDITIVE_METHODS))}); "
             f"got method={method!r}"
+        )
+
+    # The centre carries one coordinate per axis the distance spans, so when the
+    # caller names both they must agree. The scorer checks this too, but only
+    # once it runs — which under a substitutive ladder is AFTER the wrapper
+    # kind=lod group and its coarse children are on disk, leaving a partial group
+    # that a corrected retry then trips over with "duplicate child name". Same
+    # cross-check the CLI does in `_parse_reveal_knobs`, so the two entry points
+    # agree. Only checkable when both are explicit: a derived `spatial_dims`
+    # (displayed dims / non-zero extent) is not known until the data is in hand.
+    if (
+        reveal_centre is not None
+        and spatial_dims is not None
+        and len(reveal_centre) != len(spatial_dims)
+    ):
+        raise ValueError(
+            f"reveal_centre has {len(reveal_centre)} coordinates but "
+            f"spatial_dims lists {len(spatial_dims)} axes; they must match "
+            f"(one coordinate per shell axis)"
         )
     return reveal_centre, spatial_dims

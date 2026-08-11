@@ -473,6 +473,17 @@ class TestResolveRevealKnobs:
             ({"method": "radial", "spatial_dims": [1.9]}, "integer column indices"),
             ({"method": "random", "reveal_centre": [0.0]}, "only to a\n? *reveal"),
             ({"method": "random", "spatial_dims": [0]}, "only to a\n? *reveal"),
+            # One coordinate per shell axis. Deferring this to the scorer left a
+            # substitutive wrapper group (and its coarse children) on disk before
+            # the raise; see `test_mismatched_reveal_knobs_write_no_partial_group`.
+            (
+                {
+                    "method": "radial",
+                    "reveal_centre": [0.0, 0.0, 0.0],
+                    "spatial_dims": [0, 1],
+                },
+                "3 coordinates but spatial_dims lists 2 axes",
+            ),
         ],
         ids=[
             "empty-centre",
@@ -482,11 +493,38 @@ class TestResolveRevealKnobs:
             "fractional-dims",
             "centre-without-radial",
             "dims-without-radial",
+            "centre-length-mismatch",
         ],
     )
     def test_malformed_reveal_spec_raises(self, spec: dict, match: str) -> None:
         with pytest.raises(ValueError, match=match):
             resolve_additive_axis_points(spec)
+
+    def test_mismatched_reveal_knobs_write_no_partial_group(self, tmp_path) -> None:
+        """Why the cross-check belongs at RESOLVE time, end to end.
+
+        A substitutive ladder creates its wrapper ``kind=lod`` group and writes
+        the coarse gsplat children BEFORE the finest child reaches the scorer, so
+        the scorer's own length check fired only once ``p/child_0`` and
+        ``p/child_1`` were on disk — and a corrected retry then died on
+        "duplicate child name 'p'". Nothing may be written.
+        """
+        output = tmp_path / "t.luxar.zarr"
+        positions = np.random.RandomState(0).rand(200, 3).astype(np.float32)
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="3 coordinates but spatial_dims"):
+                scene.add_points(
+                    "p",
+                    positions,
+                    substitutive_lod={"levels": 2, "compression_factor": 4},
+                    additive_lod={
+                        "method": "radial",
+                        "reveal_centre": [0.0, 0.0, 0.0],
+                        "spatial_dims": [0, 1],
+                    },
+                )
+        assert not (output / "p").exists()
 
     def test_unknown_key_still_reported_after_popping_reveal_keys(self) -> None:
         """The reveal keys are POPPED, so the leftover-keys check must still fire
