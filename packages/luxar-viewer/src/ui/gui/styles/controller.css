@@ -165,7 +165,7 @@
 .luxar-gui__input:focus {
   outline: none;
   background: rgba(0, 0, 0, 0.3);
-  border-color: var(--luxar-border-focus);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /**
@@ -196,7 +196,7 @@
 .luxar-gui__input--number:focus {
   outline: none;
   background: rgba(0, 0, 0, 0.3);
-  border-color: var(--luxar-border-focus);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /* Hide spinner buttons - they interfere with text alignment */
@@ -258,7 +258,7 @@
 .luxar-gui__select:focus {
   outline: none;
   background-color: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--luxar-border-focus);
+  border: 1px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 /* <select> option colors are centralised in styles/components/select-menu.css

@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { expandImports } from './css-text';
+import { expandImports, stripComments } from './css-text';
 
 describe('expandImports — @import syntax coverage [styles.md C4]', () => {
   let dir: string;
@@ -70,5 +70,25 @@ describe('expandImports — @import syntax coverage [styles.md C4]', () => {
     const css = expandImports(join(dir, 'a.css'));
     expect(css).toContain('.a {}');
     expect(css).toContain('.b {}');
+  });
+});
+
+describe('stripComments', () => {
+  it('removes a multi-line comment whose wrapped prose looks like a selector', () => {
+    // The exact shape that tripped the embed-safety scan: a comment line
+    // beginning with the word "body" reads as a top-level `body` selector.
+    const css = [
+      '.luxar-panel {',
+      '  /* header and the scrolling',
+      '     body share a bound. */',
+      '  color: red;',
+      '}',
+    ].join('\n');
+    expect(stripComments(css)).not.toMatch(/^\s*body[\s.[:#]/m);
+    expect(stripComments(css)).toContain('color: red;');
+  });
+
+  it('leaves a real top-level selector in place', () => {
+    expect(stripComments('/* note */\nbody { margin: 0; }')).toMatch(/^body\s*\{/m);
   });
 });

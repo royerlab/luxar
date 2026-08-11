@@ -278,7 +278,7 @@
 }
 
 .luxar-layers-panel__select:focus {
-  border-color: var(--luxar-border-focus);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
   background-color: var(--luxar-interactive-hover);
 }
 
@@ -343,7 +343,7 @@
   font-size: var(--luxar-text-xs);
   color: var(--luxar-text-primary);
   background: var(--luxar-bg-secondary);
-  border: 1px solid var(--luxar-border-focus);
+  border: 1px solid var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
   border-radius: 2px;
   padding: 0 2px;
   outline: none;

@@ -79,10 +79,9 @@
 }
 
 /**
- * GUI Header (contains title and close button)
- */
-/**
  * GUI Title
+ * (The header row and close button now come from the shared
+ * .luxar-panel-header / .luxar-panel-close recipes in base/utilities.css.)
  */
 .luxar-gui__title {
   color: var(--luxar-text-primary);
@@ -91,9 +90,6 @@
   margin: 0;
 }
 
-/**
- * GUI Close Button
- */
 /**
  * Children Container
  */

@@ -47,6 +47,17 @@ export function expandImports(file: string, seen = new Set<string>()): string {
 }
 
 /**
+ * Strip every `/* … *\/` comment from a CSS string, so a text-level selector
+ * scan reads declarations only. Without this, a wrapped prose line inside a
+ * comment (e.g. one starting with the word "body") looks exactly like a
+ * top-level selector to the line-anchored patterns in
+ * library-css-scope.test.ts.
+ */
+export function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+/**
  * Strip every `@media (...) { ... }` block from a CSS string. Uses an
  * explicit brace counter (a regex with `[^{}]*` mishandles nested rules
  * inside the media block).

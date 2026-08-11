@@ -206,7 +206,7 @@
 }
 
 .luxar-dimension-dropdown__select:focus {
-  border-color: var(--luxar-border-focus);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
   background-color: var(--luxar-interactive-hover);
 }
 
@@ -237,7 +237,7 @@
 
 .luxar-dimension-toggle:focus {
   outline: none;
-  border-color: var(--luxar-border-focus);
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
 .luxar-dimension-toggle--on {
