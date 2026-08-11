@@ -27,6 +27,25 @@ describe('concat-helpers ladder-dtype contract', () => {
     expect(Array.from(out as Uint8Array)).toEqual([1, 2, 3]);
   });
 
+  it('respects perItem (e.g. 3-vector positions)', () => {
+    const parts: Part[] = [
+      { data: new Float32Array([0, 0, 0]), n: 1 },
+      { data: new Float32Array([1, 1, 1, 2, 2, 2]), n: 2 },
+    ];
+    const out = concatRequiredField(parts, (p) => p.data, count, 3, 'positions');
+    expect(out).toHaveLength(9);
+    expect(Array.from(out as Float32Array).slice(3)).toEqual([1, 1, 1, 2, 2, 2]);
+  });
+
+  it('optional field concatenates when every part carries it', () => {
+    const parts: Part[] = [
+      { data: new Float32Array([1]), n: 1 },
+      { data: new Float32Array([2]), n: 1 },
+    ];
+    const out = concatOptionalField(parts, (p) => p.data, count, 1, 'scalars');
+    expect(Array.from(out as Float32Array)).toEqual([1, 2]);
+  });
+
   it('throws a descriptive error on mixed dtypes (required field)', () => {
     const parts: Part[] = [
       { data: new Uint8Array([255, 255]), n: 2 },
