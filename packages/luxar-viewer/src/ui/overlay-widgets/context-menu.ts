@@ -194,14 +194,14 @@ export function openContextMenu(opts: ContextMenuOptions): () => void {
           e.key === 'ArrowDown'
             ? items[(idx + 1) % items.length]
             : items[(idx - 1 + items.length) % items.length];
-        next.focus();
+        focusItem(next);
         break;
       }
       case 'Home':
       case 'End':
         e.preventDefault();
         e.stopPropagation();
-        items[e.key === 'Home' ? 0 : items.length - 1]?.focus();
+        focusItem(items[e.key === 'Home' ? 0 : items.length - 1]);
         break;
       case 'ArrowRight': {
         e.preventDefault();
@@ -274,12 +274,28 @@ function enabledItems(menu: HTMLElement): HTMLElement[] {
   return Array.from(menu.querySelectorAll<HTMLElement>('.luxar-context-menu__item:not(:disabled)'));
 }
 
+/**
+ * Focus an item AND keep it in view — a menu capped to the viewport height
+ * scrolls, and jsdom lacks the native scroll-on-focus, hence the explicit
+ * (guarded) scrollIntoView.
+ */
+function focusItem(el: HTMLElement | undefined): void {
+  if (!el) return;
+  el.focus();
+  el.scrollIntoView?.({ block: 'nearest' });
+}
+
 function focusFirstItem(menu: HTMLElement): void {
-  enabledItems(menu)[0]?.focus();
+  focusItem(enabledItems(menu)[0]);
 }
 
 /** Clamp a fixed-position menu into the viewport (tolerates x/y of 0). */
 function placeMenu(el: HTMLElement, x: number, y: number): void {
+  // Moving a menu is not enough for one TALLER than the viewport (the full
+  // colormap submenu on a short window): cap the height so the surface
+  // scrolls (`overflow-y: auto` in its CSS) instead of pinning to the top
+  // margin with the lower entries unreachable.
+  el.style.maxHeight = `${Math.max(0, window.innerHeight - 2 * MARGIN)}px`;
   el.style.left = `${Math.max(MARGIN, x)}px`;
   el.style.top = `${Math.max(MARGIN, y)}px`;
   const r = el.getBoundingClientRect();

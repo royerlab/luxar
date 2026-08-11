@@ -783,6 +783,23 @@ export class LayerStateManager {
     if (changed) this.notify();
   }
 
+  /**
+   * Replace a layer's state with a freshly derived {@link LayerInfo}
+   * (per-layer reset). Preserves `selected`, and clears any solo capture —
+   * the reset rewrites visibility behind the capture's back, so a later
+   * un-solo restore would silently overwrite it (and `soloedPath` would lie
+   * about which layers are showing in the meantime). Notifies once. The
+   * live object is mutated in place, so references held by callers stay
+   * valid.
+   */
+  resetLayerState(path: string, fresh: LayerInfo): void {
+    const live = this.layers.get(path);
+    if (!live) return;
+    this.soloState = null;
+    Object.assign(live, fresh, { selected: live.selected });
+    this.notify();
+  }
+
   setVisible(path: string, visible: boolean): void {
     // A manual per-layer change invalidates the solo capture (restoring it
     // later would silently overwrite what the user just chose).

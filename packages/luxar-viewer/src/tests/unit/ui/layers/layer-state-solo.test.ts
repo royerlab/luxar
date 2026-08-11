@@ -100,4 +100,26 @@ describe('LayerStateManager solo + setVisibleMany', () => {
     state.initFromSceneGraph(graph());
     expect(state.soloedPath).toBeNull();
   });
+
+  it('resetLayerState clears the solo capture, keeps selection, and notifies once', () => {
+    state.select('/b', 'single');
+    state.solo('/a');
+    notifyCount = 0;
+
+    // Fresh authored-state derivation, exactly as the panel's resetLayer does.
+    const scratch = new LayerStateManager();
+    scratch.initFromSceneGraph(graph());
+    const fresh = scratch.getLayer('/b')!;
+    state.resetLayerState('/b', fresh);
+
+    expect(state.getLayer('/b')?.visible).toBe(true); // authored visibility restored
+    expect(state.getLayer('/b')?.selected).toBe(true); // selection preserved
+    // The capture is gone: soloedPath must not keep claiming /a is alone,
+    // and a later solo toggle is a FRESH capture of the current state.
+    expect(state.soloedPath).toBeNull();
+    expect(notifyCount).toBe(1);
+    state.solo('/a');
+    state.solo('/a');
+    expect(vis()).toEqual(['a:1', 'b:1', 'c:0']);
+  });
 });

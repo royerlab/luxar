@@ -132,6 +132,14 @@ describe('openContextMenu', () => {
     expect(menuEl()).toBeNull();
   });
 
+  it('caps the menu height to the viewport so long menus scroll', () => {
+    openBasic();
+    // placeMenu sets a viewport-relative max-height (MARGIN = 8 on each
+    // side); the CSS pairs it with overflow-y: auto so entries below the
+    // fold stay reachable instead of pinning off-screen.
+    expect(menuEl()!.style.maxHeight).toBe(`${window.innerHeight - 16}px`);
+  });
+
   it('opening a second menu closes the first; close restores focus', () => {
     const outside = document.createElement('button');
     document.body.appendChild(outside);

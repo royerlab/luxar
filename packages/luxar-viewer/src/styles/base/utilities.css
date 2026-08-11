@@ -560,7 +560,10 @@
 
 .luxar-panel-filter__input:focus {
   outline: none;
-  border-color: var(--luxar-border-focus);
+  /* Same fallback rationale as the shared focus ring above: `borders.focus`
+     is optional on ThemeBorderColors, so a custom theme without it must not
+     lose the focus indication. */
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
   background: var(--luxar-interactive-hover);
 }
 

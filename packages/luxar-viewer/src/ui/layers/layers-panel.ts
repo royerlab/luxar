@@ -398,7 +398,18 @@ export class LayersPanel {
       {
         label: 'Copy layer path',
         action: () => {
-          void navigator.clipboard?.writeText(layer.path);
+          // The Clipboard API is absent on non-secure origins and its write
+          // can reject (permission denied) — both must surface as feedback,
+          // not an unhandled rejection and silence.
+          const write = navigator.clipboard?.writeText(layer.path);
+          if (!write) {
+            showToast('Clipboard unavailable (needs a secure context)');
+            return;
+          }
+          write.then(
+            () => showToast('Layer path copied'),
+            () => showToast('Could not copy layer path')
+          );
         },
       },
     ];
@@ -480,9 +491,11 @@ export class LayersPanel {
    * Reset ONE layer to its authored state. Re-derives the LayerInfo with a
    * throwaway LayerStateManager over the kept scene graph (deliberately not
    * factoring the private walkSceneGraph derivation — this reuses it
-   * verbatim, so reset can never drift from load), preserves selection, and
-   * patches only this row (renderList would drop focus and reset the
-   * failed-loads signature).
+   * verbatim, so reset can never drift from load), applies it through the
+   * state manager (which preserves selection and clears any solo capture —
+   * a direct Object.assign here would rewrite visibility behind the
+   * capture's back), and patches only this row (renderList would drop
+   * focus and reset the failed-loads signature).
    */
   private resetLayer(path: string): void {
     if (!this.sceneGraph) return;
@@ -493,8 +506,7 @@ export class LayersPanel {
     const fresh = scratch.getLayer(path);
     scratch.dispose();
     if (!fresh) return;
-    const selected = live.selected;
-    Object.assign(live, fresh, { selected });
+    this.state.resetLayerState(path, fresh);
     this.applyEngine.applyVisibility(path, live.visible);
     this.applyEngine.applyColormap(live);
     this.applyEngine.applyMeshAppearance(live);
