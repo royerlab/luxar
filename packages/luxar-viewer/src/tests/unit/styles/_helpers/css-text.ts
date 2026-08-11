@@ -52,9 +52,40 @@ export function expandImports(file: string, seen = new Set<string>()): string {
  * comment (e.g. one starting with the word "body") looks exactly like a
  * top-level selector to the line-anchored patterns in
  * library-css-scope.test.ts.
+ *
+ * Single pass over the source rather than a `\/\*[\s\S]*?\*\/` replace, so
+ * comments and quoted strings are recognised in the order they actually
+ * appear. A plain regex is wrong in both directions: `content: "/*"` would
+ * open a comment that swallows the following (real) rules, and scanning for
+ * strings first would trip over the apostrophes this codebase's own prose
+ * comments are full of. Strings are copied through verbatim — a CSS string
+ * cannot span a raw newline, so an unterminated quote ends at the line break
+ * instead of eating the rest of the file.
  */
 export function stripComments(css: string): string {
-  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+  let out = '';
+  let i = 0;
+  while (i < css.length) {
+    const ch = css[i];
+    if (ch === '/' && css[i + 1] === '*') {
+      const end = css.indexOf('*/', i + 2);
+      i = end === -1 ? css.length : end + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] !== ch && css[j] !== '\n') {
+        if (css[j] === '\\') j++;
+        j++;
+      }
+      out += css.slice(i, Math.min(j + 1, css.length));
+      i = j + 1;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
 }
 
 /**

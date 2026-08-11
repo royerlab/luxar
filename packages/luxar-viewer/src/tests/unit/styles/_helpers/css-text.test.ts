@@ -91,4 +91,24 @@ describe('stripComments', () => {
   it('leaves a real top-level selector in place', () => {
     expect(stripComments('/* note */\nbody { margin: 0; }')).toMatch(/^body\s*\{/m);
   });
+
+  it('does not treat comment delimiters inside a quoted value as a comment', () => {
+    // A `content` string carrying `/*` must not open a comment and swallow the
+    // real rules after it — that would hide a forbidden selector from the
+    // embed-safety scan.
+    const css = ['.x {', '  content: "/*";', '}', 'body { margin: 0; }'].join('\n');
+    expect(stripComments(css)).toMatch(/^body\s*\{/m);
+  });
+
+  it('keeps scanning past the apostrophes in prose comments', () => {
+    // Real comments in this codebase are full of apostrophes; treating one as
+    // a string opener would consume everything up to the next quote.
+    const css = ["/* the panel's own padding */", 'body { margin: 0; }'].join('\n');
+    expect(stripComments(css)).toMatch(/^body\s*\{/m);
+  });
+
+  it('an unterminated quote stops at the line break', () => {
+    const css = ['.x { font-family: "Broken;', 'body { margin: 0; }'].join('\n');
+    expect(stripComments(css)).toMatch(/^body\s*\{/m);
+  });
 });
