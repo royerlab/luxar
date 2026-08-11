@@ -39,6 +39,7 @@ import {
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
 import {
+  CAPSULE_JOINT_DEFICIT_GATE,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
@@ -48,6 +49,7 @@ import {
 const G = {
   RADIUS_FACTOR: CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7), // 0.6590102
   MIN_RADIUS: CAPSULE_MIN_RADIUS_PX.toFixed(1),
+  DEFICIT_GATE: CAPSULE_JOINT_DEFICIT_GATE.toFixed(2),
   APRON: CAPSULE_STENCIL_APRON_PX.toFixed(1),
 };
 
@@ -277,10 +279,14 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                   rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / farDepthEffA;
                 }
                 rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                vJointA = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarA);
                 // Reach: the kept half-disc (|ny|·rMax) PLUS whatever of my
                 // cap the partner cannot cover (its taper deficit).
                 float deficitA = clamp(1.0 - rpFarA / max(rA, 1e-4), 0.0, 1.0);
+                // Congruence gate (see _shared/line-capsule.ts): an empty
+                // packet keeps the cheap hard cut where the deficit is ~0.
+                if (deficitA > ${G.DEFICIT_GATE}) {
+                  vJointA = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarA);
+                }
                 extA = max(abs(nLoc.y), deficitA) * rMax + ${G.APRON};
               }
             } else {
@@ -323,8 +329,10 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                   rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / farDepthEffB;
                 }
                 rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-                vJointB = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarB);
                 float deficitB = clamp(1.0 - rpFarB / max(rB, 1e-4), 0.0, 1.0);
+                if (deficitB > ${G.DEFICIT_GATE}) {
+                  vJointB = vec4(dot(qq / ql, u), dot(qq / ql, v), ql, rpFarB);
+                }
                 extB = max(abs(nLoc.y), deficitB) * rMax + ${G.APRON};
               }
             } else {

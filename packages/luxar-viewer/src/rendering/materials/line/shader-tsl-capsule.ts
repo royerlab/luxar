@@ -51,6 +51,7 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import {
+  CAPSULE_JOINT_DEFICIT_GATE,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_STENCIL_APRON_PX,
@@ -318,12 +319,15 @@ export function capsuleLineWebGPUFactory(
                 CAPSULE_MIN_RADIUS_PX,
                 uMaxLinePixelWidth
               ).toVar();
-              vJointA.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarA));
               const deficitA: TSLNode = clamp(
                 float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))),
                 0.0,
                 1.0
               ).toVar();
+              // Congruence gate (see _shared/line-capsule.ts).
+              If(deficitA.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
+                vJointA.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarA));
+              });
               extA.assign(max(abs(nLoc.y), deficitA).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
             });
           }).Else(() => {
@@ -360,12 +364,14 @@ export function capsuleLineWebGPUFactory(
                 CAPSULE_MIN_RADIUS_PX,
                 uMaxLinePixelWidth
               ).toVar();
-              vJointB.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarB));
               const deficitB: TSLNode = clamp(
                 float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))),
                 0.0,
                 1.0
               ).toVar();
+              If(deficitB.greaterThan(CAPSULE_JOINT_DEFICIT_GATE), () => {
+                vJointB.assign(vec4(dot(qhat, u), dot(qhat, v), ql, rpFarB));
+              });
               extB.assign(max(abs(nLoc.y), deficitB).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
             });
           }).Else(() => {

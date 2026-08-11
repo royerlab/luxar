@@ -67,6 +67,17 @@ export const CAPSULE_MIN_RADIUS_PX = 1.5;
 export const CAPSULE_STENCIL_APRON_PX = 0.5;
 
 /**
+ * Congruence gate for the joint DEFICIT rule: when the partner's far
+ * radius is within this fraction of my end radius (deficit ≈ 0 — equal
+ * widths, no meaningful perspective divergence), the joint packet stays
+ * empty and the fragment takes the cheap hard-cut discard instead of
+ * evaluating the partner's field. Congruent joints are the overwhelmingly
+ * common case (and the fill-heavy benchmarks' only case), so this keeps
+ * the deficit rule's cost confined to the joints that actually need it.
+ */
+export const CAPSULE_JOINT_DEFICIT_GATE = 0.02;
+
+/**
  * Sharpness-knob → profile exponent map: `n = 2^(3 − 4s)`. In `(1 − p²)^n`
  * space SMALLER exponents are boxier, so the map runs opposite to the
  * gaussian-family β: s = 0 → n = 8 (spiky), s = 0.5 → n = 2 (the default
