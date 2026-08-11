@@ -24,6 +24,28 @@ ports to match. A demo passing an explicit `--port` /
 still resolves the rare same-slot hash collision by shifting up with its
 usual warning.
 
+#### Browser tabs name the scene they show
+
+Every viewer tab was titled "Luxar Player – 3D Scene Viewer", so a row of
+open demo tabs was indistinguishable — the accomplice of the stale-tab trap.
+Two-step title chain, applied to `document.title`: a scene's authored
+`viewer_config.title` (new Python `ViewerConfig` field) wins; otherwise the
+viewer uses the new `?title=` URL parameter, which serve-family commands
+(`luxar serve --viewer` / `--open`, and therefore every `luxar demo run`)
+derive from the dataset's file name (`dataset_title`, compound suffixes like
+`.luxar.zarr` stripped, including archive-wrapped ones like
+`.gsplats.zarr.zip`). Zero demo edits required — all 80 demos get named tabs
+for free. Switching datasets inside the viewer drops `?title=` from the
+address bar and retitles the tab after the dataset you switched to (falling
+back to the page title when the URL names no store): both the URL parameter
+and an authored title name the scene you just left, so leaving either in
+place is exactly the stale tab this set out to fix. A tab reloaded after such
+a switch (or a link shared from it) carries no `?title=` any more, so the
+viewer falls back to the store name in `?src=`. `document.title` belongs to
+the host page, so `LuxarApp.dispose()` hands the page's own `<title>` back —
+an embedder that removes the viewer is not left named after a torn-down
+scene.
+
 #### The native-WebGPU smoke spec actually skips on the WebGL2 fallback (#1449)
 
 Three of its four tests gated on `capabilities.apiSurface !== 'webgpu'` alone

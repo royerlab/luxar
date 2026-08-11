@@ -17,12 +17,15 @@ import re
 import shutil
 import stat
 from pathlib import Path
+from typing import Optional
+from urllib.parse import quote
 
 from arbol import aprint, asection
 
 from ..utils.atomic_copy import atomic_copytree
 from .utils import (
     check_viewer_built,
+    dataset_title,
     format_memory_size,
     get_viewer_dist_path,
     validate_zarr_store,
@@ -78,7 +81,7 @@ def export_scene(
         _copy_zarr_data(source, output / data_dir_name)
 
         # Step 3: Generate serve.py
-        _generate_serve_script(output, data_dir_name)
+        _generate_serve_script(output, data_dir_name, dataset_title(source))
 
         # Step 4: Generate README.txt
         _generate_readme(output, data_dir_name)
@@ -167,14 +170,19 @@ def _copy_zarr_data(source: Path, dest: Path) -> None:
         aprint(f"Copied zarr data ({format_memory_size(total_size)}) to {dest}")
 
 
-def _generate_serve_script(output: Path, data_dir_name: str) -> None:
+def _generate_serve_script(
+    output: Path, data_dir_name: str, title: Optional[str] = None
+) -> None:
     """Generate the serve.py script.
 
     Args:
         output: Output directory root.
         data_dir_name: Name of the data directory.
+        title: Optional browser-tab title baked into the viewer URL (derived
+            from the source scene's file name), so exported-scene tabs are
+            tellable apart like every other serve-family command's.
     """
-    script_content = _get_serve_script_content(data_dir_name)
+    script_content = _get_serve_script_content(data_dir_name, title)
     serve_path = output / "serve.py"
     serve_path.write_text(script_content)
     # Make executable on Unix
@@ -184,17 +192,20 @@ def _generate_serve_script(output: Path, data_dir_name: str) -> None:
     aprint(f"Generated {serve_path}")
 
 
-def _get_serve_script_content(data_dir_name: str) -> str:
+def _get_serve_script_content(data_dir_name: str, title: Optional[str] = None) -> str:
     """Return the serve.py script content.
 
     Uses only Python 3 stdlib -- no external dependencies required.
 
     Args:
         data_dir_name: Name of the data directory (embedded in the script).
+        title: Optional tab title; baked in PRE-ENCODED as a ready-to-append
+            query fragment so the generated script needs no urllib import.
 
     Returns:
         Complete serve.py script as a string.
     """
+    title_query = f"&title={quote(title)}" if title else ""
     return f'''#!/usr/bin/env python3
 """Serve this exported Luxar scene locally.
 
@@ -279,7 +290,9 @@ def main():
     server = http.server.HTTPServer(("127.0.0.1", port), handler)
 
     data_url = "http://127.0.0.1:{{}}/{{}}".format(port, DATA_DIR_NAME)
-    viewer_url = "http://127.0.0.1:{{}}/viewer/?src={{}}".format(port, data_url)
+    viewer_url = "http://127.0.0.1:{{}}/viewer/?src={{}}{title_query}".format(
+        port, data_url
+    )
 
     print("Luxar viewer: {{}}".format(viewer_url))
     print("Press Ctrl+C to stop")

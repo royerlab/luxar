@@ -12,6 +12,7 @@ describe('readUrlParams', () => {
     expect(params).toEqual({
       src: null,
       theme: null,
+      title: null,
       debug: false,
       noCache: false,
       noSliceCache: false,
@@ -33,6 +34,13 @@ describe('readUrlParams', () => {
       lineJoin: null,
       linePrimitive: null,
     });
+  });
+
+  it('parses ?title=, decoding and trimming; blank collapses to null', () => {
+    expect(readUrlParams('?title=global_rivers_earth').title).toBe('global_rivers_earth');
+    expect(readUrlParams('?title=Rivers%20of%20Earth').title).toBe('Rivers of Earth');
+    expect(readUrlParams('?title=%20%20').title).toBeNull();
+    expect(readUrlParams('?title=').title).toBeNull();
   });
 
   it('lodFade defaults ON and is disabled only by ?no-lod-fade', () => {
@@ -405,6 +413,17 @@ describe('buildDataSourceBrowserUrl — edge cases', () => {
       search: '',
     });
     expect(url).toBe('/viewer?src=');
+  });
+
+  it('drops a stale ?title= but keeps the other params when src changes', () => {
+    // ?title= names the dataset the server was started with. Switching
+    // datasets in the browser modal must not carry it over, or a reload (or
+    // a shared link) titles the tab after a scene it no longer shows.
+    const url = buildDataSourceBrowserUrl('datasets/next.zarr', {
+      pathname: '/viewer',
+      search: '?src=datasets%2Fprev.zarr&title=Prev%20Scene&theme=dark',
+    });
+    expect(url).toBe('/viewer?src=datasets%2Fnext.zarr&theme=dark');
   });
 });
 

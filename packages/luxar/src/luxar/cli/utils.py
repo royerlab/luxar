@@ -11,6 +11,7 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote
 
 import zarr
 from arbol import aprint
@@ -163,6 +164,48 @@ def pick_port(
         if holder:
             aprint(f"   {holder}")
     return actual
+
+
+def dataset_title(path: "Path | str | None") -> Optional[str]:
+    """A human-recognizable title for a dataset path, or None.
+
+    Peels an archive extension (``.zip``, ``.tar.gz``, ``.tgz``) and then a
+    dataset suffix (``.luxar.zarr``, ``.gsplats.zarr``, ``.zarr``) off the file
+    name — ``global_rivers_earth`` from ``global_rivers_earth.luxar.zarr``, and
+    equally from ``global_rivers_earth.luxar.zarr.zip``. Both layers matter:
+    ``gsplat view`` takes ``.gsplats.zarr.zip`` / ``.gsplats.zarr.tar.gz``
+    archives, and a shipped demo scene is a ``.luxar.zarr.zip``.
+
+    Serve-family commands pass the result as the viewer's ``?title=``
+    parameter so every browser tab names the scene it shows (several demo/dev
+    tabs are otherwise indistinguishable). A scene's authored
+    ``viewer_config.title`` overrides it in the viewer.
+    """
+    if path is None:
+        return None
+    name = Path(path).name
+    for archive in (".tar.gz", ".tgz", ".zip"):
+        if name.lower().endswith(archive):
+            name = name[: -len(archive)]
+            break
+    for suffix in (".luxar.zarr", ".gsplats.zarr", ".zarr"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    name = name.strip()
+    return name or None
+
+
+def append_title_param(viewer_url: str, title: Optional[str]) -> str:
+    """Append ``&title=<url-encoded>`` to a viewer URL, or return it unchanged.
+
+    The viewer URL always already carries ``?src=``, so ``&`` is the right
+    separator. Shared by every serve-family command so the tab title is
+    spelled identically wherever a viewer URL is printed or opened.
+    """
+    if not title:
+        return viewer_url
+    return f"{viewer_url}&title={quote(title)}"
 
 
 def wait_for_server(

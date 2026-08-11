@@ -34,6 +34,7 @@ from .network_simulation import (
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
     _LOCAL_CORS_ORIGIN_REGEX,
+    append_title_param,
     get_viewer_dist_path,
 )
 from .utils import (
@@ -375,6 +376,7 @@ def _serve_viewer(
     data_url: Optional[str] = None,
     open_browser_flag: bool = True,
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
+    title: Optional[str] = None,
 ) -> None:
     """Internal function to serve the viewer.
 
@@ -387,6 +389,11 @@ def _serve_viewer(
         open_browser_flag: If True, open the viewer URL in the system browser
             shortly after the server starts.
         cors_origin: Allowed CORS origin (see :func:`_add_cors`).
+        title: Optional browser-tab title appended as ``&title=<title>``
+            (URL-encoded) when a ``data_url`` is present. Serve-family
+            commands derive it from the dataset file name
+            (:func:`luxar.cli.utils.dataset_title`); a scene's authored
+            ``viewer_config.title`` overrides it in the viewer.
     """
     viewer_dist = get_viewer_dist_path()
 
@@ -396,7 +403,11 @@ def _serve_viewer(
     if data_url:
         # Strip trailing slash from data_url to prevent double-slash in viewer requests
         data_url_clean = data_url.rstrip("/")
-        viewer_url = f"http://{host}:{port}/?src={data_url_clean}"
+        # The title names the browser tab (document.title) so several open
+        # viewer tabs are tellable apart; authored viewer_config.title wins.
+        viewer_url = append_title_param(
+            f"http://{host}:{port}/?src={data_url_clean}", title
+        )
     else:
         viewer_url = f"http://{host}:{port}/"
 
