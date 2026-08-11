@@ -241,6 +241,16 @@ const SHADERS = [
   'line-volprim-endon-persp',
   'line-volprim-peak',
   'line-volprim-colormap',
+  // Capsule line primitive (#1352, ?linePrimitive=capsule) — one entry per
+  // distinct GRAPH: ortho additive (sideon; joint/fold/taper/fat share its
+  // code), perspective (near-clip + fade branches), the max and volumetric
+  // mode tails, the colormap fragment, and the pick twin.
+  'line-capsule-sideon',
+  'line-capsule-endon-persp',
+  'line-capsule-max',
+  'line-capsule-volumetric',
+  'line-capsule-colormap',
+  'line-capsule-pick-sideon',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

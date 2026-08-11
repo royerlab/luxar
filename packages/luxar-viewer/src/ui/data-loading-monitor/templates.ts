@@ -70,6 +70,26 @@ export const MONITOR_ICONS = {
   info: `${MICON}<circle cx="7" cy="7" r="5.4"/><path d="M7 6.6v3M7 4.3v.1"/></svg>`,
   /** Expand corners — grow the compact pill into the full panel. */
   expand: `${MICON}<path d="M5.4 1.8H1.8v3.6M8.6 1.8h3.6v3.6M5.4 12.2H1.8V8.6M8.6 12.2h3.6V8.6"/></svg>`,
+  /** Warning triangle — failure states (was the ⚠ emoji). */
+  alert: `${MICON}<path d="M7 2 12.8 12H1.2L7 2Z"/><path d="M7 6v2.6M7 10.4v.1"/></svg>`,
+  /** Circle-slash — a disabled subsystem (was the 🚫 emoji). */
+  blocked: `${MICON}<circle cx="7" cy="7" r="5.4"/><path d="M3.2 3.2l7.6 7.6"/></svg>`,
+  /** Scene root — globe (scene-graph tree). */
+  nodeScene: `${MICON}<circle cx="7" cy="7" r="5.4"/><path d="M1.6 7h10.8M7 1.6c1.9 1.5 1.9 9.3 0 10.8M7 1.6c-1.9 1.5-1.9 9.3 0 10.8"/></svg>`,
+  /** Group — folder (scene-graph tree). */
+  nodeGroup: `${MICON}<path d="M1.8 4h3l1.2 1.2h6.2V11a1.2 1.2 0 0 1-1.2 1.2H1.8V4Z"/></svg>`,
+  /** Points — dot triplet (scene-graph tree). */
+  nodePoints: `${MICON}<circle cx="4" cy="9.5" r="1.5"/><circle cx="9.8" cy="8.2" r="1.5"/><circle cx="6.4" cy="3.8" r="1.5"/></svg>`,
+  /** Lines — open polyline (scene-graph tree). */
+  nodeLines: `${MICON}<path d="M1.8 11.2 5.6 5.4l3 3.2 3.6-6"/></svg>`,
+  /** GSplats — soft Gaussian: outer iso-contour + filled core (scene-graph tree). */
+  nodeGsplats: `${MICON}<ellipse cx="7" cy="7" rx="5.2" ry="3.9" transform="rotate(-18 7 7)"/><circle cx="7" cy="7" r="1.4" fill="currentColor" stroke="none"/></svg>`,
+  /** Mesh — hexagon (scene-graph tree; matches the old ⬡). */
+  nodeMesh: `${MICON}<path d="M7 1.6 11.7 4.3v5.4L7 12.4 2.3 9.7V4.3L7 1.6Z"/></svg>`,
+  /** kind=lod group — level slider pair (was the 🎚️ emoji). */
+  kindLod: `${MICON}<path d="M1.8 4.4h10.4M1.8 9.6h10.4"/><circle cx="5" cy="4.4" r="1.6"/><circle cx="9" cy="9.6" r="1.6"/></svg>`,
+  /** kind=partition group — BSP-split square (was the 🧩 emoji). */
+  kindPartition: `${MICON}<rect x="2" y="2" width="10" height="10" rx="1.2"/><path d="M7.6 2v6.2M2 8.2h5.6M7.6 8.2H12" /></svg>`,
 } as const;
 
 /**
@@ -290,7 +310,7 @@ ${pathList}
 
 Retry re-runs each failed load with the current view state. Failed loads are also retried automatically when the connection comes back online.`
     )}">
-      <span class="luxar-failed-loads__label">⚠ ${n} failed load${n === 1 ? '' : 's'}</span>
+      <span class="luxar-failed-loads__label">${MONITOR_ICONS.alert} ${n} failed load${n === 1 ? '' : 's'}</span>
       <button data-action="retryFailedLoads" class="luxar-cache-section__clear-btn" ${
         retryInFlight ? 'disabled' : ''
       } title="Re-run every failed load with the current view state">${retryInFlight ? 'Retrying…' : 'Retry'}</button>
@@ -880,7 +900,7 @@ export function renderCacheContent(
       <div class="luxar-tab-content--cache">
         ${renderCacheStatusRow(cacheMetrics.status)}
         <div class="luxar-cache-disabled">
-          <div class="luxar-cache-disabled__icon">🚫</div>
+          <div class="luxar-cache-disabled__icon">${MONITOR_ICONS.blocked}</div>
           <div class="luxar-cache-disabled__message">${message}</div>
           <div class="luxar-cache-disabled__hint">${hint}</div>
         </div>
@@ -1523,14 +1543,14 @@ function getProgressColorClass(percent: number): string {
  */
 function getNodeTypeIcon(type: string): string {
   const icons: Record<string, string> = {
-    scene: '🌐',
-    group: '📁',
-    points: '⚬',
-    lines: '╱',
-    gsplats: '🔮',
-    mesh: '⬡',
+    scene: MONITOR_ICONS.nodeScene,
+    group: MONITOR_ICONS.nodeGroup,
+    points: MONITOR_ICONS.nodePoints,
+    lines: MONITOR_ICONS.nodeLines,
+    gsplats: MONITOR_ICONS.nodeGsplats,
+    mesh: MONITOR_ICONS.nodeMesh,
   };
-  return icons[type] || '•';
+  return icons[type] || MONITOR_ICONS.dot;
 }
 
 /**
@@ -1554,8 +1574,8 @@ function getNodeTypeColorClass(type: string): string {
  * plain containers; everything else falls back to its geometry type.
  */
 function getSceneGraphIcon(node: SceneGraphNode): string {
-  if (node.kind === 'lod') return '🎚️';
-  if (node.kind === 'partition') return '🧩';
+  if (node.kind === 'lod') return MONITOR_ICONS.kindLod;
+  if (node.kind === 'partition') return MONITOR_ICONS.kindPartition;
   return getNodeTypeIcon(node.type);
 }
 
