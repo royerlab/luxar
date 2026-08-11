@@ -249,6 +249,23 @@ class TestRadialOrderLines:
         assert perm.shape == (len(polys),) == (5,)
         assert sorted(perm.tolist()) == list(range(5))
 
+    def test_non_finite_vertices_are_refused_naming_the_vertices(self) -> None:
+        """The error must blame the VERTICES, not ``reveal_centre``.
+
+        Lines derives its default origin from the vertices, so before the
+        data-side guard a NaN vertex produced a NaN origin that then tripped the
+        scorer's ``reveal_centre must be finite`` check — an error naming a knob
+        the caller never passed. Points and GSplats meanwhile returned input order
+        silently. One shared validator makes all three agree AND report the input
+        the caller actually supplied.
+        """
+        verts, polys = self._fan()
+        verts = verts.copy()
+        verts[3, 0] = float("nan")
+
+        with pytest.raises(ValueError, match="vertices must be finite"):
+            compute_additive_order_lines(verts, polys, method="radial")
+
     def test_is_translation_invariant(self) -> None:
         verts, polys = self._fan()
         far = verts + np.float32(1000.0)

@@ -724,6 +724,50 @@ def validate_colormap(value: Any) -> Union[str, "np.ndarray[Any, Any]"]:
 
 
 # Type guards (return bool for conditional type narrowing)
+def validate_finite_reveal_coords(coords: Any, what: str) -> None:
+    """Refuse non-finite coordinates feeding a ``radial`` reveal ordering.
+
+    A reveal ranks elements by distance, and a NaN/inf coordinate poisons that
+    rank in a way that LOOKS like success: the distances come back non-finite,
+    they all compare equal under the stable argsort the three orderings use, and
+    the ladder is emitted in INPUT order — a streaming node that fills in at
+    random instead of growing outward, with nothing to say why.
+
+    This is the DATA-side twin of the ``reveal_centre`` finite check. That one
+    guards a value the user typed; this one guards the array, and it is needed
+    separately because the three geometries were measured to disagree without it:
+    Points and GSplats returned input order silently, while Lines raised a
+    ``reveal_centre must be finite`` error naming a knob the caller never passed
+    (its default centre is DERIVED from the vertices, so bad data reached the
+    knob's validator wearing the knob's name). One shared validator, called by
+    both scorers, is what makes the three agree — hence its home here rather than
+    in either implementation.
+
+    Args:
+        coords: The coordinate array about to be scored, ``(N, d)``.
+        what: Caller-facing name of the array for the message (e.g.
+            ``"coords"``, ``"vertices"``, ``"centers"``), so the error blames the
+            input the caller actually supplied.
+
+    Raises:
+        ValueError: If any entry is NaN or infinite.
+    """
+    arr = np.asarray(coords)
+    if arr.size == 0:
+        return
+    finite = np.isfinite(arr)
+    if bool(finite.all()):
+        return
+    bad_rows = np.flatnonzero(~finite.all(axis=tuple(range(1, arr.ndim))))
+    raise ValueError(
+        f"{what} must be finite for a radial reveal: a NaN/inf coordinate makes "
+        f"every distance non-finite, so the stable argsort leaves the ladder in "
+        f"INPUT order instead of revealing outward. "
+        f"{bad_rows.size} of {arr.shape[0]} rows are non-finite "
+        f"(first at index {int(bad_rows[0])})."
+    )
+
+
 def is_position_array(obj: Any) -> bool:
     """Check if object is a valid position array."""
     try:

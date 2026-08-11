@@ -121,6 +121,43 @@ class TestRadialOrderPoints:
         dtype=np.float32,
     )
 
+    @pytest.mark.parametrize(
+        "bad", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"]
+    )
+    def test_non_finite_positions_are_refused(self, bad: float) -> None:
+        """Bad DATA is the same silent no-op as a bad ``reveal_centre``.
+
+        Measured before the guard: this returned the identity permutation — the
+        distances all came back non-finite, compared equal under the stable
+        argsort, and the ladder was emitted in INPUT order. A streaming node that
+        fills in at random instead of growing outward, with nothing to say why.
+        The three geometries also DISAGREED (Lines raised, blaming a
+        ``reveal_centre`` the caller never passed), so this is a symmetry fix as
+        much as a validation one.
+        """
+        pts = self._PTS.copy()
+        pts[2, 0] = bad
+        with pytest.raises(ValueError, match="coords must be finite"):
+            compute_additive_order_points(pts, method="radial")
+
+    def test_a_non_finite_value_outside_the_shell_columns_is_allowed(self) -> None:
+        """SENSITIVITY CONTROL on the guard's deliberate narrowness.
+
+        Only the columns the distance actually spans are checked. A NaN on an axis
+        excluded from ``spatial_dims`` cannot affect the ordering, so refusing it
+        would reject data a reveal can order perfectly well. Without this, a guard
+        widened to the whole array would still pass the test above and silently
+        break every dataset carrying a NaN in a non-spatial column.
+        """
+        pts = self._PTS.copy()
+        pts[2, 0] = float("nan")
+
+        perm, _ = compute_additive_order_points(
+            pts, method="radial", spatial_dims=[1, 2]
+        )
+
+        assert sorted(perm.tolist()) == [0, 1, 2, 3]
+
     def test_orders_innermost_first(self) -> None:
         perm, counts = compute_additive_order_points(
             self._PTS, method="radial", reveal_centre=[0.0, 0.0, 0.0]

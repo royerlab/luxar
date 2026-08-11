@@ -25,6 +25,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ....utils.lod_methods import REVEAL_METHODS, is_reveal_method
+from ....validation.types import validate_finite_reveal_coords
 
 #: Methods that order for a REVEAL rather than for approximation quality, and so
 #: must not carry energy stamps — the viewer's ``1/e(k)`` brightness compensation
@@ -157,6 +158,31 @@ def _resolve_score_dims(pts_all: NDArray, spatial_dims: Optional[List[int]]) -> 
     return dims
 
 
+def _validated_score_dims(
+    pts_all: NDArray, spatial_dims: Optional[List[int]], what: str
+) -> NDArray:
+    """:func:`_resolve_score_dims`, with the finite check at the right granularity.
+
+    The granularity is the whole point, and it is not "check everything":
+
+    * When ``spatial_dims`` is EXPLICIT, only those columns are checked. A NaN on
+      an axis the distance does not span cannot affect the ordering, and refusing
+      it would reject data a reveal can rank perfectly well.
+    * When the dims are DERIVED from extent, the full array must be checked
+      **first**, because ``max - min > 0.0`` is ``False`` for a NaN column — so the
+      extent rule silently DROPS the axis the NaN sits on and the reveal then
+      measures over fewer axes than the data has. Checking only the surviving
+      columns cannot see that: the offending column has already been discarded
+      *because* it was bad. Measured — this is why the first version of the guard
+      passed the inf case and missed the NaN one.
+    """
+    if spatial_dims is None:
+        validate_finite_reveal_coords(pts_all, what)
+    dims = _resolve_score_dims(pts_all, spatial_dims)
+    validate_finite_reveal_coords(pts_all[:, dims], what)
+    return dims
+
+
 def resolve_reveal_centre(
     centre: Optional[List[float]],
     coords: NDArray,
@@ -181,8 +207,19 @@ def resolve_reveal_centre(
     """
     if centre is not None:
         return centre
-    dims = _resolve_score_dims(np.asarray(scored, dtype=np.float64), spatial_dims)
+    # Checked BEFORE the bbox so bad data is reported as bad data: without this a
+    # NaN vertex produced a NaN origin here, which then tripped the scorer's
+    # `reveal_centre must be finite` check and blamed a knob the caller never
+    # passed — the derived default wearing the knob's name.
+    dims = _validated_score_dims(
+        np.asarray(scored, dtype=np.float64), spatial_dims, "vertices"
+    )
     pts = np.asarray(coords, dtype=np.float64)[:, dims]
+    # `coords` is a DIFFERENT array from `scored` here (vertices vs per-polyline
+    # representatives), and it is the one the origin is measured from, so it needs
+    # its own check — a NaN vertex inside an otherwise-finite polyline centre would
+    # slip through a check on the representatives alone.
+    validate_finite_reveal_coords(pts, "vertices")
     return [float(c) for c in 0.5 * (pts.min(axis=0) + pts.max(axis=0))]
 
 
@@ -239,7 +276,7 @@ def radial_element_score(
         # No columns means no distance to measure; every score would be 0.0 and
         # the ordering would silently degrade to input order.
         raise ValueError("coords must have at least one column; got shape (N, 0)")
-    dims = _resolve_score_dims(pts_all, spatial_dims)
+    dims = _validated_score_dims(pts_all, spatial_dims, "coords")
     pts = pts_all[:, dims]
     if centre is None:
         origin = (pts.min(axis=0) + pts.max(axis=0)) / 2.0

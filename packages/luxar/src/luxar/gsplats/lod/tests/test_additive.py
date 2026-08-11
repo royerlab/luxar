@@ -785,6 +785,26 @@ def test_radial_rejects_a_non_finite_centre(bad: float) -> None:
         compute_additive_order(data, method="radial", reveal_centre=[bad, 0.0, 0.0])
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+def test_radial_refuses_non_finite_centers(bad: float) -> None:
+    """A non-finite CENTER coordinate is the same silent no-op as a bad knob.
+
+    Measured before the guard: `compute_additive_order(..., method="radial")`
+    returned the identity permutation — every distance non-finite, all equal under
+    the stable argsort, ladder emitted in INPUT order. The element side behaved the
+    same way and Lines raised a misleading `reveal_centre` error, so the three
+    implementations of one ordering disagreed about malformed data. Now they share
+    `validate_finite_reveal_coords` and each names its own array.
+    """
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))
+    centers = np.array(data.centers, dtype=np.float32, copy=True)
+    centers[2, 0] = bad
+    data.centers = centers
+
+    with pytest.raises(ValueError, match="centers must be finite"):
+        compute_additive_order(data, method="radial")
+
+
 def test_radial_scorer_handles_an_empty_dataset_like_its_element_twin() -> None:
     """`_radial_score` must not raise on an empty input, for symmetry.
 

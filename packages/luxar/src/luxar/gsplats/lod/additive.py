@@ -65,6 +65,7 @@ from luxar.utils.lod_methods import AutoOrMethod as AutoOrMethod
 from luxar.utils.lod_methods import MethodName as MethodName
 from luxar.utils.lod_methods import is_reveal_method as _is_reveal_method
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+from luxar.validation.types import validate_finite_reveal_coords
 
 # The method registry lives in `luxar.utils.lod_methods` so the CLI can share it
 # without importing this package (`luxar/gsplats/__init__.py` adds ~600 ms on top
@@ -491,6 +492,11 @@ def _radial_score(
                 f"{data.ndim} columns"
             )
     pts = np.asarray(data.centers, dtype=np.float64)[:, dims]
+    # Same data-side guard as the element scorer, from the one shared validator:
+    # measured, a NaN centre coordinate made this return INPUT order silently.
+    # Only the shell columns — a NaN on an axis the distance does not span is
+    # irrelevant to the ordering.
+    validate_finite_reveal_coords(pts, "centers")
     if centre is None:
         origin = (pts.min(axis=0) + pts.max(axis=0)) / 2.0
     else:
