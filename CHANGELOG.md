@@ -212,6 +212,55 @@ slice now issues `nLods` sub-loader queries instead of 1; they resolve to zero
 ranges and fetch no chunks, so there is no network cost, and the resulting
 all-empty ladder is cached like any other.
 
+#### `substitutive_lod=` accepts a uniform colour, like every other path (#1444)
+
+A bare RGB(A) tuple, or a `(1, c)` row, is a legal and documented broadcast
+colour on the flat path and under `partition=` / `additive_lod=`, but under
+`substitutive_lod=` it was refused: the coarse levels go through the gsplat
+lift, which had no broadcast-colour handling. Points raised a shape complaint
+("colors must be (N, 3) RGB" for a tuple, "Colors count 1 doesn't match centers
+count N" for a `(1, 3)` row); Lines raised a bare `IndexError` from the
+per-vertex colour gather — a raw numpy traceback mentioning neither colours
+nor `substitutive_lod`, and not even caught by `add_lines_impl`'s
+`(ValueError, TypeError)` wrapper. `lift_points_to_gsplats` /
+`lift_lines_to_gsplats` now expand a uniform colour to the element count before
+anything indexes it (before the zero-radius drop for Points, before the
+`pairs` gather for Lines), so every coarse level carries the authored colour —
+the one case a coarse level can honour exactly, every merged representative
+being that same colour. The **alpha column rides along**: gsplats carry
+per-splat alpha end to end (`GSplatData.colors` is `(N, 3)` or `(N, 4)`, the
+writer validates `channels=(3, 4)`, the merge propagates the 4th column, and all
+three shaders scale intensity by it), so dropping it would make the node jump
+`1/alpha` brighter the instant the ladder switches off the finest level —
+exactly the LOD seam that mass-preserving amplitudes, the anisotropy cap and the
+render-light rescale exist to keep flat. A **per-element** `(N, 4)` RGBA stays
+refused by the lift (shape alone cannot tell a constant alpha from a varying
+one, and the substitutive merge is untested on the latter); the 4-column
+allowance applies only to a colour resolved as uniform, and it is resolved
+exactly once — Lines judges its vertices and the inner point lift takes that
+verdict as final, so a line set that collapses to a single bead cannot
+re-present a per-element RGBA as a uniform `(1, 4)` row. (The one inexactness
+is an alpha above `ALPHA_CLAMP = 511/512`, which the merge's optical-depth
+round-trip caps: an authored 1.0 or 0.999 reaches the coarse levels as 0.998,
+a ≤0.2% step, pinned by a test; at or below the clamp it is exact.) Value
+semantics mirror the leaf writer's: a list/tuple's components are taken at face
+value (an integer tuple is never divided by 255, `write_colors`-style), while
+an array keeps the dtype rule — and colour arrays are now held to the dtypes
+the leaf accepts (floating, uint8, uint16) before the lift builds anything.
+Normalising an `int64` array by `iinfo(int64).max` baked a near-black coarse
+level that the encoder rejected only at the finest child, stranding a
+`kind=lod` node with complete coarse children and a half-written finest one — the #1437
+stranding class, and it applied to a per-element array as much as to a uniform
+row. The pre-split gate added in #1437 always accepted the broadcast forms —
+it mirrors the flat verdict — so the two paths now agree end to end on every
+uniform colour. One neighbour in the same lift was hardened while there: the
+Lines `scalars=` + `colormap=` path took its LUT range from all vertex scalars,
+so one non-finite vertex either collapsed the whole tube to the map's first
+colour (`+inf`) or produced a garbage LUT index (`NaN` / `-inf`); the range is
+now taken over the finite vertices only, as `scalars_to_colors` already does for
+its own defaults. Only reachable by calling the lift directly — through the
+scene API the #1437 pre-split gate refuses non-finite scalars first.
+
 #### Demos serve on per-dataset derived ports, not 8000/5173
 
 Every demo used to contend for the same default ports, so with several demos
