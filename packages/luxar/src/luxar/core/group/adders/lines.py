@@ -325,11 +325,11 @@ def add_lines_impl(
                 stacklevel=2,
             )
         elif additive_lod is not None:
-            from ..lod.group import resolve_reveal_spatial_dims
             from ..lod.lines import (
                 make_additive_lod_lines,
                 resolve_additive_axis_lines,
             )
+            from ..lod.reveal import resolve_reveal_spatial_dims
 
             additive_spec = resolve_additive_axis_lines(additive_lod)
             if additive_spec is not None:

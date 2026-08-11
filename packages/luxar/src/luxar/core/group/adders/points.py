@@ -262,11 +262,11 @@ def add_points_impl(
                 stacklevel=2,
             )
         elif additive_lod is not None:
-            from ..lod.group import resolve_reveal_spatial_dims
             from ..lod.points import (
                 make_additive_lod_points,
                 resolve_additive_axis_points,
             )
+            from ..lod.reveal import resolve_reveal_spatial_dims
 
             additive_spec = resolve_additive_axis_points(additive_lod)
             if additive_spec is not None:

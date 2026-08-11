@@ -208,7 +208,7 @@ class TestRadialOrderPoints:
         caller of the public helper; the bare numpy error named neither the
         argument nor the function.
         """
-        from luxar.core.group.lod.group import radial_element_score
+        from luxar.core.group.lod.reveal import radial_element_score
 
         out = radial_element_score(np.zeros((0, 3), dtype=np.float32))
         assert out.shape == (0,)
@@ -220,7 +220,7 @@ class TestRadialOrderPoints:
         block dropped it without anything going red — which is exactly why it has
         one now.
         """
-        from luxar.core.group.lod.group import radial_element_score
+        from luxar.core.group.lod.reveal import radial_element_score
 
         with pytest.raises(ValueError, match="at least one column"):
             radial_element_score(np.zeros((4, 0), dtype=np.float32))
@@ -729,14 +729,14 @@ class TestRevealSpatialDimsFromScene:
         )
 
     def test_resolver_takes_the_displayed_dims(self) -> None:
-        from luxar.core.group.lod.group import resolve_reveal_spatial_dims
+        from luxar.core.group.lod.reveal import resolve_reveal_spatial_dims
 
         scene = SimpleNamespace(_dimensions=self._dims_4d())
         spec = {"method": "radial", "spatial_dims": None}
         assert resolve_reveal_spatial_dims(spec, scene, 4) == [1, 2, 3]
 
     def test_resolver_leaves_an_explicit_value_and_a_non_reveal_alone(self) -> None:
-        from luxar.core.group.lod.group import resolve_reveal_spatial_dims
+        from luxar.core.group.lod.reveal import resolve_reveal_spatial_dims
 
         scene = SimpleNamespace(_dimensions=self._dims_4d())
         explicit = {"method": "radial", "spatial_dims": [2, 3]}
@@ -755,7 +755,7 @@ class TestRevealSpatialDimsFromScene:
     )
     def test_resolver_falls_back_to_the_extent_rule(self, scene, n_cols) -> None:
         # None means "keep radial_element_score's own default".
-        from luxar.core.group.lod.group import resolve_reveal_spatial_dims
+        from luxar.core.group.lod.reveal import resolve_reveal_spatial_dims
 
         spec = {"method": "radial", "spatial_dims": None}
         assert resolve_reveal_spatial_dims(spec, scene, n_cols) is None
@@ -763,7 +763,7 @@ class TestRevealSpatialDimsFromScene:
     def test_resolver_falls_back_when_columns_are_not_scene_aligned(self) -> None:
         # dim_order / extend_to_all reshaped the columns, so a scene-dim index is
         # no longer a position column — the extent rule is the only safe default.
-        from luxar.core.group.lod.group import resolve_reveal_spatial_dims
+        from luxar.core.group.lod.reveal import resolve_reveal_spatial_dims
 
         scene = SimpleNamespace(_dimensions=self._dims_4d())
         spec = {"method": "radial", "spatial_dims": None}

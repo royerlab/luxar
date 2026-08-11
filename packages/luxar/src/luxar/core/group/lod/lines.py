@@ -27,7 +27,7 @@ Five ordering methods mirror the Points helper:
 * ``radial``           — concentric shells around the node's own bbox centre,
   ordering WHOLE polylines by their own centre's distance, so a streaming
   prefix grows outward from the middle with segment topology intact (the
-  reveal). See :func:`luxar.core.group.lod.group.radial_element_score`.
+  reveal). See :func:`luxar.core.group.lod.reveal.radial_element_score`.
 """
 
 from __future__ import annotations
@@ -42,10 +42,10 @@ from .group import (
     ADDITIVE_METHODS,
     DEFAULT_ADDITIVE_METHOD,
     DEFAULT_ADDITIVE_N_LODS,
-    radial_element_score,
     resolve_additive_axis,
 )
 from .poisson_disk import poisson_disk_order
+from .reveal import radial_element_score
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
@@ -216,7 +216,7 @@ def polyline_bbox_centres(
     single element. ``ncols`` limits the columns considered — the samplers use
     ``3`` because their grids are 3-D — while ``None`` (the default) uses every
     column, which is what ``radial`` needs so that
-    :func:`~luxar.core.group.lod.group.radial_element_score` can see, and
+    :func:`~luxar.core.group.lod.reveal.radial_element_score` can see, and
     therefore exclude, a stacked time or channel column.
     """
     cols = vertices.shape[1] if ncols is None else min(ncols, vertices.shape[1])
@@ -253,7 +253,7 @@ def compute_additive_order_lines(
         spatial_dims: ``radial`` only — columns the distance is measured over,
             defaulting to the columns with non-zero extent (which drops a
             *constant* time/channel column but not a *stacked* one — see
-            :func:`~luxar.core.group.lod.group.radial_element_score`).
+            :func:`~luxar.core.group.lod.reveal.radial_element_score`).
 
     Returns:
         ``(polyline_permutation, per_level_polyline_counts)``. The
@@ -453,7 +453,7 @@ def make_additive_lod_lines(
             distance is measured over, defaulting to the columns with non-zero
             extent (which excludes a *constant* time/channel column, but not a
             *stacked* one — see
-            :func:`~luxar.core.group.lod.group.radial_element_score`).
+            :func:`~luxar.core.group.lod.reveal.radial_element_score`).
 
     Returns:
         List of LOD-level entries. Each entry is a list of per-polyline

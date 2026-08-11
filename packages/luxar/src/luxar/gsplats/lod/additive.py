@@ -450,7 +450,7 @@ def _radial_score(
     shell before any of the next), which is not a reveal.
 
     An explicit ``spatial_dims`` is validated rather than trusted, mirroring the
-    element-side :func:`~luxar.core.group.lod.group.radial_element_score`: every
+    element-side :func:`~luxar.core.group.lod.reveal.radial_element_score`: every
     rejected case silently produced a WRONG ordering instead of an error — a
     negative index ALIASES to another column under numpy indexing, a repeat
     DOUBLE-COUNTS that axis in the distance, and an empty selection scores every

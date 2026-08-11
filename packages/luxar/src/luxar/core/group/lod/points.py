@@ -17,7 +17,7 @@ Five ordering methods, all geometry-agnostic-ish:
 * ``radial``     — concentric shells around the node's own bbox centre, so a
   streaming prefix grows outward from the middle (the reveal). The only
   ascending sort, and the only one whose ladder carries no energy stamps —
-  see :func:`luxar.core.group.lod.group.radial_element_score`.
+  see :func:`luxar.core.group.lod.reveal.radial_element_score`.
 
 The breakpoints API mirrors the gsplats one in vocabulary but without
 the gsplats-only ``energy:`` variant:
@@ -42,10 +42,10 @@ from .group import (
     ADDITIVE_METHODS,
     DEFAULT_ADDITIVE_METHOD,
     DEFAULT_ADDITIVE_N_LODS,
-    radial_element_score,
     resolve_additive_axis,
 )
 from .poisson_disk import poisson_disk_order
+from .reveal import radial_element_score
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Points additive LOD.
@@ -122,7 +122,7 @@ def compute_additive_order_points(
             *constant* time/channel column but not a *stacked* one (it varies
             like a spatial axis), so pass it explicitly for stacked data — or go
             through ``add_points``, which fills it from the scene's displayed
-            dims (:func:`~luxar.core.group.lod.group.resolve_reveal_spatial_dims`).
+            dims (:func:`~luxar.core.group.lod.reveal.resolve_reveal_spatial_dims`).
 
     Returns:
         ``(permutation, per_level_counts)`` — same shape as
@@ -392,7 +392,7 @@ def make_additive_lod_points(
             shell distance is measured over, defaulting to the columns with
             non-zero extent (which excludes a *constant* time/channel column,
             but not a *stacked* one — see
-            :func:`~luxar.core.group.lod.group.radial_element_score`).
+            :func:`~luxar.core.group.lod.reveal.radial_element_score`).
 
     Returns:
         List of per-level index arrays, length
