@@ -740,6 +740,10 @@ matrix = make_lod_pyramid(
 luxar gsplat lod fit.gsplats.zarr stream.gsplats.zarr --recipe stream --n-lods 4
 luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy   # cheap O(N log N)
 luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream -m mass -b counts:500,2000,10000
+# `radial` = the REVEAL: concentric shells around the bbox centre, so a streaming
+# prefix grows outward from the object's middle. Authoring only — no viewer changes.
+# Deliberately carries no energy stamps (a reveal must not be 1/e(k)-brightened).
+luxar gsplat lod fit.gsplats.zarr reveal.gsplats.zarr --recipe stream -m radial --n-lods 6
 
 # tiles / overview — BSP parts each with an additive ladder (large data);
 # overview adds a coarse substitutive cap above the tiled fine branch

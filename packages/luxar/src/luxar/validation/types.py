@@ -724,6 +724,86 @@ def validate_colormap(value: Any) -> Union[str, "np.ndarray[Any, Any]"]:
 
 
 # Type guards (return bool for conditional type narrowing)
+def validate_finite_reveal_coords(coords: Any, what: str) -> None:
+    """Refuse non-finite coordinates feeding a ``radial`` reveal ordering.
+
+    A reveal ranks elements by distance, and a NaN/inf coordinate poisons that
+    rank in a way that LOOKS like success: the distances come back non-finite,
+    they all compare equal under the stable argsort the three orderings use, and
+    the ladder is emitted in INPUT order — a streaming node that fills in at
+    random instead of growing outward, with nothing to say why.
+
+    This is the DATA-side twin of the ``reveal_centre`` finite check. That one
+    guards a value the user typed; this one guards the array, and it is needed
+    separately because the three geometries were measured to disagree without it:
+    Points and GSplats returned input order silently, while Lines raised a
+    ``reveal_centre must be finite`` error naming a knob the caller never passed
+    (its default centre is DERIVED from the vertices, so bad data reached the
+    knob's validator wearing the knob's name). One shared validator, called by
+    both scorers, is what makes the three agree — hence its home here rather than
+    in either implementation.
+
+    Args:
+        coords: The coordinate array about to be scored, ``(N, d)``.
+        what: Caller-facing name of the array for the message (e.g.
+            ``"coords"``, ``"vertices"``, ``"centers"``), so the error blames the
+            input the caller actually supplied.
+
+    Raises:
+        ValueError: If any entry is NaN or infinite.
+    """
+    arr = np.asarray(coords)
+    if arr.size == 0:
+        return
+    finite = np.isfinite(arr)
+    if bool(finite.all()):
+        return
+    bad_rows = np.flatnonzero(~finite.all(axis=tuple(range(1, arr.ndim))))
+    raise ValueError(
+        f"{what} must be finite for a radial reveal: a NaN/inf coordinate makes "
+        f"every distance non-finite, so the stable argsort leaves the ladder in "
+        f"INPUT order instead of revealing outward. "
+        f"{bad_rows.size} of {arr.shape[0]} rows are non-finite "
+        f"(first at index {int(bad_rows[0])})."
+    )
+
+
+def validate_integral_axis_indices(values: Any, name: str = "spatial_dims") -> None:
+    """Refuse a non-integral axis index before it is silently truncated to one.
+
+    ``int(1.9)`` and ``np.asarray([1.9], dtype=np.intp)`` both give ``1`` without
+    a word, so a fractional entry measures the reveal over a DIFFERENT column than
+    the caller named — and, when ``reveal_centre`` is given too, pairs that centre
+    coordinate with the wrong axis. Every other malformed ``spatial_dims``
+    (empty, negative, repeated, nested, out of range) is already rejected; this
+    was the one that got through wearing a plausible answer.
+
+    Silent on an integer-dtype input (the overwhelmingly common case) and on an
+    empty one, which the callers' own "must not be empty" rule reports better.
+
+    Args:
+        values: The candidate index sequence, before any int conversion.
+        name: Caller-facing name of the argument, for the message.
+
+    Raises:
+        ValueError: If any entry is finite-but-fractional, NaN, or infinite.
+    """
+    arr = np.asarray(values)
+    if np.issubdtype(arr.dtype, np.integer) or arr.size == 0:
+        return
+    bad = [
+        v
+        for v in np.asarray(arr, dtype=np.float64).ravel().tolist()
+        if not float(v).is_integer()
+    ]
+    if bad:
+        raise ValueError(
+            f"{name} must be integer column indices; got non-integral {bad} "
+            f"(truncating would silently measure a different axis than the one "
+            f"named)"
+        )
+
+
 def is_position_array(obj: Any) -> bool:
     """Check if object is a valid position array."""
     try:

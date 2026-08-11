@@ -6,12 +6,18 @@ of three peer implementations of the same additive-LOD pattern, alongside
 ``core/group/lod/lines.py`` (per-polyline) and ``gsplats/lod/additive.py``
 (Gaussian-energy ordering).
 
-Three ordering methods, all geometry-agnostic-ish:
+Five ordering methods, all geometry-agnostic-ish:
 
 * ``random``     — uniform-random permutation (with optional seed).
 * ``salience``   — sort by radii descending (largest points first).
 * ``spatial-uniform`` — stratified-grid sampling
   (:func:`luxar.core.group.lod.spatial_uniform.stratified_grid_order`).
+* ``poisson-disk`` — blue-noise sampling
+  (:func:`luxar.core.group.lod.poisson_disk.poisson_disk_order`).
+* ``radial``     — concentric shells around the node's own bbox centre, so a
+  streaming prefix grows outward from the middle (the reveal). The only
+  ascending sort, and the only one whose ladder carries no energy stamps —
+  see :func:`luxar.core.group.lod.reveal.radial_element_score`.
 
 The breakpoints API mirrors the gsplats one in vocabulary but without
 the gsplats-only ``energy:`` variant:
@@ -33,15 +39,19 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .group import (
+    ADDITIVE_METHODS,
     DEFAULT_ADDITIVE_METHOD,
     DEFAULT_ADDITIVE_N_LODS,
     resolve_additive_axis,
 )
 from .poisson_disk import poisson_disk_order
+from .reveal import radial_element_score
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Points additive LOD.
-PointsMethodName = Literal["random", "salience", "spatial-uniform", "poisson-disk"]
+PointsMethodName = Literal[
+    "random", "salience", "spatial-uniform", "poisson-disk", "radial"
+]
 
 
 # Default for ``additive_lod=True`` and ``additive_lod=dict()``. Aliases of the
@@ -87,6 +97,8 @@ def compute_additive_order_points(
     method: PointsMethodName = DEFAULT_METHOD,
     n_lods: int = DEFAULT_N_LODS,
     seed: Optional[int] = None,
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
 ) -> Tuple[NDArray[np.intp], List[int]]:
     """Compute an additive ordering permutation over Points.
 
@@ -94,12 +106,23 @@ def compute_additive_order_points(
         positions: ``(N, d)`` array. ``d >= 3`` for ``spatial-uniform``;
             other methods don't care about ``d``.
         radii: ``(N,)`` array or ``None``. Required for ``salience``.
-        method: One of ``random`` / ``salience`` / ``spatial-uniform``.
-        n_lods: Only consulted by ``spatial-uniform`` for deciding how
-            many grid levels to iterate. ``random`` and ``salience``
-            return a single permutation; the slicing into LOD levels
-            happens later in :func:`make_additive_lod_points`.
+        method: One of ``random`` / ``salience`` / ``spatial-uniform`` /
+            ``poisson-disk`` / ``radial``.
+        n_lods: Only consulted by ``spatial-uniform`` / ``poisson-disk`` for
+            deciding how many grid levels to iterate. ``random``, ``salience``
+            and ``radial`` return a single permutation; the slicing into LOD
+            levels happens later in :func:`make_additive_lod_points`.
         seed: For ``random``; ignored by others.
+        reveal_centre: ``radial`` only — centre of the shells, defaulting to the
+            spatial bounding-box centre (NOT the scene origin, so a dataset far
+            from the origin still grows from its own middle). One coordinate per
+            spatial axis.
+        spatial_dims: ``radial`` only — position columns the distance is measured
+            over, defaulting to the columns with non-zero extent. That drops a
+            *constant* time/channel column but not a *stacked* one (it varies
+            like a spatial axis), so pass it explicitly for stacked data — or go
+            through ``add_points``, which fills it from the scene's displayed
+            dims (:func:`~luxar.core.group.lod.reveal.resolve_reveal_spatial_dims`).
 
     Returns:
         ``(permutation, per_level_counts)`` — same shape as
@@ -129,25 +152,42 @@ def compute_additive_order_points(
         perm = np.argsort(-score, kind="stable").astype(np.intp)
         return perm, []
 
-    if method == "spatial-uniform":
+    if method in ("spatial-uniform", "poisson-disk"):
+        # One branch for both samplers, sharing the d >= 3 guard their grids
+        # need — mirroring the Lines equivalent, which has always been shaped
+        # this way. (Two branches with a copy-pasted guard each is what pushed
+        # this function past the C901 ratchet when `radial` was added.)
         if positions.shape[1] < 3:
             raise ValueError(
-                "spatial-uniform ordering needs positions with d >= 3; "
+                f"{method} ordering needs positions with d >= 3; "
                 f"got shape {positions.shape}"
             )
+        if method == "poisson-disk":
+            return poisson_disk_order(positions, n_lods, seed=seed or 0)
         return stratified_grid_order(positions, n_lods)
 
-    if method == "poisson-disk":
-        if positions.shape[1] < 3:
-            raise ValueError(
-                "poisson-disk ordering needs positions with d >= 3; "
-                f"got shape {positions.shape}"
-            )
-        return poisson_disk_order(positions, n_lods, seed=seed or 0)
+    if method == "radial":
+        # ASCENDING, unlike `salience` above: the score is a DISTANCE, so the
+        # nearest is revealed first and the prefixes grow outward as concentric
+        # shells. Returns an EMPTY natural partition, deliberately — unlike
+        # `spatial-uniform` / `poisson-disk`, whose per-level counts make
+        # `make_additive_lod_points` bypass the `counts:` / `stream:` / `energy:`
+        # breakpoint vocabularies entirely. A reveal must stay compatible with
+        # those, so the caller does the slicing.
+        return (
+            np.argsort(
+                radial_element_score(positions, reveal_centre, spatial_dims),
+                kind="stable",
+            ).astype(np.intp),
+            [],
+        )
 
+    # Unreachable for a well-typed caller — the branches above are exhaustive
+    # over PointsMethodName — but `method` arrives as a plain string from the
+    # resolver and from user code, so the runtime guard stays.
     raise ValueError(
-        "method must be one of 'random' / 'salience' / 'spatial-uniform' / "
-        f"'poisson-disk'; got {method!r}"
+        f"method must be one of {' / '.join(repr(m) for m in ADDITIVE_METHODS)}; "
+        f"got {method!r}"
     )
 
 
@@ -301,6 +341,8 @@ def make_additive_lod_points(
     colors: Optional[NDArray] = None,
     scalars: Optional[NDArray] = None,
     salience_kind: Literal["size", "energy"] = "size",
+    reveal_centre: Optional[List[float]] = None,
+    spatial_dims: Optional[List[int]] = None,
 ) -> List[NDArray[np.intp]]:
     """Compute per-LOD-level index arrays for Points.
 
@@ -344,6 +386,13 @@ def make_additive_lod_points(
             sorts by radius alone (legacy). ``'energy'`` sorts by
             ``luminance × radius**3`` — the same per-element score the
             ``energy:`` breakpoints accumulate against.
+        reveal_centre: For ``method='radial'`` — centre of the concentric
+            shells, defaulting to the spatial bounding-box centre.
+        spatial_dims: For ``method='radial'`` — the position columns the
+            shell distance is measured over, defaulting to the columns with
+            non-zero extent (which excludes a *constant* time/channel column,
+            but not a *stacked* one — see
+            :func:`~luxar.core.group.lod.reveal.radial_element_score`).
 
     Returns:
         List of per-level index arrays, length
@@ -364,7 +413,13 @@ def make_additive_lod_points(
         natural_counts: List[int] = []
     else:
         perm, natural_counts = compute_additive_order_points(
-            positions, radii=radii, method=method, n_lods=n_lods, seed=seed
+            positions,
+            radii=radii,
+            method=method,
+            n_lods=n_lods,
+            seed=seed,
+            reveal_centre=reveal_centre,
+            spatial_dims=spatial_dims,
         )
 
     if method in ("spatial-uniform", "poisson-disk"):

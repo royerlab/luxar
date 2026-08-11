@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import zarr
 
+from luxar.utils.lod_methods import is_reveal_method
+
 __all__ = [
     "AnnotateReport",
     "LeafStamp",
@@ -55,8 +57,11 @@ class LeafStamp:
     #: Empty when a nonempty leaf has zero effective energy (no stamp written,
     #: matching the build path).
     energy_fraction_cum: List[float]
-    #: Absolute self-energy weight ``w`` (``Σ aᵢ²·π^{D/2}·|Σᵢ|^{1/2}``).
-    reference_energy: float
+    #: Absolute self-energy weight ``w`` (``Σ aᵢ²·π^{D/2}·|Σᵢ|^{1/2}``), or
+    #: ``None`` when no weight was written — a REVEAL ladder carries neither half
+    #: of the e/w pair, and the report must not name a number the store does not
+    #: hold.
+    reference_energy: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -66,8 +71,9 @@ class LevelStamp:
     path: str
     n_splats: int
     quality: float
-    #: The group-consistent w: the FINEST child's total self-energy.
-    reference_energy: float
+    #: The group-consistent w: the FINEST child's total self-energy. ``None``
+    #: for a reveal child, which carries no weight (see :class:`LeafStamp`).
+    reference_energy: Optional[float]
 
 
 @dataclass
@@ -164,6 +170,29 @@ def _merge_attr_dict(
     group.attrs[key] = merged
 
 
+def _ladder_sub_groups(group: zarr.Group) -> List[zarr.Group]:
+    """The additive sub-LOD groups of a leaf, or the leaf itself when unladdered."""
+    n_additive = int(group.attrs.get("n_additive_sublods", 1))
+    if n_additive > 1:
+        return [group[f"additive_{i}"] for i in range(n_additive)]
+    return [group]
+
+
+def _ladder_is_reveal(sub_groups: List[zarr.Group]) -> bool:
+    """Whether this ladder was ordered by a REVEAL method, read from its own stamps.
+
+    The ordering method is recorded per sub-LOD as ``lod_stats.lod_method``, which
+    is provenance a reveal DOES carry (only the energy keys are omitted) — so the
+    store itself says whether it may be energy-stamped. Any sub-LOD reporting a
+    reveal method is enough: a ladder has one ordering.
+    """
+    for sub in sub_groups:
+        stats = sub.attrs.get("lod_stats", {})
+        if isinstance(stats, dict) and is_reveal_method(str(stats.get("lod_method"))):
+            return True
+    return False
+
+
 def _remove_attr_key(group: zarr.Group, key: str, name: str, *, dry_run: bool) -> None:
     """Remove ``name`` from the ``group.attrs[key]`` dict, keeping other keys.
 
@@ -185,39 +214,35 @@ def _child_count(group: zarr.Group, prefix: str) -> int:
     return sum(1 for name in group if str(name).startswith(prefix))
 
 
-def _annotate_leaf(
-    group: zarr.Group,
-    root: zarr.Group,
-    decoder: Any,
-    report: AnnotateReport,
-    *,
-    is_lod_child: bool = False,
-    dry_run: bool,
-) -> None:
-    """Stamp ``energy_fraction_cum`` per sub-LOD + ``reference_energy`` on one
-    leaf. Only ``amplitudes`` (folded to alpha-effective ``A·α`` via any RGBA
-    ``colors``) + the Cholesky diagonal are decoded, one sub-LOD resident at a
-    time."""
-    n_additive = int(group.attrs.get("n_additive_sublods", 1))
-    sub_groups = (
-        [group[f"additive_{i}"] for i in range(n_additive)]
-        if n_additive > 1
-        else [group]
-    )
+def _resolve_e_cum(
+    sub_groups: List[zarr.Group],
+    raw_energies: List[float],
+    total_raw: float,
+    n_total: int,
+) -> Optional[List[Optional[float]]]:
+    """Per-sub-LOD cumulative energy fractions, or ``None`` to stamp nothing.
 
-    raw_energies: List[float] = []
-    counts: List[int] = []
-    ndim = 0
-    for sub in sub_groups:
-        raw, n, d = _chunk_self_energy(sub, root, decoder)
-        raw_energies.append(raw)
-        counts.append(n)
-        ndim = max(ndim, d)
+    Extracted from :func:`_annotate_leaf` to keep it under the C901 ratchet —
+    the decision is now four-way (reveal / positive energy / empty leaf / zero
+    effective energy) and each arm mirrors a specific build-path behaviour.
 
-    total_raw = float(sum(raw_energies))
-    n_total = int(sum(counts))
-    e_cum: Optional[List[Optional[float]]]
-    if total_raw > 0.0:
+    ``None`` makes the caller ERASE any existing stamp rather than merely skip
+    writing, so a store wrongly stamped by an earlier build is repaired.
+    """
+    if _ladder_is_reveal(sub_groups):
+        # A REVEAL ladder (`-m radial`) is authored with NO energy stamps: the
+        # viewer brightens an incomplete ladder by 1/e(k), which is backwards for
+        # a partial object rendered at full brightness. This module's contract is
+        # to mirror the build path exactly, and the build path omits them — so
+        # stamping here would silently re-arm the very compensation the reveal
+        # exists to avoid. Verified: before this guard, `annotate-quality` on a
+        # radial store stamped 6/6 sub-LODs and added `reference_energy`.
+        #
+        # `e_cum = None` also makes the loop below ERASE any stale stamp, so a
+        # store wrongly annotated by an earlier build is repaired rather than
+        # merely left alone — the same repair posture the zero-energy path uses.
+        e_cum = None
+    elif total_raw > 0.0:
         cum = np.cumsum(raw_energies)
         # Per sub-LOD cumulative fraction. Mirror the build (additive.py's
         # `if np.isfinite(e_frac)`): a legacy inf amplitude/Cholesky gives
@@ -235,6 +260,36 @@ def _annotate_leaf(
         # leaf, α≡0): the build path only writes energy_fraction_cum when
         # energy_total > 0, so stamp NOTHING here to match it exactly.
         e_cum = None
+    return e_cum
+
+
+def _annotate_leaf(
+    group: zarr.Group,
+    root: zarr.Group,
+    decoder: Any,
+    report: AnnotateReport,
+    *,
+    is_lod_child: bool = False,
+    dry_run: bool,
+) -> None:
+    """Stamp ``energy_fraction_cum`` per sub-LOD + ``reference_energy`` on one
+    leaf. Only ``amplitudes`` (folded to alpha-effective ``A·α`` via any RGBA
+    ``colors``) + the Cholesky diagonal are decoded, one sub-LOD resident at a
+    time."""
+    sub_groups = _ladder_sub_groups(group)
+
+    raw_energies: List[float] = []
+    counts: List[int] = []
+    ndim = 0
+    for sub in sub_groups:
+        raw, n, d = _chunk_self_energy(sub, root, decoder)
+        raw_energies.append(raw)
+        counts.append(n)
+        ndim = max(ndim, d)
+
+    total_raw = float(sum(raw_energies))
+    n_total = int(sum(counts))
+    e_cum = _resolve_e_cum(sub_groups, raw_energies, total_raw, n_total)
     reference_energy = total_raw * math.pi ** (ndim / 2.0) if ndim else 0.0
     if not math.isfinite(reference_energy):
         # A legacy store with an inf amplitude/diagonal: the build resets w to
@@ -262,7 +317,16 @@ def _annotate_leaf(
     # make_substitutive_lod), which the e-only pass cannot compute — keep
     # setdefault semantics there (the with_quality pass overwrites it with
     # the correct group value).
-    if is_lod_child:
+    reveal = e_cum is None and _ladder_is_reveal(sub_groups)
+    if reveal:
+        # Both-or-neither: the sub-LODs above carry no `energy_fraction_cum`, so
+        # the leaf must carry no `reference_energy` either — a weight with nothing
+        # to weight is a half-written stamp, and the viewer's display gate poisons
+        # the whole subtree aggregate on a half-stamped leaf. Erase rather than
+        # skip, so a store wrongly annotated earlier is repaired.
+        _remove_attr_key(group, "level_stats", "reference_energy", dry_run=dry_run)
+        write_w = False
+    elif is_lod_child:
         existing = group.attrs.get("level_stats", {})
         write_w = not (isinstance(existing, dict) and "reference_energy" in existing)
     else:
@@ -282,7 +346,10 @@ def _annotate_leaf(
             energy_fraction_cum=(
                 [e for e in e_cum if e is not None] if e_cum is not None else []
             ),
-            reference_energy=reference_energy,
+            # `None` only for a reveal, whose weight was ERASED. The
+            # `is_lod_child` skip below also leaves `write_w` False, but there
+            # the leaf keeps the group-consistent weight already on disk.
+            reference_energy=None if reveal else reference_energy,
         )
     )
 
@@ -415,18 +482,22 @@ def _annotate_node(
                 quality = mixture_quality(
                     level, ref, max_pair_splats=max_pair_splats, device=device
                 ).quality
-            _merge_attr_dict(
-                child,
-                "level_stats",
-                {"quality": quality, "reference_energy": ref_w},
-                dry_run=dry_run,
-            )
+            level_stamp: Dict[str, Any] = {"quality": quality}
+            child_is_reveal = _ladder_is_reveal(_ladder_sub_groups(child))
+            if not child_is_reveal:
+                # A reveal child carries no `energy_fraction_cum` (the e-only
+                # pass above erased any), so it must carry no `reference_energy`
+                # either — otherwise this Q pass would put back exactly the
+                # half-written stamp that pass just removed. `quality` still
+                # goes on: it is a standalone readout, not half of the e pair.
+                level_stamp["reference_energy"] = ref_w
+            _merge_attr_dict(child, "level_stats", level_stamp, dry_run=dry_run)
             report.levels.append(
                 LevelStamp(
                     path=str(child.path or "/"),
                     n_splats=n_splats,
                     quality=float(quality),
-                    reference_energy=float(ref_w),
+                    reference_energy=None if child_is_reveal else float(ref_w),
                 )
             )
         return

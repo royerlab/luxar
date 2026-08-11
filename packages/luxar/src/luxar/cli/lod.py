@@ -13,12 +13,19 @@ it replaced the historical ``lod additive`` / ``lod substitutive`` /
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 from typing import Any, Optional
 
 import typer
 from arbol import aprint, asection
+
+from luxar.utils.lod_methods import (
+    GSPLAT_ADDITIVE_CHOICES_HELP,
+    REVEAL_METHODS,
+    is_reveal_method,
+)
 
 # Shared recipe/streaming validation surface — moved to
 # gsplat_ops/recipe_shared.py (consumed by six gsplat_ops modules);
@@ -62,6 +69,8 @@ _OPTION_TOKENS = {
     "--bytes-per-splat": "additive",
     "--truncation-sigmas": "additive",
     "--max-n-dense": "additive",
+    "--reveal-centre": "additive",
+    "--spatial-dims": "additive",
     "--max-elements": "partition",
     "--parts": "partition",
     "--partition-rule": "partition",
@@ -128,6 +137,109 @@ def _resolve_encoding(mode: str) -> Any:
         ) from None
 
 
+def _parse_reveal_centre(spec: Optional[str]) -> Optional["list[float]"]:
+    """Parse ``--reveal-centre`` — a comma-separated shell centre, or ``None``."""
+    if spec is None:
+        return None
+    try:
+        parsed = [float(t) for t in spec.split(",") if t.strip() != ""]
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"--reveal-centre must be comma-separated numbers; got {spec!r}"
+        ) from e
+    if not parsed:
+        raise typer.BadParameter("--reveal-centre must list >=1 coordinate")
+    if not all(math.isfinite(c) for c in parsed):
+        # `float("nan")` / `float("inf")` parse happily. Every distance would then
+        # be non-finite, all comparing equal under the stable sort, so the ladder
+        # would come out in input order with nothing to say the centre was junk.
+        raise typer.BadParameter(
+            f"--reveal-centre must be finite numbers; got {spec!r}"
+        )
+    return parsed
+
+
+def _parse_reveal_spatial_dims(spec: Optional[str], ndim: int) -> Optional["list[int]"]:
+    """Parse ``--spatial-dims`` — the columns the shell distance spans, or ``None``.
+
+    Keeps the listed ORDER and rejects a repeat (see the comment below: the order
+    pairs with ``--reveal-centre``, deliberately unlike ``--coarsen-dims``), and
+    bounds-checks each index against the dataset's own ``ndim`` so a typo is
+    caught before any work.
+    """
+    if spec is None:
+        return None
+    try:
+        parsed = [int(t) for t in spec.split(",") if t.strip() != ""]
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"--spatial-dims must be comma-separated integers; got {spec!r}"
+        ) from e
+    # Order is PRESERVED and duplicates REJECTED, deliberately unlike
+    # `--coarsen-dims` (which sorts, because a barrier set is order-free). Here the
+    # order is load-bearing: `--reveal-centre` supplies one coordinate per LISTED
+    # axis, so `sorted(set(...))` made `--spatial-dims 2,0 --reveal-centre 10,20`
+    # silently mean "axis 0 centred at 10" rather than the pairing the user typed.
+    if not parsed:
+        raise typer.BadParameter("--spatial-dims must list >=1 index")
+    if len(set(parsed)) != len(parsed):
+        raise typer.BadParameter(
+            f"--spatial-dims must not repeat an axis (a repeat would count it "
+            f"twice in the distance); got {parsed}"
+        )
+    for i in parsed:
+        if i < 0 or i >= ndim:
+            raise typer.BadParameter(
+                f"--spatial-dims index {i} out of range for {ndim}D data"
+            )
+    return parsed
+
+
+def _parse_reveal_knobs(
+    reveal_centre: Optional[str],
+    spatial_dims: Optional[str],
+    method_norm: Optional[str],
+    ndim: int,
+) -> "tuple[Optional[list[float]], Optional[list[int]]]":
+    """Parse and validate ``--reveal-centre`` / ``--spatial-dims``.
+
+    Extracted from :func:`lod_recipe`, which is already the most complex function
+    in this module; inlining this validation pushed it further past the C901
+    ratchet. Everything it needs is passed in, so it stays independently testable.
+
+    Both knobs apply only to the ``radial`` ordering, and passing either under
+    another method is an ERROR rather than a silent no-op: a user who types
+    ``--reveal-centre`` with the default ``auto`` wants a reveal, and would
+    otherwise get an energy-ordered ladder with nothing to indicate the flag was
+    dropped.
+    """
+    if (reveal_centre is not None or spatial_dims is not None) and not is_reveal_method(
+        str(method_norm)
+    ):
+        # Asked of the shared registry, not compared against a literal, so a
+        # second reveal ordering needs no edit here.
+        bad = "--reveal-centre" if reveal_centre is not None else "--spatial-dims"
+        listed = " / ".join(sorted(REVEAL_METHODS))
+        raise typer.BadParameter(
+            f"{bad} only applies to a reveal ordering ({listed}); pass "
+            f"-m {sorted(REVEAL_METHODS)[0]} (got -m {method_norm})."
+        )
+
+    parsed_centre = _parse_reveal_centre(reveal_centre)
+    parsed_dims = _parse_reveal_spatial_dims(spatial_dims, ndim)
+
+    # The centre carries one coordinate per axis the distance is measured over,
+    # so its length must match --spatial-dims when both are given. Checked here
+    # rather than deep in the scorer so the error names the flags the user typed.
+    if parsed_centre is not None and parsed_dims is not None:
+        if len(parsed_centre) != len(parsed_dims):
+            raise typer.BadParameter(
+                f"--reveal-centre has {len(parsed_centre)} coordinates but "
+                f"--spatial-dims lists {len(parsed_dims)} axes; they must match."
+            )
+    return parsed_centre, parsed_dims
+
+
 def register_lod_command(app: typer.Typer) -> None:
     """Attach the unified ``lod`` command to the ``gsplat`` Typer app."""
     app.command("lod")(lod_recipe)
@@ -155,9 +267,11 @@ def lod_recipe(
         None,
         "--method",
         "-m",
-        help="Additive ordering: auto (default; greedy at small N, self_energy "
-        "for large N to avoid greedy's O(N·nnz·logN) blowup) | greedy | "
-        "self_energy | mass | amplitude | spectral | random.",
+        help=f"Additive ordering: {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
+        "greedy at small N, self_energy for large N to avoid greedy's "
+        "O(N·nnz·logN) blowup. radial orders concentric shells around the "
+        "bbox centre, so a streaming prefix grows outward from the middle "
+        "(a reveal); its ladder carries no energy stamps.",
     ),
     breakpoints: Optional[str] = typer.Option(
         None,
@@ -308,6 +422,25 @@ def lod_recipe(
         "--array-key",
         help="Array path inside a nested --target zarr group (e.g. 'a/fused').",
     ),
+    reveal_centre: Optional[str] = typer.Option(
+        None,
+        "--reveal-centre",
+        help="[-m radial] Comma-separated centre of the concentric shells, one "
+        "coordinate per spatial axis. Default: the dataset's own bounding-box "
+        "centre — NOT the scene origin, so a dataset far from the origin still "
+        "reveals from its own middle. On a PARTITIONED recipe "
+        "(tiles/overview/adaptive) the ladder is built per part, so the default "
+        "centres EACH PART on itself (N local reveals); pass this flag to make "
+        "the whole object grow from one point.",
+    ),
+    spatial_dims: Optional[str] = typer.Option(
+        None,
+        "--spatial-dims",
+        help="[-m radial] Comma-separated center-column indices the shell "
+        "distance is measured over. Default: the non-degenerate axes, so a "
+        "stacked time/channel axis cannot become a shell dimension (shells "
+        "would otherwise expand through time as well as space).",
+    ),
     coarsen_dims: Optional[str] = typer.Option(
         None,
         "--coarsen-dims",
@@ -438,6 +571,8 @@ def lod_recipe(
             "--channel": target_channel,
             "--timepoint": target_timepoint,
             "--array-key": target_array_key,
+            "--reveal-centre": reveal_centre,
+            "--spatial-dims": spatial_dims,
             "--coarsen-dims": coarsen_dims,
             "--quality-stamps": quality_stamps,
             "--quality-max-pair-splats": quality_max_pair_splats,
@@ -665,6 +800,10 @@ def lod_recipe(
                     f"~{_MULTISCALE_CAP_TARGET:,}); pass -K to override"
                 )
 
+            parsed_reveal_centre, parsed_spatial_dims = _parse_reveal_knobs(
+                reveal_centre, spatial_dims, method_norm, data.ndim
+            )
+
             # Barrier dims for substitutive coarsening. Standalone gsplats carry
             # no display metadata, so this path takes explicit column indices and
             # warns (rather than auto-grouping) when the input is >3D.
@@ -703,6 +842,8 @@ def lod_recipe(
             params = RecipeParams(
                 n_lods=n_lods if n_lods is not None else 4,
                 additive_method=method_norm,  # type: ignore[arg-type]
+                reveal_centre=parsed_reveal_centre,
+                spatial_dims=parsed_spatial_dims,
                 breakpoints=bp,
                 truncation_sigmas=(
                     truncation_sigmas if truncation_sigmas is not None else 3.0

@@ -562,3 +562,236 @@ def test_annotate_is_idempotent(levels_store: Path) -> None:
     assert _collect_quality_attrs(levels_store) == first
     hash_second = zarr.open_group(str(levels_store), mode="r").attrs["content_hash"]
     assert hash_second == hash_first
+
+
+# ── reveal ladders must never be energy-stamped, by ANY writer ──────────────
+
+
+def _radial_store(tmp_path: Path, method: str = "radial") -> Path:
+    """A `stream` ladder ordered by ``method``, on a ball so radial is meaningful."""
+    rng = np.random.default_rng(0)
+    n = 300
+    d = rng.standard_normal((n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+    r = 50.0 * rng.random(n) ** (1 / 3)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, 0] = chol[:, 2] = chol[:, 5] = 1.5
+    data = GSplatData(
+        centers=(d * r[:, None]).astype(np.float32),
+        amplitudes=(0.2 + rng.random(n)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    out = tmp_path / f"{method}.gsplats.zarr"
+    build_recipe(
+        data, "stream", RecipeParams(n_lods=4, additive_method=method, seed=0)
+    ).save(out)
+    return out
+
+
+def _stamp_counts(path: Path) -> "tuple[int, int, bool]":
+    root = zarr.open(str(path), mode="r")
+    n = int(root.attrs.get("n_additive_sublods", 1))
+    stamped = sum(
+        "energy_fraction_cum"
+        in dict(root[f"additive_{i}"].attrs.get("lod_stats", {}) or {})
+        for i in range(n)
+    )
+    has_w = "reference_energy" in dict(root.attrs.get("level_stats", {}) or {})
+    return stamped, n, has_w
+
+
+def test_annotate_does_not_energy_stamp_a_reveal_ladder(tmp_path: Path) -> None:
+    """`annotate-quality` must not re-arm the 1/e(k) brightening on a reveal.
+
+    This module's contract is to mirror the build path exactly, and the build path
+    omits energy stamps for a reveal ordering — a radial prefix is a partial object
+    at FULL brightness, so `1/e(k)` would blow out the innermost shell and then dim
+    it as the object completes. Before this was guarded, annotating a radial store
+    stamped every sub-LOD and added `reference_energy`, silently undoing the whole
+    point of the ordering.
+    """
+    store = _radial_store(tmp_path)
+    assert _stamp_counts(store) == (0, 4, False), "the BUILD must leave it unstamped"
+
+    annotate_quality_store(store, device="cpu")
+    stamped, n, has_w = _stamp_counts(store)
+    assert stamped == 0, f"annotate stamped {stamped}/{n} sub-LODs of a reveal ladder"
+    assert not has_w, "annotate added the paired reference_energy to a reveal ladder"
+
+
+def test_annotate_report_does_not_claim_a_weight_it_erased(tmp_path: Path) -> None:
+    """The report is what the CLI prints, so it must not name a w the store lacks.
+
+    `annotate-quality` erases `reference_energy` from a reveal leaf; reporting the
+    figure it computed anyway printed `w=<number>` under a "Leaves stamped" heading
+    for a leaf that carries no weight at all.
+    """
+    store = _radial_store(tmp_path)
+    report = annotate_quality_store(store, device="cpu")
+
+    assert [leaf.reference_energy for leaf in report.leaves] == [None]
+    assert [leaf.energy_fraction_cum for leaf in report.leaves] == [[]]
+
+    # Sensitivity control: the same builder under an energy ordering DOES report
+    # a weight, so the assertion above cannot pass by the field always being None.
+    energy_store = _radial_store(tmp_path, method="self_energy")
+    _strip_quality_attrs(energy_store)
+    control = annotate_quality_store(energy_store, device="cpu")
+    assert all(leaf.reference_energy is not None for leaf in control.leaves)
+
+
+def test_annotate_repairs_a_wrongly_stamped_reveal_ladder(tmp_path: Path) -> None:
+    """Erase, don't merely skip — a store stamped by an older build gets repaired.
+
+    Mirrors the posture the zero-energy path already takes.
+    """
+    store = _radial_store(tmp_path)
+    root = zarr.open(str(store), mode="a")
+    n = int(root.attrs["n_additive_sublods"])
+    for i in range(n):
+        sub = root[f"additive_{i}"]
+        stats = dict(sub.attrs.get("lod_stats", {}) or {})
+        stats["energy_fraction_cum"] = 0.5
+        sub.attrs["lod_stats"] = stats
+    root.attrs["level_stats"] = {"reference_energy": 123.0}
+    assert _stamp_counts(store) == (n, n, True), "fixture must start corrupted"
+
+    annotate_quality_store(store, device="cpu")
+    assert _stamp_counts(store) == (0, n, False), "annotate did not repair the store"
+
+
+def test_annotate_still_stamps_a_non_reveal_ladder(tmp_path: Path) -> None:
+    """SENSITIVITY CONTROL for the two tests above.
+
+    Same builder, same shape, an energy-ordered method — which MUST be stamped.
+    Without this, both tests above would pass if annotate stopped stamping at all.
+    """
+    store = _radial_store(tmp_path, method="self_energy")
+    _strip_quality_attrs(store)
+    annotate_quality_store(store, device="cpu")
+
+    stamped, n, has_w = _stamp_counts(store)
+    assert stamped == n, f"only {stamped}/{n} sub-LODs stamped on an energy ladder"
+    assert has_w
+
+
+def test_partitioned_radial_centres_each_part_on_itself_by_default(
+    tmp_path: Path,
+) -> None:
+    """A DECISION, pinned: `tiles -m radial` self-centres each part by default.
+
+    The ladder is built per part, so without an explicit centre each part reveals
+    from its OWN bbox middle — N independent local reveals, not one object growing
+    from its centre. That is useful (each visible, frustum-culled tile paints its
+    own middle first) and surprising, so it is documented in the module README and
+    pinned here: if someone changes the default, this test should make them do it
+    deliberately.
+
+    Passing `reveal_centre` switches to one coherent global reveal, which the
+    second half asserts.
+    """
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.tree import iter_leaves
+
+    rng = np.random.default_rng(0)
+    n = 800
+    d = rng.standard_normal((n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+    r = 50.0 * rng.random(n) ** (1 / 3)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, 0] = chol[:, 2] = chol[:, 5] = 1.5
+    data = GSplatData(
+        centers=(d * r[:, None]).astype(np.float32),
+        amplitudes=(0.2 + rng.random(n)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+
+    def first_shell_gap(centre: "list[float] | None") -> "tuple[float, float]":
+        """(mean dist of each part's first shell to its OWN centre, to the GLOBAL)."""
+        out = tmp_path / f"tiles_{centre is not None}.gsplats.zarr"
+        params = RecipeParams(
+            n_lods=3,
+            additive_method="radial",
+            max_elements=250,
+            seed=0,
+            reveal_centre=centre,
+        )
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        write_gsplats_tree(out, build_recipe(data, "tiles", params))
+        node, _ = load_gsplat_node(out, include_stats=False)
+        own, glob = [], []
+        parts = [
+            [np.asarray(s.centers, dtype=np.float64) for s in leaf.additive_sublods]
+            for leaf in iter_leaves(node)
+        ]
+        assert len(parts) > 1, "fixture must actually partition"
+        allc = np.concatenate([a for p in parts for a in p])
+        gc = (allc.min(axis=0) + allc.max(axis=0)) / 2.0
+        for p in parts:
+            pall = np.concatenate(p)
+            pc = (pall.min(axis=0) + pall.max(axis=0)) / 2.0
+            own.append(float(np.linalg.norm(p[0] - pc, axis=1).mean()))
+            glob.append(float(np.linalg.norm(p[0] - gc, axis=1).mean()))
+        return sum(own) / len(own), sum(glob) / len(glob)
+
+    own_default, glob_default = first_shell_gap(None)
+    own_pinned, glob_pinned = first_shell_gap([0.0, 0.0, 0.0])
+
+    # Default: first shells hug their OWN part centre, not the global one.
+    assert own_default < glob_default, (own_default, glob_default)
+    # Pinned: the global centre becomes the closer one — the ordering really moved.
+    assert glob_pinned < glob_default, (glob_pinned, glob_default)
+
+
+def test_with_quality_does_not_re_add_the_weight_to_a_reveal_level(
+    tmp_path: Path,
+) -> None:
+    """The Q pass writes `reference_energy` per lod-group child — but not on a reveal.
+
+    Otherwise a single `annotate-quality --with-quality` run contradicts itself: the
+    e-pass erases the weight from a radial-laddered level and the Q pass immediately
+    puts it back, leaving exactly the half-written pair the reveal exists to avoid.
+    `quality` still goes on — it is a standalone readout, not half of the e pair.
+    """
+    data = _make_random_gsplat(n=400)
+    out = tmp_path / "levels_radial.gsplats.zarr"
+    build_recipe(
+        data,
+        "levels",
+        RecipeParams(
+            n_lods=3,
+            levels=1,
+            compression_factor=8,
+            additive_method="radial",
+            device="cpu",
+            seed=0,
+        ),
+    ).save(out)
+
+    annotate_quality_store(out, with_quality=True, device="cpu")
+
+    root = zarr.open(str(out), mode="r")
+    n_children = sum(1 for k in root.group_keys() if str(k).startswith("child_"))
+    assert n_children >= 2, "the levels recipe must produce a kind=lod ladder"
+    reveal_children = 0
+    for i in range(n_children):
+        child = root[f"child_{i}"]
+        stats = dict(child.attrs.get("level_stats", {}) or {})
+        n_sub = int(child.attrs.get("n_additive_sublods", 1))
+        subs = [child[f"additive_{j}"] for j in range(n_sub)] if n_sub > 1 else [child]
+        is_reveal = any(
+            dict(s.attrs.get("lod_stats", {}) or {}).get("lod_method") == "radial"
+            for s in subs
+        )
+        assert "quality" in stats, f"child_{i} lost its quality stamp"
+        if is_reveal:
+            reveal_children += 1
+            assert "reference_energy" not in stats, (
+                f"child_{i} is a reveal ladder but the Q pass re-added its weight"
+            )
+        else:
+            # Control, in the same run: a level whose ladder collapsed to one
+            # sub-LOD is not identifiable as a reveal, and keeps its weight.
+            assert "reference_energy" in stats
+    assert reveal_children, "no child was a radial ladder — the assertion was vacuous"
