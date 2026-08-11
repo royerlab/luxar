@@ -15,7 +15,10 @@
      (border-default) + tokenised radius/type (small transient badge → radius-md). */
   border-radius: var(--luxar-radius-md, 8px);
   font-size: var(--luxar-text-lg, 14px);
-  /* Notifications sit above every viewer layer, tooltips included. */
+  /* Above every tokenised layer, tooltips included. The recording panel's
+     deliberately untokenised chrome (indicator / confirm dialog / offline
+     capture overlay, 9999 and up) still wins: a modal capture is not
+     something a transient notice should be painted over. */
   z-index: calc(var(--luxar-z-tooltip) + 1000);
   transition: opacity 0.3s ease;
   pointer-events: none;
