@@ -126,8 +126,8 @@ export function coarsestFreshIndex(children: readonly FreshnessChild[], version:
 /**
  * Committed visible-element count of a child's leaf mesh, or ``null`` when
  * untracked. Reads the per-type commit stamps (``visiblePointCount`` /
- * ``visibleSegmentCount`` / ``visibleSplatCount`` — written by the
- * commit-*-geometry helpers). Non-leaf children (nested groups) and
+ * ``visibleSegmentCount`` / ``visibleSplatCount`` / ``visibleTriangleCount`` —
+ * written by the commit-*-geometry helpers). Non-leaf children (nested groups) and
  * not-yet-committed leaves carry no stamp and return ``null`` — callers must
  * only act on a KNOWN-empty level (``0``), never on ``null``.
  */

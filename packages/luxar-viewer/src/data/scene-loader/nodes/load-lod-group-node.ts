@@ -90,12 +90,16 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * and mesh defer paths so the ready/failed/loading state machine and the
  * abort-discard error handling live in exactly one place.
  *
- * **Lazy levels never join the per-slice update sweep.** ``runExpensive``
+ * **Lazy LEAF levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload
  * on a slice change once the scrub settles (``LODGroupRegistry.maybeKickReload``).
  * Keeping a fine level out of the sweep is what lets the cheap coarse (eager)
  * level commit a new timepoint immediately instead of being gated behind the
- * slow fine reload.
+ * slow fine reload. The deferred-GROUP caller below is the one exception, and
+ * only from activation onwards: its ``runExpensive`` is the ``loadChildren``
+ * recursion, whose nested leaf loaders register themselves exactly as they would
+ * anywhere else. The placeholder this function holds is never registered either
+ * way.
  */
 function attachLazyChild(
   placeholder: THREE.Object3D,

@@ -52,7 +52,16 @@ from three geometry types to four for the same reason.
 Two comments said the opposite of what the code does, which is how the report
 came about: the lod-group defer branch claimed the activation thunk runs "the
 expensive tail (and registration)", and `MeshCheapLoad.loader` claimed "the
-expensive half" registers. Neither is true of any of the four loaders.
+expensive half" registers. Neither is true of any of the four loaders. A third
+overstated its scope rather than inverting it: `attachLazyChild`'s doc claimed no
+lazy level ever joins the sweep, which is true of a lazy LEAF but not of a
+deferred nested GROUP — that one's `runExpensive` is the `loadChildren`
+recursion, so its subtree leaves register themselves on activation like any other
+leaf.
+
+One more mesh coverage residual, in the same vein: the freshness helpers' `isFresh`
+type sweep looped over three leaf types while `isFreshnessTracked` is `supportsLod`,
+which has counted mesh since it became a legal ladder level. Widened to four.
 
 #### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
 
