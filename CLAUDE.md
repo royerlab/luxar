@@ -224,7 +224,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 ```bash
 luxar demo                       # List the 80 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
-luxar demo stop                  # Stop running demos, free ports 8000/5173 (--dry-run lists)
+luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 # Demos keep heavyweight packages OUT of the core install, so a fresh checkout
 # lists every demo but cannot run them all. Report-only `deps` exits 1 for an

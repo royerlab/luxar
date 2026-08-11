@@ -411,7 +411,7 @@ def demo_stop(
         False, "--yes", "-y", help="Skip the confirmation prompt."
     ),
 ) -> None:
-    """Stop running demos and free their ports (8000/5173 etc.).
+    """Stop running demos and free their ports (and memory, and GPU).
 
     Finds every live demo — via the registry ``demo run`` maintains, plus a
     process-table sweep for strays with no registry entry — and tears each

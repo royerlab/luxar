@@ -3,10 +3,12 @@
 ``luxar demo run`` spawns its demo script as an isolated process-group leader
 (see :mod:`luxar.utils.process`), and that script in turn spawns
 ``luxar serve``. Ctrl-C teardown is deterministic — but a demo the user simply
-*forgot* in another terminal never receives a signal, keeps its ports
-(8000/5173), and makes the next ``demo run`` silently shift ports while the
-browser shows the stale scene. ``luxar demo stop`` fixes that; this module is
-its discovery + kill engine, with two complementary sources:
+*forgot* in another terminal never receives a signal, and keeps its ports, its
+memory and its GPU. Re-running that demo then shifts to a neighbouring port
+(a demo's derived port pair is stable, see :func:`luxar.utils.demos.demo_ports`)
+while the old tab keeps serving the stale scene. ``luxar demo stop`` fixes
+that; this module is its discovery + kill engine, with two complementary
+sources:
 
 - **Registry** (primary): ``demo run`` / ``run-all`` drop a JSON pidfile per
   launch under ``~/.cache/luxar/running/`` and remove it on exit. Precise —
@@ -33,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .process import can_kill_process_groups, terminate_process_group
+from .process import can_kill_process_groups, proc_table, terminate_process_group
 
 # Matches luxar.demos.registry.DEMO_CACHE_ROOT (not imported: that module pulls
 # in the whole demo table, and cli/utils.py imports us on the serve hot path).
@@ -129,6 +131,12 @@ def _ps_snapshot() -> list[tuple[int, int, str]]:
 
     ``ps -axww`` so command lines are never truncated — the ``-m luxar.demos.``
     fingerprint sits past column 80 behind a long interpreter path.
+
+    Falls back to ``/proc`` when ``ps`` is missing (a slim container), times
+    out, or prints something we cannot parse (BusyBox takes different flags).
+    An empty snapshot does not merely disable the sweep: it also strips
+    discovery of the identity check that keeps a recycled pgid from being
+    killed, so it is worth a second source before giving up.
     """
     try:
         out = subprocess.run(  # nosec B603 B607 - fixed argv, no user input
@@ -139,7 +147,7 @@ def _ps_snapshot() -> list[tuple[int, int, str]]:
             check=True,
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return []
+        out = ""
     rows: list[tuple[int, int, str]] = []
     for line in out.splitlines():
         parts = line.split(None, 2)
@@ -149,7 +157,7 @@ def _ps_snapshot() -> list[tuple[int, int, str]]:
             rows.append((int(parts[0]), int(parts[1]), parts[2]))
         except ValueError:
             continue
-    return rows
+    return rows or [(pid, pgid, cmd) for pid, pgid, _state, cmd in proc_table()]
 
 
 def _python_module_token(command: str) -> Optional[str]:
@@ -223,6 +231,23 @@ def _group_has_luxar_process(pgid: int, snapshot: list[tuple[int, int, str]]) ->
     )
 
 
+def _entry_still_live(run: DemoRun, snapshot: list[tuple[int, int, str]]) -> bool:
+    """Whether a registry entry still names a live demo, in three regimes.
+
+    With a process table in hand the answer is exact (and safe against a
+    recycled pgid). Without one, POSIX can at least ask whether the group
+    survives. Off POSIX there is no probe at all — ``os.kill(pid, 0)``
+    TERMINATES its target on Windows rather than testing it — so an entry
+    naming an owner pid is kept for ``stop_run`` to act on, and only one that
+    names nobody is dropped.
+    """
+    if snapshot:
+        return _group_has_luxar_process(run.pgid, snapshot)
+    if can_kill_process_groups():
+        return _group_alive(run.pgid)
+    return bool(run.pid)
+
+
 def discover_runs(
     runs_dir: Optional[Path] = None,
     snapshot: Optional[list[tuple[int, int, str]]] = None,
@@ -245,11 +270,7 @@ def discover_runs(
         if run.pgid == own_pgid:
             covered.add(run.pgid)
             continue
-        if snapshot and not _group_has_luxar_process(run.pgid, snapshot):
-            unregister_run(run.path)
-            continue
-        if not snapshot and not _group_alive(run.pgid):
-            # Off-POSIX / ps-less fallback: liveness by signal-0 only.
+        if not _entry_still_live(run, snapshot):
             unregister_run(run.path)
             continue
         covered.add(run.pgid)
@@ -302,6 +323,8 @@ def stop_run(run: DemoRun) -> bool:
         try:
             os.kill(run.pid, signal.SIGTERM)
             gone = True
+        except ProcessLookupError:
+            gone = True  # already dead: prune the stale entry
         except OSError:
             gone = False
     else:

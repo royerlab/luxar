@@ -24,6 +24,15 @@ import {
 const SIGMA = 1.0;
 const INV_NORM = 1 / (SIGMA * Math.sqrt(2 * Math.PI));
 
+/**
+ * Per-test timeout for the brute-quadrature sweep tests. They run in a few
+ * hundred ms bare, but the CI unit-test job is coverage-instrumented and
+ * shares a loaded runner — measured ~50× slower there (the sharp-bend sweep
+ * hit 15081 ms against the global 15 s cap: a timeout flake, not a math
+ * failure). Generous headroom, still far below the job timeout.
+ */
+const SWEEP_TIMEOUT_MS = 60_000;
+
 function vsub(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 }
@@ -162,68 +171,80 @@ describe('lineVolumetricSumIntegral vs quadrature', () => {
     expect(I).toBeCloseTo(1.0, 5);
   });
 
-  it('soft/soft lane matches quadrature across obliquity and length', () => {
-    for (const L of [0.5, 1, 3, 10, 40]) {
-      const seg: VolumetricSegment = { a: [0, 0, 0], b: [L, 0, 0], sigma: SIGMA };
-      for (const tilt of [90, 45, 10, 2, 0.5]) {
-        for (const along of [0, 0.5, 1, 1.3]) {
-          const target: Vec3 = [L * along, 0.7, 0];
-          const { o, d } = obliqueRay(target, tilt);
-          const lane = lineVolumetricSumIntegral(o, d, seg);
-          const ref = quadrature(o, d, seg);
-          expect(Math.abs(lane - ref), `soft L=${L} tilt=${tilt} along=${along}`).toBeLessThan(
-            2.5e-3 * Math.max(ref, 0.05)
-          );
-        }
-      }
-    }
-  });
-
-  it('hard/hard lane (interior segment) matches quadrature at any bend', () => {
-    for (const bend of [0, 30, 90, 150]) {
-      for (const L of [3, 10]) {
-        // Interior segment: hard cuts BOTH ends (straight partners fore and aft).
-        const { main } = jointAtB(L, bend, 10);
-        const nA = bisectorNormal([1, 0, 0], [-1, 0, 0] as Vec3); // straight partner at A
-        const seg: VolumetricSegment = { ...main, cutA: nA };
-        for (const tilt of [90, 45, 10]) {
-          for (const along of [0.02, 0.5, 0.98]) {
-            const target: Vec3 = [L * along, 0.4, 0];
+  it(
+    'soft/soft lane matches quadrature across obliquity and length',
+    { timeout: SWEEP_TIMEOUT_MS },
+    () => {
+      for (const L of [0.5, 1, 3, 10, 40]) {
+        const seg: VolumetricSegment = { a: [0, 0, 0], b: [L, 0, 0], sigma: SIGMA };
+        for (const tilt of [90, 45, 10, 2, 0.5]) {
+          for (const along of [0, 0.5, 1, 1.3]) {
+            const target: Vec3 = [L * along, 0.7, 0];
             const { o, d } = obliqueRay(target, tilt);
             const lane = lineVolumetricSumIntegral(o, d, seg);
             const ref = quadrature(o, d, seg);
-            expect(
-              Math.abs(lane - ref),
-              `hard bend=${bend} L=${L} tilt=${tilt} along=${along}`
-            ).toBeLessThan(2.5e-3 * Math.max(ref, 0.05));
+            expect(Math.abs(lane - ref), `soft L=${L} tilt=${tilt} along=${along}`).toBeLessThan(
+              2.5e-3 * Math.max(ref, 0.05)
+            );
           }
         }
       }
     }
-  });
+  );
 
-  describe('mixed lane (one hard cut, one soft cap — chain-end segments)', () => {
-    it('matches quadrature for L ≥ 3σ at bends up to 90° and every obliquity', () => {
-      for (const bend of [0, 30, 90]) {
+  it(
+    'hard/hard lane (interior segment) matches quadrature at any bend',
+    { timeout: SWEEP_TIMEOUT_MS },
+    () => {
+      for (const bend of [0, 30, 90, 150]) {
         for (const L of [3, 10]) {
-          const { main } = jointAtB(L, bend, 10); // soft at A, hard at B
-          for (const tilt of [90, 45, 10, 3]) {
-            for (const along of [-0.1, 0.05, 0.5, 0.95, 1.05]) {
+          // Interior segment: hard cuts BOTH ends (straight partners fore and aft).
+          const { main } = jointAtB(L, bend, 10);
+          const nA = bisectorNormal([1, 0, 0], [-1, 0, 0] as Vec3); // straight partner at A
+          const seg: VolumetricSegment = { ...main, cutA: nA };
+          for (const tilt of [90, 45, 10]) {
+            for (const along of [0.02, 0.5, 0.98]) {
               const target: Vec3 = [L * along, 0.4, 0];
               const { o, d } = obliqueRay(target, tilt);
-              const lane = lineVolumetricSumIntegral(o, d, main);
-              const ref = quadrature(o, d, main);
+              const lane = lineVolumetricSumIntegral(o, d, seg);
+              const ref = quadrature(o, d, seg);
               expect(
                 Math.abs(lane - ref),
-                `mixed bend=${bend} L=${L} tilt=${tilt} along=${along}`
-              ).toBeLessThan(6e-3 * Math.max(ref, 0.05));
+                `hard bend=${bend} L=${L} tilt=${tilt} along=${along}`
+              ).toBeLessThan(2.5e-3 * Math.max(ref, 0.05));
             }
           }
         }
       }
-    });
+    }
+  );
 
-    it('sharp bends (≥120°): measured absolute envelope', () => {
+  describe('mixed lane (one hard cut, one soft cap — chain-end segments)', () => {
+    it(
+      'matches quadrature for L ≥ 3σ at bends up to 90° and every obliquity',
+      { timeout: SWEEP_TIMEOUT_MS },
+      () => {
+        for (const bend of [0, 30, 90]) {
+          for (const L of [3, 10]) {
+            const { main } = jointAtB(L, bend, 10); // soft at A, hard at B
+            for (const tilt of [90, 45, 10, 3]) {
+              for (const along of [-0.1, 0.05, 0.5, 0.95, 1.05]) {
+                const target: Vec3 = [L * along, 0.4, 0];
+                const { o, d } = obliqueRay(target, tilt);
+                const lane = lineVolumetricSumIntegral(o, d, main);
+                const ref = quadrature(o, d, main);
+                expect(
+                  Math.abs(lane - ref),
+                  `mixed bend=${bend} L=${L} tilt=${tilt} along=${along}`
+                ).toBeLessThan(6e-3 * Math.max(ref, 0.05));
+              }
+            }
+          }
+        }
+      }
+    );
+
+    it('sharp bends (≥120°): measured absolute envelope', { timeout: SWEEP_TIMEOUT_MS }, () => {
       // Past ~90° the bisector plane leans toward the axis, and the
       // inclusion–exclusion residual is governed by the PERPENDICULAR
       // distance from the soft cap's support to the plane — which a longer
@@ -259,39 +280,43 @@ describe('lineVolumetricSumIntegral vs quadrature', () => {
       expect(worstAbs).toBeGreaterThan(1e-4); // sensitivity control
     });
 
-    it('short segments (L < 3σ): bounded underestimate, documented envelope', () => {
-      // The dropped inclusion–exclusion term is the cap-complement's mass on
-      // the excluded side of the plane — an UNDERestimate that grows as the
-      // two end treatments overlap. Intensities are normalized (a side-on
-      // core reads 1.0), so the visually meaningful envelope is the ABSOLUTE
-      // error. Measure the worst over the adversarial grid and pin it.
-      let worstAbs = 0;
-      let worstAt = '';
-      for (const bend of [0, 60, 120]) {
-        for (const L of [0.5, 1, 2]) {
-          const { main } = jointAtB(L, bend, 10);
-          for (const tilt of [90, 45, 10]) {
-            for (const along of [0.05, 0.5, 0.95]) {
-              const target: Vec3 = [L * along, 0.3, 0];
-              const { o, d } = obliqueRay(target, tilt);
-              const lane = lineVolumetricSumIntegral(o, d, main);
-              const ref = quadrature(o, d, main);
-              const abs = Math.abs(lane - ref);
-              if (abs > worstAbs) {
-                worstAbs = abs;
-                worstAt = `bend=${bend} L=${L} tilt=${tilt} along=${along} lane=${lane.toFixed(4)} ref=${ref.toFixed(4)}`;
+    it(
+      'short segments (L < 3σ): bounded underestimate, documented envelope',
+      { timeout: SWEEP_TIMEOUT_MS },
+      () => {
+        // The dropped inclusion–exclusion term is the cap-complement's mass on
+        // the excluded side of the plane — an UNDERestimate that grows as the
+        // two end treatments overlap. Intensities are normalized (a side-on
+        // core reads 1.0), so the visually meaningful envelope is the ABSOLUTE
+        // error. Measure the worst over the adversarial grid and pin it.
+        let worstAbs = 0;
+        let worstAt = '';
+        for (const bend of [0, 60, 120]) {
+          for (const L of [0.5, 1, 2]) {
+            const { main } = jointAtB(L, bend, 10);
+            for (const tilt of [90, 45, 10]) {
+              for (const along of [0.05, 0.5, 0.95]) {
+                const target: Vec3 = [L * along, 0.3, 0];
+                const { o, d } = obliqueRay(target, tilt);
+                const lane = lineVolumetricSumIntegral(o, d, main);
+                const ref = quadrature(o, d, main);
+                const abs = Math.abs(lane - ref);
+                if (abs > worstAbs) {
+                  worstAbs = abs;
+                  worstAt = `bend=${bend} L=${L} tilt=${tilt} along=${along} lane=${lane.toFixed(4)} ref=${ref.toFixed(4)}`;
+                }
+                // Never OVERestimates beyond lane/quadrature noise.
+                expect(lane, `over bend=${bend} L=${L} tilt=${tilt}`).toBeLessThan(ref + 6e-3);
               }
-              // Never OVERestimates beyond lane/quadrature noise.
-              expect(lane, `over bend=${bend} L=${L} tilt=${tilt}`).toBeLessThan(ref + 6e-3);
             }
           }
         }
+        console.log(`mixed short-segment worstAbs=${worstAbs.toFixed(5)} at ${worstAt}`);
+        expect(worstAbs, worstAt).toBeLessThan(0.2);
+        // Sensitivity control: the envelope is a real measurement, not slack.
+        expect(worstAbs).toBeGreaterThan(1e-4);
       }
-      console.log(`mixed short-segment worstAbs=${worstAbs.toFixed(5)} at ${worstAt}`);
-      expect(worstAbs, worstAt).toBeLessThan(0.2);
-      // Sensitivity control: the envelope is a real measurement, not slack.
-      expect(worstAbs).toBeGreaterThan(1e-4);
-    });
+    );
 
     it('MUTATION: dropping the inclusion–exclusion cap term fails at chain ends', () => {
       // Re-evaluate the L≥3σ grid with the cap term suppressed by moving the

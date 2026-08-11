@@ -310,3 +310,59 @@ def test_stop_run_revalidates_at_kill_time(tmp_path: Path, monkeypatch) -> None:
     finally:
         proc.kill()
         proc.wait()
+
+
+# ───────────────────── degraded platforms / missing `ps` ─────────────────────
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="requires /proc (Linux)")
+def test_ps_snapshot_falls_back_to_proc_when_ps_is_missing(monkeypatch) -> None:
+    """No `ps` must not silently strip discovery of its identity check.
+
+    An empty snapshot would let a recycled pgid through on signal-0 liveness
+    alone; /proc answers the same question without a subprocess.
+    """
+
+    def no_ps(*args, **kwargs):
+        raise FileNotFoundError("ps")
+
+    monkeypatch.setattr(demo_runs.subprocess, "run", no_ps)
+    rows = demo_runs._ps_snapshot()
+    mine = [row for row in rows if row[0] == os.getpid()]
+    assert len(mine) == 1
+    assert mine[0][1] == os.getpgrp()
+
+
+def test_non_posix_keeps_registry_and_stops_by_owner_pid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Off-POSIX there are no process groups — discovery must still work.
+
+    Pruning every entry there would both hide running demos and delete the
+    registry that `stop_run`'s owner-pid fallback needs.
+    """
+    monkeypatch.setattr(demo_runs, "can_kill_process_groups", lambda: False)
+    monkeypatch.setattr(demo_runs, "_ps_snapshot", list)
+    path = register_run("winrun", 4242, runs_dir=tmp_path)
+    assert path is not None
+
+    runs = discover_runs(runs_dir=tmp_path)
+    assert [(r.key, r.pgid, r.pid) for r in runs] == [("winrun", 4242, os.getpid())]
+    assert path.exists()
+
+    signalled: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        demo_runs.os, "kill", lambda pid, sig: signalled.append((pid, sig))
+    )
+    assert stop_run(runs[0]) is True
+    assert signalled == [(os.getpid(), demo_runs.signal.SIGTERM)]
+    assert not path.exists()
+
+
+def test_non_posix_prunes_an_entry_with_no_owner_pid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """…but an entry naming no owner pid is unusable off-POSIX: drop it."""
+    monkeypatch.setattr(demo_runs, "can_kill_process_groups", lambda: False)
+    monkeypatch.setattr(demo_runs, "_ps_snapshot", list)
+    (tmp_path / "4243.json").write_text('{"key": "old", "pgid": 4243, "pid": 0}')
+    assert discover_runs(runs_dir=tmp_path) == []
+    assert sorted(tmp_path.glob("*.json")) == []

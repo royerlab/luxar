@@ -62,7 +62,7 @@ Report-only `demo deps` exits 1 for any missing or outdated row. Generic
 exact constrained requirement, including a dependency outside every extra.
 
 `demo stop` clears demos left running in forgotten terminals — the usual cause
-of a "port 8000 busy" warning and a browser tab that still shows an older
+of a "port busy" warning and a browser tab that still shows an older
 scene. It finds runs via the registry `demo run` maintains (plus a
 process-table sweep for strays), lists them, asks for confirmation (`-y` to
 skip), and tears each one down with the same SIGINT → SIGTERM → SIGKILL

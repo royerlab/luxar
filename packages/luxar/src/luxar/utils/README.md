@@ -183,6 +183,12 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `create_random_spheres()`: Create random spherical points
 - `create_time_series_demo()`: Generate time-varying data
 - `launch_viewer()`: Launch the Luxar viewer for a given dataset path
+- `demo_ports()`: Stable per-dataset (data, viewer) port pair derived from the
+  dataset name — demos never contend for 8000/5173, and no two of them share a
+  full port PAIR, so a browser tab left over from one demo can never silently
+  front another demo's server (two demos may still share only the data port
+  and shift, which is harmless — the viewer URL carries its own `?src=`);
+  explicit `--port`/`--viewer-port` in `serve_args` override
 - `detect_device()`: Auto-detect the best available compute device (cuda > mps > cpu)
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
@@ -209,8 +215,12 @@ SIGTERM/SIGHUP) never orphans a `luxar serve` on its port.
   SIGINT → SIGTERM → SIGKILL escalation; optional `on_spawn` hook receives the
   child PID (= new pgid when isolated)
 - `terminate_process_group()`: The same escalation for a group discovered
-  after the fact (used by `luxar demo stop`)
+  after the fact (used by `luxar demo stop`); True only once the group is
+  provably finished — an unreaped zombie counts as gone, `EPERM` (someone
+  else's group) never does
 - `can_kill_process_groups()`: Whether POSIX process-group signalling exists
+- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`
+  — a `ps`-free process table (empty, meaning *unknown*, off Linux)
 
 ### `demo_runs.py`
 Discovery + kill engine behind `luxar demo stop` (stdlib-only): find every
@@ -222,9 +232,11 @@ running demo — even one forgotten in another terminal — and free its ports.
   removed on exit (so the registry only ever names survivors)
 - `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
   strays (`-m luxar.demos.demo_*` command lines); prunes dead/hijacked
-  entries, never returns the caller's own process group
+  entries, never returns the caller's own process group. Falls back to
+  `proc_table()` when `ps` is missing, so the identity check that keeps a
+  recycled pgid alive-and-innocent never silently disappears
 - `stop_run()`: Tear one run's process group down via `terminate_process_group`
-- `describe_port_holder()`: Best-effort "port 8000 is held by demo 'X'" hint
+- `describe_port_holder()`: Best-effort "port N is held by demo 'X'" hint
   for `pick_port`'s busy-port warning
 
 ## Usage Examples

@@ -8,9 +8,10 @@ All notable changes to Luxar are documented in this file.
 
 #### `luxar demo stop` — clear running demos and free their ports
 
-A demo forgotten in another terminal keeps 8000/5173, so the next `demo run`
-silently shifts ports while the browser surfaces the older scene — the
-"I started demo B and got demo A" trap. `luxar demo stop` now finds every
+A demo forgotten in another terminal holds its ports, its memory and its GPU
+until someone finds the window. Re-running that same demo then shifts to a
+neighbouring port (its derived pair is stable) while the old browser tab keeps
+serving the older scene. `luxar demo stop` now finds every
 running demo and tears each one's process group down with the same
 SIGINT → SIGTERM → SIGKILL escalation Ctrl-C uses. Discovery is two-source:
 a JSON pidfile registry (`~/.cache/luxar/running/`) that `demo run`/`run-all`
@@ -20,10 +21,71 @@ printed and confirmed before anything dies (`-y` skips; `--dry-run` only
 lists; `stop <key>` targets one demo) — several agents/people may run demos
 on one machine, and "stop everything" must never take a colleague's live
 server down unseen. The `pick_port` "port busy" warning now also names a
-luxar-owned squatter ("Port 8000 is held by demo 'X' (PID N) — run
+luxar-owned squatter ("Port 8042 is held by demo 'X' (PID N) — run
 `luxar demo stop` to clear it"), so the port shift explains itself.
+Teardown also stops waiting out a corpse: a child that has exited but has not
+been reaped yet still answers `killpg`, which used to hold the whole signal
+ladder open, so an interrupted `demo run` sat there for the full grace period
+before returning.
 New: `luxar.utils.demo_runs` (discovery + kill engine),
-`terminate_process_group` / `on_spawn` in `luxar.utils.process`.
+`terminate_process_group` / `proc_table` / `on_spawn` in `luxar.utils.process`.
+
+#### Demos serve on per-dataset derived ports, not 8000/5173
+
+Every demo used to contend for the same default ports, so with several demos
+(or several agents) on one machine, whichever came second silently shifted to
+8001/5174 — and a browser tab left over from demo A could later front demo
+B's server at the very same URL, showing the wrong scene with full
+confidence. `launch_viewer` now derives a stable `(data, viewer)` port pair
+from the dataset's file name (`demo_ports`, ranges 8001–8499 / 5200–5698,
+disjoint from the bare `luxar serve` defaults): no two demos share a full port
+pair — hence never a URL — and re-running the same demo lands on the same URL,
+so concurrent demos stop stepping on each other. Two demos can still draw the
+same *data* port and shift with the usual warning; that is harmless, because
+the viewer URL carries its own `?src=` and the wrong-scene trap needs both
+ports to match. A demo passing an explicit `--port` /
+`--viewer-port` through `serve_args` keeps full control, and `pick_port`
+still resolves the rare same-slot hash collision by shifting up with its
+usual warning.
+
+#### Volumetric line sum modes honour the sharpness knob via an Abel-transform radial LUT (#1352 part 5)
+
+Behind `?linePrimitive=volumetric`, the sum-family blending modes (additive,
+luminous, volumetric) rendered every line at β = 2 regardless of the per-vertex
+sharpness knob — the closed-form ray integral exists only for the Gaussian, and
+PR-2 documented the gap. The knob now works: the sum fragments' RADIAL factor is
+sampled from a shared 128×65 R16F LUT (the odd height puts the default knob
+exactly on the β = 2 row) of `S(q, s)` — the shifted+normalized
+untruncated Abel transform of the repo profile `exp(−K·rad^β)`, `β = 2^(6s−2)` —
+so the line-of-sight-integrated cross-section has the true general-β SHAPE
+(every row stays normalized to 1 at q = 0 — deliberately: the side-on core
+matches the screen-space quad at any knob, the A/B calibration anchor). The
+AXIAL erf window deliberately stays β = 2 (a cap-local approximation, exact for
+an infinite rod — the trade recorded in the #1352 plan). Peak modes were already
+exact and are untouched.
+
+Two properties carry the design. The β = 2 row of the LUT equals the former
+analytic radial as a function (the Abel transform of a Gaussian is a Gaussian),
+so the fragments sample the LUT unconditionally — there is no analytic/LUT seam
+anywhere on the knob axis. Rendered default-sharpness values go through R16F
+storage + bilinear filtering, so they match the old in-shader evaluation within
+the half-float budget (≤ 8e-4, test-pinned — at most one 8-bit quantization step
+near a rounding threshold), not byte-exactly. And every
+row is pinned to exactly 0 at q = 1, so the vertex stencil's truncation radius
+covers the profile at every sharpness. The CPU reference
+(`_shared/line-integral-lut.ts`) integrates by tanh-sinh quadrature — converged
+well beyond the texture's half-float precision across the whole knob range
+(worst self-convergence 3.2e-5, at β = 16; ≤ 5e-15 elsewhere, including the
+β < 1 cusp a plain compactified trapezoid stalls on) — and the unit tests hold
+the β = 2 row to the
+analytic radial, every row's monotonicity and endpoints, both axes' resolution
+adequacy against denser rebuilds, and the half-float storage error. New parity
+fixtures pin the knob extremes cross-backend (`line-volprim-sharp-hard`) and the
+along-segment knob interpolation (`line-volprim-sharp-taper`), plus a
+mutation-verified physics test: the taper's half-max core is ≥2× wider at the
+hard end than the soft end (a LUT wired to a constant row reads ratio ≈ 1 and
+fails). The texture is a lazy singleton built on the first volumetric material
+(~16 KB, ~90 ms); screen-space materials never trigger it.
 
 #### Volumetric line picking behind `?linePrimitive=` (#1352, part 2)
 
@@ -330,7 +392,7 @@ reference validated against brute numerical quadrature
 (`line-volumetric-integral.test.ts`: exact lanes < 0.6%, error envelopes
 pinned with sensitivity controls), and both shader backends mirror it —
 GLSL as a second source pair (the codebase's first genuine shader-source
-selection) and TSL as a twin factory, with eleven `line-volprim-*` parity
+selection) and TSL as a twin factory, with twelve `line-volprim-*` parity
 fixtures pinning pixel-level backend agreement, including the partner
 fetch, the mixed-lane splits, the peak capsule, the fragment-stage
 colormap LUT, a near-plane-straddling telephoto disc, and a straddling
@@ -345,6 +407,22 @@ polynomial. With the flag off, the screen-space pipeline is byte-identical
 (unit-asserted) and codegen snapshots are unchanged. Picking and the
 sum-mode sharpness LUT follow in later #1352 parts; the flip to
 volumetric-by-default is gated on the full perf + visual A/B (G1).
+
+Real WebGPU is verified for the primitive, not assumed: `renderTSL` grew
+a `native: true` mode (WGSL codegen + Dawn execution instead of the
+forced-WebGL backend; it fails closed by asserting the live backend after
+`init()`, since `navigator.gpu` exists even where no adapter does and the
+renderer would otherwise fall back to WebGL silently), and on Apple
+Metal 3 every `line-volprim-*` fixture renders **exactly** its GLSL image
+— mean covered-pixel diff 0.000 across all twelve, with the native
+readback's row flip folded into `renderTSL` itself so both modes return
+the same convention.
+The scaled-joint fixture doubles as the model-matrix regression from the
+PR review: the same joint authored under a non-uniform `mesh.scale`
+composes back to the identical world geometry, so its render must equal
+the unscaled joint's on each backend independently — object-space
+partner normalization (the reviewed bug) fails it at 1.8× the gate,
+while cross-backend parity alone would have let that bug through.
 
 #### A stale WASM build now names the kernel it is missing (#1412)
 
