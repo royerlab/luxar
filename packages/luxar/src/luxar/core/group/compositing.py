@@ -294,17 +294,21 @@ def validate_points_channels_before_split(
     covered here the same day, so this gate cannot drift from what the child
     write accepts. Every legal broadcast form the flat path accepts therefore
     passes THIS GATE too (a scalar radius, a ``(1, c)`` colors row, an RGB
-    triple). Passing the gate is not the same as reaching disk on every path:
-    under ``substitutive_lod=`` a broadcast ``colors`` — tuple or ``(1, 3)`` row —
-    is separately refused downstream by the gsplat lift, which bakes the coarse
-    levels from per-element RGB. That refusal predates this gate and is tracked in
-    #1444; per-element ``colors`` is unaffected.
+    triple) — and reaches disk on every path, ``substitutive_lod=`` included:
+    the gsplat lift broadcasts a uniform ``colors`` onto the coarse levels,
+    alpha column and all, rather than refusing it as it did before #1444. A
+    per-element ``(N, 4)`` RGBA is still refused by the lift (the substitutive
+    merge is untested on a varying alpha) — but that is not a broadcast form, so
+    it is not this gate's parity promise.
 
     The CHANNEL verdict is identical with and without a wrapper. Note the gate
-    runs ABOVE the positions / dimension / attr checks on the split paths, so a
-    call that ALSO trips one of those (a NaN position, a wrong column count, an
-    unknown attr) reports the channel fault first here and the positions/attr
-    fault on the plain-leaf path. Both refuse, and neither writes.
+    runs ABOVE the positions / attr checks on the split paths, so a call that
+    ALSO trips one of those (a NaN position, an unknown attr) reports the
+    channel fault first here and the positions/attr fault on the plain-leaf
+    path. Both refuse, and neither writes. The scene-DIMENSION count is the
+    exception: since #1446 every leaf adder checks it above its split branches,
+    so a wrong column count is reported first on BOTH paths and this gate is
+    never reached (see :func:`validate_labels_before_split`).
 
     Call as the FIRST statement of a wrapper impl, never from a leaf adder — see
     :func:`validate_labels_before_split` for why the placement is load-bearing.
