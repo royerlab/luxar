@@ -450,3 +450,14 @@
 
 /* light-theme <select> option/optgroup colors now come from --luxar-menu-*
    via styles/components/select-menu.css. */
+
+/* Respect a user's reduced-motion preference (WCAG 2.3.3): drop the
+   transitions this file declares (transition is not inherited). */
+@media (prefers-reduced-motion: reduce) {
+  .luxar-layers-panel__close,
+  .luxar-layer-row,
+  .luxar-layer-row__eye,
+  .luxar-layers-panel__select {
+    transition: none;
+  }
+}
