@@ -476,6 +476,12 @@ The viewer's progressive loader concatenates loaded levels for render
 and refines toward the full data over `requestAnimationFrame()`
 frames once initial paint commits.
 
+Mesh uses the same subgroup layout but is documented separately (see the
+*Mesh Node* section): its levels are a partition of the FACES, each
+re-indexing its own vertex table, so a level is not a subset of the parent's
+arrays and carries no spatial index — and the ladder is a *reveal*, restricted
+to orderings whose every prefix is one connected patch.
+
 **Parent attributes (.zattrs):**
 ```javascript
 {

@@ -328,11 +328,16 @@ export async function createProgressiveMeshLoader(
   );
 
   const lodLoaders: MeshWholeNodeLoader[] = [];
+  // Per-level DECLARED counts, for the parent-total cross-check below.
+  const levelVertices: Array<number | undefined> = [];
+  const levelFaces: Array<number | undefined> = [];
 
   for (let i = 0; i < nAdditive; i++) {
     const lodLoc = parentLoc.resolve(`additive_${i}`);
     const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
+    levelVertices.push(typeof lodAttrs.n_vertices === 'number' ? lodAttrs.n_vertices : undefined);
+    levelFaces.push(typeof lodAttrs.n_faces === 'number' ? lodAttrs.n_faces : undefined);
 
     const lodAttrsComposed = {
       ...lodAttrs,
@@ -363,7 +368,93 @@ export async function createProgressiveMeshLoader(
     );
   }
 
+  assertLadderTotalsBackedByLevels(node, declaredVertices, node.attrs.n_faces, {
+    levelVertices,
+    levelFaces,
+  });
+
   return new MeshProgressiveLoader(lodLoaders, nAdditive, node.path);
+}
+
+/**
+ * Refuse a mesh ladder whose PARENT declares more geometry than its levels hold.
+ *
+ * The parent's `n_vertices` / `n_faces` are not merely descriptive here: the commit
+ * passes them as the geometry's buffer CAPACITY (`commit-mesh-geometry.ts`, #1521),
+ * so they are what `position` / `color` / `normal` / `aScalar` and the index buffer
+ * are all sized from — on the FIRST commit, before any level past the first has
+ * been fetched.
+ *
+ * Nothing else checks them. A ladder's parent group carries no `vertices`/`faces`
+ * array of its own, so it never reaches `preflightMesh`: every per-level preflight
+ * validates its OWN counts against its OWN arrays and against the byte budget, and
+ * the vertex cap above bounds the parent's vertex total, but `n_faces` has no cap at
+ * all. A store pairing a tiny `additive_0` with an enormous parent `n_faces` would
+ * therefore have the first commit allocate an index buffer sized to the declaration
+ * — past any budget, and large enough to fail the allocation outright, which is a
+ * `RangeError` out of the commit rather than the node-scoped `LoaderError` the
+ * two-stage gate exists to produce.
+ *
+ * So the totals are cross-checked against what the levels declare, which is exactly
+ * what `write_mesh_multi_lod` stamps them from (the sums over its levels). A
+ * consistent store passes untouched, and the capacity can then never exceed what the
+ * fully-revealed ladder would allocate anyway.
+ *
+ * Two asymmetries are deliberate:
+ *
+ * - Only the parent declaring MORE is refused. Declaring less is handled by
+ *   `resolveCapacity`'s `Math.max` against the live count — it costs the
+ *   allocate-once property, not correctness, and refusing it would reject a store
+ *   that renders fine.
+ * - A parent that declares NEITHER total is not second-guessed (the capacity then
+ *   falls back to the committed counts). But once it declares one, every level must
+ *   declare both, because a level missing them is a level whose share of the total
+ *   cannot be verified — and it would fail its own preflight anyway, just later and
+ *   only once it is fetched, which is after the allocation.
+ */
+function assertLadderTotalsBackedByLevels(
+  node: SceneNode,
+  declaredVertices: unknown,
+  declaredFaces: unknown,
+  levels: { levelVertices: Array<number | undefined>; levelFaces: Array<number | undefined> }
+): void {
+  const declared = { n_vertices: declaredVertices, n_faces: declaredFaces };
+  if (typeof declared.n_vertices !== 'number' && typeof declared.n_faces !== 'number') return;
+
+  const usable = (n: number | undefined): n is number =>
+    n !== undefined && Number.isSafeInteger(n) && n >= 0;
+  const perLevel = { n_vertices: levels.levelVertices, n_faces: levels.levelFaces };
+  for (const key of ['n_vertices', 'n_faces'] as const) {
+    if (perLevel[key].every(usable)) continue;
+    throw new LoaderError(
+      'Validation',
+      node.path,
+      new Error(
+        `Mesh reveal ladder declares ${key}=${String(declared[key])} on the parent, but a ` +
+          `sub-LOD does not declare its own ${key}. The parent's totals size every GPU ` +
+          'buffer the node ever binds, and only the levels can vouch for them — so a ' +
+          'ladder whose levels do not is refused rather than trusted.'
+      )
+    );
+  }
+
+  for (const key of ['n_vertices', 'n_faces'] as const) {
+    const total = declared[key];
+    if (typeof total !== 'number') continue;
+    const sum = (perLevel[key] as number[]).reduce((s, n) => s + n, 0);
+    if (total > sum) {
+      throw new LoaderError(
+        'Validation',
+        node.path,
+        new Error(
+          `Mesh reveal ladder declares ${key}=${total.toLocaleString()} on the parent but its ` +
+            `${perLevel[key].length} levels hold ${sum.toLocaleString()}. The parent total is ` +
+            'what every buffer is sized from, on the first commit, so a declaration its own ' +
+            'levels do not back would allocate for geometry that will never arrive.'
+        )
+      );
+    }
+  }
 }
 
 /**

@@ -457,9 +457,17 @@ def _face_adjacency(faces: "NDArray", n_faces: int) -> tuple:
 
     Built with one ``np.unique`` over the ``3F`` sorted edge keys rather than a
     Python dict, so it stays vectorized: faces sharing an edge key are neighbours.
-    An edge shared by more than two faces (a non-manifold seam) is handled by
-    linking every pair in that group, which is what keeps a frontier able to cross
-    such a seam instead of stopping dead at it.
+
+    An edge shared by more than two faces (a non-manifold seam — which the
+    decimator itself produces, see :mod:`luxar.mesh.decimate`) is linked as a
+    CHAIN through its owners rather than as every ordered pair. Both consumers need
+    only REACHABILITY — :func:`_component_seeds` floods the CSR, and the reveal
+    frontier admits any face touching an admitted one — and a chain keeps the whole
+    group connected with ``O(k)`` links where a clique costs ``k*(k-1)``. A
+    manifold edge (``k == 2``) is identical either way; a degenerate one (many
+    faces on a single edge, which nothing rejects today) no longer expands
+    quadratically. The chain is also a subgraph of the true adjacency, so a prefix
+    grown through it is still connected in the mesh.
     """
     import numpy as np
 
@@ -470,25 +478,20 @@ def _face_adjacency(faces: "NDArray", n_faces: int) -> tuple:
     _keys, inverse = np.unique(e, axis=0, return_inverse=True)
     inverse = inverse.ravel()
 
-    # Group face owners by edge id, then emit every ordered pair within a group.
+    # Group face owners by edge id, then link CONSECUTIVE owners within each group
+    # (both directions) — the chain the docstring describes. Fully vectorized: a
+    # pair exists wherever two adjacent entries of the sorted list share an edge id,
+    # so no per-group Python loop is needed at all.
     order = np.argsort(inverse, kind="stable")
     grouped_edge = inverse[order]
     grouped_face = owner[order]
-    boundaries = np.flatnonzero(np.diff(grouped_edge)) + 1
-    src: list = []
-    dst: list = []
-    for group in np.split(grouped_face, boundaries):
-        if group.size < 2:
-            continue
-        for i in range(group.size):
-            for j in range(group.size):
-                if i != j:
-                    src.append(group[i])
-                    dst.append(group[j])
-    if not src:
+    same_edge = grouped_edge[:-1] == grouped_edge[1:]
+    left = grouped_face[:-1][same_edge]
+    right = grouped_face[1:][same_edge]
+    if left.size == 0:
         return np.zeros(n_faces + 1, dtype=np.int64), np.empty(0, dtype=np.int64)
-    src_arr = np.asarray(src, dtype=np.int64)
-    dst_arr = np.asarray(dst, dtype=np.int64)
+    src_arr = np.concatenate([left, right])
+    dst_arr = np.concatenate([right, left])
     sort_idx = np.argsort(src_arr, kind="stable")
     nbrs = dst_arr[sort_idx]
     counts = np.bincount(src_arr, minlength=n_faces)

@@ -734,9 +734,11 @@ describe('createProgressiveMeshLoader', () => {
 
   it('SENSITIVITY: a ladder just under the cap is built, not refused', async () => {
     // Without this the test above would pass against a guard that refused every
-    // ladder, or one whose comparison was inverted.
+    // ladder, or one whose comparison was inverted. Level counts summing to the
+    // parent's totals, because the parent-vs-levels cross-check runs too.
+    zarrOpenMock.mockResolvedValue({ attrs: { n_vertices: 67_108_864, n_faces: 4 } });
     await createProgressiveMeshLoader(
-      meshLadderNode({ n_vertices: 134_217_728 }),
+      meshLadderNode({ n_vertices: 134_217_728, n_faces: 8 }),
       2,
       {},
       makeDeps()
@@ -744,10 +746,57 @@ describe('createProgressiveMeshLoader', () => {
     expect(meshProgressiveCtorArgs).toHaveLength(1);
   });
 
-  it('does not second-guess a store that omits the parent vertex total', async () => {
+  it('does not second-guess a store that omits the parent totals', async () => {
     // Absence is not evidence of a violation: the per-level preflights still
-    // run, so the cap binds per level exactly as it did before this guard.
+    // run, so the cap binds per level exactly as it did before this guard, and
+    // the buffer capacity falls back to the committed counts.
+    zarrOpenMock.mockResolvedValue({ attrs: {} });
     await createProgressiveMeshLoader(meshLadderNode({ n_vertices: undefined }), 2, {}, makeDeps());
+    expect(meshProgressiveCtorArgs).toHaveLength(1);
+  });
+
+  it('refuses a parent FACE total its own levels do not hold', async () => {
+    // `n_faces` has no cap of its own and the parent group has no `faces` array
+    // for a preflight to check it against, yet the commit sizes the index buffer
+    // from it — so a tiny `additive_0` behind a huge parent declaration would
+    // allocate for geometry that never arrives.
+    zarrOpenMock.mockResolvedValue({ attrs: { n_vertices: 4, n_faces: 2 } });
+    await expect(
+      createProgressiveMeshLoader(
+        meshLadderNode({ n_vertices: 8, n_faces: 2_000_000_000 }),
+        2,
+        {},
+        makeDeps()
+      )
+    ).rejects.toThrow(/levels hold 4/);
+    expect(meshProgressiveCtorArgs).toHaveLength(0);
+  });
+
+  it('refuses a declared total no level vouches for', async () => {
+    // Fail-closed: a level that declares no counts cannot back the parent's
+    // totals, and it would fail its own preflight only after the allocation.
+    zarrOpenMock.mockResolvedValue({ attrs: { n_vertices: 4 } });
+    await expect(
+      createProgressiveMeshLoader(
+        meshLadderNode({ n_vertices: 8, n_faces: 100 }),
+        2,
+        {},
+        makeDeps()
+      )
+    ).rejects.toThrow(/does not declare its own n_faces/);
+  });
+
+  it('accepts a parent that UNDER-declares its totals', async () => {
+    // The dangerous direction is the parent claiming more than its levels hold;
+    // claiming less only costs the allocate-once property (`resolveCapacity`
+    // takes the max against the live count), so it must still load.
+    zarrOpenMock.mockResolvedValue({ attrs: { n_vertices: 10, n_faces: 20 } });
+    await createProgressiveMeshLoader(
+      meshLadderNode({ n_vertices: 12, n_faces: 30 }),
+      2,
+      {},
+      makeDeps()
+    );
     expect(meshProgressiveCtorArgs).toHaveLength(1);
   });
 });

@@ -78,13 +78,17 @@ export interface LoadSceneCtx {
   linesLoaders: Map<string, LinesDataLoader>;
   gsplatLoaders: Map<string, GSplatsDataLoader>;
   /**
-   * Mesh loaders, for the post-load refinement kick only.
+   * Mesh loaders, for the post-load refinement kick and the monitor's
+   * LOD-progress provider.
    *
-   * Deliberately NOT passed to `wireMonitorAfterLoad` or `reportLoadOutcome`
-   * below: neither has ever carried mesh, and widening them is a separate change
-   * with its own observable output. This entry exists because a mesh reveal
-   * ladder commits only its first level during `loadScene`, so without the kick
-   * it would sit at that first patch until the user moved a slider.
+   * Deliberately NOT passed to `reportLoadOutcome` below, which has never
+   * carried mesh — widening the load-outcome grading is a separate change with
+   * its own observable output. The refinement kick is needed because a mesh
+   * reveal ladder commits only its first level during `loadScene`, so without it
+   * the surface would sit at that first patch until the user moved a slider; the
+   * LOD-progress provider is needed because the scene-graph converter stamps
+   * `additiveSublods` on a laddered mesh parent, and a node with that stamp but
+   * no live loader state renders as `LOD -/N` ("not streaming") throughout.
    */
   meshLoaders: Map<string, MeshDataLoader>;
   /** Current GPU buffer pool reference (may be null when disabled). */
@@ -424,6 +428,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     loaders: ctx.loaders,
     linesLoaders: ctx.linesLoaders,
     gsplatLoaders: ctx.gsplatLoaders,
+    meshLoaders: ctx.meshLoaders,
     lodGroupRegistry: ctx.lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),

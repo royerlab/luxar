@@ -30,9 +30,11 @@ interface ProgressiveLike {
 
 export interface LODProgressProviderDeps {
   /**
-   * The three per-geometry loader maps (points / lines / gsplats),
+   * The four per-geometry loader maps (points / lines / gsplats / mesh),
    * keyed by scene-graph path. Additive nodes connect a single
-   * progressive loader at the node path.
+   * progressive loader at the node path. Mesh joins them because a reveal
+   * ladder is a progressive loader with the same three getters, even though
+   * mesh takes part in none of the monitor's other per-type providers.
    */
   loaderMaps: ReadonlyArray<ReadonlyMap<string, unknown>>;
   /** The scene's LOD-group registry (substitutive levels), or null. */
