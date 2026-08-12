@@ -96,6 +96,7 @@ FIXTURE_NAMES: list[str] = [
     "test_lut_u16.luxar.zarr",
     "test_mesh.luxar.zarr",
     "test_mesh_nd.luxar.zarr",
+    "test_mesh_reveal_ladder.luxar.zarr",
     "test_mixed.luxar.zarr",
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
@@ -3922,6 +3923,95 @@ def generate_mesh_test() -> None:
         )
 
 
+def generate_mesh_reveal_ladder_test() -> None:
+    """A mesh reveal ladder beside an UNLADDERED copy of the same surface.
+
+    The control node is the whole point. Every defect the ladder shipped with was
+    a difference between the laddered node and what an ordinary mesh does with the
+    same data — buffers sized from the committed prefix instead of the node total
+    (#1521), a colour tail never written after level 0 (#1522) — and none of them
+    is visible without something correct to compare against in the same scene,
+    under the same camera, at the same moment. Two nodes, identical geometry,
+    offset in x.
+
+    Why these attrs specifically:
+
+    * **per-vertex RGBA, fully opaque.** Alpha is the whole coverage term for a
+      mesh, so an unwritten colour slot reads `(0, 0, 0, 0)` — invisible. Holding
+      alpha at 1.0 everywhere makes "any transparency at all" a failure signal
+      rather than something to disentangle from an authored cutout (which is what
+      `test_mesh` deliberately has, and why this cannot reuse it).
+    * **a hue ramp along +x**, so the LAST vertices of the ladder — the ones only
+      the final level reveals — carry a colour distinguishable from both black and
+      from the first level's.
+    * **stored normals**, because the parent group of a ladder has to carry
+      `has_normals` / `normal_dims` for the geometry to bind a `normal` attribute
+      at all; a ladder whose parent omits them renders faceted and forced
+      double-sided beside a smooth control, which is exactly how that bug was
+      found.
+
+    Four levels: enough that a prefix is a genuinely partial surface and that the
+    concat runs three times, few enough to stay a small fixture.
+    """
+    with asection("Generating Mesh Reveal Ladder Test"):
+        output = FIXTURES_DIR / "test_mesh_reveal_ladder.luxar.zarr"
+
+        vertices, faces, normals = _icosphere(subdivisions=3, radius=1.0)
+        n_v = len(vertices)
+
+        colors = np.empty((n_v, 4), dtype=np.float32)
+        colors[:, 0] = (vertices[:, 0] + 1.0) / 2.0
+        colors[:, 1] = (vertices[:, 1] + 1.0) / 2.0
+        colors[:, 2] = (vertices[:, 2] + 1.0) / 2.0
+        # Opaque everywhere — see the docstring.
+        colors[:, 3] = 1.0
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
+            ]
+        )
+
+        laddered_v = vertices.copy()
+        laddered_v[:, 0] -= 1.3
+        plain_v = vertices.copy()
+        plain_v[:, 0] += 1.3
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_mesh(
+                "laddered",
+                laddered_v,
+                faces,
+                normals=normals,
+                normal_dims=[0, 1, 2],
+                colors=colors,
+                additive_lod={"n_lods": 4},
+                shading="smooth",
+                layer=True,
+            )
+            scene.add_mesh(
+                "plain",
+                plain_v,
+                faces,
+                normals=normals,
+                normal_dims=[0, 1, 2],
+                colors=colors,
+                shading="smooth",
+                layer=True,
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  Source: {n_v} vertices, {len(faces)} faces; ladder = 4 levels")
+
+
 def generate_mesh_nd_test() -> None:
     """4D mesh fixture: two spheres separated along a hidden categorical dimension.
 
@@ -4283,6 +4373,7 @@ def main() -> None:
         aprint("")
 
         generate_mesh_nd_test()
+        generate_mesh_reveal_ladder_test()
         aprint("")
 
         aprint("=" * 70)
