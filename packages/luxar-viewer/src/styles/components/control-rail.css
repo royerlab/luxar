@@ -12,7 +12,13 @@
   flex-direction: column;
   gap: 2px;
   padding: 6px;
-  z-index: var(--luxar-z-dropdown, 1000);
+  /* Above the left-docked panels (renderingControls 1600 / layers +
+     recording 1500 — see config/sections/ui/data.ts): the rail's fractional
+     resting opacity makes it ONE stacking context, so its hover tooltips
+     (children reaching rightward over a docked panel) paint at the rail's
+     own z, whatever their internal z-index says. Deliberately BELOW the
+     modal scrim tier (modal - 1), so modals still dim the rail. */
+  z-index: calc(var(--luxar-z-modal, 2000) - 2);
   /* Same material as the panels (help overlay, rendering controls, …). */
   background: var(--luxar-bg-secondary);
   backdrop-filter: var(--luxar-blur-md, blur(10px));
