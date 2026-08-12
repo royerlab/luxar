@@ -13,7 +13,7 @@ a labeled grid (row by row, top to bottom):
 
 Educational value:
 - The living QA artifact for the ?linePrimitive= renderer toggle (#1352):
-  open the same scene with ?linePrimitive=capsule, screen-space, and
+  open the same scene with the default (capsule), ?linePrimitive=screen-space, and
   volumetric side by side and compare against the overlay's expectations.
 - Joins must tile seamlessly (no gaps, wedges, or slivers), end-on segments
   must render as stable round discs, hairlines must hold the ~1.5 px floor.
@@ -183,8 +183,8 @@ def main():
                 title="Line-primitive QA grid",
                 body=(
                     "Five rows of line cases, top to bottom. Compare the same "
-                    "scene under <code>?linePrimitive=capsule</code>, "
-                    "<code>screen-space</code>, and <code>volumetric</code>."
+                    "scene under the default (capsule), "
+                    "<code>?linePrimitive=screen-space</code>, and <code>volumetric</code>."
                 ),
                 observe=[
                     "<strong>Row 1 — joins</strong>: gentle wave, 90&#176; zigzag, "
@@ -214,7 +214,9 @@ def main():
 
     aprint(f"Scene saved to: {output_path}")
     aprint(f"\nTo view: luxar serve --viewer {output_path}")
-    aprint("Then open the viewer with ?linePrimitive=capsule (or volumetric) to A/B.")
+    aprint(
+        "Capsule is the default; add ?linePrimitive=screen-space or volumetric to A/B."
+    )
 
 
 if __name__ == "__main__":

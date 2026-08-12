@@ -40,11 +40,13 @@
 export type LinePrimitive = 'screen-space' | 'volumetric' | 'capsule';
 
 /**
- * The default when nothing is overridden. Stays `screen-space` until the
- * #1352 G1 perf/visual gate passes; the flip (PR-5) changes exactly this
- * constant.
+ * The default when nothing is overridden. Flipped to `capsule` after the
+ * #1352 re-gate passed (2026-08-11: ≤1.09× the quad on the 10M worst
+ * case, parity at vsync on fills, visual sign-off on the QA grid at any
+ * zoom). `screen-space` and `volumetric` remain selectable via
+ * `?linePrimitive=` until their scheduled deletion.
  */
-export const DEFAULT_LINE_PRIMITIVE: LinePrimitive = 'screen-space';
+export const DEFAULT_LINE_PRIMITIVE: LinePrimitive = 'capsule';
 
 /** Every valid primitive, for validation and for error messages. */
 export const LINE_PRIMITIVES: readonly LinePrimitive[] = ['screen-space', 'volumetric', 'capsule'];

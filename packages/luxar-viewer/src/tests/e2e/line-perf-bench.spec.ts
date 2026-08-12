@@ -159,7 +159,7 @@ type Backend = (typeof BACKENDS)[number];
 /**
  * Line-primitive axis (#1352): comma-separated list of `?linePrimitive=`
  * values to cross with every scenario × backend, e.g.
- * `LUXAR_PERF_LINE_PRIMITIVES=default,volumetric` for the quad-vs-
+ * `LUXAR_PERF_LINE_PRIMITIVES=default,screen-space` for the capsule-vs-quad
  * volumetric A/B. The sentinel `default` omits the URL parameter
  * entirely (today's shipping primitive), so the axis is a no-op until a
  * toggle exists — and stays harmless if one never does. Non-default
@@ -186,8 +186,11 @@ const LINE_PRIMITIVES = ((): string[] => {
 
 /**
  * Result-row id for one (scenario, primitive) arm. The `default` arm
- * keeps the bare scenario id so its rows stay comparable against every
- * pre-axis results.json.
+ * keeps the bare scenario id so its rows stay comparable across runs —
+ * NOTE that "default" changed meaning at the #1352 flip (screen-space →
+ * capsule), so bare-id rows from a pre-flip results.json measure a
+ * DIFFERENT shader than post-flip rows; compare across the flip only via
+ * explicit `-screen-space` / `-capsule` arms.
  */
 const armId = (scenarioId: string, primitive: string): string =>
   primitive === 'default' ? scenarioId : `${scenarioId}-${primitive}`;
