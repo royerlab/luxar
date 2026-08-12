@@ -142,7 +142,7 @@ Each `*_impl` walks the same ordered decision tree:
    `partition=` paths (e.g. `add_mesh(..., partition={"max_elements": 40},
    blending="max")`, `add_gsplats(..., partition={"max_elements": 100},
    blending="max")`) still leave a childless `kind=partition` node that
-   survives `finalize()` — filed as a separate issue.
+   survives `finalize()` — tracked in #1534.
 6. **Substitutive-LOD branch** (points/lines, when `substitutive_lod` is set):
    delegate to the substitutive wrapper, whose coarse levels are synthesised
    gsplats under a `kind=lod` group. Fires before (auto-)partition.

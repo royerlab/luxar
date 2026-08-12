@@ -2669,6 +2669,13 @@ class TestPointsSubstitutiveNodeAttrsGate:
         assert store["p"].attrs["kind"] == "lod"
         children = sorted(store["p"].group_keys())
         assert len(children) > 1
+        # #1529 asked the harder half of the question explicitly: an attr the
+        # flat path ACCEPTS must not be silently dropped on the way to the
+        # synthesised children (which would write cleanly and be worse than a
+        # refusal). Every level — the lifted gsplat coarse ones and the finest
+        # points child alike — carries the caller's value, as the flat leaf does.
+        for child in children:
+            assert store["p"][child].attrs["truncation_radius"] == 3.0
 
     def test_a_colours_fault_still_outranks_the_attrs_gate(self, tmp_path: Any) -> None:
         compiler, scene, _ = open_scene(tmp_path, "points_sub_attrs_prec.luxar.zarr")
@@ -2794,6 +2801,11 @@ class TestLinesSubstitutiveNodeAttrsGate:
         assert store["line"].attrs["kind"] == "lod"
         children = sorted(store["line"].group_keys())
         assert len(children) > 1
+        # Same as the Points case above: #1529 asked whether an accepted
+        # gsplats-relevant attr reaches the synthesised levels or is silently
+        # dropped. It reaches every one of them, matching the flat leaf.
+        for child in children:
+            assert store["line"][child].attrs["truncation_radius"] == 3.0
 
     def test_a_colours_fault_still_outranks_the_attrs_gate(self, tmp_path: Any) -> None:
         compiler, scene, _ = open_scene(tmp_path, "lines_sub_attrs_prec.luxar.zarr")
