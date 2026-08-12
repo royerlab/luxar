@@ -39,7 +39,6 @@ import {
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
 import {
-  CAPSULE_JOINT_CUT_MIN_RADIUS_PX,
   CAPSULE_JOINT_DEFICIT_GATE,
   CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
@@ -53,7 +52,6 @@ const G = {
   MIN_RADIUS: CAPSULE_MIN_RADIUS_PX.toFixed(1),
   DEFICIT_GATE: CAPSULE_JOINT_DEFICIT_GATE.toFixed(2),
   PACKET_MIN_R: CAPSULE_JOINT_PACKET_MIN_RADIUS_PX.toFixed(1),
-  CUT_MIN_R: CAPSULE_JOINT_CUT_MIN_RADIUS_PX.toFixed(1),
   APRON: CAPSULE_STENCIL_APRON_PX.toFixed(1),
 };
 
@@ -234,19 +232,13 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       vec2 u = abLen > 1e-4 ? ab / abLen : vec2(1.0, 0.0);
       vec2 v = vec2(-u.y, u.x);
       float rMax = max(rA, rB) + ${G.APRON};
-      // HAIRLINE CUT GATE: below ${G.CUT_MIN_R} px apparent radius the
-      // joint apparatus is skipped wholesale — partner-JOINT ends degrade
-      // to plain round caps (sub-pixel overlap, self-correcting on zoom;
-      // see CAPSULE_JOINT_CUT_MIN_RADIUS_PX). Slice-clipped ends (code -1)
-      // keep their perpendicular butt: nothing may draw past the slice
-      // plane at ANY width. Free ends and hubs are already caps.
-      if (rMax < ${G.CUT_MIN_R}) {
-        bool partnerJointA = (lineT4.y > 0.5) || (lineT4.y < -2.5);
-        bool partnerJointB = (lineT4.z > 0.5) || (lineT4.z < -2.5);
-        if (partnerJointA) interiorA = 0.0;
-        if (partnerJointB) interiorB = 0.0;
-      }
-      // Interior ends get a 2D BISECTOR cut (adjacent capsules tile
+      // NOTE: the joint partition is NOT width-gated. The drawn radius is
+      // FLOORED at the AA minimum, so a hairline still draws a 1.5 px
+      // radius disc at each end: dropping the cut there would overlap two
+      // full caps on the shared vertex — measured +1.00 of peak (a 2x
+      // bead, 5 px wide) at every bend angle, i.e. as wide as the line
+      // itself, never sub-pixel. Only the deficit PACKET is width-gated
+      // (CAPSULE_JOINT_PACKET_MIN_RADIUS_PX below).
       // EVERY end is a round cap. A free end keeps the whole disc; an
       // interior end keeps its HALF of the joint disc — the bisector cut
       // partitions the disc exactly between the two legs, so joints are

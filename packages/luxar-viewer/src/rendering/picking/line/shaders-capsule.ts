@@ -27,7 +27,6 @@ import { buildLinePickTSLNodesFromUniforms } from './pick.tsl';
 import { capsuleLinePickWebGPUFactory } from './pick-capsule.tsl';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
-  CAPSULE_JOINT_CUT_MIN_RADIUS_PX,
   CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
@@ -39,7 +38,6 @@ const G = {
   MIN_RADIUS: CAPSULE_MIN_RADIUS_PX.toFixed(1),
   DEFICIT_GATE: CAPSULE_JOINT_DEFICIT_GATE.toFixed(2),
   PACKET_MIN_R: CAPSULE_JOINT_PACKET_MIN_RADIUS_PX.toFixed(1),
-  CUT_MIN_R: CAPSULE_JOINT_CUT_MIN_RADIUS_PX.toFixed(1),
   APRON: CAPSULE_STENCIL_APRON_PX.toFixed(1),
 };
 
@@ -177,18 +175,9 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vec2 u = abLen > 1e-4 ? ab / abLen : vec2(1.0, 0.0);
       vec2 v = vec2(-u.y, u.x);
       float rMax = max(rA, rB) + ${G.APRON};
-      // HAIRLINE CUT GATE: below ${G.CUT_MIN_R} px apparent radius the
-      // joint apparatus is skipped wholesale — partner-JOINT ends degrade
-      // to plain round caps (sub-pixel overlap, self-correcting on zoom;
-      // see CAPSULE_JOINT_CUT_MIN_RADIUS_PX). Slice-clipped ends (code -1)
-      // keep their perpendicular butt: nothing may draw past the slice
-      // plane at ANY width. Free ends and hubs are already caps.
-      if (rMax < ${G.CUT_MIN_R}) {
-        bool partnerJointA = (lineT4.y > 0.5) || (lineT4.y < -2.5);
-        bool partnerJointB = (lineT4.z > 0.5) || (lineT4.z < -2.5);
-        if (partnerJointA) interiorA = 0.0;
-        if (partnerJointB) interiorB = 0.0;
-      }
+      // The joint partition is NOT width-gated — the pick shape must stay
+      // the visual shape, and the drawn radius is floored at the AA
+      // minimum (see the visual twin's note).
       vec4 cutA = vec4(-1.0, 0.0, 0.0, 0.0);
       vec4 cutB = vec4(1.0, 0.0, 0.0, 0.0);
       float extA = rMax;

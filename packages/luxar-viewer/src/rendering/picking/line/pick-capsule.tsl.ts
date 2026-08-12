@@ -42,7 +42,6 @@ import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
-  CAPSULE_JOINT_CUT_MIN_RADIUS_PX,
   CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
@@ -87,11 +86,9 @@ export function capsuleLinePickWebGPUFactory(
   const vCutN: TSLNode = varying(vec4(-1.0, 0.0, 1.0, 0.0)).setInterpolation('flat');
   const vPack: TSLNode = varying(uvec4(0, 0, 0, 0)).setInterpolation('flat');
   const vAbLen: TSLNode = varying(float(1.0)).setInterpolation('flat');
-  // (abLen px, capFlags = interiorA + 2·interiorB, rA px, rB px)
-  // .xy = bisector-cut normal (my side negative); .z = the DEFICIT
-  // packet: the partner's radius gradient (px/px, either sign); .w = its
-  // projected length, doubling as packet validity (0 = hard cut) — the
-  // gate opens for every deficit source (#1495).
+  // The packed packet lanes carry the partner's radius gradient (px/px,
+  // either sign) + its projected length, which doubles as packet validity
+  // (0 = hard cut) — the gate opens for every deficit source (#1495).
   // (tc clamps per vertex; see #1494 and the GLSL twin).
   const vW: TSLNode = varying(float(1.0));
   const vFade: TSLNode = varying(float(1.0));
@@ -194,18 +191,8 @@ export function capsuleLinePickWebGPUFactory(
       .toVar();
     const v: TSLNode = vec2(u.y.negate(), u.x).toVar();
     const rMax: TSLNode = max(rA, rB).add(CAPSULE_STENCIL_APRON_PX).toVar();
-    // HAIRLINE CUT GATE — the exact mirror of the GLSL twin: below the
-    // gate radius, partner-JOINT ends degrade to plain round caps
-    // (sub-pixel overlap, self-correcting on zoom). Slice-clipped ends
-    // (code -1) keep their perpendicular butt at any width.
-    If(rMax.lessThan(CAPSULE_JOINT_CUT_MIN_RADIUS_PX), () => {
-      If(lineT4.y.greaterThan(0.5).or(lineT4.y.lessThan(-2.5)), () => {
-        interiorA.assign(0.0);
-      });
-      If(lineT4.z.greaterThan(0.5).or(lineT4.z.lessThan(-2.5)), () => {
-        interiorB.assign(0.0);
-      });
-    });
+    // The joint partition is NOT width-gated — the pick shape must stay
+    // the visual shape (see the visual twin's note).
 
     const cutA: TSLNode = vec4(-1.0, 0.0, 0.0, 0.0).toVar();
     const cutB: TSLNode = vec4(1.0, 0.0, 0.0, 0.0).toVar();

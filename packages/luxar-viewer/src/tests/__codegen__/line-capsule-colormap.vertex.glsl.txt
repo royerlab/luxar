@@ -487,29 +487,6 @@ void main() {
 	nodeVar138 = nodeVar137;
 	nodeVar139 = vec2( ( - nodeVar138.y ), nodeVar138.x );
 	nodeVar140 = ( max( nodeVar128, nodeVar129 ) + 0.5 );
-
-	if ( ( nodeVar140 < 1.5 ) ) {
-
-
-		if ( ( ( nodeVar95.y > 0.5 ) || ( nodeVar95.y < -2.5 ) ) ) {
-
-			nodeVar131 = 0.0;
-
-
-		}
-
-
-		if ( ( ( nodeVar95.z > 0.5 ) || ( nodeVar95.z < -2.5 ) ) ) {
-
-			nodeVar133 = 0.0;
-
-
-		}
-
-
-
-	}
-
 	nodeVar141 = vec4( -1.0, 0.0, 0.0, 0.0 );
 	nodeVar142 = vec4( 1.0, 0.0, 0.0, 0.0 );
 	nodeVar143 = nodeVar140;
