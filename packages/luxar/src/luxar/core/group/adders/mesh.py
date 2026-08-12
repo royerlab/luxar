@@ -855,8 +855,8 @@ def add_mesh_substitutive_lod_wrapper_impl(
         coverage_vals = list(explicit)
     else:
         # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (vertex-count
-        # ratios; the viewer anchors the finest at a quarter of the live viewport
-        # diagonal, i.e. any normal full-frame view).
+        # ratios; the viewer anchors the finest at half of the live fitted screen
+        # axis, i.e. any normal full-frame view).
         #
         # The ANCHOR is chosen from the insertion point: ``add_mesh`` rejects
         # ``partition=`` together with ``substitutive_lod=``, so a caller who wants

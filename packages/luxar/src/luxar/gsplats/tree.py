@@ -514,8 +514,8 @@ def tree_from_substitutive_levels(
 
     Each child of a multi-level lod group is back-filled with a derived
     ``coverage_fraction`` selector threshold (``sqrt(N_i/N_finest)`` — the
-    viewport-relative fraction the viewer multiplies by a quarter of the viewport
-    diagonal), so a standalone substitutive ``.gsplats.zarr`` selects levels
+    viewport-relative fraction the viewer multiplies by half of the fitted
+    screen axis), so a standalone substitutive ``.gsplats.zarr`` selects levels
     correctly in the viewer rather than being stuck at the finest level. This is the same
     single-sourced :func:`~luxar.core.group.lod.group.coverage_fractions`
     derivation the scene path uses.

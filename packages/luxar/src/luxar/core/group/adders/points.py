@@ -850,7 +850,7 @@ def add_points_substitutive_lod_wrapper_impl(
         coverage_vals = list(explicit)
     else:
         # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (count ratios;
-        # the viewer anchors the finest at a quarter of the live viewport diagonal,
+        # the viewer anchors the finest at half of the live fitted screen axis,
         # i.e. any normal full-frame view). No per-level radius or world-extent
         # needed.
         #

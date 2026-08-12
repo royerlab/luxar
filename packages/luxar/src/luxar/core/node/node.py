@@ -410,7 +410,7 @@ class Node:
         A kind=lod ``Group`` picks one of N alternative children at runtime
         based on the projected bbox diagonal in pixels and each child's
         ``coverage_fraction`` threshold (a viewport-relative fraction the viewer
-        multiplies by a quarter of the viewport diagonal). Children are added via
+        multiplies by half of the fitted screen axis). Children are added via
         the inherited ``add_*`` methods on the returned ``Group`` and each must
         carry a ``coverage_fraction`` attribute. Children must be added in
         strictly increasing ``coverage_fraction`` order, coarsest ``0.0`` →

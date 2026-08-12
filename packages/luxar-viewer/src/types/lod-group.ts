@@ -6,10 +6,11 @@ import type { BlendingMode } from './blending';
  * children at runtime based on the projected bbox diagonal in pixels and
  * each child's `coverage_fraction` threshold — a viewport-relative fraction
  * (0..4; the auto-derived WHOLE-OBJECT ladder uses 0..1, while an explicitly
- * authored or partition-bound ladder may reach 4.0) the viewer multiplies by a
- * fixed fraction (a quarter) of the viewport
- * diagonal, so a `coverage_fraction` of 1.0 activates once the object's
- * projected bbox diagonal reaches about a quarter of the viewport diagonal —
+ * authored or partition-bound ladder may reach 4.0) the viewer multiplies by
+ * half of the viewport's fitted screen axis (`min(width, height)` — the
+ * extent the camera framing actually fits, so the comparison stays invariant
+ * across aspect ratio), so a `coverage_fraction` of 1.0 activates once the
+ * object's projected bbox diagonal reaches half of the fitted screen axis —
  * i.e. at any normal full-frame view — and coarser children step in as it
  * shrinks below that. Children are
  * arbitrary geometry subtrees (points / lines / gsplats / nested specialized

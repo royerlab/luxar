@@ -205,15 +205,20 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 ### LOD switch tuning (any kind=lod group)
 Auto-derived, no knob: each child's `coverage_fraction` = `sqrt(N_i / N_finest)`
 (a viewport-relative value; coarsest 0.0, finest 1.0). The viewer multiplies it by
-a quarter of the live viewport diagonal, so the finest level shows at any normal
-full-frame view (projected size ≳ a quarter of the viewport diagonal) and coarser
-levels step in as it shrinks below that — self-calibrating on any monitor.
+half of the live viewport's fitted screen axis (the smaller of its width/height),
+so the finest level shows at any normal full-frame view (projected size ≳ half
+the fitted screen axis) and coarser levels step in as it shrinks below that —
+self-calibrating on any monitor or aspect ratio.
 
 The `adaptive` and `overview` recipes are the exception: their ladders are bound
 to a spatial partition (a tile projects to a fraction of the whole object), so
-they are scaled to anchor the finest at `4.0` = 1/FILL_FACTOR — the switch point
-a tile needs, and what `overview`'s "coarse overview, fine tiles on zoom" means.
-An explicit `coverage_fractions=[...]` list may use the same `[0, 4]` range. The former `extent`/`count` methods and the
+they are scaled to anchor the finest at `4.0` = `SCREEN_FILL_DIAGONAL_RATIO /
+FILL_FACTOR` — approximately the switch point a screen-filling tile needs (exact
+only near aspect ratio sqrt(3) ~= 1.73; the real screen-filling metric ranges
+~2.8 at 1:1 to ~7.4 at an ultrawide 32:9 — see `lod-group-registry.ts`'s
+`FILL_FACTOR` doc) — and what `overview`'s "coarse overview, fine tiles on zoom"
+means. An explicit `coverage_fractions=[...]` list may use the same `[0, 4]`
+range. The former `extent`/`count` methods and the
 `--lod-method` / `--extent-percentile` / `--extent-anisotropy` /
 `--base-pixel-size` flags have been removed.
 

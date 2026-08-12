@@ -67,13 +67,15 @@ viewport-relative** threshold, strictly monotonic increasing in coarsest→fines
 order (coarsest = `0.0`; a WHOLE-OBJECT ladder anchors its finest at `1.0`, while a
 ladder bound to a spatial partition — and any explicitly authored list — may go up
 to `MAX_COVERAGE_FRACTION` = `4.0`). At render time the
-viewer multiplies each child's `coverage_fraction` by the current viewport
-diagonal (in pixels, times a fill-factor constant of `0.25`) and picks the
-finest child whose resulting pixel threshold is satisfied by the group's
-on-screen size — so the finest level activates once the object's projected
-bbox diagonal reaches about a quarter of the viewport diagonal, i.e. at any
-normal full-frame view, and coarser levels step in as it shrinks below that,
-identically on any monitor/viewport.
+viewer multiplies each child's `coverage_fraction` by half of the current
+viewport's **fitted screen axis** (`min(viewport.width, viewport.height)` in
+pixels, times a fill-factor constant of `0.5` — the extent the camera framing
+actually fits, so the comparison stays invariant across aspect ratio, not just
+viewport size) and picks the finest child whose resulting pixel threshold is
+satisfied by the group's on-screen size — so the finest level activates once
+the object's projected bbox diagonal reaches half of the fitted screen axis,
+i.e. at any normal full-frame view, and coarser levels step in as it shrinks
+below that, identically on any monitor/viewport/aspect ratio.
 
 | Symbol | Purpose |
 |--------|---------|
@@ -86,13 +88,13 @@ identically on any monitor/viewport.
 | `partitioned_coverage_fractions(element_counts)` | **The partition-bound anchor.** `coverage_fractions(...)` scaled by `MAX_COVERAGE_FRACTION`, so the finest lands on `4.0` — what `1.0` meant before the viewer's anchor moved. Used wherever a spatial partition is part of the switch: the `adaptive` recipe's per-tile lod groups, and the `overview` recipe's coarse-cap/fine-partition pair. A tile's projected diagonal is intrinsically a fraction of the whole object's, so the whole-object anchor would put every tile on its finest level while the object is merely full-frame. **A ONE-part partition is excluded** — its single part covers the whole object, so `coverage_fractions` applies (`build_adaptive` and both tree writers' topology fallbacks special-case it). |
 | `is_partition_bound(node)` | Does `node` (a ladder's **insertion point** — the future lod group's parent) sit inside a `kind=partition`? Walks `parent` links up, so the partition wrapper itself counts and a plain `add_group` in between still counts (the ladder is still inside one tile). The scene-graph mirror of the `under_partition` recursion flag the two gsplat writers thread down a detached tree. |
 | `derive_coverage_fractions(element_counts, insertion_point, *, name=...)` | **The scene-side anchor chokepoint.** `partitioned_coverage_fractions` when `is_partition_bound(insertion_point)` (with one `aprint` line naming the node and the chosen finest threshold, so the switch is visible), else `coverage_fractions`. All **four** scene adders use it in their auto-derive branch: `add_points` / `add_lines` / `add_mesh` `substitutive_lod=` and `add_gsplats_from_data` `lod_group=` — which is also where a per-part `add_gsplats_from_file` lands, since an ordinary ladder store is matrix-shaped. (Mesh matters here specifically because `add_mesh` refuses `partition=` together with `substitutive_lod=`, so a hand-built `kind=partition` wrapper is the *only* way to get per-tile mesh ladders.) (`graft_gsplat_node`, for a *non*-matrix-shaped subtree, ORs `is_partition_bound` into its own binding flag and calls `partitioned_coverage_fractions` directly, so that site is silent.) An explicit `coverage_fractions=[...]` still wins over all of them. Assumes the partition is a real tiling (>= 2 parts) — see `partitioned_coverage_fractions`; this is the ONE producer that cannot verify that (part 0's ladder is derived before part 1 is added), so the compiler's finalize pass (`io/_compiler/finalize/lod_backfill.py::warn_one_part_partition_anchors`) warns about the result instead. |
-| `MAX_COVERAGE_FRACTION` | `4.0` — the upper bound on any `coverage_fraction`, whether authored or derived, shared by the points/lines and gsplats resolvers. It is `1 / FILL_FACTOR`: the coverage metric a *screen-filling* object produces, i.e. "a level may be required to fill the screen, at most" — exactly what `1.0` meant before the viewer's anchor moved from screen-filling to quarter-viewport. It is also the finest value a **partition-bound** derived ladder takes, so it is not an author-only escape hatch. |
+| `MAX_COVERAGE_FRACTION` | `4.0` — the upper bound on any `coverage_fraction`, whether authored or derived, shared by the points/lines and gsplats resolvers. It is `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`: approximately the coverage metric a *screen-filling* object produces (exact only near aspect ratio √3 ≈ 1.73 — see the `FILL_FACTOR` doc in `luxar-viewer/src/scene/lod-group-registry.ts`), i.e. "a level may be required to fill the screen, at most" — the same numeric value `1.0` meant before the viewer's anchor moved from screen-filling to half the fitted screen axis, though no longer an exact identity at every aspect ratio the way it was under that older anchor. It is also the finest value a **partition-bound** derived ladder takes, so it is not an author-only escape hatch. |
 
 **No tunable anchor.** There is no method selector or per-dataset knob (the
 former `extent`/`count` methods and `base_pixel_size`/`extent_percentile`/
-`extent_anisotropy` are gone) — the viewport anchors the finest level at a
-quarter of the live viewport diagonal automatically, so the switch point
-self-calibrates to whatever monitor/window the viewer runs in.
+`extent_anisotropy` are gone) — the viewport anchors the finest level at half
+of the live fitted screen axis automatically, so the switch point
+self-calibrates to whatever monitor/window/aspect ratio the viewer runs in.
 
 ## Per-geometry resolvers
 
@@ -290,7 +292,7 @@ resolvers:
   counts via `group.derive_coverage_fractions` (`sqrt(N_i/N_finest)`, re-anchored
   at fills-screen when the insertion point is inside a `kind=partition`). There is
   no method selector or per-dataset anchor knob: for a whole-object ladder the
-  viewer anchors the finest level at a quarter of the live viewport diagonal — any
+  viewer anchors the finest level at half of the live fitted screen axis — any
   normal full-frame view. `None` auto-keeps a
   multi-substitutive pyramid (routes to the `kind=lod` builder, no work
   discarded); `False` collapses to the finest level (index 0); `True`
