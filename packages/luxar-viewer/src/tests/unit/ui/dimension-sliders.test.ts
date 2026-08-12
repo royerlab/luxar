@@ -571,6 +571,47 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
+  it('a discrete dim offers only whole-cell step presets (#1520)', () => {
+    const container = document.getElementById('test-container')!;
+    const dims = createDims();
+    // Make W discrete: the grid cannot honour a sub-cell quantum, so the
+    // ×0.1 / ×0.25 / ×0.5 presets must not be offered.
+    dims.metadata![3] = {
+      name: 'W',
+      unit: '',
+      scale: 1.0,
+      discrete: true,
+      step: 1,
+      range: [0, 10],
+    };
+    const sliders = new DimensionSliders({
+      container,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 10],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'W'],
+      dimensionUnits: ['μm', 'μm', 'μm', ''],
+    });
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+
+    const playBtn = document.querySelector('.luxar-dimension-slider__play-btn')!;
+    playBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const labels = Array.from(
+      document.querySelectorAll('.luxar-dimension-slider__context-item')
+    ).map((el) => el.textContent ?? '');
+    expect(labels.some((t) => t.includes('×1'))).toBe(true);
+    expect(labels.some((t) => t.includes('×0.1'))).toBe(false);
+    expect(labels.some((t) => t.includes('×0.25'))).toBe(false);
+    expect(labels.some((t) => t.includes('×0.5'))).toBe(false);
+    sliders.dispose();
+  });
+
   it('custom step input commits on Enter; invalid values do not', () => {
     const sliders = buildSliders();
     const stub = makeAnimationManagerStub();

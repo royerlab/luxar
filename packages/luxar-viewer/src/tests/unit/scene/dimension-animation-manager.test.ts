@@ -896,5 +896,29 @@ describe('DimensionAnimationManager', () => {
       const current = sceneDimsManager.getDims()!.currentStep[3];
       expect(manager.peekNextValue(3)).toBe(current + 2);
     });
+
+    it('a sub-cell override on a discrete dim still advances one grid cell per tick (#1520)', () => {
+      // ×0.25 of the authored step 1: passed through verbatim,
+      // setDimensionValue's snap would round every tick straight back to the
+      // start and playback would freeze with the play button still lit.
+      manager.setStepSize(3, 0.25);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const start = sceneDimsManager.getDims()!.currentStep[3];
+      mockTime += 1000;
+      perFrameCallback?.();
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1);
+    });
+
+    it('a non-grid-multiple override lands playhead and prefetch on the SAME value (#1520)', () => {
+      manager.setStepSize(3, 0.7);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const start = sceneDimsManager.getDims()!.currentStep[3];
+      // Peek BEFORE the tick must predict the quantized landing (+1), not
+      // the raw +0.7 the snap would then move off of.
+      expect(manager.peekNextValue(3)).toBe(start + 1);
+      mockTime += 1000;
+      perFrameCallback?.();
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1);
+    });
   });
 });

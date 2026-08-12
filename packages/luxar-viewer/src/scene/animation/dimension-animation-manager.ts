@@ -627,7 +627,22 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     state: DimensionAnimationState,
     metadata: { discrete?: boolean; step?: number } | undefined
   ): number | null {
-    return state.stepSize ?? (metadata?.discrete ? (metadata.step ?? 1.0) : null);
+    const override = state.stepSize;
+    if (override == null) {
+      return metadata?.discrete ? (metadata.step ?? 1.0) : null;
+    }
+    if (metadata?.discrete) {
+      // Quantize a discrete dim's override to the authored grid, one cell
+      // minimum — the same rule as calculateStepSize's discrete branch.
+      // Handing a sub-grid override to advanceDimensionValue would let
+      // setDimensionValue's snap round every tick straight back to where it
+      // started (playback frozen, no warning), and a non-multiple of the
+      // grid would land the snapped playhead on a different value than the
+      // unsnapped peekNextValue prefetch (#1520).
+      const gridStep = metadata.step && metadata.step > 0 ? metadata.step : 1;
+      return Math.max(gridStep, Math.round(override / gridStep) * gridStep);
+    }
+    return override;
   }
 
   /**
