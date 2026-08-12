@@ -2159,3 +2159,36 @@ class TestGSplatsLodGroupRunsTheWholeColoursValidator:
         assert "Colors cannot be negative" in str(split)
         assert "uint8 or uint16" not in str(split)
         assert "g" not in compiler.store
+
+
+class TestTheColoursHoistDoesNotMultiplyHdrWarnings:
+    """The control on the hoist's other half: it adds refusals, not noise.
+
+    ``validate_colors_for_writing`` does not only refuse — it also WARNS, once,
+    on float colours above 10.0. Every rung the pre-wrapper gate inspects is
+    validated again by the child that writes it, so a gate that let the warning
+    through would emit each one twice (measured before the suppression: 4 for the
+    2-level ladder below, where the flat path emits one per leaf). The same
+    concern :class:`TestRangeWarningsAreNotMultipliedByTheHoist` pins for the
+    #1446 count hoist, one validator over.
+
+    Counted against the children actually written rather than a literal, so a
+    change in how many levels reach disk cannot silently weaken it.
+    """
+
+    def test_an_hdr_ladder_warns_once_per_child(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lg_hdr_warn.luxar.zarr")
+        data = _dtype_multi_substitutive_data(
+            lambda n, _lvl: np.full((n, 3), 50.0, dtype=np.float32)
+        )
+
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            scene.add_gsplats_from_data("g", data, lod_group=True)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        n_children = len(sorted(store["g"].group_keys()))
+        assert n_children > 1
+        hdr = [r for r in records if "HDR colors with maximum value" in str(r.message)]
+        assert len(hdr) == n_children

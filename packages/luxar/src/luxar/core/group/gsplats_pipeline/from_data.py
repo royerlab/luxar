@@ -200,6 +200,8 @@ def _reject_before_wrapper(
     funnel of its own; it is byte-identical to what ``add_gsplats_impl``
     produces, which the #1446 tests pin against a direct ``add_gsplats`` call.
     """
+    import warnings
+
     import numpy as np
 
     from ....validation.base import validate_colors_for_writing
@@ -268,12 +270,22 @@ def _reject_before_wrapper(
         # same level a flat call would — the finest, which is what
         # ``result.colors`` forwards. Each rung is checked against its OWN splat
         # count: a ladder's rungs are prefixes of different lengths.
-        for level in result.substitutive_levels:
-            for sub in level.additive_sublods:
-                if sub.colors is not None:
-                    validate_colors_for_writing(
-                        np.asarray(sub.colors), int(sub.n_splats), channels=(3, 4)
-                    )
+        #
+        # Its WARNINGS are suppressed for the duration, and only its warnings:
+        # the validator also warns on float colours above 10.0, and every rung
+        # this loop inspects is validated again by the child that writes it, so
+        # letting the gate warn too simply doubles the count (measured: a 2-level
+        # HDR ladder emitted 4 where the flat path emits one per leaf). Same
+        # concern as ``TestRangeWarningsAreNotMultipliedByTheHoist`` pins for the
+        # #1446 count hoist — a pre-write gate must add refusals, not noise.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            for level in result.substitutive_levels:
+                for sub in level.additive_sublods:
+                    if sub.colors is not None:
+                        validate_colors_for_writing(
+                            np.asarray(sub.colors), int(sub.n_splats), channels=(3, 4)
+                        )
         # LAST on purpose — see the docstring: the only check here with no
         # flat-path counterpart at all (the flat path ACCEPTS labels and
         # validates them last of all, in the writer sweep), so it must not
