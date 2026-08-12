@@ -919,10 +919,22 @@ Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
 (`image_label_offsets`/`image_label_bytes`) use the same CSR-style layout as
 Points (see *Per-Element Labels*).
 
-**Not written for a mesh node:** no spatial index (`ordering` is always `"none"`),
-and no additive sub-LOD subgroups — a prefix of an index buffer is a holed surface,
-not a coarse one, so the writer refuses `additive_lod` rather than producing a store
-that renders wrongly. A mesh **may** be a child of a `kind=partition` group;
+**Not written for a mesh node:** no spatial index (`ordering` is always `"none"`).
+
+**Additive sub-LOD subgroups (`additive_<i>/`) ARE written, but only for a reveal.**
+A prefix of an index buffer is a holed surface, not a coarse one, so the ladder is
+not a level of detail for a mesh and `add_mesh(additive_lod=…)` accepts only
+`method="radial"` — a concentric-shell *reveal*, whose every prefix is a
+contiguous partial surface. Three consequences are visible on disk: each level
+re-indexes its own gathered vertex table (so the parent's `n_vertices` exceeds the
+source count by the boundary duplication, exactly as `kind=partition` parts do);
+no level carries `energy_fraction_cum` and the parent carries no
+`reference_energy`, because a reveal prefix is a partial object at full brightness
+rather than a dim version of the whole; and `has_labels` is **not** set, because one
+source vertex maps to a slot in every level that touches it, so a union label CSR
+spanning levels has no well-defined index space. Labelled meshes take
+`substitutive_lod=` or `partition=`, both of which keep their labels. A mesh **may**
+be a child of a `kind=partition` group;
 `add_mesh(partition=…)` writes exactly that, with each part carrying its own
 gathered-and-renumbered vertex table (vertices on a cut are duplicated between
 neighbouring parts). A mesh may equally be a child of a `kind=lod` group —

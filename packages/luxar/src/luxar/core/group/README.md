@@ -245,8 +245,9 @@ coupling — they take a `Scene` reference and return pure NumPy arrays):
 
 - **[`adders/`](adders/README.md)** — per-leaf `add_<type>_impl` bodies for
   Points, Lines, GSplats, and Mesh, plus their partition- and multi-LOD-wrapper
-  helpers (mesh has a partition wrapper and a substitutive-LOD one, but no
-  multi-LOD/additive wrapper — it still refuses the additive prefix ladder).
+  helpers (mesh has all three: partition, substitutive-LOD, and a multi-LOD
+  wrapper whose ladder is a REVEAL — concentric shells of faces — since an
+  arbitrarily ordered prefix of an index buffer is a holed surface).
   `group.py`'s public methods are thin delegates over these.
 - **[`gsplats_pipeline/`](gsplats_pipeline/README.md)** — the high-level gsplats
   write path backing `add_gsplats_from_data` / `_from_file` / `_from_volume`;
