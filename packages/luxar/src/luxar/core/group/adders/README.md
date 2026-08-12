@@ -144,7 +144,23 @@ Each `*_impl` walks the same ordered decision tree:
 
 All `*_impl` entries wrap the body in a `try/except (ValueError, TypeError)`
 that re-raises as a `ValueError` with a `Could not add <type> '<name>': ...`
-message.
+message, built by `compositing.funnel_add_error` (#1491) rather than an f-string
+directly: on a `partition=` split (or the Mesh `substitutive_lod=` ladder), a
+child level is written by calling the SAME adder again for a synthesised child
+name (`part_0`, `child_3`), so a failure inside that recursive call already
+carries its OWN `Could not add <type> '<child>': ...` funnel prefix before the
+outer call catches it. `funnel_add_error` strips that inner prefix ONLY when
+the inner geometry word matches this call's own — never for a cross-geometry
+inner failure (the Points/Lines `substitutive_lod=` ladder's coarse children are
+GSPLATS nodes, so that inner prefix names a real, different geometry's fault and
+is left alone) and never for a `Could not create child … group '<x>': ...`
+wrapper-creation prefix. The `aprint` line directly above each raise needs the
+UN-NESTED inner text alone (not re-prefixed with this call's own type/name, or
+the console log would double-print it), so each adder calls the sibling
+`compositing.unnest_add_error` for that line and `funnel_add_error` — which is
+built on top of `unnest_add_error` — for the raise, rather than re-deriving the
+inner text from `funnel_add_error`'s own output by string surgery. The two
+calls always agree, since both strip from the same caught exception.
 
 ## Wrappers
 
@@ -162,9 +178,11 @@ Every wrapper impl opens with its geometry's pre-split gate
 `validate_lines_channels_before_split` /
 `validate_gsplats_channels_before_split` from `compositing`), which runs the flat
 writer's own step-0 channel sweep against the **source** element count — Points
-in the order colors, radii, sharpness, scalars, labels; Lines with `widths`
-FIRST, then colors, sharpness, scalars, labels; GSplats as the
-amplitudes/Cholesky/colors trio, then labels. The gate does not restate those
+in the order colors, radii, sharpness, scalars, labels, image_labels; Lines with
+`widths` FIRST, then colors, sharpness, scalars, labels, image_labels; GSplats
+as the amplitudes/Cholesky/colors trio, then labels (GSplats has no
+`substitutive_lod=` wrapper of its own, so its `image_labels` check lives only
+in the flat gate — see `geometry_writers/README.md`). The gate does not restate those
 rules: it calls the same function the writer calls
 (`validate_points_channels` / `validate_lines_channels` /
 `validate_gsplat_inputs`, the siblings of mesh's `validate_mesh_arrays`), so a
@@ -223,9 +241,14 @@ where the viewer expects a list of dimension names.
   `validate_points_channels_before_split`,
   `validate_lines_channels_before_split`,
   `validate_line_indices_before_split`,
-  `validate_gsplats_channels_before_split` (labels ride along last — via the
-  shared writer sweep for points/lines, via `validate_labels_before_split` for
-  gsplats)
+  `validate_gsplats_channels_before_split` (labels, then image_labels, ride
+  along last — via the shared writer sweep for points/lines, via
+  `validate_labels_before_split` plus the flat gate's own `image_labels` check
+  for gsplats), `unnest_add_error` (strips a same-geometry inner child's own
+  `Could not add <type> '<child>': ...` funnel prefix from a caught exception's
+  message, returning the un-nested inner text alone, #1491), `funnel_add_error`
+  (re-prefixes that un-nested text with the CALLER's own type/name — built on
+  top of `unnest_add_error` — for the message an adder re-raises)
 - `dim_order` — `apply_dim_order_positions`, `apply_dim_order_cholesky`
 - `lod.points`, `lod.lines` — additive-LOD level builders and polyline
   identification

@@ -177,7 +177,7 @@ LOD wrapper builders:
   (`lod_group=False`) or a single-leaf file, or hand-build the wrapper and give
   each child its own labels.
 - `validate_points_channels_before_split(n_points, colors=…, radii=…, sharpness=…,
-  scalars=…, labels=…)`, `validate_lines_channels_before_split(n_vertices, widths=…,
+  scalars=…, labels=…, image_labels=…)`, `validate_lines_channels_before_split(n_vertices, widths=…,
   …)`, `validate_gsplats_channels_before_split(centers, amplitudes,
   cholesky_factors, colors=…, labels=…)` — the same pre-split gate for EVERY
   other per-element channel, not just labels. Each one CALLS its geometry's
@@ -195,10 +195,16 @@ LOD wrapper builders:
   it precedes this gate on both paths and a mismatched column count is reported
   first either way.
   Same placement rule as the labels guard (first statement of the wrapper impl,
-  never a leaf adder). Labels come last, as in the flat order: for Points and
-  Lines via `validate_labels_for_writing` inside the shared writer sweep, for
-  GSplats via `validate_labels_before_split` (whose validator has no labels
-  channel). The GSplats gate also RETURNS the `cholesky_is_uniform` flag its
+  never a leaf adder). Labels, then image labels, come last, in that order, as in
+  the flat write: for Points and Lines via `validate_labels_for_writing` then
+  `validate_image_labels_for_writing` inside the shared writer sweep (#1491 added
+  the latter — it has no per-part slicer at all, since it rides only the finest
+  `substitutive_lod=` child, so it closes a narrower and differently-shaped strand
+  than the rest of this gate; see `validate_points_channels_before_split`'s own
+  docstring), for GSplats via `validate_labels_before_split` (whose validator has
+  no labels channel) plus its own `image_labels` check in the flat gate (GSplats
+  has no `substitutive_lod=` wrapper to pre-split). The GSplats gate also RETURNS
+  the `cholesky_is_uniform` flag its
   validator already computed, so the wrapper does not restate that rule either.
   Every legal broadcast form the flat path accepts passes the GATE and reaches
   disk on every path, `substitutive_lod=` included: the gsplat lift broadcasts a

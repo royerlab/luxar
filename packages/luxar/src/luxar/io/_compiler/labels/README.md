@@ -67,6 +67,85 @@ check is skipped when any level's element array is not `(N, D)` — that fault
 belongs to the per-level writer's positions validator, which names it properly.
 `positions_key` is `"positions"` for Points and `"vertices"` for Lines.
 
+### `image_labels.check_image_label_type(item) -> None`
+
+Pure TYPE dispatch, PLUS the `ndarray` SHAPE check — no file reads, no PIL
+round-trip. Answers "is `item` one of the types an image label accepts
+(`None` / `bytes` / `bytearray` / `Path` / `str` / `PIL.Image.Image` /
+`numpy.ndarray`), and, for an `ndarray`, is its shape one of `(H, W)` /
+`(H, W, 3)` / `(H, W, 4)`?" without doing the work a "yes" would then require.
+The shape check is included because it is just as cheap as the type check —
+`ndim` / `shape[2]` are attribute reads, not a PIL call — so there is no
+reason to defer it to a post-write PIL round-trip; deferring it left the exact
+strand this module closes for a mistyped entry (#1491) open for a
+mis-shaped `ndarray` instead, only one level down. Mirrors
+`normalize_image_label`'s own dispatch order exactly, including its
+Pillow-absent quirk: `from PIL import Image` raises `ImportError`
+unconditionally at that point in the dispatch, before `item`'s type is even
+inspected, so ANY item past the first four types raises the *same*
+"Pillow is required to encode PIL Image objects…" message when Pillow is
+missing — even an `int` or an `ndarray`. `normalize_image_label` calls this
+FIRST (#1491) so the dispatch has exactly one implementation; everything past
+it can then assume `item` is one of the accepted types (and, for an
+`ndarray`, one of the accepted shapes).
+
+### `image_labels.validate_image_labels_for_writing(image_labels, n_elements) -> None`
+
+No store, no file reads, no PIL round-trip — but calls `check_image_label_type`
+(#1491), so it is not entirely PIL-free: a Pillow-absent entry still raises
+that function's `ImportError`. Checks, in order: (1) a dense sequence's length
+must equal `n_elements`, or a sparse `Dict[int, item]`'s keys must each be a
+real integer index (`operator.index` — `int` / `bool` / any numpy integer pass,
+a `float` or `str` does not, even at an integral value) and in
+`[0, n_elements)`; (2) **only once every key/length check has passed**, every
+entry's TYPE via `check_image_label_type`. Raises `ValueError` for an
+out-of-range key or a length mismatch, `TypeError` for a non-integral key, and
+whatever `check_image_label_type` raises for (2). A non-integral key used to
+clear the bounds check and then raise `TypeError: list indices must be
+integers` from `write_image_labels_csr`'s own `normalized[idx]` subscript, i.e.
+post-write — the same strand, one rule over.
+
+The dense form must be RE-iterable (`list` / `tuple` / `ndarray` /
+`pandas.Series` / any `__getitem__` sequence). A single-pass iterable — one
+whose `__iter__` hands back the same, already-advancing iterator — is refused
+with a `TypeError` naming `list(...)` as the fix, since this gate's own
+per-entry sweep would drain it and it cannot hand a materialised copy back to
+its caller; draining it would leave the writer nothing to encode and stamp an
+all-empty CSR. The check is `iter(x) is iter(x)`, which consumes nothing.
+
+`write_image_labels_csr` now calls this instead of checking length/index
+inline, and so does the pre-split gate on the Points/Lines `substitutive_lod=`
+wrapper (`core.group.compositing.validate_points_channels_before_split` /
+`validate_lines_channels_before_split`) — needed because that wrapper forwards
+`image_labels` only to the finest child, written LAST, so without the length
+check a wrong-length value used to be refused only after every coarser level
+was already on disk, and without the type check a right-length list with one
+mistyped OR mis-shaped entry (an `ndarray` of an unsupported shape included —
+`check_image_label_type` validates shape too) used to be refused only after
+the OTHER arrays of that same finest child were already on disk too (#1491)
+— an equally plausible authoring mistake, stranding the same way.
+
+**Deliberate behavioural divergence** introduced by adding the type check:
+checks now run in a fixed order — length/bounds first, THEN every entry's
+type — for BOTH the dense sequence form and the sparse `dict` form, not just
+the dict one. For the sparse `dict` form specifically, the two checks no
+longer interleave per key. Pre-#1491, `write_image_labels_csr` checked one
+key's bound and immediately ran `normalize_image_label` on that key's value
+before moving to the next key — so `write_image_labels_csr(g, {0: 12345, 5:
+b"x"}, 3, …)` raised `TypeError: Unsupported image label type: int` (from key
+0's value) without ever looking at key 5's index. The same call now raises
+`ValueError: Image label index 5 out of range [0, 3)` instead — a DIFFERENT
+exception type and message, even on a direct `write_image_labels_csr` call
+that never goes through a higher pre-split gate. For the DENSE form the same
+reordering means the type sweep now precedes every file read and PIL round-trip
+too: `[b"ok", "/nope/missing.png", 123]` used to raise `FileNotFoundError`
+(the missing-file read, item 1, happened before item 2's type was ever
+inspected); it now raises `TypeError: Unsupported image label type: int`
+instead, since the whole list's types are checked before any file is opened —
+arguably an improvement, since `TypeError` IS caught by the leaf adders'
+`except (ValueError, TypeError)` funnel while `FileNotFoundError` is not (see
+`normalize_image_label`, below). Pinned in `io/tests/_compiler/test_labels.py`.
+
 ### `image_labels.write_image_labels_csr(group, image_labels, n_elements, compressor, sort_order=None)`
 
 Encode per-element images as a CSR pair:
@@ -78,11 +157,29 @@ Encode per-element images as a CSR pair:
 
 Sets `group.attrs["has_image_labels"] = True`. Accepts either a dense sequence
 (length must equal `n_elements`) or a sparse `Dict[int, item]` where missing
-indices become empty blobs. Out-of-range dict indices raise `ValueError`.
+indices become empty blobs. The dense (non-`dict`) form is materialised into a
+concrete `list` exactly ONCE, before either validating or encoding it (#1491)
+— so a single-pass iterable (one whose `__iter__` keeps returning the same,
+already-advanced iterator; `list` / `tuple` / `ndarray` / `pandas.Series` are
+all re-iterable and unaffected) passed directly to this call IS supported: it
+is walked exactly once and works. Reaching this function through any GATE with
+one is not: `validate_image_labels_for_writing` refuses a one-shot container
+before the node is created (see above), because a gate cannot walk it and
+still hand it on. If the CALLER drained it itself before calling this, the
+materialisation sees zero items and raises `Image labels length (0) must
+match element count (N)` instead of silently writing an all-empty CSR.
+Length/index/type checks (now including the `ndarray` shape check) are
+delegated to `validate_image_labels_for_writing`, above; what remains here,
+still post-write, is the part no pure validator can do: reading a
+`str`/`Path` file, the actual PIL encode — plus normalizing the sparse `dict`
+form to a dense list and the actual zarr write.
 
 ### `image_labels.normalize_image_label(item) -> bytes`
 
-Convert a single heterogeneous image input into encoded image bytes:
+Convert a single heterogeneous image input into encoded image bytes. Calls
+`check_image_label_type(item)` first (#1491) — everything below it may then
+assume `item` is one of the accepted types AND, for an `ndarray`, one of the
+accepted shapes:
 
 | Input type | Handling |
 |------------|----------|
@@ -92,8 +189,16 @@ Convert a single heterogeneous image input into encoded image bytes:
 | `PIL.Image.Image` | encoded to WebP (quality 85) |
 | `numpy.ndarray` `(H,W)`, `(H,W,3)`, `(H,W,4)` uint8 | via PIL → WebP (quality 85) |
 
-Raises `ImportError` (with an install hint) if Pillow is needed but missing, and
-`TypeError` / `ValueError` for unsupported types or array shapes.
+Raises `ImportError` (with an install hint) if Pillow is needed but missing,
+`TypeError` for an unsupported type, or `ValueError` for an unsupported
+`ndarray` shape — all three from `check_image_label_type`, run first; none of
+them needs an actual file read or PIL call, so none is unique to this
+function any more. What genuinely remains post-write-only, because it needs a
+real file read or a real PIL round-trip, is a `str`/`Path` read's
+`FileNotFoundError` and the PIL encode itself. Neither `ImportError` nor that
+`FileNotFoundError` is caught by the leaf adders' `except (ValueError,
+TypeError)` funnel — both escape a caller unwrapped; a pre-existing gap, not
+introduced by #1491.
 
 ## The `sort_order` argument
 

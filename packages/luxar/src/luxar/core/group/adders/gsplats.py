@@ -16,11 +16,13 @@ from ...gsplats import GSplats
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
     COMPOSITING_ATTRS,
+    funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
+    unnest_add_error,
     validate_gsplats_channels_before_split,
 )
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
@@ -242,8 +244,12 @@ def add_gsplats_impl(
             **attrs,
         )
     except (ValueError, TypeError) as e:
-        aprint(f"Failed to add gsplats node '{name}': {e}")
-        raise ValueError(f"Could not add gsplats '{name}': {e}") from e
+        # Un-nest BEFORE printing too, or arbol still echoes an internal
+        # child name (`part_0`) that the raised exception no longer names
+        # (#1491) — see funnel_add_error.
+        inner = unnest_add_error("gsplats", name, e)
+        aprint(f"Failed to add gsplats node '{name}': {inner}")
+        raise ValueError(funnel_add_error("gsplats", name, e)) from e
 
 
 def add_gsplats_partition_wrapper_impl(
