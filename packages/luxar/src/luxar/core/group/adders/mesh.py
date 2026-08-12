@@ -39,11 +39,13 @@ from arbol import aprint
 from ...mesh import Mesh
 from ..compositing import (
     COMPOSITING_ATTRS,
+    funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
+    unnest_add_error,
 )
 from ..dim_order import apply_dim_order_positions
 from ..partition import reject_mismatched_partition_parent
@@ -630,8 +632,12 @@ def add_mesh_impl(
             **attrs,
         )
     except (ValueError, TypeError) as e:
-        aprint(f"Failed to add mesh node '{name}': {e}")
-        raise ValueError(f"Could not add mesh '{name}': {e}") from e
+        # Un-nest BEFORE printing too, or arbol still echoes an internal child
+        # name (`part_0` / `child_0`) that the raised exception no longer
+        # names (#1491) — see funnel_add_error.
+        inner = unnest_add_error("mesh", name, e)
+        aprint(f"Failed to add mesh node '{name}': {inner}")
+        raise ValueError(funnel_add_error("mesh", name, e)) from e
 
 
 def add_mesh_substitutive_lod_wrapper_impl(
@@ -691,11 +697,21 @@ def add_mesh_substitutive_lod_wrapper_impl(
     # and before `add_lod_group` creates the group. The adder already ran the
     # child's attr/extend_to_all gates on the way in; these are the rest of what
     # a child write checks, and without them a malformed channel was refused
-    # only from inside a child — colours with two components, a wrong-length
-    # scalars array or a typo'd `shading` from `child_0`, a bad normals array or
-    # `labels` length from the FINEST child, which is written last. Either way
-    # the store was left holding a `kind=lod` group with no children (or with
-    # its finest one missing), where the plain-leaf path writes nothing at all.
+    # only from inside a child write. Colours with two components, a
+    # wrong-length scalars array, a typo'd `shading`, or a bad normals array
+    # is validated identically for EVERY level, so it was refused from
+    # whichever child's write hit it first (typically `child_0`, the
+    # coarsest, since levels write coarsest-to-finest) — leaving the store
+    # holding a `kind=lod` group with no children at all (if the first one
+    # failed) or missing only its finest one (if a later level did), where
+    # the plain-leaf path writes nothing.
+    # `labels` and a wrong-length `image_labels` (#1491) fail a DIFFERENT way:
+    # both are forwarded ONLY to the FINEST child, written last, so pre-fix
+    # they were refused deep inside that child's OWN write — after its
+    # vertices, faces, normals, colours and scalars were already on disk.
+    # That left every level, the finest included, fully written and
+    # independently loadable; only the finest level's own label channel was
+    # silently missing — harder to notice than a missing level, not milder.
     #
     # The authored arrays are the right thing to check: a level's decimated
     # arrays are derived from them (cluster means keep the dtype, the channel
@@ -712,6 +728,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
         shading=shading,
         double_sided=double_sided,
         labels=labels,
+        image_labels=image_labels,
     )
 
     n_vertices = int(vert_arr.shape[0])

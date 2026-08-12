@@ -229,6 +229,77 @@ class TestImageLabelValidation:
             with pytest.raises((TypeError, ValueError)):
                 scene.add_points("pts", positions, image_labels=[42])
 
+    def test_unsupported_ndarray_shape_raises_before_anything_is_written(
+        self, tmp_path
+    ):
+        """A mis-shaped ``ndarray`` entry is refused before any zarr write (#1491).
+
+        ``check_image_label_type`` validates an ``ndarray``'s shape eagerly
+        (no PIL round-trip needed for ``ndim``/``shape[2]``), so this no
+        longer strands a complete node with only its image channel missing.
+        """
+        path = str(tmp_path / "test.luxar.zarr")
+        positions = np.random.rand(3, 3).astype(np.float32)
+        bad = [np.zeros((4, 5, 2), dtype=np.uint8)] * 3  # not (H,W)/(H,W,3)/(H,W,4)
+
+        with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            with pytest.raises(ValueError, match="Unsupported ndarray shape"):
+                scene.add_points("pts", positions, image_labels=bad)
+
+        store = zarr.open_group(path, mode="r")
+        assert "pts" not in store
+
+    def test_one_shot_iterable_raises_instead_of_writing_empty_labels(self, tmp_path):
+        """A single-pass ``Sized`` ``image_labels`` fails loudly, not silently (#1491).
+
+        Before this fix, a container with ``__len__`` but a one-shot
+        ``__iter__`` (drained by the pre-write channel gate's type sweep,
+        then materialised again by the writer) reached the writer's
+        blob-encoding loop already exhausted, silently writing an all-empty
+        CSR with ``has_image_labels=True`` stamped. That is exactly the
+        class of failure #1491 closes for a mistyped/mis-shaped entry, so it
+        must not reappear here for an unusual container.
+
+        Unlike a mistyped/mis-shaped entry, this does NOT stay
+        write-nothing: the length is right and every real item's type is
+        valid, so the FIRST gate to walk the iterator (the pre-write channel
+        sweep) finds nothing wrong and consumes it harmlessly; only the
+        SECOND walk — this function's own materialisation, inside the
+        writer — discovers it is empty. By then ``positions``/``radii`` are
+        already on disk, same as any other post-write failure (the module's
+        step-0 comment calls this the pre-existing "F7 residual": the
+        fail-fast gate is best-effort, not transactional). What #1491
+        guarantees here is the loud, specific error, not a rolled-back node.
+        """
+
+        class OneShot:
+            def __init__(self, items):
+                self._it = iter(items)
+                self._n = len(items)
+
+            def __len__(self):
+                return self._n
+
+            def __iter__(self):
+                return self._it
+
+        path = str(tmp_path / "test.luxar.zarr")
+        positions = np.random.rand(3, 3).astype(np.float32)
+        blobs = OneShot([_make_fake_jpeg(10), _make_fake_webp(20), _make_fake_png(30)])
+
+        with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            with pytest.raises(ValueError, match=r"Image labels length \(0\)"):
+                scene.add_points("pts", positions, image_labels=blobs)
+
+        store = zarr.open_group(path, mode="r")
+        # Positions/radii land on disk before the (later) failure — see the
+        # docstring above — but NOT an all-empty image_label CSR: that is the
+        # silent-corruption failure mode this test exists to rule out.
+        assert "pts" in store
+        assert "image_label_offsets" not in store["pts"]
+
 
 class TestImageLabelZarrProperties:
     """Test zarr storage properties."""

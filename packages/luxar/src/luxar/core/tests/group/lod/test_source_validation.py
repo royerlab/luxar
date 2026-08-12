@@ -17,8 +17,20 @@ WHERE the write fails: the finest child is written LAST, after ``add_lod_group``
 and every coarse gsplat level, so without the gate a wrong-length channel strands
 a partial ``kind=lod`` node on disk.
 
-The second half of this module covers the SCENE-DIMENSION COUNT gate (#1446),
-which is the same bug class one validator over: the count check sat below the LOD
+Immediately below the per-channel cases above sits a THIRD section, inserted
+between them and the dimension-count one: ``image_labels``, pre-split, on the
+Points/Lines ``substitutive_lod=`` wrapper specifically (#1491). It does not
+fit the ``slice_optional_array`` shape above at all — it has no per-level
+SLICER in the first place, since it is forwarded only to the finest child,
+written LAST — so a wrong-length or out-of-range-sparse value used to be
+refused only after that finest child's OTHER arrays (and every coarser gsplat
+level) were already committed, leaving a complete, loadable ladder silently
+missing only its images. It earns its own section (message, non-double-
+prefixing, sparse form, and a decoding control) rather than joining the
+parametrized lists above.
+
+The next section covers the SCENE-DIMENSION COUNT gate (#1446), which is the
+same bug class one validator over: the count check sat below the LOD
 branches, so an additive ladder wrote ``additive_<i>`` nodes whose column count
 contradicted the scene's dimensions, and the substitutive / ``lod_group=``
 wrappers refused only from inside ``child_0`` — after the ``kind=lod`` group was
@@ -26,7 +38,7 @@ already on disk. Each case asserts message parity with the flat call AND an empt
 store; the controls assert the hoist did not multiply the per-dimension range
 ``UserWarning`` across levels.
 
-The third and last section is the same bug class one step further out (#1471),
+The fourth and last section is the same bug class one step further out (#1471),
 and it is where the pattern breaks: ``labels`` / ``image_labels`` on a
 multi-CHILD gsplats wrapper cannot be hoisted at all, only REFUSED. Every
 substitutive level is its own set of merged representative splats with its own
@@ -34,6 +46,16 @@ count, so no single list has a per-element correspondence to slice — which is
 why those cases assert a new message rather than parity with a flat one, and why
 the precedence tests matter more here: the refusal has no flat counterpart, so it
 must sit BELOW every check that does.
+
+A note on ``assert_same_refusal`` / the ``"child_" not in message``
+idiom used throughout this file (#1491): now that :func:`funnel_add_error`
+un-nests unconditionally for a SAME-geometry recursive child, the absence of
+``"child_"`` in a message is no longer, by itself, evidence that the gate fired
+EARLY (pre-split, nothing written). A late refusal from inside a same-kind
+child (e.g. the Mesh ``substitutive_lod=`` ladder's own ``child_3``) is un-nested
+just the same, so it ALSO reads without ``"child_"`` in it — only the
+accompanying store assertion (nothing / only the expected node persisted)
+still discriminates early from late.
 """
 
 from __future__ import annotations
@@ -331,6 +353,334 @@ class TestLinesSubstitutiveLodSourceValidation:
         assert_same_refusal(flat, split)
         assert channel in str(split)
         assert "line" not in compiler.store
+
+
+# ---------------------------------------------------------------------------
+# image_labels, pre-split, on the Points/Lines substitutive wrapper (#1491)
+# ---------------------------------------------------------------------------
+#
+# image_labels does not fit the _POINTS_SUB_CASES / _LINES_SUB_CASES shape
+# above: it is forwarded ONLY to the finest child (never sliced/broadcast),
+# and its own error wording ("Image labels length …") does not contain the
+# parameter's name the way the other channels' does — so it gets its own
+# section rather than joining those parametrized lists.
+#
+# Raw bytes blobs (not PIL images / ndarrays), matching the CSR unit tests in
+# io/tests/_compiler/test_labels.py, so these tests exercise the length/index
+# gate without depending on Pillow being installed.
+
+_IMG_SUB_SHORT = [f"blob-{i}".encode() for i in range(_SUB_HALF)]  # 200, wrong
+_IMG_SUB_FULL = [f"blob-{i}".encode() for i in range(_SUB_N)]  # 400, matches
+
+
+class TestPointsSubstitutiveImageLabelsSourceValidation:
+    def test_wrong_length_is_refused_before_anything_is_written(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "points_sub_img_short.luxar.zarr")
+        flat_compiler, flat_scene, _ = open_scene(
+            tmp_path, "points_sub_img_short_flat.luxar.zarr"
+        )
+        positions = random_positions(_SUB_N, seed=91)
+
+        flat = refusal(
+            lambda: flat_scene.add_points("p", positions, image_labels=_IMG_SUB_SHORT)
+        )
+        split = refusal(
+            lambda: scene.add_points(
+                "p", positions, image_labels=_IMG_SUB_SHORT, substitutive_lod=True
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Image labels length (200) must match element count (400)" in str(split)
+        # The gate runs above the lift/add_lod_group, so no coarse gsplat level
+        # (and no childless wrapper) is left — the pre-fix strand this closes.
+        assert "p" not in compiler.store
+        # The FLAT writer's own new step-0f gate must refuse just as cleanly —
+        # pre-fix this call still wrote positions/radii/chunk_bounds before
+        # write_image_labels_csr's inline check caught it. Bound and checked
+        # here rather than discarded, or this half of the gate is unpinned.
+        assert "p" not in flat_compiler.store
+
+    def test_message_is_not_double_prefixed(self, tmp_path: Any) -> None:
+        """Pre-fix: ``Could not add points 'p': Could not add points 'child_3': …``.
+
+        ``child_3`` is the auto-generated finest-child name (three coarse gsplat
+        levels precede it here) — an internal node the caller never typed. The
+        outer funnel must un-nest that before re-raising, so the message names
+        only the node the caller passed.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "points_sub_img_prefix.luxar.zarr")
+        positions = random_positions(_SUB_N, seed=92)
+
+        split = refusal(
+            lambda: scene.add_points(
+                "p", positions, image_labels=_IMG_SUB_SHORT, substitutive_lod=True
+            )
+        )
+
+        message = str(split)
+        assert message.startswith("Could not add points 'p': ")
+        assert "child_" not in message
+        assert message.count("Could not add") == 1
+        assert "p" not in compiler.store
+
+    def test_out_of_range_sparse_index_is_refused_before_anything_is_written(
+        self, tmp_path: Any
+    ) -> None:
+        """The dict (sparse) form is checked pre-split too, not only the length."""
+        compiler, scene, _ = open_scene(tmp_path, "points_sub_img_sparse.luxar.zarr")
+        positions = random_positions(_SUB_N, seed=93)
+
+        split = refusal(
+            lambda: scene.add_points(
+                "p",
+                positions,
+                image_labels={_SUB_N: b"blob"},
+                substitutive_lod=True,
+            )
+        )
+
+        assert f"Image label index {_SUB_N} out of range [0, {_SUB_N})" in str(split)
+        assert "child_" not in str(split)
+        assert "p" not in compiler.store
+
+    def test_valid_image_labels_still_reach_the_finest_child_intact(
+        self, tmp_path: Any
+    ) -> None:
+        """The control: a correctly-sized ``image_labels`` still writes end to end.
+
+        The new gate must not reject legal input. The coarse gsplat levels carry
+        no ``image_labels`` channel at all (only the finest — original — Points
+        child does), so the ladder is complete once that child's flag is set.
+        "Intact" is checked by DECODING the finest child's CSR pair and comparing
+        it against the authored blobs byte-for-byte, not merely by the presence
+        of the ``has_image_labels`` flag.
+        """
+        from luxar.io.tests.test_image_labels import _decode_image_labels_from_zarr
+
+        compiler, scene, path = open_scene(tmp_path, "points_sub_img_ok.luxar.zarr")
+        positions = random_positions(_SUB_N, seed=94)
+
+        scene.add_points(
+            "p", positions, image_labels=_IMG_SUB_FULL, substitutive_lod=True
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["p"].attrs["kind"] == "lod"
+        children = sorted(store["p"].group_keys())
+        assert len(children) > 1
+        finest = children[-1]
+        assert store["p"][finest].attrs["type"] == "points"
+        assert store["p"][finest].attrs["has_image_labels"] is True
+        assert store["p"][finest].attrs["n_points"] == _SUB_N
+        for coarse in children[:-1]:
+            assert store["p"][coarse].attrs.get("has_image_labels") is not True
+        # Sorted rather than positional: the finest child's own spatial ordering
+        # (Morton/Hilbert, on by default) permutes both positions and their
+        # image labels together, so the ON-DISK index of a given blob need not
+        # match its index in the authored list — only the SET of blobs must
+        # survive intact.
+        decoded = _decode_image_labels_from_zarr(path, f"p/{finest}")
+        assert sorted(decoded) == sorted(_IMG_SUB_FULL)
+
+
+class TestLinesSubstitutiveImageLabelsSourceValidation:
+    def test_wrong_length_is_refused_before_anything_is_written(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "lines_sub_img_short.luxar.zarr")
+        flat_compiler, flat_scene, _ = open_scene(
+            tmp_path, "lines_sub_img_short_flat.luxar.zarr"
+        )
+        vertices = random_positions(_SUB_N, seed=95)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line",
+                vertices,
+                line_type="segments",
+                widths=0.2,
+                image_labels=_IMG_SUB_SHORT,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                line_type="segments",
+                widths=0.2,
+                image_labels=_IMG_SUB_SHORT,
+                substitutive_lod=True,
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Image labels length (200) must match element count (400)" in str(split)
+        assert "line" not in compiler.store
+        # The FLAT writer's own new step-0h gate must refuse just as cleanly —
+        # see the Points twin above for the pre-fix strand this pins.
+        assert "line" not in flat_compiler.store
+
+    def test_message_is_not_double_prefixed(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "lines_sub_img_prefix.luxar.zarr")
+        vertices = random_positions(_SUB_N, seed=96)
+
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                line_type="segments",
+                widths=0.2,
+                image_labels=_IMG_SUB_SHORT,
+                substitutive_lod=True,
+            )
+        )
+
+        message = str(split)
+        assert message.startswith("Could not add lines 'line': ")
+        assert "child_" not in message
+        assert message.count("Could not add") == 1
+        assert "line" not in compiler.store
+
+    def test_valid_image_labels_still_reach_the_finest_child_intact(
+        self, tmp_path: Any
+    ) -> None:
+        """The control: a correctly-sized ``image_labels`` still writes end to end.
+
+        "Intact" is checked by DECODING the finest child's CSR pair and
+        comparing it against the authored blobs, not merely the presence of
+        the ``has_image_labels`` flag — see the Points twin for why the
+        comparison is a SET (``sorted(...)``) rather than positional.
+        """
+        from luxar.io.tests.test_image_labels import _decode_image_labels_from_zarr
+
+        compiler, scene, path = open_scene(tmp_path, "lines_sub_img_ok.luxar.zarr")
+        vertices = random_positions(_SUB_N, seed=97)
+
+        scene.add_lines(
+            "line",
+            vertices,
+            line_type="segments",
+            widths=0.2,
+            image_labels=_IMG_SUB_FULL,
+            substitutive_lod=True,
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["line"].attrs["kind"] == "lod"
+        children = sorted(store["line"].group_keys())
+        assert len(children) > 1
+        finest = children[-1]
+        assert store["line"][finest].attrs["type"] == "lines"
+        assert store["line"][finest].attrs["has_image_labels"] is True
+        assert store["line"][finest].attrs["n_vertices"] == _SUB_N
+        for coarse in children[:-1]:
+            assert store["line"][coarse].attrs.get("has_image_labels") is not True
+        decoded = _decode_image_labels_from_zarr(path, f"line/{finest}")
+        assert sorted(decoded) == sorted(_IMG_SUB_FULL)
+
+    def test_out_of_range_sparse_index_is_refused_before_anything_is_written(
+        self, tmp_path: Any
+    ) -> None:
+        """The Lines twin of the Points sparse-dict case above.
+
+        The dict (sparse) form is checked pre-split too, not only the length —
+        this was the only geometry missing this case (#1491 review).
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lines_sub_img_sparse.luxar.zarr")
+        vertices = random_positions(_SUB_N, seed=99)
+
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                line_type="segments",
+                widths=0.2,
+                image_labels={_SUB_N: b"blob"},
+                substitutive_lod=True,
+            )
+        )
+
+        assert f"Image label index {_SUB_N} out of range [0, {_SUB_N})" in str(split)
+        assert "child_" not in str(split)
+        assert "line" not in compiler.store
+
+
+# ---------------------------------------------------------------------------
+# image_labels on the FLAT GSplats writer (#1491) — GSplats has no
+# substitutive_lod= wrapper of its own (a gsplat leaf IS the coarse-level
+# representation the other three geometry types lift into), so its
+# image_labels check lives only in write_gsplats' own step-0e gate, never in a
+# pre-split gate. That inline gate had ZERO coverage anywhere before this: no
+# test exercised a wrong-length or an out-of-range sparse image_labels on a
+# direct add_gsplats call.
+# ---------------------------------------------------------------------------
+
+
+class TestGSplatsImageLabelsFlatGate:
+    def test_wrong_length_is_refused_with_nothing_written(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "gsplats_img_short.luxar.zarr")
+        centers = random_positions(_SUB_N, seed=101)
+        cholesky = cholesky_rows_nd(_SUB_N, 3)
+        amplitudes = np.ones(_SUB_N, dtype=np.float32)
+
+        exc = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                image_labels=_IMG_SUB_SHORT,
+            )
+        )
+
+        assert "Image labels length (200) must match element count (400)" in str(exc)
+        assert "g" not in compiler.store
+
+    def test_out_of_range_sparse_index_is_refused_with_nothing_written(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "gsplats_img_sparse.luxar.zarr")
+        centers = random_positions(_SUB_N, seed=102)
+        cholesky = cholesky_rows_nd(_SUB_N, 3)
+        amplitudes = np.ones(_SUB_N, dtype=np.float32)
+
+        exc = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                image_labels={_SUB_N: b"blob"},
+            )
+        )
+
+        assert f"Image label index {_SUB_N} out of range [0, {_SUB_N})" in str(exc)
+        assert "g" not in compiler.store
+
+    def test_valid_image_labels_write_normally(self, tmp_path: Any) -> None:
+        """The control: a correctly-sized ``image_labels`` still writes end to end."""
+        compiler, scene, path = open_scene(tmp_path, "gsplats_img_ok.luxar.zarr")
+        centers = random_positions(_SUB_N, seed=103)
+        cholesky = cholesky_rows_nd(_SUB_N, 3)
+        amplitudes = np.ones(_SUB_N, dtype=np.float32)
+
+        scene.add_gsplats(
+            "g",
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky,
+            image_labels=_IMG_SUB_FULL,
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs["has_image_labels"] is True
+        assert store["g"].attrs["n_splats"] == _SUB_N
 
 
 # 24 vertices as 12 edges (see the partition sibling for why this shape).

@@ -14,9 +14,11 @@ import numpy as np
 import pytest
 
 from luxar.core.group.compositing import (
+    funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     slice_optional_array,
+    unnest_add_error,
 )
 
 
@@ -152,3 +154,140 @@ class TestPositionBoundsFromArray:
         bounds = position_bounds_from_array(pos)
         assert all(isinstance(v, float) for v in bounds["min"])
         assert all(isinstance(v, float) for v in bounds["max"])
+
+
+class TestFunnelAddError:
+    """Unit tests for ``funnel_add_error`` (#1491) — no end-to-end test above the
+    adders exercises the raw string logic directly, so these pin every branch
+    the regex/token-match decides between.
+    """
+
+    def test_same_geometry_inner_prefix_is_stripped(self) -> None:
+        """The case the function exists for: a same-kind recursive child."""
+        exc = ValueError("Could not add points 'child_3': Image labels length (2)")
+        message = funnel_add_error("points", "p", exc)
+        assert message == "Could not add points 'p': Image labels length (2)"
+        assert "child_3" not in message
+        assert message.count("Could not add") == 1
+
+    def test_cross_geometry_inner_prefix_is_kept(self) -> None:
+        """A DIFFERENT geometry's own failure — e.g. a lifted gsplats child under
+        a Points ``substitutive_lod=`` ladder — must not be relabelled as the
+        outer geometry's fault (the reserved-attr misattribution this fixes).
+        """
+        exc = ValueError(
+            "Could not add gsplats 'child_0': Attribute(s) ['amplitude_range'] "
+            "are reserved"
+        )
+        message = funnel_add_error("points", "p", exc)
+        assert message == (
+            "Could not add points 'p': Could not add gsplats 'child_0': "
+            "Attribute(s) ['amplitude_range'] are reserved"
+        )
+
+    def test_group_inner_prefix_is_never_stripped(self) -> None:
+        """``group`` is not a geometry word — a wrapper-creation failure must
+        stay visibly a group failure, never be relabelled as this geometry's.
+        """
+        exc = ValueError("Could not add group 'g': boom")
+        message = funnel_add_error("points", "P", exc)
+        assert message == "Could not add points 'P': Could not add group 'g': boom"
+
+    def test_plain_message_passes_through_byte_for_byte(self) -> None:
+        exc = ValueError("positions must be finite")
+        message = funnel_add_error("mesh", "surf", exc)
+        assert message == "Could not add mesh 'surf': positions must be finite"
+
+    def test_apostrophe_in_name_does_not_get_mangled(self) -> None:
+        """``validate_node_name`` accepts an apostrophe in a node name.
+
+        The regex's ``[^']*`` name group stops at the FIRST quote it meets, so
+        a name like ``a'b`` breaks its own closing ``': `` and the message is
+        never recognised as the nested-funnel shape — it is not stripped, but
+        it must still come through intact (re-prefixed, not truncated or
+        interleaved) rather than corrupted.
+        """
+        exc = ValueError("Could not add lines 'a'b': widths must be positive")
+        message = funnel_add_error("lines", "a'b", exc)
+        assert message == (
+            "Could not add lines 'a'b': "
+            "Could not add lines 'a'b': widths must be positive"
+        )
+
+    def test_idempotent_on_its_own_output(self) -> None:
+        """Running the result back through the function reproduces it exactly.
+
+        Not because the regex has nothing left to match — it matches this
+        function's OWN output shape too — but because the strip and the
+        re-prefix use the SAME geometry/name, so stripping what was just added
+        back and re-adding it is a no-op.
+        """
+        exc = ValueError("Could not add points 'child_3': Image labels length (2)")
+        once = funnel_add_error("points", "p", exc)
+        twice = funnel_add_error("points", "p", ValueError(once))
+        assert once == twice
+
+    def test_wrong_length_full_shape_matches_the_issue_repro(self) -> None:
+        """The exact shape measured in issue #1491's own repro."""
+        exc = ValueError(
+            "Could not add points 'child_3': Image labels length (200) must "
+            "match element count (400)"
+        )
+        message = funnel_add_error("points", "p", exc)
+        assert message == (
+            "Could not add points 'p': Image labels length (200) must match "
+            "element count (400)"
+        )
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            ValueError("Could not add points 'child_3': Image labels length (2)"),
+            ValueError(
+                "Could not add gsplats 'child_0': Attribute(s) "
+                "['amplitude_range'] are reserved"
+            ),
+            ValueError("Could not add group 'g': boom"),
+            ValueError("positions must be finite"),
+        ],
+    )
+    def test_agrees_with_unnest_add_error(self, exc: ValueError) -> None:
+        """``funnel_add_error`` is exactly the ``Could not add …`` re-prefix of
+        ``unnest_add_error``'s own output — the dead re-derivation four adders
+        used to do by hand (stripping their own ``Could not add <type>
+        '<name>': `` prefix back off ``funnel_add_error``'s result) is provably
+        the same string as calling ``unnest_add_error`` directly (#1491).
+        """
+        assert funnel_add_error("points", "p", exc) == (
+            f"Could not add points 'p': {unnest_add_error('points', 'p', exc)}"
+        )
+
+
+class TestUnnestAddError:
+    """Unit tests for ``unnest_add_error`` (#1491) — the un-nesting half
+    ``funnel_add_error`` is built on, and the function each adder's
+    ``except`` block now calls directly for its ``aprint`` line instead of
+    stripping ``funnel_add_error``'s own re-prefix back off by hand.
+    """
+
+    def test_same_geometry_inner_prefix_is_stripped(self) -> None:
+        exc = ValueError("Could not add points 'child_3': Image labels length (2)")
+        assert unnest_add_error("points", "p", exc) == "Image labels length (2)"
+
+    def test_cross_geometry_inner_prefix_is_kept(self) -> None:
+        exc = ValueError(
+            "Could not add gsplats 'child_0': Attribute(s) ['amplitude_range'] "
+            "are reserved"
+        )
+        assert unnest_add_error("points", "p", exc) == (
+            "Could not add gsplats 'child_0': Attribute(s) ['amplitude_range'] "
+            "are reserved"
+        )
+
+    def test_group_inner_prefix_is_never_stripped(self) -> None:
+        exc = ValueError("Could not add group 'g': boom")
+        assert unnest_add_error("points", "P", exc) == "Could not add group 'g': boom"
+
+    def test_plain_message_passes_through_byte_for_byte(self) -> None:
+        exc = ValueError("positions must be finite")
+        assert unnest_add_error("mesh", "surf", exc) == "positions must be finite"
