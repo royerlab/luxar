@@ -150,6 +150,11 @@ export function commitMeshGeometry(
 
   object.userData.visibleTriangleCount = projected.visibleFaceCount;
   object.userData.visibleVertexCount = projected.visibleVertexCount;
+  // The geometry's `position` attribute is now capacity-sized (#1521), so it can no
+  // longer answer "how many vertices has this node committed" — that would report
+  // the ladder's lifetime total from level 0 on. Stamped here, from the data the
+  // commit actually received, for `debug-state.ts` to read instead.
+  object.userData.committedVertexCount = data.vertexCount;
 
   // The GPU now holds this data. Mesh has no memoized-concat noop path (the whole
   // node is resident, so there is no LOD concatenation to memoize and

@@ -19,7 +19,11 @@
  *   geometry no longer holds the commit's data".
  * Presence therefore tests `!== undefined`, and clearing DELETES the
  * property (never assigns `undefined`) — the stamp would otherwise keep the
- * loader-returned source arrays reachable.
+ * loader-returned source arrays reachable. (For Mesh this is no longer the
+ * ONLY such reference: `rendering/mesh-geometry.ts`'s own currency stamps —
+ * `meshColorsSource` / `meshNormalSource` / `meshAScalarSource` — also pin
+ * the last committed colour/normal/scalar arrays on the geometry's
+ * `userData`, independent of this stamp.)
  *
  * **The `elementIdMap` sibling stamp.** Picking needs to translate the
  * STORAGE SLOT its shaders report (a position in the buffer now on the GPU)
