@@ -106,7 +106,8 @@ ui/
 │   ├── layer-state.ts, range-slider.ts, labeled-slider.ts,
 │   │ attrs-utils.ts
 ├── overlay-widgets/                    # Shared base for scale-bar / colormap-legend
-│   └── ui-component.ts
+│   ├── ui-component.ts
+│   └── context-menu.ts                 # Shared right-click menu (openContextMenu; full menu ARIA)
 ├── help-overlay/                       # Help overlay's private helper
 │   └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
 ├── control-rail/                       # Control rail's private helpers (orchestrator: ../control-rail.ts)

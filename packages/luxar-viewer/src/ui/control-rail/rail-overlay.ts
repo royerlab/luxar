@@ -177,7 +177,7 @@ export class RailOverlay {
     if (!popover) return;
 
     const el = document.createElement('div');
-    el.className = 'luxar-control-rail__popover luxar-glass-surface';
+    el.className = 'luxar-control-rail__popover luxar-glass-surface luxar-panel-pop';
     el.setAttribute('role', 'group');
     el.setAttribute('aria-label', `${popover.title ?? item.title}`);
     // Arrow as a real child (not ::before) — the glass themes claim

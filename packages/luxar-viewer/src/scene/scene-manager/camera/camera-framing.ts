@@ -118,7 +118,10 @@ function drawnTriangleCount(geometry: THREE.BufferGeometry): number {
  * matrices; the caller should call `scene.updateMatrixWorld(true)`
  * before calling if needed.
  */
-export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxResult {
+// Accepts any Object3D root (a THREE.Scene IS one): the traversal below only
+// needs `.traverse`, which lets per-layer camera framing reuse this walker on
+// a subtree.
+export function computeSceneBoundingBox(scene: THREE.Object3D): SceneBoundingBoxResult {
   const box = new THREE.Box3();
   let primitiveCount = 0;
 
@@ -346,6 +349,37 @@ export function centerCameraOnScene(
   );
   log.success(Modules.CONTROLS, 'Controls target updated and state saved');
 
+  return center;
+}
+
+/**
+ * Frame the camera on ONE object subtree (per-layer "frame camera" — the
+ * subtree sibling of {@link centerCameraOnScene}). Returns the new look-at
+ * center, or null when the subtree holds no framable geometry (e.g. a
+ * partition whose parts have not streamed in yet).
+ */
+export function frameCameraOnObject(
+  root: THREE.Object3D,
+  camera: LuxarCamera,
+  controls: ControlsManager,
+  up?: THREE.Vector3
+): CenterResult {
+  root.updateMatrixWorld(true);
+  const { box, primitiveCount } = computeSceneBoundingBox(root);
+  if (box.isEmpty() || primitiveCount === 0) {
+    log.warning(Modules.SCENE_MANAGER, `No visible geometry to frame in "${root.name}"`);
+    return null;
+  }
+  const center = box.getCenter(new THREE.Vector3());
+  fitCameraToBounds(
+    camera,
+    controls,
+    {
+      min: { x: box.min.x, y: box.min.y, z: box.min.z },
+      max: { x: box.max.x, y: box.max.y, z: box.max.z },
+    },
+    { lookAtTarget: center, logLabel: `Camera framed on "${root.name}"`, up }
+  );
   return center;
 }
 

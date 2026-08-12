@@ -402,6 +402,7 @@ export class LayerStateManager {
    * Walks children recursively and collects nodes with `layer: true`.
    */
   initFromSceneGraph(root: SceneNode): void {
+    this.soloState = null;
     this.layers.clear();
     this.layerOrder = [];
     this.lastClickedPath = null;
@@ -725,7 +726,84 @@ export class LayerStateManager {
   // ─── Mutations ───────────────────────────────────────────
 
   /** Toggle visibility (independent of selection) */
+  /** Toggle-restore solo capture (see {@link solo}); null when not soloed. */
+  private soloState: { path: string; previous: Map<string, boolean> } | null = null;
+
+  /** Path of the layer currently soloed via {@link solo}, else null. */
+  get soloedPath(): string | null {
+    return this.soloState?.path ?? null;
+  }
+
+  /**
+   * Toggle-restore solo ("hide all others"). The first call captures the
+   * current visibility set and shows only `path`; soloing the SAME path
+   * again restores the captured set (for layers that still exist); soloing
+   * a DIFFERENT path re-targets while keeping the original capture, so the
+   * eventual un-solo restores the true pre-solo state. A manual visibility
+   * change or a scene reload clears the capture. One notification per
+   * transition (never per-layer).
+   */
+  solo(path: string): void {
+    if (!this.layers.has(path)) return;
+    if (this.soloState?.path === path) {
+      for (const [p, v] of this.soloState.previous) {
+        const layer = this.layers.get(p);
+        if (layer) layer.visible = v;
+      }
+      this.soloState = null;
+    } else {
+      if (!this.soloState) {
+        const previous = new Map<string, boolean>();
+        for (const layer of this.layers.values()) previous.set(layer.path, layer.visible);
+        this.soloState = { path, previous };
+      } else {
+        this.soloState = { path, previous: this.soloState.previous };
+      }
+      for (const layer of this.layers.values()) layer.visible = layer.path === path;
+    }
+    this.notify();
+  }
+
+  /**
+   * Set visibility for many layers with a SINGLE change notification
+   * ({@link setVisible} notifies per call, so an N-layer sweep would
+   * re-render the panel N times). Clears any solo capture — a batch
+   * visibility change supersedes the remembered pre-solo state.
+   */
+  setVisibleMany(entries: Array<{ path: string; visible: boolean }>): void {
+    this.soloState = null;
+    let changed = false;
+    for (const { path, visible } of entries) {
+      const layer = this.layers.get(path);
+      if (layer && layer.visible !== visible) {
+        layer.visible = visible;
+        changed = true;
+      }
+    }
+    if (changed) this.notify();
+  }
+
+  /**
+   * Replace a layer's state with a freshly derived {@link LayerInfo}
+   * (per-layer reset). Preserves `selected`, and clears any solo capture —
+   * the reset rewrites visibility behind the capture's back, so a later
+   * un-solo restore would silently overwrite it (and `soloedPath` would lie
+   * about which layers are showing in the meantime). Notifies once. The
+   * live object is mutated in place, so references held by callers stay
+   * valid.
+   */
+  resetLayerState(path: string, fresh: LayerInfo): void {
+    const live = this.layers.get(path);
+    if (!live) return;
+    this.soloState = null;
+    Object.assign(live, fresh, { selected: live.selected });
+    this.notify();
+  }
+
   setVisible(path: string, visible: boolean): void {
+    // A manual per-layer change invalidates the solo capture (restoring it
+    // later would silently overwrite what the user just chose).
+    this.soloState = null;
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.visible = visible;

@@ -18,7 +18,14 @@ import { createE2EServerMetadata, ensureCheckoutIdentity } from './tools/e2e-ser
 // global is undefined at config load. Reconstruct it from `import.meta.url`.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '../..');
-const viewerBaseURL = 'http://127.0.0.1:5173';
+// The VIEWER port is overridable per run: a sibling checkout (another agent
+// or session) sometimes holds 5173 with its own Vite, which the identity
+// guard below rightly refuses to reuse — `LUXAR_E2E_VIEWER_PORT=5199` runs
+// the suite alongside it instead of fighting over the port. The DATA port is
+// deliberately NOT overridable: spec files hardcode `http://localhost:9000/`
+// dataset URLs (they are page-side absolute URLs, not baseURL-relative).
+const viewerPort = process.env.LUXAR_E2E_VIEWER_PORT ?? '5173';
+const viewerBaseURL = `http://127.0.0.1:${viewerPort}`;
 const dataBaseURL = 'http://127.0.0.1:9000';
 const checkoutIdentity = ensureCheckoutIdentity(projectRoot, __dirname);
 const serverMetadata = createE2EServerMetadata(checkoutIdentity, viewerBaseURL, dataBaseURL);
@@ -141,7 +148,7 @@ export default defineConfig({
       // WebGL is the default) and `VITE_LUXAR_USE_WEBGPU_RENDERER` (an
       // alias for the WebGPU opt-in) are forwarded too so existing CI
       // invocations keep working harmlessly.
-      command: 'pnpm dev --host 127.0.0.1 --strictPort',
+      command: `pnpm dev --host 127.0.0.1 --port ${viewerPort} --strictPort`,
       // A sibling checkout has a different marker path and cannot satisfy this
       // readiness probe. If its Vite owns 5173, strictPort fails loudly.
       url: serverMetadata.viewerIdentityURL,
