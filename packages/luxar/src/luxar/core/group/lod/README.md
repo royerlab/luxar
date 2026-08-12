@@ -193,8 +193,12 @@ A **per-element** `(N, 4)` RGBA is still refused by the lift, because
 the substitutive merge is untested on a varying alpha (drop the alpha column, or
 use `partition=` / `additive_lod=`). Colour dtype follows the leaf's rule —
 floating, uint8 or uint16 — and any other (an `int64` array, say) is refused
-before the lift builds anything, rather than baking a near-black coarse level
-the encoder then rejects at the finest child.
+before anything is built, rather than baking a near-black coarse level the
+encoder then rejects at the finest child. A scene-door caller now hits that in
+the shared pre-write validator (`validation.base.validate_color_dtype`, #1489),
+which every geometry and every structural path runs; the lift keeps its own copy
+of the rule for direct callers of `lift_points_to_gsplats` /
+`lift_lines_to_gsplats`, which bypass the scene entirely.
 
 ### Lines (`lines.py`)
 

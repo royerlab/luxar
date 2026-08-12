@@ -51,6 +51,32 @@ def cholesky_rows_nd(n: int, ndim: int) -> np.ndarray:
     return np.tile(tril[np.tril_indices(ndim)], (n, 1))
 
 
+def grid_mesh(side: int) -> Tuple[np.ndarray, np.ndarray]:
+    """A welded ``side x side`` triangulated plane: ``(vertices, faces)``.
+
+    The Mesh counterpart of :func:`random_positions`. Regular rather than random
+    because a mesh's two structural paths both need real structure to chew on —
+    a BSP cut needs vertices that separate spatially, and the decimator needs
+    clusters that actually merge — where a point cloud only needs coordinates.
+    Vertices are ``(side*side, 3)`` float32, faces ``(2*(side-1)**2, 3)`` uint32.
+    """
+    axis = np.arange(side, dtype=np.float32)
+    gx, gy = np.meshgrid(axis, axis)
+    vertices = np.stack(
+        [gx.ravel(), gy.ravel(), np.zeros(side * side, dtype=np.float32)], axis=1
+    ).astype(np.float32)
+    faces = [
+        tri
+        for i in range(side - 1)
+        for j in range(side - 1)
+        for tri in (
+            (i * side + j, i * side + j + 1, (i + 1) * side + j),
+            (i * side + j + 1, (i + 1) * side + j + 1, (i + 1) * side + j),
+        )
+    ]
+    return vertices, np.asarray(faces, dtype=np.uint32)
+
+
 def bad_ndim_positions(n: int, seed: int, ndim: int = 4) -> np.ndarray:
     """``(n, ndim)`` coordinates — one column too many for a 3-D scene (#1446)."""
     rng = np.random.default_rng(seed)
@@ -132,6 +158,24 @@ LABEL_KWARGS = [
     ("labels", {"labels": LABELS}, "has_labels"),
     ("image_labels", {"image_labels": IMAGE_LABELS}, "has_image_labels"),
 ]
+
+
+# --------------------------------------------------------------------------
+# Shared by the two halves of the #1489 colour-DTYPE suite (lod/ + partition/)
+# --------------------------------------------------------------------------
+
+
+def int64_rgb(n: int) -> np.ndarray:
+    """``(n, 3)`` red as **int64** — a colour dtype no writer can store (#1489).
+
+    Exactly what ``np.tile([255, 0, 0], (n, 1))`` gives you on Linux, which is
+    why this is the realistic spelling of the bug rather than a contrived dtype:
+    a COLOR array may be floating point, or integer uint8/uint16, and nothing
+    else. The encoder always refused it; until the rule moved into
+    ``validate_colors_for_writing`` it refused MID-write, one dataset after the
+    positions.
+    """
+    return np.tile([255, 0, 0], (n, 1)).astype(np.int64)
 
 
 def finalized_group_keys(compiler: Any, path: str) -> Set[str]:

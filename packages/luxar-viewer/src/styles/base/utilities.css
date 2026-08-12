@@ -513,8 +513,84 @@
   stroke-linejoin: round;
 }
 
+/* ========== Panel filter field (shared recipe) ==========
+   Live type-to-filter row for list-bearing panels (dataset browser anatomy
+   generalized): relative wrapper, 13px stroke search icon, input on the
+   neutral interactive fill with the theme-owned focus border. */
+.luxar-panel-filter {
+  position: relative;
+}
+
+.luxar-panel-filter__icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--luxar-text-muted);
+}
+
+.luxar-panel-filter__icon svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.luxar-panel-filter__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--luxar-spacing-2) var(--luxar-spacing-4) var(--luxar-spacing-2) 30px;
+  background: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-md);
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+  transition: var(--luxar-transition-fast);
+}
+
+.luxar-panel-filter__input::placeholder {
+  color: var(--luxar-text-muted);
+}
+
+.luxar-panel-filter__input:focus {
+  outline: none;
+  /* Same fallback rationale as the shared focus ring above: `borders.focus`
+     is optional on ThemeBorderColors, so a custom theme without it must not
+     lose the focus indication. */
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+  background: var(--luxar-interactive-hover);
+}
+
+/* ========== Panel entry motion (shared recipe) ==========
+   Transform-only scale-settle for every floating surface (UI Design Guide
+   §10.2). Deliberately NO opacity — animating opacity on a glass root breaks
+   the liquid-glass SVG filter (§5.1.3). CSS animations restart automatically
+   on display:none → block, so toggled panels re-pop on every open with zero
+   JS. Surfaces whose root already carries a positioning transform (the rail
+   flyout's translateY, the dimension sliders' translateX) must NOT use this
+   class — they get composed keyframes in their own stylesheets. */
+@keyframes luxar-panel-pop-kf {
+  from {
+    transform: scale(0.975);
+  }
+}
+
+.luxar-panel-pop {
+  animation: luxar-panel-pop-kf 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
 /* ========== Reduced Motion ========== */
 @media (prefers-reduced-motion: reduce) {
+  .luxar-panel-pop {
+    animation: none;
+  }
+
   .luxar-panel-close {
     transition: none;
   }

@@ -464,3 +464,20 @@
 [data-theme='liquid-glass'] .luxar-recording-indicator {
   background: rgba(0, 0, 0, 0.55);
 }
+
+/* ==========================================================================
+   CURSOR-ANCHORED CONTEXT MENUS
+   ========================================================================== */
+
+/* Same failure mode as the REC pill above, and for the same reason: a
+   transient cursor popover is deliberately NOT a .luxar-glass-surface (UI
+   Design Guide §7.8 — that is what makes the shared menu's `overflow-y: auto`
+   legal), so it gets none of the ::after dark tint and paints the theme's
+   translucent-WHITE --luxar-bg-secondary under white text. Over a bright
+   render that is white-on-white. Paint the tint the glass surfaces use.
+   Covers both the shared widget (its submenu carries the same base class)
+   and the older dimension-slider menu, which only had a light override. */
+[data-theme='liquid-glass'] .luxar-context-menu,
+[data-theme='liquid-glass'] .luxar-dimension-slider__context-menu {
+  background: rgba(0, 0, 0, 0.55);
+}

@@ -26,13 +26,14 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_render_attrs(attrs, POINTS_RESERVED_ATTRS)` — reserved writer-stamp collisions
    - `validate_node_path(path)` — every segment must be a valid node name; the bare root path `overlays` is reserved (screen-space overlay metadata lives under `overlays/<name>`) and rejected here
    - `validate_positions_for_writing(positions)` → `(n_points, n_dims)`
-   - `validate_points_channels(n_points, colors=…, radii=…, sharpness=…, scalars=…, labels=…)` — every per-point channel check, in one shared function for the same reason mesh has `validate_mesh_arrays`: a SECOND caller runs **exactly this** and nothing else. `compositing.validate_points_channels_before_split` runs it against the SOURCE point count before a `partition=` / `additive_lod=` / `substitutive_lod=` split, because the per-part slicer passes a wrong-length channel through whole and a part whose own count happens to match then ACCEPTS it (#1437) — where the plain-leaf path refuses the same input. Sharing the function is what keeps the pre-split gate from drifting from what the child write accepts. It covers, in this order:
-     - `validate_colors_for_writing(colors, n_points, channels=(3,4))` — if colors is an array (Points accept RGBA: alpha is per-point opacity)
+   - `validate_points_channels(n_points, colors=…, radii=…, sharpness=…, scalars=…, labels=…, image_labels=…)` — every per-point channel check, in one shared function for the same reason mesh has `validate_mesh_arrays`: a SECOND caller runs **exactly this** and nothing else. `compositing.validate_points_channels_before_split` runs it against the SOURCE point count before a `partition=` / `additive_lod=` / `substitutive_lod=` split, because the per-part slicer passes a wrong-length channel through whole and a part whose own count happens to match then ACCEPTS it (#1437) — where the plain-leaf path refuses the same input. `image_labels` (#1491) is the exception to that mechanism: it has no per-part slicer at all (it rides only the finest `substitutive_lod=` child), so its check closes a narrower, DIFFERENT stranding shape — see the function's own docstring. Sharing the function is what keeps the pre-split gate from drifting from what the child write accepts. It covers, in this order:
+     - `validate_colors_for_writing(colors, n_points, channels=(3,4))` — if colors is an array (Points accept RGBA: alpha is per-point opacity). Storage DTYPE included: a COLOR array must be floating point, or integer `uint8`/`uint16`; a wider/signed integer or a `complex` array is refused, because the encoder refuses those rather than converting them — and it refused from inside `write_colors`, one dataset after `positions` (#1489). The check runs last inside that validator so its precedence matches the encoder's (negativity first, empty arrays pass through)
      - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
      - `validate_radii_for_writing(radii, n_points)` — arrays AND broadcast scalars
      - `validate_sharpness_for_writing(sharpness, n_points)` — arrays AND broadcast scalars
      - `validate_scalars_preflight(scalars, n_points)` — length check
      - `validate_labels_for_writing(labels, n_points)` — sequence-of-str type + length
+     - `validate_image_labels_for_writing(image_labels, n_points)` — length (dense) / index bounds (sparse dict) + per-item type (#1491)
    - `prepare_transform_attrs(attrs, ctx.store)` — transform / nd_transform normalization
 
 2. **Setup**: `ctx.store.require_group(path)`
@@ -77,13 +78,14 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - Validate `line_type` in `("segments", "polyline", "loop", "indexed")`
    - Type-specific vertex count checks (segments: even, polyline: ≥2, loop: ≥3, indexed: requires `indices`)
    - `validate_line_indices(indices, n_vertices)` — the indexed edge list, shared with a second caller like the two functions below. Normalizes with `np.asarray` and accepts only a flat even-element `(2E,)` array or an `(E, 2)` pair array, then integer dtype and `[0, n_vertices)` bounds — all before `convert_to_indexed`, which is what makes the bounds check meaningful. Returns the normalized array. `compositing.validate_line_indices_before_split` runs it from each split branch of `add_lines`, ahead of that branch's topology builder: `lod.lines.identify_polylines` checks only dtype and bounds and then reshapes to pairs, so an `(E, 3)` array was reinterpreted as `3E/2` edges the author never wound and written (#1437). Topology before channels, mirroring mesh's faces-first order
-   - `validate_lines_channels(n_vertices, widths=…, colors=…, sharpness=…, scalars=…, labels=…)` — every per-vertex channel check in one shared function, the Points sibling (see its entry above for why it is shared). `widths` is required, so it is validated first and unconditionally; all four channels are per-VERTEX, not per-segment. It covers, in this order:
+   - `validate_lines_channels(n_vertices, widths=…, colors=…, sharpness=…, scalars=…, labels=…, image_labels=…)` — every per-vertex channel check in one shared function, the Points sibling (see its entry above for why it is shared). `widths` is required, so it is validated first and unconditionally; all five channels are per-VERTEX, not per-segment. It covers, in this order:
      - `validate_widths_for_writing(widths, n_vertices)` — arrays AND broadcast scalars
      - `validate_colors_for_writing(colors, n_vertices, channels=(3,4))` — if colors is an array
      - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
      - `validate_sharpness_for_writing(sharpness, n_vertices)` — arrays AND broadcast scalars
      - `validate_scalars_preflight(scalars, n_vertices)` — length check
      - `validate_labels_for_writing(labels, n_vertices)` — if `labels is not None` (labels are per-vertex)
+     - `validate_image_labels_for_writing(image_labels, n_vertices)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491)
    - `prepare_transform_attrs(attrs, ctx.store)`
 
 2. **Setup**: `ctx.store.require_group(path)` and print the named write header. For `segments` input with at least 16 vertices, a warn-only authoring lint fires when more than 90% of consecutive edges form a forward coordinate chain (immediate `(a,b),(b,a)` reversals are excluded). The warning names the logical node and fires once across partition leaves; it recommends shared-index `polyline`/`indexed` authoring for joint continuity.
@@ -129,6 +131,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_node_path(path)`
    - `validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)` → `(centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform)`
    - `validate_labels_for_writing(labels, n_splats)` — if `labels is not None`
+   - `validate_image_labels_for_writing(image_labels, n_splats)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491). GSplats has no `substitutive_lod=` wrapper of its own (a gsplat leaf IS the coarse-level representation other geometry types lift into), so this only needs hoisting into the flat gate, not a pre-split gate too.
 
 2. **Setup**: `ctx.store.require_group(path)`
 
@@ -182,15 +185,22 @@ for is an *additive* ladder inside a single leaf.
    - `validate_node_path(path)`
    - `validate_mesh_arrays(vertices, faces, …)` — every array check, in one shared
      function because `add_mesh(substitutive_lod=…)` runs **exactly this** before it
-     decimates anything and before `add_lod_group` creates the group. Without that, a
-     malformed channel was refused only from inside a child write, leaving a
-     `kind=lod` group with no children (or missing its finest one) where the
-     plain-leaf path writes nothing. It covers:
+     decimates anything and before `add_lod_group` creates the group. Without that,
+     `colors` / `normals` / `shading` (validated per level) were refused only from
+     inside whichever child's write hit them first — a `kind=lod` group left with
+     no children at all, or missing only its finest one, depending which level
+     failed. `labels` and `image_labels` (#1491) fail a DIFFERENT way: both are
+     forwarded ONLY to the finest child, written last, so a wrong one used to be
+     refused deep inside that child's OWN write — after its other arrays were
+     already on disk — leaving every level, finest included, fully written and
+     loadable, with only that level's label channel silently missing. Either shape
+     is a strand the plain-leaf path's "nothing written" does not have. It covers:
      - `validate_positions_for_writing(vertices, context="vertices")` → `(n_vertices, n_dims)`, then `validate_vertices_for_writing(vertices)` for the `MAX_MESH_VERTICES` (2^27) ceiling. Order matters: the cap reads `shape[0]`, meaningful only once the array is known 2D
      - `validate_faces_for_writing(faces, n_vertices)` — layout `(F,3)` or flat `(3F,)`, integer dtype, `min >= 0`, `max < n_vertices`, `F >= 1`. Runs BEFORE the `uint32` cast, which is what makes the bounds check meaningful
      - `normals` / `normal_dims` enforced as a **pair in both directions** — each is meaningless alone
      - `shading` must be `"smooth"` / `"flat"`; `double_sided` must be a bool
      - `validate_colors_for_writing(..., channels=(3,4))` or `validate_broadcast_color`, `validate_scalars_preflight`, `validate_labels_for_writing`
+     - `validate_image_labels_for_writing(image_labels, n_vertices)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491)
    - `prepare_transform_attrs(attrs, ctx.store)` — not idempotent, so exactly once
 
 2. **Normalize faces** to `(F, 3)` `uint32`. Safe only here: the validator has established an integer dtype and both bounds, and the vertex cap keeps every admitted index far below 2^32, so the cast is value-preserving.
@@ -227,7 +237,7 @@ Both are frozen dataclasses built by the orchestrator and passed in by value.
 
 ## Key Invariants
 
-1. **Fail-fast pre-write gate**: The input validators run BEFORE `require_group(path)`, so an invalid input cannot leave a partial node on disk — this deliberately includes `prepare_transform_attrs` for Points and Lines (it reads `store.attrs["scene_dimensions"]` but is still run in the gate so a bad transform can't leak a partial node). The store-dependent steps that remain post-write, and so can leak a partial node on failure, are `image_labels` writing, custom colormap-LUT resolution, and — for GSplats only — `transform` / `nd_transform` normalization (deferred inside `apply_gsplat_group_attrs`) (F7 residual — transactional/temp-dir writes are a separate project).
+1. **Fail-fast pre-write gate**: The input validators run BEFORE `require_group(path)`, so an invalid input cannot leave a partial node on disk — this deliberately includes `prepare_transform_attrs` for Points and Lines (it reads `store.attrs["scene_dimensions"]` but is still run in the gate so a bad transform can't leak a partial node). `image_labels`' LENGTH / sparse-index checks now run in this same gate too (`validate_image_labels_for_writing`, shared with `write_image_labels_csr` — see `labels/README.md`), closing the #1491 stranding class. The store-dependent steps that remain post-write, and so can leak a partial node on failure, are `image_labels`' blob normalization + CSR write (`normalize_image_label` needs PIL / file reads), custom colormap-LUT resolution, and — for GSplats only — `transform` / `nd_transform` normalization (deferred inside `apply_gsplat_group_attrs`) (F7 residual — transactional/temp-dir writes are a separate project).
 
 2. **Broadcast detection**: Scalars and tuples/lists are passed through to the encoder without expansion. Arrays with `shape[0] == 1` are treated as broadcasted and are NOT reordered by spatial ordering (the encoding layer handles the broadcast).
 

@@ -4,6 +4,41 @@ import { log, Modules } from '../utils/log';
 import { clamp } from '../utils/clamp';
 
 /**
+ * Snap an (already range-clamped) value to a discrete dimension's 0-anchored
+ * k·step grid, keeping the result inside [min, max]: an off-grid range end
+ * must not snap outside the range (10.5 on a step-1 grid rounds to 11 —
+ * past the data when max is 10.5). When the range spans no grid point at
+ * all, the nearest range end wins.
+ *
+ * The range comparisons carry the SAME step-relative epsilon as
+ * {@link SceneDimsManager.defaultPosition}, and for the same reason: an
+ * exactly on-grid end can round an ulp past itself (`Math.round(0.7/0.1)*0.1`
+ * = 0.7000000000000001, `Math.round(0.9/0.3)*0.3` = 0.8999999999999999), and
+ * a strict comparison would then step a whole cell inward — making the
+ * first/last frame of a fractional-step dimension unreachable. A sub-epsilon
+ * excursion keeps its exact grid value rather than being clamped, so the
+ * position stays byte-identical to the one defaultPosition computes for the
+ * same target (viewStatesEqual / S-cache keys compare exact floats).
+ *
+ * Exported so the animation prefetcher (DimensionAnimationManager.
+ * peekNextValue) can predict EXACTLY the value setDimensionValue will land
+ * on — the t+1 prefetch and the playhead must agree even when a loop wrap
+ * targets an off-grid range end.
+ */
+export function snapDiscreteValue(value: number, step: number, min: number, max: number): number {
+  const s = step > 0 ? step : 1.0;
+  const eps = s * 1e-9;
+  let snapped = Math.round(value / s) * s;
+  // Re-snap after stepping a cell inward: `k*s - s` can differ from
+  // `(k-1)*s` by an ulp, and every grid value must be reproducible.
+  if (snapped > max + eps) snapped = Math.round((snapped - s) / s) * s;
+  if (snapped < min - eps) snapped = Math.round((snapped + s) / s) * s;
+  // Only a genuine excursion is clamped (a range narrower than one cell).
+  if (snapped > max + eps || snapped < min - eps) return clamp(snapped, min, max);
+  return snapped;
+}
+
+/**
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
  *
  * This singleton is a critical architectural component that solves the fundamental problem
@@ -268,16 +303,17 @@ export class SceneDimsManager {
     }
 
     // Apply range constraints to prevent navigation beyond data bounds
+    let min = -Infinity;
+    let max = Infinity;
     if (this.dimensionRanges) {
-      const [min, max] = this.dimensionRanges[dimIndex];
+      [min, max] = this.dimensionRanges[dimIndex];
       value = clamp(value, min, max);
     }
 
     // Handle discrete dimensions (e.g., time frames, categorical data)
     const dimMeta = this.dims.metadata?.[dimIndex];
     if (dimMeta?.discrete) {
-      const step = dimMeta.step || 1.0;
-      value = Math.round(value / step) * step;
+      value = snapDiscreteValue(value, dimMeta.step || 1.0, min, max);
     }
 
     this.dims.currentStep[dimIndex] = value;

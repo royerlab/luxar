@@ -19,6 +19,7 @@
 @import './components/help-overlay.css';
 @import './components/dimension-sliders.css';
 @import './components/debug-console.css';
+@import './components/context-menu.css';
 @import './components/dataset-browser.css';
 @import './components/data-loading-monitor.css';
 @import './components/resolution-indicator.css';
