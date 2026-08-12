@@ -29,7 +29,7 @@ const TOOLTIPS: Record<string, string> = {
     'paint — the view sharpens progressively without blocking interaction. Timed separately ' +
     'from Total Update because it runs behind the scenes',
   'Depth Sort':
-    'Async depth sorting of transparent geometry (points, lines, gsplats) in the order-dependent ' +
+    'Async depth sorting of transparent geometry (points, lines, gsplats, mesh) in the order-dependent ' +
     'normal blending mode: each entry is one worker round-trip from dispatch until the selected ' +
     'ordering completes a draw. Frames in between render the previous order, so this never blocks ' +
     'interaction — the tags show the element count sorted and the ordering bytes: "up" after the rendered upload, ' +
@@ -185,7 +185,7 @@ function renderMetadata(metadata: TimingMetadata | undefined): string {
 
   if (metadata.elements !== undefined) {
     tags.push(
-      `<span class="luxar-timing-panel__tag" title="Elements processed by this step in the latest update — points, line segments or Gaussian splats (the depth sorter serves all three geometry types)">${formatCount(metadata.elements)} elements</span>`
+      `<span class="luxar-timing-panel__tag" title="Elements processed by this step in the latest update — points, line segments, Gaussian splats or mesh triangles (the depth sorter serves all four geometry types)">${formatCount(metadata.elements)} elements</span>`
     );
   }
 
