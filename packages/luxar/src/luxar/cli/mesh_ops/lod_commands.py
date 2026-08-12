@@ -10,18 +10,353 @@ group. Same asymmetry ``luxar mesh import`` already carries, for the same reason
 The ladder itself is built by ``add_mesh(substitutive_lod=…)``; this command is an
 option surface plus a read/write shell around it, so the CLI and the Python API
 cannot disagree about what a level is.
+
+The output scene contains ONLY the picked mesh's ladder: every other node in the
+source scene — other points/lines/gsplats/mesh nodes, other groups, user-authored
+overlays — is not carried across; nor is any placement/compositing an ancestor
+group genuinely changes (its own attrs are forwarded, but a group's are not — see
+``_lost_compositing_keys``, which warns only on a key that is not sitting at its
+neutral default, not the identity transform, and not already overridden by the
+picked mesh's own attrs — so neither a bare namespace group nor an existing
+ladder's own bookkeeping wrapper, nor this command's own re-stamped defaults,
+trigger a false alarm); nor are the picked mesh's own per-vertex ``labels`` /
+``image_labels`` (``MeshData`` has no field for them). All of this is reported
+with an explicit warning naming what is dropped, after every validator that can
+still abort the run and before anything is written.
 """
 
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import typer
 from arbol import aprint, asection
 
 from ...core.group.lod.group import MESH_SUBSTITUTIVE_METHODS
+
+
+def _ancestor_group_paths(node_path: str) -> List[str]:
+    """Full paths of every group ``node_path`` is nested under, root-first.
+
+    Empty for a top-level node. A group's ``COMPOSITING_ATTRS`` (``transform``,
+    ``opacity``, ``blending_mode``, …) are inherited by every descendant,
+    exactly the way the ``kind=lod`` wrapper this command itself writes passes
+    them down to its children (see the note below on ``forwarded``). `run_lod`
+    only reads the picked mesh LEAF's own ``data.metadata`` — an ancestor's
+    attrs never reach it. Whether that is a REAL loss is a much narrower
+    question than "did the ancestor set the key" — see `_lost_compositing_keys`,
+    which does the actual filtering.
+    """
+    ancestors = []
+    prefix = ""
+    for part in node_path.split("/")[:-1]:
+        prefix = f"{prefix}/{part}" if prefix else part
+        ancestors.append(prefix)
+    return ancestors
+
+
+_NEUTRAL_COMPOSITING_DEFAULTS = {
+    # Measured on a bare `add_mesh("surf", V, F)`: the writer stamps these
+    # FIVE keys onto every leaf regardless of whether the caller set them, at
+    # values that compose as a no-op (multiplicatively for the first four,
+    # additively for `offset`). `run_lod` forwards them (they are in
+    # `KNOWN_RENDER_ATTRS`) and the adder splits `COMPOSITING_ATTRS` onto the
+    # `kind=lod` wrapper it builds — so every ladder THIS COMMAND writes has a
+    # wrapper carrying all five at these exact values, and a key sitting at
+    # its neutral default changes nothing regardless of which layer sets it.
+    "opacity": 1.0,
+    "gamma": 1.0,
+    "intensity": 1.0,
+    "absorption": 1.0,
+    "offset": 0.0,
+}
+# `blending_mode` is NOT auto-stamped (a bare leaf has none), so presence
+# alone means the ancestor authored one — but the viewer's attrs composer is
+# nearest-setter-wins, so it only matters when the picked LEAF does not ALSO
+# set the same key (its own value wins regardless of the ancestor's).
+# `layer` / `visible` are likewise never auto-stamped, and carry no such
+# override rule, so presence alone is always a real loss for them.
+#
+# `join` is COMPOSITING_ATTRS too, but is handled separately in
+# `_lost_compositing_keys` rather than through this leaf-overrides rule:
+# `add_mesh` REFUSES `join` outright (`reject_lines_only_join` in
+# `core/group/adders/mesh.py` — it is lines-only), so a mesh LEAF can never
+# carry it, and the "skip when the leaf also sets it" test could never fire.
+# An ancestor's `join` cannot affect a mesh ladder either way, so it is
+# always skipped, not just when the leaf happens to override it.
+_LEAF_OVERRIDES_ANCESTOR = ("blending_mode",)
+
+
+def _is_identity_transform(raw_transform: Any) -> bool:
+    """Whether a group's RAW stored ``transform`` attr is the identity.
+
+    ``source.get_node_metadata`` — unlike ``get_mesh`` — hands back the
+    column-major 16-list exactly as stored (see its own docstring); reshaping
+    that list directly, row-major, would silently swap the translation into
+    the wrong slots (the CLAUDE.md transpose gotcha). `read_transform_from_zarr`
+    is the same conversion `get_mesh` itself applies, so this compares like
+    with like against :func:`luxar.core.transforms.identity`.
+    """
+    from ...core.transforms import identity, read_transform_from_zarr
+
+    matrix = read_transform_from_zarr(raw_transform)
+    return bool((matrix == identity()).all())
+
+
+def _is_identity_nd_transform(nd_transform: Optional[Dict[str, Any]]) -> bool:
+    """Whether a group's ``nd_transform`` dict changes nothing.
+
+    Per-dimension: a ``{"scale": 1.0, "offset": 0.0}`` (or absent) affine entry,
+    or a ``permutation`` that maps every index to itself, is a no-op.
+    """
+    if not nd_transform:
+        return True
+    for entry in nd_transform.values():
+        permutation = entry.get("permutation")
+        if permutation is not None:
+            if list(permutation) != list(range(len(permutation))):
+                return False
+        elif entry.get("scale", 1.0) != 1.0 or entry.get("offset", 0.0) != 0.0:
+            return False
+    return True
+
+
+def _is_lost_compositing_key(
+    key: str, value: Any, leaf_metadata: Dict[str, Any]
+) -> bool:
+    """Whether ONE ancestor ``COMPOSITING_ATTRS`` key is a REAL loss.
+
+    Key-presence alone over-reports: see the module-level notes above each
+    exception this makes. Split out of `_lost_compositing_keys` itself so
+    that function's own branching (now just a comprehension) stays well
+    under the C901 ratchet.
+    """
+    if key in _NEUTRAL_COMPOSITING_DEFAULTS:
+        return bool(value != _NEUTRAL_COMPOSITING_DEFAULTS[key])
+    if key == "transform":
+        return not _is_identity_transform(value)
+    if key == "nd_transform":
+        return not _is_identity_nd_transform(value)
+    if key == "join":
+        # A mesh leaf can never carry `join` (see the module-level note on
+        # `_LEAF_OVERRIDES_ANCESTOR`), so an ancestor's `join` is never
+        # something a mesh ladder loses — this path is a mesh command, not
+        # a lines one.
+        return False
+    if key in _LEAF_OVERRIDES_ANCESTOR:
+        return key not in leaf_metadata
+    # `layer` / `visible` (and anything genuinely non-neutral above):
+    # presence is always a real loss.
+    return True
+
+
+def _lost_compositing_keys(
+    ancestor_attrs: Dict[str, Any], leaf_metadata: Dict[str, Any]
+) -> List[str]:
+    """Which of an ancestor's ``COMPOSITING_ATTRS`` are a REAL loss.
+
+    Iterates the intersection in sorted order so the result (and the message
+    built from it) is deterministic.
+    """
+    from ...core.group.compositing import COMPOSITING_ATTRS
+
+    return [
+        key
+        for key in sorted(COMPOSITING_ATTRS & ancestor_attrs.keys())
+        if _is_lost_compositing_key(key, ancestor_attrs[key], leaf_metadata)
+    ]
+
+
+def _ancestor_compositing_loss(
+    source: Any, node_path: str, leaf_metadata: Dict[str, Any]
+) -> List[Tuple[str, List[str]]]:
+    """``(group_path, lost_keys)`` for each ancestor that actually loses something.
+
+    A bare namespace group, and the ``kind=lod`` / ``kind=partition`` wrapper
+    groups this command's own supported ``--node surf/child_0`` /
+    ``--node surf/part_0`` re-laddering workflows nest a mesh under, carry
+    ONLY structural stamps (``kind``, ``child_index``, ``content_hash``,
+    ``selector``, ``default_level``, ``max_elements``, ``position_bounds``,
+    ``display_type``, …) — none of them a member of ``COMPOSITING_ATTRS``. But
+    key PRESENCE is not enough either: see `_lost_compositing_keys`, which
+    this delegates to for the real filter.
+    """
+    losses = []
+    for group_path in _ancestor_group_paths(node_path):
+        attrs = source.get_node_metadata(group_path)
+        lost_keys = _lost_compositing_keys(attrs, leaf_metadata)
+        if lost_keys:
+            losses.append((group_path, lost_keys))
+    return losses
+
+
+def _dropped_sibling_nodes(source: Any, node_path: str) -> List[Tuple[str, str]]:
+    """Every OTHER node in ``source`` the rewrite will not carry.
+
+    The output is a brand-new scene containing only the ladder built from
+    ``node_path`` — every other points/lines/gsplats/mesh node, and every other
+    group, is left out (the caller is responsible for warning about it; this
+    just enumerates it). Ancestor groups of ``node_path`` are excluded HERE —
+    see `_ancestor_group_paths`, which the caller uses instead to warn about
+    them with a more specific message; they are not omitted because they are
+    harmless. The reserved ``overlays`` container is also excluded: it is not
+    a user node (`Scene` refuses to let anyone create a top-level node by that
+    name), and the overlay entries actually living under it don't match any
+    ``list_*`` filter in the first place — `_dropped_overlay_nodes` reports
+    those, the real content, separately.
+    """
+    ancestors = set(_ancestor_group_paths(node_path))
+    dropped = [(n, "points") for n in sorted(source.list_points())]
+    dropped += [(n, "lines") for n in sorted(source.list_lines())]
+    dropped += [(n, "gsplats") for n in sorted(source.list_gsplats())]
+    dropped += [(n, "mesh") for n in sorted(source.list_meshes()) if n != node_path]
+    dropped += [
+        (n, "group")
+        for n in sorted(source.list_groups())
+        if n not in ancestors and n != "overlays"
+    ]
+    return dropped
+
+
+_OVERLAY_TYPES = ("overlay_text", "overlay_html", "overlay_image")
+"""The three user-authored overlay types: `Scene.add_text` / `.add_html` /
+`.add_image` (`core/scene/overlays/adders.py`). Anything else under
+`overlays/` is not a real overlay this command needs to report."""
+
+
+def _is_auto_injected_hover_overlay(
+    source: Any, overlay_path: str, mesh_is_labelled: bool
+) -> bool:
+    """Whether ``overlay_path`` is the hover overlay finalize auto-injects.
+
+    THREE conditions, all required:
+
+    1. Gated on the picked mesh actually HAVING ``labels``/``image_labels``:
+       that is the only reason finalize ever injects a hover overlay
+       (``auto_inject_hover_overlay`` returns immediately otherwise), and it
+       is the per-vertex-label warning's presence — not this overlay's own
+       name or attrs — that justifies skipping it here. Without this gate, an
+       UNLABELLED scene with a user overlay named ``__hover_text`` AND
+       ``hover=True`` (a public kwarg of ``Scene.add_text``) satisfies both
+       of the checks below yet is genuine content nothing else warns about.
+    2. Name matches ``__hover_text`` / ``__hover_image``.
+    3. Its own ``hover`` attr is actually ``True`` (`next_overlay_name` does
+       not reserve either name, so a same-named, non-hover user overlay must
+       still be reported).
+    """
+    if not mesh_is_labelled:
+        return False
+    if overlay_path.rsplit("/", 1)[-1] not in ("__hover_text", "__hover_image"):
+        return False
+    return bool(source.get_node_metadata(overlay_path).get("hover"))
+
+
+def _dropped_overlay_nodes(source: Any, mesh_is_labelled: bool) -> List[str]:
+    """Full paths of the genuine user-authored overlays under ``overlays/``.
+
+    Overlay nodes match none of the five ``list_*`` filters, so
+    `_dropped_sibling_nodes` never sees them — only ``LuxarScene.nodes`` types
+    them. Excludes the auto-injected hover overlay (see
+    `_is_auto_injected_hover_overlay`): it exists purely because the picked
+    node has ``labels``/``image_labels``, and the per-vertex-label warning
+    already covers that loss — naming the hover overlay too would just be the
+    same drop said twice.
+    """
+    return sorted(
+        n["name"]
+        for n in source.nodes
+        if n["name"].startswith("overlays/")
+        and n["type"] in _OVERLAY_TYPES
+        and not _is_auto_injected_hover_overlay(source, n["name"], mesh_is_labelled)
+    )
+
+
+def _format_dropped_node_lines(
+    dropped: List[Tuple[str, str]], leaf_name: str
+) -> List[str]:
+    """One warning line per dropped node — collapsed where that would flood.
+
+    A large spatial partition (`--node surf/part_0` against a scene with
+    hundreds of `surf/part_N` siblings — a workflow `_pick_mesh` itself
+    forces once there is more than one mesh) would otherwise print one
+    `aprint` per sibling. Grouped by (parent path, kind); a group with MORE
+    THAN THREE members collapses to one line stating the full count (never a
+    silent truncation) — e.g. "4 other points nodes in 'stuff'" — and a
+    smaller group keeps its individual named lines, as before.
+
+    Deliberately NOT worded "parts": that is Luxar's term of art for
+    `kind=partition` children specifically, and this groups by parent PATH
+    alone — any sibling nodes sharing an ordinary namespace group are not
+    "parts" of anything.
+    """
+    groups: Dict[Tuple[str, str], List[str]] = {}
+    for name, kind in dropped:
+        parent = name.rsplit("/", 1)[0] if "/" in name else ""
+        groups.setdefault((parent, kind), []).append(name)
+
+    lines = []
+    for (parent, kind), names in sorted(groups.items()):
+        if len(names) > 3:
+            where = f" in {parent!r}" if parent else ""
+            lines.append(
+                f"⚠️  Not carried into the new scene: {len(names)} other "
+                f"{kind} nodes{where} — only {leaf_name}'s ladder is written."
+            )
+        else:
+            for name in names:
+                lines.append(
+                    f"⚠️  Not carried into the new scene: {name!r} ({kind}) — "
+                    f"only {leaf_name}'s ladder is written."
+                )
+    return lines
+
+
+def _report_drops(source: Any, node_path: str, leaf_name: str, data: Any) -> None:
+    """Print every warning for what this rewrite will not carry across.
+
+    Pulled out of `run_lod` so that function's own branching stays under the
+    C901 ratchet — this is pure reporting (four independent drop categories,
+    each already reduced to a plain list/tuple by its own helper), not
+    control flow the caller needs inline.
+    """
+    dropped_siblings = _dropped_sibling_nodes(source, node_path)
+    for line in _format_dropped_node_lines(dropped_siblings, leaf_name):
+        aprint(line)
+    for group_path, lost_keys in _ancestor_compositing_loss(
+        source, node_path, data.metadata
+    ):
+        aprint(
+            f"⚠️  {node_path!r} is nested under group {group_path!r}, which "
+            f"sets {', '.join(lost_keys)}; that inherited placement/"
+            "compositing is NOT forwarded and does not travel into the "
+            "new scene."
+        )
+    dropped_label_channels = [
+        channel
+        for channel, present in (
+            ("labels", data.metadata.get("has_labels")),
+            ("image_labels", data.metadata.get("has_image_labels")),
+        )
+        if present
+    ]
+    # Threaded into the overlay lookup because the hover-overlay skip is
+    # justified ONLY by this: finalize auto-injects a hover overlay purely
+    # because the picked node has labels, so unlabelled it never exists and
+    # the "the label warning already covers it" reasoning does not apply.
+    mesh_is_labelled = bool(dropped_label_channels)
+    for overlay_path in _dropped_overlay_nodes(source, mesh_is_labelled):
+        aprint(
+            f"⚠️  Not carried into the new scene: {overlay_path!r} (overlay) "
+            f"— only {leaf_name}'s ladder is written."
+        )
+    if dropped_label_channels:
+        aprint(
+            f"⚠️  {node_path!r} has per-vertex "
+            f"{' and '.join(dropped_label_channels)}; `add_mesh` has no field "
+            "for them, so they will NOT be carried into the new scene."
+        )
 
 
 def _pick_mesh(scene: Any, input_path: Path, node_name: Optional[str]) -> str:
@@ -125,6 +460,7 @@ def run_lod(
                 "rewritten into a new scene without inventing axes for it."
             )
         node_path = _pick_mesh(source, input_path, node_name)
+        leaf_name = node_path.rsplit("/", 1)[-1]
         data = source.get_mesh(node_path)
         aprint(
             f"Source {node_path!r}: {data.vertices.shape[0]:,} vertices, "
@@ -153,7 +489,9 @@ def run_lod(
         # (`labels` / `image_labels`): `MeshData` has no field for them, so the
         # reader never surfaces them and this round trip cannot carry what it
         # cannot read. A labelled source therefore comes back unlabelled rather
-        # than half-labelled, which is at least uniform across every level.
+        # than half-labelled, which is at least uniform across every level. The
+        # warning printed below (from `data.metadata["has_labels"]` /
+        # `["has_image_labels"]`) is the only place this is reported now.
         #
         # An allow-list rather than "everything outside MESH_RESERVED_ATTRS":
         # that set is the keys the writer refuses FROM A CALLER, and the store
@@ -221,8 +559,19 @@ def run_lod(
                 )
             forwarded["colormap"] = lut
 
-        # Everything above this line reads or validates; the destination is
-        # destroyed only once the write is certain to be attempted.
+        # Everything above this line reads or validates; everything below is
+        # either the drop report or destroys/writes the destination. The
+        # report sits exactly HERE, in both directions: after
+        # `resolve_substitutive_axis_mesh`, `validate_scalar_data_range` and
+        # the missing-LUT check above — each can still raise and abort the
+        # command, and printing "will not be carried" before an abort that
+        # means nothing was carried (or written) at all was actively
+        # misleading — and before the `rmtree`/write below, which is the
+        # last point where anything is still reversible.
+        _report_drops(source, node_path, leaf_name, data)
+
+        # The destination is destroyed only once the write is certain to be
+        # attempted — nothing below this point can still abort.
         if output_path.exists():
             shutil.rmtree(output_path) if output_path.is_dir() else output_path.unlink()
 
@@ -244,7 +593,7 @@ def run_lod(
                 dimensions=source.dimensions, viewer_config=viewer_config
             )
             scene.add_mesh(
-                node_path.rsplit("/", 1)[-1],
+                leaf_name,
                 data.vertices,
                 data.faces,
                 normals=data.normals,
@@ -318,6 +667,14 @@ def lod_command(
     Levels that cannot reduce the surface are dropped, so a small mesh may come
     back with fewer than `--levels` — or, if it cannot be reduced at all, as a
     plain leaf.
+
+    The output scene contains ONLY the picked mesh's ladder: every other node in
+    the input scene (other points/lines/gsplats/mesh nodes, other groups,
+    user-authored overlays), any placement/compositing an ancestor group actually
+    set (transform/opacity/blending_mode/…; a bare namespace group or an existing
+    ladder's own wrapper sets none and is not reported), and the picked mesh's
+    own per-vertex `labels`/`image_labels` are not carried across. Each is named
+    in a warning before anything is written.
 
     \b
     Examples:

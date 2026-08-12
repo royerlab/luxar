@@ -203,3 +203,27 @@ on every coarse level, and every level stamps the source field's `scalar_data_ra
 the colormap maps the same value to the same colour at every level rather than only at the
 finest. Per-vertex **labels and image labels are not carried** — the reader does not
 surface them, so the round trip cannot see them.
+
+The output is a brand-new scene containing ONLY the picked mesh's ladder. **Every other
+node in the source scene is left out** — other points/lines/gsplats/mesh nodes, other
+groups, and any user-authored overlays (`add_text`/`add_html`/`add_image`) — since
+there is nowhere else for them to go. Also left behind: any placement/compositing
+(`transform`, `opacity`, `blending_mode`, …) an ancestor group genuinely CHANGES — only
+the mesh's OWN attrs are forwarded. "Genuinely changes" is narrower than "is set at
+all": a key sitting at its neutral value (`opacity`/`gamma`/`intensity`/`absorption` at
+`1.0`, `offset` at `0.0`) composes as a no-op regardless of which layer sets it, an
+identity `transform`/`nd_transform` moves nothing, `blending_mode` is
+nearest-setter-wins so it only matters when the picked mesh does not already set the
+same key itself, and `join` is skipped outright (it is lines-only — `add_mesh` refuses
+it, so a mesh leaf can never carry it and an ancestor's `join` can never affect a mesh
+ladder) — so re-laddering a level of an existing ladder (`--node surf/child_0`) or a
+partition tile (`--node surf/part_0`) reports nothing here, even though the wrapper
+groups those workflows nest under do carry a few of these keys at their neutral values
+(this command's own ladders re-forward the picked mesh's stamped defaults onto the
+wrapper it writes). After every check that can still abort the command and before
+anything is written, it warns about each node that will not be carried across
+(collapsed into one line per parent + kind when more than three share both, worded by
+node kind rather than as "parts" — that term is reserved for actual `kind=partition`
+children — so a large group of siblings does not flood the console), each ancestor
+group that does lose something (naming exactly which keys), and any per-vertex
+labels/image labels on the picked mesh, by name.
