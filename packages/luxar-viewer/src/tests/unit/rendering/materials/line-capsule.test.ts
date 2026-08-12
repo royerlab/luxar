@@ -64,8 +64,12 @@ describe('capsule constants', () => {
       // independently per leg — speckles), and a non-negative gradient
       // packet contributes no deficit (hard cut via the zero blend).
       expect(src).toContain('clamp(0.5 - sideA, 0.0, 1.0)');
-      // Packet validity = a positive packed partner length.
-      expect(src).toContain('if (vCutA2.w > 0.0) {');
+      // Packet validity = a positive packed partner length (the joint
+      // state rides packed half-pair varyings; normals stay full
+      // precision in vCutN per #1502 — see the shader declaration note).
+      expect(src).toContain('if (pkA.y > 0.0) {');
+      expect(src).toContain('unpackHalf2x16(vPack.x)');
+      expect(src).toContain('flat in vec4 vCutN;');
     }
     for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
       // Stencil reach covers the kept half-disc PLUS the partner's taper

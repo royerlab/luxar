@@ -99,6 +99,22 @@ export const CAPSULE_JOINT_DEFICIT_GATE = 0.02;
 export const CAPSULE_JOINT_PACKET_MIN_RADIUS_PX = 4.0;
 
 /**
+ * Hairline cut gate (px): below this apparent radius the whole joint
+ * apparatus — partner fetch, bisector construction, fragment partition —
+ * is skipped and interior ends keep plain round caps. The artifact this
+ * machinery prevents (a double-bright additive overlap at the joint) is
+ * SUB-PIXEL for lines this thin (at or below the AA radius floor, where
+ * widths are already fattened and energy-compensated), and the gate is
+ * self-correcting: zoom in and the radius crosses it, re-enabling the
+ * exact partition. Slice-clipped ends (joint code -1) are NOT gated —
+ * their perpendicular butt is a correctness rule (nothing may draw past
+ * the slice plane), not a visual nicety. Measured on the 10M hairline
+ * scenario the full apparatus cost ~20% of the capsule's GPU time
+ * (see perf-results/1352-campaign, recovery-round decomposition).
+ */
+export const CAPSULE_JOINT_CUT_MIN_RADIUS_PX = 1.5;
+
+/**
  * Sharpness-knob → profile exponent map: `n = 2^(3 − 4s)`. In `(1 − p²)^n`
  * space SMALLER exponents are boxier, so the map runs opposite to the
  * gaussian-family β: s = 0 → n = 8 (spiky), s = 0.5 → n = 2 (the default
