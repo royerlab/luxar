@@ -75,7 +75,10 @@ export class NumberController extends Controller<number> {
         this.triggerFinishChange();
       });
 
-      // Mousewheel fine-tuning: scroll = 1/10th step, Shift+scroll = 10x step
+      // Mousewheel fine-tuning: scroll = 1/10th step. Modifiers follow the
+      // app-wide slider convention (dimension sliders, layers range
+      // sliders): Shift = finer (÷10), Ctrl = coarse (×10), Ctrl+Shift =
+      // finest (÷100) — relative to the 1/10th-step base.
       this.eventManager.add(
         this.slider,
         'wheel',
@@ -83,9 +86,17 @@ export class NumberController extends Controller<number> {
           const wheelEvent = e as WheelEvent;
           wheelEvent.preventDefault();
           if (!this.slider || !this.stepValue) return;
-          const multiplier = wheelEvent.shiftKey ? 10 : 0.1;
+          let multiplier = 0.1;
+          if (wheelEvent.shiftKey && wheelEvent.ctrlKey) multiplier = 0.001;
+          else if (wheelEvent.shiftKey) multiplier = 0.01;
+          else if (wheelEvent.ctrlKey) multiplier = 1;
           const delta = this.stepValue * multiplier;
-          const direction = wheelEvent.deltaY < 0 ? 1 : -1;
+          // Shift+wheel on a standard mouse arrives as a HORIZONTAL scroll
+          // (the browser swaps the axis, leaving deltaY = 0) — read
+          // whichever axis carries the motion.
+          const wheelDelta = wheelEvent.deltaY !== 0 ? wheelEvent.deltaY : wheelEvent.deltaX;
+          if (wheelDelta === 0) return;
+          const direction = wheelDelta < 0 ? 1 : -1;
           const value = this.constrainValue(this.getValue() + direction * delta);
           this.object[this.property] = value;
           this.updateDisplay();
@@ -116,7 +127,7 @@ export class NumberController extends Controller<number> {
       });
 
       // Cursor hint and tooltip
-      this.slider.title = 'Scroll: fine-tune · Shift+Scroll: coarse · Double-click: reset';
+      this.slider.title = 'Scroll: fine-tune · ⇧: finer · ⌃: coarse · Double-click: reset';
 
       // Auto-blur after interaction
       applyAutoBlur(this.slider, this.eventManager);

@@ -909,6 +909,42 @@ describe('DimensionAnimationManager', () => {
       expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1);
     });
 
+    it('loop wrap to an off-grid range min: prefetch and playhead land on the SAME value', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 1], step: 1, display: true },
+          // Off-grid ends on a step-1 grid: the loop wrap targets min 0.5
+          // raw, which setDimensionValue snaps to 1 — peek must predict 1.
+          { name: 't', unit: '', range: [0.5, 10.5], step: 1, display: false, discrete: true },
+        ],
+      };
+      const dims = new SceneDimsManager();
+      dims.initFromScene(scene);
+      const controller = new AnimationController(
+        {} as ControlsManager,
+        {} as PostProcessingManager
+      );
+      const captured: { fn: (() => void) | null } = { fn: null };
+      vi.spyOn(controller, 'startAnimation').mockImplementation(() => {});
+      vi.spyOn(controller, 'addPerFrameCallback').mockImplementation(
+        (_id: string, callback: () => void) => {
+          captured.fn = callback;
+        }
+      );
+      const localManager = new DimensionAnimationManager(dims, controller);
+      dims.setDimensionValue(3, 10); // last on-grid point before max 10.5
+      localManager.play(3, { targetFPS: 10, direction: 'forward', loopMode: 'loop' });
+      // 10 + 1 = 11 ≥ max 10.5 → loop wraps to raw min 0.5 → snapped to 1.
+      expect(localManager.peekNextValue(3)).toBe(1);
+      mockTime += 1000;
+      captured.fn?.();
+      expect(dims.getDims()!.currentStep[3]).toBe(1);
+      localManager.dispose();
+    });
+
     it('quantization rounds to the NEAREST grid cell (1.7 → 2 cells, not floored to 1)', () => {
       // Distinguishes round() from floor(): every sub-cell case is identical
       // under both, so without this pin a round→floor drift is undetectable.

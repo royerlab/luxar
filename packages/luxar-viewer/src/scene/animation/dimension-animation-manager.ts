@@ -31,6 +31,7 @@
 import * as THREE from 'three';
 import type { AnimationController } from './animation-controller';
 import type { SceneDimsManager } from '../scene-dims-manager';
+import { snapDiscreteValue } from '../scene-dims-manager';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
@@ -317,7 +318,15 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       targetFPS: state.targetFPS,
       continuousTraverseMs: config.dimensionAnimation.timing.continuousTraverseSeconds * 1000,
     });
-    return result.shouldStop ? null : result.value;
+    if (result.shouldStop) return null;
+    // Predict the EXACT landing: setDimensionValue snaps a discrete dim to
+    // its 0-anchored grid inside the range. Mid-range ticks are already
+    // on-grid (the step is quantized), but a loop wrap targets the raw
+    // range end — when that end is off-grid (min 0.5 on a step-1 grid) the
+    // unsnapped value would warm a t+1 slice the playhead never visits.
+    return metadata?.discrete
+      ? snapDiscreteValue(result.value, metadata.step || 1.0, min, max)
+      : result.value;
   }
 
   /** Indices of every dimension currently playing. */
