@@ -58,6 +58,59 @@ describe('NumberController', () => {
       controller = new NumberController(object, 'value', { min: 0, max: 100, step: 1 });
     });
 
+    it('wheel steps 1/10th step; modifiers follow the slider convention (⇧ finer, ⌃ coarse)', () => {
+      const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
+      const wheel = (init: WheelEventInit) =>
+        slider.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init }));
+
+      // Base: scroll up = +0.1×step (step 1 → +0.1).
+      wheel({ deltaY: -120 });
+      expect(object.value).toBeCloseTo(50.1, 9);
+      // Shift = finer (÷10 of base).
+      wheel({ deltaY: -120, shiftKey: true });
+      expect(object.value).toBeCloseTo(50.11, 9);
+      // Ctrl = coarse (×10 of base = one full step).
+      wheel({ deltaY: 120, ctrlKey: true });
+      expect(object.value).toBeCloseTo(49.11, 9);
+      // Ctrl+Shift = finest (÷100 of base).
+      wheel({ deltaY: -120, ctrlKey: true, shiftKey: true });
+      expect(object.value).toBeCloseTo(49.111, 9);
+    });
+
+    it('wheel reads the horizontal axis when Shift swaps it; zero delta is a no-op', () => {
+      const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
+
+      // Shift+wheel on a standard mouse arrives as deltaX with deltaY = 0.
+      slider.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 0,
+          deltaX: 120,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      expect(object.value).toBeCloseTo(49.99, 9); // scrolled "down" → −0.01
+
+      slider.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 0, deltaX: 0, bubbles: true, cancelable: true })
+      );
+      expect(object.value).toBeCloseTo(49.99, 9); // unchanged
+    });
+
+    it('wheel does not reach the window (the FOV handler must not see the coarse tier)', () => {
+      const slider = controller.domElement.querySelector('.luxar-gui__slider') as HTMLInputElement;
+      const windowSpy = vi.fn();
+      window.addEventListener('wheel', windowSpy);
+      slider.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true })
+      );
+      window.removeEventListener('wheel', windowSpy);
+      expect(windowSpy).not.toHaveBeenCalled();
+      // The step still applied — the guard only stops the event, not the tier.
+      expect(object.value).toBeCloseTo(51, 9);
+    });
+
     it('should create both slider and input', () => {
       const slider = controller.domElement.querySelector('.luxar-gui__slider');
       const input = controller.domElement.querySelector('.luxar-gui__input--number');

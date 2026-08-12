@@ -313,8 +313,12 @@ export class RangeSlider {
     const curMin = parseFloat(this.lowInput.min);
     const curMax = parseFloat(this.lowInput.max);
     const step = computeWheelStep(curMin, curMax, e.shiftKey);
-    // Scroll up (deltaY < 0) → increase, scroll down → decrease
-    const direction = e.deltaY < 0 ? 1 : -1;
+    // Scroll up → increase, scroll down → decrease. Shift+wheel on a
+    // standard mouse arrives as a HORIZONTAL scroll (the browser swaps the
+    // axis, leaving deltaY = 0), so read whichever axis carries the motion.
+    const wheelDelta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    if (wheelDelta === 0) return;
+    const direction = wheelDelta < 0 ? 1 : -1;
     const delta = step * direction;
 
     let newMin = curMin;

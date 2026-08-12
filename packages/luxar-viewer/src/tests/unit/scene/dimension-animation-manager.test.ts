@@ -783,4 +783,187 @@ describe('DimensionAnimationManager', () => {
       expect(state?.isPlaying).toBe(true);
     });
   });
+
+  describe('step size override', () => {
+    let mockTime = 0;
+
+    beforeEach(() => {
+      mockTime = 1000;
+      vi.spyOn(performance, 'now').mockImplementation(() => mockTime);
+    });
+
+    /**
+     * Self-contained manager over a CONTINUOUS dimension (the shared fixture
+     * has only discrete non-displayed dims) — the continuousIncrement pattern
+     * plus an optional step override.
+     */
+    const continuousDelta = (targetFPS: number, stepSize: number | null): number => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'w', unit: '', range: [0, 100], display: false, discrete: false },
+        ],
+      };
+      const dims = new SceneDimsManager();
+      dims.initFromScene(scene);
+      const controller = new AnimationController(
+        {} as ControlsManager,
+        {} as PostProcessingManager
+      );
+      const captured: { fn: (() => void) | null } = { fn: null };
+      vi.spyOn(controller, 'startAnimation').mockImplementation(() => {});
+      vi.spyOn(controller, 'addPerFrameCallback').mockImplementation(
+        (_id: string, callback: () => void) => {
+          captured.fn = callback;
+        }
+      );
+      const localManager = new DimensionAnimationManager(dims, controller);
+      if (stepSize !== null) localManager.setStepSize(3, stepSize);
+      const start = dims.getDims()!.currentStep[3];
+      localManager.play(3, { targetFPS, direction: 'forward' });
+      mockTime += 1000;
+      captured.fn?.();
+      const delta = dims.getDims()!.currentStep[3] - start;
+      localManager.dispose();
+      return delta;
+    };
+
+    it('setStepSize lazily creates state; getStepSize round-trips; stepChange fires', () => {
+      const events: Array<{ dimIndex: number; stepSize: number | null }> = [];
+      manager.addEventListener('stepChange', (e) => {
+        events.push({ dimIndex: e.dimIndex, stepSize: e.stepSize });
+      });
+      expect(manager.getState(3)).toBeUndefined();
+      manager.setStepSize(3, 2.5);
+      expect(manager.getState(3)).toBeDefined(); // lazy-created
+      expect(manager.getState(3)?.isPlaying).toBe(false);
+      expect(manager.getStepSize(3)).toBe(2.5);
+      expect(events).toEqual([{ dimIndex: 3, stepSize: 2.5 }]);
+    });
+
+    it('rejects NaN / 0 / negative and keeps the previous value', () => {
+      manager.setStepSize(3, 2);
+      for (const bad of [NaN, 0, -1, Infinity]) {
+        manager.setStepSize(3, bad);
+        expect(manager.getStepSize(3)).toBe(2);
+      }
+    });
+
+    it('clamps an override wider than the range to the range width', () => {
+      manager.play(3); // caches dimensionRanges (time: [0, 10])
+      manager.pause(3);
+      manager.setStepSize(3, 500);
+      expect(manager.getStepSize(3)).toBe(10);
+    });
+
+    it('continuous dim with an override advances by EXACTLY the override, at any fps', () => {
+      // Auto: increment ∝ 1/fps. Override: the quantum is fps-independent
+      // (fps only changes the tick RATE) — the decoupling the feature is for.
+      expect(continuousDelta(10, 2)).toBeCloseTo(2, 9);
+      expect(continuousDelta(20, 2)).toBeCloseTo(2, 9);
+      // And Auto still scales with 1/fps (regression guard for the default).
+      expect(continuousDelta(20, null)).toBeCloseTo(continuousDelta(10, null) / 2, 6);
+    });
+
+    it('discrete dim: the override wins over the authored step', () => {
+      // dim 3 (time) is discrete with authored step 1 over [0, 10].
+      manager.setStepSize(3, 2);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const start = sceneDimsManager.getDims()!.currentStep[3];
+      mockTime += 1000;
+      perFrameCallback?.();
+      // setDimensionValue snaps to the authored grid, so +2 stays on-grid.
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 2);
+    });
+
+    it('setStepSize(null) restores the Auto behavior', () => {
+      manager.setStepSize(3, 3);
+      manager.setStepSize(3, null);
+      expect(manager.getStepSize(3)).toBeNull();
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const start = sceneDimsManager.getDims()!.currentStep[3];
+      mockTime += 1000;
+      perFrameCallback?.();
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1); // authored step
+    });
+
+    it('peekNextValue agrees with the override (playhead/prefetch parity)', () => {
+      manager.setStepSize(3, 2);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const current = sceneDimsManager.getDims()!.currentStep[3];
+      expect(manager.peekNextValue(3)).toBe(current + 2);
+    });
+
+    it('a sub-cell override on a discrete dim still advances one grid cell per tick (#1520)', () => {
+      // ×0.25 of the authored step 1: passed through verbatim,
+      // setDimensionValue's snap would round every tick straight back to the
+      // start and playback would freeze with the play button still lit.
+      manager.setStepSize(3, 0.25);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const start = sceneDimsManager.getDims()!.currentStep[3];
+      mockTime += 1000;
+      perFrameCallback?.();
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1);
+    });
+
+    it('loop wrap to an off-grid range min: prefetch and playhead land on the SAME value', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 1], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 1], step: 1, display: true },
+          // Off-grid ends on a step-1 grid: the loop wrap targets min 0.5
+          // raw, which setDimensionValue snaps to 1 — peek must predict 1.
+          { name: 't', unit: '', range: [0.5, 10.5], step: 1, display: false, discrete: true },
+        ],
+      };
+      const dims = new SceneDimsManager();
+      dims.initFromScene(scene);
+      const controller = new AnimationController(
+        {} as ControlsManager,
+        {} as PostProcessingManager
+      );
+      const captured: { fn: (() => void) | null } = { fn: null };
+      vi.spyOn(controller, 'startAnimation').mockImplementation(() => {});
+      vi.spyOn(controller, 'addPerFrameCallback').mockImplementation(
+        (_id: string, callback: () => void) => {
+          captured.fn = callback;
+        }
+      );
+      const localManager = new DimensionAnimationManager(dims, controller);
+      dims.setDimensionValue(3, 10); // last on-grid point before max 10.5
+      localManager.play(3, { targetFPS: 10, direction: 'forward', loopMode: 'loop' });
+      // 10 + 1 = 11 ≥ max 10.5 → loop wraps to raw min 0.5 → snapped to 1.
+      expect(localManager.peekNextValue(3)).toBe(1);
+      mockTime += 1000;
+      captured.fn?.();
+      expect(dims.getDims()!.currentStep[3]).toBe(1);
+      localManager.dispose();
+    });
+
+    it('quantization rounds to the NEAREST grid cell (1.7 → 2 cells, not floored to 1)', () => {
+      // Distinguishes round() from floor(): every sub-cell case is identical
+      // under both, so without this pin a round→floor drift is undetectable.
+      manager.setStepSize(3, 1.7);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const start = sceneDimsManager.getDims()!.currentStep[3];
+      expect(manager.peekNextValue(3)).toBe(start + 2);
+    });
+
+    it('a non-grid-multiple override lands playhead and prefetch on the SAME value (#1520)', () => {
+      manager.setStepSize(3, 0.7);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const start = sceneDimsManager.getDims()!.currentStep[3];
+      // Peek BEFORE the tick must predict the quantized landing (+1), not
+      // the raw +0.7 the snap would then move off of.
+      expect(manager.peekNextValue(3)).toBe(start + 1);
+      mockTime += 1000;
+      perFrameCallback?.();
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1);
+    });
+  });
 });

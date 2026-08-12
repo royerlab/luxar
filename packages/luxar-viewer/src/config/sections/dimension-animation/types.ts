@@ -7,11 +7,18 @@ export interface DimensionAnimationConfig {
     targetFPS: number;
     loop: 'once' | 'loop' | 'bounce';
     direction: 'forward' | 'backward';
+    /** Per-tick step override; null = Auto (fps-derived / authored step). */
+    stepSize: number | null;
   };
   presets: {
     fps: number[];
     customMin: number;
     customMax: number;
+    /**
+     * Step-section choices in the per-dimension context menu, as multipliers
+     * of the dimension's BASE step (authored step, else 1% of the range).
+     */
+    stepMultipliers: number[];
   };
   timing: {
     minFrameTimeMs: number;

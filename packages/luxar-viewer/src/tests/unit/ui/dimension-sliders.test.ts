@@ -402,3 +402,329 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
     expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
   });
 });
+
+describe('DimensionSliders — wheel stepping + Step context-menu section', () => {
+  const createDims = (): SimpleDims => ({
+    ndim: 4,
+    displayed: [0, 1, 2],
+    currentStep: [0, 0, 0, 5.5],
+    metadata: [
+      { name: 'X', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      { name: 'Y', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      { name: 'Z', unit: 'μm', scale: 1.0, discrete: false, step: 0.1 },
+      // Continuous W with an authored step — the wheel's base quantum.
+      { name: 'W', unit: '', scale: 1.0, discrete: false, step: 0.5, range: [0, 10] },
+    ],
+  });
+
+  function buildSliders() {
+    const container = document.getElementById('test-container')!;
+    return new DimensionSliders({
+      container,
+      dims: createDims(),
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 10],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'W'],
+      dimensionUnits: ['μm', 'μm', 'μm', ''],
+    });
+  }
+
+  /** Minimal DimensionAnimationManager stub for the context menu. */
+  function makeAnimationManagerStub() {
+    return {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getState: vi.fn(() => undefined),
+      isAnimating: vi.fn(() => false),
+      getStepSize: vi.fn((): number | null => null),
+      setStepSize: vi.fn(),
+      setTargetFPS: vi.fn(),
+      setLoopMode: vi.fn(),
+      play: vi.fn(),
+      pause: vi.fn(),
+      toggle: vi.fn(),
+    };
+  }
+
+  it('wheel steps by the BASE step; Shift = ÷10; page scroll prevented', () => {
+    const sliders = buildSliders();
+    const track = document.querySelector('.luxar-dimension-slider__track')!;
+
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    const up = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true });
+    track.dispatchEvent(up);
+    // Base = authored step 0.5 (NOT the animation override — decoupled).
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 6);
+    expect(up.defaultPrevented).toBe(true);
+
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    const fineDown = new WheelEvent('wheel', {
+      deltaY: 100,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    track.dispatchEvent(fineDown);
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 5.45);
+    sliders.dispose();
+  });
+
+  it('wheel modifier tiers: Ctrl = coarse ×10, Ctrl+Shift = extra-fine ÷100', () => {
+    const sliders = buildSliders();
+    const track = document.querySelector('.luxar-dimension-slider__track')!;
+
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: 100, ctrlKey: true, bubbles: true, cancelable: true })
+    );
+    // Coarse down = authored step 0.5 × 10 → 5.5 − 5.
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 0.5);
+
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: -100,
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    // Extra-fine up = authored step 0.5 ÷ 100 → 5.5 + 0.005.
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, expect.closeTo(5.505, 10));
+    sliders.dispose();
+  });
+
+  it('Shift+wheel arriving on the horizontal axis (browser axis swap) still steps', () => {
+    const sliders = buildSliders();
+    const track = document.querySelector('.luxar-dimension-slider__track')!;
+
+    // A standard mouse under Shift reports deltaX with deltaY = 0.
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: 0,
+        deltaX: 100,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 5.45);
+
+    // A zero-delta wheel event is a no-op, not a step.
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(new WheelEvent('wheel', { deltaY: 0, bubbles: true, cancelable: true }));
+    expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
+    sliders.dispose();
+  });
+
+  it('wheel does not reach the window (stopPropagation guards the FOV handler)', () => {
+    const sliders = buildSliders();
+    const track = document.querySelector('.luxar-dimension-slider__track')!;
+    const windowSpy = vi.fn();
+    window.addEventListener('wheel', windowSpy);
+    track.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(windowSpy).not.toHaveBeenCalled();
+    window.removeEventListener('wheel', windowSpy);
+    sliders.dispose();
+  });
+
+  it('post-dispose: wheel no longer routes to setDimensionValue', () => {
+    const sliders = buildSliders();
+    const track = document.querySelector('.luxar-dimension-slider__track')!;
+    sliders.dispose();
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
+  });
+
+  it('context menu gains a Step section: Auto selected, presets call setStepSize', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+
+    const playBtn = document.querySelector('.luxar-dimension-slider__play-btn')!;
+    playBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const headers = Array.from(
+      document.querySelectorAll('.luxar-dimension-slider__context-header')
+    ).map((h) => h.textContent);
+    expect(headers).toContain('Step');
+    // The E2E-pinned headers keep their exact text.
+    expect(headers).toContain('Speed');
+    expect(headers).toContain('Loop Mode');
+
+    const items = Array.from(document.querySelectorAll('.luxar-dimension-slider__context-item'));
+    const auto = items.find((el) => el.textContent?.includes('Auto'))!;
+    expect(auto.classList.contains('luxar-dimension-slider__context-item--selected')).toBe(true);
+
+    // ×2 of base 0.5 → 1; the computed value lives in the chip tooltip.
+    const x2 = items.find((el) => el.textContent?.includes('×2'))!;
+    expect((x2 as HTMLElement).title).toContain('= 1');
+    (x2 as HTMLElement).click();
+    expect(stub.setStepSize).toHaveBeenCalledWith(3, 1);
+    sliders.dispose();
+  });
+
+  it('speed chips: sub-1 fps reads as a fraction; aria-checked tracks the radio state', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const speedGroup = document.querySelector('[role="radiogroup"][aria-label="Speed"]')!;
+    const chips = Array.from(speedGroup.querySelectorAll('button'));
+    const half = chips.find((c) => c.textContent === '1/2')!;
+    expect(half).toBeTruthy();
+    expect(half.title).toBe('1 frame every 2 s');
+
+    // Default 10 FPS is the checked radio; 1/2 is not.
+    const ten = chips.find((c) => c.textContent === '10')!;
+    expect(ten.getAttribute('aria-checked')).toBe('true');
+    expect(half.getAttribute('aria-checked')).toBe('false');
+
+    // Picking the fraction chip routes the REAL 0.5 to the manager.
+    half.click();
+    expect(stub.setTargetFPS).toHaveBeenCalledWith(3, 0.5);
+    sliders.dispose();
+  });
+
+  it('custom step field: blur without editing never re-commits the 3-digit display form', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    // A full-precision override that matches no preset → seeds the custom field.
+    stub.getStepSize = vi.fn(() => 0.123456);
+    sliders.setAnimationManager(stub as never);
+
+    const playBtn = document.querySelector('.luxar-dimension-slider__play-btn')!;
+    playBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const input = document.querySelector(
+      'input[aria-label="Custom step size"]'
+    ) as HTMLInputElement;
+    expect(input.value).toBe('0.123'); // seeded with the truncated display form
+
+    // Focus-then-leave with no edit must NOT rewrite 0.123456 → 0.123.
+    input.dispatchEvent(new Event('blur'));
+    expect(stub.setStepSize).not.toHaveBeenCalled();
+
+    // An actual edit still commits on blur.
+    input.value = '0.2';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('blur'));
+    expect(stub.setStepSize).toHaveBeenCalledWith(3, 0.2);
+    sliders.dispose();
+  });
+
+  it('a discrete dim offers only whole-cell step presets (#1520)', () => {
+    const container = document.getElementById('test-container')!;
+    const dims = createDims();
+    // Make W discrete: the grid cannot honour a sub-cell quantum, so the
+    // ×0.1 / ×0.25 / ×0.5 presets must not be offered.
+    dims.metadata![3] = {
+      name: 'W',
+      unit: '',
+      scale: 1.0,
+      discrete: true,
+      step: 1,
+      range: [0, 10],
+    };
+    const sliders = new DimensionSliders({
+      container,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 10],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'W'],
+      dimensionUnits: ['μm', 'μm', 'μm', ''],
+    });
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+
+    const playBtn = document.querySelector('.luxar-dimension-slider__play-btn')!;
+    playBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const labels = Array.from(
+      document.querySelectorAll('.luxar-dimension-slider__context-item')
+    ).map((el) => el.textContent ?? '');
+    expect(labels.some((t) => t.includes('×1'))).toBe(true);
+    expect(labels.some((t) => t.includes('×0.1'))).toBe(false);
+    expect(labels.some((t) => t.includes('×0.25'))).toBe(false);
+    expect(labels.some((t) => t.includes('×0.5'))).toBe(false);
+    sliders.dispose();
+  });
+
+  it('a discrete dim with NO authored step keeps sub-1 multipliers whose value reaches a cell', () => {
+    const container = document.getElementById('test-container')!;
+    const dims = createDims();
+    // No authored step → the menu's base falls back to 1% of the range
+    // (10), while the snap grid defaults to 1. ×0.1 of 10 = 1 = one full
+    // cell — a perfectly honorable quantum that must NOT be filtered.
+    dims.metadata![3] = { name: 'W', unit: '', scale: 1.0, discrete: true, range: [0, 1000] };
+    const sliders = new DimensionSliders({
+      container,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 1000],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'W'],
+      dimensionUnits: ['μm', 'μm', 'μm', ''],
+    });
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+
+    const playBtn = document.querySelector('.luxar-dimension-slider__play-btn')!;
+    playBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const labels = Array.from(
+      document.querySelectorAll('.luxar-dimension-slider__context-item')
+    ).map((el) => el.textContent ?? '');
+    expect(labels.some((t) => t.includes('×0.1'))).toBe(true); // 10 × 0.1 = 1 cell
+    expect(labels.some((t) => t.includes('×0.5'))).toBe(true); // 10 × 0.5 = 5 cells
+    sliders.dispose();
+  });
+
+  it('custom step input commits on Enter; invalid values do not', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const input = document.querySelector<HTMLInputElement>(
+      '.luxar-dimension-slider__context-step-input'
+    )!;
+    expect(input.type).toBe('number'); // NEVER type=range (E2E slider indexing)
+    // And NEVER inside the chips radiogroup — a radio group may only own
+    // radios, and this is a spinbutton.
+    expect(input.closest('[role="radiogroup"]')).toBeNull();
+    expect(input.closest('.luxar-dimension-slider__context-section')).not.toBeNull();
+
+    // Real typing fires an `input` event — the commit is gated on it (an
+    // un-edited field must never re-commit its truncated display seed).
+    input.value = '-3';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(stub.setStepSize).not.toHaveBeenCalled();
+
+    input.value = '0.75';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(stub.setStepSize).toHaveBeenCalledWith(3, 0.75);
+    sliders.dispose();
+  });
+});

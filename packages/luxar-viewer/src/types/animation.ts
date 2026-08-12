@@ -35,6 +35,14 @@ export interface DimensionAnimationState {
   lastFPSMeasurementTime: number;
   /** Measured actual FPS (may differ from target) */
   actualFPS: number;
+  /**
+   * Explicit per-tick step size in dimension units; null = Auto (continuous
+   * dims derive the increment from fps + the range-traversal time, discrete
+   * dims use their authored step). Also consumed by the [ / ] keyboard
+   * navigation. Deliberately NOT consumed by the slider wheel/drag — hand
+   * stepping stays on the dimension's own base step.
+   */
+  stepSize: number | null;
 }
 
 /**
@@ -51,6 +59,8 @@ export interface DimensionAnimationEvents {
   speedChange: { dimIndex: number; fps: number };
   /** Emitted when loop mode changes */
   loopModeChange: { dimIndex: number; loopMode: LoopMode };
+  /** Emitted when the per-dimension step override changes (null = Auto) */
+  stepChange: { dimIndex: number; stepSize: number | null };
   /** Emitted when direction changes (bounce mode) */
   directionChange: { dimIndex: number; direction: AnimationDirection };
   /** Emitted when measured FPS differs significantly from target */
