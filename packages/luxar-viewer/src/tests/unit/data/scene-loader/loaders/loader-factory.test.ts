@@ -21,6 +21,8 @@ const gsplatsCtorArgs: unknown[][] = [];
 const progressiveCtorArgs: unknown[][] = [];
 const pointsProgressiveCtorArgs: unknown[][] = [];
 const linesProgressiveCtorArgs: unknown[][] = [];
+const meshCtorArgs: unknown[][] = [];
+const meshProgressiveCtorArgs: unknown[][] = [];
 
 vi.mock('../../../../../data/points/points-spatial-index-loader', () => ({
   PointsSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
@@ -52,6 +54,16 @@ vi.mock('../../../../../data/gsplats/gsplats-progressive-loader', () => ({
     progressiveCtorArgs.push(args);
   }),
 }));
+vi.mock('../../../../../data/mesh/mesh-whole-node-loader', () => ({
+  MeshWholeNodeLoader: vi.fn(function (...args: unknown[]) {
+    meshCtorArgs.push(args);
+  }),
+}));
+vi.mock('../../../../../data/mesh/mesh-progressive-loader', () => ({
+  MeshProgressiveLoader: vi.fn(function (...args: unknown[]) {
+    meshProgressiveCtorArgs.push(args);
+  }),
+}));
 
 // Stub zarrita: every resolve() returns another stub with its own
 // resolve() so chained calls (parent.resolve('lod_0')) still work.
@@ -66,7 +78,14 @@ function makeStubLoc(path: string): {
     resolve: (s: string) => makeStubLoc(path === '' ? s : `${path}/${s}`),
   };
 }
-const zarrOpenMock = vi.fn(async (_loc: unknown, _opts: unknown) => ({ attrs: { foo: 'bar' } }));
+// Return type widened to arbitrary attrs: the mesh cases below re-resolve it
+// with per-case sub-LOD attrs (label flags, energy stamps), which the narrow
+// inferred `{ foo: string }` would reject.
+const zarrOpenMock = vi.fn(
+  async (_loc: unknown, _opts: unknown): Promise<{ attrs: Record<string, unknown> }> => ({
+    attrs: { foo: 'bar' },
+  })
+);
 vi.mock('zarrita', () => ({
   registry: {},
   root: (_store: unknown) => makeStubLoc(''),
@@ -83,6 +102,7 @@ import {
   createProgressiveGSplatsLoader,
   createProgressivePointsLoader,
   createProgressiveLinesLoader,
+  createProgressiveMeshLoader,
   type LoaderFactoryDeps,
 } from '../../../../../data/scene-loader/loaders/loader-factory';
 import type { SceneNode } from '../../../../../data/data-loader-types';
@@ -114,6 +134,8 @@ beforeEach(() => {
   progressiveCtorArgs.length = 0;
   pointsProgressiveCtorArgs.length = 0;
   linesProgressiveCtorArgs.length = 0;
+  meshCtorArgs.length = 0;
+  meshProgressiveCtorArgs.length = 0;
   zarrOpenMock.mockClear();
 });
 
@@ -640,5 +662,92 @@ describe('progressive loader energy tables (quality stamps)', () => {
     expect((pointsCtorArgs[0][0] as { path: string }).path).toBe('cloud/child_3/additive_0');
     // The progressive wrapper still gets the node's own (slash-prefixed) path.
     expect(pointsProgressiveCtorArgs[0][2]).toBe('/cloud/child_3');
+  });
+});
+
+describe('createProgressiveMeshLoader', () => {
+  /** A laddered mesh node, with whatever parent attrs the case needs. */
+  function meshLadderNode(attrs: Record<string, unknown>): SceneNode {
+    return {
+      path: '/surf',
+      type: 'mesh',
+      attrs: { type: 'mesh', n_additive_sublods: 4, ...attrs },
+      hasSpatialIndex: false,
+      children: [],
+    };
+  }
+
+  it('builds one whole-node loader per additive subgroup', async () => {
+    await createProgressiveMeshLoader(meshLadderNode({}), 3, {}, makeDeps());
+
+    expect(meshCtorArgs).toHaveLength(3);
+    expect(meshCtorArgs.map((args) => args[0])).toEqual([
+      '/surf/additive_0',
+      '/surf/additive_1',
+      '/surf/additive_2',
+    ]);
+    expect(meshProgressiveCtorArgs).toHaveLength(1);
+    expect(meshProgressiveCtorArgs[0][1]).toBe(3);
+    expect(meshProgressiveCtorArgs[0][2]).toBe('/surf');
+  });
+
+  it('clears the label flags on every sub-LOD', async () => {
+    // A laddered mesh has no labels — a face-partition duplicates boundary
+    // vertices, so the union index space a parent CSR would need does not
+    // exist. Cleared here as well as refused by the writer, so a hand-written
+    // store cannot make a level publish ranges the concat would discard.
+    zarrOpenMock.mockResolvedValue({ attrs: { has_labels: true, has_image_labels: true } });
+    await createProgressiveMeshLoader(meshLadderNode({}), 2, {}, makeDeps());
+
+    for (const args of meshCtorArgs) {
+      const attrs = args[1] as { has_labels?: boolean; has_image_labels?: boolean };
+      expect(attrs.has_labels).toBe(false);
+      expect(attrs.has_image_labels).toBe(false);
+    }
+  });
+
+  it('passes NO energy table — a reveal prefix carries no energy stamps', async () => {
+    // Third of the three latches (the writer refuses the keys, this factory
+    // never reads them, the loader's getter returns null). If the ladder ever
+    // grew an energy-table argument, `energyCompensation` would brighten a
+    // partial surface by 1/e(k).
+    zarrOpenMock.mockResolvedValue({
+      attrs: { lod_stats: { energy_fraction_cum: 0.25 } },
+    });
+    await createProgressiveMeshLoader(meshLadderNode({}), 2, {}, makeDeps());
+
+    // ctor is (lodLoaders, nLods, path) — exactly three arguments, so there is
+    // no slot an energy table could arrive in.
+    expect(meshProgressiveCtorArgs[0]).toHaveLength(3);
+  });
+
+  it('refuses a ladder whose LEVELS SUM past the vertex cap', async () => {
+    // Each level passes its own preflight; the concatenated buffer is what the
+    // pick vote key strides over, so the cap binds on the total (spec §6.5).
+    await expect(
+      createProgressiveMeshLoader(meshLadderNode({ n_vertices: 200_000_000 }), 4, {}, makeDeps())
+    ).rejects.toThrow(/vertices across its 4 levels/);
+    // Refused before a single subgroup is opened — the refusal must cost no fetch.
+    expect(zarrOpenMock).not.toHaveBeenCalled();
+    expect(meshCtorArgs).toHaveLength(0);
+  });
+
+  it('SENSITIVITY: a ladder just under the cap is built, not refused', async () => {
+    // Without this the test above would pass against a guard that refused every
+    // ladder, or one whose comparison was inverted.
+    await createProgressiveMeshLoader(
+      meshLadderNode({ n_vertices: 134_217_728 }),
+      2,
+      {},
+      makeDeps()
+    );
+    expect(meshProgressiveCtorArgs).toHaveLength(1);
+  });
+
+  it('does not second-guess a store that omits the parent vertex total', async () => {
+    // Absence is not evidence of a violation: the per-level preflights still
+    // run, so the cap binds per level exactly as it did before this guard.
+    await createProgressiveMeshLoader(meshLadderNode({ n_vertices: undefined }), 2, {}, makeDeps());
+    expect(meshProgressiveCtorArgs).toHaveLength(1);
   });
 });

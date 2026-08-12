@@ -567,3 +567,104 @@ describe('the `normal` / `aScalar` attributes — replaced, never added or remov
     expect(scalarAttr.version, 'scalar buffer re-uploaded on a slice move').toBe(scalarVersion);
   });
 });
+
+describe('capacity sizing — a reveal ladder must not orphan GPU buffers (#1521)', () => {
+  /** One commit of a growing ladder, against a node whose TOTAL is fixed. */
+  function commit(
+    geometry: THREE.BufferGeometry,
+    vertexCount: number,
+    faceCount: number,
+    totals: { vertices: number; faces: number }
+  ): void {
+    const indices = new Uint32Array(faceCount * 3);
+    for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+    updateMeshGeometry(geometry, {
+      position: new Float32Array(vertexCount * 3),
+      positionChanged: true,
+      indices,
+      colors: new Uint8Array(vertexCount * 3),
+      colorComponents: 3,
+      normals: new Float32Array(vertexCount * 3),
+      scalars: new Float32Array(vertexCount),
+      vertexCount,
+      faceCount,
+      vertexCountGrows: true,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+  }
+
+  function ids(geometry: THREE.BufferGeometry): Record<string, unknown> {
+    return {
+      index: geometry.index,
+      position: geometry.getAttribute('position'),
+      color: geometry.getAttribute('color'),
+      normal: geometry.getAttribute('normal'),
+      aScalar: geometry.getAttribute('aScalar'),
+    };
+  }
+
+  it('keeps every attribute object identical as the revealed prefix grows', () => {
+    // The defect: three frees a replaced attribute's GL buffer from NOWHERE — not
+    // on replacement, and not on dispose (only what is still bound is freed). So a
+    // rebind per level orphans the previous level's buffers for the session.
+    // Identity is therefore the thing to assert: an object that never changes is a
+    // buffer that is never orphaned.
+    const totals = { vertices: 140_000, faces: 70_000 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      normals: new Float32Array(3),
+      scalars: new Float32Array(1),
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    commit(geometry, 40_000, 20_000, totals); // level 0 — installs the real buffers
+    const afterFirst = ids(geometry);
+    commit(geometry, 90_000, 45_000, totals); // level 1
+    commit(geometry, 140_000, 70_000, totals); // level 2 — the full ladder
+
+    for (const [name, attr] of Object.entries(afterFirst)) {
+      expect(geometry.getAttribute(name) ?? geometry.index).toBe(attr);
+    }
+  });
+
+  it('sizes those buffers to the ladder TOTAL, not the first committed prefix', () => {
+    // The identity assertion above passes trivially if the buffers are too small
+    // and the later levels are silently truncated. This is its control.
+    const totals = { vertices: 140_000, faces: 70_000 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      normals: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+    commit(geometry, 40_000, 20_000, totals);
+
+    expect(geometry.getAttribute('position').count).toBe(140_000);
+    expect(geometry.index!.count).toBe(70_000 * 3);
+    // And the dtype is chosen from the TOTAL, so it cannot flip Uint16 → Uint32 on
+    // an already-drawn geometry when the reveal crosses 65,536 vertices — the
+    // attribute-identity change the WebGPU backend does not tolerate.
+    expect(geometry.index!.array).toBeInstanceOf(Uint32Array);
+  });
+
+  it('leaves an UNLADDERED mesh byte-identical: no capacity, no copy', () => {
+    // The no-op guarantee. An ordinary mesh passes no capacity, so every path must
+    // behave exactly as before — including the zero-copy colour wrap, where the
+    // bound buffer IS the caller's array.
+    const colors = new Float32Array(6);
+    const attr = createMeshColorAttribute(colors, 3, 2);
+    expect(attr.array).toBe(colors);
+  });
+});
