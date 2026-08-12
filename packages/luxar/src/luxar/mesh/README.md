@@ -63,9 +63,13 @@ which keeps the splitter ignorant of the attribute set.
 
 - **The `Mesh` node class, the writer, and the reader** — `luxar.core.mesh`,
   `luxar.io._compiler.geometry_writers.mesh`, `luxar.io.reader`.
-- **An *additive* (prefix) LOD ladder.** That flavour cannot apply to a surface at all —
-  a prefix of an index buffer is a surface with holes in it, not a coarser one — so it is
-  refused on principle. *Substitutive* levels, which were missing only a producer, now
+- **An additive (prefix) LOD ladder over an *arbitrary* order.** A prefix of an
+  arbitrarily ordered index buffer is a surface with holes in it, not a coarser one — so
+  that flavour stays refused. A spatially coherent *reveal* (concentric shells, innermost
+  first) is accepted instead — `add_mesh(additive_lod=...)` takes `method="radial"` and
+  nothing else — and the ladder's *ordering* lives in `core/group/lod/mesh.py`; the
+  re-indexing it uses is `split.py`, above.
+  *Substitutive* levels, which were missing only a producer, now
   work: `decimate.py` above is that producer (vertex clustering; a Garland-Heckbert
   `qem` tier is the one this is shaped to admit next, issue #1348), and
   `add_mesh(substitutive_lod=…)` writes the resulting `kind=lod` group. Partitioning
