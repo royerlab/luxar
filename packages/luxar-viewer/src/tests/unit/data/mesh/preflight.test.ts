@@ -139,13 +139,28 @@ describe('parseDtype', () => {
 describe('preflightMesh — acceptance', () => {
   it('admits a plain tetrahedron and reports what it established', async () => {
     const result = await preflightMesh(PATH, tetAttrs(), tetHandles());
+    // accountedBytes is checked in the dedicated `accountedBytes` describe block
+    // below against the independently-computed arithmetic — it is a production
+    // value now, not a byproduct, so it earns its own precise assertions rather
+    // than a placeholder here.
+    //
+    // `toEqual` (not `toMatchObject`): a relaxed `toMatchObject` here lets an
+    // unconsumed extra field on `MeshPreflightResult` pass unnoticed, AND under
+    // `toMatchObject` a MISSING key would satisfy an expected `undefined` just
+    // as well as a present one — the exact-keys check below closes that second
+    // gap explicitly.
     expect(result).toEqual({
       nVertices: 4,
       nFaces: 4,
       ndim: 3,
       colorComponents: undefined,
       normalDims: undefined,
+      accountedBytes: result.accountedBytes,
     });
+    expect(Object.keys(result).sort()).toEqual(
+      ['accountedBytes', 'colorComponents', 'nFaces', 'ndim', 'normalDims', 'nVertices'].sort()
+    );
+    expect(Number.isFinite(result.accountedBytes)).toBe(true);
   });
 
   it('admits every optional array, and reads the colour channel count', async () => {
@@ -751,5 +766,116 @@ describe('preflightMesh — (d) normal_dims well-formedness', () => {
       tetHandles({ normals: fakeArray([4, 3], '<f4') })
     );
     expect(result.normalDims).toEqual([2, 0, 1]);
+  });
+});
+
+/**
+ * `accountedBytes` is now a production value — the mesh reveal ladder
+ * (`loader-factory.ts`'s `createProgressiveMeshLoader`) sums it across every
+ * level to charge the whole ladder against ONE budget. So it needs its own
+ * pinning, independent of the acceptance/rejection tests above: not just that
+ * SOME number comes back, but that the number IS the arithmetic the ceiling
+ * comparison uses (stored bytes + decoded bytes, summed over every array,
+ * plus the single largest chunk buffer) — not a lookalike that happens to be
+ * in the right ballpark.
+ */
+describe('preflightMesh — accountedBytes', () => {
+  it('equals the independently-computed stored+decoded+max-chunk arithmetic', async () => {
+    // Case 1: a plain tetrahedron, unencoded float32/uint32, chunks == shape.
+    // vertices: stored 12*4=48, decoded 12*4=48 -> 96; chunk 12*4=48.
+    // faces:    stored 12*4=48, decoded 12*4=48 -> 96; chunk 12*4=48.
+    // accountedBytes-sum = 192, max chunk = 48 -> total 240.
+    const plain = await preflightMesh(PATH, tetAttrs(), {
+      vertices: fakeArray([4, 3], '<f4', [4, 3]),
+      faces: fakeArray([4, 3], '<u4', [4, 3]),
+    });
+    expect(plain.accountedBytes).toBe(240);
+
+    // Case 2: same tetrahedron, plus every optional array.
+    // normals (float32, [4,3]): stored 48, decoded 48 -> 96; chunk 48.
+    // colors (uint8, RGBA [4,4]): stored 16, decoded 64 -> 80; chunk 16.
+    // scalars (uint8, [4]): stored 4, decoded 16 -> 20; chunk 4.
+    // accountedBytes-sum = 192 (vertices+faces) + 96 + 80 + 20 = 388.
+    // max chunk over all five arrays = 48 -> total 436.
+    const withOptional = await preflightMesh(
+      PATH,
+      tetAttrs({
+        has_normals: true,
+        normal_dims: [0, 1, 2],
+        has_colors: true,
+        has_scalars: true,
+        shading: 'smooth',
+      }),
+      {
+        vertices: fakeArray([4, 3], '<f4', [4, 3]),
+        faces: fakeArray([4, 3], '<u4', [4, 3]),
+        normals: fakeArray([4, 3], '<f4', [4, 3]),
+        colors: fakeArray([4, 4], '|u1', [4, 4]),
+        scalars: fakeArray([4], '|u1', [4]),
+      }
+    );
+    expect(withOptional.accountedBytes).toBe(436);
+
+    // Case 3: a chunk declared LARGER than the array's own shape (the zarr v2
+    // exploit the budget's chunk term exists to catch, per preflight.ts's own
+    // comment) dominates the max-chunk term rather than being folded away.
+    // faces chunk 1000*3 elements * 4 bytes = 12000, which becomes the max.
+    // accountedBytes-sum is unchanged at 192 -> total 192 + 12000 = 12192.
+    const bigChunk = await preflightMesh(PATH, tetAttrs(), {
+      vertices: fakeArray([4, 3], '<f4', [4, 3]),
+      faces: fakeArray([4, 3], '<u4', [1000, 3]),
+    });
+    expect(bigChunk.accountedBytes).toBe(12192);
+
+    // Case 4: the oversized chunk on an OPTIONAL array (colors), not
+    // vertices/faces. A guard that folded the chunk term into the loop only
+    // for the two required arrays — rather than every array the loop visits —
+    // would miss this: it still passes cases 1-3 (neither exercises an
+    // optional array's chunk at all).
+    // vertices: stored 48, decoded 48 -> 96; chunk 48.
+    // faces:    stored 48, decoded 48 -> 96; chunk 48.
+    // colors (uint8 RGB [4,3]): stored 12, decoded 48 -> 60; chunk 1000*3*1=3000.
+    // accountedBytes-sum = 96 + 96 + 60 = 252; max chunk = 3000 -> total 3252.
+    const bigOptionalChunk = await preflightMesh(PATH, tetAttrs({ has_colors: true }), {
+      vertices: fakeArray([4, 3], '<f4', [4, 3]),
+      faces: fakeArray([4, 3], '<u4', [4, 3]),
+      colors: fakeArray([4, 3], '|u1', [1000, 3]),
+    });
+    expect(bigOptionalChunk.accountedBytes).toBe(3252);
+  });
+
+  it('is the exact quantity the ceiling gates: admitted AT budget, refused one byte over', async () => {
+    // Uses the same chunks-independent-of-shape affordance as the arithmetic
+    // above, but pushed to hit the ceiling on the nose. All dtypes are uint8
+    // (itemSize 1) so every term is a whole number of bytes, letting a single
+    // extra chunk element move the total by exactly one byte.
+    //
+    // Fixed part (vertices + faces, both [4,3] uint8, chunks == shape):
+    //   each array: stored 12*1=12, decoded 12*4=48 -> 60; chunk 12*1=12.
+    //   accountedBytes-sum = 120; baseline max chunk = 12.
+    // The vertices array's CHUNK is then set independently of its shape (zarr
+    // v2 permits chunks > shape IN MAGNITUDE — it does not permit a different
+    // RANK; `len(chunks) == len(shape)` is a zarr v2 structural requirement, so
+    // the oversized chunk keeps rank 2 (`[n, 1]`, same element count as `[n]`)
+    // rather than dropping to rank 1) to land the total exactly on, then one
+    // byte past, MESH_DECODE_BUDGET_BYTES.
+    const fixedSum = 120;
+    const atBudgetChunk = MESH_DECODE_BUDGET_BYTES - fixedSum;
+    const overBudgetChunk = atBudgetChunk + 1;
+
+    const atBudget = await preflightMesh(PATH, tetAttrs(), {
+      vertices: fakeArray([4, 3], '|u1', [atBudgetChunk, 1]),
+      faces: fakeArray([4, 3], '|u1', [4, 3]),
+    });
+    expect(atBudget.accountedBytes).toBe(MESH_DECODE_BUDGET_BYTES);
+
+    await expectReject(
+      () =>
+        preflightMesh(PATH, tetAttrs(), {
+          vertices: fakeArray([4, 3], '|u1', [overBudgetChunk, 1]),
+          faces: fakeArray([4, 3], '|u1', [4, 3]),
+        }),
+      /account for.*over the.*budget/
+    );
   });
 });

@@ -70,6 +70,8 @@ import {
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
 import { assertColorLayout } from '../loaders';
+import { MESH_DECODE_BUDGET_BYTES } from '../../config/constants';
+import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import { log, Modules, LogEmoji } from '../../utils/log';
 
 /** The empty payload a ladder with no committed level hands back. */
@@ -256,6 +258,43 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private _initialLoadDone = false;
   private _disposed = false;
   /**
+   * Latched once {@link assertWithinByteBudget} has fully accounted the ladder
+   * and admitted it. Set ONLY on that success path — never on a rejection —
+   * so a level whose `runPreflight()` failed transiently gets a genuine
+   * re-check on the next `updateView` rather than a cached pass.
+   */
+  private _budgetChecked = false;
+  /**
+   * The sticky AGGREGATE-over-budget refusal, once thrown — deliberately the
+   * mirror image of {@link _budgetChecked} above.
+   *
+   * A level's own `runPreflight()` rejection (a network blip on that level's
+   * metadata open) is transient by nature and must stay unlatched, which is
+   * why `_budgetChecked` above is never set on a rejection. The AGGREGATE
+   * comparison this field guards is the opposite case: DETERMINISTIC. By the
+   * time `assertWithinByteBudget` reaches the sum, every level's
+   * `MeshPreflightResult` came from an `initialize()` that already succeeded
+   * and is cached (`MeshWholeNodeLoader.doInitialize` never re-runs once
+   * `this.handles` is set) — there is no I/O left to vary, so re-running the
+   * gate on a later `updateView` can only ever repeat the same verdict.
+   *
+   * Recomputing it anyway is actively harmful: without this latch,
+   * `hasMoreLODs` stays `true` forever (the loaded-level count never grows on
+   * a ladder that is never allowed to fetch a single level), so
+   * `queue-next.ts` keeps scheduling `runMeshRefinement` on every slice
+   * scrub, which burns `MAX_CONSECUTIVE_REFINEMENT_FAILURES` refinement
+   * passes per scrub and toasts "Refinement failed … — showing a partial
+   * surface" — false, since zero triangles were ever committed.
+   *
+   * So the refusal is computed once, cached here, and every later call
+   * rethrows the SAME `LoaderError` object with no further `runPreflight()`
+   * calls. `hasMoreLODs` also reads this field directly (see below) and
+   * reports `false` once it is set, which is what actually removes the dead
+   * node from `queueNext`'s refinement loop rather than merely making its
+   * gate cheap to re-fail.
+   */
+  private _budgetRefusal: LoaderError | null = null;
+  /**
    * Memoized concatenation, keyed on the loaded LEVEL COUNT alone.
    *
    * Its siblings additionally key on a reset generation because their ladders
@@ -279,6 +318,10 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // refinement loop holding a stale reference stops instead of indexing into
     // the now-empty `lodLoaders`. Mirrors the sibling loaders.
     if (this._disposed) return false;
+    // A latched aggregate-over-budget refusal means this ladder will never load
+    // another level (see `_budgetRefusal`'s docstring) — report no further work
+    // so the refinement loop leaves the node instead of re-failing it forever.
+    if (this._budgetRefusal) return false;
     // While a playback frame budget is active the budgeted prefix IS the target:
     // no background refinement between animation ticks.
     if (this._frameBudgetMs !== null) return false;
@@ -323,6 +366,159 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     return this.updateView(viewState, session);
   }
 
+  /**
+   * Charge the ladder's aggregate byte budget ONCE, at the ladder's first
+   * `updateView` — before any level's chunks are fetched.
+   *
+   * ## Why here, and not at ladder-construction time
+   *
+   * This aggregate used to run in `createProgressiveMeshLoader`
+   * (`../scene-loader/loaders/loader-factory.ts`), during `loadMeshNodeCheap` —
+   * outside `loadMeshNode`'s try/placeholder-attach and before
+   * `registerMeshLoader`. A rejection thrown from there had nowhere to go: no
+   * placeholder to mark failed, no `recordFailure`, no retry, no monitor
+   * banner — a transient blip on one level's metadata open permanently lost
+   * the whole node, silently (`reportLoadOutcome` still logged success). The
+   * alternative — swallowing that rejection — traded that away for the other
+   * failure: `retryFailedLoader` reuses the existing loader rather than
+   * re-entering the factory, so a swallowed level's bytes went uncounted
+   * forever, the level then loaded fine on retry, and the ladder that
+   * motivated this whole check sailed through over budget with nothing left
+   * to refuse it.
+   *
+   * Both failure modes trace to the same cause: the check ran somewhere with
+   * no containment. A leaf's own byte budget is enforced inside
+   * `MeshWholeNodeLoader.fetch()`, i.e. inside `loadMeshNodeExpensive`'s try —
+   * so charging the LADDER at the equivalent point, its own first load, gives
+   * it the identical containment (failure recorded, retryable, banner shown)
+   * as well as the identical ceiling: ladder ≡ leaf in both respects. It is
+   * still strictly before any chunk is fetched — `runPreflight()` only opens
+   * metadata — so the two-stage gate's "refuse before allocation" property
+   * survives the move unchanged.
+   *
+   * ## The first-paint tradeoff this creates, stated honestly
+   *
+   * Gating on EVERY level's metadata before level 0 is fetched has a real cost,
+   * and it is worth stating rather than leaving implicit:
+   *
+   * 1. Any single level's `runPreflight()` rejection now costs the WHOLE first
+   *    paint. Before this change, levels `0..k-1` painted and the ladder simply
+   *    stalled at the bad level `k` with a "partial surface" toast; now nothing
+   *    paints until every level's metadata has opened successfully.
+   * 2. On a store WITHOUT consolidated metadata, the added latency is real, not
+   *    theoretical. A 6-level ladder with normals and colors is ~30 arrays,
+   *    i.e. ~60 metadata objects (`.zarray` + `.zattrs` each) to open before
+   *    level 0 can even start fetching chunks. Behind a browser's ~6-connection
+   *    limit per origin, that is several serialized round trips — measurably
+   *    slower first paint on exactly the slow link this reveal ladder exists
+   *    to serve well.
+   *
+   * For a Luxar-written store this is close to free: the compiler writes a
+   * `.zmetadata` consolidated-metadata document, and `src/data/zarr.ts` wraps
+   * every store with `zarrita.withMaybeConsolidatedMetadata`, so every
+   * `zarr.open(..., { kind: 'array' })` above is served from an in-memory
+   * document instead of a network round trip. The cost above is real only for
+   * an arbitrary `?src=` store that omits it.
+   *
+   * An alternative was considered and NOT taken: charge levels `1..N-1` only
+   * AFTER level 0 has been committed, so a slow/failing deeper level would
+   * never block first paint (level 0 already has its own leaf-sized
+   * `runPreflight()`, so the pre-refusal peak would still be bounded by one
+   * leaf's ceiling). Rejected here because it weakens the property this gate
+   * is FOR — "refuse the whole ladder before any chunk is fetched" — down to
+   * "refuse before the second chunk," and because the common (consolidated)
+   * case already pays nothing for gating everything up front. Not
+   * implemented.
+   *
+   * ## Why the sum is the right quantity
+   *
+   * `MESH_DECODE_BUDGET_BYTES` is a per-NODE ceiling, and a reveal ladder is
+   * one node (`MESH_NODE_SPEC.md` §9.1): this class concatenates every
+   * level's vertices/faces/normals/colors/scalars into ONE committed buffer
+   * set (`concatenateMeshData` above), and all of it stays resident for the
+   * node's whole life. Each level's own `runPreflight()` only ever sees its
+   * own ceiling, with no knowledge of its siblings — so without this, a
+   * ladder's real ceiling was `nAdditive x budget`: a plain leaf with the
+   * ladder's total geometry is refused up front, but the same geometry split
+   * into levels sails through, N times over budget, and the tab dies on the
+   * concatenated allocation. Summing every level's `accountedBytes` and
+   * charging that once against the SAME ceiling is what turns N budgets back
+   * into one.
+   *
+   * The sum overcharges relative to what a single level's own preflight would
+   * need to: it includes each level's own largest-chunk term even though the
+   * ladder loads levels sequentially (never two chunk buffers alive at once
+   * across levels), and an `array_ref` target shared between levels is
+   * charged once per referring level rather than once total. In that sense it
+   * is a deliberate over-estimate.
+   *
+   * That does NOT make the charged figure a bound on true peak residency,
+   * which is a separate quantity this sum does not track. Per level `i`, the
+   * charged term is `stored_i + 4·decoded_i` (plus that level's own
+   * `maxChunk_i`, which is transient and never resident); true residency after
+   * a full reveal is `decoded_i` held by the level's own loader PLUS its share
+   * of the memoized concat copy (`concatenateMemoized` above) — the per-level
+   * buffers stay resident AND the concat holds a second copy of the same
+   * values, so residency is ≈ `2·decoded_i`. The ratio of the two depends on
+   * how much narrower the stored dtype is than the always-4-byte decoded
+   * value: for a float32 3D mesh, stored ≈ decoded, so `2·decoded_i` works out
+   * to only ≈1x the charged sum; for a narrow quantized store (e.g. `stored_i
+   * ≈ decoded_i / 4`), it is ≈1.6x the charged sum. So true residency is at
+   * most ~1.6x this sum for a narrow-dtype store, and close to 1x for a
+   * float32 one — never the flat "roughly twice" a reader might otherwise
+   * assume from the over-estimate above. Tightening the ceiling to the true
+   * residency figure is a deliberate follow-up, not bundled into this fix.
+   *
+   * ## Why a level's own rejection propagates, unswallowed
+   *
+   * `initialize()` routes a transient open failure (a network blip) through
+   * `classifyLoaderError` precisely so it stays retryable, and that property
+   * has to survive reaching here. Letting the rejection propagate instead of
+   * catching it is what is now CORRECT, unlike at the old call site:
+   * `loadMeshNodeExpensive`'s catch records the failure and keeps the blip
+   * retryable, and a later retry re-enters `updateView`, which re-runs this
+   * gate — `_budgetChecked` is latched only on a fully successful accounting,
+   * and the failed level's own `initialize()` cached nothing, so the retry
+   * genuinely re-preflights rather than replaying a stale rejection.
+   *
+   * The AGGREGATE over-budget refusal below is the opposite case — deterministic
+   * once every level's preflight has succeeded — and is latched instead; see
+   * {@link _budgetRefusal}.
+   */
+  private async assertWithinByteBudget(): Promise<void> {
+    if (this._budgetChecked || this._disposed) return;
+    // The aggregate refusal is deterministic (see `_budgetRefusal`'s
+    // docstring) — rethrow the cached error rather than re-running every
+    // level's `runPreflight()` for a verdict that cannot change.
+    if (this._budgetRefusal) throw this._budgetRefusal;
+
+    const results = await Promise.all(this.lodLoaders.map((loader) => loader.runPreflight()));
+
+    // A dispose() racing the check above tore the ladder down mid-await — there
+    // is nothing left to charge a budget against, and latching now would skip
+    // a genuine re-check should this instance somehow be asked again.
+    if (this._disposed) return;
+
+    const totalBytes = results.reduce((sum, r) => sum + r.accountedBytes, 0);
+    if (totalBytes > MESH_DECODE_BUDGET_BYTES) {
+      const mib = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+      const error = new LoaderError(
+        'Validation',
+        this.path,
+        new Error(
+          `Mesh reveal ladder's ${this.lodLoaders.length} levels account for ${mib(totalBytes)} ` +
+            `combined, over the ${mib(MESH_DECODE_BUDGET_BYTES)} per-node budget. The levels ` +
+            "are concatenated into one node's buffers and all stay resident, so they are " +
+            'charged together rather than against separate budgets. Decimate the mesh, ' +
+            'write fewer levels, or split it across nodes.'
+        )
+      );
+      this._budgetRefusal = error;
+      throw error;
+    }
+    this._budgetChecked = true;
+  }
+
   async updateView(
     viewState: MeshViewState,
     session?: UpdateSession,
@@ -333,6 +529,10 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     this._frameBudgetMs = viewState.frameBudgetMs ?? null;
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
+
+    // Charge the ladder's aggregate byte budget before a single level is
+    // fetched (see {@link assertWithinByteBudget}). A no-op once admitted.
+    await this.assertWithinByteBudget();
 
     // Background prefetch (shadow) passes only warm caches — the caller discards
     // the return value — so hand back the empty payload instead of the O(N)

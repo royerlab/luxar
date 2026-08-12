@@ -137,6 +137,20 @@ half the stored-only arithmetic, because the decoded term is charged as well.
 The cap is still checked, and checked first, so a nonsensical declaration gets the
 message that names the real problem (pick-key aliasing) rather than blaming bytes.
 
+**A reveal ladder (§9.1) is charged as ONE node, not N.** Every `additive_<i>`
+level still runs its own Stage 1 against `MESH_DECODE_BUDGET_BYTES`, but
+`MeshProgressiveLoader.assertWithinByteBudget` (`mesh-progressive-loader.ts`)
+additionally sums every level's `accountedBytes` and charges that total once
+against the same ceiling, on the ladder's FIRST LOAD — the same point at which
+a leaf's own budget is enforced (inside `MeshWholeNodeLoader.fetch()`) — and
+still before any level's chunks are fetched. Charging it there rather than at
+construction gives the ladder the same failure containment as a leaf: a
+refusal is recorded and retryable instead of vanishing the node or going
+uncounted. Without the check at all, a ladder whose levels are individually
+under budget could still sum to N× it — the levels concatenate into one
+node's buffers and all stay resident, so a ladder cannot buy itself N budgets
+by splitting into levels.
+
 ## nD semantics: whole-triangle cull
 
 A triangle renders **iff all three of its vertices pass the nD slab test**. No

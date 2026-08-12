@@ -21,6 +21,8 @@ import {
   concatenateMeshData,
 } from '../../../data/mesh/mesh-progressive-loader';
 import { stampLadderComplete } from '../../../data/scene-loader/commit/stamp-view-version';
+import { LoaderError } from '../../../data/scene-loader/nodes/load-leaf-error-dispatch';
+import { MESH_DECODE_BUDGET_BYTES } from '../../../config/constants';
 import type { LoadedMeshData, MeshViewState } from '../../../types/mesh';
 import type { MeshWholeNodeLoader } from '../../../data/mesh/mesh-whole-node-loader';
 
@@ -65,20 +67,41 @@ function level(
 }
 
 /**
- * A sub-loader stub with the one method the ladder loop calls.
+ * A sub-loader stub with the methods the ladder loop and the byte-budget gate
+ * call.
  *
  * `gate` lets a test hold a level mid-flight, which is the only way to exercise
  * the post-await dispose check: the ladder loop's hazard is a `dispose()` that
  * lands BETWEEN the await resolving and the push, and a synchronous stub never
  * opens that window.
+ *
+ * `accountedBytes` defaults to a tiny value so every pre-existing test above —
+ * none of which cares about the byte budget — keeps passing untouched; a
+ * ladder of default-tiny levels never trips the aggregate the budget describe
+ * below exercises. `preflightError`, when set, makes `runPreflight()` REJECT
+ * instead of resolving — simulating a level whose own metadata open fails (a
+ * transient network blip, in the real class).
  */
 function subLoader(
   data: LoadedMeshData,
-  opts: { resident?: boolean; gate?: Promise<void> } = {}
-): MeshWholeNodeLoader & { calls: number; disposed: boolean } {
+  opts: {
+    resident?: boolean;
+    gate?: Promise<void>;
+    accountedBytes?: number;
+    preflightError?: Error | null;
+    preflightGate?: Promise<void>;
+  } = {}
+): MeshWholeNodeLoader & { calls: number; disposed: boolean; preflightCalls: number } {
   const stub = {
     calls: 0,
     disposed: false,
+    preflightCalls: 0,
+    runPreflight: vi.fn(async () => {
+      stub.preflightCalls++;
+      if (opts.preflightGate) await opts.preflightGate;
+      if (opts.preflightError) throw opts.preflightError;
+      return { accountedBytes: opts.accountedBytes ?? 1, nVertices: 0, nFaces: 0, ndim: 0 };
+    }),
     updateViewWithResidency: vi.fn(async () => {
       stub.calls++;
       if (opts.gate) await opts.gate;
@@ -88,7 +111,11 @@ function subLoader(
       stub.disposed = true;
     }),
   };
-  return stub as unknown as MeshWholeNodeLoader & { calls: number; disposed: boolean };
+  return stub as unknown as MeshWholeNodeLoader & {
+    calls: number;
+    disposed: boolean;
+    preflightCalls: number;
+  };
 }
 
 const VIEW: MeshViewState = {
@@ -389,5 +416,193 @@ describe('MeshProgressiveLoader', () => {
 
       expect(userData.committedLadderComplete).toBe(false);
     });
+  });
+});
+
+// ============================================================================
+// Aggregate byte budget (#1517)
+// ============================================================================
+
+describe('MeshProgressiveLoader — aggregate byte budget (#1517)', () => {
+  // The bug: each level's `runPreflight()` only ever sees its OWN
+  // `MESH_DECODE_BUDGET_BYTES` ceiling. Four levels individually under budget
+  // but jointly N times over it used to sail through — the same geometry as a
+  // plain leaf, which the leaf's single preflight would have refused up
+  // front. `assertWithinByteBudget` sums the levels' `accountedBytes` and
+  // charges that once against the SAME ceiling, at the ladder's first
+  // `updateView` — before any level's chunks are fetched.
+
+  it('refuses a ladder whose levels are individually fine but jointly over the ceiling', async () => {
+    const perLevel = Math.floor(MESH_DECODE_BUDGET_BYTES * 0.3);
+    const subs = [
+      subLoader(level(4, [0, 1, 2]), { accountedBytes: perLevel }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: perLevel }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: perLevel }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: perLevel }),
+    ];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    let thrown: unknown;
+    try {
+      await loader.updateView(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Validation');
+    expect((thrown as Error).message).toMatch(/4 levels account for.*combined, over the.*budget/);
+  });
+
+  it('latches the aggregate refusal — a later updateView rethrows the SAME error and re-runs NO preflight', async () => {
+    // The over-budget verdict is deterministic once every level's own preflight
+    // has already succeeded and cached its result (#1517 round 4): re-deriving it
+    // on a later `updateView` can only repeat the same answer. Without latching,
+    // `hasMoreLODs` would stay `true` forever and a refinement loop holding this
+    // node would re-run this gate — and burn its failure budget — on every scrub.
+    const subs = [
+      subLoader(level(4, [0, 1, 2]), { accountedBytes: MESH_DECODE_BUDGET_BYTES }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: MESH_DECODE_BUDGET_BYTES }),
+    ];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    let firstError: unknown;
+    try {
+      await loader.updateView(VIEW);
+    } catch (e) {
+      firstError = e;
+    }
+    expect(firstError).toBeInstanceOf(LoaderError);
+    for (const sub of subs) expect(sub.preflightCalls).toBe(1);
+
+    let secondError: unknown;
+    try {
+      await loader.updateView({ ...VIEW, slicePosition: [1, 1, 1] });
+    } catch (e) {
+      secondError = e;
+    }
+    // Same object, not merely an equal message — proof the gate rethrew the
+    // cached refusal rather than recomputing it.
+    expect(secondError).toBe(firstError);
+    for (const sub of subs) expect(sub.preflightCalls).toBe(1);
+  });
+
+  it('reports hasMoreLODs false once the aggregate refusal has latched, so the refinement loop leaves the node', async () => {
+    const subs = [
+      subLoader(level(4, [0, 1, 2]), { accountedBytes: MESH_DECODE_BUDGET_BYTES }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: MESH_DECODE_BUDGET_BYTES }),
+    ];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    expect(loader.hasMoreLODs).toBe(true);
+    await expect(loader.updateView(VIEW)).rejects.toThrow(LoaderError);
+    // This is the property that actually stops `queue-next.ts` from scheduling
+    // `runMeshRefinement` on the dead node — the latched error alone is not
+    // enough if a caller never re-observes it.
+    expect(loader.hasMoreLODs).toBe(false);
+  });
+
+  it('SENSITIVITY: levels summing to exactly the ceiling still load (not `>=`)', async () => {
+    // Without this, the refusal above would also pass against a guard that
+    // refuses every ladder outright, or one whose comparison is inverted.
+    // Four levels summing to precisely MESH_DECODE_BUDGET_BYTES — the leaf's
+    // own `> budget` boundary — must be ADMITTED.
+    const per = Math.floor(MESH_DECODE_BUDGET_BYTES / 4);
+    const last = MESH_DECODE_BUDGET_BYTES - 3 * per; // exact sum === budget
+    const subs = [
+      subLoader(level(4, [0, 1, 2]), { accountedBytes: per }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: per }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: per }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: last }),
+    ];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    const data = await loader.updateView(VIEW);
+    expect(data.faceCount).toBeGreaterThan(0);
+  });
+
+  it('refuses BEFORE any level is fetched', async () => {
+    const subs = [
+      subLoader(level(4, [0, 1, 2]), { accountedBytes: MESH_DECODE_BUDGET_BYTES }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: MESH_DECODE_BUDGET_BYTES }),
+    ];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    await expect(loader.updateView(VIEW)).rejects.toThrow(LoaderError);
+    // The refusal must cost no fetch — the streaming loop never ran.
+    for (const sub of subs) expect(sub.calls).toBe(0);
+  });
+
+  it('runs the gate ONCE for a ladder that passes — a later slice scrub costs nothing', async () => {
+    const subs = [subLoader(level(4, [0, 1, 2])), subLoader(level(3, [0, 1, 2]))];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    await loader.updateView(VIEW);
+    await loader.updateView({ ...VIEW, slicePosition: [1, 1, 1] });
+
+    for (const sub of subs) expect(sub.preflightCalls).toBe(1);
+  });
+
+  it("propagates a level's own runPreflight() rejection unchanged, and does not latch the ladder", async () => {
+    // The transient-blip path the placement (inside the contained
+    // `loadMeshNodeExpensive` try, in production) exists to get right: the
+    // level's own error surfaces AS ITSELF, not rewritten into a ladder-wide
+    // message and not swallowed — and the ladder is not admitted, so a later
+    // retry (here: the flaky level recovering) genuinely re-checks rather than
+    // replaying a cached pass.
+    const failure = new Error('simulated transient network failure');
+    const flaky = subLoader(level(4, [0, 1, 2]), { preflightError: failure });
+    const subs = [flaky, subLoader(level(3, [0, 1, 2]))];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    await expect(loader.updateView(VIEW)).rejects.toBe(failure);
+    // Nothing was fetched — the rejection happened at the gate, before the
+    // streaming loop.
+    for (const sub of subs) expect(sub.calls).toBe(0);
+
+    // The flaky level "recovers" (a real retry re-enters `initialize()` fresh,
+    // since a failed attempt caches nothing); a later updateView must re-run
+    // the gate rather than replay the earlier rejection or skip it as already
+    // checked.
+    flaky.runPreflight = vi.fn(async () => ({
+      accountedBytes: 1,
+      nVertices: 0,
+      nFaces: 0,
+      ndim: 0,
+    }));
+    const data = await loader.updateView(VIEW);
+    expect(data.faceCount).toBeGreaterThan(0);
+  });
+
+  it('a dispose() racing the gate on an OVER-BUDGET ladder resolves (empty payload) rather than rejecting', async () => {
+    // The mutation-proved version of the dispose race: without this test, "make
+    // the post-await `_disposed` re-check a no-op" survives, because a ladder
+    // whose levels are all comfortably under budget can't tell "returned early"
+    // from "computed the sum and it happened to pass". Push every level's own
+    // `accountedBytes` over the ceiling so the two paths diverge — dropping the
+    // re-check would have this reject with the budget `LoaderError` instead of
+    // resolving, throwing a refusal at a dataset that is already gone.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const subs = [
+      subLoader(level(4, [0, 1, 2]), {
+        accountedBytes: MESH_DECODE_BUDGET_BYTES,
+        preflightGate: gate,
+      }),
+      subLoader(level(3, [0, 1, 2]), { accountedBytes: MESH_DECODE_BUDGET_BYTES }),
+    ];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    const inFlight = loader.updateView(VIEW);
+    loader.dispose();
+    release();
+
+    // Must RESOLVE, not reject: a torn-down node must not throw a budget refusal
+    // at a dataset nothing will read. The empty payload is the ladder's own
+    // "nothing committed" answer, from the streaming loop's own `_disposed`
+    // break — not a side effect of the budget check being skipped.
+    const data = await inFlight;
+    expect(data.faceCount).toBe(0);
   });
 });

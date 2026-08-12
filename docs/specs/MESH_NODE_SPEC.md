@@ -349,7 +349,11 @@ transient around 2 GiB, comfortably inside a 64-bit tab — which is also why th
 raised toward "what a tab survives"; the tab has to survive the *multiple*, not the ceiling. The ceiling
 is **per node** —
 N nodes can still sum to N×budget, so the "one node lost, not the scene" guarantee is per-node; v1
-imposes no aggregate cap. Any failure fails the node with a `LoaderError` (one node lost, not the scene)
+imposes no aggregate cap. A §9.1 reveal ladder is a single node for this purpose: its levels are summed
+and charged once against the same ceiling, on the ladder's first load — before any level's chunks are
+fetched, and at the same point a leaf's own budget is enforced, so a refusal gets the same failure
+containment (recorded, retryable) as a leaf's. Any failure fails
+the node with a `LoaderError` (one node lost, not the scene)
 **without fetching a single chunk**, preserving the blast radius before allocation.
 
 The `n_vertices <= 2^27` cap belongs at this preflight because mesh's pick `elementId` is `gl_VertexID`
