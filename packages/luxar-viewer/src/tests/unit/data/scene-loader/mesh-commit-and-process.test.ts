@@ -162,6 +162,40 @@ describe('commitMeshGeometry', () => {
     return { root, mesh };
   }
 
+  it('sizes the buffers from the NODE ATTRS, not the committed prefix (#1521)', async () => {
+    // WHERE the capacity comes from, which the geometry-level tests cannot pin:
+    // they are handed explicit capacities, so a commit that sourced them from
+    // `data.vertexCount` would satisfy every one of them while re-binding — and
+    // orphaning — every attribute on each level of a ladder.
+    //
+    // The node here declares a 12-vertex / 4-face TOTAL while the commit carries a
+    // 3-vertex / 1-face prefix, exactly the shape of a ladder mid-reveal.
+    const ladderAttrs: MeshMetadata = { ...ATTRS, n_vertices: 12, n_faces: 4 };
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/ladder', ladderAttrs, loader, null);
+    root.add(mesh);
+
+    const staged = await processMeshData('/ladder', loaded(), VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+
+    expect(mesh.geometry.getAttribute('position').count).toBe(12);
+    expect(mesh.geometry.getAttribute('color').count).toBe(12);
+    expect(mesh.geometry.index!.count).toBe(4 * 3);
+    // Only the prefix is DRAWN, which is the other half of the contract: a bigger
+    // buffer must not put stale tail triangles on screen.
+    expect(mesh.geometry.drawRange.count).toBe(3);
+    // The real pin for `committedVertexCount`: `n_vertices` (12), `position.count`
+    // (12) and `data.vertexCount` (3) all disagree here, so this is the only case
+    // that can tell "stamped from the committed data" apart from "stamped from
+    // the node attrs" or "read back off `position.count`" — the sibling assertion
+    // below (in the non-ladder test) has all three equal to 3 and would pass for
+    // any of the three wrong sources.
+    expect(mesh.userData.committedVertexCount).toBe(3);
+  });
+
   it('populates the placeholder and stamps the visible counts', async () => {
     const { root, mesh } = sceneWithMesh('/surface');
     const staged = await processMeshData('/surface', loaded(), VIEW, {
@@ -175,6 +209,10 @@ describe('commitMeshGeometry', () => {
     expect(mesh.geometry.getAttribute('position').count).toBe(3);
     expect(mesh.userData.visibleTriangleCount).toBe(1);
     expect(mesh.userData.loadedViewVersion).toBe(7);
+    // Stamped separately from `position.count`: that attribute is capacity-sized
+    // for a reveal ladder (#1521) and would otherwise report the ladder's
+    // lifetime total rather than what this commit actually received (#1522).
+    expect(mesh.userData.committedVertexCount).toBe(3);
   });
 
   it('applies the node transform to the placeholder, like the sibling factories', () => {

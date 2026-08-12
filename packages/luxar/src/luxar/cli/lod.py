@@ -23,6 +23,7 @@ from arbol import aprint, asection
 
 from luxar.utils.lod_methods import (
     GSPLAT_ADDITIVE_CHOICES_HELP,
+    LEGACY_METHOD_FLAGS,
     REVEAL_METHODS,
     is_reveal_method,
 )
@@ -61,7 +62,7 @@ _MULTISCALE_CAP_TARGET = 256_000
 # (for its coarse cap) but fixes the cap at a single level.
 _OPTION_TOKENS = {
     "--n-lods": "additive",
-    "--method": "additive",
+    "--add-method": "additive",
     "--breakpoints": "additive",
     "--additive": "additive",
     "--target-ms": "additive",
@@ -75,7 +76,7 @@ _OPTION_TOKENS = {
     "--parts": "partition",
     "--partition-rule": "partition",
     "--compression-factor": "substitutive",
-    "--substitutive-method": "substitutive",
+    "--subst-method": "substitutive",
     "--lloyd-iters": "substitutive",
     "--candidate-bins-k": "substitutive",
     "--coverage-inflation": "substitutive",
@@ -135,6 +136,28 @@ def _resolve_encoding(mode: str) -> Any:
         raise typer.BadParameter(
             f"--encoding must be auto|precision|memory; got {mode!r}"
         ) from None
+
+
+def _reject_renamed_method_flags(*supplied: tuple[Optional[str], str]) -> None:
+    """Reject a renamed method flag with a pointer naming its replacement.
+
+    Extracted from ``lod_recipe`` rather than inlined: that function is baselined
+    at C901 44 and the loop pushed it to 46, which the complexity ratchet reports
+    as a regression (the gate is "no worse", not "under the limit"). Lifting it out
+    keeps the caller's score unchanged and the check independently testable.
+
+    Each argument pairs the value typer parsed for a hidden legacy option with that
+    option's spelling. A non-``None`` value means the user typed the old flag.
+    """
+    for value, legacy in supplied:
+        if value is None:
+            continue
+        new = LEGACY_METHOD_FLAGS[legacy]
+        raise typer.BadParameter(
+            f"{legacy} was renamed to {new} (2026-08: the additive and "
+            f"substitutive method flags are now named symmetrically, and no "
+            f"method flag is bare); use {new} {value}."
+        )
 
 
 def _parse_reveal_centre(spec: Optional[str]) -> Optional["list[float]"]:
@@ -265,13 +288,30 @@ def lod_recipe(
     ),
     method: Optional[str] = typer.Option(
         None,
-        "--method",
+        "--add-method",
         "-m",
         help=f"Additive ordering: {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
         "greedy at small N, self_energy for large N to avoid greedy's "
         "O(N·nnz·logN) blowup. radial orders concentric shells around the "
         "bbox centre, so a streaming prefix grows outward from the middle "
         "(a reveal); its ladder carries no energy stamps.",
+    ),
+    # Renamed spellings, declared only so the body can raise a pointer. Typer
+    # rejects an unknown option before this function runs, so the
+    # LEGACY_RECIPE_NAMES idiom (validate the VALUE, name the replacement) cannot
+    # reach a removed FLAG at all — the option must exist to be reachable.
+    #
+    # Stated honestly: dropping these would NOT leave the user with nothing. Typer
+    # already emits "No such option: --substitutive-method (Possible options:
+    # --subst-method)", which is a usable hint. What these add is the *why* (a
+    # deliberate rename, dated) and a copy-pasteable replacement carrying the
+    # user's own value — worth ~6 lines, but an improvement on a decent default
+    # rather than a rescue from silence.
+    #
+    # Hidden so they stay out of `--help`; any value at all triggers the pointer.
+    legacy_method: Optional[str] = typer.Option(None, "--method", hidden=True),
+    legacy_substitutive_method: Optional[str] = typer.Option(
+        None, "--substitutive-method", hidden=True
     ),
     breakpoints: Optional[str] = typer.Option(
         None,
@@ -347,7 +387,7 @@ def lod_recipe(
     ),
     substitutive_method: Optional[str] = typer.Option(
         None,
-        "--substitutive-method",
+        "--subst-method",
         help="Substitutive algorithm: auto (default) | kmeans | kmeans_lloyd | "
         "greedy | greedy_lloyd.",
     ),
@@ -528,6 +568,17 @@ def lod_recipe(
 
     try:
         # ── validate --recipe ──
+        # Renamed method flags, before anything else — a run that named an old
+        # spelling asked for something this command no longer has, and letting it
+        # proceed under the flag's DEFAULT would silently do different work than
+        # requested (`--method greedy` would become `auto`). Mirrors the legacy
+        # recipe-name rejection below; the difference is that a flag has to be
+        # DECLARED to be diagnosable at all, so the two hidden options above exist
+        # purely to reach this check.
+        _reject_renamed_method_flags(
+            (legacy_method, "--method"),
+            (legacy_substitutive_method, "--substitutive-method"),
+        )
         if recipe is None:
             raise typer.BadParameter(
                 "--recipe is required; choose one of: " + ", ".join(RECIPE_NAMES)
@@ -548,7 +599,7 @@ def lod_recipe(
         # ── option-relevance check (reject options irrelevant to the recipe) ──
         provided = {
             "--n-lods": n_lods,
-            "--method": method,
+            "--add-method": method,
             "--breakpoints": breakpoints,
             "--additive": additive_ladders,
             "--target-ms": target_ms,
@@ -560,7 +611,7 @@ def lod_recipe(
             "--parts": parts,
             "--partition-rule": partition_rule,
             "--compression-factor": compression_factor,
-            "--substitutive-method": substitutive_method,
+            "--subst-method": substitutive_method,
             "--lloyd-iters": lloyd_iterations,
             "--candidate-bins-k": candidate_bins_k,
             "--coverage-inflation": coverage_inflation,
@@ -579,7 +630,8 @@ def lod_recipe(
             "--levels": levels,
         }
         # ``hints`` add a recipe-specific clause when a given flag is rejected:
-        #  - --method moved to --substitutive-method for the substitutive recipe;
+        #  - --add-method's value naming a substitutive algorithm points at
+        #    --subst-method (see the cross-hint below);
         #  - overview's coarse cap is single-level, so --levels has no meaning
         #    there (size the cap with -K, auto-scaled by default).
         hints: dict[str, str] = {}
@@ -596,19 +648,19 @@ def lod_recipe(
         method_norm = (method or "auto").strip().replace("-", "_")
         if method_norm not in VALID_ADDITIVE_METHODS:
             msg = (
-                f"--method must be one of {list(VALID_ADDITIVE_METHODS)}; "
+                f"--add-method must be one of {list(VALID_ADDITIVE_METHODS)}; "
                 f"got {method!r}"
             )
             if method_norm in VALID_SUBSTITUTIVE_METHODS:
                 # `-m kmeans_lloyd` etc.: the user almost certainly meant the
-                # substitutive partition algorithm (--method is the ADDITIVE
+                # substitutive partition algorithm (--add-method is the ADDITIVE
                 # ordering — every substitutive level is laddered by default).
-                msg += " (for the substitutive algorithm use --substitutive-method)"
+                msg += " (for the substitutive algorithm use --subst-method)"
             raise typer.BadParameter(msg)
         sub_norm = (substitutive_method or "auto").strip().replace("-", "_")
         if sub_norm not in VALID_SUBSTITUTIVE_METHODS:
             raise typer.BadParameter(
-                f"--substitutive-method must be one of "
+                f"--subst-method must be one of "
                 f"{list(VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
             )
         if additive_ladders is False and recipe in ("stream", "tiles"):

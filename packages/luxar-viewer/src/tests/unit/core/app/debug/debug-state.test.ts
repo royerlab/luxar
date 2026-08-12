@@ -119,6 +119,7 @@ function makeMeshNode(
     visible?: boolean;
     drawTriangles?: number;
     defines?: Record<string, number>;
+    committedVertexCount?: number;
   } = {}
 ): THREE.Mesh {
   const geometry = new THREE.BufferGeometry();
@@ -133,7 +134,14 @@ function makeMeshNode(
     defines: options.defines ?? {},
   });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.userData = { nodeType: 'mesh' };
+  mesh.userData = {
+    nodeType: 'mesh',
+    // Absent by default, matching production (`create-mesh-node.ts` never seeds
+    // it) — the `??` fallback in `computeDebugState` depends on that absence.
+    ...(options.committedVertexCount !== undefined
+      ? { committedVertexCount: options.committedVertexCount }
+      : {}),
+  };
   if (options.name !== undefined) mesh.name = options.name;
   if (options.visible !== undefined) mesh.visible = options.visible;
   return mesh;
@@ -455,6 +463,20 @@ describe('computeDebugState', () => {
       expect(state.meshNodes[0].triangleCount).toBe(40);
       expect(state.meshNodes[0].vertexCount).toBe(25);
       expect(state.totalTriangles).toBe(40);
+    });
+
+    it('prefers the committedVertexCount stamp over position.count for a reveal ladder', () => {
+      // Every OTHER case here builds a node with no stamp at all, so the whole
+      // `userData.committedVertexCount` branch in `computeDebugState` is
+      // untested without this: deleting it and falling back to
+      // `position.count` unconditionally would still pass the rest of the
+      // suite. `position` is capacity-sized for a ladder (#1521), so a real
+      // laddered node's stamp sits BELOW that capacity.
+      const scene = new THREE.Scene();
+      scene.add(makeMeshNode(40, 25, { name: 'laddered', committedVertexCount: 10 }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.meshNodes[0].vertexCount).toBe(10);
     });
 
     it('reports the DRAW RANGE, not the whole index buffer', () => {

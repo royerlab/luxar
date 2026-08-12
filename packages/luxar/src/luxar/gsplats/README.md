@@ -738,7 +738,7 @@ matrix = make_lod_pyramid(
 # One command, one `--recipe` flag (REQUIRED); output is a standalone v3.3 .gsplats.zarr.
 # flat / stream — single leaf, optionally with an additive (prefix-sum) ladder
 luxar gsplat lod fit.gsplats.zarr stream.gsplats.zarr --recipe stream --n-lods 4
-luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy   # cheap O(N log N)
+luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream --add-method self_energy   # cheap O(N log N)
 luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream -m mass -b counts:500,2000,10000
 # `radial` = the REVEAL: concentric shells around the bbox centre, so a streaming
 # prefix grows outward from the object's middle. Authoring only — no viewer changes.
