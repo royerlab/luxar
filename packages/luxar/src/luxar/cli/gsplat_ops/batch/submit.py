@@ -314,7 +314,7 @@ def run_batch_submit(
     ),
     merge_additive_method: Optional[str] = typer.Option(
         None,
-        "--merge-additive-method",
+        "--merge-add-method",
         help="Additive ladder method for --merge-recipe stream "
         f"({GSPLAT_ADDITIVE_CHOICES_HELP}). Default auto.",
         rich_help_panel="Merge LOD",
@@ -365,7 +365,7 @@ def run_batch_submit(
     ),
     merge_substitutive_method: Optional[str] = typer.Option(
         None,
-        "--merge-substitutive-method",
+        "--merge-subst-method",
         help="Substitutive coarsening method for --merge-recipe.",
         rich_help_panel="Merge LOD",
     ),

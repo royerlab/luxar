@@ -47,14 +47,16 @@ class GeometryCapabilities(NamedTuple):
     #: May appear as a ``kind=lod`` group's ``display_type``. Requires a level
     #: ladder whose coarse levels are renderable stand-ins for the fine ones.
     #:
-    #: This flag gates the SUBSTITUTIVE mechanism only, and the distinction is
-    #: load-bearing for ``mesh``. A ``kind=lod`` group holds levels that REPLACE
-    #: one another; an additive ladder is a set of ``additive_<i>/`` subgroups
-    #: *inside a leaf* and never reaches any of this flag's three consumers
-    #: (``add_lod_group``, the finalize-time back-fill, and the finest-child
-    #: resolver). Mesh is ``lod=True`` and still has no additive ladder — that
-    #: exclusion is enforced by ``adders/mesh.py::_reject_structure_params``
-    #: and, viewer-side, by ``loader-factory.ts``.
+    #: This flag gates the SUBSTITUTIVE mechanism only. A ``kind=lod`` group holds
+    #: levels that REPLACE one another; an additive ladder is a set of
+    #: ``additive_<i>/`` subgroups *inside a leaf* and never reaches any of this
+    #: flag's three consumers (``add_lod_group``, the finalize-time back-fill, and
+    #: the finest-child resolver). So the two mechanisms are independent for every
+    #: geometry type and this flag has never gated the additive one — including for
+    #: ``mesh``, which now has a reveal ladder of its own
+    #: (``adders/mesh.py::add_mesh_multi_lod_wrapper_impl``) restricted to
+    #: spatially coherent orders by
+    #: ``core/group/lod/mesh.py::MESH_ADDITIVE_METHODS``.
     lod: bool
 
     #: May appear as a ``kind=partition`` group's ``display_type``. Requires a
@@ -70,9 +72,10 @@ GEOMETRY_CAPABILITIES: Final[dict[GeometryTypeName, GeometryCapabilities]] = {
     # partition via `luxar.mesh.split` (spec §9). Flip a flag here when a path
     # lands — not at the call sites.
     #   lod        TRUE, and it means SUBSTITUTIVE only — see the field doc.
-    #              The ADDITIVE prefix ladder remains impossible for a surface
-    #              (a prefix of an index buffer is holed, not coarse) and is
-    #              refused elsewhere; this flag never gated it.
+    #              The additive axis is a separate mechanism this flag never
+    #              gated: mesh has a REVEAL ladder (concentric face shells), and
+    #              the prefix of an ARBITRARY order stays refused — holed, not
+    #              coarse — by MESH_ADDITIVE_METHODS rather than by any flag here.
     #   partition  TRUE: a BSP cut runs BETWEEN faces, and each part re-indexes
     #              its own vertices (boundary vertices duplicated, per-vertex
     #              label CSR split).

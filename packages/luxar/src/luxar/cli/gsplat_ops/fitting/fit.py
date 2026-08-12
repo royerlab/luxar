@@ -196,7 +196,7 @@ def run_fit_volume(
     recipe_additive_method: Optional[str] = typer.Option(
         None,
         "-m",
-        "--additive-method",
+        "--add-method",
         help=f"[--recipe stream] {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the default) is "
         "greedy ((1-1/e)-optimal) at small N, self_energy (cheap O(N log N)) "
         "for large parts. radial reveals outward from the bbox centre.",
@@ -253,7 +253,7 @@ def run_fit_volume(
     ),
     recipe_substitutive_method: Optional[str] = typer.Option(
         None,
-        "--substitutive-method",
+        "--subst-method",
         help="[--recipe levels] auto (default) / kmeans-lloyd / greedy / greedy-lloyd.",
         rich_help_panel="Per-part LOD",
     ),

@@ -3,8 +3,8 @@
 Per-leaf adder implementations for `Group`. Each geometry type (Points,
 Lines, GSplats, Mesh) has its own module here holding the body of
 `Group.add_<type>` along with its partition-wrapper and multi-LOD-wrapper
-helpers (mesh has a partition wrapper and a substitutive-LOD one, but no
-multi-LOD/additive wrapper — it still refuses the additive prefix ladder).
+helpers (mesh has all three: a partition wrapper, a substitutive-LOD one, and a
+multi-LOD wrapper whose ladder is a REVEAL — see `mesh.py` below).
 
 ## Overview
 
@@ -27,7 +27,7 @@ adders/
 ├── points.py      # add_points_impl + partition / multi-LOD wrappers
 ├── lines.py       # add_lines_impl + partition / multi-LOD wrappers
 ├── gsplats.py     # add_gsplats_impl + partition wrapper
-└── mesh.py        # add_mesh_impl + partition / substitutive-LOD wrappers
+└── mesh.py        # add_mesh_impl + partition / substitutive-LOD / multi-LOD (reveal) wrappers
 ```
 
 ## Modules
@@ -73,6 +73,7 @@ in the `gsplats` package (`luxar gsplat lod`), not at add time.
 - `add_mesh_impl(group, *, name, vertices, faces, ...)` → `Mesh | Group`
 - `_add_mesh_partition(group, *, name, vert_arr, faces_arr, ...)` → `Group | None`
 - `add_mesh_substitutive_lod_wrapper_impl(group, *, name, vert_arr, ...)` → `Group | Mesh`
+- `add_mesh_multi_lod_wrapper_impl(group, *, name, vert_arr, parts, ...)` → `Mesh`
 
 Mesh partitions at **face granularity** — the BSP runs over face centroids, so
 `max_elements` counts faces and no triangle is ever cut. A part cannot be a slice
@@ -88,10 +89,30 @@ refusal `add_points` / `add_lines` carry, which is why a hand-built
 `kind=partition` wrapper is the only route to per-tile mesh ladders; like its
 three siblings the wrapper derives its `coverage_fraction` thresholds through
 `lod.group.derive_coverage_fractions`, so such a ladder is auto-anchored at
-fills-screen (finest `4.0`) instead of the whole-object `1.0`. There is still no
-multi-LOD (additive)
-wrapper: mesh refuses the additive prefix ladder (and
-`blending_mode='volumetric'`) with a per-case explanation.
+fills-screen (finest `4.0`) instead of the whole-object `1.0`.
+
+`additive_lod=` writes a REVEAL ladder — `additive_<i>/` levels holding concentric
+shells of FACES, innermost first — through `add_mesh_multi_lod_wrapper_impl` and
+`write_mesh_multi_lod`. It is the same shape as the Points/Lines multi-LOD wrapper
+with three mesh-specific differences, all downstream of "a triangle is three
+references, not a row":
+
+* A level is a re-indexing, not a slice. The branch splits FACES
+  (`lod.mesh.make_additive_lod_mesh`) and re-indexes each group through
+  `luxar.mesh.split.split_mesh_by_faces`, so the wrapper receives `MeshPart`s and
+  gathers each per-vertex channel through `part.vertex_index` — a boundary vertex
+  is stored once per level that touches it (logged as a duplication factor).
+* `labels` / `image_labels` DEGRADE the ladder to a plain leaf with a
+  `UserWarning` instead of riding it: there is no union index space for the CSR
+  the sibling ladders put on their parent (see `write_mesh_multi_lod`).
+* No energy stamps. `additive_level_stats` suppresses them for every reveal
+  method, and the wrapper passes all-zero energies plus
+  `energy_kind="mesh-reveal-no-energy"` to say the same thing a second way.
+
+`additive_lod=` composes with neither `substitutive_lod=` nor `partition=` yet —
+each pairing is refused by name, where Points and Lines compose both.
+`blending_mode='volumetric'` and a non-reveal additive `method` stay refused with a
+per-case explanation.
 
 ## Add-Path Anatomy
 
@@ -212,7 +233,8 @@ rejected alongside `partition=`.
 
 Write a single parent node carrying `n_additive_sublods=N` plus a global
 `position_bounds`, with one `additive_<i>/` subgroup per LOD level
-(`write_points_multi_lod` / `write_lines_multi_lod`). For lines, each subgroup
+(`write_points_multi_lod` / `write_lines_multi_lod` / `write_mesh_multi_lod`). For
+lines, each subgroup
 carries a subset of **whole** polylines with segment indices local to the
 subgroup. The returned node is the parent — the user sees one logical node and
 the viewer's progressive loader walks the subgroups.
@@ -221,13 +243,21 @@ the viewer's progressive loader walks the subgroups.
 subgroups carry none, because the loader concatenates loaded levels into one
 committed buffer), so the wrappers call `scene._notify_labels_added()` exactly as
 the flat path does — otherwise a ladder-only scene would get no hover overlay.
+MESH IS THE EXCEPTION on both counts: a mesh level re-indexes its own vertices, so
+the union index space does not exist — `write_mesh_multi_lod` refuses a labelled
+level and the adder degrades a labelled mesh to a flat leaf, so there is no
+`_notify_labels_added()` call on that path and none is needed.
 
 Unlike the partition wrapper, this one does not recurse through a leaf adder, so
 it resolves `extend_to_all` itself right before the writer call, via the shared
 `lod.group.resolve_ladder_extend_to_all` (which leaves `None` unresolved): the
 multi-LOD writers stamp that value verbatim onto the parent group AND every
 `additive_<i>/` subgroup, so an unresolved `"all"` sentinel would reach disk
-where the viewer expects a list of dimension names.
+where the viewer expects a list of dimension names. (Mesh diverges here too: it
+dispatches its structural branches BELOW the `extend_to_all` resolution — the
+partition branch needs the resolved names — so the value reaching
+`add_mesh_multi_lod_wrapper_impl` is already resolved and the shared helper would
+only re-emit the advisory.)
 
 ## Dependencies
 

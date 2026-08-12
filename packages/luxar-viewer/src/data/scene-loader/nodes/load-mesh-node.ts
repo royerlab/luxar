@@ -1,18 +1,20 @@
 /**
  * Initial-load path for a single Mesh leaf node.
  *
- * Builds the whole-node loader, attaches an empty placeholder so commit / retry /
- * update always have a target, then routes the fetch through the same
- * `deriveNodeViewState` + `processMeshData` / `commitMeshGeometry` path the update
- * sweep and the retry path use. Structurally the same as `load-points-node.ts`,
- * with one difference, which follows from mesh having no ADDITIVE ladder:
+ * Builds the loader, attaches an empty placeholder so commit / retry / update always
+ * have a target, then routes the fetch through the same `deriveNodeViewState` +
+ * `processMeshData` / `commitMeshGeometry` path the update sweep and the retry path
+ * use. Structurally the same as `load-points-node.ts`, progressive branch included:
+ * a node declaring `n_additive_sublods > 1` gets a `MeshProgressiveLoader` over its
+ * `additive_<i>/` subgroups, and everything downstream is unchanged.
  *
- * - **No progressive branch.** `n_additive_sublods` on a mesh is a malformed store;
- *   `createProgressiveMeshLoader` rejects it with an explanation. That rejection is
- *   NOT dead code and must not be "tidied": a mesh can be a SUBSTITUTIVE level (see
- *   below), and substitutive levels are siblings under a `kind=lod` group — an
- *   additive ladder would be `additive_<i>/` subgroups inside this leaf, which is a
- *   different thing and still impossible for a surface.
+ * Note what that ladder is and is not. Mesh still has no additive
+ * LEVEL-OF-DETAIL ladder — a prefix of an arbitrary index buffer is a holed
+ * surface, not a coarser one — and the writer enforces it by admitting only
+ * orderings whose every prefix is one connected patch, so what streams in is a
+ * REVEAL: a growing surface (`MESH_NODE_SPEC.md` §9). SUBSTITUTIVE levels remain a
+ * different shape entirely — sibling children of a `kind=lod` group, written by
+ * `add_mesh(substitutive_lod=…)` — and never route through the progressive path.
  *
  * It DOES have the cheap/expensive split, and gained it late. The sibling loaders
  * split so a lazily-activated `kind=lod` level can attach its placeholder up front
@@ -30,7 +32,7 @@ import type * as THREE from 'three';
 import type * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
-import { createMeshLoader } from '../loaders/loader-factory';
+import { createMeshLoader, createProgressiveMeshLoader } from '../loaders/loader-factory';
 import type { SceneNode } from '../../data-loader-types';
 import type { MeshDataLoader, MeshMetadata } from '../../../types/mesh';
 import type { NodeBuildCtx } from './build-ctx';
@@ -62,12 +64,31 @@ export async function loadMeshNodeCheap(
       `${String(node.attrs.n_faces ?? 'unknown')} faces`
   );
 
-  const loader = createMeshLoader(node, loc, ctx.factoryDeps) as MeshDataLoader;
+  // Progressive reveal ladder: walks `additive_<i>/` subgroups and wraps one
+  // whole-node loader per level. Unladdered nodes (no `n_additive_sublods`) take
+  // the single-loader path below.
+  const nAdditive = (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
+  if (nAdditive > 1) {
+    log.info(Modules.SCENE_LOADER, `  Additive sub-LODs: ${nAdditive} (reveal ladder)`);
+  }
+
+  // The effective attrs are read BEFORE the loader is built, unlike the three
+  // sibling loaders which read them after: the progressive factory composes each
+  // sub-LOD's attrs through the parent's, so it needs them as an argument.
+  const attrs = ctx.applyEffectiveAttrs(node) as unknown as MeshMetadata;
+  const loader =
+    nAdditive > 1
+      ? await createProgressiveMeshLoader(
+          node,
+          nAdditive,
+          attrs as unknown as SceneNode['attrs'],
+          ctx.factoryDeps
+        )
+      : (createMeshLoader(node, loc, ctx.factoryDeps) as MeshDataLoader);
   ctx.connectLoaderToMonitor(node.path, loader);
 
   // Attach the placeholder BEFORE fetching, so an initial-load failure leaves a
   // recoverable scene state that `retryFailedLoader` can write into.
-  const attrs = ctx.applyEffectiveAttrs(node) as unknown as MeshMetadata;
   // The RAW leaf attrs ride along too: `resolveColormapWindow` needs both bags to
   // tell a leaf-authored scalar window from an inherited ancestor gain (#936).
   const placeholder = ctx.nodeFactory.createEmptyMeshNode(

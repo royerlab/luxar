@@ -360,6 +360,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         substitutive_lod: Optional[Union[bool, Dict[str, Any]]] = None,
+        additive_lod: Optional[Union[bool, Dict[str, Any]]] = None,
         **attrs: Any,
     ) -> Union["Mesh", "Group"]:
         """Add a triangle mesh (surface) node to this group.
@@ -386,11 +387,30 @@ class Group(Node):
         declaration is refused. ``partition`` and ``substitutive_lod`` cannot be
         combined, exactly as for Points / Lines.
 
-        Not supported for meshes (each raises rather than silently degrading):
-        ``additive_lod`` (a prefix of an index buffer is a surface with holes, not
-        a coarser surface) and ``blending_mode='volumetric'`` (a zero-thickness
-        surface has no path length to integrate). See
-        ``docs/specs/MESH_NODE_SPEC.md`` §9.
+        ``additive_lod`` IS supported, as a **reveal ladder and nothing else**: it
+        writes ``additive_<i>/`` levels inside the leaf, each holding one concentric
+        shell of faces, innermost first, which the viewer draws cumulatively so the
+        surface grows outward from its centre as it streams. ``method`` accepts only
+        ``"radial"`` — a prefix of an *arbitrarily ordered* index buffer is a surface
+        with holes rather than a coarser one, so ``"random"`` / ``"salience"`` and the
+        element samplers are refused, as are ``salience_kind`` and ``seed``. Use
+        ``substitutive_lod`` to make a surface genuinely coarser. The ladder carries
+        no energy stamps by construction (a reveal is a partial surface at FULL
+        brightness, so the viewer's ``1/e(k)`` brightness compensation must not reach
+        it), it degrades to a plain leaf with a ``UserWarning`` when ``labels`` or
+        ``image_labels`` is set (a level re-indexes its own vertices, so there is no
+        single index space for a union label CSR), and it cannot yet be combined with
+        ``substitutive_lod`` or ``partition`` — each pairing is refused by name, where
+        Points and Lines compose both. See
+        :func:`luxar.core.group.lod.mesh.resolve_additive_axis_mesh`.
+
+        The viewer half ships too: a mesh node declaring ``n_additive_sublods > 1``
+        is loaded by its own progressive loader, which fetches the levels in order
+        and commits each grown prefix into the same buffers.
+
+        Not supported for meshes (raises rather than silently degrading):
+        ``blending_mode='volumetric'`` — a zero-thickness surface has no path length
+        to integrate. See ``docs/specs/MESH_NODE_SPEC.md`` §9.
 
         Args:
             name: Name of the mesh node.
@@ -432,6 +452,15 @@ class Group(Node):
                 for remapping onto the scene's dimension order. ``faces`` is index
                 data addressing vertex rows and is never reordered.
             fill: Fill values for scene dimensions absent from ``dim_order``.
+            substitutive_lod: ``True`` / ``{...}`` to write a ``kind=lod`` group of
+                progressively DECIMATED copies of the surface (see above).
+            additive_lod: ``True`` / ``{...}`` to write a reveal ladder of
+                ``additive_<i>/`` levels inside the leaf. Keys: ``method``
+                (``"radial"`` only), ``n_lods``, ``counts`` (alias ``breakpoints``),
+                ``reveal_centre``, ``spatial_dims``. Levels hold concentric shells of
+                FACES — a triangle is the indivisible unit, as it is for
+                ``partition`` — and are cumulative when concatenated, so the surface
+                grows outward as it loads.
             **attrs: Additional attributes — ``opacity``, ``intensity``,
                 ``offset``, ``gamma``, ``colormap``, ``layer``, ``visible``,
                 ``transform``, ``nd_transform``, ``blending_mode``. Note
@@ -441,7 +470,9 @@ class Group(Node):
         Returns:
             The created Mesh node — or, with ``substitutive_lod``, the ``kind=lod``
             Group wrapping the ladder, or with ``partition``, the ``kind=partition``
-            Group wrapping the parts (matching ``add_points`` / ``add_lines``).
+            Group wrapping the parts (matching ``add_points`` / ``add_lines``). With
+            ``additive_lod`` it is still the Mesh node: a reveal ladder lives INSIDE
+            the leaf, so the caller's "one node" is unchanged.
         """
         from .adders.mesh import add_mesh_impl
 
@@ -464,6 +495,7 @@ class Group(Node):
             dim_order=dim_order,
             fill=fill,
             substitutive_lod=substitutive_lod,
+            additive_lod=additive_lod,
             **attrs,
         )
 

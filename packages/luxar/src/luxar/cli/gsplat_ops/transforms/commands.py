@@ -541,7 +541,7 @@ def additive_dataset(
     ),
     method: Optional[str] = typer.Option(
         None,
-        "--method",
+        "--add-method",
         "-m",
         help=f"Additive ordering per leaf: {GSPLAT_ADDITIVE_CHOICES_HELP}. auto (the "
         "default) is greedy at small N, self_energy above. radial reveals "

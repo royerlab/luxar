@@ -41,6 +41,7 @@ import { ViewStateQueue } from './scene-loader/view-state/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
 import { runPointsRefinement } from './points/lod-refinement';
 import { runLinesRefinement } from './lines/lod-refinement';
+import { runMeshRefinement } from './mesh/lod-refinement';
 import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
 import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
 import { loadAndStage as gsplatsLoadAndStage, label as gsplatsLabel } from './gsplats/handler';
@@ -627,6 +628,7 @@ export class SceneLoader {
       loaders: this.loaders,
       linesLoaders: this.linesLoaders,
       gsplatLoaders: this.gsplatLoaders,
+      meshLoaders: this.meshLoaders,
       gpuBufferPool: () => this._gpuBufferPool,
       monitor: () => this.monitor,
       profiler: this.profiler,
@@ -966,6 +968,7 @@ export class SceneLoader {
         pointsLoaders: this.loaders,
         linesLoaders: this.linesLoaders,
         gsplatLoaders: this.gsplatLoaders,
+        meshLoaders: this.meshLoaders,
         updateView: (state) => this.updateView(state),
         setUpdateInProgress: (v) => {
           this._updateInProgress = v;
@@ -976,13 +979,14 @@ export class SceneLoader {
     }
   }
 
-  /** Any registered loader (points / lines / gsplats) with LODs left to stream. */
+  /** Any registered loader (points / lines / gsplats / mesh) with LODs left to stream. */
   private anyLoaderHasMoreLODs(): boolean {
     const hasMore = (loader: unknown) => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
     return (
       [...this.gsplatLoaders.values()].some(hasMore) ||
       [...this.loaders.values()].some(hasMore) ||
-      [...this.linesLoaders.values()].some(hasMore)
+      [...this.linesLoaders.values()].some(hasMore) ||
+      [...this.meshLoaders.values()].some(hasMore)
     );
   }
 
@@ -1150,6 +1154,30 @@ export class SceneLoader {
       processLines: (path, data, viewState, session) =>
         this.processLinesData(path, data, viewState, session),
       commitLines: (staged, session) => this.commitLinesGeometry(staged, session),
+      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      releaseLock: noopReleaseLock,
+      retriggerUpdate: onCancel,
+      isActive: () => !this._disposed,
+      signal: refinementController.signal,
+      profiler: this.profiler,
+    });
+    if (cancelled || this._disposed) return;
+
+    // Mesh runs LAST and therefore owns `finalReleaseLock`. Order within the four
+    // phases is otherwise historical (gsplats was the template), but the final slot
+    // is not arbitrary: whichever phase runs last must release the serialization
+    // lock, and a mesh reveal is the cheapest of the four to interrupt — its levels
+    // are already-decoded whole-node payloads, so a cancelled pass loses at most one
+    // projection rather than an in-flight chunk fetch.
+    await runMeshRefinement({
+      rootGroup: this.rootGroup,
+      viewStateQueue: this.viewStateQueue,
+      meshLoaders: this.meshLoaders,
+      deriveNodeViewState: (path, attrs, opts) =>
+        this.deriveNodeViewState(path, attrs as never, opts) as never,
+      processMesh: (path, data, viewState, attrs) =>
+        this.processMeshData(path, data, viewState, attrs),
+      commitMesh: (staged, session) => this.commitMeshGeometry(staged, session),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       releaseLock: finalReleaseLock,
       retriggerUpdate: onCancel,

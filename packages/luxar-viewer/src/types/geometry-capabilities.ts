@@ -129,12 +129,16 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     gsplats: { lod: true, partition: true, pooled: true, depthSortable: true },
     // Mesh: a connected surface, not a set of independent elements — see
     // docs/specs/MESH_NODE_SPEC.md §2.1 and §9.
-    //   lod           TRUE, and SUBSTITUTIVE only. A kind=lod group holds levels
-    //                 that REPLACE one another, and `luxar.mesh.decimate` is the
-    //                 producer that was missing. The ADDITIVE prefix ladder stays
-    //                 impossible (a prefix of an index buffer is a HOLED surface,
-    //                 not a coarser one) and this flag never gated it — that
-    //                 refusal lives in `loader-factory.ts`.
+    //   lod           TRUE, and SUBSTITUTIVE only — this flag has only ever meant
+    //                 the kind=lod group, whose levels REPLACE one another, and
+    //                 `luxar.mesh.decimate` is the producer that was missing.
+    //                 An additive prefix ladder is still not a LEVEL OF DETAIL for
+    //                 a surface (a prefix of an arbitrary index buffer is a HOLED
+    //                 surface, not a coarser one), so nothing here changed when
+    //                 mesh gained one: what it gained is a REVEAL, whose writer
+    //                 admits only orderings with a connected prefix, and which
+    //                 lives inside the leaf as `additive_<i>` subgroups rather
+    //                 than as a kind=lod group. See `mesh-progressive-loader.ts`.
     //   partition     TRUE. A BSP cut runs between faces, never through one,
     //                 and each part gathers + renumbers the vertices its own
     //                 faces use (luxar.mesh.split on the writer side). Vertices
