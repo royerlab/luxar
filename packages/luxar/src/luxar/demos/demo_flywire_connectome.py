@@ -596,13 +596,10 @@ def build_scene(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # Deliberate exception to the house ACES recommendation: this
-                # demo was tuned to Neutral (together with the low intensities
-                # below) precisely because ACES lifts mid-tones and blew the
-                # 300K-line luminous connection glow out into a white wash.
-                # Only move it to ACES alongside a re-tuned exposure and an
-                # actual A/B render.
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                # ACES (the house recommendation), paired with the re-tuned
+                # layer appearance below (opacity 0.79 + luminous on every
+                # Neurons/Connections layer) from an A/B render — see #1459.
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             # One toggleable Points layer per super_class — optic, central,
@@ -619,8 +616,9 @@ def build_scene(
                     colors=sc_palette[sc_name],
                     radii=radii,
                     sharpness=np.full(len(pos), 0.55, dtype=np.float32),
-                    opacity=0.95,
+                    opacity=0.79,
                     intensity=0.1,
+                    blending_mode="luminous",
                     labels=labels,
                     layer=True,
                 )
@@ -645,11 +643,9 @@ def build_scene(
                     sharpness=np.full(len(nt_verts), 0.85, dtype=np.float32),
                     line_type="segments",
                     blending_mode="luminous",
-                    # Very faint: 300K luminous connection lines otherwise
-                    # accumulate into a white wash that hides the (beautifully
-                    # colored) neuron cell bodies. Keep them as a subtle
-                    # connective glow so the neurons dominate the view.
-                    opacity=0.08,
+                    # Re-tuned (#1459): 0.79 opacity under ACES reads as a bright
+                    # connective glow that no longer washes out the neuron bodies.
+                    opacity=0.79,
                     intensity=0.08,
                     labels=nt_labels,
                     layer=True,
