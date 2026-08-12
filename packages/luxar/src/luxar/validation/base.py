@@ -170,6 +170,61 @@ def _validate_numeric_finite_values(array: NDArray[Any], context: str) -> None:
         )
 
 
+#: The only integer dtypes a COLOR array may be stored in. An integer colour is
+#: SDR in its own native range, and these are the two whose range the decoder
+#: knows how to normalize by — hence a whitelist rather than a width test
+#: (``int8`` is narrow and still unwritable).
+_WRITABLE_INTEGER_COLOR_DTYPES = (np.dtype("uint8"), np.dtype("uint16"))
+
+
+def validate_color_dtype(colors: NDArray[Any], context: str = "colors") -> None:
+    """Refuse a COLOR array whose dtype no writer can store (#1489).
+
+    A writable COLOR array is FLOATING POINT at any width (the encoder quantizes
+    it, and HDR needs the range) or integer ``uint8`` / ``uint16``. Everything
+    else is refused — a wider or signed integer, and also ``complex``, which is
+    ``np.number`` enough to pass :func:`_validate_numeric_finite_values` and then
+    dies deep inside the per-channel encoder. A whitelist rather than a pair of
+    special cases — the same SHAPE as the two other places this rule is spelled
+    out, ``encoding._encoders.base._validate_input`` and
+    ``luxar.gsplats.lift._reject_unwritable_color_dtype``. Only the encoder's
+    integer wording is reproduced verbatim (it is the rule being hoisted); the
+    lift phrases its own refusal differently and raises a bare ``ValueError``.
+
+    Hoisted into the pre-write sweep because the encoder's copy fires from inside
+    the colours write, one dataset after ``positions`` — or a whole LOD child in
+    — stranding a partial node (#1437's class). Its only caller is
+    :func:`validate_colors_for_writing`, which is what every pre-write path
+    runs — including the gsplats ``lod_group=`` gate, which asks the WHOLE
+    validator of every substitutive level rather than this rule alone, so that
+    a wrapped call cannot answer with a different fault than the flat one. It
+    stays a named function rather than an inline block because the rule is
+    cited by name from the docs that describe it.
+
+    Bool never reaches here: it is not an :class:`numpy.integer` subtype, and
+    :func:`_validate_numeric_finite_values` has already refused it as
+    non-numeric.
+    """
+    dtype = colors.dtype
+    if np.issubdtype(dtype, np.floating) or dtype in _WRITABLE_INTEGER_COLOR_DTYPES:
+        return
+    if np.issubdtype(dtype, np.integer):
+        # Byte-identical to the encoder's own integer message (minus the
+        # validator's `context:` prefix) so existing `match=` assertions and the
+        # two mirrors stay in lock-step.
+        raise ValidationError(
+            f"{context}: Integer COLOR arrays must use dtype uint8 or uint16 "
+            f"(got {dtype})",
+            "Cast SDR colours with colors.astype(np.uint8) (or np.uint16), "
+            "or pass a float array for HDR colours",
+        )
+    raise ValidationError(
+        f"{context}: COLOR arrays must be floating point, or integer uint8 or "
+        f"uint16 (got {dtype})",
+        "Use a float array for HDR/SDR colours, or cast with colors.astype(np.uint8)",
+    )
+
+
 def validate_positions_for_writing(
     positions: NDArray[Any], context: str = "positions"
 ) -> Tuple[int, int]:
@@ -258,6 +313,17 @@ def validate_colors_for_writing(
     The alpha column is a per-element opacity in [0, 1], not an HDR
     emission channel.
 
+    DTYPE is checked here, via :func:`validate_color_dtype` — unlike the
+    positions sibling, which deliberately accepts any numeric dtype (see
+    :func:`validate_positions_for_writing`), and like
+    :func:`validate_faces_for_writing`, which likewise refuses a non-integer
+    array outright. A COLOR array's dtype is one the encoder REFUSES rather than
+    converts: floating point is free (it quantizes), but an integer array must
+    already be ``uint8`` or ``uint16``. That refusal used to land mid-write,
+    after ``positions`` (or a whole LOD child) was on disk — the #1437 stranding
+    class this pre-write sweep exists to close. The check runs LAST here so its
+    precedence matches the encoder's own; see the comment at the call site.
+
     Args:
         colors: Colors array to validate
         n_points: Expected number of points
@@ -323,6 +389,17 @@ def validate_colors_for_writing(
             f"{context}: Colors cannot be negative. Found minimum value: {min_val:.3f}",
             "Ensure all color values are >= 0. Use np.clip(colors, 0, None) to fix",
         )
+
+    # Storage dtype, LAST of the whole-array checks so this function refuses in
+    # the same ORDER `encoding._encoders.base._validate_input` does — the copy of
+    # the rule it is hoisted from. Two consequences are deliberate and pinned by
+    # tests: an all-negative int32 array reports NEGATIVITY (as the encoder
+    # does), and an empty array returns via the `size == 0` branch above without
+    # a dtype opinion at all (as the encoder does, via `_write_passthrough`
+    # ahead of `_validate_input`). Shape still outranks everything, so a
+    # wrong-shape int64 array reports its shape exactly as a wrong-shape bool
+    # array already did.
+    validate_color_dtype(colors, context)
 
     if colors.ndim == 2 and colors.shape[1] == 4:
         # Alpha is opacity, not emission: bounded to [0, 1] regardless of the

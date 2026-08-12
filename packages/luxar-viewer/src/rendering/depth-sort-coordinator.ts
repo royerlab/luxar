@@ -791,7 +791,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
           // SCHEDULED here and is upgraded to uploaded only after THREE
           // renders the selected buffer (issue #713).
           session?.setMetadata({
-            splats: result.ordering.length,
+            elements: result.ordering.length,
             kernelMs: result.kernelMs,
             boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
             queueMs: Math.max(0, roundTripMs - result.workerMs),
@@ -823,7 +823,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
                       kernelMs: result.kernelMs,
                       boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
                       queueMs: Math.max(0, roundTripMs - result.workerMs),
-                      splats: result.ordering.length,
+                      elements: result.ordering.length,
                     });
                   }
                   session.end();

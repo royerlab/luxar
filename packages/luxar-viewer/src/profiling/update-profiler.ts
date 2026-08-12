@@ -72,6 +72,13 @@ export interface TimingMetadata {
   segments?: number;
   /** Splats visible/loaded */
   splats?: number;
+  /**
+   * Elements processed by a geometry-agnostic pass (the depth-sort rows,
+   * which sort points, line segments, Gaussian splats or mesh triangles
+   * through one machinery) — kept separate from the per-type counts above
+   * so the monitor never labels 3.0K sorted POINTS as "splats".
+   */
+  elements?: number;
   /** Whether this operation was skipped */
   skipped?: boolean;
   /** Reason for skipping */
@@ -127,8 +134,11 @@ export interface DepthSortCompletion {
   boundaryMs: number | null;
   /** Round-trip minus worker time (Comlink + clone + queueing), or null. */
   queueMs: number | null;
-  /** Splat count in the applied ordering, or null if unknown. */
-  splats: number | null;
+  /**
+   * Element count in the applied ordering (points / segments / splats /
+   * triangles), or null if unknown.
+   */
+  elements: number | null;
 }
 
 /**
@@ -146,6 +156,7 @@ const SUMMED_METADATA_KEYS = [
   'points',
   'segments',
   'splats',
+  'elements',
 ] as const;
 
 /**
@@ -555,15 +566,15 @@ export class UpdateProfiler {
   }
 
   /**
-   * Begin a gsplat depth-sort round-trip (depth-sorting Phase 3). Returns
+   * Begin a depth-sort round-trip (depth-sorting Phase 3). Returns
    * a detached root session that merges into the 'Depth Sort' persistent
    * tree — same isolation contract as {@link beginPass}: it never touches
    * the active update session or the ambient context, so a sort resolving
    * mid-update cannot disable the update's own profiling.
    *
    * The depth-sort coordinator opens one per SortWorker dispatch, stamps
-   * `setMetadata({ splats, info, kernelMs, boundaryMs, queueMs, applyMs })`
-   * (splat count, ordering bytes, and the worker/boundary/queue/apply
+   * `setMetadata({ elements, info, kernelMs, boundaryMs, queueMs, applyMs })`
+   * (element count, ordering bytes, and the worker/boundary/queue/apply
    * timing split — the latency numbers are last-write on merge), and ends
    * it when the ordering is APPLIED — i.e. its buffer is flipped in and
    * drawn — NOT merely when the SortWorker RPC resolves (large orderings
@@ -780,7 +791,7 @@ export class UpdateProfiler {
     kernelMs: number | null;
     boundaryMs: number | null;
     queueMs: number | null;
-    splats: number | null;
+    elements: number | null;
   }): void {
     this.depthSortCompletionTotal++;
     this.depthSortCompletions.push({ seq: this.depthSortCompletionTotal, ...event });
