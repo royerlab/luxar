@@ -619,9 +619,11 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
   /**
    * The per-tick step handed to advanceDimensionValue: the user's explicit
-   * override when set, else the authored step for discrete dims, else null
-   * (continuous fps-derived increment). MUST be used by BOTH updateDimension
-   * and peekNextValue — the playhead and the t+1 prefetch have to agree.
+   * override when set (quantized to the authored grid for discrete dims,
+   * one cell minimum — see #1520), else the authored step for discrete
+   * dims, else null (continuous fps-derived increment). MUST be used by
+   * BOTH updateDimension and peekNextValue — the playhead and the t+1
+   * prefetch have to agree.
    */
   private resolveAnimationStep(
     state: DimensionAnimationState,

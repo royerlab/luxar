@@ -440,7 +440,7 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       removeEventListener: vi.fn(),
       getState: vi.fn(() => undefined),
       isAnimating: vi.fn(() => false),
-      getStepSize: vi.fn(() => null),
+      getStepSize: vi.fn((): number | null => null),
       setStepSize: vi.fn(),
       setTargetFPS: vi.fn(),
       setLoopMode: vi.fn(),
@@ -571,6 +571,33 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
+  it('custom step field: blur without editing never re-commits the 3-digit display form', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    // A full-precision override that matches no preset → seeds the custom field.
+    stub.getStepSize = vi.fn(() => 0.123456);
+    sliders.setAnimationManager(stub as never);
+
+    const playBtn = document.querySelector('.luxar-dimension-slider__play-btn')!;
+    playBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const input = document.querySelector(
+      'input[aria-label="Custom step size"]'
+    ) as HTMLInputElement;
+    expect(input.value).toBe('0.123'); // seeded with the truncated display form
+
+    // Focus-then-leave with no edit must NOT rewrite 0.123456 → 0.123.
+    input.dispatchEvent(new Event('blur'));
+    expect(stub.setStepSize).not.toHaveBeenCalled();
+
+    // An actual edit still commits on blur.
+    input.value = '0.2';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('blur'));
+    expect(stub.setStepSize).toHaveBeenCalledWith(3, 0.2);
+    sliders.dispose();
+  });
+
   it('a discrete dim offers only whole-cell step presets (#1520)', () => {
     const container = document.getElementById('test-container')!;
     const dims = createDims();
@@ -625,11 +652,15 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     )!;
     expect(input.type).toBe('number'); // NEVER type=range (E2E slider indexing)
 
+    // Real typing fires an `input` event — the commit is gated on it (an
+    // un-edited field must never re-commit its truncated display seed).
     input.value = '-3';
+    input.dispatchEvent(new Event('input'));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(stub.setStepSize).not.toHaveBeenCalled();
 
     input.value = '0.75';
+    input.dispatchEvent(new Event('input'));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(stub.setStepSize).toHaveBeenCalledWith(3, 0.75);
     sliders.dispose();

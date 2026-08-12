@@ -835,8 +835,10 @@ export class InputHandler {
    * Handles keyboard navigation through nD dimensions using [ and ] keys.
    *
    * This implements intelligent dimension navigation with adaptive step sizes:
-   * - Discrete dimensions step by their defined increment
-   * - Continuous dimensions step by 1% of their total range
+   * - The animation menu's per-dimension Step override wins when set
+   *   (quantized to the authored grid for discrete dims)
+   * - Otherwise discrete dimensions step by their defined increment
+   * - Otherwise continuous dimensions step by 1% of their total range
    * - Steps are clamped to dimension bounds
    * - Only updates if the value actually changes
    *

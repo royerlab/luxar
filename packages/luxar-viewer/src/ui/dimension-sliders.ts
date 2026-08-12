@@ -1290,9 +1290,16 @@ export class DimensionSliders {
     // Commit once, on Enter or on blur (blur also fires when the
     // click-outside close removes the menu, so a typed value is not lost).
     // Escape closes the menu without committing (document-level handler).
+    // Only an actually-edited value commits: the input is seeded with the
+    // 3-significant-digit display form, so committing it untouched would
+    // silently truncate a full-precision override (0.123456 → 0.123).
     let committed = false;
+    let edited = false;
+    customInput.addEventListener('input', () => {
+      edited = true;
+    });
     const commitCustom = (): void => {
-      if (committed) return;
+      if (committed || !edited) return;
       const v = parseFloat(customInput.value);
       if (Number.isFinite(v) && v > 0) {
         committed = true;

@@ -909,6 +909,15 @@ describe('DimensionAnimationManager', () => {
       expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1);
     });
 
+    it('quantization rounds to the NEAREST grid cell (1.7 → 2 cells, not floored to 1)', () => {
+      // Distinguishes round() from floor(): every sub-cell case is identical
+      // under both, so without this pin a round→floor drift is undetectable.
+      manager.setStepSize(3, 1.7);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+      const start = sceneDimsManager.getDims()!.currentStep[3];
+      expect(manager.peekNextValue(3)).toBe(start + 2);
+    });
+
     it('a non-grid-multiple override lands playhead and prefetch on the SAME value (#1520)', () => {
       manager.setStepSize(3, 0.7);
       manager.play(3, { targetFPS: 10, direction: 'forward' });
