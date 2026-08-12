@@ -19,7 +19,8 @@ Exposed:
   :func:`validate_lines_channels_before_split`,
   :func:`validate_gsplats_channels_before_split` — the same pre-split gate for
   every other per-element channel (colors / radii / widths / sharpness /
-  scalars / amplitudes / Cholesky), delegating to the writers' own sweeps.
+  scalars / amplitudes / Cholesky / image_labels), delegating to the writers'
+  own sweeps.
 * :func:`validate_line_indices_before_split` — the topology half of the Lines
   gate: the flat ``indexed`` layout/parity check, run before the channels.
 * :func:`position_bounds_from_array` — per-axis min/max of an (N, D)
@@ -31,13 +32,166 @@ Exposed:
   points / gsplats / mesh leaf, where it would write cleanly and do nothing.
 * :func:`reject_lines_only_join_assignment` — the same refusal for the second
   door into the same attr, the ``node.join = ...`` property setter.
+* :func:`unnest_add_error` — strip a SAME-geometry inner adder's own ``Could
+  not add <geometry> '<child>': …`` prefix from a caught exception's message,
+  so a refusal from inside a synthesised same-kind split child (``child_3``,
+  ``part_0``) reads the same as the flat path's refusal for the same input.
+* :func:`funnel_add_error` — build an adder's outer ``Could not add <geometry>
+  '<name>': …`` message from :func:`unnest_add_error`'s un-nested inner text.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 import numpy as np
+
+#: The four addable geometry words — the only tokens a nested funnel prefix is
+#: ever allowed to name. Deliberately excludes ``group``: ``Node.add_lod_group``
+#: / ``add_partition_group`` build their OWN ``Could not create child … group
+#: '<x>': …`` prefix ahead of a wrapper-creation failure, and that prefix must
+#: never be mistaken for (or stripped as) a geometry adder's — see
+#: :func:`funnel_add_error`.
+_GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
+
+#: Matches the prefix an adder's own funnel produces, e.g.
+#: ``Could not add points 'child_3': ...``. Anchored to the start of the
+#: string so it only strips an ACTUAL nested funnel prefix, never a substring
+#: that happens to appear mid-message, and the token is restricted to
+#: :data:`_GEOMETRY_WORDS` so a ``Could not add group '<x>': …`` prefix (an
+#: unrelated wrapper-creation failure, never a geometry adder's own) can never
+#: match.
+_NESTED_ADD_ERROR_PREFIX_RE = re.compile(
+    r"^Could not add (" + "|".join(_GEOMETRY_WORDS) + r") '[^']*': "
+)
+
+
+def unnest_add_error(geometry: str, name: str, exc: BaseException) -> str:
+    """Strip a SAME-geometry inner ``Could not add <geometry> '<child>': …``
+    prefix from ``exc``'s message, returning the UN-NESTED inner text alone
+    (never re-prefixed with the caller's own ``geometry``/``name`` — that is
+    :func:`funnel_add_error`'s job, built on top of this).
+
+    Every ``add_points`` / ``add_lines`` / ``add_mesh`` / ``add_gsplats``
+    funnels every failure inside its ``try`` block through one
+    ``raise ValueError(f"Could not add {geometry} '{name}': {e}") from e``. On
+    a ``partition=`` split, on the Mesh ``substitutive_lod=`` ladder, or on the
+    FINEST child of a Points/Lines ``substitutive_lod=`` ladder (the one child
+    of that ladder written by the SAME adder — its coarse siblings are lifted
+    to gsplats, see below), a child level is written by calling the SAME adder
+    again for a synthesised child name (``child_3``, ``part_0``) — so when
+    that recursive call fails, its own funnel has ALREADY produced
+    ``Could not add <geometry> '<child>': …`` before the outer call catches it
+    and wraps it a second time: ``Could not add points 'p': Could not add
+    points 'part_1': Image labels length (200) must match element count
+    (400)``. That doubly indirects the caller away from the actual fault and
+    names an internal node they never passed and have no way to address
+    (issue #1491).
+
+    Stripping the inner prefix — and, in :func:`funnel_add_error`, re-prefixing
+    with the CALLER's own ``geometry``/``name`` — makes the split path's
+    message identical to what the flat (non-split) path raises for the same
+    invalid input — the "same verdict" parity this module's docstrings already
+    promise between the two write paths.
+
+    The strip is CONDITIONAL on the inner token matching this call's OWN
+    ``geometry``, which is the whole point rather than an edge case: on the
+    Points/Lines ``substitutive_lod=`` ladder the coarse children are
+    GSPLATS nodes (the lift target), so an outer ``add_points`` call's inner
+    failure is genuinely ``Could not add gsplats 'child_0': …`` — a DIFFERENT
+    geometry's own fault, not a same-kind recursion artefact. Un-nesting that
+    would hide which geometry actually failed and, worse, could relabel it
+    with an attribute the outer geometry does not even recognise (a gsplats-
+    only attr like ``amplitude_range`` reported as a Points fault). Only a
+    same-geometry inner prefix — the actual recursion-into-itself case this
+    function exists for — is stripped; a cross-geometry or a
+    ``Could not add group '<x>': …`` inner prefix (see
+    :data:`_GEOMETRY_WORDS`) is left exactly as raised.
+
+    Only a message whose token matches the CALLER's ``geometry`` is touched;
+    any other message (a plain ``ValueError`` from a leaf write, a
+    ``TypeError``, a cross-geometry or ``group`` inner prefix, ...) passes
+    through byte-for-byte, so an unrelated error is never mangled.
+
+    Not every raise site funnels through this. The ones that do are the four
+    ``add_{points,lines,mesh,gsplats}_impl`` outer ``except`` blocks — see
+    ``adders/{points,lines,mesh,gsplats}.py``. A handful of OTHER sites build
+    the identical ``Could not add <geometry> '<name>': …`` prefix by hand and
+    do not call this function: ``gsplats_pipeline/lod_dispatch.py``,
+    ``gsplats_pipeline/from_data.py``, ``gsplats_pipeline/from_io.py`` (two
+    sites), and ``scene/scene.py``. None of those is reachable as an INNER
+    exception this function would need to un-nest today — they are the
+    outermost raise on their own call paths — so the gap is latent, not a
+    live bug; it means only that a future recursive call THROUGH one of them
+    would need its own :func:`funnel_add_error` call, same as the four
+    adders. This helper also does not reach the wrapper-GROUP creation chain:
+    e.g. ``scene.add_points("g", pos, substitutive_lod=True,
+    transform=[1,2,3])`` still raises ``Could not add points 'g': Could not
+    create child kind=lod group 'g': Could not add group 'g': Could not
+    create child group 'g': Invalid transform for node 'g': …`` — four levels
+    of nesting, none of it un-nested by this function (the innermost failure
+    is a ``group``, which :data:`_GEOMETRY_WORDS` excludes by design). That
+    chain is a separate, still-open problem; this function closes only the
+    geometry-adder same-kind recursion case #1491 is about.
+
+    Args:
+        geometry: The geometry kind for THIS raise site — ``"points"`` /
+            ``"lines"`` / ``"mesh"`` / ``"gsplats"`` — matching what the flat
+            write would say for the same node type.
+        name: The node name the CALLER passed to this adder call (never a
+            synthesised child/part name — those only ever appear on an INNER
+            call, which is exactly what gets stripped when the inner geometry
+            matches this one). Unused by this function directly (the strip
+            only inspects ``exc``'s own message), but taken for symmetry with
+            :func:`funnel_add_error` and so a future geometry-aware strip rule
+            has somewhere to use it.
+        exc: The caught exception. Only its ``str()`` is used; the call site
+            keeps its own ``raise ... from e`` so the full chain (including
+            this exact exc) is still available to a debugger/traceback.
+
+    Returns:
+        ``exc``'s message with a same-geometry inner ``Could not add …``
+        prefix removed, or unchanged if there is none.
+    """
+    message = str(exc)
+    match = _NESTED_ADD_ERROR_PREFIX_RE.match(message)
+    if match and match.group(1) == geometry:
+        message = message[match.end() :]
+    return message
+
+
+def funnel_add_error(geometry: str, name: str, exc: BaseException) -> str:
+    """Build the ``Could not add <geometry> '<name>': …`` message, un-nested.
+
+    Thin wrapper around :func:`unnest_add_error`: re-prefixes its un-nested
+    inner text with THIS call's own ``geometry``/``name``, producing the
+    string an adder's outer ``except`` block passes to ``ValueError(...)``.
+    See :func:`unnest_add_error` for why the un-nesting is needed and exactly
+    which prefix it strips.
+
+    Idempotent, but not because the regex has "nothing left to match" on a
+    second pass — it does: this function's OWN output is
+    ``Could not add <geometry> '<name>': <message>``, which matches the same
+    pattern :func:`unnest_add_error` strips. Idempotence instead holds because
+    every un-nesting is immediately followed by re-prefixing with the SAME
+    ``geometry``/``name`` that were just stripped, so running the result
+    through this function again with the same arguments strips exactly what
+    it just added back and reproduces the identical string.
+
+    Args:
+        geometry: The geometry kind for THIS raise site — ``"points"`` /
+            ``"lines"`` / ``"mesh"`` / ``"gsplats"`` — matching what the flat
+            write would say for the same node type.
+        name: The node name the CALLER passed to this adder call.
+        exc: The caught exception — forwarded to :func:`unnest_add_error`
+            unchanged.
+
+    Returns:
+        The message to pass to ``ValueError(...)``.
+    """
+    return f"Could not add {geometry} '{name}': {unnest_add_error(geometry, name, exc)}"
+
 
 #: Attrs that ride on a kind=lod / kind=partition wrapper Group (where the user
 #: thinks of the wrapper as "their layer") rather than getting copied onto
@@ -276,6 +430,7 @@ def validate_points_channels_before_split(
     sharpness: Any = None,
     scalars: Any = None,
     labels: Any = None,
+    image_labels: Any = None,
 ) -> None:
     """Run the flat Points write gate over every per-point channel, pre-split.
 
@@ -301,6 +456,30 @@ def validate_points_channels_before_split(
     merge is untested on a varying alpha) — but that is not a broadcast form, so
     it is not this gate's parity promise.
 
+    ``image_labels`` (#1491) does not fit the ``slice_optional_array`` trap
+    above at all — it has no per-part/per-level SLICER in the first place. On
+    ``substitutive_lod=`` the value is forwarded ONLY to the finest child
+    (Points itself), which the wrapper writes LAST, after every coarse gsplat
+    level is already committed. Pre-fix, the length/index check ran INSIDE
+    ``write_image_labels_csr``, near the very end of that finest child's own
+    write — AFTER its ``type``, ``n_points``, positions, radii, colors,
+    sharpness, scalars and ``labels`` were already on disk. (``finalize()``,
+    which back-fills a ``kind=lod`` wrapper's own ``position_bounds`` from its
+    finest child, runs only from ``LuxarZarrCompiler.finalize()`` — AFTER
+    every ``add_*`` call has returned — so it never ran on this path: the
+    raising ``add_points`` call propagated the error straight out, and the
+    wrapper node was left with no ``position_bounds`` of its own at all.) So a
+    wrong-length ``image_labels`` left a COMPLETE, fully
+    loadable N-level ``kind=lod`` ladder on disk — every level present, every
+    other array on every level present — silently missing only the
+    ``image_label_offsets`` / ``image_label_bytes`` the caller actually asked
+    for. That is HARDER to notice than a missing level, not milder: the
+    ladder loads and renders exactly like a smaller, correctly-authored object
+    that simply has no images, rather than announcing a failed write.
+    (``partition=`` refuses ``image_labels`` outright, and an additive ladder
+    falls back to a single leaf when it is set, so the substitutive wrapper is
+    the only one exposed to this.)
+
     The CHANNEL verdict is identical with and without a wrapper. Note the gate
     runs ABOVE the positions / attr checks on the split paths, so a call that
     ALSO trips one of those (a NaN position, an unknown attr) reports the
@@ -321,6 +500,10 @@ def validate_points_channels_before_split(
         sharpness: Per-point array, ``(1,)`` broadcast array, or scalar.
         scalars: Per-point array, ``(1,)`` broadcast array, or scalar.
         labels: One string per point.
+        image_labels: Per-point images (dense sequence or sparse dict) — only
+            ever carried by the finest child of a ``substitutive_lod=``
+            ladder; see the paragraph above for why it needs this gate
+            specifically.
 
     Raises:
         ValidationError: If any channel is not a legal per-point or broadcast
@@ -335,6 +518,7 @@ def validate_points_channels_before_split(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        image_labels=image_labels,
     )
 
 
@@ -346,13 +530,17 @@ def validate_lines_channels_before_split(
     sharpness: Any = None,
     scalars: Any = None,
     labels: Any = None,
+    image_labels: Any = None,
 ) -> None:
     """Run the flat Lines write gate over every per-vertex channel, pre-split.
 
     The Lines twin of :func:`validate_points_channels_before_split` — read that
-    docstring for the trap this closes, for why the implementation is shared
-    with the writer rather than repeated, and for the exact scope of the
-    identical-verdict promise. All four channels are per-VERTEX (not
+    docstring for the trap this closes (including the ``image_labels``
+    paragraph: the substitutive wrapper forwards it only to the finest child,
+    written LAST, so this gate is what keeps a wrong length from stranding a
+    truncated ``kind=lod`` ladder), for why the implementation is shared with
+    the writer rather than repeated, and for the exact scope of the
+    identical-verdict promise. All five channels are per-VERTEX (not
     per-segment), and ``widths`` is required, so it is validated first and
     unconditionally. The topology half of the same gate is
     :func:`validate_line_indices_before_split`, which must run BEFORE this one.
@@ -365,6 +553,10 @@ def validate_lines_channels_before_split(
         sharpness: Per-vertex array, ``(1,)`` broadcast array, or scalar.
         scalars: Per-vertex array, ``(1,)`` broadcast array, or scalar.
         labels: One string per vertex.
+        image_labels: Per-vertex images (dense sequence or sparse dict) —
+            only ever carried by the finest child of a ``substitutive_lod=``
+            ladder; see :func:`validate_points_channels_before_split` for why
+            it needs this gate specifically.
 
     Raises:
         ValidationError: If any channel is not a legal per-vertex or broadcast
@@ -379,6 +571,7 @@ def validate_lines_channels_before_split(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        image_labels=image_labels,
     )
 
 

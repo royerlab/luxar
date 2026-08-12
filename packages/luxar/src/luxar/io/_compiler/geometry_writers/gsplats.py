@@ -24,7 +24,10 @@ from ..gsplat_assembly import (
     validate_gsplat_inputs,
     write_gsplat_arrays,
 )
-from ..labels.image_labels import write_image_labels_csr
+from ..labels.image_labels import (
+    validate_image_labels_for_writing,
+    write_image_labels_csr,
+)
 from ..labels.text_labels import write_labels_csr
 from ..node_common import (
     GSPLATS_RESERVED_ATTRS,
@@ -68,10 +71,18 @@ def write_gsplats(
     # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group
     # is created, so an invalid input cannot leave a partial node on disk.
     # NOTE this gate is best-effort, not transactional: validators that need
-    # the store (image_labels, transform/nd_transform + custom colormap LUT
-    # resolution inside apply_gsplat_group_attrs) still run post-write and can
-    # leak a partial node on failure (F7 residual — transactional/temp-dir
-    # writes are a separate project).
+    # the store (transform/nd_transform + custom colormap LUT resolution
+    # inside apply_gsplat_group_attrs) still run post-write and can leak a
+    # partial node on failure (F7 residual — transactional/temp-dir writes are
+    # a separate project). image_labels' LENGTH/index and its per-item TYPE
+    # dispatch — including the (H,W[,3|4]) ndarray-shape check, which
+    # check_image_label_type validates eagerly since ndim/shape[2] need no PIL
+    # round-trip — now run here too (step 0e, below, via
+    # validate_image_labels_for_writing / check_image_label_type); only
+    # normalize_image_label's actual blob normalization still runs post-write
+    # — reading a str/Path file and the PIL encode itself (including the
+    # Pillow-not-installed ImportError, which the adder's
+    # except (ValueError, TypeError) funnel does not catch either).
     #
     # 0a. Pure attr validators + reserved writer-stamp collisions.
     validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
@@ -97,6 +108,15 @@ def write_gsplats(
         from ....validation.base import validate_labels_for_writing
 
         validate_labels_for_writing(labels, n_splats)
+
+    # 0e. Image labels: length (dense) / index bounds (sparse dict) — see
+    # validate_image_labels_for_writing for why this moved out of the CSR
+    # writer itself. GSplats has no substitutive_lod wrapper OF ITS OWN (a
+    # gsplat leaf IS the coarse-level representation other geometry types
+    # lift into), so unlike Points/Lines/Mesh this check only needs to be
+    # hoisted into the flat gate, not into a pre-split gate too.
+    if image_labels is not None:
+        validate_image_labels_for_writing(image_labels, n_splats)
 
     # 1. Setup: Create group
     group = ctx.store.require_group(path)
