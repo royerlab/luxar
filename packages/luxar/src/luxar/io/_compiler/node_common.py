@@ -185,7 +185,14 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # Geometry-writer internal forwarding flags. NOT an exhaustive list of
         # them: a flag popped BEFORE this gate runs never needs listing here.
         # ``_return_sort_order`` (see ``record_forwarded_sort_order``) is popped
-        # as the writers' very first statement and is deliberately absent.
+        # as the writers' very first statement and is deliberately absent. Note
+        # that "never needs listing" holds only for THIS (writer-internal) call
+        # site: since #1529, Points/Lines adders also run this same gate at the
+        # adder entry, before any writer ever pops such a flag, so a
+        # popped-first private flag reaching the adder would be rejected there
+        # as unknown instead — no live case does this today (`_return_sort_order`
+        # is never caller-supplied), but a future one would surface earlier and
+        # under a different message than this comment's premise suggests.
         "_skip_scene_bounds",
     }
 )

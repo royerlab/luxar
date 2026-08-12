@@ -188,12 +188,15 @@ LOD wrapper builders:
   write accepts. What that buys is a per-element CHANNEL verdict identical with
   and without `partition=` / `additive_lod=` / `substitutive_lod=` — identical
   exception type and message, which the tests assert byte-for-byte. The gate runs
-  ABOVE the positions / attr checks on the split paths, so a call that also trips
-  one of those reports the channel fault first here and the positions/attr fault
-  on the plain-leaf path — both refuse, neither writes. The scene-DIMENSION count
-  is the exception: since #1446 the adders check it above their split branches, so
-  it precedes this gate on both paths and a mismatched column count is reported
-  first either way.
+  ABOVE the positions checks on the split paths, so a call that also trips a bad
+  position (e.g. a NaN) reports the channel fault first here and the positions
+  fault on the plain-leaf path — both refuse, neither writes. The scene-DIMENSION
+  count is one exception: since #1446 the adders check it above their split
+  branches, so it precedes this gate on both paths and a mismatched column count
+  is reported first either way. The node-attrs check is a second exception, on
+  Points/Lines only: since #1529 `validate_render_attrs` also runs at the adder
+  entry, above this gate, so an unknown/reserved attr wins there too — GSplats
+  has no such entry gate, so an attrs fault there still loses to this one.
   Same placement rule as the labels guard (first statement of the wrapper impl,
   never a leaf adder). Labels, then image labels, come last, in that order, as in
   the flat write: for Points and Lines via `validate_labels_for_writing` then

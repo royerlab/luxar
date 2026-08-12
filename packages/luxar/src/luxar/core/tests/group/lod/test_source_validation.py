@@ -56,6 +56,47 @@ child (e.g. the Mesh ``substitutive_lod=`` ladder's own ``child_3``) is un-neste
 just the same, so it ALSO reads without ``"child_"`` in it — only the
 accompanying store assertion (nothing / only the expected node persisted)
 still discriminates early from late.
+
+The fifth and last section is the NODE-ATTRS gate (#1529), a Points/Lines-only
+variant of the #1437 bug (Mesh and GSplats did not gain it: their own
+``partition=`` paths still strand a childless ``kind=partition`` node, filed
+separately), and it covers all THREE Points/Lines split paths, not only
+substitutive_lod=: substitutive_lod= and partition= both forward the
+non-compositing remainder of the caller's ``**attrs`` to a synthesised child
+(a gsplats ``child_0``, or a ``part_i``), and additive_lod= goes straight to
+the multi-LOD writer, which calls this same validator with NO reserved-attrs
+set at all. So an attrs key the flat writer would reject up front — either a key
+``GSPLATS_RESERVED_ATTRS`` reserves but ``POINTS_RESERVED_ATTRS`` /
+``LINES_RESERVED_ATTRS`` do not (``amplitude_range=``), a plain unknown-key
+typo (``blending=``), or (additive_lod= only) a genuinely points/lines-reserved
+key misreported as *unknown* instead of *reserved* (``ordering=``,
+``max_radius=``/``max_width=``) — used to be refused only from inside the
+first child, by which point the wrapper group itself (childless: zero coarse
+levels / parts) was already on disk; a ``position_bounds=`` collision under
+additive_lod= did not even raise at all — real ladder data was written and
+the writer's own stamp silently clobbered, breaking ``finalize()`` later with
+an unrelated ``ValueError``. Unlike the #1437/#1446 sections this is not a
+per-element SLICE hoisted upward; it is the SAME pure attrs validator
+(``validate_render_attrs``) the flat writer already calls, run once more,
+earlier, on the un-split caller attrs — so every split path refuses
+byte-identically to the flat path, and the flat path simply validates twice
+(idempotent), which also means a multi-fault flat call now reports the attrs
+fault where it used to report an ``extend_to_all`` fault (Mesh diverges here:
+its substitutive wrapper resolves ``extend_to_all`` before its own attrs gate,
+keeping the pre-#1529 order). Two precedence controls follow the #1437/#1446
+pattern: the colours/colormap gate still outranks this one, on every path
+(unchanged); and this gate now itself outranks the #1437 channel gate at the
+top of the partition/substitutive/multi-LOD wrappers — the flat writer's own
+order (attrs before channels) is what the split paths now match, where
+before #1529 they did not. A THIRD set of placement tests below pins that
+this gate lives at the ADDER ENTRY, not duplicated at the top of each
+wrapper: an implementation that instead put the same check at the top of the
+partition/substitutive wrappers would pass every message-parity test above
+but would still let that wrapper's own kwarg-spec check (a malformed
+``partition=`` rule, an invalid ``substitutive_lod=`` ``compression_factor``)
+run first, and on the flat path would still let ``extend_to_all`` resolution
+run first — only a call that trips both faults at once, and asserts the
+ADDER's ordering wins, can tell the two implementations apart.
 """
 
 from __future__ import annotations
@@ -2542,3 +2583,687 @@ class TestTheColoursHoistDoesNotMultiplyHdrWarnings:
         assert n_children > 1
         hdr = [r for r in records if "HDR colors with maximum value" in str(r.message)]
         assert len(hdr) == n_children
+
+
+# ---------------------------------------------------------------------------
+# Node-attrs gate, pre-split, on the Points/Lines substitutive wrapper (#1529)
+# ---------------------------------------------------------------------------
+#
+# The substitutive wrapper forwards the non-compositing remainder of **attrs
+# to a synthesised gsplats child_0, so an attrs key the flat writer refuses up
+# front used to be caught
+# only from inside that child — by which point the kind=lod wrapper itself was
+# already on disk, childless (child_0 is the FIRST coarse level, so no level
+# had actually been written yet). `amplitude_range` is reserved for GSPLATS
+# but not for POINTS/LINES, so it is the case that shows the wrapper refusing
+# for a DIFFERENT reason than the flat leaf does pre-fix (reserved vs.
+# unknown); `blending` (a typo for `blending_mode`) is the plain unknown-key
+# case, which also exercises the "Did you mean ...?" hint.
+
+
+class TestPointsSubstitutiveNodeAttrsGate:
+    def test_reserved_but_unknown_attr_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "points_sub_attrs_amp.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "points_sub_attrs_amp_flat.luxar.zarr")
+        positions = random_positions(_SUB_N, seed=111)
+
+        flat = refusal(
+            lambda: flat_scene.add_points("p", positions, amplitude_range=[0.0, 1.0])
+        )
+        split = refusal(
+            lambda: scene.add_points(
+                "p", positions, substitutive_lod=True, amplitude_range=[0.0, 1.0]
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "amplitude_range" in str(split)
+        assert "p" not in compiler.store
+        # The gate runs above add_lod_group, so no partial kind=lod node
+        # survives finalize() either — the #1529 stranding this closes.
+        assert "p" not in finalized_group_keys(compiler, path)
+
+    def test_unknown_attr_typo_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "points_sub_attrs_typo.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "points_sub_attrs_typo_flat.luxar.zarr")
+        positions = random_positions(_SUB_N, seed=112)
+
+        flat = refusal(lambda: flat_scene.add_points("p", positions, blending="max"))
+        split = refusal(
+            lambda: scene.add_points(
+                "p", positions, substitutive_lod=True, blending="max"
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Did you mean 'blending_mode'?" in str(split)
+        assert "p" not in compiler.store
+        assert "p" not in finalized_group_keys(compiler, path)
+
+    def test_truncation_radius_is_accepted_on_both_paths(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, "points_sub_attrs_trunc.luxar.zarr"
+        )
+        flat_compiler, flat_scene, flat_path = open_scene(
+            tmp_path, "points_sub_attrs_trunc_flat.luxar.zarr"
+        )
+        positions = random_positions(_SUB_N, seed=113)
+
+        # Control on the flat path: truncation_radius is a known render attr.
+        flat_scene.add_points("p", positions, truncation_radius=3.0)
+        flat_compiler.finalize()
+
+        scene.add_points("p", positions, substitutive_lod=True, truncation_radius=3.0)
+        compiler.finalize()
+
+        flat_store = zarr.open_group(flat_path, mode="r")
+        assert flat_store["p"].attrs["type"] == "points"
+        assert flat_store["p"].attrs["truncation_radius"] == 3.0
+        assert "kind" not in flat_store["p"].attrs
+
+        store = zarr.open_group(path, mode="r")
+        assert store["p"].attrs["kind"] == "lod"
+        children = sorted(store["p"].group_keys())
+        assert len(children) > 1
+        # #1529 asked the harder half of the question explicitly: an attr the
+        # flat path ACCEPTS must not be silently dropped on the way to the
+        # synthesised children (which would write cleanly and be worse than a
+        # refusal). Every level — the lifted gsplat coarse ones and the finest
+        # points child alike — carries the caller's value, as the flat leaf does.
+        for child in children:
+            assert store["p"][child].attrs["truncation_radius"] == 3.0
+
+    def test_a_colours_fault_still_outranks_the_attrs_gate(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "points_sub_attrs_prec.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "points_sub_attrs_prec_flat.luxar.zarr")
+        positions = random_positions(_SUB_N, seed=114)
+
+        flat = refusal(
+            lambda: flat_scene.add_points(
+                "p",
+                positions,
+                colors=[1.0, 0.0, 0.0],
+                colormap="viridis",
+                bogus_attr=1,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_points(
+                "p",
+                positions,
+                substitutive_lod=True,
+                colors=[1.0, 0.0, 0.0],
+                colormap="viridis",
+                bogus_attr=1,
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "both 'colors' and 'colormap'" in str(split)
+        assert "p" not in compiler.store
+
+
+class TestLinesSubstitutiveNodeAttrsGate:
+    def test_reserved_but_unknown_attr_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lines_sub_attrs_amp.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lines_sub_attrs_amp_flat.luxar.zarr")
+        vertices = random_positions(_SUB_N, seed=115)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                amplitude_range=[0.0, 1.0],
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                substitutive_lod=True,
+                amplitude_range=[0.0, 1.0],
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "amplitude_range" in str(split)
+        assert "line" not in compiler.store
+        # The gate runs above add_lod_group, so no partial kind=lod node
+        # survives finalize() either — the #1529 stranding this closes.
+        assert "line" not in finalized_group_keys(compiler, path)
+
+    def test_unknown_attr_typo_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lines_sub_attrs_typo.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lines_sub_attrs_typo_flat.luxar.zarr")
+        vertices = random_positions(_SUB_N, seed=116)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line", vertices, widths=0.2, line_type="segments", blending="max"
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                substitutive_lod=True,
+                blending="max",
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Did you mean 'blending_mode'?" in str(split)
+        assert "line" not in compiler.store
+        assert "line" not in finalized_group_keys(compiler, path)
+
+    def test_truncation_radius_is_accepted_on_both_paths(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lines_sub_attrs_trunc.luxar.zarr")
+        flat_compiler, flat_scene, flat_path = open_scene(
+            tmp_path, "lines_sub_attrs_trunc_flat.luxar.zarr"
+        )
+        vertices = random_positions(_SUB_N, seed=117)
+
+        flat_scene.add_lines(
+            "line", vertices, widths=0.2, line_type="segments", truncation_radius=3.0
+        )
+        flat_compiler.finalize()
+
+        scene.add_lines(
+            "line",
+            vertices,
+            widths=0.2,
+            line_type="segments",
+            substitutive_lod=True,
+            truncation_radius=3.0,
+        )
+        compiler.finalize()
+
+        flat_store = zarr.open_group(flat_path, mode="r")
+        assert flat_store["line"].attrs["type"] == "lines"
+        assert flat_store["line"].attrs["truncation_radius"] == 3.0
+        assert "kind" not in flat_store["line"].attrs
+
+        store = zarr.open_group(path, mode="r")
+        assert store["line"].attrs["kind"] == "lod"
+        children = sorted(store["line"].group_keys())
+        assert len(children) > 1
+        # Same as the Points case above: #1529 asked whether an accepted
+        # gsplats-relevant attr reaches the synthesised levels or is silently
+        # dropped. It reaches every one of them, matching the flat leaf.
+        for child in children:
+            assert store["line"][child].attrs["truncation_radius"] == 3.0
+
+    def test_a_colours_fault_still_outranks_the_attrs_gate(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "lines_sub_attrs_prec.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lines_sub_attrs_prec_flat.luxar.zarr")
+        vertices = random_positions(_SUB_N, seed=118)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                colors=[1.0, 0.0, 0.0],
+                colormap="viridis",
+                bogus_attr=1,
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                substitutive_lod=True,
+                colors=[1.0, 0.0, 0.0],
+                colormap="viridis",
+                bogus_attr=1,
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "both 'colors' and 'colormap'" in str(split)
+        assert "line" not in compiler.store
+
+
+# ---------------------------------------------------------------------------
+# Node-attrs gate, pre-split, on the Points/Lines PARTITION path (#1529)
+# ---------------------------------------------------------------------------
+#
+# The gate at the top of add_points_impl / add_lines_impl runs above the
+# partition= branch too, not just substitutive_lod=. Pre-fix, a bad attr
+# raised the right message but still left a childless kind=partition node for
+# the caller's name on disk: validate_render_attrs was reached only from
+# add_points_impl (points.py:283) delegating to
+# add_points_partition_wrapper_impl, whose per-part
+# wrapper.add_points(name=f"part_{i}") call (points.py:521) reaches the
+# child's own write_points → node_common.py:528 — add_partition_group only
+# creates the wrapper group, it does not itself recurse. 200 elements at
+# max_elements=100 gives exactly two
+# parts (same construction as tests/group/partition/test_source_validation.py).
+
+_PART_N = 200
+_PART_HALF = 100
+
+
+class TestPointsPartitionNodeAttrsGate:
+    def test_unknown_attr_typo_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, "points_part_attrs_typo.luxar.zarr"
+        )
+        _, flat_scene, _ = open_scene(
+            tmp_path, "points_part_attrs_typo_flat.luxar.zarr"
+        )
+        positions = random_positions(_PART_N, seed=123)
+
+        flat = refusal(lambda: flat_scene.add_points("p", positions, blending="max"))
+        split = refusal(
+            lambda: scene.add_points(
+                "p", positions, partition={"max_elements": _PART_HALF}, blending="max"
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Did you mean 'blending_mode'?" in str(split)
+        assert "p" not in compiler.store
+        # Pre-fix this raised the SAME message but still left a childless
+        # kind=partition "p" on disk, surviving finalize() — the #1529
+        # stranding this closes.
+        assert "p" not in finalized_group_keys(compiler, path)
+
+
+class TestLinesPartitionNodeAttrsGate:
+    def test_unknown_attr_typo_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lines_part_attrs_typo.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lines_part_attrs_typo_flat.luxar.zarr")
+        vertices = random_positions(_PART_N, seed=124)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line", vertices, widths=0.2, line_type="segments", blending="max"
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                partition={"max_elements": _PART_HALF},
+                blending="max",
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Did you mean 'blending_mode'?" in str(split)
+        assert "line" not in compiler.store
+        assert "line" not in finalized_group_keys(compiler, path)
+
+
+class TestPointsPartitionNodeAttrsGateOutranksTheChannelGate:
+    def test_attrs_fault_reported_before_the_channel_fault(self, tmp_path: Any) -> None:
+        """Both faults at once: the attrs fault wins, flat and split alike.
+
+        Pre-fix, the #1437 channel gate at the top of the partition wrapper
+        ran first (nothing hoisted the attrs check above it), so a call with
+        both a bad attr AND a wrong-length channel reported the channel
+        fault — while the flat call on the SAME input reported the attrs
+        fault, since the flat writer validates attrs (step 0a) before
+        channels (steps 0d-0f). The split path now agrees with the flat one.
+        """
+        compiler, scene, _ = open_scene(
+            tmp_path, "points_part_attrs_outranks_channel.luxar.zarr"
+        )
+        _, flat_scene, _ = open_scene(
+            tmp_path, "points_part_attrs_outranks_channel_flat.luxar.zarr"
+        )
+        positions = random_positions(_PART_N, seed=125)
+        # Half-length colours: on their own, this is what the #1437 channel
+        # gate refuses.
+        wrong_length_colors = np.zeros((_PART_HALF, 3), dtype=np.float32)
+
+        flat = refusal(
+            lambda: flat_scene.add_points(
+                "p", positions, colors=wrong_length_colors, blending="max"
+            )
+        )
+        split = refusal(
+            lambda: scene.add_points(
+                "p",
+                positions,
+                partition={"max_elements": _PART_HALF},
+                colors=wrong_length_colors,
+                blending="max",
+            )
+        )
+
+        assert "Did you mean 'blending_mode'?" in str(flat)
+        assert_same_refusal(flat, split)
+        assert "p" not in compiler.store
+
+
+class TestLinesPartitionNodeAttrsGateOutranksTheChannelGate:
+    """Lines counterpart of the Points class above — same construction."""
+
+    def test_attrs_fault_reported_before_the_channel_fault(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(
+            tmp_path, "lines_part_attrs_outranks_channel.luxar.zarr"
+        )
+        _, flat_scene, _ = open_scene(
+            tmp_path, "lines_part_attrs_outranks_channel_flat.luxar.zarr"
+        )
+        vertices = random_positions(_PART_N, seed=131)
+        # Half-length colours: on their own, this is what the #1437 channel
+        # gate refuses.
+        wrong_length_colors = np.zeros((_PART_HALF, 3), dtype=np.float32)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                colors=wrong_length_colors,
+                blending="max",
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                partition={"max_elements": _PART_HALF},
+                colors=wrong_length_colors,
+                blending="max",
+            )
+        )
+
+        assert "Did you mean 'blending_mode'?" in str(flat)
+        assert_same_refusal(flat, split)
+        assert "line" not in compiler.store
+
+    def test_wrong_length_colors_alone_trips_the_channel_gate(
+        self, tmp_path: Any
+    ) -> None:
+        """Control: without the attrs fault, the half-length colours alone are
+        what the #1437 channel gate refuses — otherwise the test above could
+        silently collapse into a duplicate of TestLinesPartitionNodeAttrsGate
+        if this fixture's colours ever became valid.
+        """
+        _, scene, _ = open_scene(
+            tmp_path, "lines_part_attrs_outranks_channel_control.luxar.zarr"
+        )
+        vertices = random_positions(_PART_N, seed=131)
+        wrong_length_colors = np.zeros((_PART_HALF, 3), dtype=np.float32)
+
+        alone = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                partition={"max_elements": _PART_HALF},
+                colors=wrong_length_colors,
+            )
+        )
+
+        assert "doesn't match" in str(alone)
+
+
+# ---------------------------------------------------------------------------
+# Node-attrs gate PLACEMENT: entry vs. each wrapper's own kwarg-spec check,
+# vs. extend_to_all resolution (#1529)
+# ---------------------------------------------------------------------------
+#
+# The message-parity tests above hold just as well for a WRONG implementation
+# that put the same validate_render_attrs() call at the top of each of the
+# three wrappers instead of at the adder entry (add_points_impl /
+# add_lines_impl, before any branch runs) — every one of them would still
+# refuse byte-identically to the flat path, with nothing written. What
+# distinguishes the two implementations is PRECEDENCE over each wrapper's own
+# kwarg-spec check (a malformed partition= rule, an invalid substitutive_lod=
+# compression_factor) and over extend_to_all resolution: only the adder-entry
+# placement outranks those too. Each case below fires the OTHER fault alone
+# first (to confirm it exists and is what a wrapper-level placement would
+# report), then adds a bad node attr and checks the attrs fault wins instead.
+
+
+class TestPointsPartitionNodeAttrsGateOutranksThePartitionRuleCheck:
+    def test_partition_rule_alone_raises_the_rule_error(self, tmp_path: Any) -> None:
+        _, scene, _ = open_scene(tmp_path, "points_part_rule_alone.luxar.zarr")
+        positions = random_positions(_PART_N, seed=132)
+
+        exc = refusal(
+            lambda: scene.add_points(
+                "p",
+                positions,
+                partition={"max_elements": _PART_HALF, "rule": "bogus"},
+            )
+        )
+        assert "partition rule must be" in str(exc)
+
+    def test_attrs_fault_outranks_the_partition_rule_check(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(
+            tmp_path, "points_part_rule_outranked.luxar.zarr"
+        )
+        positions = random_positions(_PART_N, seed=133)
+
+        exc = refusal(
+            lambda: scene.add_points(
+                "p",
+                positions,
+                partition={"max_elements": _PART_HALF, "rule": "bogus"},
+                blending="max",
+            )
+        )
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "partition rule" not in str(exc)
+        assert "p" not in compiler.store
+
+
+class TestPointsSubstitutiveNodeAttrsGateOutranksTheSpecCheck:
+    def test_compression_factor_alone_raises_the_spec_error(
+        self, tmp_path: Any
+    ) -> None:
+        _, scene, _ = open_scene(tmp_path, "points_sub_spec_alone.luxar.zarr")
+        positions = random_positions(_SUB_N, seed=134)
+
+        exc = refusal(
+            lambda: scene.add_points(
+                "p", positions, substitutive_lod={"compression_factor": -1}
+            )
+        )
+        assert "compression_factor must be" in str(exc)
+
+    def test_attrs_fault_outranks_the_spec_check(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(
+            tmp_path, "points_sub_spec_outranked.luxar.zarr"
+        )
+        positions = random_positions(_SUB_N, seed=135)
+
+        exc = refusal(
+            lambda: scene.add_points(
+                "p",
+                positions,
+                substitutive_lod={"compression_factor": -1},
+                blending="max",
+            )
+        )
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "compression_factor" not in str(exc)
+        assert "p" not in compiler.store
+
+
+class TestFlatPathNodeAttrsGateOutranksExtendToAll:
+    """Pins the #1529 precedence change: attrs now beats extend_to_all too.
+
+    Pre-#1529, ``_resolve_extend_to_all`` ran (in the adder, on the flat
+    fall-through) before the writer ever reached its own attrs gate, so a
+    call tripping both faults reported the ``extend_to_all`` one. The
+    adder-entry gate now runs first even on the flat path, so the attrs
+    fault wins instead — a deliberate side effect of validating attrs first,
+    not a change to any single-fault call's outcome.
+    """
+
+    def test_extend_to_all_alone_raises_the_extend_to_all_error(
+        self, tmp_path: Any
+    ) -> None:
+        _, scene, _ = open_scene(tmp_path, "flat_extend_alone.luxar.zarr")
+        positions = random_positions(_N, seed=136)
+
+        exc = refusal(lambda: scene.add_points("p", positions, extend_to_all=["NOPE"]))
+        assert "Unknown dimension(s) in extend_to_all" in str(exc)
+
+    def test_attrs_fault_outranks_extend_to_all(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "flat_extend_outranked.luxar.zarr")
+        positions = random_positions(_N, seed=137)
+
+        exc = refusal(
+            lambda: scene.add_points(
+                "p", positions, extend_to_all=["NOPE"], blending="max"
+            )
+        )
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "extend_to_all" not in str(exc)
+        assert "p" not in compiler.store
+
+
+# ---------------------------------------------------------------------------
+# Node-attrs gate, pre-split, on the Points/Lines ADDITIVE path (#1529)
+# ---------------------------------------------------------------------------
+#
+# additive_lod= goes straight to the multi-LOD writer, which calls
+# validate_render_attrs with NO reserved-attrs set at all — so a genuinely
+# RESERVED key (``ordering=``, ``max_radius=`` / ``max_width=``) was reported
+# as *unknown* instead of the correct #1221 *reserved* verdict, and a
+# ``position_bounds=`` collision didn't raise at all: the multi-LOD writer's
+# unreserved call let it straight onto disk, silently clobbering the writer's
+# own stamp, and ``finalize()`` then failed later with an unrelated
+# ``ValueError: Could not finalize Zarr store: list indices must be integers
+# or slices, not str`` (measured: the compiler funnels the underlying
+# ``TypeError`` into a ``ValueError``).
+
+_ADD_RESERVED_CASES_POINTS = [("ordering", "morton"), ("max_radius", 5.0)]
+_ADD_RESERVED_CASES_LINES = [("ordering", "morton"), ("max_width", 5.0)]
+
+
+class TestPointsAdditiveNodeAttrsGate:
+    @pytest.mark.parametrize("key,value", _ADD_RESERVED_CASES_POINTS)
+    def test_reserved_attr_gets_the_reserved_verdict_not_unknown(
+        self, tmp_path: Any, key: str, value: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, f"points_add_attrs_{key}.luxar.zarr")
+        _, flat_scene, _ = open_scene(
+            tmp_path, f"points_add_attrs_{key}_flat.luxar.zarr"
+        )
+        positions = random_positions(_N, seed=126)
+
+        flat = refusal(lambda: flat_scene.add_points("p", positions, **{key: value}))
+        split = refusal(
+            lambda: scene.add_points(
+                "p", positions, additive_lod=_POINTS_LADDER, **{key: value}
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert f"'{key}'" in str(split)
+        assert "are reserved" in str(split)
+        assert "p" not in compiler.store
+
+    def test_position_bounds_no_longer_clobbers_the_writers_own_stamp(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, "points_add_attrs_posbounds.luxar.zarr"
+        )
+        positions = random_positions(_N, seed=127)
+
+        split = refusal(
+            lambda: scene.add_points(
+                "p",
+                positions,
+                additive_lod=_POINTS_LADDER,
+                position_bounds=[[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
+            )
+        )
+
+        assert "position_bounds" in str(split)
+        assert "are reserved" in str(split)
+        assert "p" not in compiler.store
+        # Nothing was written, so finalize() must succeed cleanly. Pre-fix,
+        # this call did not raise at all and finalize() later failed with an
+        # unrelated ValueError once the clobbered position_bounds was read back.
+        assert "p" not in finalized_group_keys(compiler, path)
+
+
+class TestLinesAdditiveNodeAttrsGate:
+    @pytest.mark.parametrize("key,value", _ADD_RESERVED_CASES_LINES)
+    def test_reserved_attr_gets_the_reserved_verdict_not_unknown(
+        self, tmp_path: Any, key: str, value: Any
+    ) -> None:
+        compiler, scene, _ = open_scene(tmp_path, f"lines_add_attrs_{key}.luxar.zarr")
+        _, flat_scene, _ = open_scene(
+            tmp_path, f"lines_add_attrs_{key}_flat.luxar.zarr"
+        )
+        vertices = random_positions(_N, seed=128)
+
+        flat = refusal(
+            lambda: flat_scene.add_lines(
+                "line", vertices, widths=0.2, line_type="segments", **{key: value}
+            )
+        )
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                additive_lod=_LINES_LADDER,
+                **{key: value},
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert f"'{key}'" in str(split)
+        assert "are reserved" in str(split)
+        assert "line" not in compiler.store
+
+    def test_position_bounds_no_longer_clobbers_the_writers_own_stamp(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, "lines_add_attrs_posbounds.luxar.zarr"
+        )
+        vertices = random_positions(_N, seed=129)
+
+        split = refusal(
+            lambda: scene.add_lines(
+                "line",
+                vertices,
+                widths=0.2,
+                line_type="segments",
+                additive_lod=_LINES_LADDER,
+                position_bounds=[[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
+            )
+        )
+
+        assert "position_bounds" in str(split)
+        assert "are reserved" in str(split)
+        assert "line" not in compiler.store
+        assert "line" not in finalized_group_keys(compiler, path)

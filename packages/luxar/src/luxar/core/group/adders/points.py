@@ -140,6 +140,53 @@ def add_points_impl(
         # adders answer this the same way).
         scene._validate_dimension_count(pos_arr, name, data_type="positions")
 
+        # Node-attrs gate — same validator the flat writer runs as its own first
+        # step (write_points' step 0a), hoisted here for the same reason as the
+        # dimension-count check just above (#1446 is the model for placement;
+        # the nearest precedent for this validator itself is mesh's own
+        # _maybe_add_mesh_substitutive_lod, mesh.py:401-403 — the substitutive
+        # branch's dispatcher, called before the wrapper — whose dict(attrs)
+        # copy is unnecessary for the same read-only reason ours doesn't
+        # copy), and covering all three split paths below, not just
+        # substitutive: substitutive_lod= forwards the non-compositing
+        # remainder of `**attrs` to a synthesised gsplats `child_0`;
+        # partition= forwards it to each `part_i`; additive_lod= goes straight
+        # to the multi-LOD writer, which calls this same validator with NO
+        # reserved-attrs set at all. A key
+        # the flat writer would reject — gsplat-RESERVED-but-points-unknown
+        # (`amplitude_range=`; POINTS_RESERVED_ATTRS doesn't carry it but
+        # GSPLATS_RESERVED_ATTRS does), a plain typo (`blending=`), or (on the
+        # additive path only) genuinely points-RESERVED (`ordering=`,
+        # `max_radius=`, misreported as *unknown* rather than *reserved*) —
+        # used to be refused only from inside the first child, by which point
+        # the wrapper group itself (childless: zero coarse levels / parts) was
+        # already on disk; a `position_bounds=` collision under additive_lod=
+        # didn't even raise — it silently clobbered the writer's own stamp and
+        # broke `finalize()` later, far from the actual cause. Below the
+        # colours/dimension-count gates above (same precedence those already
+        # keep: a bad colours/colormap combination or a dimension mismatch
+        # outranks an attrs typo) and above every wrapper branch, so nothing is
+        # written before it runs. This also deliberately outranks the #1437
+        # channel gate at the top of the partition/substitutive/multi-LOD
+        # wrappers below, each branch's own kwarg-spec checks (a malformed
+        # `partition=`/`substitutive_lod=` spec), and `extend_to_all`
+        # resolution — including on the flat fall-through below, where a call
+        # that trips both now reports the attrs fault first (it used to report
+        # the extend_to_all fault; see step 10 in README.md). The flat writer
+        # validates node attrs before it ever looks at channels, so this hoist
+        # keeps that same order on every path. The validator only inspects
+        # `attrs` and raises on the first problem it finds — it is read-only,
+        # so running it here on the live dict (not a copy) is safe. Calling
+        # the SAME validator here means the split path refuses
+        # byte-identically to the flat path below (which still runs it once
+        # more, inside write_points — idempotent).
+        from ....io._compiler.node_common import (
+            POINTS_RESERVED_ATTRS,
+            validate_render_attrs,
+        )
+
+        validate_render_attrs(attrs, reserved_attrs=POINTS_RESERVED_ATTRS)
+
         # Substitutive-LOD branch — coarse levels are synthesised gsplats (each
         # point lifted to an isotropic Gaussian, then reduced by the gsplat
         # substitutive pipeline) under a kind=lod Group whose finest child is the
@@ -435,8 +482,11 @@ def add_points_partition_wrapper_impl(
     # Entering a wrapper IS "a split is about to happen": from here on every
     # per-point channel is sliced per part, and `slice_optional_array` passes a
     # wrong-length value through whole. Scoped to the split paths so the
-    # plain-leaf gate order (and therefore which error a multi-fault call
-    # reports) is untouched.
+    # plain-leaf CHANNEL-gate order (and therefore which error a multi-fault
+    # call reports, among channel-vs-channel faults) is untouched. The one
+    # exception is the node-attrs gate (#1529, add_points_impl above): it runs
+    # at the adder entry, before this wrapper is even chosen, so it outranks
+    # this channel gate too — a call that trips both reports the attrs fault.
     validate_points_channels_before_split(
         n_points,
         colors=colors,
@@ -704,6 +754,9 @@ def add_points_substitutive_lod_wrapper_impl(
     # finest child (written LAST, after every coarse level is already on disk) is
     # where a wrong-length channel would otherwise be caught — stranding a
     # partial kind=lod group. Fail here instead, before anything is written.
+    # The node-attrs gate (#1529, add_points_impl above) already ran at the
+    # adder entry, before this wrapper was even chosen, so it outranks this
+    # channel gate too — a call that trips both reports the attrs fault.
     validate_points_channels_before_split(
         n_points,
         colors=colors,
