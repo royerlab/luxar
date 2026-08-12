@@ -1,8 +1,11 @@
 /**
  * Pure step-size + next-position math for nD navigation. Computes how
- * far to move per [/] key press (with Shift/Ctrl fine/coarse modifiers)
- * and where the next position lands, including discrete rounding and
- * wrap-around or clamping at the dimension's bounds.
+ * far to move per [/] key press or slider wheel notch — the modifier
+ * tiers (Shift fine ÷10, Ctrl coarse ×10, Ctrl+Shift extra-fine ÷100)
+ * only reach here from the slider wheel: the [/] key bindings match the
+ * unmodified key, so Shift+[ arrives as '{' and never fires — and where
+ * the next position lands, including discrete rounding and wrap-around
+ * or clamping at the dimension's bounds.
  *
  * @module input/input-handler/dimension-navigation/step-math
  */
@@ -35,6 +38,7 @@ export const DEFAULT_NAV_CONFIG: NavigationConfig = {
  * - Continuous dimensions (time): Step by 1% of range by default
  * - Shift modifier: Fine control (10x smaller steps)
  * - Ctrl modifier: Coarse control (10x larger steps)
+ * - Ctrl+Shift together: Extra-fine control (100x smaller steps)
  *
  * @param dimIndex - Zero-based index of dimension to navigate
  * @param dims - Complete dimension configuration including metadata
@@ -70,8 +74,12 @@ export function calculateStepSize(
     stepSize = 1.0; // Default
   }
 
-  // Apply modifiers
-  if (modifiers.shift) {
+  // Apply modifiers. Shift and Ctrl do not cancel out when held together:
+  // Ctrl+Shift is one more rung in the fine direction (÷100), not a
+  // coarse/fine tug-of-war.
+  if (modifiers.shift && modifiers.ctrl) {
+    stepSize /= config.fineStepDivisor * config.fineStepDivisor; // Extra-fine
+  } else if (modifiers.shift) {
     stepSize /= config.fineStepDivisor; // Fine control
   } else if (modifiers.ctrl) {
     stepSize *= config.coarseStepMultiplier; // Coarse control

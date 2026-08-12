@@ -752,18 +752,31 @@ export class DimensionSliders {
     };
 
     // Mouse wheel steps the value by the dimension's BASE step (authored
-    // step, else 1% of range); Shift = fine (÷10). Deliberately DECOUPLED
-    // from the animation menu's Step override — hand stepping stays on the
-    // dimension's own grid (user decision). setDimensionValue is the
-    // authoritative clamp + discrete snap; no cyclic wrap on wheel.
+    // step, else 1% of range); Shift = fine (÷10), Ctrl = coarse (×10),
+    // Ctrl+Shift = extra-fine (÷100) — the same modifier tiers as [/].
+    // Requiring Shift alongside Ctrl for extra-fine keeps a macOS trackpad
+    // pinch (which arrives as a ctrlKey-only wheel event) off that tier.
+    // Deliberately DECOUPLED from the animation menu's Step override — hand
+    // stepping stays on the dimension's own grid (user decision).
+    // setDimensionValue is the authoritative clamp + discrete snap; no
+    // cyclic wrap on wheel.
     const wheelHandler = (event: WheelEvent) => {
-      // preventDefault: don't scroll the page (requires { passive: false }).
+      // preventDefault: don't scroll the page, and don't let Ctrl+wheel
+      // zoom it (requires { passive: false }).
       event.preventDefault();
       // stopPropagation: the window-level wheel handler (FOV zoom +
       // animation poke) does not check event targets.
       event.stopPropagation();
-      const wheelStep = calculateStepSize(dimIndex, this.dims, { shift: event.shiftKey });
-      const direction = event.deltaY < 0 ? 1 : -1; // scroll up = increase
+      // Shift+wheel on a standard mouse arrives as a HORIZONTAL scroll
+      // (the browser swaps the axis, leaving deltaY = 0) — read whichever
+      // axis carries the motion.
+      const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+      if (delta === 0) return;
+      const wheelStep = calculateStepSize(dimIndex, this.dims, {
+        shift: event.shiftKey,
+        ctrl: event.ctrlKey,
+      });
+      const direction = delta < 0 ? 1 : -1; // scroll up = increase
       // Read the live value, not slider.value — the continuous slider's
       // 0–1000 integer scale would quantize and drift under fine steps.
       const live = this.dims.currentStep[dimIndex];
@@ -775,7 +788,7 @@ export class DimensionSliders {
     this.sliderEvents.on(sliderContainer, 'wheel', wheelHandler, { passive: false });
 
     // Discoverability, matching the layers range-slider's affordance.
-    slider.title = 'Scroll to step (Shift = fine)';
+    slider.title = 'Scroll to step (Shift = fine, Ctrl = coarse, Ctrl+Shift = extra-fine)';
 
     sliderContainer.appendChild(progressBar);
     sliderContainer.appendChild(slider);

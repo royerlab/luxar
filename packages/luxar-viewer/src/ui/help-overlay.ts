@@ -97,6 +97,7 @@ const HELP_SECTIONS: HelpSection[] = [
     entries: [
       { keys: ['1 – 9'], label: 'Select dimension to control' },
       { keys: ['[', ']'], label: 'Step along the selected dimension' },
+      { keys: ['Wheel'], label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)' },
       { keys: ['N'], label: 'Dimension sliders panel' },
       { keys: ['K'], label: 'Play / pause dimension animation' },
       { keys: ['Home', 'End'], label: 'Jump to dimension start / end' },

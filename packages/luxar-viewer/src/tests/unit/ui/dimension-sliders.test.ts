@@ -473,6 +473,56 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
+  it('wheel modifier tiers: Ctrl = coarse ×10, Ctrl+Shift = extra-fine ÷100', () => {
+    const sliders = buildSliders();
+    const track = document.querySelector('.luxar-dimension-slider__track')!;
+
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: 100, ctrlKey: true, bubbles: true, cancelable: true })
+    );
+    // Coarse down = authored step 0.5 × 10 → 5.5 − 5.
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 0.5);
+
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: -100,
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    // Extra-fine up = authored step 0.5 ÷ 100 → 5.5 + 0.005.
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, expect.closeTo(5.505, 10));
+    sliders.dispose();
+  });
+
+  it('Shift+wheel arriving on the horizontal axis (browser axis swap) still steps', () => {
+    const sliders = buildSliders();
+    const track = document.querySelector('.luxar-dimension-slider__track')!;
+
+    // A standard mouse under Shift reports deltaX with deltaY = 0.
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: 0,
+        deltaX: 100,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 5.45);
+
+    // A zero-delta wheel event is a no-op, not a step.
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
+    track.dispatchEvent(new WheelEvent('wheel', { deltaY: 0, bubbles: true, cancelable: true }));
+    expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
+    sliders.dispose();
+  });
+
   it('wheel does not reach the window (stopPropagation guards the FOV handler)', () => {
     const sliders = buildSliders();
     const track = document.querySelector('.luxar-dimension-slider__track')!;

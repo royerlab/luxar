@@ -111,6 +111,16 @@ describe('nD Navigation Utilities', () => {
       expect(step).toBe(10); // 1 * 10 (coarseStepMultiplier)
     });
 
+    it('applies extra-fine control with ctrl+shift (÷100, not a cancel-out)', () => {
+      const dims = new DimensionsBuilder()
+        .withNDimensions(2)
+        .withDimension(0, 'x', 'px', [0, 100], { step: 10 })
+        .build();
+
+      const step = calculateStepSize(0, dims, { shift: true, ctrl: true });
+      expect(step).toBe(0.1); // 10 / (10 × 10) — one more rung in the fine direction
+    });
+
     it('should floor at one grid cell for discrete dimensions', () => {
       const dims = new DimensionsBuilder()
         .withNDimensions(2)
