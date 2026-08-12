@@ -374,10 +374,11 @@ one set of shader builders — belongs to the next slice of #1352, not here,
 because folding it in now would rewrite lanes that have already been
 quadrature-pinned against `line-volumetric-integral.test.ts`.
 
-## Capsule primitive (`?linePrimitive=capsule`, #1352)
+## Capsule primitive (the DEFAULT since the #1352 flip)
 
-The third primitive, built after the G1 gate measured the volumetric
-primitive 2.7–5× the quad's frame cost: a deliberately relaxed model that
+THE default line primitive (flipped from `screen-space` after the #1352
+re-gate), built after the G1 gate measured the volumetric primitive
+2.7–5× the quad's frame cost: a deliberately relaxed model that
 keeps the volumetric primitive's two behavioural wins — direction-stable
 near-axial rendering (an end-on segment is a round disc, never a flickering
 sliver) and seamless bisector-cut joins — at quad-class cost (measured
