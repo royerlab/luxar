@@ -39,7 +39,8 @@
  *   and prefix sizing converge to the same buffer at completion, so no end-state
  *   observable distinguishes them — the symptom is a REBIND, which leaves no trace
  *   once the ladder is whole. Verified by mutation: sourcing capacity from
- *   `data.vertexCount` in the commit left all six tests here green. Its real guard
+ *   `data.vertexCount` in the commit left all six tests this file then held — the
+ *   five below plus that candidate — green. Its real guard
  *   is the unit-level assertion that every attribute OBJECT survives three growing
  *   commits (`mesh-geometry.test.ts`), which is exactly the history this layer
  *   cannot see. What survives here is the consequence that IS observable — the
