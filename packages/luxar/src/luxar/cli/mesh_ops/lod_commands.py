@@ -17,10 +17,11 @@ overlays — is not carried across; nor is any placement/compositing an ancestor
 group genuinely changes (its own attrs are forwarded, but a group's are not — see
 ``_lost_compositing_keys``, which warns only on a key that is not sitting at its
 neutral default, not the identity transform, and not already overridden by the
-picked mesh's own attrs — so neither a bare namespace group nor an existing
-ladder's own bookkeeping wrapper, nor this command's own re-stamped defaults,
-trigger a false alarm); nor are the picked mesh's own per-vertex ``labels`` /
-``image_labels`` (``MeshData`` has no field for them). All of this is reported
+picked mesh's own attrs or by a nearer group — so neither a bare namespace
+group nor an existing ladder's own bookkeeping wrapper, nor this command's own
+re-stamped defaults, trigger a false alarm); nor are the picked mesh's own
+per-vertex ``labels`` / ``image_labels`` (``MeshData`` has no field for them,
+so the reader never surfaces them). All of this is reported
 with an explicit warning naming what is dropped, after every validator that can
 still abort the run and before anything is written.
 """
@@ -29,7 +30,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import typer
 from arbol import aprint, asection
@@ -71,13 +72,21 @@ _NEUTRAL_COMPOSITING_DEFAULTS = {
     "intensity": 1.0,
     "absorption": 1.0,
     "offset": 0.0,
+    # Not auto-stamped, but these two have a DEFAULT the reader applies when
+    # the key is absent (`Node.layer` -> False, `Node.visible` -> True), so an
+    # ancestor authoring the default explicitly changes nothing either: the
+    # group is not a Layers-panel entry, and it is not hidden. Only the other
+    # value is a real loss (a dropped layer grouping / a surface that was
+    # authored hidden and comes back shown).
+    "layer": False,
+    "visible": True,
 }
 # `blending_mode` is NOT auto-stamped (a bare leaf has none), so presence
 # alone means the ancestor authored one — but the viewer's attrs composer is
-# nearest-setter-wins, so it only matters when the picked LEAF does not ALSO
-# set the same key (its own value wins regardless of the ancestor's).
-# `layer` / `visible` are likewise never auto-stamped, and carry no such
-# override rule, so presence alone is always a real loss for them.
+# nearest-setter-wins, so it only matters when neither the picked LEAF nor a
+# NEARER ancestor group also sets the same key (the nearest setter's value
+# wins regardless of an outer group's). The leaf half of that rule lives in
+# `_is_lost_compositing_key`; the ancestor half in `_ancestor_compositing_loss`.
 #
 # `join` is COMPOSITING_ATTRS too, but is handled separately in
 # `_lost_compositing_keys` rather than through this leaf-overrides rule:
@@ -86,7 +95,7 @@ _NEUTRAL_COMPOSITING_DEFAULTS = {
 # carry it, and the "skip when the leaf also sets it" test could never fire.
 # An ancestor's `join` cannot affect a mesh ladder either way, so it is
 # always skipped, not just when the leaf happens to override it.
-_LEAF_OVERRIDES_ANCESTOR = ("blending_mode",)
+_LEAF_OVERRIDES_ANCESTOR = frozenset({"blending_mode"})
 
 
 def _is_identity_transform(raw_transform: Any) -> bool:
@@ -146,9 +155,11 @@ def _is_lost_compositing_key(
         # a lines one.
         return False
     if key in _LEAF_OVERRIDES_ANCESTOR:
+        # The leaf half of nearest-setter-wins; the nearer-GROUP half is
+        # `_ancestor_compositing_loss`'s, which sees the whole chain.
         return key not in leaf_metadata
-    # `layer` / `visible` (and anything genuinely non-neutral above):
-    # presence is always a real loss.
+    # Every member of `COMPOSITING_ATTRS` is covered above; a future one
+    # defaults to being reported rather than silently skipped.
     return True
 
 
@@ -182,13 +193,31 @@ def _ancestor_compositing_loss(
     ``display_type``, …) — none of them a member of ``COMPOSITING_ATTRS``. But
     key PRESENCE is not enough either: see `_lost_compositing_keys`, which
     this delegates to for the real filter.
+
+    Walked NEAREST-ANCESTOR-FIRST for the sake of the
+    `_LEAF_OVERRIDES_ANCESTOR` keys, which the viewer composes
+    nearest-setter-wins: under
+    ``outer(blending_mode='additive') / inner(blending_mode='normal') / mesh``
+    only ``inner``'s mode ever reached the mesh, so ``outer``'s was ALREADY
+    shadowed in the source scene and is not something this rewrite loses.
+    Every other compositing key composes across the whole chain (the scalars
+    multiply, the transforms concatenate), so each ancestor that sets one
+    genuinely loses it and is reported. The list is flipped back to
+    root-first before returning, so the warnings still read outermost-first.
     """
     losses = []
-    for group_path in _ancestor_group_paths(node_path):
+    shadowed: Set[str] = set()
+    for group_path in reversed(_ancestor_group_paths(node_path)):
         attrs = source.get_node_metadata(group_path)
-        lost_keys = _lost_compositing_keys(attrs, leaf_metadata)
+        lost_keys = [
+            key
+            for key in _lost_compositing_keys(attrs, leaf_metadata)
+            if key not in shadowed
+        ]
+        shadowed |= _LEAF_OVERRIDES_ANCESTOR & attrs.keys()
         if lost_keys:
             losses.append((group_path, lost_keys))
+    losses.reverse()
     return losses
 
 
@@ -226,12 +255,24 @@ _OVERLAY_TYPES = ("overlay_text", "overlay_html", "overlay_image")
 `overlays/` is not a real overlay this command needs to report."""
 
 
+_AUTO_HOVER_TEMPLATES = {
+    "__hover_text": ("text", "{hover_label}"),
+    "__hover_image": ("html", "{hover_image_label}"),
+}
+"""The two overlays ``auto_inject_hover_overlay`` writes, each mapped to the
+attr carrying its content and the exact placeholder it fills that attr with
+(``core/scene/overlays/hover_inject.py``). That payload is the part of an
+injected overlay a user does not arrive at by accident — the NAME is
+unreserved (`next_overlay_name` lets anyone claim it) and ``hover=True`` is a
+public ``Scene.add_text`` kwarg."""
+
+
 def _is_auto_injected_hover_overlay(
     source: Any, overlay_path: str, mesh_is_labelled: bool
 ) -> bool:
     """Whether ``overlay_path`` is the hover overlay finalize auto-injects.
 
-    THREE conditions, all required:
+    FOUR conditions, all required:
 
     1. Gated on the picked mesh actually HAVING ``labels``/``image_labels``:
        that is the only reason finalize ever injects a hover overlay
@@ -239,18 +280,31 @@ def _is_auto_injected_hover_overlay(
        is the per-vertex-label warning's presence — not this overlay's own
        name or attrs — that justifies skipping it here. Without this gate, an
        UNLABELLED scene with a user overlay named ``__hover_text`` AND
-       ``hover=True`` (a public kwarg of ``Scene.add_text``) satisfies both
-       of the checks below yet is genuine content nothing else warns about.
+       ``hover=True`` (a public kwarg of ``Scene.add_text``) satisfies the
+       checks below yet is genuine content nothing else warns about.
     2. Name matches ``__hover_text`` / ``__hover_image``.
     3. Its own ``hover`` attr is actually ``True`` (`next_overlay_name` does
        not reserve either name, so a same-named, non-hover user overlay must
        still be reported).
+    4. Its content is the injected PLACEHOLDER (`_AUTO_HOVER_TEMPLATES`).
+       Conditions 1-3 are not provenance on a LABELLED scene: finalize skips
+       the injection entirely when any overlay already sets ``hover``
+       (`auto_inject_hover_overlay` condition 2), so a user's own
+       ``add_text('…', name='__hover_text', hover=True)`` is the ONLY hover
+       overlay in the store and would be dropped with nothing said. An
+       overlay whose text is verbatim ``{hover_label}`` either IS the
+       injected one or is indistinguishable from it in what it renders.
     """
     if not mesh_is_labelled:
         return False
-    if overlay_path.rsplit("/", 1)[-1] not in ("__hover_text", "__hover_image"):
+    template = _AUTO_HOVER_TEMPLATES.get(overlay_path.rsplit("/", 1)[-1])
+    if template is None:
         return False
-    return bool(source.get_node_metadata(overlay_path).get("hover"))
+    attrs = source.get_node_metadata(overlay_path)
+    if not attrs.get("hover"):
+        return False
+    content_attr, placeholder = template
+    return bool(attrs.get(content_attr) == placeholder)
 
 
 def _dropped_overlay_nodes(source: Any, mesh_is_labelled: bool) -> List[str]:

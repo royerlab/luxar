@@ -1063,6 +1063,146 @@ class TestMeshLod:
         stdout = capsys.readouterr().out
         assert "'overlays/__hover_text' (overlay)" in stdout
 
+    def test_a_hover_true_overlay_on_a_LABELLED_mesh_is_still_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 5: the labelled scene is the case the name+`hover`
+        pair cannot decide either.
+
+        `auto_inject_hover_overlay` bails the moment ANY overlay already sets
+        `hover` — so on a labelled scene a user's own
+        `add_text(..., name='__hover_text', hover=True)` is the ONLY hover
+        overlay in the store, no injection ever happened, and the label
+        warning does not cover it. Provenance is the injected PLACEHOLDER
+        payload (`{hover_label}`), which this overlay does not carry.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces, labels=["v"] * vertices.shape[0])
+            scene.add_text("mine", (0.1, 0.1), name="__hover_text", hover=True)
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "'overlays/__hover_text' (overlay)" in stdout
+        # …and the label channel is still reported in its own right.
+        assert "'surf' has per-vertex labels" in stdout
+
+    def test_only_the_NEAREST_ancestor_blending_mode_is_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 5: nearest-setter-wins applies between ancestors too.
+
+        Under `outer(additive) / inner(normal) / mesh` the viewer's composer
+        gives the mesh `inner`'s mode — `outer`'s was ALREADY shadowed in the
+        SOURCE scene, so the rewrite does not lose it. Evaluating each
+        ancestor in isolation named both groups.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            outer = scene.add_group("outer", blending_mode="additive")
+            inner = outer.add_group("inner", blending_mode="normal")
+            inner.add_mesh("skull", vertices, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="outer/inner/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        ancestor_lines = [
+            line for line in stdout.splitlines() if "is nested under group" in line
+        ]
+        assert len(ancestor_lines) == 1
+        assert "'outer/inner'" in ancestor_lines[0]
+        assert "which sets blending_mode;" in ancestor_lines[0]
+
+    def test_ancestor_layer_and_visible_are_judged_against_their_defaults(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 5: `layer`/`visible` have defaults too.
+
+        `Node.layer` reads False when absent and `Node.visible` reads True, so
+        a group authoring those exact values is a no-op for the picked mesh —
+        the same false alarm the neutral-scalar gate exists to prevent. The
+        other value IS a real loss and must still be named.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+        from luxar.io.reader import LuxarScene
+
+        neutral = tmp_path / "neutral.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(neutral) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surfaces", layer=False, visible=True)
+            group.add_mesh("skull", vertices, faces)
+        # Non-vacuous: both keys really are on the stored group.
+        stored = LuxarScene.load(neutral).get_node_metadata("surfaces")
+        assert stored["layer"] is False and stored["visible"] is True
+
+        assert (
+            len(
+                run_lod(
+                    input_path=neutral,
+                    output_path=tmp_path / "a.luxar.zarr",
+                    node_name="surfaces/skull",
+                    levels=2,
+                    compression_factor=4,
+                    method="auto",
+                    overwrite=False,
+                )
+            )
+            >= 2
+        )
+        assert "is nested under group" not in capsys.readouterr().out
+
+        real = tmp_path / "real.luxar.zarr"
+        with LuxarZarrCompiler(real) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surfaces", layer=True, visible=False)
+            group.add_mesh("skull", vertices, faces)
+
+        assert (
+            len(
+                run_lod(
+                    input_path=real,
+                    output_path=tmp_path / "b.luxar.zarr",
+                    node_name="surfaces/skull",
+                    levels=2,
+                    compression_factor=4,
+                    method="auto",
+                    overwrite=False,
+                )
+            )
+            >= 2
+        )
+        ancestor_lines = [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if "is nested under group" in line
+        ]
+        assert len(ancestor_lines) == 1
+        assert "which sets layer, visible;" in ancestor_lines[0]
+
     def test_an_aborted_run_prints_no_drop_warning(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

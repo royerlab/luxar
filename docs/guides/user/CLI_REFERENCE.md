@@ -212,9 +212,10 @@ there is nowhere else for them to go. Also left behind: any placement/compositin
 the mesh's OWN attrs are forwarded. "Genuinely changes" is narrower than "is set at
 all": a key sitting at its neutral value (`opacity`/`gamma`/`intensity`/`absorption` at
 `1.0`, `offset` at `0.0`) composes as a no-op regardless of which layer sets it, an
-identity `transform`/`nd_transform` moves nothing, `blending_mode` is
-nearest-setter-wins so it only matters when the picked mesh does not already set the
-same key itself, and `join` is skipped outright (it is lines-only — `add_mesh` refuses
+identity `transform`/`nd_transform` moves nothing, a `layer`/`visible` at its own
+default (`false`/`true`) is likewise a no-op, `blending_mode` is nearest-setter-wins so
+it only matters for the nearest group that sets it and only when the picked mesh does
+not set it itself, and `join` is skipped outright (it is lines-only — `add_mesh` refuses
 it, so a mesh leaf can never carry it and an ancestor's `join` can never affect a mesh
 ladder) — so re-laddering a level of an existing ladder (`--node surf/child_0`) or a
 partition tile (`--node surf/part_0`) reports nothing here, even though the wrapper
