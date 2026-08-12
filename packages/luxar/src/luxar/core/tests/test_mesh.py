@@ -1835,6 +1835,128 @@ def test_additive_lod_writes_a_ladder_of_face_shells(tmp_path) -> None:
     assert int(parent.attrs["n_vertices"]) > 0
 
 
+def _stacked_grids(n: int = 9, n_stacked: int = 2):
+    """`n_stacked` copies of an `n x n` grid, stacked along a leading (time) column.
+
+    The canonical nD authoring shape: several timepoints held in ONE vertex array,
+    disjoint in the face graph because no triangle spans two timepoints. So the
+    mesh's edge-connected components ARE the stacked coordinates, which is what
+    makes it the fixture for #1514.
+    """
+    verts, faces = [], []
+    base_v, base_f = _grid_mesh(n)
+    per = base_v.shape[0]
+    for t in range(n_stacked):
+        stacked = np.zeros((per, base_v.shape[1] + 1), dtype=np.float32)
+        stacked[:, 0] = float(t)
+        stacked[:, 1:] = base_v
+        verts.append(stacked)
+        faces.append(base_f + t * per)
+    return (
+        np.concatenate(verts).astype(np.float32),
+        np.concatenate(faces).astype(np.uint32),
+        per,
+    )
+
+
+def test_every_level_of_a_STACKED_mesh_carries_faces_at_every_timepoint() -> None:
+    """#1514: the reveal must not sequence a stacked mesh by timepoint.
+
+    A stacked mesh's components are its timepoints (no triangle spans two), and a
+    traversal that drains one component before opening the next therefore puts the
+    whole of t=0 in the early levels and the whole of t=1 in the late ones. That is
+    invisible in the finished ladder and ruinous while it streams: a viewer parked
+    on the last timepoint renders NOTHING until the final level lands, which is the
+    opposite of what a streaming ladder is for.
+
+    It also defeats the machinery built to prevent exactly this — `spatial_dims`
+    keeps the stacked column out of the SCORE, and the traversal reintroduced the
+    same effect through connectivity instead. Hence the check is on the OUTCOME
+    (does every level carry every timepoint) rather than on the score.
+    """
+    from luxar.core.group.lod.mesh import make_additive_lod_mesh
+
+    vertices, faces, per_timepoint = _stacked_grids()
+
+    levels = make_additive_lod_mesh(vertices, faces, n_lods=4, spatial_dims=[1, 2, 3])
+
+    assert len(levels) == 4
+    for i, level in enumerate(levels):
+        tris = faces[level]
+        at_t0 = int((tris < per_timepoint).all(axis=1).sum())
+        at_t1 = int((tris >= per_timepoint).all(axis=1).sum())
+        assert at_t0 > 0, f"level {i} has no faces at t=0 ({at_t0}/{at_t1})"
+        assert at_t1 > 0, f"level {i} has no faces at t=1 ({at_t0}/{at_t1})"
+
+
+def test_a_stacked_mesh_reveals_ONE_patch_per_timepoint_at_every_prefix() -> None:
+    """The other half: interleaving the components must not cost contiguity.
+
+    Seeding every component up front is what fixed #1514, and the risk of that
+    change is the guarantee #1507 bought — that a prefix is not lace. Both hold
+    together: each component still grows only through shared edges, so a
+    two-timepoint mesh reveals as exactly two patches, never more.
+
+    Paired with the test above deliberately. Either alone is satisfiable by a
+    mistake: drain-one-component-first gives perfect contiguity and sequenced
+    timepoints, and a plain radius sort gives perfectly interleaved timepoints and
+    lace.
+    """
+    from luxar.core.group.lod.mesh import make_additive_lod_mesh
+
+    vertices, faces, _ = _stacked_grids()
+
+    levels = make_additive_lod_mesh(vertices, faces, n_lods=4, spatial_dims=[1, 2, 3])
+
+    for i in range(len(levels)):
+        prefix = np.concatenate(levels[: i + 1])
+        assert _prefix_component_count(faces[prefix]) == 2, (
+            f"prefix through level {i} is not exactly one patch per timepoint"
+        )
+
+
+def test_spatial_dims_excludes_the_stacked_column_from_the_reveal_DISTANCE() -> None:
+    """`spatial_dims` names the columns the radius is measured over.
+
+    Left in, a stacked column is a coordinate like any other, so distance from the
+    centre includes distance in TIME and the ladder front-loads whichever
+    timepoints sit nearest the middle of that axis — shells expanding through time
+    as well as space.
+
+    THREE timepoints, not two, and that is load-bearing. With two symmetric ones
+    the stacked term adds the SAME constant to both groups (each sits equally far
+    from the centre of that axis), so the score is a monotone function of the
+    spatial distance either way and the order provably cannot differ — a two-stack
+    fixture would have made the sensitivity control below unfalsifiable. With
+    three, the middle timepoint sits AT the centre of the stacked axis and the
+    outer two do not, so including the column genuinely reorders.
+    """
+    from luxar.core.group.lod.mesh import compute_additive_order_mesh
+
+    vertices, faces, _ = _stacked_grids(n_stacked=3)
+    # Widen the stacked spacing so the effect is unmistakable rather than
+    # marginal against the grid's own extent.
+    vertices[:, 0] *= 50.0
+
+    excluded = compute_additive_order_mesh(vertices, faces, spatial_dims=[1, 2, 3])
+    included = compute_additive_order_mesh(vertices, faces, spatial_dims=None)
+
+    # SENSITIVITY first: the two readings must actually differ, or the assertion
+    # that follows would pass against a scorer that ignores `spatial_dims`.
+    assert not np.array_equal(excluded, included), (
+        "including the stacked column changed nothing — this fixture cannot tell "
+        "the two readings apart, so the exclusion assertion below proves nothing"
+    )
+
+    # With the column excluded, moving the whole stack along it must not move the
+    # order: the score is reading only the columns it was told to.
+    moved = vertices.copy()
+    moved[:, 0] += 1000.0
+    assert np.array_equal(
+        excluded, compute_additive_order_mesh(moved, faces, spatial_dims=[1, 2, 3])
+    )
+
+
 def test_the_ladder_parent_DESCRIBES_the_surface_not_just_its_size(tmp_path) -> None:
     """A ladder's parent must carry the same descriptive attrs a flat mesh does.
 
@@ -1852,12 +1974,34 @@ def test_the_ladder_parent_DESCRIBES_the_surface_not_just_its_size(tmp_path) -> 
     Asserted against a FLAT write of the same mesh rather than a hand-copied key
     list, so a new descriptive attr on `write_mesh` fails here until the ladder
     carries it too.
+
+    The fixture carries normals AND per-vertex colours deliberately, rather than
+    reusing the bare grid: a plain mesh stamps neither `normal_dims` nor
+    `color_data_range`, so a bare fixture would leave the two attrs MOST likely to
+    be forgotten outside the set this compares — a ratchet with a hole exactly
+    where the risk is.
     """
-    store, vertices, faces = _write_ladder(tmp_path, additive_lod={"n_lods": 3})
+    vertices, faces = _grid_mesh(13)
+    rich = dict(
+        normals=np.tile(
+            np.array([[0.0, 0.0, 1.0]], dtype=np.float32), (len(vertices), 1)
+        ),
+        normal_dims=[0, 1, 2],
+        # Colours, not scalars+colormap: the two are mutually exclusive, and
+        # `color_data_range` (the attr this fixture exists to cover) comes from
+        # the colour path.
+        colors=np.linspace(0, 1, len(vertices) * 3, dtype=np.float32).reshape(-1, 3),
+        double_sided=False,
+        shading="smooth",
+    )
+    store = tmp_path / "ladder.luxar.zarr"
+    with LuxarZarrCompiler(str(store)) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh("surf", vertices, faces, additive_lod={"n_lods": 3}, **rich)
     flat_store = tmp_path / "flat.luxar.zarr"
     with LuxarZarrCompiler(str(flat_store)) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        scene.add_mesh("surf", vertices, faces)
+        scene.add_mesh("surf", vertices, faces, **rich)
 
     parent = zarr.open_group(str(store), mode="r")["surf"]
     flat = zarr.open_group(str(flat_store), mode="r")["surf"]

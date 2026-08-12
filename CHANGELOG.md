@@ -48,6 +48,18 @@ avoid. Growing through shared edges makes contiguity structural on any topology,
 and it is what earns the duplication numbers above — under the radius sort the
 same spheres measured 2.81x and 2.17x, close to random.
 
+The reveal seeds **every** connected component up front rather than opening one
+when the frontier runs dry. On a *stacked* mesh — several timepoints held in one
+vertex array — the components ARE the timepoints, so draining one before opening
+the next sequenced the ladder by time: two stacked spheres with `n_lods=4` gave
+160/0, 160/0, 0/160, 0/160 faces per level, and a viewer parked on the last
+timepoint rendered nothing until the final level landed. It also defeated the
+machinery built to prevent exactly that, since `spatial_dims` already keeps the
+stacked column out of the *score* and connectivity reintroduced the effect. One
+heap over all components interleaves them by radius while each still grows only
+through shared edges, so every level now carries faces at every timepoint and
+every prefix is still exactly one patch per component (#1514).
+
 The ladder's parent group carries the same DESCRIPTIVE attrs a flat mesh write
 stamps — `ndim`, `has_normals` / `normal_dims`, `has_colors`, `has_scalars`,
 `shading`, `double_sided`, `ordering`, and the colour/scalar window as a union

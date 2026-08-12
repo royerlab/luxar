@@ -1158,13 +1158,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # The colour/scalar windows, taken as the UNION over the levels.
         #
-        # Today every level inherits the authored global window, so the union equals
-        # any one level's and this is a no-op. It is written as a union anyway
-        # because that is the reading that stays correct if a level ever measures
-        # its own: copying level 0's would then set the node's colormap from
-        # whatever data landed in the innermost shell, and the surface would
-        # recolour as the reveal completed. Costs one attrs read per level, once,
-        # at authoring time.
+        # LOAD-BEARING for colours, a no-op for scalars — the two windows are not
+        # alike, and it is worth saying which is which. `scalar_data_range` is the
+        # AUTHORED window, passed down to every level unchanged, so its union
+        # equals any one level's. `color_data_range` is MEASURED by the encoder
+        # from each level's own vertex subset, so the levels genuinely disagree: a
+        # radius ramp over three levels gives [0.00, 4.22], [2.98, 5.73],
+        # [4.71, 8.00], and only their union [0.00, 8.00] matches what a flat
+        # write of the same mesh stamps. Copying level 0's would set the node's
+        # colour window from whatever landed in the innermost shell, and the
+        # surface would recolour as the reveal completed. Costs one attrs read per
+        # level, once, at authoring time.
         for key in ("color_data_range", "scalar_data_range"):
             ranges = [
                 self.store.require_group(f"{path}/additive_{i}").attrs.get(key)

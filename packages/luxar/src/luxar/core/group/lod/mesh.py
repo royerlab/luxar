@@ -497,6 +497,43 @@ def _face_adjacency(faces: "NDArray", n_faces: int) -> tuple:
     return offsets, nbrs
 
 
+def _component_seeds(
+    offsets: "NDArray", nbrs: "NDArray", scores: "NDArray", n_faces: int
+) -> List[int]:
+    """One seed per edge-connected component: its face NEAREST the reveal centre.
+
+    Labels the components once off the adjacency CSR
+    :func:`_face_adjacency` already built, so the reveal can seed every component
+    UP FRONT and let a single heap interleave them by radius (#1514). Visiting
+    faces in ascending score means the first face of each component encountered is
+    also its closest to the centre, so no per-component minimum pass is needed.
+
+    A flood fill rather than a union-find: the CSR is already the adjacency a fill
+    walks, and each face is pushed and popped exactly once, so this is O(F + E)
+    with no parent-chain bookkeeping. On the overwhelmingly common CONNECTED mesh
+    it returns after one fill of length F and yields a single seed.
+    """
+    import numpy as np
+
+    labelled = np.zeros(n_faces, dtype=bool)
+    seeds: List[int] = []
+    for start in np.argsort(scores, kind="stable"):
+        start_i = int(start)
+        if labelled[start_i]:
+            continue
+        seeds.append(start_i)
+        labelled[start_i] = True
+        stack = [start_i]
+        while stack:
+            face = stack.pop()
+            for k in range(offsets[face], offsets[face + 1]):
+                nb = int(nbrs[k])
+                if not labelled[nb]:
+                    labelled[nb] = True
+                    stack.append(nb)
+    return seeds
+
+
 def compute_additive_order_mesh(
     vertices: "NDArray",
     faces: "NDArray",
@@ -576,30 +613,38 @@ def compute_additive_order_mesh(
     # 100k faces. It runs once at authoring time, next to a decimator that is also
     # a Python loop, so the trade (a true guarantee for authoring seconds) is the
     # right one; a vectorized reformulation would be welcome and is not needed yet.
+    # EVERY component is seeded UP FRONT, not opened when the frontier runs dry.
+    #
+    # That difference is the whole of #1514. Refilling the heap only once it
+    # emptied meant one component was exhausted before the next opened — and on a
+    # STACKED mesh (several timepoints or channels held in one vertex array, a
+    # first-class authoring shape) the components ARE the timepoints, so the
+    # ladder came out sequenced by time: two 320-face icospheres stacked as
+    # t=0/t=1 with `n_lods=4` gave 160/0, 160/0, 0/160, 0/160 faces per level. A
+    # viewer parked on the last timepoint then renders NOTHING until the whole
+    # ladder has arrived, which is the opposite of what a streaming ladder is for.
+    #
+    # It also defeated the machinery that exists to prevent exactly this:
+    # `resolve_reveal_spatial_dims` already keeps the stacked column out of the
+    # SCORE, and the traversal reintroduced the same effect through connectivity.
+    #
+    # Seeding all components at once puts one heap over all of them, so they
+    # interleave by radius while each still grows only through shared edges. Both
+    # guarantees survive, and the docstring's "one patch per component" becomes
+    # literally true rather than "per component reached so far".
     import heapq
 
     offsets, nbrs = _face_adjacency(faces_arr, n_faces)
+    component_seeds = _component_seeds(offsets, nbrs, scores, n_faces)
+
     visited = np.zeros(n_faces, dtype=bool)
-    # Seed candidates in radius order, so each new component starts at its own
-    # closest face to the centre.
-    by_radius = np.argsort(scores, kind="stable")
     order: list = []
     heap: list = []
-    next_seed = 0
-    while len(order) < n_faces:
-        if not heap:
-            # A mesh may be disconnected; when the frontier empties, the nearest
-            # unvisited face opens the next component. Every prefix is then a union
-            # of connected patches, one per component REACHED — one patch for the
-            # connected mesh that is the normal case.
-            while next_seed < n_faces and visited[by_radius[next_seed]]:
-                next_seed += 1
-            if next_seed >= n_faces:
-                break
-            seed = int(by_radius[next_seed])
-            visited[seed] = True
-            heapq.heappush(heap, (float(scores[seed]), seed))
-        radius, face = heapq.heappop(heap)
+    for seed in component_seeds:
+        visited[seed] = True
+        heapq.heappush(heap, (float(scores[seed]), seed))
+    while heap:
+        _radius, face = heapq.heappop(heap)
         order.append(face)
         for k in range(offsets[face], offsets[face + 1]):
             nb = int(nbrs[k])
