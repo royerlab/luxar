@@ -504,6 +504,787 @@ class TestMeshLod:
         carried = LuxarScene.load(out).viewer_config
         assert carried is not None and carried.tone_mapping == "ACES"
 
+    def test_an_ordinary_single_mesh_scene_warns_about_nothing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The baseline: one unlabelled mesh, no siblings, nothing to warn about.
+
+        Without this, the drop warnings below could be firing on every run
+        (false alarm) and the other two tests would still pass.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "Not carried into the new scene" not in stdout
+        assert "has no field for them" not in stdout
+
+    def test_a_sibling_points_node_is_named_as_dropped(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Issue #1357: every OTHER node in the source scene is left out.
+
+        A `dots` points node next to the mesh `surf` used to simply disappear
+        from the output with nothing in the console saying so.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces)
+            scene.add_points("dots", np.zeros((3, 3), dtype=np.float32))
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "Not carried into the new scene" in stdout
+        assert "'dots' (points)" in stdout
+        # The picked mesh survived — only its sibling should be reported.
+        assert "'surf' (mesh)" not in stdout
+
+    def test_labelled_mesh_names_the_dropped_label_channel(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The other silent drop from #1357: per-vertex `labels`.
+
+        `MeshData` has no field for them, so the round trip cannot carry what
+        it cannot read — but nothing used to tell the user that happened.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces, labels=["v"] * vertices.shape[0])
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "'surf' has per-vertex labels" in stdout
+        assert "has no field for them" in stdout
+        # Labels auto-inject a hover overlay at finalize (`__hover_text`),
+        # whose container `overlays` has no `type` attr and lands in
+        # `list_groups()`. That container is not genuine dropped content —
+        # the labels warning above already covers the loss — so it must not
+        # ALSO show up as a bogus dropped group. (The compiler's own
+        # "Created group: overlays/__hover_text" diagnostic, from writing the
+        # SOURCE scene, is unrelated and legitimately present.)
+        assert "'overlays' (group)" not in stdout
+        assert "(overlay)" not in stdout
+
+    def test_a_mesh_nested_under_a_transformed_group_names_that_group(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 2/3: an ANCESTOR group's own attrs are lost too —
+        but the message must name EXACTLY what is lost, no more.
+
+        `run_lod` forwards only the picked mesh LEAF's `data.metadata` — an
+        ancestor group's `transform`/`opacity`/… never reach it, exactly the
+        way `COMPOSITING_ATTRS` land on the `kind=lod` WRAPPER group rather
+        than its children (see the comment a few lines above in
+        `lod_commands.py`). A mesh authored at `surfaces/skull` under a group
+        translated off-origin at reduced opacity used to come back at the
+        origin, fully opaque, with nothing saying so. Round 3's fix: `surfaces`
+        here carries ONLY `opacity`/`transform` (a plain `add_group` does not
+        auto-stamp the neutral defaults a mesh LEAF does), so the message must
+        name exactly those two keys — no `absorption`/`gamma`/`intensity`/
+        `offset` noise.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+        from luxar.core.transforms import translate
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group(
+                "surfaces", transform=translate(100.0, 0.0, 0.0), opacity=0.25
+            )
+            group.add_mesh("skull", vertices, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="surfaces/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        # Narrowed to the ANCESTOR WARNING LINE itself (not the whole
+        # compile's stdout): a bare substring check over everything printed
+        # would also pass on an unrelated future line that happens to
+        # mention "gamma" or "offset", and — since a plain `add_group` never
+        # stores the four neutral-default keys either way — could never
+        # actually catch a regression here; the neutral-default LOGIC itself
+        # is pinned by `test_run_lod_chained_on_its_own_output_prints_no_ancestor_warning`
+        # below, which does exercise a wrapper that carries them.
+        ancestor_lines = [
+            line for line in stdout.splitlines() if "is nested under group" in line
+        ]
+        assert len(ancestor_lines) == 1
+        assert "'surfaces'" in ancestor_lines[0]
+        assert "which sets opacity, transform;" in ancestor_lines[0]
+        for noise in ("absorption", "gamma", "intensity", "offset"):
+            assert noise not in ancestor_lines[0]
+
+    def test_run_lod_chained_on_its_own_output_prints_no_ancestor_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 3: presence alone over-reports on THIS command's
+        own output.
+
+        `run_lod` forwards the picked mesh leaf's stored `opacity`/
+        `absorption`/`gamma`/`intensity`/`offset` — neutral defaults though
+        they are (1.0/1.0/1.0/1.0/0.0) — and the adder splits
+        `COMPOSITING_ATTRS` onto the `kind=lod` wrapper it builds. So a
+        wrapper THIS COMMAND itself just wrote carries all five, at values
+        bit-identical to the leaf's — a key-presence-only gate would print
+        "which sets absorption, gamma, intensity, offset, opacity" for a
+        chained re-ladder that loses nothing at all.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        ladder = tmp_path / "ladder.luxar.zarr"
+        assert len(_run(run_lod, source, ladder)) >= 2
+        capsys.readouterr()  # discard the first run's own output
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=ladder,
+            output_path=out,
+            node_name="surf/child_0",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 1
+
+        stdout = capsys.readouterr().out
+        assert "is nested under group" not in stdout
+
+    def test_a_plain_ancestor_group_prints_no_compositing_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 2: gate the ancestor warning on an ACTUAL loss.
+
+        A bare namespace group — no `transform`, no `opacity`, nothing in
+        `COMPOSITING_ATTRS` — has nothing for the picked mesh to inherit, so
+        nesting under one must not print a "placement is lost" warning that
+        would be false.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surfaces")
+            group.add_mesh("skull", vertices, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="surfaces/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "is nested under group" not in stdout
+
+    def test_re_laddering_an_existing_ladder_level_prints_no_false_alarm(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`--node surf/child_0` — this file's own supported re-lod workflow.
+
+        The source here is built the way a fitting pipeline (or a direct
+        ``add_mesh(substitutive_lod=…)`` call) actually produces a `kind=lod`
+        wrapper: no compositing kwarg passed at all, so `surf` carries only
+        structural bookkeeping (`kind`, `child_index`, `content_hash`,
+        `selector`, `default_level`, `position_bounds`, …) — none of it a
+        `COMPOSITING_ATTRS` member — and re-laddering one of its levels must
+        not print a false "placement/compositing is lost" warning.
+
+        (Deliberately NOT built by running `run_lod` twice: `run_lod` itself
+        forwards the picked mesh's stored `opacity`/`absorption`/`gamma`/
+        `intensity`/`offset` — defaults though they are — as explicit
+        `add_mesh` kwargs, which the wrapper-splitting logic then DOES stamp
+        onto its own `kind=lod` wrapper. That is a real, separate property of
+        this round trip, not the false alarm this test is pinning.)
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "surf",
+                vertices,
+                faces,
+                substitutive_lod={
+                    "levels": 2,
+                    "compression_factor": 4,
+                    "method": "auto",
+                },
+            )
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="surf/child_0",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 1
+
+        stdout = capsys.readouterr().out
+        assert "is nested under group" not in stdout
+
+    def test_an_ancestor_identity_transform_prints_no_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 4: the identity-`transform` SKIP branch, pinned.
+
+        Every other ancestor test either has no `transform` key at all, or a
+        genuinely non-identity one — neither exercises the branch that
+        decides an authored-but-no-op `transform` is not a real loss. Making
+        `_is_identity_transform` always return `False` (or deleting the
+        branch) would leave every other test green while this one catches
+        it.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+        from luxar.core.transforms import identity
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surfaces", transform=identity())
+            group.add_mesh("skull", vertices, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="surfaces/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "is nested under group" not in stdout
+
+    def _four_d_dimensions(self):
+        from luxar import Dimension, Dimensions
+
+        return Dimensions(
+            [
+                Dimension("x", unit="um", display=True),
+                Dimension("y", unit="um", display=True),
+                Dimension("z", unit="um", display=True),
+                Dimension("Time", unit="s", display=False, discrete=True, step=1.0),
+            ]
+        )
+
+    def test_an_ancestor_real_nd_transform_names_it(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 4: the `nd_transform` REAL-loss branch, pinned.
+
+        No other test authors an `nd_transform` at all, so
+        `_is_identity_nd_transform` is never even called — making it always
+        return `True` (or deleting the whole `nd_transform` branch) leaves
+        every other test green while an ancestor's real nD placement is
+        dropped in complete silence. A 4-D scene is needed: `nd_transform`
+        names a real non-displayed dimension ("Time" here).
+        """
+        from luxar import LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        time_col = np.full((vertices.shape[0], 1), 5.0, dtype=np.float32)
+        vertices_4d = np.hstack([vertices, time_col]).astype(np.float32)
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=self._four_d_dimensions())
+            group = scene.add_group(
+                "surfaces", nd_transform={"Time": {"scale": 2.0, "offset": 10.0}}
+            )
+            group.add_mesh("skull", vertices_4d, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="surfaces/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        ancestor_lines = [
+            line for line in stdout.splitlines() if "is nested under group" in line
+        ]
+        assert len(ancestor_lines) == 1
+        assert "nd_transform" in ancestor_lines[0]
+
+    def test_an_ancestor_identity_nd_transform_prints_no_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The no-op twin of the test above: a no-op affine entry is not a
+        real loss either."""
+        from luxar import LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        time_col = np.full((vertices.shape[0], 1), 5.0, dtype=np.float32)
+        vertices_4d = np.hstack([vertices, time_col]).astype(np.float32)
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=self._four_d_dimensions())
+            group = scene.add_group(
+                "surfaces", nd_transform={"Time": {"scale": 1.0, "offset": 0.0}}
+            )
+            group.add_mesh("skull", vertices_4d, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="surfaces/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "is nested under group" not in stdout
+
+    def test_a_leaf_overriding_blending_mode_suppresses_the_ancestor_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 4: the `_LEAF_OVERRIDES_ANCESTOR` skip, pinned.
+
+        No other test sets `blending_mode` on BOTH the ancestor and the
+        picked leaf, so this branch (nearest-setter-wins: the leaf's own
+        value travels regardless, so the ancestor's is not actually lost)
+        is never reached by the existing suite.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surfaces", blending_mode="additive")
+            group.add_mesh("skull", vertices, faces, blending_mode="normal")
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="surfaces/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "is nested under group" not in stdout
+
+    def test_an_ancestor_join_is_always_skipped(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 4: `join` is lines-only, so it can never be a mesh's
+        loss — probed with `add_group('surfaces', join='miter')`.
+
+        `add_mesh` refuses `join` outright (`reject_lines_only_join`), so a
+        mesh leaf can never carry it, and the old
+        `key in _LEAF_OVERRIDES_ANCESTOR` skip (which only fires when the
+        LEAF also sets the key) could never apply to it — it used to print
+        a false "which sets join" warning for an attribute that changes
+        nothing about a mesh ladder.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surfaces", join="miter")
+            group.add_mesh("skull", vertices, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="surfaces/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "is nested under group" not in stdout
+
+    def test_a_user_authored_overlay_is_named_as_dropped(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 2: all THREE overlay types, not just `add_text`.
+
+        `overlays` itself is not a user node (`Scene` refuses to let anyone
+        create one by that name) and must not be reported; a genuine overlay
+        living under it — text, HTML, AND image — is real content and must be
+        named. `add_image` was the specific gap: `overlay_image` was missing
+        from the type filter, so an image overlay was still silently dropped.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces)
+            scene.add_text("hello", (0.05, 0.05), name="caption")
+            scene.add_html("<b>hi</b>", (0.1, 0.1), name="note")
+            scene.add_image(
+                np.zeros((2, 2, 3), dtype=np.uint8), (0.9, 0.05), name="logo"
+            )
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "Not carried into the new scene" in stdout
+        assert "'overlays/caption' (overlay)" in stdout
+        assert "'overlays/note' (overlay)" in stdout
+        assert "'overlays/logo' (overlay)" in stdout
+        # The reserved container itself is not a dropped node.
+        assert "'overlays' (group)" not in stdout
+
+    def test_a_user_overlay_named_like_the_hover_overlay_is_still_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 3: the hover-overlay skip must be gated on
+        PROVENANCE, not name alone.
+
+        `next_overlay_name` does not reserve `__hover_text` /
+        `__hover_image` — a user is free to name their own overlay that,
+        and on an UNLABELLED scene (so no hover overlay is even
+        auto-injected) a name-only check drops it with no warning at all.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces)  # unlabelled: no auto-inject
+            scene.add_text("hi", (0.1, 0.1), name="__hover_text")
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "'overlays/__hover_text' (overlay)" in stdout
+
+    def test_a_hover_true_overlay_on_an_unlabelled_mesh_is_still_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 4: the round-3 fix still had the hole open.
+
+        `hover` is a PUBLIC kwarg of `Scene.add_text`, so a user overlay
+        named `__hover_text` WITH `hover=True` satisfies both the name and
+        the provenance check round 3 added — on an UNLABELLED mesh (so no
+        hover overlay is auto-injected, and the per-vertex-label warning
+        that is the skip's whole justification never fires either), that
+        combination used to vanish with no warning of any kind.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces)  # unlabelled: no auto-inject
+            scene.add_text("hi", (0.1, 0.1), name="__hover_text", hover=True)
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "'overlays/__hover_text' (overlay)" in stdout
+
+    def test_a_hover_true_overlay_on_a_LABELLED_mesh_is_still_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 5: the labelled scene is the case the name+`hover`
+        pair cannot decide either.
+
+        `auto_inject_hover_overlay` bails the moment ANY overlay already sets
+        `hover` — so on a labelled scene a user's own
+        `add_text(..., name='__hover_text', hover=True)` is the ONLY hover
+        overlay in the store, no injection ever happened, and the label
+        warning does not cover it. Provenance is the injected PLACEHOLDER
+        payload (`{hover_label}`), which this overlay does not carry.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces, labels=["v"] * vertices.shape[0])
+            scene.add_text("mine", (0.1, 0.1), name="__hover_text", hover=True)
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "'overlays/__hover_text' (overlay)" in stdout
+        # …and the label channel is still reported in its own right.
+        assert "'surf' has per-vertex labels" in stdout
+
+    def test_only_the_NEAREST_ancestor_blending_mode_is_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 5: nearest-setter-wins applies between ancestors too.
+
+        Under `outer(additive) / inner(normal) / mesh` the viewer's composer
+        gives the mesh `inner`'s mode — `outer`'s was ALREADY shadowed in the
+        SOURCE scene, so the rewrite does not lose it. Evaluating each
+        ancestor in isolation named both groups.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            outer = scene.add_group("outer", blending_mode="additive")
+            inner = outer.add_group("inner", blending_mode="normal")
+            inner.add_mesh("skull", vertices, faces)
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="outer/inner/skull",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        ancestor_lines = [
+            line for line in stdout.splitlines() if "is nested under group" in line
+        ]
+        assert len(ancestor_lines) == 1
+        assert "'outer/inner'" in ancestor_lines[0]
+        assert "which sets blending_mode;" in ancestor_lines[0]
+
+    def test_ancestor_layer_and_visible_are_judged_against_their_defaults(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 5: `layer`/`visible` have defaults too.
+
+        `Node.layer` reads False when absent and `Node.visible` reads True, so
+        a group authoring those exact values is a no-op for the picked mesh —
+        the same false alarm the neutral-scalar gate exists to prevent. The
+        other value IS a real loss and must still be named.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+        from luxar.io.reader import LuxarScene
+
+        neutral = tmp_path / "neutral.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(neutral) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surfaces", layer=False, visible=True)
+            group.add_mesh("skull", vertices, faces)
+        # Non-vacuous: both keys really are on the stored group.
+        stored = LuxarScene.load(neutral).get_node_metadata("surfaces")
+        assert stored["layer"] is False and stored["visible"] is True
+
+        assert (
+            len(
+                run_lod(
+                    input_path=neutral,
+                    output_path=tmp_path / "a.luxar.zarr",
+                    node_name="surfaces/skull",
+                    levels=2,
+                    compression_factor=4,
+                    method="auto",
+                    overwrite=False,
+                )
+            )
+            >= 2
+        )
+        assert "is nested under group" not in capsys.readouterr().out
+
+        real = tmp_path / "real.luxar.zarr"
+        with LuxarZarrCompiler(real) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            group = scene.add_group("surfaces", layer=True, visible=False)
+            group.add_mesh("skull", vertices, faces)
+
+        assert (
+            len(
+                run_lod(
+                    input_path=real,
+                    output_path=tmp_path / "b.luxar.zarr",
+                    node_name="surfaces/skull",
+                    levels=2,
+                    compression_factor=4,
+                    method="auto",
+                    overwrite=False,
+                )
+            )
+            >= 2
+        )
+        ancestor_lines = [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if "is nested under group" in line
+        ]
+        assert len(ancestor_lines) == 1
+        assert "which sets layer, visible;" in ancestor_lines[0]
+
+    def test_an_aborted_run_prints_no_drop_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 2: the drop report must sit AFTER the validators.
+
+        `--method qem` aborts before `add_mesh` is ever called and before
+        anything is written; the drop warnings, printed earlier in the
+        function, used to fire anyway and announce drops that never
+        happened.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("surf", vertices, faces)
+            scene.add_points("dots", np.zeros((3, 3), dtype=np.float32))
+
+        out = tmp_path / "out.luxar.zarr"
+        with pytest.raises(ValueError, match="method"):
+            run_lod(
+                input_path=source,
+                output_path=out,
+                node_name=None,
+                levels=2,
+                compression_factor=4,
+                method="qem",
+                overwrite=False,
+            )
+
+        stdout = capsys.readouterr().out
+        assert "Not carried into the new scene" not in stdout
+
+    def test_many_siblings_collapse_into_one_counted_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Reviewer round 2/3: a wall of one-line-per-sibling doesn't scale —
+        and the collapsed wording must not overclaim "parts" of anything.
+
+        A large spatial partition can have hundreds of parts, and `_pick_mesh`
+        forces `--node` once a scene has more than one mesh — so re-laddering
+        one part used to print one `aprint` per OTHER sibling. Four points
+        clouds under a 'stuff' group stand in for hundreds here; the point is
+        the collapse threshold (more than three sharing a parent + kind), not
+        the specific count — and "parts" is Luxar's term of art for
+        `kind=partition` children specifically, which these are not, so
+        round 3 reworded the collapsed line to something accurate in every
+        case.
+        """
+        from luxar import Dimensions, LuxarZarrCompiler
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, faces = _grid_mesh()
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("cover", vertices, faces)
+            group = scene.add_group("stuff")
+            for i in range(4):
+                group.add_points(f"cloud_{i}", np.zeros((3, 3), dtype=np.float32))
+
+        out = tmp_path / "out.luxar.zarr"
+        counts = run_lod(
+            input_path=source,
+            output_path=out,
+            node_name="cover",
+            levels=2,
+            compression_factor=4,
+            method="auto",
+            overwrite=False,
+        )
+        assert len(counts) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "4 other points nodes in 'stuff'" in stdout
+        assert "parts" not in stdout
+        # Collapsed, not itemized: none of the four clouds gets its own line.
+        for i in range(4):
+            assert f"'stuff/cloud_{i}'" not in stdout
+
 
 class TestMeshLodOutputPaths:
     """The guards must test the path the COMPILER writes to, not the raw argument.
