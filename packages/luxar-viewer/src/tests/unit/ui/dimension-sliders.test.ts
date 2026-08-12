@@ -571,6 +571,31 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
+  it('speed chips: sub-1 fps reads as a fraction; aria-checked tracks the radio state', () => {
+    const sliders = buildSliders();
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const speedGroup = document.querySelector('[role="radiogroup"][aria-label="Speed"]')!;
+    const chips = Array.from(speedGroup.querySelectorAll('button'));
+    const half = chips.find((c) => c.textContent === '1/2')!;
+    expect(half).toBeTruthy();
+    expect(half.title).toBe('1 frame every 2 s');
+
+    // Default 10 FPS is the checked radio; 1/2 is not.
+    const ten = chips.find((c) => c.textContent === '10')!;
+    expect(ten.getAttribute('aria-checked')).toBe('true');
+    expect(half.getAttribute('aria-checked')).toBe('false');
+
+    // Picking the fraction chip routes the REAL 0.5 to the manager.
+    half.click();
+    expect(stub.setTargetFPS).toHaveBeenCalledWith(3, 0.5);
+    sliders.dispose();
+  });
+
   it('custom step field: blur without editing never re-commits the 3-digit display form', () => {
     const sliders = buildSliders();
     const stub = makeAnimationManagerStub();
