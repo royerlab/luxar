@@ -64,16 +64,24 @@ function level(
   };
 }
 
-/** A sub-loader stub with the one method the ladder loop calls. */
+/**
+ * A sub-loader stub with the one method the ladder loop calls.
+ *
+ * `gate` lets a test hold a level mid-flight, which is the only way to exercise
+ * the post-await dispose check: the ladder loop's hazard is a `dispose()` that
+ * lands BETWEEN the await resolving and the push, and a synchronous stub never
+ * opens that window.
+ */
 function subLoader(
   data: LoadedMeshData,
-  opts: { resident?: boolean; elapsed?: number } = {}
+  opts: { resident?: boolean; gate?: Promise<void> } = {}
 ): MeshWholeNodeLoader & { calls: number; disposed: boolean } {
   const stub = {
     calls: 0,
     disposed: false,
     updateViewWithResidency: vi.fn(async () => {
       stub.calls++;
+      if (opts.gate) await opts.gate;
       return { data, allResident: opts.resident ?? true };
     }),
     dispose: vi.fn(() => {
@@ -282,6 +290,57 @@ describe('MeshProgressiveLoader', () => {
 
     for (const sub of subs) expect(sub.disposed).toBe(true);
     expect(loader.hasMoreLODs).toBe(false);
+  });
+
+  it('does not push a level that resolved AFTER dispose', async () => {
+    // The teardown race the loop guards twice (before the await and after it).
+    // Without the post-await check the level would be pushed onto a ladder
+    // `dispose()` just emptied — resurrecting it on a dead loader and pinning
+    // the whole prefix's arrays that nothing will ever read.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const subs = [subLoader(level(4, [0, 1, 2]), { gate }), subLoader(level(3, [0, 1, 2]))];
+    const loader = new MeshProgressiveLoader(subs, 2, '/surf');
+
+    const inFlight = loader.updateView(VIEW);
+    loader.dispose();
+    release();
+    const data = await inFlight;
+
+    expect(loader.loadedLODCount).toBe(0);
+    expect(data.faceCount).toBe(0);
+    // And it must report no further work, so a refinement loop holding a stale
+    // reference stops instead of indexing into the emptied array.
+    expect(loader.hasMoreLODs).toBe(false);
+  });
+
+  it('survives updateView called after dispose', async () => {
+    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+    loader.dispose();
+
+    const data = await loader.updateView(VIEW);
+
+    expect(data.faceCount).toBe(0);
+    expect(data.vertexCount).toBe(0);
+  });
+
+  it('crosses the uint16 index boundary as the prefix grows', async () => {
+    // The index buffer dtype is chosen from the VERTEX count: level 0 alone fits
+    // uint16, the ladder does not. Nothing here binds a real geometry, but the
+    // concat is what decides which side of 65536 the commit sees, so pin that it
+    // reports the summed count rather than any single level's.
+    const { loader } = makeLadder([level(40_000, [0, 1, 2]), level(40_000, [0, 1, 2])]);
+
+    const data = await loader.updateView(VIEW);
+
+    // Each level on its own is a uint16 index buffer; the ladder is not.
+    expect(40_000).toBeLessThan(65_536);
+    expect(data.vertexCount).toBeGreaterThan(65_535);
+    expect(data.vertexCount).toBe(80_000);
+    // And the offset that crosses the boundary is a real index, not a wrap.
+    expect(data.faces[3]).toBe(40_000);
   });
 
   describe('energy stamps', () => {

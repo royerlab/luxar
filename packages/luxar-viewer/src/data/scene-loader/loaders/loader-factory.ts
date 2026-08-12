@@ -36,6 +36,8 @@ import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 import type { MeshDataLoader, MeshMetadata } from '../../../types/mesh';
 import { ArrayRefRegistry } from '../../array-decoder/decoder';
+import { MAX_MESH_VERTICES } from '../../../config/constants';
+import { LoaderError } from '../nodes/load-leaf-error-dispatch';
 import { log, Modules } from '../../../utils/log';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import type { SliceCache } from '../../../cache/slice-cache';
@@ -288,6 +290,37 @@ export async function createProgressiveMeshLoader(
   deps: LoaderFactoryDeps
 ): Promise<MeshDataLoader> {
   const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
+
+  // The vertex cap has to be charged against the LADDER, not each level.
+  //
+  // `MAX_MESH_VERTICES` (2^27) exists because above it the pick vote key aliases
+  // across nodes (spec §6.5), and what the pick path reads is the CONCATENATED
+  // prefix — so the total is the quantity that must respect it. Every level runs
+  // its own `preflightMesh`, but a level is only a fraction of the surface (and a
+  // face-partition duplicates boundary vertices, so the levels sum to MORE than
+  // the source mesh): four levels of 40M each pass individually while the ladder
+  // they compose is 160M, past the cap, with picking silently aliasing. Charged
+  // here, before a single subgroup is opened, so the refusal costs no fetch —
+  // the same discipline as the per-level preflight it complements.
+  //
+  // The parent's `n_vertices` IS that sum (`write_mesh_multi_lod` stamps it from
+  // what the levels actually wrote). A store that omits it is not second-guessed:
+  // the per-level preflights still run, and the cap then binds per level as it did
+  // before, which is the pre-existing behaviour rather than a new hole.
+  const declaredVertices = node.attrs.n_vertices;
+  if (typeof declaredVertices === 'number' && declaredVertices > MAX_MESH_VERTICES) {
+    throw new LoaderError(
+      'Validation',
+      node.path,
+      new Error(
+        `Mesh reveal ladder declares ${declaredVertices.toLocaleString()} vertices across ` +
+          `its ${nAdditive} levels, above the ${MAX_MESH_VERTICES.toLocaleString()} cap ` +
+          '(the pick vote-key stride bound, spec §6.5). The levels are concatenated into ' +
+          'one buffer, so the cap applies to their total — write fewer levels, or a ' +
+          'coarser surface.'
+      )
+    );
+  }
 
   log.query(
     Modules.SCENE_LOADER,

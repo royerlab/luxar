@@ -13,10 +13,19 @@
  * coarser one — which is why mesh has no *level-of-detail* additive ladder and
  * never will (`docs/specs/MESH_NODE_SPEC.md` §9). What it has is a REVEAL: the
  * writer orders faces by best-first growth through face adjacency keyed on
- * radius, so every prefix is ONE connected patch that grows outward from the
- * centre. The renderer does nothing special; each level is just more triangles.
- * That is the whole design — `MESH_ADDITIVE_METHODS` on the Python side admits
- * `radial` and nothing else for exactly this reason.
+ * radius, so **every prefix is ONE connected patch**. The renderer does nothing
+ * special; each level is just more triangles. That is the whole design —
+ * `MESH_ADDITIVE_METHODS` on the Python side admits `radial` and nothing else
+ * for exactly this reason.
+ *
+ * Connectivity is the guarantee; "grows outward from the centre" is what it
+ * LOOKS like only where the radius actually varies over the surface — an
+ * isosurface with depth structure, the target case. On a shell at near-constant
+ * radius (a sphere, a membrane) the radius carries almost no information, the
+ * frontier admits a whole radius class at once, and the half-revealed surface
+ * reads as a sieve filling in rather than a cap spreading. Observed on an
+ * icosphere, not inferred. Still one connected patch, still far better than an
+ * arbitrary order — but worth knowing before promising a user a growing cap.
  *
  * ## Why this loader is half the size of its three siblings
  *
@@ -325,9 +334,17 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     const budgetDeadline =
       this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
 
-    // Background prefetch (shadow) passes only warm caches — the SlicePrefetcher
-    // discards the return value — so hand back the empty payload instead of the
-    // O(N) main-thread concat.
+    // Background prefetch (shadow) passes only warm caches — the caller discards
+    // the return value — so hand back the empty payload instead of the O(N)
+    // main-thread concat.
+    //
+    // UNREACHABLE TODAY, and kept rather than dropped: `SlicePrefetcher.prefetch`
+    // enumerates points, lines and gsplats only, so no mesh node is ever shadowed
+    // (a mesh is whole-node resident, so there is no next-timepoint slice to warm
+    // — the shadow would re-fetch the same bytes into a second loader). It stays
+    // because `GeometryDescriptor` hands this factory to the prefetcher for every
+    // kind, so the day mesh joins that list the ladder must not answer a shadow
+    // pass with a full concat.
     const isPrefetch = viewState.prefetch === true;
 
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
