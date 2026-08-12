@@ -6,6 +6,10 @@
  * #ifdef USE_COLORMAP pattern gates the scalar texel fetch + LUT path so
  * it is compiled only when a colormap texture is actually provided.
  */
+// NOTE (#1352 flip): these pins exercise the QUAD (screen-space)
+// primitive's shader internals, so constructions pass it explicitly —
+// the session default is now 'capsule'. The quad pins go away with the
+// primitive itself in the deletion PR.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
@@ -145,25 +149,29 @@ describe('Material colormap guards', () => {
 
   describe('LineMaterial', () => {
     it('creates without colormap', () => {
-      const mat = new LineMaterial();
+      const mat = new LineMaterial({ primitive: 'screen-space' });
       expect(mat.defines.USE_COLORMAP).toBeUndefined();
       expect(mat.uniforms.uColormapTex).toBeUndefined();
     });
 
     it('creates with colormap', () => {
       const tex = new THREE.DataTexture(new Uint8Array(1024), 256, 1, THREE.RGBAFormat);
-      const mat = new LineMaterial({ colormapTexture: tex, scalarRange: [0, 1] });
+      const mat = new LineMaterial({
+        primitive: 'screen-space',
+        colormapTexture: tex,
+        scalarRange: [0, 1],
+      });
       expect(mat.defines.USE_COLORMAP).toBe('');
     });
 
     it('clone without colormap is safe', () => {
-      const mat = new LineMaterial();
+      const mat = new LineMaterial({ primitive: 'screen-space' });
       const cloned = mat.clone();
       expect(cloned.defines.USE_COLORMAP).toBeUndefined();
     });
 
     it('vertex shader USES texel5 scalars only under USE_COLORMAP (fetch is unconditional since phase 4)', () => {
-      const mat = new LineMaterial();
+      const mat = new LineMaterial({ primitive: 'screen-space' });
       const shader = mat.vertexShader;
       // Scalars live in texel5.xy of the fixed 6-texel line texture, so
       // there are no scalar ATTRIBUTES to declare at all (the interleaved

@@ -44,7 +44,12 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=2.0,<3.0",
+    # numpy 2.5.0 rewrote its type stubs to PEP 695 `type` statements, which mypy
+    # rejects under our target python_version=3.10 ("Type statement is only supported
+    # in Python 3.12 and greater") — aborting the type-check step and turning main +
+    # every PR red. Cap below 2.5 (newest clean stubs = 2.4.6) until the mypy target
+    # moves to 3.12 or numpy/mypy reconcile.
+    "numpy>=2.0,<2.5",
     "zarr>=2.16,<3.0",
     "typer>=0.19,<1.0",
     "fastapi>=0.111,<1.0",

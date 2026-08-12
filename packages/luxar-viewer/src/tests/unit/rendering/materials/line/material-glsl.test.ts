@@ -1,3 +1,7 @@
+// NOTE (#1352 flip): these pins exercise the QUAD (screen-space)
+// primitive's shader internals, so constructions pass it explicitly —
+// the session default is now 'capsule'. The quad pins go away with the
+// primitive itself in the deletion PR.
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { LineMaterial } from '../../../../../rendering/materials/line/material-glsl';
@@ -52,7 +56,7 @@ vi.mock('three', async () => {
 describe('LineMaterial', () => {
   describe('constructor', () => {
     it('should create a material with default values', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);
       expect(material.uniforms.uOpacity.value).toBe(1.0);
@@ -66,14 +70,14 @@ describe('LineMaterial', () => {
     });
 
     it('should default invGamma to 1.0', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       expect(material.uniforms.uInvGamma.value).toBe(1.0);
       expect(material.userData.gamma).toBe(1.0);
     });
 
     it('should accept custom gamma', () => {
-      const material = new LineMaterial({ gamma: 2.2 });
+      const material = new LineMaterial({ primitive: 'screen-space', gamma: 2.2 });
 
       expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(material.userData.gamma).toBe(2.2);
@@ -112,7 +116,7 @@ describe('LineMaterial', () => {
       // the broken module afterwards. It happened four times while this file was
       // being written, so pin every line GLSL source, including the shared block
       // and the picking pair (whose sources are assembled the same way).
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
       const sources: Array<[string, string]> = [
         ['visual vertex', material.vertexShader],
         ['visual fragment', material.fragmentShader],
@@ -144,7 +148,7 @@ describe('LineMaterial', () => {
     });
 
     it('should have correct vertex shader with screen-space expansion', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       // Texture-backed storage: the only per-instance attributes are
       // aSortedIndex (aQuadCorner is per quad vertex); per-segment values
@@ -200,7 +204,7 @@ describe('LineMaterial', () => {
     });
 
     it('should have correct fragment shader with shifted-truncated super-Gaussian falloff', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       // Check for uniforms
       expect(material.fragmentShader).toContain('uniform float uOpacity');
@@ -270,7 +274,7 @@ describe('LineMaterial', () => {
       // t=0 and t=1 corners of a tapered / foreshortened segment straddle the
       // 2 px gate and disagree — resolved from the provoking vertex alone,
       // which WebGL takes from the last vertex and WGSL from the first.
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
       const stages: Array<[string, string]> = [
         ['visual vertex', material.vertexShader],
         ['pick vertex', LINE_PICK_VERTEX_SHADER],
@@ -298,7 +302,7 @@ describe('LineMaterial', () => {
 
   describe('methods', () => {
     it('should update camera parameters', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
       const fov = (45 * Math.PI) / 180;
       const resolution = new THREE.Vector2(1920, 1080);
 
@@ -309,7 +313,7 @@ describe('LineMaterial', () => {
     });
 
     it('should update opacity', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       material.updateOpacity(0.75);
 
@@ -317,7 +321,7 @@ describe('LineMaterial', () => {
     });
 
     it('should update gamma', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       material.updateGamma(2.2);
 
@@ -326,7 +330,7 @@ describe('LineMaterial', () => {
     });
 
     it('should clamp gamma to prevent division by zero', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       material.updateGamma(0);
 
@@ -359,7 +363,7 @@ describe('LineMaterial', () => {
       // divergence B9c fixed. The shader floors at 1e-20 (zero-guard
       // only), so writing 0 is safe and symmetric with the point/gsplat
       // wrappers.
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
       material.updateCameraParams(1.0, new THREE.Vector2(100, 100), false, 5.0);
       expect(material.uniforms.uNearCull.value).toBe(5.0);
       material.updateCameraParams(1.0, new THREE.Vector2(100, 100), false, 0);
@@ -372,7 +376,7 @@ describe('LineMaterial', () => {
 
   describe('shader correctness', () => {
     it('should use semicircle kernel model for joints (cap math now in fragment)', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       // cap factor at endpoints should be 0.5 for seamless joints.
       // Now computed in the fragment shader from interpolated vT, with
@@ -384,7 +388,7 @@ describe('LineMaterial', () => {
     });
 
     it('should handle clipped endpoints correctly (in fragment)', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       // Clipped/suppressed endpoints should lift THEIR OWN ramp to full
       // intensity (1.0), and the two per-endpoint caps combine with min()
@@ -397,7 +401,7 @@ describe('LineMaterial', () => {
     });
 
     it('should use world-space to pixel conversion', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       // Check for perspective-correct pixel width calculation. tan() is
       // no longer evaluated per-vertex — `uPerspectiveLineScale` is
@@ -407,7 +411,7 @@ describe('LineMaterial', () => {
     });
 
     it('drives the pathological discard from the per-segment max width (issue #849)', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       // The discard must be ONE per-segment decision, not per-quad-vertex:
       // rawPixelWidth varies between the t=0 and t=1 corners of the shared
@@ -422,7 +426,7 @@ describe('LineMaterial', () => {
 
   describe('blending mode depth test configuration', () => {
     it('should have depthTest false for additive mode (ignores depth)', () => {
-      const material = new LineMaterial({ blendingMode: 'additive' });
+      const material = new LineMaterial({ primitive: 'screen-space', blendingMode: 'additive' });
 
       // 'additive' ignores depth entirely (renders on top of everything)
       expect(material.userData.depthTest).toBe(false);
@@ -430,7 +434,7 @@ describe('LineMaterial', () => {
     });
 
     it('should have depthTest true for luminous mode (respects depth occlusion)', () => {
-      const material = new LineMaterial({ blendingMode: 'luminous' });
+      const material = new LineMaterial({ primitive: 'screen-space', blendingMode: 'luminous' });
 
       // 'luminous' respects depth occlusion but uses same visual output as additive
       expect(material.userData.depthTest).toBe(true);
@@ -438,14 +442,14 @@ describe('LineMaterial', () => {
     });
 
     it('should have depthTest true for normal mode', () => {
-      const material = new LineMaterial({ blendingMode: 'normal' });
+      const material = new LineMaterial({ primitive: 'screen-space', blendingMode: 'normal' });
 
       expect(material.userData.depthTest).toBe(true);
       expect(material.blending).toBe('NormalBlending');
     });
 
     it('should use simple alpha output in fragment shader', () => {
-      const material = new LineMaterial();
+      const material = new LineMaterial({ primitive: 'screen-space' });
 
       // No uLuminous uniform - shader always uses same output pattern
       expect(material.fragmentShader).not.toContain('uniform bool uLuminous');
@@ -458,7 +462,7 @@ describe('LineMaterial', () => {
     });
 
     it('should configure opaque mode correctly', () => {
-      const material = new LineMaterial({ blendingMode: 'opaque' });
+      const material = new LineMaterial({ primitive: 'screen-space', blendingMode: 'opaque' });
 
       expect(material.transparent).toBe(false);
       expect(material.depthWrite).toBe(true);
@@ -474,7 +478,7 @@ describe('LineMaterial', () => {
     // as their real numeric values (`MaxEquation`, `SrcAlphaFactor`,
     // `OneMinusSrcAlphaFactor`). Use real THREE constants for those.
     it('switches additive → max: blending becomes CustomBlending + MaxEquation', () => {
-      const material = new LineMaterial({ blendingMode: 'additive' });
+      const material = new LineMaterial({ primitive: 'screen-space', blendingMode: 'additive' });
       expect(material.blending).toBe('AdditiveBlending');
 
       material.applyBlendingMode('max');
@@ -491,7 +495,7 @@ describe('LineMaterial', () => {
       // Without applyBlendingMode resetting state, blendEquation would
       // strand at MaxEquation after the user switched modes via the
       // layers panel.
-      const material = new LineMaterial({ blendingMode: 'max' });
+      const material = new LineMaterial({ primitive: 'screen-space', blendingMode: 'max' });
       expect(material.blendEquation).toBe(THREE.MaxEquation);
 
       material.applyBlendingMode('additive');
@@ -502,7 +506,7 @@ describe('LineMaterial', () => {
     });
 
     it('switches additive → luminous: blending unchanged, depthTest flips to true', () => {
-      const material = new LineMaterial({ blendingMode: 'additive' });
+      const material = new LineMaterial({ primitive: 'screen-space', blendingMode: 'additive' });
       expect(material.depthTest).toBe(false);
 
       material.applyBlendingMode('luminous');
@@ -557,7 +561,7 @@ describe('createInstancedLinesMesh', () => {
       segmentCount: 2,
     };
 
-    const material = new LineMaterial();
+    const material = new LineMaterial({ primitive: 'screen-space' });
     const mesh = createInstancedLinesMesh(config, material);
 
     // Lines use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
@@ -619,7 +623,7 @@ describe('createInstancedLinesMesh', () => {
       segmentCount: 1,
     };
 
-    const material = new LineMaterial();
+    const material = new LineMaterial({ primitive: 'screen-space' });
     const mesh = createInstancedLinesMesh(config, material);
 
     const geometry = mesh.geometry;
@@ -649,7 +653,7 @@ describe('createInstancedLinesMesh', () => {
       segmentCount: 1,
     };
 
-    const material = new LineMaterial();
+    const material = new LineMaterial({ primitive: 'screen-space' });
     const mesh = createInstancedLinesMesh(config, material);
     const geometry = mesh.geometry;
     expect(geometry.boundingBox!.min.x).toBeCloseTo(0, 5);

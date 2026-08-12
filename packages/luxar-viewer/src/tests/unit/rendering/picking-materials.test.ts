@@ -5,6 +5,10 @@
  * CameraAwareMaterial, and have the expected uniforms.
  */
 
+// NOTE (#1352 flip): these pins exercise the QUAD (screen-space)
+// primitive's shader internals, so constructions pass it explicitly —
+// the session default is now 'capsule'. The quad pins go away with the
+// primitive itself in the deletion PR.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointPickingMaterial } from '../../../rendering/picking/point/material';
@@ -119,14 +123,14 @@ describe('PointPickingTSLMaterial', () => {
 
 describe('LinePickingMaterial', () => {
   it('instantiates with correct nodeId uniform', () => {
-    const material = new LinePickingMaterial({ nodeId: 7 });
+    const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 7 });
     expect(material.uniforms.uNodeId.value).toBe(7);
     expect(material).toBeInstanceOf(THREE.ShaderMaterial);
     material.dispose();
   });
 
   it('uses correct material settings for picking', () => {
-    const material = new LinePickingMaterial({ nodeId: 1 });
+    const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 1 });
     expect(material.transparent).toBe(false);
     expect(material.depthTest).toBe(true);
     expect(material.blending).toBe(THREE.NoBlending);
@@ -135,7 +139,7 @@ describe('LinePickingMaterial', () => {
   });
 
   it('implements updateCameraParams', () => {
-    const material = new LinePickingMaterial({ nodeId: 1 });
+    const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 1 });
     const resolution = new THREE.Vector2(1920, 1080);
 
     material.updateCameraParams(1.0, resolution, false);
@@ -149,7 +153,7 @@ describe('LinePickingMaterial', () => {
   // (beta = 2^(6s - 2)) with no per-buffer fast path, so the picking
   // shader carries no LUXAR_SHARPNESS_TWO define.
   it('GLSL line picking shader uses the super-Gaussian falloff, no LUXAR_SHARPNESS_TWO', () => {
-    const material = new LinePickingMaterial({ nodeId: 1 });
+    const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 1 });
     expect(material.fragmentShader).toContain('exp2(6.0 * vSharpness - 2.0)');
     expect(material.fragmentShader).toContain('exp(-K * pow(p, beta))');
     expect(material.fragmentShader).not.toContain('LUXAR_SHARPNESS_TWO');
@@ -161,7 +165,7 @@ describe('LinePickingMaterial', () => {
   // endpoint, each lifted by its own suppression, combined with min()
   // (issue #796 — mirrors the material-glsl.test.ts assertion).
   it('GLSL line picking shader uses per-endpoint cap ramps combined with min()', () => {
-    const material = new LinePickingMaterial({ nodeId: 1 });
+    const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 1 });
     expect(material.fragmentShader).toContain('mix(0.5 + 0.5 * startRamp, 1.0, vCapSuppressStart)');
     expect(material.fragmentShader).toContain('mix(0.5 + 0.5 * endRamp, 1.0, vCapSuppressEnd)');
     expect(material.fragmentShader).toContain('min(startCap, endCap)');
@@ -173,7 +177,7 @@ describe('LinePickingMaterial', () => {
   // corners, so gating on it sentinels only half the quad and leaves a
   // visible wedge (issue #849). The fix gates on segMaxPixelWidth.
   it('GLSL line picking shader gates the pathological discard on the per-segment max width (issue #849)', () => {
-    const material = new LinePickingMaterial({ nodeId: 1 });
+    const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 1 });
     expect(material.vertexShader).toContain('segMaxPixelWidth');
     expect(material.vertexShader).toContain('segMaxPixelWidth > maxPW * 2.0');
     expect(material.vertexShader).not.toContain('rawPixelWidth > maxPW * 2.0');
@@ -184,7 +188,7 @@ describe('LinePickingMaterial', () => {
   // Material.clone() calls the constructor with no config and throws;
   // three-geometry symmetry rule).
   it('clone preserves config and tuned uniforms (independent of source)', () => {
-    const material = new LinePickingMaterial({ nodeId: 7 });
+    const material = new LinePickingMaterial({ primitive: 'screen-space', nodeId: 7 });
     material.updateCameraParams(10, new THREE.Vector2(800, 600), true, 0.25);
 
     const cloned = material.clone();
@@ -514,7 +518,10 @@ describe('picking materials — depth-sort ordering slot', () => {
   > = [
     ['PointPickingMaterial', () => new PointPickingMaterial({ nodeId: 1 })],
     ['PointPickingTSLMaterial', () => new PointPickingTSLMaterial({ nodeId: 1 })],
-    ['LinePickingMaterial', () => new LinePickingMaterial({ nodeId: 1 })],
+    [
+      'LinePickingMaterial',
+      () => new LinePickingMaterial({ primitive: 'screen-space', nodeId: 1 }),
+    ],
     ['LinePickingTSLMaterial', () => new LinePickingTSLMaterial({ nodeId: 1 })],
     ['GSplatPickingMaterial', () => new GSplatPickingMaterial({ nodeId: 1 })],
     ['GSplatPickingTSLMaterial', () => new GSplatPickingTSLMaterial({ nodeId: 1 })],
