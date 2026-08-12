@@ -12,6 +12,10 @@
  * Both toggle the LUXAR_MAX_RGB_CONTRIBUTION shader define when
  * entering max and clear it when leaving.
  */
+// NOTE (#1352 flip): these pins exercise the QUAD (screen-space)
+// primitive's shader internals, so constructions pass it explicitly —
+// the session default is now 'capsule'. The quad pins go away with the
+// primitive itself in the deletion PR.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { LineMaterial } from '../../../../../rendering/materials/line/material-glsl';
@@ -21,7 +25,7 @@ import type { BlendingMode } from '../../../../../rendering/material-manager';
 
 describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   it('max mode sets CustomBlending + MaxEquation + OneFactor/OneFactor', () => {
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('max');
     expect(mat.blending).toBe(THREE.CustomBlending);
     expect(mat.blendEquation).toBe(THREE.MaxEquation);
@@ -35,7 +39,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   });
 
   it('additive mode resets CustomBlending state via the shared helper (SrcAlpha/One)', () => {
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('max');
     mat.applyBlendingMode('additive');
     expect(mat.blending).toBe(THREE.AdditiveBlending);
@@ -53,7 +57,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   });
 
   it('normal at opacity=1.0 writes depth; at 0.5 does not', () => {
-    const mat = new LineMaterial({ opacity: 1.0 });
+    const mat = new LineMaterial({ primitive: 'screen-space', opacity: 1.0 });
     mat.applyBlendingMode('normal');
     expect(mat.blending).toBe(THREE.NormalBlending);
     expect(mat.depthTest).toBe(true);
@@ -65,7 +69,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   });
 
   it('opaque mode disables transparency and writes depth', () => {
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('opaque');
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
@@ -75,7 +79,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   });
 
   it('luminous mode is additive but depth-tested', () => {
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('luminous');
     expect(mat.blending).toBe(THREE.AdditiveBlending);
     expect(mat.depthTest).toBe(true);
@@ -88,7 +92,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   it('reapplying same mode does not bump material.version (idempotent)', () => {
     // THREE.Material.needsUpdate is a setter that increments `version`.
     // Read via `version` to detect whether a recompile would be triggered.
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('max');
     const versionAfterFirst = mat.version;
     mat.applyBlendingMode('max');
@@ -97,7 +101,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   });
 
   it('mode changes that toggle defines bump material.version (max→additive)', () => {
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('max');
     const versionAfterMax = mat.version;
     mat.applyBlendingMode('additive');
@@ -109,7 +113,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   it('line fragment shader contains LUXAR_MAX_RGB_CONTRIBUTION guard', () => {
     // Phase 4 made the max branch an `#elif` of the volumetric `#if` —
     // pin the `defined(...)` form (matches the point twin's pin).
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     expect(mat.fragmentShader).toContain('defined(LUXAR_MAX_RGB_CONTRIBUTION)');
     expect(mat.fragmentShader).toContain('gammaColor * a');
   });
@@ -120,7 +124,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     // campaign's mutation lesson). τ = κ × the ray mass, physical absorption
     // alpha, and the color-discard bypass (a black line still absorbs) are
     // each distinct generated code. Mirrors the point twin.
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     expect(mat.fragmentShader).toContain('#if defined(LUXAR_VOLUMETRIC)');
     expect(mat.fragmentShader).toContain('float tau = uAbsorption * alpha;');
     expect(mat.fragmentShader).toContain('float volAlpha = 1.0 - exp(-tau);');
@@ -141,7 +145,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     // volumetric — an unsanitized NaN from hand-crafted zarr poisons τ
     // past the discard into NaN pixels. Pinned at the USAGE (the
     // interpolated assignment), matching the point twin's pin.
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     expect(mat.vertexShader).toContain(
       'vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tEff);'
     );
@@ -156,7 +160,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     // That made a Lines node and its lifted-gsplat twin disagree by exactly
     // one path length. Re-introducing any size factor here silently
     // de-calibrates κ across geometry types.
-    const src = new LineMaterial().fragmentShader;
+    const src = new LineMaterial({ primitive: 'screen-space' }).fragmentShader;
     expect(src).toContain('float tau = uAbsorption * alpha;');
     expect(src).not.toMatch(/tau\s*=[^;]*vWidthAtT/);
   });
@@ -168,14 +172,14 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     // playwright-tier codegen snapshot would catch it) — an RGBA
     // dataset's translucent segments would render fully opaque in
     // additive/normal/max. Pinned at the USAGE.
-    const mat = new LineMaterial();
+    const mat = new LineMaterial({ primitive: 'screen-space' });
     expect(mat.fragmentShader).toContain('intensity *= vAlpha;');
   });
 });
 
 describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   it('max mode sets CustomBlending + MaxEquation + OneFactor/OneFactor', () => {
-    const mat = new LineTSLMaterial();
+    const mat = new LineTSLMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('max');
     expect(mat.blending).toBe(THREE.CustomBlending);
     expect(mat.blendEquation).toBe(THREE.MaxEquation);
@@ -189,7 +193,7 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   });
 
   it('additive mode resets CustomBlending state via the shared helper (SrcAlpha/One)', () => {
-    const mat = new LineTSLMaterial();
+    const mat = new LineTSLMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('max');
     mat.applyBlendingMode('additive');
     expect(mat.blending).toBe(THREE.AdditiveBlending);
@@ -207,7 +211,7 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   });
 
   it('normal at opacity=1.0 writes depth; at 0.5 does not', () => {
-    const mat = new LineTSLMaterial({ opacity: 1.0 });
+    const mat = new LineTSLMaterial({ primitive: 'screen-space', opacity: 1.0 });
     mat.applyBlendingMode('normal');
     expect(mat.blending).toBe(THREE.NormalBlending);
     expect(mat.blendSrc).toBe(THREE.SrcAlphaFactor);
@@ -221,7 +225,7 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   });
 
   it('opaque mode disables transparency and writes depth', () => {
-    const mat = new LineTSLMaterial();
+    const mat = new LineTSLMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('opaque');
     expect(mat.transparent).toBe(false);
     expect(mat.depthWrite).toBe(true);
@@ -231,7 +235,7 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   });
 
   it('luminous mode is additive but depth-tested', () => {
-    const mat = new LineTSLMaterial();
+    const mat = new LineTSLMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('luminous');
     expect(mat.blending).toBe(THREE.AdditiveBlending);
     expect(mat.depthTest).toBe(true);
@@ -241,7 +245,7 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   });
 
   it('reapplying same mode does not bump material.version (idempotent)', () => {
-    const mat = new LineTSLMaterial();
+    const mat = new LineTSLMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('max');
     const versionAfterFirst = mat.version;
     mat.applyBlendingMode('max');
@@ -250,7 +254,7 @@ describe('LineTSLMaterial.applyBlendingMode (TSL)', () => {
   });
 
   it('mode changes that toggle defines bump material.version (max→additive)', () => {
-    const mat = new LineTSLMaterial();
+    const mat = new LineTSLMaterial({ primitive: 'screen-space' });
     mat.applyBlendingMode('max');
     const versionAfterMax = mat.version;
     mat.applyBlendingMode('additive');
@@ -288,8 +292,8 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
 
   for (const mode of ALL_MODES) {
     it(`'${mode}': GLSL state equals getCompleteBlendingState and matches TSL`, () => {
-      const glsl = new LineMaterial();
-      const tsl = new LineTSLMaterial();
+      const glsl = new LineMaterial({ primitive: 'screen-space' });
+      const tsl = new LineTSLMaterial({ primitive: 'screen-space' });
       glsl.applyBlendingMode(mode);
       tsl.applyBlendingMode(mode);
       const expected = getCompleteBlendingState(mode, 1.0);
@@ -308,7 +312,10 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
     // emission over One/OneMinusSrcAlpha — the same framebuffer state
     // points (phase 3) and gsplats (phase 1) carry — never
     // depth-writes, depth-tested.
-    for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
+    for (const mat of [
+      new LineMaterial({ primitive: 'screen-space' }),
+      new LineTSLMaterial({ primitive: 'screen-space' }),
+    ]) {
       mat.applyBlendingMode('volumetric');
       expect(mat.blending).toBe(THREE.CustomBlending);
       expect(mat.blendEquation).toBe(THREE.AddEquation);
@@ -325,7 +332,10 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
   it('every non-volumetric transition clears LUXAR_VOLUMETRIC (no stranded define)', () => {
     // Risk #6 of the spec: a volumetric→normal switch must not strand
     // the define — the normal branch would then never be reached.
-    for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
+    for (const mat of [
+      new LineMaterial({ primitive: 'screen-space' }),
+      new LineTSLMaterial({ primitive: 'screen-space' }),
+    ]) {
       mat.applyBlendingMode('volumetric');
       expect(mat.defines?.LUXAR_VOLUMETRIC).toBe('');
       mat.applyBlendingMode('normal');
@@ -343,7 +353,10 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
     // derive the volumetric state (and output branch) itself from
     // config.blendingMode.
     const expected = getCompleteBlendingState('volumetric', 1.0);
-    const constructed = new LineTSLMaterial({ blendingMode: 'volumetric' });
+    const constructed = new LineTSLMaterial({
+      primitive: 'screen-space',
+      blendingMode: 'volumetric',
+    });
     for (const field of STATE_FIELDS) {
       expect(constructed[field], `constructed ${field}`).toBe(expected[field]);
     }
@@ -353,7 +366,7 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
     // max→volumetric toggles BOTH defines → definesChanged →
     // rebuildGraph — the tail must re-derive the volumetric state, not
     // clobber it with a stale-mode default.
-    const switched = new LineTSLMaterial({ blendingMode: 'max' });
+    const switched = new LineTSLMaterial({ primitive: 'screen-space', blendingMode: 'max' });
     switched.applyBlendingMode('volumetric');
     for (const field of STATE_FIELDS) {
       expect(switched[field], `post-switch ${field}`).toBe(expected[field]);
@@ -373,7 +386,10 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
     // κ to 1.0 or dropped the RGBA-alpha flag would silently change the
     // volumetric render (the gsplat phase-1 review caught the same bug
     // class in its clones).
-    for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
+    for (const mat of [
+      new LineMaterial({ primitive: 'screen-space' }),
+      new LineTSLMaterial({ primitive: 'screen-space' }),
+    ]) {
       mat.applyBlendingMode('volumetric');
       mat.updateAbsorption(2.5);
       mat.updateHasElementAlpha(true);
@@ -390,8 +406,8 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
     // recompile (GLSL version bump) or graph rebuild (TSL) per tick
     // would hitch the volumetric render on every drag step.
     for (const mat of [
-      new LineMaterial({ blendingMode: 'volumetric' }),
-      new LineTSLMaterial({ blendingMode: 'volumetric' }),
+      new LineMaterial({ primitive: 'screen-space', blendingMode: 'volumetric' }),
+      new LineTSLMaterial({ primitive: 'screen-space', blendingMode: 'volumetric' }),
     ]) {
       const version = mat.version;
       mat.updateAbsorption(2.5);
@@ -418,13 +434,21 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
 // twins (additive state otherwise forces depthTest=false).
 describe('LineTSLMaterial constructor explicit overrides', () => {
   it('depthTest: true survives additive construction', () => {
-    const mat = new LineTSLMaterial({ blendingMode: 'additive', depthTest: true });
+    const mat = new LineTSLMaterial({
+      primitive: 'screen-space',
+      blendingMode: 'additive',
+      depthTest: true,
+    });
     expect(mat.depthTest).toBe(true);
     expect(mat.userData.depthTest).toBe(true);
   });
 
   it('transparent: false survives additive construction', () => {
-    const mat = new LineTSLMaterial({ blendingMode: 'additive', transparent: false });
+    const mat = new LineTSLMaterial({
+      primitive: 'screen-space',
+      blendingMode: 'additive',
+      transparent: false,
+    });
     expect(mat.transparent).toBe(false);
   });
 });
@@ -435,7 +459,10 @@ describe('LineMaterial single-pass billboards (both backends)', () => {
     // without forceSinglePass trips THREE's two-pass transparent render:
     // measured live, the mesh rasterizes ~2x the triangles (and sorted
     // modes split each mesh's draw independent of the depth sort).
-    for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
+    for (const mat of [
+      new LineMaterial({ primitive: 'screen-space' }),
+      new LineTSLMaterial({ primitive: 'screen-space' }),
+    ]) {
       expect(mat.forceSinglePass).toBe(true);
       expect(mat.side).toBe(THREE.DoubleSide);
     }

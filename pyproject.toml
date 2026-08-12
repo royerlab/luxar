@@ -44,7 +44,12 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=2.0,<3.0",
+    # numpy 2.5.0 rewrote its type stubs to PEP 695 `type` statements, which mypy
+    # rejects under our target python_version=3.10 ("Type statement is only supported
+    # in Python 3.12 and greater") — aborting the type-check step and turning main +
+    # every PR red. Cap below 2.5 (newest clean stubs = 2.4.6) until the mypy target
+    # moves to 3.12 or numpy/mypy reconcile.
+    "numpy>=2.0,<2.5",
     "zarr>=2.16,<3.0",
     "typer>=0.19,<1.0",
     "fastapi>=0.111,<1.0",
@@ -288,9 +293,9 @@ dependencies = [
 # tests (content-fit CLI, tiled/progressive fitting) still run locally and their
 # code stays covered by fast unit tests (coverage holds at ~87% ≥ the 80% gate).
 [tool.hatch.envs.default.scripts]
-test = "pytest {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
-test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
-test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests}"
+test = "pytest {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
+test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
+test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `scripts/benchmarks` is listed explicitly: a broad `benchmarks/` entry in
 # .gitignore makes ruff's directory walk skip it, but pre-commit still formats
 # those tracked files, so it must be covered here to keep them in sync.
@@ -543,6 +548,7 @@ testpaths = [
     "packages/luxar/examples/tests",
     "stats",
     "scripts/gallery/tests",
+    "scripts/tests",
 ]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

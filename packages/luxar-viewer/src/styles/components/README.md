@@ -9,8 +9,14 @@ Every selector here is scoped under a `.luxar-*` class so the rules are
 safe to ship inside a host page without leaking into the embedder's
 chrome. Colors, spacing, radii, and shadows reference the
 `--luxar-*` CSS custom properties injected at runtime by the
-`ThemeManager` (see `../../themes/`) — no hardcoded palette values, no
-`!important`.
+`ThemeManager` (see `../../themes/`). The two escape hatches have separate
+policies: a literal standing in for a token value needs both an inline
+comment justifying it and a line in §15.6, while `!important` is confined to
+three categories (reduced-motion overrides, the control-rail docking
+overrides, and state-forcing rules that must beat inline styles). See the
+[UI Design Guide](../../../../../docs/guides/developer/UI_DESIGN_GUIDE.md)
+§13 for both rules, §15.6 for the sanctioned exceptions, and §15.1–15.5 for
+the drift still awaiting migration.
 
 ## Files
 
@@ -37,7 +43,7 @@ chrome. Colors, spacing, radii, and shadows reference the
 
 - Class names are prefixed with `luxar-` (e.g. `.luxar-colormap-legend`,
   `.luxar-layers-panel`) so the stylesheet is embed-safe.
-- Modifier states use `--` suffixes (e.g. `.luxar-toast--visible`),
+- Modifier states use `--` suffixes (e.g. `.luxar-data-monitor__tab--active`),
   matching the BEM-ish style used by the custom GUI library in
   `../../ui/gui/styles/`.
 - Colors and spacing reference `var(--luxar-*)` properties from the

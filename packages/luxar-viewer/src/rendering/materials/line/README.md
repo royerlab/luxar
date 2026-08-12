@@ -374,10 +374,11 @@ one set of shader builders — belongs to the next slice of #1352, not here,
 because folding it in now would rewrite lanes that have already been
 quadrature-pinned against `line-volumetric-integral.test.ts`.
 
-## Capsule primitive (`?linePrimitive=capsule`, #1352)
+## Capsule primitive (the DEFAULT since the #1352 flip)
 
-The third primitive, built after the G1 gate measured the volumetric
-primitive 2.7–5× the quad's frame cost: a deliberately relaxed model that
+THE default line primitive (flipped from `screen-space` after the #1352
+re-gate), built after the G1 gate measured the volumetric primitive
+2.7–5× the quad's frame cost: a deliberately relaxed model that
 keeps the volumetric primitive's two behavioural wins — direction-stable
 near-axial rendering (an end-on segment is a round disc, never a flickering
 sliver) and seamless bisector-cut joins — at quad-class cost (measured
@@ -425,28 +426,26 @@ of the joint disc — the cap region (beyond the endpoint) is partitioned along 
 bisector, the line through the shared vertex with 2D normal
 `normalize(q̂ − m̂)` in pixel space (the partner's normal is the exact
 negation, so the two half-discs tile the disc exactly at ANY bend angle —
-no notch, no chopped miter tip, no double-bright overlap). Three
-refinements make this hold at extreme zoom as well as at normal widths:
-the cut is confined to the cap region, so where the two rod BODIES
-genuinely overlap (the inner corner of a bend) both legs render — matching
-the physical union; the foreign-side cap contribution fades smoothly over a
-bend-scaled fraction of the radius (`CAPSULE_CUT_FADE_RADIUS_FRACTION`)
-instead of a hard cut, keeping the hand-off to the partner's body C0
-(sub-pixel at normal widths, and collapsing toward an exact butt at
-straight joints where any foreign contribution would double-count) — a
-BUTT cut, where no bisector was found at all, is hard rather than faded,
-since the reach the vertex stage reserves is raised only where a bisector
-was; and
-the partner's far endpoint is near-plane-clipped toward the joint vertex
-before projecting (a behind-eye projection flips and would poison the cut
-normal), with a joint vertex behind the near plane keeping the
-perpendicular butt. The per-fragment radius interpolates LINEARLY across
-the stencil (`vR`) — a constant-width tube's pixel radius is exactly
-linear in screen x (1/depth is perspective-linear), so this keeps
-silhouettes straight and rims soft under extreme foreshortening.
+no notch, no chopped miter tip, no double-bright overlap). The cut spans the
+full joint plane (cap and body) and composes by the DEFICIT rule over a
+1 px AA ramp: on the partner's side each leg renders
+`max(mine − partner, 0)`, so the additive pair composes to
+`max(mine, partner)`. Congruent legs (the common case, and the only case
+the fill benchmarks exercise) gate to an exact zero-double-count
+partition — the same domain partition the volumetric primitive
+integrates per ray — while tapered or perspective-diverged partners get
+exactly the light a pure partition would chop (a fat vertex's disc keeps
+the half a thin neighbour cannot render; the numeric composition sweep in
+`line-capsule.test.ts` pins the three reconstruction errors of
+#1494/#1488/#1490). The partner's far endpoint is near-plane-clipped
+toward the joint vertex before projecting (a behind-eye projection flips
+and would poison the cut normal), with a joint vertex behind the near
+plane keeping the perpendicular butt. The per-fragment radius is computed EXACTLY from the
+endpoint radii (`mix(rA, rB, clamp(x/L, 0, 1))` — a linear varying cannot
+represent this, since its interpolation spans the cap extensions).
 
 Picking follows the toggle (same dispatch as volumetric): the capsule pick
-shaders run the same stencil, cuts, and fold rule as the visual pair so the
+shaders run the same stencil and joint partition as the visual pair so the
 pick footprint tracks the pixels exactly (see `../../picking/line/README.md`).
 The primitive is BUILD-time, like the other two: it selects the source pair /
 TSL factory at material construction and never changes on a live material.

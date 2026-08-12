@@ -25,6 +25,97 @@ if TYPE_CHECKING:
     from ..group import Group
 
 
+# The two structures that reach :func:`labels_on_wrapper_reason`, spelled once so
+# the wording cannot drift between the ``lod_group=`` door and the graft door.
+#
+# The lod_group one names the STRUCTURE rather than the kwarg on purpose: the
+# most likely real door is the AUTO-LOWER route, where the caller passed no
+# ``lod_group=`` at all (``add_gsplats_from_file`` on any matrix-shaped
+# multi-level file takes it), and a message quoting a kwarg that is not in the
+# call sends the reader looking for something that is not there.
+LOD_GROUP_STRUCTURE = (
+    "a multi-level substitutive pyramid (auto-lowered to a kind=lod group)"
+)
+LOD_GROUP_REMEDY = (
+    "Label a single-level node instead (lod_group=False collapses to the finest level)."
+)
+GRAFT_STRUCTURE = (
+    "a grafted multi-node .gsplats.zarr subtree (kind=lod / kind=partition)"
+)
+GRAFT_REMEDY = (
+    "Label a single-leaf file instead ('gsplat flatten' collapses this one to "
+    "one leaf)."
+)
+
+
+def labels_on_wrapper_reason(kwarg: str, structure: str, remedy: str) -> str:
+    """Why per-element labels cannot ride into a multi-child gsplats wrapper.
+
+    ONE template for all four doors — ``labels`` / ``image_labels`` crossed with
+    the ``lod_group=`` gate below and the graft gate in ``from_io`` — because they
+    all fail for the identical reason, and hand-written near-copies would be free
+    to drift. Only two things vary: ``structure`` names the wrapper the caller
+    actually asked for, and ``remedy`` is that door's single-node escape hatch.
+    Both come from the module constants above.
+    """
+    return (
+        f"{kwarg} is not supported on {structure}. Each child carries its own "
+        "set of splats — a coarser level holds merged representatives, a "
+        "partition part holds one tile's share — so no single list has a "
+        "per-element correspondence to carry: slicing it would pair entries with "
+        "the wrong splats, and passing it whole would only fit whichever child "
+        f"happened to match. {remedy} Or build the wrapper yourself "
+        "(add_lod_group() / add_partition_group()) and give each add_gsplats() "
+        f"child its own {kwarg}. An additive_lod= ladder is not an alternative "
+        "here: a gsplats additive ladder carries no labels at all."
+    )
+
+
+def labels_on_a_laddered_leaf_reason(kwarg: str) -> str:
+    """Why a SINGLE gsplats leaf still cannot take labels once it is laddered.
+
+    Deliberately NOT the shared template above. That one's whole argument is
+    "several children, no per-element correspondence, so it cannot be sliced" —
+    every clause of which is false here: there is one leaf, holding every splat,
+    with a perfect correspondence. The fault is simply that the writer this leaf
+    goes to has nowhere to put them. Bending the template to cover both would
+    make it read wrong at one door or the other, so this forks — and the two live
+    side by side, sharing the concluding fact (the template's last sentence states
+    the same "no labels channel" limitation from the other direction).
+    """
+    return (
+        f"{kwarg} is not supported on a gsplats additive ladder. The ladder "
+        "writer (write_gsplat_leaf_subtree) has no labels channel at all — "
+        "labels are a leaf-only feature of write_gsplats — so a laddered leaf "
+        "cannot carry them however they are supplied, and the ladder-union "
+        "labels Points and Lines get have no gsplats equivalent. Collapse the "
+        "ladder and label the single leaf ('gsplat flatten' does exactly that), "
+        f"or keep the ladder and drop {kwarg}."
+    )
+
+
+def strip_absent_label_kwargs(attrs: Dict[str, Any]) -> None:
+    """Delete ``labels`` / ``image_labels`` from ``attrs`` when their value is None.
+
+    ``labels=None`` means "no labels" — that is how the leaf adders read it, since
+    they bind both as named params defaulting to None. Here they arrive inside
+    ``**attrs``, where a present-but-None KEY is a different thing entirely: it
+    survives into ``child_attrs`` and reaches ``validate_render_attrs``, which
+    rejects an unknown key by NAME and never looks at its value. So the idiomatic
+    ``labels=maybe_labels`` call stranded a childless wrapper with ``Unknown node
+    attribute 'labels'`` raised from inside ``child_0``, whenever a child took the
+    additive-ladder writer — which every level of a stock ``gsplat lod --recipe
+    levels`` file does, its stream ladders being on by default (#1471).
+
+    Mutates in place and returns None: every caller owns the dict it passes (its
+    own ``**attrs``), and handing back a copy would only invite one of them to
+    forget to use it.
+    """
+    for key in ("labels", "image_labels"):
+        if key in attrs and attrs[key] is None:
+            del attrs[key]
+
+
 def _reject_before_wrapper(
     group: "Group",
     *,
@@ -34,6 +125,8 @@ def _reject_before_wrapper(
     fill: Optional[Dict[str, float]],
     fill_sigma: Optional[Dict[str, float]],
     colormap: Any,
+    labels: Any = None,
+    image_labels: Any = None,
 ) -> None:
     """Refuse what is judgeable up front BEFORE the ``kind=lod`` group exists (#1446).
 
@@ -46,9 +139,15 @@ def _reject_before_wrapper(
     own funnel, and :func:`add_gsplats_multi_lod_impl` validates every sub-LOD
     while building them, before its single write.
 
-    The ORDER inside the gate copies the flat path's statement order exactly,
-    because that order is what decides which fault a call tripping more than one
-    of them is told about: the rank raise first (the ``(N, D)`` check at the top
+    The ORDER inside the gate copies the flat path's statement order exactly
+    AMONG THE CHECKS IT CONTAINS — not the flat path's order as a whole, which
+    starts higher up with ``validate_node_name`` and
+    ``_ensure_no_duplicate_child`` (``adders/gsplats.py``, above everything
+    mirrored here), so a duplicate name is still reported differently on the two
+    paths. That gap predates this gate, came in with #1446, and is deliberately
+    left alone. For everything the gate DOES contain the order is what decides
+    which fault a call tripping more than one of them is told about: the rank
+    raise first (the ``(N, D)`` check at the top
     of ``add_gsplats_impl``), then the ``dim_order`` spec — which the flat path
     runs while APPLYING the transform, i.e. above everything else — then the
     colours/colormap exclusion, and the width last. Getting that wrong is the
@@ -71,6 +170,20 @@ def _reject_before_wrapper(
     (``validate_fill_sigma_keys``). All of them are judged from the spec plus the
     column count alone, so all of them are checkable here. Everything left
     downstream genuinely needs the transformed per-level arrays.
+
+    ``labels`` / ``image_labels`` are the ONE check here with no flat-path
+    counterpart (#1471), which is why they come LAST. Both ride into every child
+    unsliced through ``child_attrs``, so a real ladder — whose levels are merged
+    representatives with DIFFERENT splat counts — refused from inside ``child_0``
+    with the wrapper already on disk, and no per-level slicing could have saved
+    it: there is no per-element correspondence between a coarse level's
+    representatives and the finest level's splats. So they are REFUSED outright
+    rather than hoisted. The flat path, by contrast, happily ACCEPTS ``labels``
+    and validates it LAST of all, in the writer's own sweep — so ranking this
+    refusal any higher would let it outrank a fault the flat path reports first,
+    which is exactly what the parity assertions above pin. ``labels`` is asked
+    before ``image_labels`` (the leaf adder's signature order), so a call passing
+    both hears about ``labels``.
 
     Called from INSIDE the multi-substitutive branch, below the
     ``coverage_fraction`` refusal, so that structural-kwarg fault outranks
@@ -127,6 +240,17 @@ def _reject_before_wrapper(
             group._find_scene()._validate_dimension_count(
                 centers, name, data_type="centers"
             )
+        # LAST on purpose — see the docstring: the only check here with no
+        # flat-path counterpart at all (the flat path ACCEPTS labels and
+        # validates them last of all, in the writer sweep), so it must not
+        # outrank any fault the flat path would report first.
+        for kwarg, value in (("labels", labels), ("image_labels", image_labels)):
+            if value is not None:
+                raise ValueError(
+                    labels_on_wrapper_reason(
+                        kwarg, LOD_GROUP_STRUCTURE, LOD_GROUP_REMEDY
+                    )
+                )
     except (ValueError, TypeError) as e:
         raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
@@ -154,6 +278,13 @@ def add_gsplats_from_data_impl(
 
     if not isinstance(result, GSplatData):
         raise TypeError(f"Expected GSplatData, got {type(result).__name__}")
+
+    # Normalise "no labels" to "no key" for the whole dispatch — a present-but-None
+    # key is otherwise an unknown ATTR to every writer downstream. Done here rather
+    # than per-branch because all three targets forward ``**attrs`` verbatim, and
+    # it is a no-op on the flat route (``Group.add_gsplats`` binds both as named
+    # params defaulting to None). See :func:`strip_absent_label_kwargs`.
+    strip_absent_label_kwargs(attrs)
 
     # Propagate truncation_radius through attrs (unless caller overrode it)
     if "truncation_radius" not in attrs:
@@ -196,6 +327,11 @@ def add_gsplats_from_data_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             colormap=attrs.get("colormap"),
+            # Neither is a named kwarg of this function: both are named params of
+            # the LEAF adder and travel here inside ``**attrs``, from where they
+            # would ride into every child through ``child_attrs``.
+            labels=attrs.get("labels"),
+            image_labels=attrs.get("image_labels"),
         )
         return add_gsplats_as_lod_group_impl(
             group,
