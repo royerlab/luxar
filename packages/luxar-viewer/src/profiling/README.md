@@ -12,7 +12,7 @@ The Profiling package provides performance profiling for data loading and render
 - **Exponential Moving Average**: Stable timing averages with EMA (alpha=0.1)
 - **Ambient root context**: `time()`/`begin()` attach to the root session — handy for flat top-level entries
 - **Concurrent-safe top-level entries**: `timeTopLevel()` is safe under `Promise.all` for parallel loader updates
-- **Metadata Tracking**: Points, segments, splats, skip flags, plus optional chunk / cache / info fields on `TimingMetadata`
+- **Metadata Tracking**: Points, segments, splats, geometry-neutral elements, skip flags, plus optional chunk / cache / info fields on `TimingMetadata`
 - **UI Integration**: `DataLoadingMonitor` displays the timing panel
 
 ## Quick Start
@@ -138,8 +138,8 @@ Total Update                              [root]
 ## Metadata Per Entry
 
 `TimingMetadata` fields (all optional): `chunks`, `cacheHits`,
-`cacheMisses`, `points`, `segments`, `splats`, `skipped`, `skipReason`,
-`info`.
+`cacheMisses`, `points`, `segments`, `splats`, `elements`, `skipped`,
+`skipReason`, `info`.
 
 | Entry Type      | Metadata Fields typically set |
 | --------------- | ----------------------------- |
@@ -147,8 +147,15 @@ Total Update                              [root]
 | Points          | `points` (visible count)      |
 | Lines           | `segments` (visible count)    |
 | GSplats         | `splats` (visible count)      |
+| Depth Sort      | `elements` (sorted count)     |
 | Skipped entries | `skipped: true`, `skipReason` |
 | Sub-operations  | (none, time is the metric)    |
+
+`elements` is the geometry-NEUTRAL count, used by passes that serve every
+geometry type through one machinery — the depth-sort rows sort points,
+line segments, Gaussian splats or mesh triangles, so a per-type tag there
+would be wrong (or not even well defined when the root aggregates sorts
+across nodes of different types).
 
 ## EMA Smoothing
 

@@ -6,7 +6,7 @@
  *
  * Features tested:
  * - Play/pause controls
- * - FPS selection (1, 2, 5, 10, 15, 30, 60 FPS)
+ * - FPS selection (0.5, 1, 2, 5, 10, 15, 30, 60, 120 FPS)
  * - Loop modes (once, loop, bounce)
  * - Keyboard shortcuts (K, Home, End, Shift+arrows)
  * - Animation progress and state
@@ -864,5 +864,129 @@ test.describe('Dimension Animation - Error Handling', () => {
     // Should not crash
     const state = await getLuxarState(page);
     expect(state.initialized).toBe(true);
+  });
+
+  test('context menu has a Step section with presets and a number input', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+    await waitForDataLoaded(page);
+    await focusCanvas(page);
+
+    const playButton = await page.locator('.luxar-dimension-slider__play-btn').first();
+    await playButton.waitFor({ state: 'visible', timeout: 5000 });
+    await playButton.click({ button: 'right' });
+    await waitForNextRender(page);
+
+    const headers = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.luxar-dimension-slider__context-header')).map((h) =>
+        h.textContent?.trim()
+      )
+    );
+    expect(headers).toContain('Step');
+    // The pinned headers keep their exact text.
+    expect(headers).toContain('Speed');
+    expect(headers).toContain('Loop Mode');
+
+    // The custom field is a NUMBER input — never a range input (the slider
+    // helpers index input[type=range] inside slider groups).
+    const custom = page.locator('.luxar-dimension-slider__context-step-input');
+    await expect(custom).toHaveAttribute('type', 'number');
+    await page.keyboard.press('Escape');
+  });
+
+  test('the step override drives the animation increment', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+    await waitForDataLoaded(page);
+    await focusCanvas(page);
+
+    // Dim 3 = W, continuous, range [0, 10]. Override step = 2 at slow fps.
+    // Park the playhead on 0 first: W's default position is the range CENTRE
+    // (5), and a loop wrap resets to min — so from 5 the visited values are
+    // 5,7,9,0,2,… and a "multiple of 2" assertion would depend on whether a
+    // wrap happened to land inside the window. Anchored at 0 every reachable
+    // value is a multiple of 2, wrap included.
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
+      const sceneDims = debug?.sceneDimsManager ?? debug?.app?.sceneDimsManager;
+      sceneDims?.setDimensionValue?.(3, 0);
+      ih?.animationManager?.setStepSize?.(3, 2);
+      ih?.animationManager?.setTargetFPS?.(3, 5);
+    });
+
+    const initial = await getDimensionValue(page, 3);
+    expect(initial).toBeCloseTo(0, 6);
+    await page.keyboard.press('4');
+    await page.keyboard.press('k'); // play
+    await waitForDimensionValueChange(page, 3, initial, 5000);
+    await page.keyboard.press('k'); // pause
+
+    const after = await getDimensionValue(page, 3);
+    // Every tick moves exactly 2 — robust to however many ticks (and loop
+    // wraps) elapsed. The wait above already proved the playhead moved.
+    expect(after % 2).toBeCloseTo(0, 6);
+  });
+
+  test('the step override drives the ] key increment', async ({ page }) => {
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+    await waitForDataLoaded(page);
+    await focusCanvas(page);
+
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
+      ih?.animationManager?.setStepSize?.(3, 2.5);
+    });
+
+    await page.keyboard.press('4'); // select W (4th dimension)
+    const initial = await getDimensionValue(page, 3);
+    await page.keyboard.press(']');
+    await waitForNextRender(page);
+    const after = await getDimensionValue(page, 3);
+    expect(after - initial).toBeCloseTo(2.5, 6);
+  });
+
+  test('mouse wheel steps the slider by the base step; Shift is fine; clamps at max', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+    await waitForDataLoaded(page);
+    await focusCanvas(page);
+
+    // W (dim 3) is the FIRST slider group (Channel renders as a dropdown).
+    const track = page.locator('.luxar-dimension-slider__track').first();
+    await track.waitFor({ state: 'visible', timeout: 5000 });
+    const box = (await track.boundingBox())!;
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+
+    const initial = await getDimensionValue(page, 3);
+    await page.mouse.move(cx, cy);
+    await page.mouse.wheel(0, -120); // scroll up = increase
+    await waitForNextRender(page);
+    const afterWheel = await getDimensionValue(page, 3);
+    // W declares step=1.0 over [0, 10]: base = authored step.
+    expect(afterWheel - initial).toBeCloseTo(1.0, 6);
+
+    // Shift = fine (÷10).
+    await page.keyboard.down('Shift');
+    await page.mouse.wheel(0, -120);
+    await page.keyboard.up('Shift');
+    await waitForNextRender(page);
+    const afterFine = await getDimensionValue(page, 3);
+    expect(afterFine - afterWheel).toBeCloseTo(0.1, 6);
+
+    // Clamp at the range max (no wrap).
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const sceneDims = debug?.sceneDimsManager ?? debug?.app?.sceneDimsManager;
+      sceneDims?.setDimensionValue?.(3, 10);
+    });
+    await page.mouse.wheel(0, -120);
+    await waitForNextRender(page);
+    expect(await getDimensionValue(page, 3)).toBe(10);
   });
 });

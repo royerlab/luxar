@@ -1118,7 +1118,10 @@ export class DataLoadingMonitor {
     if (!this.panel) return;
 
     // Base class (+ glass-surface marker so it themes with the glass themes)
-    const classes = ['luxar-data-monitor', 'luxar-glass-surface'];
+    // luxar-panel-pop: same-string className rewrites do NOT restart the CSS
+    // animation, so live data updates never re-trigger the pop — only
+    // display:none → block (show/expand) does.
+    const classes = ['luxar-data-monitor', 'luxar-glass-surface', 'luxar-panel-pop'];
 
     // Position class
     classes.push(`luxar-data-monitor--${this.config.position}`);

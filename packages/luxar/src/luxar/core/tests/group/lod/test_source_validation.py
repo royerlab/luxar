@@ -80,6 +80,8 @@ from ..conftest import (
     cholesky_rows_nd,
     count_range_warnings,
     finalized_group_keys,
+    grid_mesh,
+    int64_rgb,
     open_ranged_scene,
     open_scene,
     random_positions,
@@ -2090,3 +2092,453 @@ class TestTheGsplatsAdditiveLadderStillHasNoLabelsChannel:
         assert f"Unknown node attribute '{channel}'" in str(split)
         assert "is not supported on a multi-level substitutive" not in str(split)
         assert "g" not in compiler.store
+
+
+# ---------------------------------------------------------------------------
+# Unwritable colour DTYPE, pre-split (#1489)
+# ---------------------------------------------------------------------------
+
+#: Vertices per side of the mesh substitutive case. 15x15 = 225 vertices, enough
+#: for the decimator to synthesise coarse levels (a surface it cannot reduce
+#: falls back to a plain leaf and the ladder branch is never entered).
+_DTYPE_MESH_SIDE = 15
+_DTYPE_MESH_N = _DTYPE_MESH_SIDE * _DTYPE_MESH_SIDE
+
+
+class TestLodWrappersRefuseAnUnwritableColorDtype:
+    """The LOD half of #1489 — the same hole the partition/ sibling documents.
+
+    An integer COLOR array must be ``uint8``/``uint16``; the encoder always said
+    so, but from inside ``write_colors``, which on a laddered node is reached
+    only after a whole CHILD is on disk. Measured before the fix:
+    ``additive_lod=True`` left ``n/additive_0`` behind, and a mesh
+    ``substitutive_lod=True`` left ``n/child_0``. Points and Lines survived the
+    substitutive case only because ``luxar.gsplats.lift`` carries its own dtype
+    mirror (#1444/#1485) — one path, one geometry pair, which is precisely why
+    the rule belongs in the shared validator instead.
+
+    Parity with the flat path is byte-exact for the same reason as everywhere
+    else in this module: both paths now run the ONE validator.
+    """
+
+    @pytest.mark.parametrize("geometry", ["points", "lines"])
+    def test_additive_int64_colors_are_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any, geometry: str
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"{geometry}_add_dt.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"{geometry}_add_dt_flat.luxar.zarr")
+        coords = random_positions(_N, seed=91)
+        colors = int64_rgb(_N)
+
+        def call(target: Any, **extra: Any) -> Any:
+            if geometry == "points":
+                return target.add_points("n", coords, colors=colors, **extra)
+            return target.add_lines(
+                "n", coords, widths=0.3, line_type="segments", colors=colors, **extra
+            )
+
+        ladder = _POINTS_LADDER if geometry == "points" else _LINES_LADDER
+        flat = refusal(lambda: call(flat_scene))
+        split = refusal(lambda: call(scene, additive_lod=ladder))
+
+        assert_same_refusal(flat, split)
+        assert "Integer COLOR arrays must use dtype uint8 or uint16" in str(split)
+        assert "n" not in compiler.store
+        assert "n" not in finalized_group_keys(compiler, path)
+
+    def test_mesh_substitutive_int64_colors_are_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        """The row the gsplat-lift mirror never covered: a mesh coarsens by decimation.
+
+        Points and Lines lift to gsplats and are caught by ``lift``'s own dtype
+        check; a mesh takes a different producer entirely, so before the shared
+        rule this call wrote ``n/child_0`` and then refused from inside it.
+        """
+        compiler, scene, path = open_scene(tmp_path, "mesh_sub_dt.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "mesh_sub_dt_flat.luxar.zarr")
+        vertices, faces = grid_mesh(_DTYPE_MESH_SIDE)
+        colors = int64_rgb(_DTYPE_MESH_N)
+
+        flat = refusal(lambda: flat_scene.add_mesh("n", vertices, faces, colors=colors))
+        split = refusal(
+            lambda: scene.add_mesh(
+                "n", vertices, faces, colors=colors, substitutive_lod=True
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Integer COLOR arrays must use dtype uint8 or uint16" in str(split)
+        assert "n" not in compiler.store
+        assert "n" not in finalized_group_keys(compiler, path)
+
+    def test_the_same_mesh_colours_as_uint8_still_ladder(self, tmp_path: Any) -> None:
+        """The negative control: only the DTYPE was ever wrong.
+
+        A surface too coarse to reduce writes a plain leaf instead of a ladder,
+        which would make the refusal above vacuous — so pin that this very mesh
+        with ``.astype(np.uint8)`` colours really does produce a ``kind=lod``
+        group with more than one child.
+        """
+        compiler, scene, path = open_scene(tmp_path, "mesh_sub_dt_ok.luxar.zarr")
+        vertices, faces = grid_mesh(_DTYPE_MESH_SIDE)
+
+        scene.add_mesh(
+            "n",
+            vertices,
+            faces,
+            colors=int64_rgb(_DTYPE_MESH_N).astype(np.uint8),
+            substitutive_lod=True,
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["n"].attrs["kind"] == "lod"
+        assert len(sorted(store["n"].group_keys())) > 1
+
+
+def _dtype_multi_substitutive_data(colors_for: Any) -> Any:
+    """A 2-level substitutive ``GSplatData`` whose colours vary BY LEVEL.
+
+    ``colors_for(n, level_index)`` — level 0 is the FINEST (what a flat call
+    forwards as ``colors=``), level 1 the coarse one, and the writer emits them
+    coarsest-first as ``child_0`` / ``child_1``. Stored levels, not a compute
+    spec, so ``lod_group=`` really does reach ``add_lod_group``.
+    """
+    return _multi_substitutive_data(
+        lambda n, seed: random_positions(n, seed=seed),
+        lambda n: cholesky_rows_nd(n, 3),
+        colors_for=colors_for,
+    )
+
+
+class TestGSplatsLodGroupColourDtype:
+    """The gsplats substitutive door: ``lod_group=``, not ``substitutive_lod=`` (#1489).
+
+    GSplats have no ``substitutive_lod=`` kwarg — their substitutive door is
+    ``add_gsplats_from_data(..., lod_group=…)`` with multi-level data — and
+    ``add_gsplats_as_lod_group_impl`` creates the ``kind=lod`` group BEFORE it
+    writes any child. So the shared validator alone did not save this path: it
+    only ran from inside a child. Measured with the dtype rule neutered, and each
+    residue SURVIVED ``finalize()``:
+
+    * both levels ``int64``   → ``g`` on disk as ``kind=lod`` holding a partial
+      ``child_0`` (positions written, colours not);
+    * finest bad, coarse fine → ``kind=lod`` holding a COMPLETE ``child_0`` and a
+      partial ``child_1``, i.e. a half-written ladder the viewer would load;
+    * coarse bad, finest fine → ``kind=lod`` holding a partial ``child_0``.
+
+    The fix is one call inside ``_reject_before_wrapper``'s existing colours
+    sweep — the one that already walks every level for the colours/colormap rule
+    and whose own comment names this stranding shape. Levels are walked
+    finest-first, so an all-bad ladder reports the level a flat call would.
+    """
+
+    #: ``(case, colors_for)``. Colours are (n, 3) red; only the dtype varies.
+    _CASES = [
+        ("both_levels", lambda n, _lvl: int64_rgb(n)),
+        (
+            "finest_only",
+            lambda n, lvl: int64_rgb(n) if lvl == 0 else int64_rgb(n).astype(np.uint8),
+        ),
+        (
+            "coarse_only",
+            lambda n, lvl: int64_rgb(n).astype(np.uint8) if lvl == 0 else int64_rgb(n),
+        ),
+    ]
+
+    @pytest.mark.parametrize("case,colors_for", _CASES)
+    def test_int64_colours_leave_no_partial_ladder(
+        self, tmp_path: Any, case: str, colors_for: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"lg_dtype_{case}.luxar.zarr")
+        data = _dtype_multi_substitutive_data(colors_for)
+
+        split = refusal(lambda: scene.add_gsplats_from_data("g", data, lod_group=True))
+
+        assert "Integer COLOR arrays must use dtype uint8 or uint16" in str(split)
+        # The refusal must name the NODE the caller asked for, never an internal
+        # child — the tell that it came from the pre-wrapper gate and not from
+        # inside a write that had already happened.
+        assert "child_0" not in str(split) and "child_1" not in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    def test_an_all_bad_ladder_is_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any
+    ) -> None:
+        """Parity where a flat counterpart exists: the finest level's colours.
+
+        ``lod_group=False`` on the same data forwards ``result.colors`` — the
+        FINEST level's array — so the two paths must agree byte-for-byte. This is
+        also what pins the finest-first walk order: reporting the coarse level
+        first would name a different dtype the moment the two levels differ.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_dtype_parity.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lg_dtype_parity_flat.luxar.zarr")
+        data = _dtype_multi_substitutive_data(lambda n, _lvl: int64_rgb(n))
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                colors=data.colors,
+            )
+        )
+        split = refusal(lambda: scene.add_gsplats_from_data("g", data, lod_group=True))
+
+        assert_same_refusal(flat, split)
+        assert "g" not in compiler.store
+
+    def test_the_width_fault_still_outranks_the_dtype_one(self, tmp_path: Any) -> None:
+        """Precedence: the dtype check sits BELOW the dimension count, as flat does.
+
+        The leaf writer runs its channel sweep after ``_validate_dimension_count``,
+        so a 4-column ladder in a 3-dimension scene must hear about its width even
+        though its colours are also unwritable — otherwise ``lod_group=`` disagrees
+        with its own flat path about which of two faults it reports.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_dtype_width.luxar.zarr")
+        data = _multi_substitutive_data(
+            lambda n, seed: bad_ndim_positions(n, seed=seed),
+            lambda n: cholesky_rows_nd(n, 4),
+            colors_for=lambda n, _lvl: int64_rgb(n),
+        )
+
+        split = refusal(lambda: scene.add_gsplats_from_data("g", data, lod_group=True))
+
+        assert "4 columns" in str(split)
+        assert "uint8 or uint16" not in str(split)
+        assert "g" not in compiler.store
+
+    def test_the_same_ladder_with_uint8_colours_still_writes(
+        self, tmp_path: Any
+    ) -> None:
+        """The negative control: only the DTYPE was ever wrong.
+
+        Without this the refusals above would also pass if the ladder never
+        materialised — so pin that this very data with ``.astype(np.uint8)``
+        colours really does produce a ``kind=lod`` group with both children.
+        """
+        compiler, scene, path = open_scene(tmp_path, "lg_dtype_ok.luxar.zarr")
+        data = _dtype_multi_substitutive_data(
+            lambda n, _lvl: int64_rgb(n).astype(np.uint8)
+        )
+
+        scene.add_gsplats_from_data("g", data, lod_group=True)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs["kind"] == "lod"
+        assert sorted(store["g"].group_keys()) == ["child_0", "child_1"]
+
+
+def _two_rung_finest_level_data(second_rung_colors: Any) -> Any:
+    """A ladder whose FINEST level has two additive rungs, the second one bad.
+
+    Every other gsplats fixture in this module builds levels with exactly one
+    rung, so ``for sub in level.additive_sublods[:1]`` used to be an invisible
+    mutation — it killed 0 of 105 tests. A multi-rung level is the STOCK shape,
+    not an exotic one: ``gsplat lod --recipe levels`` carries stream ladders by
+    default, so every level of an ordinary file has several rungs.
+    """
+    from luxar.gsplats.gsplat_data import (
+        AdditiveSubLOD,
+        GSplatData,
+        SubstitutiveLevel,
+    )
+
+    def rung(n: int, seed: int, colors: Any) -> Any:
+        return AdditiveSubLOD(
+            centers=random_positions(n, seed=seed),
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=cholesky_rows_nd(n, 3),
+            colors=colors,
+        )
+
+    clean = int64_rgb(4).astype(np.uint8)
+    return GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[
+                    rung(4, 71, clean),
+                    rung(4, 72, second_rung_colors),
+                ],
+                compression_factor=1,
+                level_index=0,
+            ),
+            SubstitutiveLevel(
+                additive_sublods=[rung(2, 73, int64_rgb(2).astype(np.uint8))],
+                compression_factor=4,
+                level_index=1,
+            ),
+        ]
+    )
+
+
+class TestGSplatsLodGroupChecksEveryAdditiveRung:
+    """The gate walks the whole ladder, not just each level's first rung (#1489).
+
+    A substitutive level is itself an additive ladder, and the sweep loops over
+    BOTH axes. Nothing pinned the inner one until this class: truncating it to
+    ``additive_sublods[:1]`` left every other test in the module green.
+    """
+
+    def test_a_bad_second_rung_is_refused_before_the_wrapper_exists(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lg_rung_bad.luxar.zarr")
+        data = _two_rung_finest_level_data(int64_rgb(4))
+
+        split = refusal(lambda: scene.add_gsplats_from_data("g", data, lod_group=True))
+
+        assert "Integer COLOR arrays must use dtype uint8 or uint16" in str(split)
+        assert "child_0" not in str(split) and "child_1" not in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    def test_the_same_ladder_with_a_clean_second_rung_still_writes(
+        self, tmp_path: Any
+    ) -> None:
+        """The control: two rungs are a legal shape, so the refusal is about dtype."""
+        compiler, scene, path = open_scene(tmp_path, "lg_rung_ok.luxar.zarr")
+        data = _two_rung_finest_level_data(int64_rgb(4).astype(np.uint8))
+
+        scene.add_gsplats_from_data("g", data, lod_group=True)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs["kind"] == "lod"
+        assert sorted(store["g"].group_keys()) == ["child_0", "child_1"]
+
+
+#: ``(id, colours factory, expected message fragment)`` — the colours faults the
+#: leaf refuses for a reason OTHER than dtype. Each one used to blame ``child_0``
+#: and leave ``g`` on disk as a childless ``kind=lod`` group surviving
+#: ``finalize()``; they close together with the dtype one because the gate runs
+#: the WHOLE shared validator, not the dtype rule alone.
+_NON_DTYPE_COLOUR_FAULTS = [
+    (
+        "negative_float",
+        lambda n: np.full((n, 3), -0.5, dtype=np.float32),
+        "Colors cannot be negative",
+    ),
+    (
+        "nan_float",
+        lambda n: np.full((n, 3), np.nan, dtype=np.float32),
+        "NaN or Inf value(s)",
+    ),
+    (
+        "alpha_above_one",
+        lambda n: np.concatenate(
+            [
+                np.full((n, 3), 0.5, dtype=np.float32),
+                np.full((n, 1), 1.5, dtype=np.float32),
+            ],
+            axis=1,
+        ),
+        "alpha channel must be within [0, 1]",
+    ),
+]
+
+
+class TestGSplatsLodGroupRunsTheWholeColoursValidator:
+    """Hoisting the dtype rule ALONE would have broken parity and left three doors.
+
+    ``validate_color_dtype`` is the fifth check inside
+    ``validate_colors_for_writing``; lifting just it into the pre-wrapper gate
+    jumps it over the four above. Measured with only the dtype helper hoisted: an
+    all-``-1`` ``int32`` ladder answered with the DTYPE message where the flat
+    path answers ``Colors cannot be negative`` — and then advised
+    ``colors.astype(np.uint8)``, which turns -1 into 255. The gate calls the whole
+    validator instead, so the internal order is the leaf's by construction.
+
+    NOT fixed here, and deliberately not claimed anywhere: a call that ALSO trips
+    a cholesky fault reports the COLOURS fault under the wrapper where the flat
+    path reports cholesky. That is the pre-existing pre-split-gate asymmetry
+    documented in ``core.group.compositing`` — verified identical to the one the
+    ``labels`` gate already has (measured: with a bad Cholesky diagonal, the
+    wrapper answers ``labels is not supported …`` where flat answers
+    ``cholesky_factors: Cholesky diagonal must be positive``).
+    """
+
+    @pytest.mark.parametrize("case,colors_for,expected", _NON_DTYPE_COLOUR_FAULTS)
+    def test_a_non_dtype_colours_fault_leaves_no_wrapper(
+        self, tmp_path: Any, case: str, colors_for: Any, expected: str
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"lg_colfault_{case}.luxar.zarr")
+        data = _dtype_multi_substitutive_data(lambda n, _lvl: colors_for(n))
+
+        split = refusal(lambda: scene.add_gsplats_from_data("g", data, lod_group=True))
+
+        assert expected in str(split)
+        assert "child_0" not in str(split) and "child_1" not in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    def test_a_negative_integer_ladder_reports_negativity_not_dtype(
+        self, tmp_path: Any
+    ) -> None:
+        """The parity case that a dtype-only hoist got wrong, both ways round.
+
+        ``int32`` is unwritable AND negative. The flat path reports negativity
+        (dtype is checked last inside the validator, matching the encoder); the
+        wrapped path must say the same thing, byte for byte, or the caller is
+        told to cast -1 to uint8.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "lg_negint.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "lg_negint_flat.luxar.zarr")
+        data = _dtype_multi_substitutive_data(
+            lambda n, _lvl: np.full((n, 3), -1, dtype=np.int32)
+        )
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                colors=data.colors,
+            )
+        )
+        split = refusal(lambda: scene.add_gsplats_from_data("g", data, lod_group=True))
+
+        assert_same_refusal(flat, split)
+        assert "Colors cannot be negative" in str(split)
+        assert "uint8 or uint16" not in str(split)
+        assert "g" not in compiler.store
+
+
+class TestTheColoursHoistDoesNotMultiplyHdrWarnings:
+    """The control on the hoist's other half: it adds refusals, not noise.
+
+    ``validate_colors_for_writing`` does not only refuse — it also WARNS, once,
+    on float colours above 10.0. Every rung the pre-wrapper gate inspects is
+    validated again by the child that writes it, so a gate that let the warning
+    through would emit each one twice (measured before the suppression: 4 for the
+    2-level ladder below, where the flat path emits one per leaf). The same
+    concern :class:`TestRangeWarningsAreNotMultipliedByTheHoist` pins for the
+    #1446 count hoist, one validator over.
+
+    Counted against the children actually written rather than a literal, so a
+    change in how many levels reach disk cannot silently weaken it.
+    """
+
+    def test_an_hdr_ladder_warns_once_per_child(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "lg_hdr_warn.luxar.zarr")
+        data = _dtype_multi_substitutive_data(
+            lambda n, _lvl: np.full((n, 3), 50.0, dtype=np.float32)
+        )
+
+        with warnings.catch_warnings(record=True) as records:
+            warnings.simplefilter("always")
+            scene.add_gsplats_from_data("g", data, lod_group=True)
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        n_children = len(sorted(store["g"].group_keys()))
+        assert n_children > 1
+        hdr = [r for r in records if "HDR colors with maximum value" in str(r.message)]
+        assert len(hdr) == n_children

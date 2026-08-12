@@ -52,6 +52,7 @@ import {
 import {
   autoFrameCamera,
   centerCameraOnScene,
+  frameCameraOnObject,
   centerOnOrigin,
 } from './scene-manager/camera/camera-framing';
 import {
@@ -797,6 +798,15 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
     const center = centerCameraOnScene(this.scene, this.camera, this.controls, this.sceneUp);
     if (center) this.lastBoundingBoxCenter.copy(center);
+  }
+
+  /**
+   * Frame the camera on one object subtree (the per-layer sibling of
+   * {@link centerCameraOnScene}). Returns false when the subtree holds no
+   * framable geometry (e.g. a partition whose parts haven't streamed yet).
+   */
+  public fitCameraToObject(obj: THREE.Object3D): boolean {
+    return frameCameraOnObject(obj, this.camera, this.controls, this.sceneUp) !== null;
   }
 
   /**

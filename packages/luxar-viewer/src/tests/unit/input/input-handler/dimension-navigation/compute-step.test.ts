@@ -353,3 +353,75 @@ describe('resolveSelectedDimension', () => {
     expect(result).toEqual({ selectedDimension: null, navigableCount: 0 });
   });
 });
+
+describe('computeDimensionStep — step override (getStepOverride)', () => {
+  const RANGES: ReadonlyArray<readonly [number, number]> = [
+    [0, 10],
+    [0, 10],
+    [0, 10],
+    [0, 100], // Time (navigable slot 0)
+    [0, 3], // Channel (navigable slot 1)
+  ];
+
+  it('a continuous dim moves by exactly the override', () => {
+    const dims = makeDims({
+      currentStep: [0, 0, 0, 50, 0],
+      metadata: [
+        makeMetadata(),
+        makeMetadata(),
+        makeMetadata(),
+        makeMetadata({ name: 'Time', range: [0, 100], discrete: false }),
+        makeMetadata({ name: 'Channel' }),
+      ],
+    });
+    const result = computeDimensionStep(1, 0, dims, RANGES, () => 5);
+    expect(result).toEqual({ targetDim: 3, newValue: 55, changed: true });
+  });
+
+  it('an off-grid override on a discrete dim quantizes to the authored grid', () => {
+    const dims = makeDims({
+      currentStep: [0, 0, 0, 50, 0],
+      metadata: [
+        makeMetadata(),
+        makeMetadata(),
+        makeMetadata(),
+        makeMetadata({ name: 'Time', range: [0, 100], discrete: true, step: 0.5 }),
+        makeMetadata({ name: 'Channel' }),
+      ],
+    });
+    // Override 0.3 on a 0.5 grid → one grid cell (max(grid, round-to-grid)).
+    const result = computeDimensionStep(1, 0, dims, RANGES, () => 0.3);
+    expect(result?.newValue).toBe(50.5);
+  });
+
+  it('a null override is identical to omitting the lookup (base derivation)', () => {
+    const dims = makeDims({
+      currentStep: [0, 0, 0, 50, 0],
+      metadata: [
+        makeMetadata(),
+        makeMetadata(),
+        makeMetadata(),
+        makeMetadata({ name: 'Time', range: [0, 100], discrete: false }),
+        makeMetadata({ name: 'Channel' }),
+      ],
+    });
+    const withNull = computeDimensionStep(1, 0, dims, RANGES, () => null);
+    const without = computeDimensionStep(1, 0, dims, RANGES);
+    expect(withNull).toEqual(without);
+  });
+
+  it('an override step clamps at the range max (no overshoot, no wrap)', () => {
+    const dims = makeDims({
+      currentStep: [0, 0, 0, 98, 0],
+      metadata: [
+        makeMetadata(),
+        makeMetadata(),
+        makeMetadata(),
+        makeMetadata({ name: 'Time', range: [0, 100], discrete: false }),
+        makeMetadata({ name: 'Channel' }),
+      ],
+    });
+    const result = computeDimensionStep(1, 0, dims, RANGES, () => 5);
+    expect(result?.newValue).toBe(100);
+  });
+});

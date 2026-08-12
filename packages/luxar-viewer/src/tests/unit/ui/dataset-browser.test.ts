@@ -1026,4 +1026,83 @@ describe('DatasetBrowser', () => {
       }
     });
   });
+
+  describe('modal focus trap', () => {
+    it('Tab on the last focusable wraps to the first (and Shift+Tab back)', async () => {
+      // vi.clearAllMocks() does NOT drop queued mockResolvedValueOnce values
+      // from earlier tests (it clears calls, not once-queues) — a stale zarr
+      // result would auto-select and close the browser. Hard-reset first.
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ entries: [{ name: 'a.zarr', path: 'a.zarr', type: 'zarr' }] })
+      );
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+      const focusables = panel.querySelectorAll<HTMLElement>(
+        'a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])'
+      );
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+
+      last.focus();
+      panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      expect(document.activeElement).toBe(first);
+
+      first.focus();
+      panel.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
+      );
+      expect(document.activeElement).toBe(last);
+    });
+
+    it('hide() releases the trap (Tab escapes a hidden modal); show() re-arms it', async () => {
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ entries: [{ name: 'a.zarr', path: 'a.zarr', type: 'zarr' }] })
+      );
+      const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+      const panel = container.querySelector('#luxar-dataset-browser') as HTMLElement;
+      const focusables = panel.querySelectorAll<HTMLElement>(
+        'a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])'
+      );
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+
+      // Hidden modal: the trap MUST be released — Tab on the last focusable
+      // no longer wraps (a hidden panel holding Tab hostage is a keyboard
+      // lock; the browser default proceeds instead).
+      browser.hide();
+      last.focus();
+      panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      expect(document.activeElement).toBe(last);
+
+      // show() re-arms: Tab wraps again.
+      browser.show();
+      last.focus();
+      panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      expect(document.activeElement).toBe(first);
+      browser.close();
+    });
+
+    it('close() releases the trap and returns focus to the previously-focused element', async () => {
+      const outside = document.createElement('button');
+      document.body.appendChild(outside);
+      outside.focus();
+
+      navigateMock.mockReset();
+      navigateMock.mockResolvedValue(defaultNavigateResult());
+      const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+      browser.close();
+
+      expect(document.activeElement).toBe(outside);
+      outside.remove();
+    });
+  });
 });

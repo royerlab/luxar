@@ -1,5 +1,6 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
+import { calculateStepSize } from '../input/input-handler/dimension-navigation/step-math';
 import { getViewerContainer } from '../utils/viewer-container';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
@@ -750,8 +751,44 @@ export class DimensionSliders {
       }
     };
 
+    // Mouse wheel steps the value by the dimension's BASE step (authored
+    // step, else 1% of range); Shift = fine (÷10), Ctrl = coarse (×10),
+    // Ctrl+Shift = extra-fine (÷100) — the same modifier tiers as [/].
+    // Requiring Shift alongside Ctrl for extra-fine keeps a macOS trackpad
+    // pinch (which arrives as a ctrlKey-only wheel event) off that tier.
+    // Deliberately DECOUPLED from the animation menu's Step override — hand
+    // stepping stays on the dimension's own grid (user decision).
+    // setDimensionValue is the authoritative clamp + discrete snap; no
+    // cyclic wrap on wheel.
+    const wheelHandler = (event: WheelEvent) => {
+      // preventDefault: don't scroll the page, and don't let Ctrl+wheel
+      // zoom it (requires { passive: false }).
+      event.preventDefault();
+      // stopPropagation: the window-level wheel handler (FOV zoom +
+      // animation poke) does not check event targets.
+      event.stopPropagation();
+      // Shift+wheel on a standard mouse arrives as a HORIZONTAL scroll
+      // (the browser swaps the axis, leaving deltaY = 0) — read whichever
+      // axis carries the motion.
+      const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+      if (delta === 0) return;
+      const wheelStep = calculateStepSize(dimIndex, this.dims, {
+        shift: event.shiftKey,
+        ctrl: event.ctrlKey,
+      });
+      const direction = delta < 0 ? 1 : -1; // scroll up = increase
+      // Read the live value, not slider.value — the continuous slider's
+      // 0–1000 integer scale would quantize and drift under fine steps.
+      const live = this.dims.currentStep[dimIndex];
+      sceneDimsManager.setDimensionValue(dimIndex, live + direction * wheelStep);
+    };
+
     this.sliderEvents.on(slider, 'input', inputHandler);
     this.sliderEvents.on(slider, 'keydown', keydownHandler);
+    this.sliderEvents.on(sliderContainer, 'wheel', wheelHandler, { passive: false });
+
+    // Discoverability, matching the layers range-slider's affordance.
+    slider.title = 'Scroll to step (Shift = fine, Ctrl = coarse, Ctrl+Shift = extra-fine)';
 
     sliderContainer.appendChild(progressBar);
     sliderContainer.appendChild(slider);
@@ -1080,88 +1117,211 @@ export class DimensionSliders {
     const menu = document.createElement('div');
     menu.className = 'luxar-dimension-slider__context-menu';
 
-    // Speed section
-    const speedSection = document.createElement('div');
-    speedSection.className = 'luxar-dimension-slider__context-section';
-
-    const speedHeader = document.createElement('div');
-    speedHeader.className = 'luxar-dimension-slider__context-header';
-    speedHeader.textContent = 'Speed';
-    speedSection.appendChild(speedHeader);
-
-    const fpsPresets = config.dimensionAnimation.presets.fps;
-    fpsPresets.forEach((fps) => {
-      const item = document.createElement('div');
-      item.className = 'luxar-dimension-slider__context-item';
-      if (fps === currentFPS) {
-        item.classList.add('luxar-dimension-slider__context-item--selected');
+    // Compact chip layout (UI Design Guide §6/§8): each section is one
+    // micro-header row (title + an optional right-aligned muted readout)
+    // over one WRAPPING row of selectable chips — the sanctioned
+    // "active chip/segment" idiom — instead of a tall radio list. Header
+    // TEXT stays exactly 'Speed' / 'Loop Mode' / 'Step' (E2E-pinned); the
+    // uppercase rendering comes from CSS.
+    const makeSection = (title: string, aside?: string): HTMLDivElement => {
+      const section = document.createElement('div');
+      section.className = 'luxar-dimension-slider__context-section';
+      const headerRow = document.createElement('div');
+      headerRow.className = 'luxar-dimension-slider__context-header-row';
+      const header = document.createElement('div');
+      header.className = 'luxar-dimension-slider__context-header';
+      header.textContent = title;
+      headerRow.appendChild(header);
+      if (aside) {
+        const asideEl = document.createElement('span');
+        asideEl.className = 'luxar-dimension-slider__context-aside';
+        asideEl.textContent = aside;
+        headerRow.appendChild(asideEl);
       }
+      section.appendChild(headerRow);
+      const chips = document.createElement('div');
+      chips.className = 'luxar-dimension-slider__context-chips';
+      chips.setAttribute('role', 'radiogroup');
+      chips.setAttribute('aria-label', title);
+      section.appendChild(chips);
+      menu.appendChild(section);
+      return chips;
+    };
 
-      const radio = document.createElement('span');
-      radio.className = 'luxar-dimension-slider__context-radio';
-      radio.textContent = fps === currentFPS ? '●' : '○';
+    const makeChip = (
+      labelText: string,
+      selected: boolean,
+      onPick: () => void,
+      opts?: { tooltip?: string; mono?: boolean; grow?: boolean }
+    ): HTMLButtonElement => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'luxar-dimension-slider__context-item';
+      if (selected) chip.classList.add('luxar-dimension-slider__context-item--selected');
+      if (opts?.mono) chip.classList.add('luxar-dimension-slider__context-item--mono');
+      if (opts?.grow) chip.classList.add('luxar-dimension-slider__context-item--grow');
+      chip.setAttribute('role', 'radio');
+      chip.setAttribute('aria-checked', String(selected));
+      if (opts?.tooltip) chip.title = opts.tooltip;
+      chip.textContent = labelText;
+      chip.addEventListener('click', onPick);
+      return chip;
+    };
 
-      const label = document.createElement('span');
-      label.textContent = `${fps} FPS`;
-
-      item.appendChild(radio);
-      item.appendChild(label);
-
-      item.addEventListener('click', () => {
-        if (this.animationManager) {
-          this.animationManager.setTargetFPS(dimIndex, fps);
-          this.closeContextMenu();
-        }
-      });
-
-      speedSection.appendChild(item);
+    // Speed: FPS presets as mono numeral chips; the unit rides the header
+    // as a muted aside so the chips don't each repeat 'FPS'. Sub-1 rates
+    // read as fractions ('1/2', one frame every 2 s), not decimals.
+    const speedChips = makeSection('Speed', 'fps');
+    config.dimensionAnimation.presets.fps.forEach((fps) => {
+      const label = fps >= 1 ? String(fps) : `1/${Math.round(1 / fps)}`;
+      const tooltip = fps >= 1 ? `${fps} FPS` : `1 frame every ${Math.round(1 / fps)} s`;
+      speedChips.appendChild(
+        makeChip(
+          label,
+          fps === currentFPS,
+          () => {
+            if (this.animationManager) {
+              this.animationManager.setTargetFPS(dimIndex, fps);
+              this.closeContextMenu();
+            }
+          },
+          { tooltip, mono: true }
+        )
+      );
     });
 
-    menu.appendChild(speedSection);
-
-    // Loop mode section
-    const loopSection = document.createElement('div');
-    loopSection.className = 'luxar-dimension-slider__context-section';
-
-    const loopHeader = document.createElement('div');
-    loopHeader.className = 'luxar-dimension-slider__context-header';
-    loopHeader.textContent = 'Loop Mode';
-    loopSection.appendChild(loopHeader);
-
+    // Loop Mode: three equal segments.
+    const loopChips = makeSection('Loop Mode');
     const loopModes: Array<{ value: 'once' | 'loop' | 'bounce'; label: string }> = [
       { value: 'once', label: 'Once' },
       { value: 'loop', label: 'Loop' },
       { value: 'bounce', label: 'Bounce' },
     ];
-
     loopModes.forEach((mode) => {
-      const item = document.createElement('div');
-      item.className = 'luxar-dimension-slider__context-item';
-      if (mode.value === currentLoopMode) {
-        item.classList.add('luxar-dimension-slider__context-item--selected');
-      }
-
-      const radio = document.createElement('span');
-      radio.className = 'luxar-dimension-slider__context-radio';
-      radio.textContent = mode.value === currentLoopMode ? '●' : '○';
-
-      const label = document.createElement('span');
-      label.textContent = mode.label;
-
-      item.appendChild(radio);
-      item.appendChild(label);
-
-      item.addEventListener('click', () => {
-        if (this.animationManager) {
-          this.animationManager.setLoopMode(dimIndex, mode.value);
-          this.closeContextMenu();
-        }
-      });
-
-      loopSection.appendChild(item);
+      loopChips.appendChild(
+        makeChip(
+          mode.label,
+          mode.value === currentLoopMode,
+          () => {
+            if (this.animationManager) {
+              this.animationManager.setLoopMode(dimIndex, mode.value);
+              this.closeContextMenu();
+            }
+          },
+          { grow: true }
+        )
+      );
     });
 
-    menu.appendChild(loopSection);
+    // Step section: the per-tick quantum for animation AND the [ / ] keys.
+    // Presets are multipliers of the dimension's BASE step (authored step,
+    // else 1% of the range); Auto restores the historical behavior
+    // (continuous: fps-derived range/10s traversal; discrete: authored
+    // step). The slider wheel/drag deliberately do NOT follow this override
+    // — hand stepping stays on the base step.
+    const currentStepOverride = this.animationManager?.getStepSize(dimIndex) ?? null;
+    const meta = this.dims.metadata?.[dimIndex];
+    const [rangeMin, rangeMax] = this.dimensionRanges[dimIndex];
+    const baseStep = meta?.step ?? (rangeMax - rangeMin) * 0.01;
+    const unit = this.dimensionUnits[dimIndex] || '';
+    const formatStep = (v: number): string =>
+      Number.isInteger(v) ? String(v) : Number(v.toPrecision(3)).toString();
+
+    // Per-preset computed values live in chip tooltips; the header's muted
+    // readout shows the ACTIVE quantum ('auto' when no override is set).
+    const stepAside =
+      currentStepOverride === null
+        ? 'auto'
+        : `${formatStep(currentStepOverride)}${unit ? ` ${unit}` : ''}`;
+    const stepChips = makeSection('Step', stepAside);
+
+    stepChips.appendChild(
+      makeChip('Auto', currentStepOverride === null, () => {
+        this.animationManager?.setStepSize(dimIndex, null);
+        this.closeContextMenu();
+      })
+    );
+
+    let presetMatched = currentStepOverride === null;
+    // A discrete dimension cannot honour a quantum below one grid cell —
+    // the animation step is quantized to the authored grid with a one-cell
+    // floor (#1520) — so only offer presets whose VALUE reaches a cell.
+    // Compare values, not multipliers: with no authored step the base falls
+    // back to 1% of the range, so a sub-1 multiplier can still be several
+    // grid cells (the epsilon absorbs the float product).
+    const gridStep = meta?.step && meta.step > 0 ? meta.step : 1;
+    const stepMultipliers = config.dimensionAnimation.presets.stepMultipliers.filter(
+      (m) => !meta?.discrete || baseStep * m >= gridStep * (1 - 1e-9)
+    );
+    for (const m of stepMultipliers) {
+      const value = baseStep * m;
+      const selected =
+        currentStepOverride !== null && Math.abs(currentStepOverride - value) <= value * 1e-6;
+      if (selected) presetMatched = true;
+      stepChips.appendChild(
+        makeChip(
+          `×${m}`,
+          selected,
+          () => {
+            this.animationManager?.setStepSize(dimIndex, value);
+            this.closeContextMenu();
+          },
+          { tooltip: `×${m} = ${formatStep(value)}${unit ? ` ${unit}` : ''}`, mono: true }
+        )
+      );
+    }
+
+    // Custom value input, on its own row directly under the chips — NOT
+    // inside them: the chips row is a radiogroup, whose owned children must
+    // all be radios, and a number input is a spinbutton (assistive tech
+    // would report a broken radio-group ownership). MUST be a number input,
+    // never type=range (the E2E slider helper indexes input[type=range]
+    // inside the slider group), and number inputs are covered by
+    // isTypingInInput, so global shortcuts ([ ] k …) stay suppressed while
+    // typing.
+    const customInput = document.createElement('input');
+    customInput.type = 'number';
+    customInput.className = 'luxar-dimension-slider__context-step-input';
+    customInput.min = '0';
+    customInput.step = 'any';
+    customInput.placeholder = 'custom';
+    customInput.setAttribute('aria-label', 'Custom step size');
+    if (!presetMatched && currentStepOverride !== null) {
+      customInput.value = formatStep(currentStepOverride);
+    }
+    // Commit once, on Enter or on blur (blur also fires when the
+    // click-outside close removes the menu, so a typed value is not lost).
+    // Escape closes the menu without committing (document-level handler).
+    // Only an actually-edited value commits: the input is seeded with the
+    // 3-significant-digit display form, so committing it untouched would
+    // silently truncate a full-precision override (0.123456 → 0.123).
+    let committed = false;
+    let edited = false;
+    customInput.addEventListener('input', () => {
+      edited = true;
+    });
+    const commitCustom = (): void => {
+      if (committed || !edited) return;
+      const v = parseFloat(customInput.value);
+      if (Number.isFinite(v) && v > 0) {
+        committed = true;
+        this.animationManager?.setStepSize(dimIndex, v);
+      }
+    };
+    customInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        commitCustom();
+        this.closeContextMenu();
+      }
+    });
+    customInput.addEventListener('blur', commitCustom);
+    const customRow = document.createElement('div');
+    customRow.className = 'luxar-dimension-slider__context-step-custom';
+    customRow.appendChild(customInput);
+    // makeSection() appended the chips row to its section, so this lands the
+    // field as the chips row's sibling — inside the Step section, outside the
+    // radiogroup.
+    stepChips.parentElement?.appendChild(customRow);
 
     // Add to document first (needed to measure height)
     getViewerContainer().appendChild(menu);
