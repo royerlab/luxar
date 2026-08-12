@@ -1,6 +1,6 @@
 /**
  * Capsule line primitive — TSL / NodeMaterial twin of
- * `shader-glsl-capsule.ts` (issue #1352, behind `?linePrimitive=capsule`).
+ * `shader-glsl-capsule.ts` (issue #1352, the DEFAULT line primitive (`?linePrimitive=capsule`)).
  *
  * Same model, same constants: a gaussian-like quartic profile of the 2D
  * point-to-segment distance, evaluated on stencil-LOCAL interpolated
