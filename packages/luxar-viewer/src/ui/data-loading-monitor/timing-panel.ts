@@ -29,10 +29,10 @@ const TOOLTIPS: Record<string, string> = {
     'paint — the view sharpens progressively without blocking interaction. Timed separately ' +
     'from Total Update because it runs behind the scenes',
   'Depth Sort':
-    'Async depth sorting of Gaussian splats in the order-dependent normal blending mode: ' +
-    'each entry is one worker round-trip from dispatch until the selected ordering completes a draw. ' +
-    'Frames in between render the previous order, so this never blocks interaction — the tags ' +
-    'show the splat count sorted and the ordering bytes: "up" after the rendered upload, ' +
+    'Async depth sorting of transparent geometry (points, lines, gsplats) in the order-dependent ' +
+    'normal blending mode: each entry is one worker round-trip from dispatch until the selected ' +
+    'ordering completes a draw. Frames in between render the previous order, so this never blocks ' +
+    'interaction — the tags show the element count sorted and the ordering bytes: "up" after the rendered upload, ' +
     '"sched" if the sort was abandoned while the bytes were still staged for upload',
   Points:
     'All work to update point-cloud layers this update: spatial query, chunk loading, nD→3D ' +
@@ -180,6 +180,12 @@ function renderMetadata(metadata: TimingMetadata | undefined): string {
   if (metadata.splats !== undefined) {
     tags.push(
       `<span class="luxar-timing-panel__tag" title="Gaussian splats processed by this step in the latest update">${formatCount(metadata.splats)} splats</span>`
+    );
+  }
+
+  if (metadata.elements !== undefined) {
+    tags.push(
+      `<span class="luxar-timing-panel__tag" title="Elements processed by this step in the latest update — points, line segments or Gaussian splats (the depth sorter serves all three geometry types)">${formatCount(metadata.elements)} elements</span>`
     );
   }
 
