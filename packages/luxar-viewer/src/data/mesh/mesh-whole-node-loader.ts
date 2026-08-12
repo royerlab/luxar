@@ -423,7 +423,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   /**
    * {@link updateView}, plus whether the mesh was already in hand.
    *
-   * Exists for one caller: {@link MeshProgressiveLoader}, whose streaming loop
+   * Exists for one caller: `MeshProgressiveLoader` (`./mesh-progressive-loader`),
+   * whose streaming loop
    * asks each level "was that cheap?" to decide whether to keep going this pass
    * or leave the rest to a later one (`streaming-policy.ts`). The three sibling
    * progressive loaders call the identically named method on their spatial-index
