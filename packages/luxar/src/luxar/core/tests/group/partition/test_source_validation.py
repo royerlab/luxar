@@ -38,6 +38,7 @@ import zarr
 from luxar.io.reader import LuxarScene
 
 from ..conftest import (
+    IMAGE_LABELS,
     LABEL_KWARGS,
     LABELS,
     N_LABELLED,
@@ -1169,6 +1170,339 @@ class TestASingleFlatLeafGraftStillLabels:
         assert store["g"].attrs["kind"] == "partition"
         assert sorted(store["g"].group_keys()) == ["part_0", "part_1"]
 
+    def test_a_legal_sparse_image_labels_dict_still_labels_a_one_part_partition(
+        self, tmp_path: Any
+    ) -> None:
+        """The positive control for the dict form (#1505's length check).
+
+        The fix's only ``image_labels`` dict coverage on this exempt branch is
+        a refusal (an out-of-range key, in the sibling class below) — so a
+        future change that refused every dict at this gate would pass the
+        whole suite without this control. Measured: ``{0: img, 4: img}`` on a
+        one-part graft of an ``N_LABELLED``-splat leaf still writes normally.
+        Not parametrized over ``LABEL_KWARGS``: the sparse dict form is
+        ``image_labels``-only, ``labels`` has no dict spelling.
+
+        ``has_image_labels is True`` alone cannot tell "both images landed"
+        apart from "an empty CSR with the flag set", so this also reads back
+        ``part_0``'s ``image_label_offsets`` (the CSR byte-offset array
+        ``write_image_labels_csr`` writes — see
+        ``io/_compiler/labels/image_labels.py``) and asserts exactly TWO
+        non-empty entries. Measured on this exact call: ``[0 0 44 44 44 44 88
+        88 88]``. The assertion is on the COUNT of non-empty entries, not
+        their SLOTS (here 1 and 5), because the writer's spatial
+        ``sort_order`` permutes stored position relative to original element
+        index — asserting fixed slots would pin an ordering detail this test
+        does not care about and could break on an unrelated ordering change.
+        """
+        compiler, scene, path = open_scene(tmp_path, "graft_sparse_dict_ok.luxar.zarr")
+
+        _graft(
+            scene,
+            name="g",
+            node=_nested_partition_tree(3, (N_LABELLED,)),
+            image_labels={0: IMAGE_LABELS[0], 4: IMAGE_LABELS[0]},
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs["kind"] == "partition"
+        part_0 = store["g"]["part_0"]
+        assert part_0.attrs["has_image_labels"] is True
+        offsets = part_0["image_label_offsets"][:]
+        assert np.count_nonzero(np.diff(offsets)) == 2
+
+
+#: Channel-specific wording for the 8-long-list-on-a-5-splat-leaf case this
+#: whole class is built around — measured: ``labels: Labels length (8) must
+#: match element count (5)`` / ``Image labels length (8) must match element
+#: count (5)``. Pinning the channel-specific form (not just the shared
+#: ``must match element count (5)`` suffix) is what catches the fix
+#: accidentally raising the WRONG refusal template (the multi-leaf
+#: ``labels_on_wrapper_reason``, or ``labels_on_a_laddered_leaf_reason``) —
+#: every one of which would still satisfy a bare ``'g'``-prefix /
+#: no-``part_0`` / nothing-written assertion.
+_WRONG_LENGTH_WORDING = {
+    "labels": "labels: Labels length (8)",
+    "image_labels": "Image labels length (8)",
+}
+
+
+def _flat_refusal_for_leaf(
+    tmp_path: Any, filename: str, leaf: Any, kwargs: Dict[str, Any]
+) -> Exception:
+    """Refuse ``leaf``'s own three arrays via the TRUE flat path (``add_gsplats``).
+
+    The flat control every parity assertion in the class below compares
+    against — the leaf's own sub-LOD centers/amplitudes/cholesky_factors,
+    added directly with the same label kwargs, exactly as
+    ``test_parity_with_the_true_flat_path`` builds it. Factored to one place
+    so the FOUR call sites (two direct one-part partitions —
+    ``test_parity_with_the_true_flat_path``'s wrong-LENGTH case and
+    ``test_a_wrongly_typed_label_entry_is_refused_too``'s wrong-CONTENT one —
+    plus a bare-leaf graft and a two-wrapper-deep nest) cannot state the
+    construction slightly differently and drift apart from each other.
+    """
+    _, flat_scene, _ = open_scene(tmp_path, filename)
+    sub = leaf.additive_sublods[0]
+    return refusal(
+        lambda: flat_scene.add_gsplats(
+            "g",
+            centers=sub.centers,
+            amplitudes=sub.amplitudes,
+            cholesky_factors=sub.cholesky_factors,
+            **kwargs,
+        )
+    )
+
+
+class TestAWrongLengthLabelOnTheExemptLeafIsRefused:
+    """The LENGTH half of the one-flat-leaf exemption (#1505).
+
+    Measured on ``main`` (before this fix): an 8-long ``labels`` /
+    ``image_labels`` grafted onto a one-part ``kind=partition`` of a 5-splat
+    leaf sailed past ``_reject_labels_on_a_grafted_wrapper`` — leaf count == 1
+    and sub-LOD count == 1, the exact shape it exempts — and refused one level
+    down instead, from inside ``part_0``'s own leaf write: ``Could not add
+    gsplats 'part_0': labels: Labels length (8) must match element count
+    (5)``, with the childless ``kind=partition`` named ``g`` already on disk,
+    surviving ``finalize()``. Both channels stranded identically, and the flat
+    control (the same three arrays via ``scene.add_gsplats(...)``) refused
+    with the byte-identical message and wrote nothing at all — that asymmetry
+    is exactly what this class closes.
+    """
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_a_one_part_partition_graft_is_refused_before_the_wrapper_exists(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_1part_wronglen_{channel}.luxar.zarr"
+        )
+        node = _nested_partition_tree(3, (5,))
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, **kwargs))
+
+        assert str(split).startswith("Could not add gsplats 'g': ")
+        assert "part_0" not in str(split)
+        # Pins the WORDING, not just the structure: all three assertions above
+        # are also satisfied if the fix had raised the wrong refusal entirely
+        # (the multi-leaf or laddered-leaf template).
+        assert "must match element count (5)" in str(split)
+        assert _WRONG_LENGTH_WORDING[channel] in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_parity_with_the_true_flat_path(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        """Exact-message parity against the true flat write, not a bare-leaf graft.
+
+        A bare-leaf graft also runs through this same gate (see
+        ``TestASingleFlatLeafGraftStillLabels``'s ``test_a_bare_leaf_graft_still_labels``),
+        so it is not an independent control for this assertion — see
+        ``assert_same_refusal``'s own docstring on why the comparison has to be
+        exact-message, not a substring.
+        """
+        node = _nested_partition_tree(3, (5,))
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_1part_wronglen_parity_{channel}.luxar.zarr"
+        )
+        flat = _flat_refusal_for_leaf(
+            tmp_path,
+            f"flat_wronglen_parity_{channel}.luxar.zarr",
+            node.children[0],
+            kwargs,
+        )
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, **kwargs))
+
+        assert_same_refusal(flat, split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_a_nest_that_still_resolves_to_one_leaf_is_refused_too(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        """Two wrappers deep, but still one leaf — the length check is not
+        accidentally scoped to a direct one-part partition only.
+
+        Mirrors ``test_a_nest_that_still_resolves_to_one_leaf_labels_that_leaf``'s
+        shape, at the wrong length instead of the right one. Asserted against
+        the true flat control (measured byte-identical to it, both channels),
+        not just the ``'g'`` prefix: a bare prefix/no-``part_0`` check passes
+        whether or not this shape's length check was ever wired up, since the
+        two-wrapper nest strands in the same visible way either answer arrives.
+        """
+        from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+        leaf = _nested_partition_tree(3, (5,)).children[0]
+        node = GSplatPartition(
+            children=[GSplatLodGroup(children=[leaf])], max_elements=5
+        )
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_nest1_wronglen_{channel}.luxar.zarr"
+        )
+        flat = _flat_refusal_for_leaf(
+            tmp_path, f"flat_nest1_wronglen_{channel}.luxar.zarr", leaf, kwargs
+        )
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, **kwargs))
+
+        assert_same_refusal(flat, split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_a_bare_leaf_graft_is_refused_too(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        """The other one-leaf shape cannot drift from the partitioned one.
+
+        Nothing strands here either way (a bare leaf creates no wrapper), but
+        pinning it keeps the two one-leaf shapes from disagreeing, exactly as
+        ``test_a_bare_laddered_leaf_graft_gets_the_same_answer`` does for the
+        ladder. A bare-prefix assertion alone would pass whether this shape's
+        length check were scoped to only the direct one-part case or shared
+        with it, so the message is compared exact-message against the true
+        flat control (measured byte-identical, both channels) instead.
+        """
+        leaf = _nested_partition_tree(3, (5,)).children[0]
+        compiler, scene, _ = open_scene(
+            tmp_path, f"graft_bareleaf_wronglen_{channel}.luxar.zarr"
+        )
+        flat = _flat_refusal_for_leaf(
+            tmp_path, f"flat_bareleaf_wronglen_{channel}.luxar.zarr", leaf, kwargs
+        )
+
+        split = refusal(lambda: _graft(scene, name="g", node=leaf, **kwargs))
+
+        assert_same_refusal(flat, split)
+        assert "g" not in compiler.store
+
+    def test_a_multi_leaf_graft_still_answers_with_its_own_structural_reason(
+        self, tmp_path: Any
+    ) -> None:
+        """Precedence: the length check sits on the EXEMPT branch, strictly
+        below the multi-leaf refusal, so a wrong-length channel on a shape
+        that is ALSO structurally disqualified gets the structural message,
+        not a length one.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "graft_multi_wronglen.luxar.zarr")
+        node = _nested_partition_tree(3, (5, 6))  # two leaves, neither length 8
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, labels=LABELS))
+
+        assert "labels is not supported on a grafted multi-node" in str(split)
+        assert "Labels length" not in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_laddered_leaf_still_answers_with_its_own_structural_reason(
+        self, tmp_path: Any
+    ) -> None:
+        """Same precedence, for the OTHER structural refusal (the sub-LOD one).
+
+        ``_laddered_leaf(3, 2)`` totals 6 splats, wrong-length for an 8-long
+        ``labels`` — but the ladder branch is checked before the length
+        helper ever runs, so its own message must win regardless.
+        """
+        from luxar.gsplats.tree import GSplatPartition
+
+        compiler, scene, _ = open_scene(tmp_path, "graft_ladder_wronglen.luxar.zarr")
+        node = GSplatPartition(children=[_laddered_leaf(3, 2)], max_elements=6)
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, labels=LABELS))
+
+        assert "labels is not supported on a gsplats additive ladder" in str(split)
+        assert "Labels length" not in str(split)
+        assert "g" not in compiler.store
+
+    def test_an_out_of_range_sparse_image_label_key_is_refused_too(
+        self, tmp_path: Any
+    ) -> None:
+        """Proves the fix calls the WHOLE validator, not a bare ``len()`` check.
+
+        A sparse ``image_labels`` dict has its OWN length (1 key) that would
+        pass a naive comparison against nothing in particular; it is the KEY
+        being out of ``[0, 5)`` that ``validate_image_labels_for_writing``
+        catches, and only calling the real validator (not reimplementing a
+        length rule) catches it here too.
+        """
+        node = _nested_partition_tree(3, (5,))
+        compiler, scene, _ = open_scene(tmp_path, "graft_sparse_oob.luxar.zarr")
+
+        split = refusal(
+            lambda: _graft(
+                scene, name="g", node=node, image_labels={7: IMAGE_LABELS[0]}
+            )
+        )
+
+        assert str(split).startswith("Could not add gsplats 'g': ")
+        # The index wording, not just the prefix: a naive
+        # ``len(image_labels) != n_splats`` reimplementation ALSO refuses this
+        # call (1 key vs 5 splats), just with a length message instead of this
+        # index one — so only this assertion tells the two apart.
+        assert "Image label index 7 out of range [0, 5)" in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_wrongly_typed_label_entry_is_refused_too(self, tmp_path: Any) -> None:
+        """The ``labels`` analogue of the sparse-key content case above.
+
+        A RIGHT-length list with a non-``str`` entry — the ``labels`` channel
+        has no sparse form, so its own content fault is a bad entry TYPE
+        rather than an out-of-range key. Measured: ``Could not add gsplats
+        'g': labels: Label at index 2 is int, expected str or None (got
+        3)``, byte-identical to the flat control (the same rule
+        ``validate_labels_before_split`` enforces on every other path).
+        """
+        node = _nested_partition_tree(3, (5,))
+        bad_labels = ["a", "b", 3, "d", "e"]
+        compiler, scene, _ = open_scene(tmp_path, "graft_label_content.luxar.zarr")
+        flat = _flat_refusal_for_leaf(
+            tmp_path,
+            "flat_label_content.luxar.zarr",
+            node.children[0],
+            {"labels": bad_labels},
+        )
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, labels=bad_labels))
+
+        assert_same_refusal(flat, split)
+        assert "Label at index 2 is int, expected str or None (got 3)" in str(split)
+        assert "g" not in compiler.store
+
+    def test_a_wrong_length_label_outranks_an_unknown_attr_here(
+        self, tmp_path: Any
+    ) -> None:
+        """The deliberate ordering this check's placement forces, pinned (#1505).
+
+        This length check is the FIRST statement of ``graft_gsplat_node``, so
+        for a multi-fault call it now outranks faults the flat path would
+        report first. Measured: this exact call (an 8-long ``labels`` PLUS an
+        unknown ``foo`` attr, on a one-part partition of a 5-splat leaf)
+        answers the label-length fault here, where the true flat
+        ``add_gsplats(..., labels=<8-long>, foo=1)`` answers ``Unknown node
+        attribute 'foo'`` instead — both refuse, and neither writes. This is
+        the SANCTIONED divergence, not a bug: see the ONE LEAF bullet of
+        ``_reject_labels_on_a_grafted_wrapper``'s docstring, which names
+        ``compositing.validate_points_channels_before_split``'s identical
+        documented trade for "a NaN position, an unknown attr", and the
+        ``lod_group=`` door (``from_data._reject_before_wrapper``) already
+        making the same choice.
+        """
+        node = _nested_partition_tree(3, (5,))
+        compiler, scene, _ = open_scene(tmp_path, "graft_precedence_attr.luxar.zarr")
+
+        split = refusal(
+            lambda: _graft(scene, name="g", node=node, labels=LABELS, foo=1)
+        )
+
+        assert "must match element count (5)" in str(split)
+        assert "foo" not in str(split)
+        assert "g" not in compiler.store
+
 
 class TestTheGraftGateIsReachedThroughThePublicFileDoor:
     """Everything above calls ``graft_gsplat_node``; this proves the door reaches it.
@@ -1180,14 +1514,15 @@ class TestTheGraftGateIsReachedThroughThePublicFileDoor:
     """
 
     @staticmethod
-    def _write(tmp_path: Any, ndim: int = 3) -> str:
+    def _write(tmp_path: Any, ndim: int = 3, counts: Sequence[int] = (8, 6)) -> str:
         from luxar.gsplats.io.save_gsplats import write_gsplats_tree
         from luxar.gsplats.tree import is_matrix_shaped
 
-        node = _nested_partition_tree(ndim)
+        node = _nested_partition_tree(ndim, counts)
         # The premise: a matrix-shaped tree would take the data path instead.
         assert not is_matrix_shaped(node)
-        file_path = str(tmp_path / f"nested_{ndim}d.gsplats.zarr")
+        tag = "x".join(str(c) for c in counts)
+        file_path = str(tmp_path / f"nested_{ndim}d_{tag}.gsplats.zarr")
         write_gsplats_tree(file_path, node)
         return file_path
 
@@ -1202,6 +1537,37 @@ class TestTheGraftGateIsReachedThroughThePublicFileDoor:
 
         assert f"{channel} is not supported on a grafted multi-node" in str(split)
         assert "part_0" not in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize("channel,kwargs,_attr", LABEL_KWARGS)
+    def test_a_one_part_file_is_refused_before_the_wrapper_exists(
+        self, tmp_path: Any, channel: str, kwargs: Dict[str, Any], _attr: str
+    ) -> None:
+        """The public-door counterpart of ``TestAWrongLengthLabelOnTheExemptLeafIsRefused``.
+
+        That class calls ``graft_gsplat_node`` directly; ``luxar gsplat
+        partition in out --parts 1`` is the real producer of the exact
+        one-part ``kind=partition`` store the exemption covers, and its
+        public door is ``add_gsplats_from_file`` — not exercised anywhere else
+        in this class, which otherwise only ever writes the two-leaf
+        (structurally-refused) shape. Measured with the fix neutralised:
+        ``Could not add gsplats 'part_0': labels: Labels length (8) must
+        match element count (5)`` (``image_labels`` the same, worded for its
+        own channel), with ``g`` on disk as a childless ``kind=partition``
+        surviving ``finalize()``. With the fix, the ``'g'``-prefixed form and
+        an empty store.
+        """
+        file_path = self._write(tmp_path, counts=(5,))
+        compiler, scene, path = open_scene(
+            tmp_path, f"file_onepart_wronglen_{channel}.luxar.zarr"
+        )
+
+        split = refusal(lambda: scene.add_gsplats_from_file("g", file_path, **kwargs))
+
+        assert str(split).startswith("Could not add gsplats 'g': ")
+        assert "part_0" not in str(split)
+        assert _WRONG_LENGTH_WORDING[channel] in str(split)
         assert "g" not in compiler.store
         assert "g" not in finalized_group_keys(compiler, path)
 
