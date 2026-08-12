@@ -154,11 +154,11 @@ def add_lines_impl(
         # Node-attrs gate — same validator the flat writer runs as its own first
         # step (write_lines' step 0a), hoisted here for the same reason as the
         # dimension-count check just above (#1446 is the model for placement;
-        # the nearest precedent for this validator itself is mesh's own
-        # _maybe_add_mesh_substitutive_lod, mesh.py:401-403 — the substitutive
-        # branch's dispatcher, called before the wrapper — whose dict(attrs)
-        # copy is unnecessary for the same read-only reason ours doesn't
-        # copy), and covering all three split paths below, not just
+        # the nearest precedent for this validator itself is Mesh's own entry
+        # gate at the top of ``add_mesh_impl`` (mesh.py, #1534) — the hoist run
+        # once, before any of its three structural branches, whose un-copied
+        # ``attrs`` is the same read-only reason ours doesn't copy either),
+        # and covering all three split paths below, not just
         # substitutive: substitutive_lod= forwards the non-compositing
         # remainder of `**attrs` to a synthesised gsplats `child_0`;
         # partition= forwards it to each `part_i`; additive_lod= goes straight

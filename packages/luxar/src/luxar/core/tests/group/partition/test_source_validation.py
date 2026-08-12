@@ -1424,3 +1424,91 @@ class TestPartitionRefusesAnUnwritableColorDtype:
         store = zarr.open_group(path, mode="r")
         assert store["n"].attrs["kind"] == "partition"
         assert len(sorted(store["n"].group_keys())) > 1
+
+
+# ---------------------------------------------------------------------------
+# Node-attrs gate, pre-split, on the Mesh/GSplats PARTITION path (#1534)
+# ---------------------------------------------------------------------------
+#
+# add_mesh_impl / add_gsplats_impl never ran validate_render_attrs at the
+# adder entry (unlike Points/Lines since #1529): a bad attr under partition=
+# was refused only from inside the first synthesised child (Mesh's
+# ``part_0``, GSplats' ``part_0``), by which point ``add_partition_group`` had
+# already created the wrapper's childless ``kind=partition`` node on disk.
+# #1534 hoists the same validator to each adder's entry, above every
+# structural branch, closing this for both geometry types the way #1529 did
+# for Points/Lines. The LOD-wrapper half of the #1534 gate (Mesh's
+# ``additive_lod=``, plus the placement/precedence controls shared by both
+# geometry types) lives in ``tests/group/lod/test_source_validation.py``.
+
+_MESH_PART_SIDE = 4  # grid_mesh(4): 16 vertices, 18 faces
+_MESH_PART_MAX_ELEMENTS = 8  # -> 4 face-count-capped parts (measured)
+
+
+class TestMeshPartitionNodeAttrsGate:
+    def test_unknown_attr_typo_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(tmp_path, "mesh_part_attrs_typo.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, "mesh_part_attrs_typo_flat.luxar.zarr")
+        vertices, faces = grid_mesh(_MESH_PART_SIDE)
+
+        flat = refusal(
+            lambda: flat_scene.add_mesh("m", vertices, faces, blending="max")
+        )
+        split = refusal(
+            lambda: scene.add_mesh(
+                "m",
+                vertices,
+                faces,
+                partition={"max_elements": _MESH_PART_MAX_ELEMENTS},
+                blending="max",
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Did you mean 'blending_mode'?" in str(split)
+        assert "m" not in compiler.store
+        # Pre-fix this raised the SAME message but still left a childless
+        # kind=partition "m" on disk, surviving finalize() — the #1534
+        # stranding this closes (the Mesh/GSplats peer of #1529).
+        assert "m" not in finalized_group_keys(compiler, path)
+
+
+_GSPLATS_PART_N = 200
+_GSPLATS_PART_HALF = 100
+
+
+class TestGSplatsPartitionNodeAttrsGate:
+    def test_unknown_attr_typo_leaves_no_childless_wrapper(self, tmp_path: Any) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, "gsplats_part_attrs_typo.luxar.zarr"
+        )
+        _, flat_scene, _ = open_scene(
+            tmp_path, "gsplats_part_attrs_typo_flat.luxar.zarr"
+        )
+        centers = random_positions(_GSPLATS_PART_N, seed=201)
+        chol = cholesky_rows_nd(_GSPLATS_PART_N, 3)
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=1.0,
+                cholesky_factors=chol,
+                blending="max",
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=1.0,
+                cholesky_factors=chol,
+                partition={"max_elements": _GSPLATS_PART_HALF},
+                blending="max",
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert "Did you mean 'blending_mode'?" in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)

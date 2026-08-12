@@ -57,46 +57,101 @@ just the same, so it ALSO reads without ``"child_"`` in it — only the
 accompanying store assertion (nothing / only the expected node persisted)
 still discriminates early from late.
 
-The fifth and last section is the NODE-ATTRS gate (#1529), a Points/Lines-only
-variant of the #1437 bug (Mesh and GSplats did not gain it: their own
-``partition=`` paths still strand a childless ``kind=partition`` node, filed
-separately), and it covers all THREE Points/Lines split paths, not only
-substitutive_lod=: substitutive_lod= and partition= both forward the
-non-compositing remainder of the caller's ``**attrs`` to a synthesised child
-(a gsplats ``child_0``, or a ``part_i``), and additive_lod= goes straight to
-the multi-LOD writer, which calls this same validator with NO reserved-attrs
-set at all. So an attrs key the flat writer would reject up front — either a key
-``GSPLATS_RESERVED_ATTRS`` reserves but ``POINTS_RESERVED_ATTRS`` /
-``LINES_RESERVED_ATTRS`` do not (``amplitude_range=``), a plain unknown-key
-typo (``blending=``), or (additive_lod= only) a genuinely points/lines-reserved
-key misreported as *unknown* instead of *reserved* (``ordering=``,
-``max_radius=``/``max_width=``) — used to be refused only from inside the
-first child, by which point the wrapper group itself (childless: zero coarse
-levels / parts) was already on disk; a ``position_bounds=`` collision under
-additive_lod= did not even raise at all — real ladder data was written and
-the writer's own stamp silently clobbered, breaking ``finalize()`` later with
-an unrelated ``ValueError``. Unlike the #1437/#1446 sections this is not a
-per-element SLICE hoisted upward; it is the SAME pure attrs validator
-(``validate_render_attrs``) the flat writer already calls, run once more,
-earlier, on the un-split caller attrs — so every split path refuses
-byte-identically to the flat path, and the flat path simply validates twice
-(idempotent), which also means a multi-fault flat call now reports the attrs
-fault where it used to report an ``extend_to_all`` fault (Mesh diverges here:
-its substitutive wrapper resolves ``extend_to_all`` before its own attrs gate,
-keeping the pre-#1529 order). Two precedence controls follow the #1437/#1446
-pattern: the colours/colormap gate still outranks this one, on every path
-(unchanged); and this gate now itself outranks the #1437 channel gate at the
-top of the partition/substitutive/multi-LOD wrappers — the flat writer's own
-order (attrs before channels) is what the split paths now match, where
-before #1529 they did not. A THIRD set of placement tests below pins that
-this gate lives at the ADDER ENTRY, not duplicated at the top of each
-wrapper: an implementation that instead put the same check at the top of the
-partition/substitutive wrappers would pass every message-parity test above
-but would still let that wrapper's own kwarg-spec check (a malformed
-``partition=`` rule, an invalid ``substitutive_lod=`` ``compression_factor``)
-run first, and on the flat path would still let ``extend_to_all`` resolution
-run first — only a call that trips both faults at once, and asserts the
-ADDER's ordering wins, can tell the two implementations apart.
+The fifth and last section is the NODE-ATTRS gate. It started (#1529) as a
+Points/Lines-only variant of the #1437 bug and covered all THREE Points/Lines
+split paths, not only substitutive_lod=: substitutive_lod= and partition= both
+forward the non-compositing remainder of the caller's ``**attrs`` to a
+synthesised child (a gsplats ``child_0``, or a ``part_i``), and additive_lod=
+goes straight to the multi-LOD writer, which calls this same validator with NO
+reserved-attrs set at all. So an attrs key the flat writer would reject up
+front — either a key ``GSPLATS_RESERVED_ATTRS`` reserves but
+``POINTS_RESERVED_ATTRS`` / ``LINES_RESERVED_ATTRS`` do not
+(``amplitude_range=``), a plain unknown-key typo (``blending=``), or
+(additive_lod= only) a genuinely points/lines-reserved key misreported as
+*unknown* instead of *reserved* (``ordering=``, ``max_radius=``/
+``max_width=``) — used to be refused only from inside the first child, by
+which point the wrapper group itself (childless: zero coarse levels / parts)
+was already on disk; a ``position_bounds=`` collision under additive_lod= did
+not even raise at all — real ladder data was written and the writer's own
+stamp silently clobbered, breaking ``finalize()`` later with an unrelated
+``ValueError``.
+
+#1534 then extended the same gate to Mesh and GSplats, which had NOT gained it
+under #1529: their own ``partition=`` paths still stranded a childless
+``kind=partition`` node on a bad attr, exactly the #1529 shape one geometry
+type over — see ``tests/group/partition/test_source_validation.py`` for those
+cases. Mesh's ``substitutive_lod=`` wrapper was the one path that already ran
+this validator pre-#1534 (with the right reserved set, ``MESH_RESERVED_ATTRS``)
+— but it ran the check AFTER resolving its own ``extend_to_all``, the opposite
+of the Points/Lines order, and its ``additive_lod=`` reveal ladder ran no
+attrs check of its own at all (falling through to ``write_mesh_multi_lod``'s
+unreserved one, same shape as the Points/Lines additive bug — and, like that
+bug, with BOTH of its symptoms: a mesh-``RESERVED`` key like ``ordering=`` came
+back *unknown* rather than *reserved* (still refused, nothing written), while
+``position_bounds=`` — reserved for mesh but ALSO listed in
+``_ALLOWED_NODE_ATTRS`` — did not raise at all: a real ladder was written and
+the writer's own stamp was silently clobbered, breaking ``finalize()`` later
+with an unrelated ``ValueError``. See the comment above
+``TestMeshAdditiveNodeAttrsGate`` below for the measured repro). #1534 moved
+the check to the top of ``add_mesh_impl``, above every one of its three
+structural branches, which fixes all three: partition= no longer strands,
+neither additive_lod= symptom survives, and every branch (including the flat
+fall-through) now agrees with Points/Lines on ordering against
+``extend_to_all`` too — see the ``TestMeshFlatPathNodeAttrsGateOutranksExtendToAll``
+and ``TestMeshSubstitutiveNodeAttrsGateOutranksExtendToAll`` classes below.
+GSplats' only structural door on ``add_gsplats`` is ``partition=`` (its
+``lod_group=``/``additive_lod=`` doors live on the separate
+``add_gsplats_from_data`` adder — out of scope for THIS section, but see the
+dedicated ``TestGSplatsFromDataNodeAttrsGate`` section further down this same
+file, which closes the ``lod_group=`` half of the same stranding class);
+#1534 hoists the same check above it.
+
+A round-2 review finding on that same ``lod_group=`` gate: its ``labels``/
+``image_labels`` exclusion list was incomplete. ``partition`` sits in the
+identical position — a named parameter of the LEAF ``Group.add_gsplats`` that
+is NOT a parameter of ``add_gsplats_from_data_impl``, so it arrives inside
+``**attrs`` here and must ride through, unexcluded, to drive each child's own
+BSP split — and a previously-working ``add_gsplats_from_data(..., lod_group=
+<...>, partition={...})`` call started answering ``Unknown node attribute
+'partition'. Did you mean 'absorption'?`` with nothing written. Fixed by
+adding ``partition`` to the exclusion set; see
+``TestGSplatsFromDataNodeAttrsGateStillForwardsPartition`` further down this
+file. One consequence of this gate now covering the ``lod_group=`` door at
+all: a bad ``colormap``/``opacity`` VALUE (not just an unknown/reserved KEY)
+now outranks the dedicated labels refusal below, matching the flat path's own
+precedence between its attrs gate and its labels handling — desirable parity,
+documented at the ``_reject_before_wrapper`` call site in ``from_data.py``,
+not an accident. This does not close every gap in this door. A
+present-but-conflicting ``colors=`` / ``truncation_radius=None`` reaching
+``**attrs`` here is tracked separately in #1496 and deliberately left alone.
+Nor does the exclusion of ``partition`` extend to its VALUE: an invalid
+partition spec (``partition="nonsense"``, ``partition={"max_elements": 0}``)
+is still refused only from inside ``child_0``, after the ``kind=lod`` wrapper
+is on disk — the spec check lives in the leaf adder, one level below this
+gate, so it is the same stranding shape one door over and needs its own
+change, not a wider exclusion here.
+
+Unlike the #1437/#1446 sections this is not a per-element SLICE hoisted
+upward; it is the SAME pure attrs validator (``validate_render_attrs``) the
+flat writer already calls, run once more, earlier, on the un-split caller
+attrs — so every split path refuses byte-identically to the flat path, and the
+flat path simply validates twice (idempotent), which also means a multi-fault
+flat call now reports the attrs fault where it used to report an
+``extend_to_all`` fault, on all four geometry types this file covers. Two
+precedence controls follow the #1437/#1446 pattern: the colours/colormap gate
+still outranks this one, on every path (unchanged); and this gate now itself
+outranks the #1437 channel gate at the top of the partition/substitutive/
+multi-LOD wrappers — the flat writer's own order (attrs before channels) is
+what the split paths now match, where before #1529/#1534 they did not. A THIRD
+set of placement tests below pins that this gate lives at the ADDER ENTRY, not
+duplicated at the top of each wrapper: an implementation that instead put the
+same check at the top of the partition/substitutive wrappers would pass every
+message-parity test above but would still let that wrapper's own kwarg-spec
+check (a malformed ``partition=`` rule, an invalid ``substitutive_lod=``
+``compression_factor``) run first, and on the flat path would still let
+``extend_to_all`` resolution run first — only a call that trips both faults at
+once, and asserts the ADDER's ordering wins, can tell the two implementations
+apart.
 """
 
 from __future__ import annotations
@@ -1353,6 +1408,200 @@ class TestGSplatsLodGroupDimensionCount:
             )
 
         assert "g" not in compiler.store
+
+
+# ---------------------------------------------------------------------------
+# Node-attrs gate on ``add_gsplats_from_data``'s own doors (issue #1534 review
+# finding 2 — a DIFFERENT adder than the four covered by the fifth section's
+# docstring above, which explicitly scopes itself to ``add_points`` /
+# ``add_lines`` / ``add_mesh`` / ``add_gsplats``)
+# ---------------------------------------------------------------------------
+#
+# ``lod_group=`` dispatches through ``_reject_before_wrapper``
+# (``gsplats_pipeline/from_data.py``), which judges everything checkable
+# BEFORE ``add_gsplats_as_lod_group_impl`` calls ``add_lod_group`` — but, unlike
+# the #1529/#1534 leaf-adder hoist, it never ran ``validate_render_attrs`` at
+# all. Measured pre-fix: ``child_0``'s own write already answers a
+# ``GSPLATS_RESERVED_ATTRS`` key (``ordering=``, ``position_bounds=``, ...)
+# with the correct *reserved* verdict — write_gsplats has always used the
+# right reserved set, so there is no wrong-verdict/silent-accept-and-clobber
+# half to this one, unlike the Points/Lines/Mesh ADDITIVE bug — but that
+# refusal came from inside ``child_0``, by which point the ``kind=lod``
+# wrapper was already on disk: the same #1529/#1534 partition/substitutive
+# shape, one adder layer up.
+#
+# ``additive_lod=`` dispatches through ``add_gsplats_multi_lod_impl`` ->
+# ``write_gsplat_leaf_subtree``, whose own ``validate_render_attrs`` call
+# (with the correct ``GSPLATS_RESERVED_ATTRS``) already runs BEFORE that
+# writer creates any group — so that door never stranded and needed no
+# change; the control test below just pins that it stays that way.
+
+_GSPLATS_FROM_DATA_RESERVED_CASES = [("ordering", "morton"), ("center_bounds", None)]
+
+
+class TestGSplatsFromDataNodeAttrsGate:
+    @pytest.mark.parametrize("key,value", _GSPLATS_FROM_DATA_RESERVED_CASES)
+    def test_lod_group_reserved_attr_no_longer_strands_a_childless_wrapper(
+        self, tmp_path: Any, key: str, value: Any
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, f"gsplats_fromdata_lg_{key}.luxar.zarr"
+        )
+        _, flat_scene, _ = open_scene(
+            tmp_path, f"gsplats_fromdata_lg_{key}_flat.luxar.zarr"
+        )
+        data = _multi_substitutive_3d_data()
+
+        flat = refusal(
+            lambda: flat_scene.add_gsplats(
+                "g",
+                centers=data.centers,
+                amplitudes=data.amplitudes,
+                cholesky_factors=data.cholesky_factors,
+                **{key: value},
+            )
+        )
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, lod_group=True, **{key: value}
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert f"'{key}'" in str(split)
+        assert "are reserved" in str(split)
+        assert "g" not in compiler.store
+        # Pre-fix: the flat-write verdict was already correct (write_gsplats has
+        # always reserved this key), but it fired from inside ``child_0`` — by
+        # then ``add_lod_group`` had already created ``g`` as a childless
+        # ``kind=lod`` group, which survived finalize().
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    def test_lod_group_position_bounds_no_longer_strands_a_childless_wrapper(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, "gsplats_fromdata_lg_posbounds.luxar.zarr"
+        )
+        data = _multi_substitutive_3d_data()
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                data,
+                lod_group=True,
+                position_bounds=[[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
+            )
+        )
+
+        assert "position_bounds" in str(split)
+        assert "are reserved" in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    def test_additive_lod_reserved_attr_control_already_refused_cleanly(
+        self, tmp_path: Any
+    ) -> None:
+        """Control: this door needed no change here — pin that it stays refused.
+
+        ``at_substitutive(0)`` takes the finest level of a 2-level substitutive
+        ``GSplatData`` and reduces it to a single-substitutive one; combined with
+        ``additive_lod={"n_lods": 2}`` this reaches ``add_gsplats_multi_lod_impl``,
+        the same shape ``TestTheGsplatsAdditiveLadderStillHasNoLabelsChannel``
+        uses above.
+        """
+        compiler, scene, path = open_scene(
+            tmp_path, "gsplats_fromdata_add_attrs.luxar.zarr"
+        )
+        data = _multi_substitutive_3d_data().at_substitutive(0)
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g", data, additive_lod={"n_lods": 2}, ordering="morton"
+            )
+        )
+
+        assert "'ordering'" in str(split)
+        assert "are reserved" in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+
+class TestGSplatsFromDataNodeAttrsGateStillForwardsPartition:
+    """``partition=`` is a leaf ``add_gsplats`` named param, not an unknown attr.
+
+    Regression for a round-2 review finding on this same gate: ``partition`` sits
+    in EXACTLY the position ``labels``/``image_labels`` do — a named parameter of
+    the leaf ``Group.add_gsplats`` that is NOT a named parameter of
+    ``add_gsplats_from_data_impl``, so it arrives inside ``**attrs`` here and must
+    ride, unexcluded, into ``child_attrs`` for each substitutive child to apply
+    its own BSP split. Excluding only ``labels``/``image_labels`` (as this gate
+    did immediately after #1534) made a previously-working
+    ``partition={"max_elements": N}`` call answer ``Unknown node attribute
+    'partition'. Did you mean 'absorption'?`` with nothing written, on a call
+    whose SINGLE-level twin (no ``lod_group=``) kept working — measured before
+    this fix.
+    """
+
+    def test_partition_still_builds_a_partitioned_child_under_a_ladder(
+        self, tmp_path: Any
+    ) -> None:
+        compiler, scene, path = open_scene(
+            tmp_path, "gsplats_fromdata_lg_partition.luxar.zarr"
+        )
+        data = _multi_substitutive_3d_data()
+
+        # max_elements=2 splits the 8-splat finest level into 4 parts of 2 but
+        # leaves the 2-splat coarsest level whole (1 part -> falls through to a
+        # plain leaf), matching the ``child_1 kind=partition -> part_0..3``
+        # shape measured pre-fix on main.
+        node = scene.add_gsplats_from_data(
+            "g", data, lod_group=True, partition={"max_elements": 2}
+        )
+        compiler.finalize()
+
+        assert node is not None
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("kind") == "lod"
+        children = set(store["g"].group_keys())
+        assert children == {"child_0", "child_1"}
+        partitioned = [
+            c for c in children if store["g"][c].attrs.get("kind") == "partition"
+        ]
+        assert len(partitioned) == 1, (
+            "expected exactly one child (the 8-splat finest level) to have been "
+            f"partitioned; got {partitioned} among {children}"
+        )
+        assert set(store["g"][partitioned[0]].group_keys()) == {
+            "part_0",
+            "part_1",
+            "part_2",
+            "part_3",
+        }
+
+    def test_a_bad_attr_alongside_partition_is_still_refused_up_front(
+        self, tmp_path: Any
+    ) -> None:
+        """``partition=`` riding through must not blunt the gate for real typos."""
+        compiler, scene, path = open_scene(
+            tmp_path, "gsplats_fromdata_lg_partition_badattr.luxar.zarr"
+        )
+        data = _multi_substitutive_3d_data()
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                data,
+                lod_group=True,
+                partition={"max_elements": 2},
+                blending="max",
+            )
+        )
+
+        assert "Unknown node attribute 'blending'" in str(split)
+        assert "Did you mean 'blending_mode'?" in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
 
 
 def _coloured_multi_substitutive_data(ndim: int) -> Any:
@@ -3267,3 +3516,307 @@ class TestLinesAdditiveNodeAttrsGate:
         assert "are reserved" in str(split)
         assert "line" not in compiler.store
         assert "line" not in finalized_group_keys(compiler, path)
+
+
+# ---------------------------------------------------------------------------
+# Node-attrs gate, pre-split, on the Mesh ADDITIVE path (#1534)
+# ---------------------------------------------------------------------------
+#
+# additive_lod= dispatches straight to add_mesh_multi_lod_wrapper_impl's
+# writer.write_mesh_multi_lod, whose OWN fail-fast calls validate_render_attrs
+# with NO reserved-attrs set at all — the same shape as the Points/Lines
+# additive bug (#1529) one geometry type over, and it has BOTH of that bug's
+# two symptoms, not only the milder one. For a genuinely mesh-RESERVED key that
+# is NOT also in ``_ALLOWED_NODE_ATTRS`` (``ordering=``, ``has_labels=``) the
+# unreserved call reports *unknown* instead of the correct *reserved* verdict —
+# still refused, nothing written, only the WRONG VERDICT is wrong. For
+# ``position_bounds=`` — reserved for mesh, but ALSO listed in
+# ``_ALLOWED_NODE_ATTRS`` (it is legitimately unreserved elsewhere, e.g. the
+# generic ``write_group`` path) — the unreserved call does not raise at ALL:
+# it is accepted, written into every level's parent group, and then correct
+# (``global_bounds``) — but the RETURNED ``Mesh`` node's own ``Node.__init__``
+# re-persists the caller's stale, un-mutated copy of ``attrs`` right back over
+# it (``write_group`` merges and overwrites), silently clobbering the writer's
+# own stamp. Measured pre-fix:
+# ``add_mesh("m", V, F, additive_lod=True, position_bounds=[[0,1],[0,1],[0,1]])``
+# writes a complete 4-level reveal ladder, with ``m.position_bounds`` on disk
+# left as the caller's raw list-of-pairs instead of the writer's ``{"min":
+# ..., "max": ...}`` dict — then ``compiler.finalize()`` dies with an unrelated
+# ``ValueError: Could not finalize Zarr store: list indices must be integers
+# or slices, not str`` from ``expand_bounds_with_transforms`` indexing that
+# list with ``"min"``/``"max"``. Byte-for-byte the symptom
+# ``changelog.d/1529.md`` documents for the Points/Lines additive door, and
+# exactly what the dedicated ``test_position_bounds_no_longer_clobbers_the_
+# writers_own_stamp`` tests pin for Points and Lines above. Both symptoms are
+# fixed the same way: #1534 moved the check to the top of ``add_mesh_impl``,
+# above every structural branch, so neither reaches ``write_mesh_multi_lod``
+# unreserved any more (parity against the flat leaf, whose ``write_mesh`` call
+# already used ``MESH_RESERVED_ATTRS`` and is therefore unchanged by #1534).
+
+_MESH_ADD_RESERVED_CASES = [("ordering", "morton"), ("has_labels", True)]
+
+
+class TestMeshAdditiveNodeAttrsGate:
+    @pytest.mark.parametrize("key,value", _MESH_ADD_RESERVED_CASES)
+    def test_reserved_attr_gets_the_reserved_verdict_not_unknown(
+        self, tmp_path: Any, key: str, value: Any
+    ) -> None:
+        compiler, scene, path = open_scene(tmp_path, f"mesh_add_attrs_{key}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"mesh_add_attrs_{key}_flat.luxar.zarr")
+        vertices, faces = grid_mesh(13)
+
+        flat = refusal(
+            lambda: flat_scene.add_mesh("m", vertices, faces, **{key: value})
+        )
+        split = refusal(
+            lambda: scene.add_mesh(
+                "m", vertices, faces, additive_lod=True, **{key: value}
+            )
+        )
+
+        assert_same_refusal(flat, split)
+        assert f"'{key}'" in str(split)
+        assert "are reserved" in str(split)
+        assert "m" not in compiler.store
+        assert "m" not in finalized_group_keys(compiler, path)
+
+    def test_position_bounds_no_longer_clobbers_the_writers_own_stamp(
+        self, tmp_path: Any
+    ) -> None:
+        """The worse-than-wrong-verdict half of the bug (see the module comment
+        above the class): pre-fix this call did not raise at all, wrote a real
+        ladder, and then broke ``finalize()`` once the clobbered
+        ``position_bounds`` was read back — the Mesh twin of the Points/Lines
+        tests of the same name above.
+        """
+        compiler, scene, path = open_scene(
+            tmp_path, "mesh_add_attrs_posbounds.luxar.zarr"
+        )
+        vertices, faces = grid_mesh(13)
+
+        split = refusal(
+            lambda: scene.add_mesh(
+                "m",
+                vertices,
+                faces,
+                additive_lod=True,
+                position_bounds=[[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
+            )
+        )
+
+        assert "position_bounds" in str(split)
+        assert "are reserved" in str(split)
+        assert "m" not in compiler.store
+        # Nothing was written, so finalize() must succeed cleanly. Pre-fix, this
+        # call did not raise at all — a real ladder was written and finalize()
+        # later failed with an unrelated ValueError once the clobbered
+        # position_bounds was read back by expand_bounds_with_transforms.
+        assert "m" not in finalized_group_keys(compiler, path)
+
+
+# ---------------------------------------------------------------------------
+# Node-attrs gate PLACEMENT, continued: Mesh/GSplats partition-rule and
+# extend_to_all precedence (#1534)
+# ---------------------------------------------------------------------------
+#
+# Same construction as TestPointsPartitionNodeAttrsGateOutranksThePartitionRuleCheck
+# / TestFlatPathNodeAttrsGateOutranksExtendToAll above, extended to the two
+# geometry types #1529 did not cover. Each class fires the OTHER fault alone
+# first (proving it exists and is what a wrapper-level — rather than
+# adder-entry — placement would report), then adds a bad node attr and checks
+# the attrs fault wins instead.
+
+
+class TestMeshPartitionNodeAttrsGateOutranksThePartitionRuleCheck:
+    def test_partition_rule_alone_raises_the_rule_error(self, tmp_path: Any) -> None:
+        _, scene, _ = open_scene(tmp_path, "mesh_part_rule_alone.luxar.zarr")
+        vertices, faces = grid_mesh(4)
+
+        exc = refusal(
+            lambda: scene.add_mesh(
+                "m", vertices, faces, partition={"max_elements": 8, "rule": "bogus"}
+            )
+        )
+        assert "partition rule must be" in str(exc)
+
+    def test_attrs_fault_outranks_the_partition_rule_check(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(tmp_path, "mesh_part_rule_outranked.luxar.zarr")
+        vertices, faces = grid_mesh(4)
+
+        exc = refusal(
+            lambda: scene.add_mesh(
+                "m",
+                vertices,
+                faces,
+                partition={"max_elements": 8, "rule": "bogus"},
+                blending="max",
+            )
+        )
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "partition rule" not in str(exc)
+        assert "m" not in compiler.store
+
+
+class TestGSplatsPartitionNodeAttrsGateOutranksThePartitionRuleCheck:
+    def test_partition_rule_alone_raises_the_rule_error(self, tmp_path: Any) -> None:
+        _, scene, _ = open_scene(tmp_path, "gsplats_part_rule_alone.luxar.zarr")
+        centers = random_positions(_PART_N, seed=138)
+
+        exc = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=1.0,
+                cholesky_factors=cholesky_rows_nd(_PART_N, 3),
+                partition={"max_elements": _PART_HALF, "rule": "bogus"},
+            )
+        )
+        assert "partition rule must be" in str(exc)
+
+    def test_attrs_fault_outranks_the_partition_rule_check(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(
+            tmp_path, "gsplats_part_rule_outranked.luxar.zarr"
+        )
+        centers = random_positions(_PART_N, seed=139)
+
+        exc = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=1.0,
+                cholesky_factors=cholesky_rows_nd(_PART_N, 3),
+                partition={"max_elements": _PART_HALF, "rule": "bogus"},
+                blending="max",
+            )
+        )
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "partition rule" not in str(exc)
+        assert "g" not in compiler.store
+
+
+class TestMeshFlatPathNodeAttrsGateOutranksExtendToAll:
+    """Pins the #1534 precedence change on Mesh's plain-leaf path.
+
+    Pre-fix, ``_resolve_extend_to_all`` ran in the adder (mesh's flat
+    fall-through) before ``write_mesh`` ever reached its own attrs gate, so a
+    call tripping both faults reported the ``extend_to_all`` one. The
+    adder-entry gate (mirroring #1529 on Points/Lines) now runs first even on
+    the flat mesh path, so the attrs fault wins instead.
+    """
+
+    def test_extend_to_all_alone_raises_the_extend_to_all_error(
+        self, tmp_path: Any
+    ) -> None:
+        _, scene, _ = open_scene(tmp_path, "mesh_flat_extend_alone.luxar.zarr")
+        vertices, faces = grid_mesh(4)
+
+        exc = refusal(
+            lambda: scene.add_mesh("m", vertices, faces, extend_to_all=["NOPE"])
+        )
+        assert "Unknown dimension(s) in extend_to_all" in str(exc)
+
+    def test_attrs_fault_outranks_extend_to_all(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(
+            tmp_path, "mesh_flat_extend_outranked.luxar.zarr"
+        )
+        vertices, faces = grid_mesh(4)
+
+        exc = refusal(
+            lambda: scene.add_mesh(
+                "m", vertices, faces, extend_to_all=["NOPE"], blending="max"
+            )
+        )
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "extend_to_all" not in str(exc)
+        assert "m" not in compiler.store
+
+
+class TestMeshSubstitutiveNodeAttrsGateOutranksExtendToAll:
+    """Pins the #1534 reconciliation named in this module's docstring.
+
+    Mesh's substitutive wrapper used to resolve ``extend_to_all`` (its own
+    preflight, inside ``_maybe_add_mesh_substitutive_lod``) BEFORE its attrs
+    gate — the opposite of the Points/Lines #1529 order. The entry-level gate
+    now sits above that dispatch, so a call tripping both reports the attrs
+    fault here too, closing the divergence.
+    """
+
+    def test_extend_to_all_alone_raises_the_extend_to_all_error(
+        self, tmp_path: Any
+    ) -> None:
+        _, scene, _ = open_scene(tmp_path, "mesh_sub_extend_alone.luxar.zarr")
+        vertices, faces = grid_mesh(4)
+
+        exc = refusal(
+            lambda: scene.add_mesh(
+                "m", vertices, faces, substitutive_lod=True, extend_to_all=["NOPE"]
+            )
+        )
+        assert "Unknown dimension(s) in extend_to_all" in str(exc)
+
+    def test_attrs_fault_outranks_extend_to_all(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(
+            tmp_path, "mesh_sub_extend_outranked.luxar.zarr"
+        )
+        vertices, faces = grid_mesh(4)
+
+        exc = refusal(
+            lambda: scene.add_mesh(
+                "m",
+                vertices,
+                faces,
+                substitutive_lod=True,
+                extend_to_all=["NOPE"],
+                blending="max",
+            )
+        )
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "extend_to_all" not in str(exc)
+        assert "m" not in compiler.store
+
+
+class TestGSplatsFlatPathNodeAttrsGateOutranksExtendToAll:
+    """Pins the #1534 precedence change on GSplats' plain-leaf path.
+
+    Pre-fix, GSplats had no adder-entry attrs gate at all, so
+    ``_resolve_extend_to_all`` (run in the adder before the flat write) beat
+    the writer's own attrs check on a call tripping both. The new entry gate
+    mirrors Points/Lines' #1529 fix and now wins here too.
+    """
+
+    def test_extend_to_all_alone_raises_the_extend_to_all_error(
+        self, tmp_path: Any
+    ) -> None:
+        _, scene, _ = open_scene(tmp_path, "gsplats_flat_extend_alone.luxar.zarr")
+        centers = random_positions(_N, seed=140)
+
+        exc = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=1.0,
+                cholesky_factors=cholesky_rows_nd(_N, 3),
+                extend_to_all=["NOPE"],
+            )
+        )
+        assert "Unknown dimension(s) in extend_to_all" in str(exc)
+
+    def test_attrs_fault_outranks_extend_to_all(self, tmp_path: Any) -> None:
+        compiler, scene, _ = open_scene(
+            tmp_path, "gsplats_flat_extend_outranked.luxar.zarr"
+        )
+        centers = random_positions(_N, seed=141)
+
+        exc = refusal(
+            lambda: scene.add_gsplats(
+                "g",
+                centers=centers,
+                amplitudes=1.0,
+                cholesky_factors=cholesky_rows_nd(_N, 3),
+                extend_to_all=["NOPE"],
+                blending="max",
+            )
+        )
+        assert "Did you mean 'blending_mode'?" in str(exc)
+        assert "extend_to_all" not in str(exc)
+        assert "g" not in compiler.store
