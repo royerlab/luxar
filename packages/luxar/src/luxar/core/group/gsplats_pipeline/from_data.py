@@ -200,6 +200,9 @@ def _reject_before_wrapper(
     funnel of its own; it is byte-identical to what ``add_gsplats_impl``
     produces, which the #1446 tests pin against a direct ``add_gsplats`` call.
     """
+    import numpy as np
+
+    from ....validation.base import validate_colors_for_writing
     from ...scene.dim_order import validate_dim_order_spec
     from ...scene.validation import validate_array_rank
     from ..dim_order import validate_fill_sigma_keys
@@ -240,6 +243,37 @@ def _reject_before_wrapper(
             group._find_scene()._validate_dimension_count(
                 centers, name, data_type="centers"
             )
+        # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
+        # level, for the same reason the colours/colormap question above is asked
+        # of every level — and below the width, because that is where the flat
+        # path puts it (the leaf writer's channel sweep runs after the dimension
+        # count). Any colours fault otherwise surfaces from inside a child with
+        # the wrapper already on disk (#1489): measured with this loop removed,
+        # an all-``int64`` two-level ladder left ``name`` holding a PARTIAL
+        # ``child_0`` (centers/amplitudes/cholesky, no colours), and a
+        # fine-bad/coarse-clean one left a COMPLETE ``child_0`` beside a partial
+        # ``child_1`` — a half-written ladder. Dtype is only the loudest of four
+        # such doors; negative values, NaN and an out-of-range RGBA alpha all did
+        # the same thing.
+        #
+        # The FULL validator, never just the dtype rule it was written for: dtype
+        # is the fifth check inside it, so hoisting that one alone jumps it over
+        # the four above and an all-negative ``int32`` array then answered with
+        # the dtype where the flat path answers "Colors cannot be negative" — and
+        # advised ``astype(np.uint8)``, which turns -1 into 255. One call, one
+        # internal order, parity restored.
+        #
+        # Levels are walked finest-first, which is the order
+        # ``substitutive_levels`` holds them in, so an all-bad ladder reports the
+        # same level a flat call would — the finest, which is what
+        # ``result.colors`` forwards. Each rung is checked against its OWN splat
+        # count: a ladder's rungs are prefixes of different lengths.
+        for level in result.substitutive_levels:
+            for sub in level.additive_sublods:
+                if sub.colors is not None:
+                    validate_colors_for_writing(
+                        np.asarray(sub.colors), int(sub.n_splats), channels=(3, 4)
+                    )
         # LAST on purpose — see the docstring: the only check here with no
         # flat-path counterpart at all (the flat path ACCEPTS labels and
         # validates them last of all, in the writer sweep), so it must not

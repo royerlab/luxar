@@ -106,7 +106,19 @@ Provides detailed validation functions specifically for write-time validation, w
 
 **Key Functions:**
 - `validate_positions_for_writing()`: Validate positions before Zarr writing
-- `validate_colors_for_writing()`: Validate colors with HDR support
+- `validate_colors_for_writing()`: Validate colors with HDR support — including
+  their storage DTYPE (via `validate_color_dtype`): a COLOR array must be
+  floating point, or integer `uint8`/`uint16`. Everything else — a wider or
+  signed integer, or `complex` — is refused, mirroring the encoder's rule and
+  its precedence so the refusal lands before any write instead of stranding a
+  partial node (#1489). `validate_faces_for_writing` enforces a storage dtype
+  too (integer only), so colours are not alone in this; positions deliberately
+  do not (see the note below)
+- `validate_color_dtype()`: the dtype rule on its own, named so the docs can
+  cite it; `validate_colors_for_writing()` is its only caller, and the pre-write
+  gates that run ahead of a wrapper (the gsplats `lod_group=` one walks every
+  substitutive level) call that whole validator rather than this rule alone, so
+  a wrapped call reports the same colours fault as a flat one
 - `validate_radii_for_writing()`: Validate point radii (arrays AND broadcast scalars)
 - `validate_sharpness_for_writing()`: Validate sharpness (arrays AND broadcast scalars)
 - `validate_widths_for_writing()`: Validate line widths (arrays AND broadcast scalars)
@@ -134,7 +146,12 @@ Provides detailed validation functions specifically for write-time validation, w
 
 **Note:** these validators deliberately do NOT dtype-convert. `validate_positions_for_writing`
 accepts any numeric dtype and returns `(n_points, n_dims)` — callers needing
-float32 storage must convert afterwards (e.g. via `ensure_float32`).
+float32 storage must convert afterwards (e.g. via `ensure_float32`). Not
+converting is not the same as not CHECKING, though: where the encoder refuses a
+dtype outright rather than converting it, the validator refuses it too, so the
+refusal lands before any write. That is `validate_colors_for_writing` (floating,
+or integer `uint8`/`uint16`) and `validate_faces_for_writing` (integer only);
+`validate_positions_for_writing` really does accept any numeric dtype.
 
 ### `nd_transforms.py`
 Validation and composition for nD transforms on non-displayed dimensions.
