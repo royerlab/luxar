@@ -80,6 +80,7 @@ export function commitMeshGeometry(
   const object = found as THREE.Mesh;
 
   const { data, projected } = staged;
+  const nodeAttrs = object.userData.attrs as MeshMetadata;
   const attributesRebuilt = updateMeshGeometry(object.geometry, {
     position: projected.position,
     // Explicit rather than inferred from array identity: the position buffer is
@@ -114,6 +115,18 @@ export function commitMeshGeometry(
     vertexCountGrows:
       (object.userData.loader as { totalLODCount?: number } | undefined)?.totalLODCount !==
       undefined,
+    // The node's LIFETIME totals, which every buffer is sized and dtype-chosen
+    // from. `write_mesh_multi_lod` stamps these on the ladder's parent as the sums
+    // over its levels, and for an unladdered mesh they equal the committed counts,
+    // so this is one expression for both cases rather than a branch.
+    //
+    // Load-bearing (#1521): sized from the committed PREFIX instead, every level
+    // would rebind `position` / `color` / `normal` / `aScalar` and `setIndex`, and
+    // three frees a replaced attribute's GL buffer from nowhere — not on
+    // replacement and not on dispose. Each level would orphan the previous level's
+    // buffers for the session.
+    capacityVertexCount: nodeAttrs.n_vertices,
+    capacityFaceCount: nodeAttrs.n_faces,
   });
 
   // The epoch's side, which is NOT simply the node's `double_sided`: an odd-parity
@@ -126,7 +139,7 @@ export function commitMeshGeometry(
   // `displayDims` change can flip a smooth-shaded node onto the derivative fallback
   // and back (§3.4 / §6.2). Both are guarded on change, so a slice move costs
   // nothing here.
-  applyMeshShading(object, object.userData.attrs as MeshMetadata, projected.storedNormalsUsable);
+  applyMeshShading(object, nodeAttrs, projected.storedNormalsUsable);
 
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it

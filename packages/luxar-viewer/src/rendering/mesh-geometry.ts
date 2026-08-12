@@ -118,6 +118,47 @@ export interface MeshGeometryConfig {
    * either way.
    */
   vertexCountGrows?: boolean;
+  /**
+   * The node's LIFETIME vertex/face totals, which every buffer here is sized and
+   * dtype-chosen from — as distinct from {@link vertexCount} / {@link faceCount},
+   * which describe the data being committed NOW.
+   *
+   * They differ for exactly one thing: a reveal ladder, whose committed prefix
+   * grows a level at a time while the node's total does not. That distinction is
+   * the whole point. Sizing from the prefix would re-run `setAttribute` /
+   * `setIndex` on every level, and three frees a replaced attribute's GL buffer
+   * from nowhere — not on replacement, and not on dispose either (only the
+   * attributes still bound at that moment are freed). So each level would orphan
+   * the previous level's buffers for the session: ~150 MB for a 4-level 2M-vertex
+   * surface with normals and colours, near a gigabyte at 10M (#1521). Sizing from
+   * the total restores the allocate-once invariant `applyMeshIndices` documents,
+   * and the growing prefix is written INTO the same buffers.
+   *
+   * Absent (or equal to the live counts) for every unladdered mesh, which is why
+   * this change is a no-op there — including the zero-copy colour path.
+   */
+  capacityVertexCount?: number;
+  capacityFaceCount?: number;
+}
+
+/**
+ * Fit `source` into a buffer of `capacity` rows, copying only when it must.
+ *
+ * Returns the source array UNCHANGED when the capacity is exactly the live count,
+ * which is every mesh that is not a reveal ladder — so the zero-copy paths below
+ * stay zero-copy and their buffers stay byte-identical to before #1521.
+ */
+function atCapacity<A extends { length: number; set(a: ArrayLike<number>, o?: number): void }>(
+  source: A,
+  perItem: number,
+  count: number,
+  capacity: number
+): A {
+  if (capacity <= count) return source;
+  const ctor = (source as unknown as { constructor: new (n: number) => A }).constructor;
+  const out = new ctor(capacity * perItem);
+  out.set(source as unknown as ArrayLike<number>, 0);
+  return out;
 }
 
 /**
@@ -151,22 +192,31 @@ export interface MeshGeometryConfig {
 export function createMeshColorAttribute(
   colors: MeshColorArray,
   colorComponents: 3 | 4,
-  vertexCount: number
+  vertexCount: number,
+  capacityVertexCount: number = vertexCount
 ): THREE.BufferAttribute {
   if (colors instanceof Float32Array) {
     // Valid WebGPU format at either width; no pad, no widen.
-    return new THREE.BufferAttribute(colors, colorComponents, false);
+    return new THREE.BufferAttribute(
+      atCapacity(colors, colorComponents, vertexCount, capacityVertexCount),
+      colorComponents,
+      false
+    );
   }
 
   if (colorComponents === 4) {
-    return new THREE.BufferAttribute(colors, 4, true);
+    return new THREE.BufferAttribute(
+      atCapacity(colors, 4, vertexCount, capacityVertexCount),
+      4,
+      true
+    );
   }
 
   const opaque = colors instanceof Uint8Array ? 255 : 65535;
   const padded =
     colors instanceof Uint8Array
-      ? new Uint8Array(vertexCount * 4)
-      : new Uint16Array(vertexCount * 4);
+      ? new Uint8Array(capacityVertexCount * 4)
+      : new Uint16Array(capacityVertexCount * 4);
   for (let v = 0; v < vertexCount; v++) {
     const src = v * 3;
     const dst = v * 4;
@@ -189,10 +239,28 @@ export function createMeshColorAttribute(
  * this can stay size-3 and pick up `w = 1.0` from the attribute default. Mirrors
  * `create-points-node.ts`'s white fill.
  */
-export function createMeshDefaultColorAttribute(vertexCount: number): THREE.BufferAttribute {
-  const white = new Float32Array(vertexCount * 3);
+export function createMeshDefaultColorAttribute(
+  vertexCount: number,
+  capacityVertexCount: number = vertexCount
+): THREE.BufferAttribute {
+  const white = new Float32Array(Math.max(vertexCount, capacityVertexCount) * 3);
   white.fill(1.0);
   return new THREE.BufferAttribute(white, 3, false);
+}
+
+/**
+ * The node's lifetime totals, defaulted to the committed counts.
+ *
+ * `Math.max` rather than a plain `??`: the totals come from the store's declared
+ * attrs, and a store whose parent count is SMALLER than what its levels actually
+ * hold would otherwise size the buffers below the data and truncate the surface.
+ * Trusting the larger of the two makes a wrong attr cost memory, not geometry.
+ */
+function resolveCapacity(input: MeshGeometryConfig): { capVertices: number; capFaces: number } {
+  return {
+    capVertices: Math.max(input.capacityVertexCount ?? input.vertexCount, input.vertexCount),
+    capFaces: Math.max(input.capacityFaceCount ?? input.faceCount, input.faceCount),
+  };
 }
 
 /**
@@ -217,7 +285,11 @@ export function createMeshIndexAttribute(
   faceCount: number
 ): THREE.BufferAttribute {
   // Capacity is the node's FULL face count, not the visible one, so the buffer is
-  // allocated once for the node's lifetime — see `applyMeshIndices` for why.
+  // allocated once for the node's lifetime — see `applyMeshIndices` for why. On a
+  // reveal ladder the caller passes the LADDER's totals here, not the committed
+  // prefix's, so "once for the node's lifetime" survives the growth (#1521): both
+  // the size and the dtype are then fixed from the first commit, and the dtype
+  // cannot flip Uint16 → Uint32 mid-reveal on an already-drawn geometry.
   const capacity = Math.max(faceCount * 3, indices.length);
   const array = vertexCount < 65536 ? new Uint16Array(capacity) : new Uint32Array(capacity);
   array.set(indices);
@@ -353,28 +425,55 @@ export function computeMeshBounds(
  */
 export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
+  const { capVertices, capFaces } = resolveCapacity(input);
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(
+      atCapacity(input.position, 3, input.vertexCount, capVertices),
+      3,
+      false
+    )
+  );
   geometry.setAttribute(
     'color',
     input.colors
-      ? createMeshColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
-      : createMeshDefaultColorAttribute(input.vertexCount)
+      ? createMeshColorAttribute(
+          input.colors,
+          input.colorComponents ?? 3,
+          input.vertexCount,
+          capVertices
+        )
+      : createMeshDefaultColorAttribute(input.vertexCount, capVertices)
   );
   // Stamped so `updateMeshGeometry` can tell authored colors from the placeholder
   // WITHOUT comparing counts — see its color guard for why counts alone fail.
   if (input.colors) geometry.userData.meshColorsInstalled = true;
   if (input.normals) {
-    geometry.setAttribute('normal', new THREE.BufferAttribute(input.normals, 3, false));
+    geometry.setAttribute(
+      'normal',
+      new THREE.BufferAttribute(
+        atCapacity(input.normals, 3, input.vertexCount, capVertices),
+        3,
+        false
+      )
+    );
   }
   if (input.scalars) {
-    geometry.setAttribute('aScalar', new THREE.BufferAttribute(input.scalars, 1, false));
+    geometry.setAttribute(
+      'aScalar',
+      new THREE.BufferAttribute(
+        atCapacity(input.scalars, 1, input.vertexCount, capVertices),
+        1,
+        false
+      )
+    );
     // The scalar-presence stamp every geometry type uses, and the signal
     // `supportsScalarColormap('mesh', …)` fails closed on. Deliberately the same
     // mechanism as points/lines even though mesh binds a real attribute it could
     // probe for: one rule means one way to be wrong.
     geometry.userData.hasScalars = true;
   }
-  applyMeshIndices(geometry, input.indices, input.vertexCount, input.faceCount);
+  applyMeshIndices(geometry, input.indices, capVertices, capFaces);
   if (input.bounds !== undefined) {
     computeMeshBounds(geometry, input.bounds);
   } else {
@@ -421,11 +520,15 @@ function replaceVertexAttribute(
   name: 'normal' | 'aScalar',
   data: Float32Array | null | undefined,
   itemSize: 1 | 3,
-  vertexCount: number
+  vertexCount: number,
+  capacityVertexCount: number = vertexCount
 ): boolean {
   const existing = geometry.getAttribute(name) as THREE.BufferAttribute | undefined;
   if (!existing || !data) return false;
-  if (existing.count === vertexCount && existing.array.length === data.length) {
+  // A ladder's buffer is CAPACITY-sized while `data` is the committed prefix, so
+  // the in-place copy is the steady state there too — the length test compares the
+  // bound buffer against the capacity, and the copy writes only the prefix.
+  if (existing.count === capacityVertexCount && existing.array.length >= data.length) {
     // `needsUpdate` ONLY on a real content change — see the fourth case above. The
     // steady state is identity-equal, and flagging it there re-uploads the whole
     // buffer once per slice move.
@@ -435,7 +538,14 @@ function replaceVertexAttribute(
     }
     return false;
   }
-  geometry.setAttribute(name, new THREE.BufferAttribute(data, itemSize, false));
+  geometry.setAttribute(
+    name,
+    new THREE.BufferAttribute(
+      atCapacity(data, itemSize, vertexCount, capacityVertexCount),
+      itemSize,
+      false
+    )
+  );
   return true;
 }
 
@@ -477,6 +587,7 @@ export function updateMeshGeometry(
 ): boolean {
   let attributesRebuilt = false;
   let positionRebound = false;
+  const { capVertices, capFaces } = resolveCapacity(input);
   const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
   // `input.positionChanged`, NOT array identity — the projection reuses one buffer, so
   // identity is stable across a `displayDims` change and would suppress the re-upload.
@@ -491,7 +602,11 @@ export function updateMeshGeometry(
   const storedKey = geometry.userData.meshUploadedKey as string | undefined;
   const keyChanged = input.positionKey !== undefined && input.positionKey !== storedKey;
   if (positionAttr && (input.positionChanged || keyChanged)) {
-    if (positionAttr.array.length === input.position.length) {
+    // `>=`, not `===`: on a ladder the bound buffer is sized to the node's TOTAL
+    // while `input.position` is the committed prefix, so every level after the
+    // first copies INTO the same buffer instead of rebinding (#1521). For an
+    // unladdered mesh the two are equal and this is the original test.
+    if (positionAttr.array.length >= input.position.length && positionAttr.count > 1) {
       // Already the same buffer when the geometry bound the projection scratch
       // directly (the steady state after the first commit), in which case the copy
       // is a self-copy and only the upload flag matters.
@@ -511,7 +626,14 @@ export function updateMeshGeometry(
           `Mesh position length changed (${positionAttr.array.length} -> ${input.position.length}); rebinding`
         );
       }
-      geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
+      geometry.setAttribute(
+        'position',
+        new THREE.BufferAttribute(
+          atCapacity(input.position, 3, input.vertexCount, capVertices),
+          3,
+          false
+        )
+      );
       // A new attribute object → three's cached WebGPU RenderObject is now stale.
       attributesRebuilt = true;
     }
@@ -554,12 +676,17 @@ export function updateMeshGeometry(
   const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
   const authoredColorsPending =
     input.colors !== null && geometry.userData.meshColorsInstalled !== true;
-  if (!colorAttr || colorAttr.count !== input.vertexCount || authoredColorsPending) {
+  if (!colorAttr || colorAttr.count !== capVertices || authoredColorsPending) {
     geometry.setAttribute(
       'color',
       input.colors
-        ? createMeshColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
-        : createMeshDefaultColorAttribute(input.vertexCount)
+        ? createMeshColorAttribute(
+            input.colors,
+            input.colorComponents ?? 3,
+            input.vertexCount,
+            capVertices
+          )
+        : createMeshDefaultColorAttribute(input.vertexCount, capVertices)
     );
     if (input.colors) geometry.userData.meshColorsInstalled = true;
     attributesRebuilt = true;
@@ -574,14 +701,18 @@ export function updateMeshGeometry(
   // and never rebuilds. Conversely a frame change that makes stored normals
   // meaningless must NOT unbind them: the shader variant stops reading the
   // attribute instead (§3.4, and `MeshGeometryConfig.normals`).
-  if (replaceVertexAttribute(geometry, 'normal', input.normals, 3, input.vertexCount)) {
+  if (
+    replaceVertexAttribute(geometry, 'normal', input.normals, 3, input.vertexCount, capVertices)
+  ) {
     attributesRebuilt = true;
   }
-  if (replaceVertexAttribute(geometry, 'aScalar', input.scalars, 1, input.vertexCount)) {
+  if (
+    replaceVertexAttribute(geometry, 'aScalar', input.scalars, 1, input.vertexCount, capVertices)
+  ) {
     attributesRebuilt = true;
   }
 
-  applyMeshIndices(geometry, input.indices, input.vertexCount, input.faceCount);
+  applyMeshIndices(geometry, input.indices, capVertices, capFaces);
 
   // Bounds track the VISIBLE set, so they refresh on EVERY epoch — a slice move
   // changes which vertices are indexed even when `position` is untouched. Cheap: the
