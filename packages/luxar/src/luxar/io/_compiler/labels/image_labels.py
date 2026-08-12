@@ -291,7 +291,7 @@ def validate_image_labels_for_writing(image_labels: Any, n_elements: int) -> Non
         # whose ``__iter__`` hands back the same, already-advancing iterator —
         # therefore has nothing left for that second walk, and this gate has
         # no way to hand its own materialised copy back to the caller. Refuse
-        # it HERE, before anything is written, rather than let the walk-two
+        # it HERE, before anything is written, rather than let that second walk
         # report "Image labels length (0)" mid-write with the node's other
         # arrays already on disk. Detected WITHOUT consuming an item: a
         # re-iterable sequence (list / tuple / ndarray / pandas.Series / any
