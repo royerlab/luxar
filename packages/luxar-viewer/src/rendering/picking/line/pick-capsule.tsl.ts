@@ -1,6 +1,6 @@
 /**
  * Capsule line PICKING — TSL / NodeMaterial twin of `shaders-capsule.ts`
- * (issue #1352, behind `?linePrimitive=capsule`).
+ * (issue #1352, the DEFAULT line primitive (`?linePrimitive=capsule`)).
  *
  * Same stencil, half-disc joints and quartic profile as the visual
  * capsule TSL factory (`materials/line/shader-tsl-capsule.ts`); the pick
