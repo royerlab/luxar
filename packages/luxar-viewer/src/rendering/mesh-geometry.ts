@@ -320,18 +320,23 @@ function resolveCapacity(input: MeshGeometryConfig): { capVertices: number; capF
 /**
  * Choose the index-buffer dtype.
  *
- * `Uint16Array` below 65536 vertices, `Uint32Array` above. Not a micro-
+ * `Uint16Array` below 65536 vertices, `Uint32Array` at or above. Not a micro-
  * optimization: WebGL1-era `OES_element_index_uint` aside, the real reason is that
  * three sets `geometry.index.array` verbatim, and a `Uint32Array` index forces the
  * 32-bit path for every draw. Meshes in this domain are usually well under 65k
  * vertices per node.
  *
+ * That rationale only holds on the WebGL backends: the WebGPU backend widens a
+ * narrow index attribute to Uint32Array in place at first upload, so the narrow
+ * choice buys nothing there — see {@link applyMeshIndices} for the detail. It is
+ * still the right allocation, because WebGL never gets that widening for free.
+ *
  * The threshold is on `vertexCount`, not on the max index present: `vertexCount` is
  * fixed for the node, whereas the largest index actually drawn changes with the slice.
  * Keying off the observed maximum would let the dtype differ between epochs, which
- * would defeat the buffer reuse in {@link applyMeshIndices} — and re-binding a drawn
- * geometry's index with a different dtype is exactly the kind of attribute-identity
- * change the WebGPU backend does not tolerate.
+ * would defeat the buffer reuse in {@link applyMeshIndices} — a dtype flip forces a
+ * fresh `setIndex` call, orphaning the old attribute's GPU buffer, which is exactly
+ * the leak {@link applyMeshIndices} exists to avoid.
  */
 export function createMeshIndexAttribute(
   indices: Uint32Array,
@@ -387,9 +392,35 @@ export function applyMeshIndices(
 ): void {
   const existing = geometry.index;
   const wantUint16 = vertexCount < 65536;
-  const dtypeMatches = wantUint16
-    ? existing?.array instanceof Uint16Array
-    : existing?.array instanceof Uint32Array;
+
+  // The question this predicate has to answer is not "is this the dtype
+  // `createMeshIndexAttribute` would allocate for this node", but "can this buffer
+  // carry the indices we are about to write." The distinction is not academic: the
+  // WebGPU backend rewrites a non-normalized Uint16Array (or Uint8Array) index
+  // attribute to Uint32Array IN PLACE the first time it uploads it
+  // (`WebGPUAttributeUtils.createAttribute` assigns straight into
+  // `bufferAttribute.array`, mutating the very attribute this predicate is about to
+  // interrogate). So after the first WebGPU upload of any sub-65536-vertex mesh,
+  // `existing.array` is already a Uint32Array even though `createMeshIndexAttribute`
+  // allocated it as a Uint16Array — asking "does this match what I would allocate"
+  // therefore always failed on WebGPU, forcing a `setIndex` (and the leak this
+  // function exists to prevent) on every epoch after the first.
+  //
+  // So: a Uint32Array can carry the indices of ANY node; a Uint16Array only of one
+  // under 65,536 vertices. That threshold is strict `<` for two separate reasons.
+  // Above 65,536 vertices indices genuinely truncate on `.set()`. AT exactly 65,536
+  // nothing truncates — 65,535 is still exactly representable in 16 bits — but 65,535
+  // is reserved: three's own `arrayNeedsUint32` refuses a 16-bit index array
+  // containing it (citing `PRIMITIVE_RESTART_FIXED_INDEX`), because WebGL2's
+  // permanently-enabled fixed-index restart silently DROPS the triangle referencing
+  // vertex 65,535, and three's WebGPU path rewrites that entry to `0xffffffff` — on a
+  // triangle-list not a restart but an out-of-range fetch. Corrupt on either backend.
+  // Below the threshold that same rewrite is a non-issue for us: the largest possible
+  // index is then 65,534, so 65,535 never appears in our data, and the stale tail past
+  // `drawRange` only ever holds indices we ourselves wrote.
+  const dtypeCanCarry =
+    existing?.array instanceof Uint32Array ||
+    (wantUint16 && existing?.array instanceof Uint16Array);
 
   // Reuse requires the buffer to already be at the node's FULL capacity, not merely
   // big enough for this epoch. The placeholder is born with a zero-length index
@@ -397,7 +428,7 @@ export function applyMeshIndices(
   // "fit" in it, leave it at zero, and force a `setIndex` on the next epoch that
   // reveals a triangle — reintroducing exactly the per-move reallocation this avoids.
   const capacity = Math.max(faceCount * 3, indices.length);
-  if (existing && dtypeMatches && existing.array.length >= capacity) {
+  if (existing && dtypeCanCarry && existing.array.length >= capacity) {
     // Bound the upload to the prefix actually rewritten. Without this the whole
     // capacity buffer is re-uploaded every slice move, which for a large mesh with a
     // small visible set is far more bandwidth than the old reallocating path spent —
@@ -678,6 +709,10 @@ function refreshMeshColors(
   const expectedItemSize = padsRgb ? 4 : colorComponents;
   if (
     existing.itemSize !== expectedItemSize ||
+    // Unlike the index dtype check `applyMeshIndices` has to special-case, this
+    // "does this match what I would allocate" comparison is safe: every narrow
+    // colour path binds `normalized: true`, which WebGPU's in-place substitution
+    // never touches, and the float path is always `Float32Array`.
     (existing.array as object).constructor !== colors.constructor ||
     existing.array.length < vertexCount * existing.itemSize
   ) {
