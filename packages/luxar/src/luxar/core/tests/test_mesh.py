@@ -1862,20 +1862,40 @@ def test_the_ladder_parent_DESCRIBES_the_surface_not_just_its_size(tmp_path) -> 
     parent = zarr.open_group(str(store), mode="r")["surf"]
     flat = zarr.open_group(str(flat_store), mode="r")["surf"]
 
-    for key in (
-        "ndim",
-        "has_normals",
-        "has_colors",
-        "has_scalars",
-        "shading",
-        "double_sided",
-        "ordering",
-    ):
-        assert key in parent.attrs, f"ladder parent is missing {key!r}"
+    # DERIVED from the flat write, not a hand-copied key list — that is what makes
+    # this a ratchet: a descriptive attr added to `write_mesh` tomorrow fails here
+    # until `write_mesh_multi_lod` carries it too. Everything a flat mesh stamps
+    # must appear on the parent unless it is on one of two exclusion lists, each
+    # with its own reason.
+    #
+    # RECOMPUTED by the ladder writer, so equality is the wrong test: the parent's
+    # totals span the levels (its vertex count EXCEEDS the source's by the
+    # boundary duplication), and its bounds are the union.
+    recomputed = {"n_vertices", "n_faces", "position_bounds", "content_hash", "type"}
+    # VIEWER-DEFAULTED appearance, deliberately not stamped — matching the three
+    # sibling ladder writers, whose parents carry only what the adder passed. The
+    # reader supplies the same defaults the writer would have, so stamping them
+    # would add bytes and a second place to drift.
+    appearance = {"opacity", "gamma", "intensity", "offset", "absorption"}
+    # Position in the parent's child list; a ladder's parent has its own.
+    structural = {"child_index"}
+
+    missing = set(flat.attrs) - set(parent.attrs) - recomputed - appearance - structural
+    assert not missing, (
+        f"a flat mesh write stamps {sorted(missing)} but the ladder parent does not. "
+        "If that is intended, add the key to one of the exclusion sets above WITH "
+        "its reason; if not, carry it in `write_mesh_multi_lod`."
+    )
+    for key in set(flat.attrs) - recomputed - appearance - structural:
         assert parent.attrs[key] == flat.attrs[key], (
             f"{key!r}: ladder parent says {parent.attrs[key]!r}, a flat write of "
             f"the same mesh says {flat.attrs[key]!r}"
         )
+    # Anti-vacuity: the comparison must actually be covering the attrs this test
+    # exists for, not an empty set after the exclusions.
+    assert {"has_normals", "shading", "ndim", "ordering"} <= set(
+        flat.attrs
+    ) - recomputed
 
 
 def test_the_ladder_parent_carries_the_normal_frame_and_the_union_colour_window(
