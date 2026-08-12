@@ -44,7 +44,7 @@
     "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader.SceneLoader.applyEffectiveAttrs.__type.transform",
     "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader/loaders/loader-factory.createProgressiveGSplatsLoader.parentEffectiveAttrs.__type.transform",
     "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader/loaders/loader-factory.createProgressiveLinesLoader.parentEffectiveAttrs.__type.transform",
-    "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader/loaders/loader-factory.createProgressiveMeshLoader._parentEffectiveAttrs.__type.transform",
+    "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader/loaders/loader-factory.createProgressiveMeshLoader.parentEffectiveAttrs.__type.transform",
     "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader/loaders/loader-factory.createProgressivePointsLoader.parentEffectiveAttrs.__type.transform",
     "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader/nodes/build-ctx.NodeBuildCtx.applyEffectiveAttrs.__type.transform",
     "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader/prefetch/slice-prefetcher.SlicePrefetcherCtx.applyEffectiveAttrs.__type.transform",

@@ -1,8 +1,8 @@
 # Mesh Node Specification
 
-**Status:** Delivered — Phases 0–6 landed (writer, cull kernels, drawable, shaded, picking + panel + stats, docs; §11); real WebGPU verified pixel-equivalent to WebGL (§11 row 6). `kind=partition` (§9.2) and SUBSTITUTIVE LOD levels (§9) both now ship. The ADDITIVE prefix ladder, spatial indexing, exact nD triangle clipping, `volumetric` blending and worker projection remain deliberate non-goals (§9).
+**Status:** Delivered — Phases 0–6 landed (writer, cull kernels, drawable, shaded, picking + panel + stats, docs; §11); real WebGPU verified pixel-equivalent to WebGL (§11 row 6). `kind=partition` (§9.2), SUBSTITUTIVE LOD levels (§9) and the §9.1 reveal ladder (authoring AND the viewer half) all now ship. The additive prefix ladder AS A LOD, spatial indexing, exact nD triangle clipping, `volumetric` blending and worker projection remain deliberate non-goals (§9).
 **Scope:** A fourth first-class geometry type — `mesh` — symmetric to Points, Lines and GSplats.
-**Non-goals:** the additive prefix LOD ladder, spatial indexing, exact nD triangle clipping, `volumetric` blending, worker projection. (Substitutive LOD levels — decimation — and `kind=partition` were non-goals and have since landed.) See [§9](#9-explicitly-out-of-scope).
+**Non-goals:** the additive prefix ladder as a LOD (the §9.1 reveal, which reuses its subgroup layout, has landed), spatial indexing, exact nD triangle clipping, `volumetric` blending, worker projection. (Substitutive LOD levels — decimation — and `kind=partition` were non-goals and have since landed.) See [§9](#9-explicitly-out-of-scope).
 **Target data:** isosurfaces and segmentation boundaries — 3D geometry whose hidden dimensions are
 discrete (time, channel). This is a deliberate narrowing; it is what makes §5, §7 and §9 defensible.
 
@@ -557,6 +557,9 @@ rebuilt; the vertex attribute buffers are uploaded once, in full, and left alone
 `displayDims` change: because `position` and `normal` are both `displayDims`-derived (§6.1, §3.4), it
 re-extracts and re-uploads the `position` buffer and re-decides the `normal` attribute (§7). This is
 re-extraction of the display-space projection, **not** compaction — compaction is still never done.
+A reveal-ladder level is a second exception: each level writes its grown vertex/face prefix into the SAME
+capacity-sized buffers (sized to the ladder's lifetime totals, never resized), rather than uploading
+"once, in full" the way an unladdered mesh does.
 `drawElements` never fetches an unreferenced vertex, so culled vertices cost nothing to draw, and the
 mesh is resident in full anyway (§7). This deliberately avoids:
 
@@ -1583,9 +1586,17 @@ from `add_mesh(substitutive_lod=…)` or `luxar mesh lod`. Per-level picking nee
 exactly as the row predicted: the LOD registry hides inactive levels and the picking system
 skips hidden nodes.
 
-The **ADDITIVE** ladder row above is untouched and still correct. The `lod` capability flag
-gates `kind=lod` groups, whose levels REPLACE one another; an additive ladder is
-`additive_<i>/` subgroups inside a leaf, refused separately and permanently.
+The **ADDITIVE** ladder row above is untouched and still correct — *as a row about LOD*.
+The `lod` capability flag gates `kind=lod` groups, whose levels REPLACE one another; an
+additive ladder is `additive_<i>/` subgroups inside a leaf, and as a **level of detail** it
+stays refused permanently, for the reason the row gives.
+
+What has since shipped is the other thing the row points at: the **reveal effect** of §9.1.
+`add_mesh(additive_lod=…)` writes `additive_<i>/` subgroups for `method="radial"` and for
+nothing else — the method set is a one-element frozenset, so the refusal of every
+arbitrary-order prefix is enforced by the vocabulary rather than by a separate guard. So the
+distinction this section draws is now load-bearing in code: same subgroup layout, admitted
+for the effect, still refused for the LOD.
 
 ### 9.1 Reveal ladders — an additive prefix as an EFFECT, never as a LOD
 
@@ -1623,9 +1634,39 @@ stating because they are what make it read as a reveal:
   not scene-aligned. Either way `spatial_dims` overrides it.
 
 On Lines it orders **whole polylines** by their own centre, so every prefix keeps valid
-segment topology. For **mesh** the ladder itself does not exist yet — the reveal is the
-motivating use case for building it, tracked as its own work item, since a mesh additive
-ladder needs a progressive loader and a multi-LOD writer that no other type can lend it.
+segment topology. On **mesh** it orders whole **faces** by their centroid, and each level
+re-indexes its own gathered vertex table through `luxar.mesh.split.split_mesh_by_faces` —
+whose contract is "these face groups are a true partition", which is exactly what an
+additive ladder's levels are, so the ladder needed no new re-indexer.
+
+The mesh half is where the reveal restriction becomes *the whole vocabulary* rather than one
+option among several: `MESH_ADDITIVE_METHODS` is `{"radial"}`. Points and Lines also accept
+`random`, `salience` and the two samplers, because a prefix of an element cloud is a sparser
+SAMPLE of the same object. A random half of a mesh's triangles is not a coarser surface, it
+is confetti — so for mesh, "reveal" is not a mode, it is the only thing a prefix can honestly
+be. Two things fall out of that, each independently worth the restriction: the energy stamps
+below cannot arise (every reveal method is excluded from them), and vertex duplication at the
+level boundaries stays far off the 3x unwelded ceiling a scattered order approaches.
+
+The ordering is **best-first growth through face adjacency**, keyed on radius from the reveal
+centre — not a radius sort. A radius sort delivers the contiguity claim on a convex blob and
+breaks it on a closed surface, which is what §Target data names: every centroid sits at nearly
+the same radius, so the order is decided by noise over the whole shell. Measured edge-connected
+components of each cumulative prefix, `n_lods=4`, under a plain radius sort: `20 / 20 / 1 / 1`
+on a 1280-face icosphere. Growing through shared edges makes it structural — the frontier only
+admits a face touching one already admitted — so every prefix is one connected patch on a
+sphere, a torus or a non-convex dumbbell, and the duplication argument gets its single boundary
+curve. Measured at 4 levels, reveal vs random over the same faces: 288-face plane 1.66 vs 2.95,
+320-face icosphere 2.67 vs 3.31, 1280-face icosphere 1.69 vs 3.25 (2.81 / 2.17 for the reveal
+under the radius sort — the connectivity fix is what moved them).
+
+Authoring landed with `add_mesh(additive_lod=…)` and `write_mesh_multi_lod`; the viewer's
+second half landed with it — `createProgressiveMeshLoader` opens a mesh node declaring
+`n_additive_sublods > 1` and `MeshProgressiveLoader` fetches its levels in order,
+concatenating each revealed prefix into the buffers the node was sized for.
+Labels are cleared on a laddered mesh — one source vertex maps into every level that touches
+it, so a union CSR spanning levels has no well-defined index space; `substitutive_lod=` and
+`partition=` both keep theirs.
 
 **One argument FOR the ladder route that the `drawRange` design missed:** depth sorting
 permutes `geometry.index`, so a reveal expressed as a `drawRange` over a reveal-ordered

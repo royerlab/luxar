@@ -6,7 +6,7 @@
  *      yield to the render loop via `scheduleFrame` (rAF while visible,
  *      timer in hidden tabs, sync in non-browser contexts), then
  *      release the lock and re-enter `updateView(pendingState)`.
- *   2. No pending state, but at least one progressive GSplats loader
+ *   2. No pending state, but at least one progressive loader of any kind
  *      still has higher LODs to fetch — kick the refinement loop and
  *      keep the lock held (refinement releases it on completion or
  *      when superseded by a new pending state).
@@ -23,28 +23,31 @@ import { scheduleFrame } from '../../../utils/schedule-frame';
 import type { DataLoader, ViewState } from '../../data-loader-types';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 import type { LinesDataLoader } from '../../../types/lines';
+import type { MeshDataLoader } from '../../../types/mesh';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 
 export interface QueueNextCtx {
   viewStateQueue: ViewStateQueue;
   /**
-   * All three per-type loader maps. Refinement must be gated on EVERY
+   * All four per-type loader maps. Refinement must be gated on EVERY
    * geometry type — progressive Points and Lines loaders carry additive
    * ladders exactly like GSplats (ladders are on by default for all
-   * recipes), and the post-load kick in `lifecycle/load-scene.ts` already
-   * checks all three. Gating on gsplats alone left points/lines-only
-   * scenes stuck at partial LODs after every view change.
+   * recipes), Mesh carries a reveal ladder of the same shape, and the
+   * post-load kick in `lifecycle/load-scene.ts` checks the same four.
+   * Gating on gsplats alone left points/lines-only scenes stuck at partial
+   * LODs after every view change.
    */
   pointsLoaders: Map<string, DataLoader>;
   linesLoaders: Map<string, LinesDataLoader>;
   gsplatLoaders: Map<string, GSplatsDataLoader>;
+  meshLoaders: Map<string, MeshDataLoader>;
   /** Re-enter the orchestrator's `updateView` with the next pending state. */
   updateView(state: Partial<ViewState>): Promise<void>;
   /** Set the orchestrator's `_updateInProgress` flag. */
   setUpdateInProgress(value: boolean): void;
   /**
-   * Kick the progressive LOD refinement orchestrator (all three geometry
-   * types in sequence — gsplats, then points, then lines).
+   * Kick the progressive LOD refinement orchestrator (all four geometry
+   * types in sequence — gsplats, points, lines, then mesh).
    */
   scheduleGSplatsRefinement(): Promise<void>;
   /**
@@ -92,13 +95,14 @@ export function queueNext(ctx: QueueNextCtx): void {
   // first-commit latency, not full-ladder latency.
   ctx.resolvePassWaiters();
 
-  // No pending update — check if ANY progressive loader (points, lines, or
-  // gsplats) still has additive LODs to stream. Mirrors the post-load kick
-  // in lifecycle/load-scene.ts, which checks all three symmetrically.
+  // No pending update — check if ANY progressive loader (points, lines,
+  // gsplats or mesh) still has additive LODs to stream. Mirrors the post-load
+  // kick in lifecycle/load-scene.ts, which checks the same four symmetrically.
   const needsRefinement =
     [...ctx.gsplatLoaders.values()].some(hasMore) ||
     [...ctx.pointsLoaders.values()].some(hasMore) ||
-    [...ctx.linesLoaders.values()].some(hasMore);
+    [...ctx.linesLoaders.values()].some(hasMore) ||
+    [...ctx.meshLoaders.values()].some(hasMore);
 
   if (needsRefinement) {
     // Keep _updateInProgress = true during refinement so slider/animation

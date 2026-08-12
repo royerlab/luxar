@@ -108,6 +108,119 @@ export interface MeshGeometryConfig {
    * `undefined` falls back to the scan, `null` means nothing is drawn.
    */
   bounds?: MeshProjectionBounds | null;
+  /**
+   * Whether this node's vertex count legitimately GROWS between commits.
+   *
+   * True for a reveal-ladder node, whose every level adds vertices, and false for
+   * every other mesh — a whole-node mesh is fetched once, so a changed vertex count
+   * there means the buffers and the metadata disagree and is worth a warning. The
+   * flag exists only to keep that warning meaningful; the rebind itself is identical
+   * either way.
+   */
+  vertexCountGrows?: boolean;
+  /**
+   * The node's LIFETIME vertex/face totals, which every buffer here is sized and
+   * dtype-chosen from — as distinct from {@link vertexCount} / {@link faceCount},
+   * which describe the data being committed NOW.
+   *
+   * They differ for exactly one thing: a reveal ladder, whose committed prefix
+   * grows a level at a time while the node's total does not. That distinction is
+   * the whole point. Sizing from the prefix would re-run `setAttribute` /
+   * `setIndex` on every level, and three frees a replaced attribute's GL buffer
+   * from nowhere — not on replacement, and not on dispose either (only the
+   * attributes still bound at that moment are freed). So each level would orphan
+   * the previous level's buffers for the session: ~150 MB for a 4-level 2M-vertex
+   * surface with normals and colours, near a gigabyte at 10M (#1521). Sizing from
+   * the total restores the allocate-once invariant `applyMeshIndices` documents,
+   * and the growing prefix is written INTO the same buffers.
+   *
+   * Absent (or equal to the live counts) for every unladdered mesh, which is why
+   * this change is a no-op there — including the zero-copy colour path.
+   */
+  capacityVertexCount?: number;
+  capacityFaceCount?: number;
+}
+
+/**
+ * Fit `source` into a buffer of `capacity` rows, copying only when it must.
+ *
+ * Returns the source array UNCHANGED when the capacity is exactly the live count,
+ * which is every mesh that is not a reveal ladder — so the zero-copy paths below
+ * stay zero-copy and their buffers stay byte-identical to before #1521.
+ */
+function atCapacity<A extends { length: number; set(a: ArrayLike<number>, o?: number): void }>(
+  source: A,
+  perItem: number,
+  count: number,
+  capacity: number
+): A {
+  if (capacity <= count) return source;
+  const ctor = (source as unknown as { constructor: new (n: number) => A }).constructor;
+  const out = new ctor(capacity * perItem);
+  out.set(source as unknown as ArrayLike<number>, 0);
+  return out;
+}
+
+/**
+ * Whether `geometry.userData` already stamps `source`/`count` under `key` — the
+ * shared currency check `refreshMeshColors` and `replaceVertexAttribute` both need.
+ *
+ * Once an attribute is bound at the node's CAPACITY (#1521), the bound buffer is a
+ * copy `atCapacity` made once at the rebind and is never identity-equal to the
+ * caller's array again — not even on the very level that produced it. (The
+ * RGB→RGBA pad path is the other way to lose identity: it allocates a fresh
+ * `padded` array on every write.) So currency has to be tracked by the SOURCE
+ * array's own identity, stamped separately on `geometry.userData`, rather than by
+ * comparing it against the bound buffer.
+ */
+function isAttributeCurrent(
+  geometry: THREE.BufferGeometry,
+  key: string,
+  source: unknown,
+  count: number
+): boolean {
+  return geometry.userData[`${key}Source`] === source && geometry.userData[`${key}Count`] === count;
+}
+
+/** Stamp the `{key}Source`/`{key}Count` currency pair {@link isAttributeCurrent} reads. */
+function stampAttributeCurrency(
+  geometry: THREE.BufferGeometry,
+  key: string,
+  source: unknown,
+  count: number
+): void {
+  geometry.userData[`${key}Source`] = source;
+  geometry.userData[`${key}Count`] = count;
+}
+
+/**
+ * Pad `colors`' RGB triples into an already-sized RGBA `dst`, one vertex at a
+ * time, with a fully opaque pad alpha (`255` for `uint8`, `65535` for `uint16` —
+ * both normalize to `1.0`, the same *"1.0 for RGB data"* contract the gsplat and
+ * line shaders document).
+ *
+ * Shared by {@link createMeshColorAttribute} (padding into a fresh buffer) and
+ * `refreshMeshColors` (padding a committed prefix into an already-bound one), so
+ * the `uint8`/`uint16` opaque constant cannot diverge between them.
+ *
+ * Only the first `vertexCount` vertices of `dst` are touched — on a reveal
+ * ladder the tail past it belongs to a not-yet-revealed level and stays
+ * whatever `dst` already held there (zero-filled for a fresh buffer).
+ */
+function padRgbIntoRgba(
+  dst: Uint8Array | Uint16Array,
+  colors: Uint8Array | Uint16Array,
+  vertexCount: number
+): void {
+  const opaque = colors instanceof Uint8Array ? 255 : 65535;
+  for (let v = 0; v < vertexCount; v++) {
+    const src = v * 3;
+    const dstOff = v * 4;
+    dst[dstOff] = colors[src];
+    dst[dstOff + 1] = colors[src + 1];
+    dst[dstOff + 2] = colors[src + 2];
+    dst[dstOff + 3] = opaque;
+  }
 }
 
 /**
@@ -141,30 +254,31 @@ export interface MeshGeometryConfig {
 export function createMeshColorAttribute(
   colors: MeshColorArray,
   colorComponents: 3 | 4,
-  vertexCount: number
+  vertexCount: number,
+  capacityVertexCount: number = vertexCount
 ): THREE.BufferAttribute {
   if (colors instanceof Float32Array) {
     // Valid WebGPU format at either width; no pad, no widen.
-    return new THREE.BufferAttribute(colors, colorComponents, false);
+    return new THREE.BufferAttribute(
+      atCapacity(colors, colorComponents, vertexCount, capacityVertexCount),
+      colorComponents,
+      false
+    );
   }
 
   if (colorComponents === 4) {
-    return new THREE.BufferAttribute(colors, 4, true);
+    return new THREE.BufferAttribute(
+      atCapacity(colors, 4, vertexCount, capacityVertexCount),
+      4,
+      true
+    );
   }
 
-  const opaque = colors instanceof Uint8Array ? 255 : 65535;
   const padded =
     colors instanceof Uint8Array
-      ? new Uint8Array(vertexCount * 4)
-      : new Uint16Array(vertexCount * 4);
-  for (let v = 0; v < vertexCount; v++) {
-    const src = v * 3;
-    const dst = v * 4;
-    padded[dst] = colors[src];
-    padded[dst + 1] = colors[src + 1];
-    padded[dst + 2] = colors[src + 2];
-    padded[dst + 3] = opaque;
-  }
+      ? new Uint8Array(capacityVertexCount * 4)
+      : new Uint16Array(capacityVertexCount * 4);
+  padRgbIntoRgba(padded, colors, vertexCount);
   // `normalized: true` — the GPU maps [0, 255] / [0, 65535] to [0, 1] for free.
   return new THREE.BufferAttribute(padded, 4, true);
 }
@@ -179,10 +293,28 @@ export function createMeshColorAttribute(
  * this can stay size-3 and pick up `w = 1.0` from the attribute default. Mirrors
  * `create-points-node.ts`'s white fill.
  */
-export function createMeshDefaultColorAttribute(vertexCount: number): THREE.BufferAttribute {
-  const white = new Float32Array(vertexCount * 3);
+export function createMeshDefaultColorAttribute(
+  vertexCount: number,
+  capacityVertexCount: number = vertexCount
+): THREE.BufferAttribute {
+  const white = new Float32Array(Math.max(vertexCount, capacityVertexCount) * 3);
   white.fill(1.0);
   return new THREE.BufferAttribute(white, 3, false);
+}
+
+/**
+ * The node's lifetime totals, defaulted to the committed counts.
+ *
+ * `Math.max` rather than a plain `??`: the totals come from the store's declared
+ * attrs, and a store whose parent count is SMALLER than what its levels actually
+ * hold would otherwise size the buffers below the data and truncate the surface.
+ * Trusting the larger of the two makes a wrong attr cost memory, not geometry.
+ */
+function resolveCapacity(input: MeshGeometryConfig): { capVertices: number; capFaces: number } {
+  return {
+    capVertices: Math.max(input.capacityVertexCount ?? input.vertexCount, input.vertexCount),
+    capFaces: Math.max(input.capacityFaceCount ?? input.faceCount, input.faceCount),
+  };
 }
 
 /**
@@ -207,7 +339,11 @@ export function createMeshIndexAttribute(
   faceCount: number
 ): THREE.BufferAttribute {
   // Capacity is the node's FULL face count, not the visible one, so the buffer is
-  // allocated once for the node's lifetime — see `applyMeshIndices` for why.
+  // allocated once for the node's lifetime — see `applyMeshIndices` for why. On a
+  // reveal ladder the caller passes the LADDER's totals here, not the committed
+  // prefix's, so "once for the node's lifetime" survives the growth (#1521): both
+  // the size and the dtype are then fixed from the first commit, and the dtype
+  // cannot flip Uint16 → Uint32 mid-reveal on an already-drawn geometry.
   const capacity = Math.max(faceCount * 3, indices.length);
   const array = vertexCount < 65536 ? new Uint16Array(capacity) : new Uint32Array(capacity);
   array.set(indices);
@@ -265,9 +401,11 @@ export function applyMeshIndices(
     // Bound the upload to the prefix actually rewritten. Without this the whole
     // capacity buffer is re-uploaded every slice move, which for a large mesh with a
     // small visible set is far more bandwidth than the old reallocating path spent —
-    // i.e. it would trade the leak for a per-move bandwidth regression. The classic
-    // WebGL backend honours update ranges; the WebGPU backends ignore them and
-    // re-upload in full, so this is an improvement there and neutral here.
+    // i.e. it would trade the leak for a per-move bandwidth regression. All three
+    // backends honour `BufferAttribute` update ranges — the classic `WebGLRenderer`,
+    // and both of `WebGPURenderer`'s backends (native WebGPU and the WebGL2
+    // fallback) — so bounding the range is a real bandwidth win everywhere, not just
+    // on classic WebGL.
     //
     // A fully-culled epoch rewrites NOTHING, so it must not set `needsUpdate` at
     // all: on the WebGL backend an EMPTY update-range list means "upload the whole
@@ -343,28 +481,62 @@ export function computeMeshBounds(
  */
 export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
+  const { capVertices, capFaces } = resolveCapacity(input);
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(
+      atCapacity(input.position, 3, input.vertexCount, capVertices),
+      3,
+      false
+    )
+  );
   geometry.setAttribute(
     'color',
     input.colors
-      ? createMeshColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
-      : createMeshDefaultColorAttribute(input.vertexCount)
+      ? createMeshColorAttribute(
+          input.colors,
+          input.colorComponents ?? 3,
+          input.vertexCount,
+          capVertices
+        )
+      : createMeshDefaultColorAttribute(input.vertexCount, capVertices)
   );
   // Stamped so `updateMeshGeometry` can tell authored colors from the placeholder
   // WITHOUT comparing counts — see its color guard for why counts alone fail.
-  if (input.colors) geometry.userData.meshColorsInstalled = true;
+  // `meshColorsSource`/`meshColorsCount` are the CURRENCY markers `refreshMeshColors`
+  // reads: stamping them here means the very first `updateMeshGeometry` call for
+  // this node already sees a matching source and does nothing, instead of treating
+  // the create-time write as stale and re-writing it immediately.
+  if (input.colors) {
+    geometry.userData.meshColorsInstalled = true;
+    stampAttributeCurrency(geometry, 'meshColors', input.colors, input.vertexCount);
+  }
   if (input.normals) {
-    geometry.setAttribute('normal', new THREE.BufferAttribute(input.normals, 3, false));
+    geometry.setAttribute(
+      'normal',
+      new THREE.BufferAttribute(
+        atCapacity(input.normals, 3, input.vertexCount, capVertices),
+        3,
+        false
+      )
+    );
   }
   if (input.scalars) {
-    geometry.setAttribute('aScalar', new THREE.BufferAttribute(input.scalars, 1, false));
+    geometry.setAttribute(
+      'aScalar',
+      new THREE.BufferAttribute(
+        atCapacity(input.scalars, 1, input.vertexCount, capVertices),
+        1,
+        false
+      )
+    );
     // The scalar-presence stamp every geometry type uses, and the signal
     // `supportsScalarColormap('mesh', …)` fails closed on. Deliberately the same
     // mechanism as points/lines even though mesh binds a real attribute it could
     // probe for: one rule means one way to be wrong.
     geometry.userData.hasScalars = true;
   }
-  applyMeshIndices(geometry, input.indices, input.vertexCount, input.faceCount);
+  applyMeshIndices(geometry, input.indices, capVertices, capFaces);
   if (input.bounds !== undefined) {
     computeMeshBounds(geometry, input.bounds);
   } else {
@@ -381,27 +553,36 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
  *
  * Shared by `normal` and `aScalar`, which have identical lifecycles: both are
  * per-node-constant in EXISTENCE (decided at creation from the metadata) and
- * uploaded-once in CONTENT (a slice move rebuilds only the index).
+ * uploaded-once in CONTENT PER LEVEL — a slice move rebuilds only the index, but
+ * a reveal ladder's later levels genuinely grow the committed prefix.
  *
- * Four cases, and only the last two touch the GPU:
+ * Four cases, and only the last touches the GPU (the rebind below is a fifth):
  * - the attribute is not bound → do nothing. The node has no such array; adding one
  *   now would grow a live geometry's attribute set.
  * - no data this epoch → do nothing. Keeps whatever is bound (the 1-vertex
  *   placeholder stub, or the last real upload).
- * - **already the same array** → do nothing, which is the STEADY STATE and the whole
- *   reason this case is called out. The whole-node loader serves one cached
- *   `LoadedMeshData` for the node's lifetime and the commit passes `data.normals` /
- *   `data.scalars` on every epoch, so after the first-commit rebind the identity is
- *   always equal. Flagging `needsUpdate` here would re-upload the entire normal
- *   (`V·12` bytes) and scalar (`V·4` bytes) buffers on EVERY slice move, with no
- *   update ranges — real bandwidth during a scrub at the 2^27-vertex cap, and a
- *   direct contradiction of the uploaded-once contract above. Nothing mutates these
- *   arrays in place (normals are never re-projected, §3.4; scalars are
- *   view-independent), so identity-equal means the GPU copy is already current.
- * - lengths agree but the array is NEW → copy + flag. That is a re-fetch after a
- *   dispose/reload handing over fresh buffers, which genuinely needs the upload.
+ * - **already current** → do nothing, which is the STEADY STATE and the whole
+ *   reason this case is called out. Currency is tracked by the SOURCE array's own
+ *   identity plus the committed count (`isAttributeCurrent`), not by comparing it
+ *   against the bound buffer: once the buffer is bound at the node's CAPACITY
+ *   (#1521), a ladder's later levels never see `existing.array === data` again —
+ *   the buffer is a copy `atCapacity` made once at the rebind, not the caller's
+ *   array. The whole-node loader serves one cached `LoadedMeshData` for the
+ *   node's lifetime and the commit passes `data.normals` / `data.scalars` on
+ *   every epoch, so after the first write at a given level the SOURCE is always
+ *   equal too. Flagging `needsUpdate` there would re-upload the entire normal
+ *   (`V·12` bytes) and scalar (`V·4` bytes) buffers on EVERY slice move — real
+ *   bandwidth during a scrub at the 2^27-vertex cap, and the exact bug this
+ *   mirrors for `color` (#1522): a reveal ladder's later levels silently never
+ *   reaching the buffer because currency looked permanently stale. Nothing
+ *   mutates these arrays in place (normals are never re-projected, §3.4; scalars
+ *   are view-independent), so current means the GPU copy already matches.
+ * - not current, buffer already fits → copy the prefix + flag. Either a genuine
+ *   re-fetch (dispose/reload handing over fresh buffers at an unchanged count) or
+ *   a new ladder level (a longer prefix at the same capacity) — both need the
+ *   upload, bounded to the prefix actually written.
  *
- * Lengths differ → rebind, the expected first commit (placeholder stub → real
+ * Buffer too small → rebind, the expected first commit (placeholder stub → real
  * buffer), reported so the caller evicts three's cached WebGPU `RenderObject`.
  *
  * @returns `true` when a `setAttribute` rebind happened.
@@ -411,21 +592,127 @@ function replaceVertexAttribute(
   name: 'normal' | 'aScalar',
   data: Float32Array | null | undefined,
   itemSize: 1 | 3,
-  vertexCount: number
+  vertexCount: number,
+  capacityVertexCount: number = vertexCount
 ): boolean {
   const existing = geometry.getAttribute(name) as THREE.BufferAttribute | undefined;
   if (!existing || !data) return false;
-  if (existing.count === vertexCount && existing.array.length === data.length) {
-    // `needsUpdate` ONLY on a real content change — see the fourth case above. The
-    // steady state is identity-equal, and flagging it there re-uploads the whole
-    // buffer once per slice move.
-    if (existing.array !== data) {
+  const key = name === 'normal' ? 'meshNormal' : 'meshAScalar';
+  // A ladder's buffer is CAPACITY-sized while `data` is the committed prefix, so
+  // the in-place copy is the steady state there too — the length test compares the
+  // bound buffer against the capacity, and the copy writes only the prefix.
+  if (existing.count === capacityVertexCount && existing.array.length >= data.length) {
+    // `existing.array !== data` alone still catches the zero-copy unladdered case
+    // (the bound buffer IS the caller's array, so nothing needs a stamp to know
+    // it); `isAttributeCurrent` catches the capacity-bound case identity can no
+    // longer see. Either being false is enough to skip the write.
+    if (existing.array !== data && !isAttributeCurrent(geometry, key, data, vertexCount)) {
       (existing.array as Float32Array).set(data);
+      // Bound the upload to the prefix actually written — mirrors
+      // `applyMeshIndices`. An empty update-range list means "upload the
+      // whole capacity-sized buffer" on the classic WebGL path, so never
+      // flag an update without adding a range.
+      existing.clearUpdateRanges();
+      existing.addUpdateRange(0, data.length);
       existing.needsUpdate = true;
     }
+    stampAttributeCurrency(geometry, key, data, vertexCount);
     return false;
   }
-  geometry.setAttribute(name, new THREE.BufferAttribute(data, itemSize, false));
+  geometry.setAttribute(
+    name,
+    new THREE.BufferAttribute(
+      atCapacity(data, itemSize, vertexCount, capacityVertexCount),
+      itemSize,
+      false
+    )
+  );
+  stampAttributeCurrency(geometry, key, data, vertexCount);
+  return true;
+}
+
+/**
+ * Write `colors`' committed prefix into an already-bound, capacity-sized `color`
+ * attribute, returning `false` only when the bound attribute's FORMAT cannot hold
+ * `colors` — the caller then falls back to `createMeshColorAttribute` and rebinds.
+ *
+ * ## Why a format check, not a count check
+ *
+ * Once `color` is bound at the node's capacity, every level of a reveal ladder
+ * binds at the SAME count (`capVertices`), so count can no longer tell "already
+ * installed" apart from "installed, but still holding an earlier level's prefix"
+ * (#1522). The bound attribute's LAYOUT can, and it has to mirror
+ * `createMeshColorAttribute` exactly: `float32` colors bind at their native
+ * `colorComponents`, `uint8`/`uint16` always at itemSize 4 (RGB padded, opaque
+ * alpha) — see that function for why.
+ *
+ * ## Why currency is tracked by the SOURCE array's identity
+ *
+ * Not the bound buffer's, because the RGB→RGBA pad path allocates a fresh
+ * `padded` array every time it runs — the bound array is therefore never
+ * identity-equal to `colors`, even in the unladdered steady state. Tracking
+ * currency there would re-pad and re-upload the whole buffer on every slice
+ * move, exactly the bandwidth regression `replaceVertexAttribute` documents for
+ * `normal`/`aScalar`. `isAttributeCurrent`/`stampAttributeCurrency` read and
+ * write `geometry.userData.meshColorsSource` / `meshColorsCount` everywhere
+ * AUTHORED `color` is written (here, in `createMeshGeometry`, and on the rebind
+ * path below) so the steady state is reached from the first commit. The
+ * null-colors steady state (the guard in `updateMeshGeometry`) never calls this
+ * function at all — it assumes the default-white attribute is already
+ * installed, which the null-colors rebind now guarantees: it clears the
+ * authored-colour currency stamps, so a later authored commit can never be
+ * mistaken for already-current against a source array that installed the
+ * white default, not a colour.
+ *
+ * @returns `true` when the existing attribute now holds `colors`' prefix
+ * (written in place or already current); `false` when the caller must rebind.
+ */
+function refreshMeshColors(
+  geometry: THREE.BufferGeometry,
+  existing: THREE.BufferAttribute,
+  colors: MeshColorArray,
+  colorComponents: 3 | 4,
+  vertexCount: number
+): boolean {
+  const padsRgb = !(colors instanceof Float32Array) && colorComponents === 3;
+  const expectedItemSize = padsRgb ? 4 : colorComponents;
+  if (
+    existing.itemSize !== expectedItemSize ||
+    (existing.array as object).constructor !== colors.constructor ||
+    existing.array.length < vertexCount * existing.itemSize
+  ) {
+    return false;
+  }
+
+  // Already current — the steady state for an unladdered mesh from its second
+  // commit on, and for a ladder level committed twice in a row (a slice move
+  // between two reveals at the same level).
+  if (isAttributeCurrent(geometry, 'meshColors', colors, vertexCount)) {
+    return true;
+  }
+
+  if (padsRgb) {
+    // The same pad loop `createMeshColorAttribute` runs, writing into the
+    // already-bound buffer instead of a fresh one. Only the committed prefix —
+    // the tail past `vertexCount` is unreachable until a later level reveals
+    // it, and `drawRange`/the index bound the draw until then.
+    padRgbIntoRgba(
+      existing.array as Uint8Array | Uint16Array,
+      colors as Uint8Array | Uint16Array,
+      vertexCount
+    );
+  } else if (existing.array !== colors) {
+    // Skipped when the bound array IS the source — the zero-copy wrap an
+    // unladdered non-padded mesh binds directly.
+    (existing.array as Float32Array | Uint8Array | Uint16Array).set(colors as ArrayLike<number>);
+  }
+  // Bound the upload to the prefix actually written — mirrors `applyMeshIndices`.
+  // An empty update-range list means "upload the whole capacity-sized buffer" on
+  // the classic WebGL path, so never flag an update without adding a range.
+  existing.clearUpdateRanges();
+  existing.addUpdateRange(0, vertexCount * existing.itemSize);
+  existing.needsUpdate = true;
+  stampAttributeCurrency(geometry, 'meshColors', colors, vertexCount);
   return true;
 }
 
@@ -436,24 +723,32 @@ function replaceVertexAttribute(
  * the no-compaction design: the vertex attribute buffers stay uploaded and
  * untouched, and `drawElements` simply stops referencing the culled vertices.
  *
- * `position` is re-uploaded only when it actually differs in identity — that
- * happens on a `displayDims` change, where the display-space projection is
- * re-extracted. **Bounds are recomputed whenever position is replaced**, because
+ * `position` is re-uploaded on any of three conditions: `input.positionChanged`
+ * is set (a `displayDims` change, where the display-space projection is
+ * re-extracted); the geometry's last upload used a different `displayDims` key
+ * than this commit (`keyChanged`); or it covered a different vertex count than
+ * this commit (`countChanged` — the reveal-ladder case, where a later level's
+ * committed prefix grows). **Bounds are recomputed whenever position is replaced**, because
  * re-uploading the buffer does *not* invalidate Three.js's cached
  * `boundingBox`/`boundingSphere`, which `frustumCulled` and the raycaster broad
  * phase both consult — and the display-space AABB genuinely changes under an axis
  * permutation. Skipping that recompute makes a permuted mesh vanish from the
  * frustum test while still being "loaded", which is a confusing failure to debug.
  *
- * The `color` attribute is **installed on the first commit and then left alone**:
- * the node is created with a 1-vertex placeholder color (see
- * `createEmptyMeshNode`), so the authored colors have to be bound here or they
- * would never reach the shader. It is a first-commit-only install, not a
- * per-slice-move update — see the guard below.
+ * The `color` attribute is **installed on the first commit, then kept current with
+ * an in-place write on every commit that carries authored colors**: the node is
+ * created with a 1-vertex placeholder color (see `createEmptyMeshNode`), so the
+ * authored colors have to be bound here or they would never reach the shader —
+ * and on a reveal ladder every later level's prefix has to reach the buffer too,
+ * or the vertices it reveals keep the zero-filled slot they were born with
+ * (#1522). See the guard below for the install-vs-refresh split.
  *
  * @returns `attributesRebuilt` — `true` when a VERTEX attribute was rebound via
- * `setAttribute` (the first-commit position grow-rebind or the first-commit color
- * install), `false` otherwise. The commit uses this to evict three's stale WebGPU
+ * `setAttribute`: the first-commit position grow-rebind, the first-commit color
+ * install, a color rebind forced by a format mismatch (`refreshMeshColors`
+ * returning `false`), or a `normal`/`aScalar` rebind (`replaceVertexAttribute`'s
+ * buffer-too-small case) — `false` otherwise, including a color REFRESH, which
+ * writes into the already-bound buffer rather than rebinding it. The commit uses this to evict three's stale WebGPU
  * `RenderObject` cache after a vertex-attribute rebind (its cached `vertexBuffers`
  * keeps pointing at the OLD GPU buffer/pipeline otherwise) — the same contract the
  * points/lines/gsplats commits follow via `invalidateRenderObjectFor`. A pure slice
@@ -467,6 +762,7 @@ export function updateMeshGeometry(
 ): boolean {
   let attributesRebuilt = false;
   let positionRebound = false;
+  const { capVertices, capFaces } = resolveCapacity(input);
   const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
   // `input.positionChanged`, NOT array identity — the projection reuses one buffer, so
   // identity is stable across a `displayDims` change and would suppress the re-upload.
@@ -480,27 +776,58 @@ export function updateMeshGeometry(
   // untouched and the next real commit refreshes.
   const storedKey = geometry.userData.meshUploadedKey as string | undefined;
   const keyChanged = input.positionKey !== undefined && input.positionKey !== storedKey;
-  if (positionAttr && (input.positionChanged || keyChanged)) {
-    if (positionAttr.array.length === input.position.length) {
+  // The upload ALSO fires when the geometry's last upload covered a vertex count
+  // that differs from this commit's (`countChanged`) — the reveal-ladder counterpart of
+  // `keyChanged`. A ladder level can be superseded (its commit aborted) after
+  // `projectMeshTo3D` already extracted and stamped the loader-owned scratch's
+  // `displayDimsKey`, so the NEXT sweep re-projects the same memoized level with
+  // `positionChanged === false` and an unchanged `positionKey` — neither flag sees
+  // the gap, because both are keyed on `displayDims`, not on how many vertices are
+  // committed. Without this, the index/drawRange advance to the new level while
+  // `position` keeps the previous level's zero-filled tail, so the newly revealed
+  // triangles collapse to the display-space origin (#1522). Like the key, stamped
+  // only where the upload actually runs, so an aborted commit leaves it lagging.
+  const storedVertexCount = geometry.userData.meshUploadedVertexCount as number | undefined;
+  const countChanged = storedVertexCount !== input.vertexCount;
+  if (positionAttr && (input.positionChanged || keyChanged || countChanged)) {
+    // `>=`, not `===`: on a ladder the bound buffer is sized to the node's TOTAL
+    // while `input.position` is the committed prefix, so every level after the
+    // first copies INTO the same buffer instead of rebinding (#1521). For an
+    // unladdered mesh the two are equal and this is the original test.
+    if (positionAttr.array.length >= input.position.length && positionAttr.count > 1) {
       // Already the same buffer when the geometry bound the projection scratch
       // directly (the steady state after the first commit), in which case the copy
       // is a self-copy and only the upload flag matters.
       if (positionAttr.array !== input.position) {
         (positionAttr.array as Float32Array).set(input.position);
       }
+      // Bound the upload to the prefix actually written — mirrors
+      // `applyMeshIndices`. An empty update-range list means "upload the
+      // whole capacity-sized buffer" on the classic WebGL path, so never
+      // flag an update without adding a range.
+      positionAttr.clearUpdateRanges();
+      positionAttr.addUpdateRange(0, input.position.length);
       positionAttr.needsUpdate = true;
     } else {
-      // A length change on a LIVE node means the vertex count changed, which the
+      // A length change on a LIVE node means the vertex count changed, which a
       // whole-node loader never does — warn and rebind rather than silently
-      // truncate. The 1-vertex placeholder growing to the real buffer is the
-      // expected first commit of every mesh, not an anomaly, so it stays quiet.
-      if (positionAttr.count !== 1) {
+      // truncate. Two expected cases stay quiet: the 1-vertex placeholder growing
+      // to the real buffer (the first commit of every mesh), and a reveal ladder,
+      // whose every level genuinely adds vertices (`vertexCountGrows`).
+      if (positionAttr.count !== 1 && input.vertexCountGrows !== true) {
         log.warning(
           Modules.SCENE_LOADER,
           `Mesh position length changed (${positionAttr.array.length} -> ${input.position.length}); rebinding`
         );
       }
-      geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
+      geometry.setAttribute(
+        'position',
+        new THREE.BufferAttribute(
+          atCapacity(input.position, 3, input.vertexCount, capVertices),
+          3,
+          false
+        )
+      );
       // A new attribute object → three's cached WebGPU RenderObject is now stale.
       attributesRebuilt = true;
     }
@@ -510,25 +837,35 @@ export function updateMeshGeometry(
     // the next real commit's `keyChanged` still fires. Only when a key was provided, so
     // the placeholder factory / unit-test callers stay byte-identical to before.
     if (input.positionKey !== undefined) geometry.userData.meshUploadedKey = input.positionKey;
+    // Same idea for the count: stamped here, not before, so a superseded commit that
+    // never reaches this line leaves `countChanged` true for the next real one.
+    geometry.userData.meshUploadedVertexCount = input.vertexCount;
   }
 
-  // Install the `color` attribute exactly once, on the first commit. The node is
-  // born with the 1-vertex placeholder color from `createEmptyMeshNode`
-  // (`colors: null, vertexCount: 1`), so without this the authored per-vertex
-  // colors would never bind and an indexed draw would fetch `color` out of bounds
-  // (black under WebGL2 robust access; a pipeline-validation failure on WebGPU).
+  // Install the `color` attribute on the first commit, then REFRESH it in place on
+  // every later commit that carries authored colors. The node is born with the
+  // 1-vertex placeholder color from `createEmptyMeshNode` (`colors: null,
+  // vertexCount: 1`), so without the install the authored per-vertex colors would
+  // never bind and an indexed draw would fetch `color` out of bounds (black under
+  // WebGL2 robust access; a pipeline-validation failure on WebGPU). Without the
+  // refresh, a reveal ladder's later levels would keep whatever the buffer held at
+  // install time: `color` is bound at the node's full `capVertices` from the first
+  // commit (#1521), so `count` is capVertices on every level and can no longer
+  // distinguish "installed" from "installed, but still holding an earlier level's
+  // prefix" — the vertices a later level reveals would keep the zero-filled slot
+  // they were born with, which for `uint8`/`uint16` RGB or ANY RGBA mesh zeroes
+  // `vAlpha` (the mesh's entire coverage term) and makes the revealed surface
+  // invisible (#1522).
   //
-  // Keyed off `vertexCount` PLUS an explicit installed marker: the placeholder is
-  // 1-vertex (`colorAttr.count === 1`) and a real drawable mesh has N vertices, so
-  // `count !== vertexCount` catches the first commit of every mesh with more than
-  // one vertex — but a 1-VERTEX mesh with authored colors matches the placeholder's
-  // count and would keep the placeholder white forever on the count test alone.
-  // `userData.meshColorsInstalled` (stamped here and by `createMeshGeometry` when
-  // authored colors are bound) closes that hole while keeping the color buffer
-  // uploaded-once on every subsequent slice move (the no-compaction doctrine — only
-  // the index rebuilds on a slice move). Note `projectMeshTo3D` reuses one loader
-  // `position` buffer, so color must NOT be tied to position identity — that would
-  // re-upload color whenever position does.
+  // Install is still keyed off `vertexCount` PLUS an explicit marker: the
+  // placeholder is 1-vertex (`colorAttr.count === 1`) and a real drawable mesh has
+  // N vertices, so `count !== capVertices` catches the first commit of every mesh
+  // with more than one vertex — but a 1-VERTEX mesh with authored colors matches
+  // the placeholder's count and would keep the placeholder white forever on the
+  // count test alone. `userData.meshColorsInstalled` (stamped here, and by
+  // `createMeshGeometry` when authored colors are bound) closes that hole. Note
+  // `projectMeshTo3D` reuses one loader `position` buffer, so color must NOT be
+  // tied to position identity — that would re-upload color whenever position does.
   //
   // Format stability across the guard: the no-colors default-white path stays
   // `float32x3` at count N — a format-preserving rebind exactly like `position`'s
@@ -536,21 +873,71 @@ export function updateMeshGeometry(
   // non-float32-RGB colors change format ONCE on first install (placeholder
   // `float32x3` → e.g. `unorm8x4`) and never again, so there is no per-rebuild dtype
   // flip — the WebGPU attribute-identity hazard the surrounding code and
-  // `createMeshIndexAttribute` guard against.
+  // `createMeshIndexAttribute` guard against. `refreshMeshColors` re-validates that
+  // same format on every refresh and reports `false` (forcing a rebind) if it ever
+  // disagrees, rather than assuming it silently still holds.
   //
-  // This install rebinds a vertex attribute, so it sets `attributesRebuilt` to
-  // drive the commit's WebGPU RenderObject eviction (see the @returns note).
+  // Only the install rebinds a vertex attribute, so only it sets
+  // `attributesRebuilt` to drive the commit's WebGPU RenderObject eviction (see
+  // the @returns note) — a refresh writes into the SAME buffer.
   const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
   const authoredColorsPending =
     input.colors !== null && geometry.userData.meshColorsInstalled !== true;
-  if (!colorAttr || colorAttr.count !== input.vertexCount || authoredColorsPending) {
+  if (colorAttr && colorAttr.count === capVertices && !authoredColorsPending) {
+    // The steady state. A `null`-colors epoch needs nothing: the default-white
+    // fill already spans the whole capacity (`createMeshDefaultColorAttribute`).
+    // An authored epoch refreshes its committed prefix in place, falling back to
+    // a rebind only if the bound attribute's format cannot hold it.
+    if (
+      input.colors !== null &&
+      !refreshMeshColors(
+        geometry,
+        colorAttr,
+        input.colors,
+        input.colorComponents ?? 3,
+        input.vertexCount
+      )
+    ) {
+      geometry.setAttribute(
+        'color',
+        createMeshColorAttribute(
+          input.colors,
+          input.colorComponents ?? 3,
+          input.vertexCount,
+          capVertices
+        )
+      );
+      geometry.userData.meshColorsInstalled = true;
+      stampAttributeCurrency(geometry, 'meshColors', input.colors, input.vertexCount);
+      attributesRebuilt = true;
+    }
+  } else {
     geometry.setAttribute(
       'color',
       input.colors
-        ? createMeshColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
-        : createMeshDefaultColorAttribute(input.vertexCount)
+        ? createMeshColorAttribute(
+            input.colors,
+            input.colorComponents ?? 3,
+            input.vertexCount,
+            capVertices
+          )
+        : createMeshDefaultColorAttribute(input.vertexCount, capVertices)
     );
-    if (input.colors) geometry.userData.meshColorsInstalled = true;
+    if (input.colors) {
+      geometry.userData.meshColorsInstalled = true;
+      stampAttributeCurrency(geometry, 'meshColors', input.colors, input.vertexCount);
+    } else {
+      // Belt-and-braces for a state the loaders currently forbid — colour
+      // presence is a per-node constant and `concatenateMeshData` refuses a
+      // ladder whose levels disagree, so this rebind is never reached with a
+      // stale AUTHORED stamp today. Clearing it anyway means a hypothetical
+      // later authored commit can never be mistaken for "already current"
+      // against a source array that installed the white default's rebind, not
+      // a colour.
+      geometry.userData.meshColorsInstalled = false;
+      delete geometry.userData.meshColorsSource;
+      delete geometry.userData.meshColorsCount;
+    }
     attributesRebuilt = true;
   }
 
@@ -563,14 +950,18 @@ export function updateMeshGeometry(
   // and never rebuilds. Conversely a frame change that makes stored normals
   // meaningless must NOT unbind them: the shader variant stops reading the
   // attribute instead (§3.4, and `MeshGeometryConfig.normals`).
-  if (replaceVertexAttribute(geometry, 'normal', input.normals, 3, input.vertexCount)) {
+  if (
+    replaceVertexAttribute(geometry, 'normal', input.normals, 3, input.vertexCount, capVertices)
+  ) {
     attributesRebuilt = true;
   }
-  if (replaceVertexAttribute(geometry, 'aScalar', input.scalars, 1, input.vertexCount)) {
+  if (
+    replaceVertexAttribute(geometry, 'aScalar', input.scalars, 1, input.vertexCount, capVertices)
+  ) {
     attributesRebuilt = true;
   }
 
-  applyMeshIndices(geometry, input.indices, input.vertexCount, input.faceCount);
+  applyMeshIndices(geometry, input.indices, capVertices, capFaces);
 
   // Bounds track the VISIBLE set, so they refresh on EVERY epoch — a slice move
   // changes which vertices are indexed even when `position` is untouched. Cheap: the

@@ -421,6 +421,33 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   }
 
   /**
+   * {@link updateView}, plus whether the mesh was already in hand.
+   *
+   * Exists for one caller: `MeshProgressiveLoader` (`./mesh-progressive-loader`),
+   * whose streaming loop
+   * asks each level "was that cheap?" to decide whether to keep going this pass
+   * or leave the rest to a later one (`streaming-policy.ts`). The three sibling
+   * progressive loaders call the identically named method on their spatial-index
+   * sub-loaders, so the ladder loop is the same shape for all four types.
+   *
+   * `allResident` reads the loader's OWN decode cache rather than the chunk
+   * cache the siblings report, because that is where the cost actually is here:
+   * a whole-node level either has been fetched and decoded (free to re-serve) or
+   * has not (a full network read). Sampled BEFORE the await, so a level that this
+   * very call fetches reports `false` — reporting the post-fetch state would say
+   * "resident" for every level and defeat the refine pass's stop rule.
+   */
+  async updateViewWithResidency(
+    viewState: MeshViewState,
+    session?: UpdateSession,
+    signal?: AbortSignal
+  ): Promise<{ data: LoadedMeshData; allResident: boolean }> {
+    const allResident = this.data !== null;
+    const data = await this.updateView(viewState, session, signal);
+    return { data, allResident };
+  }
+
+  /**
    * Clear all cached state.
    *
    * State-clearing rather than terminal, matching the sibling loaders (the points

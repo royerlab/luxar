@@ -181,7 +181,7 @@ def run_batch_run(
         None, "--merge-n-lods", rich_help_panel="Merge LOD"
     ),
     merge_additive_method: Optional[str] = typer.Option(
-        None, "--merge-additive-method", rich_help_panel="Merge LOD"
+        None, "--merge-add-method", rich_help_panel="Merge LOD"
     ),
     merge_breakpoints: Optional[str] = typer.Option(
         None, "--merge-breakpoints", rich_help_panel="Merge LOD"
@@ -202,7 +202,7 @@ def run_batch_run(
         None, "--merge-levels", rich_help_panel="Merge LOD"
     ),
     merge_substitutive_method: Optional[str] = typer.Option(
-        None, "--merge-substitutive-method", rich_help_panel="Merge LOD"
+        None, "--merge-subst-method", rich_help_panel="Merge LOD"
     ),
     merge_coarsen_dims: Optional[str] = typer.Option(
         None, "--merge-coarsen-dims", rich_help_panel="Merge LOD"

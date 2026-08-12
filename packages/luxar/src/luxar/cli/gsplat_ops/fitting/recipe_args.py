@@ -55,7 +55,7 @@ def build_fit_recipe_params(
     # which raises on irrelevant options rather than silently dropping them).
     additive_only = {
         "--n-lods": n_lods,
-        "--additive-method": additive_method,
+        "--add-method": additive_method,
         "--breakpoints": breakpoints,
         "--target-ms": target_ms,
         "--bandwidth-mbps": bandwidth_mbps,
@@ -64,7 +64,7 @@ def build_fit_recipe_params(
     substitutive_only = {
         "--compression-factor": compression_factor,
         "--levels": levels,
-        "--substitutive-method": substitutive_method,
+        "--subst-method": substitutive_method,
         "--coarsen-dims": coarsen_dims,
     }
     irrelevant = substitutive_only if recipe == "stream" else additive_only
@@ -79,13 +79,13 @@ def build_fit_recipe_params(
     add_norm = (additive_method or "auto").strip().replace("-", "_")
     if add_norm not in VALID_ADDITIVE_METHODS:
         raise typer.BadParameter(
-            f"--additive-method must be one of {list(VALID_ADDITIVE_METHODS)}; "
+            f"--add-method must be one of {list(VALID_ADDITIVE_METHODS)}; "
             f"got {additive_method!r}"
         )
     sub_norm = (substitutive_method or "auto").strip().replace("-", "_")
     if sub_norm not in VALID_SUBSTITUTIVE_METHODS:
         raise typer.BadParameter(
-            f"--substitutive-method must be one of "
+            f"--subst-method must be one of "
             f"{list(VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
         )
     validate_streaming_knobs(target_ms, bandwidth_mbps, bytes_per_splat, breakpoints)
