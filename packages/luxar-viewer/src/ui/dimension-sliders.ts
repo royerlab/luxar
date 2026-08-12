@@ -1250,12 +1250,15 @@ export class DimensionSliders {
     });
 
     let presetMatched = currentStepOverride === null;
-    // A discrete dimension cannot honour a sub-cell quantum — the animation
-    // step is quantized to the authored grid with a one-cell floor (#1520),
-    // so ×0.5 and ×1 would behave identically. Offer only whole-cell
-    // multipliers there.
+    // A discrete dimension cannot honour a quantum below one grid cell —
+    // the animation step is quantized to the authored grid with a one-cell
+    // floor (#1520) — so only offer presets whose VALUE reaches a cell.
+    // Compare values, not multipliers: with no authored step the base falls
+    // back to 1% of the range, so a sub-1 multiplier can still be several
+    // grid cells (the epsilon absorbs the float product).
+    const gridStep = meta?.step && meta.step > 0 ? meta.step : 1;
     const stepMultipliers = config.dimensionAnimation.presets.stepMultipliers.filter(
-      (m) => !meta?.discrete || m >= 1
+      (m) => !meta?.discrete || baseStep * m >= gridStep * (1 - 1e-9)
     );
     for (const m of stepMultipliers) {
       const value = baseStep * m;

@@ -639,6 +639,39 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
+  it('a discrete dim with NO authored step keeps sub-1 multipliers whose value reaches a cell', () => {
+    const container = document.getElementById('test-container')!;
+    const dims = createDims();
+    // No authored step → the menu's base falls back to 1% of the range
+    // (10), while the snap grid defaults to 1. ×0.1 of 10 = 1 = one full
+    // cell — a perfectly honorable quantum that must NOT be filtered.
+    dims.metadata![3] = { name: 'W', unit: '', scale: 1.0, discrete: true, range: [0, 1000] };
+    const sliders = new DimensionSliders({
+      container,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 1000],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'W'],
+      dimensionUnits: ['μm', 'μm', 'μm', ''],
+    });
+    const stub = makeAnimationManagerStub();
+    sliders.setAnimationManager(stub as never);
+
+    const playBtn = document.querySelector('.luxar-dimension-slider__play-btn')!;
+    playBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const labels = Array.from(
+      document.querySelectorAll('.luxar-dimension-slider__context-item')
+    ).map((el) => el.textContent ?? '');
+    expect(labels.some((t) => t.includes('×0.1'))).toBe(true); // 10 × 0.1 = 1 cell
+    expect(labels.some((t) => t.includes('×0.5'))).toBe(true); // 10 × 0.5 = 5 cells
+    sliders.dispose();
+  });
+
   it('custom step input commits on Enter; invalid values do not', () => {
     const sliders = buildSliders();
     const stub = makeAnimationManagerStub();
