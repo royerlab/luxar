@@ -483,9 +483,8 @@ becomes drawable; today both sets include `mesh`.
 - `add_mesh(additive_lod=True | {"n_lods": N, …})` → a **reveal** ladder of
   `additive_<i>/` levels inside the leaf, each holding one concentric shell of
   faces, innermost first, so the surface grows outward from its centre as it
-  streams. **Authoring + format only for now**: the viewer's loader factory still
-  refuses a mesh node declaring `n_additive_sublods > 1`, so such a scene does not
-  display until that follow-up ships.
+  streams. The viewer loads one through its own progressive mesh loader, which
+  fetches the levels in order and commits each grown prefix into the same buffers.
 - Progressive writing (data written immediately to Zarr)
 
 **What a mesh does NOT have**, and why the absences are structural rather than

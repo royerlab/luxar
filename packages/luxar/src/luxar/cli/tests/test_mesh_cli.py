@@ -404,7 +404,13 @@ class TestMeshLod:
         Both halves are asserted because either alone is satisfiable by a mistake:
         the pointer without the new flag means nothing works, and the new flag
         without the pointer leaves `-m qem` scripts to fail later against the
-        additive flag `-m` will name once mesh has an additive ladder.
+        additive flag `-m` would name should mesh gain an additive ordering knob.
+
+        BOTH former spellings are exercised. `-m` was a real short form here (unlike
+        on `gsplat lod`, where it survived the rename), so declaring only `--method`
+        on the hidden legacy option sends `-m cluster` to typer's bare "No such
+        option: -m" — no replacement, no value carried, which is exactly what the
+        pointer exists to avoid.
         """
         source = tmp_path / "src.luxar.zarr"
         _write_source(source)
@@ -428,26 +434,30 @@ class TestMeshLod:
             == "lod"
         )
 
-        old = runner.invoke(
-            app,
-            [
-                "mesh",
-                "lod",
-                str(source),
-                str(tmp_path / "old.luxar.zarr"),
-                "--method",
-                "cluster",
-            ],
-        )
-        assert old.exit_code != 0
-        pointer = _plain(old.output)
-        assert "--subst-method cluster" in pointer, pointer
-        # The pointer must NOT send a mesh user to `--add-method`: that is the
-        # gsplat replacement for the bare flag, and mesh's bare `--method` was
-        # the substitutive one. Asserted on the normalised text, or Rich's
-        # escape codes make the absence unfalsifiable — see `_plain`.
-        assert "--add-method" not in pointer, pointer
-        assert not (tmp_path / "old.luxar.zarr").exists()
+        for spelling, stem in (("--method", "old"), ("-m", "old_short")):
+            old = runner.invoke(
+                app,
+                [
+                    "mesh",
+                    "lod",
+                    str(source),
+                    str(tmp_path / f"{stem}.luxar.zarr"),
+                    spelling,
+                    "cluster",
+                ],
+            )
+            assert old.exit_code != 0
+            pointer = _plain(old.output)
+            assert "--subst-method cluster" in pointer, pointer
+            # A bare "No such option" would also be a non-zero exit, so assert the
+            # replacement AND that typer never got to reject the flag itself.
+            assert "No such option" not in pointer, pointer
+            # The pointer must NOT send a mesh user to `--add-method`: that is the
+            # gsplat replacement for the bare flag, and mesh's bare `--method` was
+            # the substitutive one. Asserted on the normalised text, or Rich's
+            # escape codes make the absence unfalsifiable — see `_plain`.
+            assert "--add-method" not in pointer, pointer
+            assert not (tmp_path / f"{stem}.luxar.zarr").exists()
 
     def test_overwrite_DOES_replace_an_existing_output(self, tmp_path: Path) -> None:
         # The twin of the test above, and the one that keeps the deletion honest:

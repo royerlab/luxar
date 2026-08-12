@@ -717,11 +717,18 @@ def lod_command(
     # before the body runs, so an undeclared flag is undiagnosable).
     #
     # Mesh needs the pointer MORE than gsplat does, and for a reason unique to it:
-    # `-m` is not merely gone, it is RESERVED — Stage 12 gives mesh an additive
-    # ladder and with it `-m/--add-method`, matching gsplat. So a script that says
-    # `-m qem` will, after that lands, be naming the additive-ordering flag with a
+    # `-m` is not merely gone, it is RESERVED — should mesh ever gain an additive
+    # ordering knob it would be `-m/--add-method`, matching gsplat. So a script that
+    # says `-m qem` would, after that, be naming the additive-ordering flag with a
     # decimation value. Typer's own "No such option: -m" says nothing about that.
-    legacy_method: Optional[str] = typer.Option(None, "--method", hidden=True),
+    #
+    # BOTH former spellings are declared on the one option, because both were real:
+    # `mesh lod` took `-m/--method` until the rename. `gsplat lod` declares only the
+    # long form for its pair, and correctly so — there `-m` still exists and still
+    # means the additive method, so it needs no pointer. Here it is gone, and an
+    # undeclared short form gets typer's bare "No such option" instead of the
+    # migration pointer this whole option exists to raise.
+    legacy_method: Optional[str] = typer.Option(None, "--method", "-m", hidden=True),
 ) -> None:
     """Build a substitutive LOD ladder for a mesh scene.
 
@@ -755,8 +762,8 @@ def lod_command(
     # which is precisely the collision this rename removes from the flag surface.
     if legacy_method is not None:
         raise typer.BadParameter(
-            "--method was renamed to --subst-method (2026-08: no method flag is "
-            "bare, and -m is reserved for the additive ordering, as on "
+            "--method / -m was renamed to --subst-method (2026-08: no method flag "
+            "is bare, and -m is reserved for the additive ordering, as on "
             f"`gsplat lod`); use --subst-method {legacy_method}."
         )
     try:

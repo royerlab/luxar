@@ -1,6 +1,6 @@
 # Mesh Node Specification
 
-**Status:** Delivered — Phases 0–6 landed (writer, cull kernels, drawable, shaded, picking + panel + stats, docs; §11); real WebGPU verified pixel-equivalent to WebGL (§11 row 6). `kind=partition` (§9.2), SUBSTITUTIVE LOD levels (§9) and the §9.1 reveal ladder (authoring; the viewer half is in flight) all now ship. The additive prefix ladder AS A LOD, spatial indexing, exact nD triangle clipping, `volumetric` blending and worker projection remain deliberate non-goals (§9).
+**Status:** Delivered — Phases 0–6 landed (writer, cull kernels, drawable, shaded, picking + panel + stats, docs; §11); real WebGPU verified pixel-equivalent to WebGL (§11 row 6). `kind=partition` (§9.2), SUBSTITUTIVE LOD levels (§9) and the §9.1 reveal ladder (authoring AND the viewer half) all now ship. The additive prefix ladder AS A LOD, spatial indexing, exact nD triangle clipping, `volumetric` blending and worker projection remain deliberate non-goals (§9).
 **Scope:** A fourth first-class geometry type — `mesh` — symmetric to Points, Lines and GSplats.
 **Non-goals:** the additive prefix ladder as a LOD (the §9.1 reveal, which reuses its subgroup layout, has landed), spatial indexing, exact nD triangle clipping, `volumetric` blending, worker projection. (Substitutive LOD levels — decimation — and `kind=partition` were non-goals and have since landed.) See [§9](#9-explicitly-out-of-scope).
 **Target data:** isosurfaces and segmentation boundaries — 3D geometry whose hidden dimensions are
@@ -1661,8 +1661,9 @@ curve. Measured at 4 levels, reveal vs random over the same faces: 288-face plan
 under the radius sort — the connectivity fix is what moved them).
 
 Authoring landed with `add_mesh(additive_lod=…)` and `write_mesh_multi_lod`; the viewer's
-progressive mesh loader is the second half, and until it lands
-`createProgressiveMeshLoader` still rejects a mesh node declaring `n_additive_sublods > 1`.
+second half landed with it — `createProgressiveMeshLoader` opens a mesh node declaring
+`n_additive_sublods > 1` and `MeshProgressiveLoader` fetches its levels in order,
+concatenating each revealed prefix into the buffers the node was sized for.
 Labels are cleared on a laddered mesh — one source vertex maps into every level that touches
 it, so a union CSR spanning levels has no well-defined index space; `substitutive_lod=` and
 `partition=` both keep theirs.

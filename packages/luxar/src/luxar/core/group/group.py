@@ -404,13 +404,9 @@ class Group(Node):
         Points and Lines compose both. See
         :func:`luxar.core.group.lod.mesh.resolve_additive_axis_mesh`.
 
-        .. warning::
-           **Viewer support for a mesh reveal ladder has not landed yet.** The
-           viewer's loader factory deliberately REFUSES a mesh node declaring
-           ``n_additive_sublods > 1`` (so a store cannot quietly render only its
-           coarsest shell), so a scene authored with ``additive_lod=`` on a mesh
-           does not display until that follow-up ships. The writer, the format and
-           the Python reader are complete.
+        The viewer half ships too: a mesh node declaring ``n_additive_sublods > 1``
+        is loaded by its own progressive loader, which fetches the levels in order
+        and commits each grown prefix into the same buffers.
 
         Not supported for meshes (raises rather than silently degrading):
         ``blending_mode='volumetric'`` — a zero-thickness surface has no path length

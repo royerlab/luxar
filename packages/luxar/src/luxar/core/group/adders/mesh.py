@@ -134,11 +134,11 @@ def _reject_structure_params(name: str, attrs: Dict[str, Any]) -> None:
 def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
     """Refuse ``blending_mode='volumetric'`` on a mesh (spec §9).
 
-    The other §9 exclusions are refused already — the additive ladder by
-    :func:`_reject_structure_params` and by the viewer's progressive-loader
-    factory, a mismatched partition parent by the shared
-    ``reject_mismatched_partition_parent`` — but this one was documented and never
-    enforced, so a volumetric mesh wrote and loaded cleanly.
+    The other §9 exclusions are refused already — an additive ladder that is not a
+    pure reveal by ``MESH_ADDITIVE_METHODS`` and
+    :func:`_reject_additive_lod_compositions`, a mismatched partition parent by the
+    shared ``reject_mismatched_partition_parent`` — but this one was documented and
+    never enforced, so a volumetric mesh wrote and loaded cleanly.
 
     It cannot mean anything. Volumetric blending is emission-absorption integration
     through a participating medium: the shader scales each element's contribution by

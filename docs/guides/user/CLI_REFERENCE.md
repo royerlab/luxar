@@ -191,9 +191,9 @@ or `cluster`, because a mesh is decimated where a gsplat level reduces a Gaussia
 which a surface is not. `auto` resolves to `cluster` today.
 
 The flag was called `--method` before August 2026, and `-m` was its short form. Both are
-gone: `-m` is reserved for the additive ordering it names on `gsplat lod`, which mesh will
-gain with its own progressive ladder. The old spelling exits with a pointer rather than
-silently doing something else.
+gone: `-m` is reserved for the additive ordering it already names on `gsplat lod`. Either
+old spelling exits with a pointer naming the replacement and carrying your value, rather
+than silently doing something else.
 
 Levels that cannot reduce the surface are dropped, so a small mesh may come back with
 fewer than `--levels`; one that cannot be reduced at all comes back as a plain leaf
