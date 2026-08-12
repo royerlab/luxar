@@ -753,7 +753,7 @@ def lod_command(
       luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr
       luxar mesh lod scan.luxar.zarr scan_lod.luxar.zarr -L 4 -K 3
       luxar mesh lod multi.luxar.zarr out.luxar.zarr --node surfaces/skull
-      luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr --subst-method qem
+      luxar mesh lod bunny.luxar.zarr bunny_lod.luxar.zarr --subst-method cluster
     """
     # NOT routed through `LEGACY_METHOD_FLAGS`, deliberately: that table maps
     # `--method` → `--add-method`, which is right for every gsplat surface and
