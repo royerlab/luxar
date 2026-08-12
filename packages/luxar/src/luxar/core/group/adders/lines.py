@@ -26,10 +26,12 @@ from arbol import aprint
 from ...lines import Lines
 from ..compositing import (
     COMPOSITING_ATTRS,
+    funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     slice_optional_array,
     sync_custom_colormap_attr,
+    unnest_add_error,
     validate_line_indices_before_split,
     validate_lines_channels_before_split,
 )
@@ -452,8 +454,14 @@ def add_lines_impl(
             **attrs,
         )
     except (ValueError, TypeError) as e:
-        aprint(f"Failed to add lines node '{name}': {e}")
-        raise ValueError(f"Could not add lines '{name}': {e}") from e
+        # Un-nest BEFORE printing too, or arbol still echoes an internal
+        # child name (`part_0`) that the raised exception no longer names
+        # (#1491) — see funnel_add_error. A cross-geometry inner prefix (a
+        # substitutive_lod= gsplats child) is deliberately left alone by
+        # funnel_add_error, so it stays visible here too.
+        inner = unnest_add_error("lines", name, e)
+        aprint(f"Failed to add lines node '{name}': {inner}")
+        raise ValueError(funnel_add_error("lines", name, e)) from e
 
 
 def _collect_partition_vertex_indices(
@@ -954,6 +962,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        image_labels=image_labels,
     )
 
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
