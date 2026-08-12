@@ -1471,8 +1471,6 @@ def test_every_method_named_in_the_help_EXAMPLES_is_a_real_method() -> None:
     the one place a wrong method name costs a user a round trip instead of a type
     error, which is why it gets a test and the prose does not.
     """
-    import re
-
     from luxar.cli.mesh_ops.lod_commands import lod_command
     from luxar.core.group.lod.group import MESH_SUBSTITUTIVE_METHODS
 
@@ -1480,8 +1478,12 @@ def test_every_method_named_in_the_help_EXAMPLES_is_a_real_method() -> None:
     # docstring, and that is where the examples live. Reading the wrong one made
     # the regex match nothing — which the emptiness guard below caught rather
     # than letting `set() - valid` pass as "no invalid methods".
+    #
+    # `[\s=]+`, not `\s+`: `--subst-method=qem` is the same command line, and with
+    # a space-only pattern it slips past a growing examples block unseen (the
+    # emptiness guard only catches it while it is the ONLY example).
     doc = lod_command.__doc__ or ""
-    named = set(re.findall(r"--subst-method\s+(\S+)", doc))
+    named = set(re.findall(r"--subst-method[\s=]+(\S+)", doc))
     assert named, "no --subst-method example found — did the examples block move?"
     invalid = named - set(MESH_SUBSTITUTIVE_METHODS)
     assert not invalid, (
