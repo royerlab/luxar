@@ -38,7 +38,7 @@ nothing is visible. A separate half-space test pins the property none of the
 above can see when it breaks on both backends at once: with the bisector cuts
 active, each side of a joint decodes to exactly its own segment id.
 
-## The capsule pick pass (#1352, behind `?linePrimitive=capsule`)
+## The capsule pick pass (#1352 — the default since the flip)
 
 Same dispatch, third variant. The capsule pick shaders duplicate the visual
 capsule's vertex stage exactly — stencil-local corners, half-disc bisector

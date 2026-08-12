@@ -698,8 +698,8 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
 - `?perf-timestamp` — Enable WebGPU timestamp-query profiling for performance tests
 - `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to `[0.25, native]`) and lock adaptive resolution off
-- `?lineJoin=<none|miter>` — Force the line join style for the session, overriding each node's authored `join` attribute
-- `?linePrimitive=<screen-space|volumetric>` — Select the line rendering primitive for the session (#1352): `volumetric` draws each segment as its true 3D density (exact end-on, bisector-cut joints — the stencil truncates the miter past a 90° turn); default `screen-space`
+- `?lineJoin=<none|miter>` — Force the line join style for the session; applies only to `linePrimitive=screen-space` (the default capsule partitions joints unconditionally; scheduled for removal)
+- `?linePrimitive=<capsule|screen-space|volumetric>` — Select the line rendering primitive for the session (#1352); default `capsule` (gaussian-like 2D point-to-segment profile: stable end-on discs, seamless partitioned joints, quad-class cost). The legacy `screen-space` quad and the exact-but-slow `volumetric` remain selectable until their scheduled removal
 - `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded
 - `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari)
 
