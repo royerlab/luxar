@@ -15,7 +15,12 @@ export const uiConfig: UIConfig = {
     loading: 1000, // Loading indicator
     error: 1000, // Error messages
     help: 1001, // Help overlay (above errors)
-    renderingControls: 1999, // Rendering controls panel (top of mid-layer)
+    // The three left-DOCKED panels live below the control rail (modal - 2 in
+    // control-rail.css): the rail's hover tooltips extend rightward OVER the
+    // docked panel, and a panel above the rail buries them. The dock is
+    // exclusive (one panel at a time from the rail), so only the deliberate
+    // keyboard-stacking order matters between them.
+    renderingControls: 1600, // Rendering controls panel (top of the dock)
     recordingPanel: 1500, // Recording panel (screenshot/video capture)
     layersPanel: 1500, // Layers panel (per-node controls)
 

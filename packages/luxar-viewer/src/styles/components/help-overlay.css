@@ -89,6 +89,19 @@
   padding-left: var(--luxar-spacing-8);
 }
 
+/* Pinned filter row (shared .luxar-panel-filter recipe). */
+.luxar-help-overlay__filter {
+  flex-shrink: 0;
+  padding: 0 var(--luxar-spacing-8) var(--luxar-spacing-3);
+}
+
+.luxar-help-overlay__no-matches {
+  text-align: center;
+  padding: var(--luxar-spacing-10);
+  color: var(--luxar-text-muted);
+  font-size: var(--luxar-text-sm);
+}
+
 /* Sections */
 .luxar-help-overlay__section {
   margin-bottom: var(--luxar-spacing-6);

@@ -24,6 +24,7 @@ const UI_CONFIG = config.ui;
 
 let activeHelpClickHandler: ((event: MouseEvent) => void) | null = null;
 let activeHelpClickTimer: ReturnType<typeof setTimeout> | null = null;
+let activeHelpFilterFocusTimer: ReturnType<typeof setTimeout> | null = null;
 let activeHelpFocusTrapRelease: (() => void) | null = null;
 
 /** One shortcut row: chip text(s) + what they do. */
@@ -150,7 +151,7 @@ export function showHelpOverlay() {
 
   const helpDiv = document.createElement('div');
   helpDiv.id = 'luxar-help-overlay';
-  helpDiv.className = 'luxar-help-overlay luxar-glass-surface';
+  helpDiv.className = 'luxar-help-overlay luxar-glass-surface luxar-panel-pop';
   helpDiv.setAttribute('role', 'dialog');
   helpDiv.setAttribute('aria-modal', 'true');
   helpDiv.setAttribute('aria-labelledby', 'luxar-help-overlay-title');
@@ -175,6 +176,24 @@ export function showHelpOverlay() {
 
   header.appendChild(title);
   header.appendChild(closeBtn);
+
+  // Type-to-filter across shortcut keys + descriptions (pinned under the
+  // header, outside the scroll area). Sections with no surviving rows hide.
+  const filterWrap = document.createElement('div');
+  filterWrap.className = 'luxar-help-overlay__filter luxar-panel-filter';
+  const filterIcon = document.createElement('span');
+  filterIcon.className = 'luxar-panel-filter__icon';
+  filterIcon.innerHTML =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L21 21"/></svg>';
+  filterIcon.setAttribute('aria-hidden', 'true');
+  const filterInput = document.createElement('input');
+  filterInput.type = 'text';
+  filterInput.className = 'luxar-panel-filter__input';
+  filterInput.placeholder = 'Filter shortcuts…';
+  filterInput.setAttribute('aria-label', 'Filter keyboard shortcuts');
+  filterInput.autocomplete = 'off';
+  filterWrap.appendChild(filterIcon);
+  filterWrap.appendChild(filterInput);
 
   const controlsList = document.createElement('div');
   controlsList.className = 'luxar-help-overlay__sections';
@@ -240,6 +259,46 @@ export function showHelpOverlay() {
   }
   controlsList.appendChild(tipsEl);
 
+  // Empty-state note for the filter (hidden until a query matches nothing).
+  const noMatches = document.createElement('div');
+  noMatches.className = 'luxar-help-overlay__no-matches';
+  noMatches.textContent = 'No shortcuts match.';
+  noMatches.style.display = 'none';
+  controlsList.appendChild(noMatches);
+
+  const applyHelpFilter = (): void => {
+    const q = filterInput.value.trim().toLowerCase();
+    let anyVisible = false;
+    for (const section of Array.from(
+      controlsList.querySelectorAll<HTMLElement>('.luxar-help-overlay__section')
+    )) {
+      let sectionVisible = false;
+      for (const item of Array.from(
+        section.querySelectorAll<HTMLElement>('.luxar-help-overlay__row, .luxar-help-overlay__tip')
+      )) {
+        const match = !q || (item.textContent ?? '').toLowerCase().includes(q);
+        item.style.display = match ? '' : 'none';
+        if (match) sectionVisible = true;
+      }
+      section.style.display = sectionVisible ? '' : 'none';
+      if (sectionVisible) anyVisible = true;
+    }
+    noMatches.style.display = anyVisible ? 'none' : '';
+  };
+  filterInput.addEventListener('input', applyHelpFilter);
+  // Keystrokes stay local (typing 'v' must not switch camera modes). Escape
+  // with a query clears it; an empty Escape falls through and closes the
+  // overlay as before.
+  filterInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && filterInput.value) {
+      e.stopPropagation();
+      filterInput.value = '';
+      applyHelpFilter();
+      return;
+    }
+    if (e.key !== 'Escape' && e.key !== 'Tab') e.stopPropagation();
+  });
+
   // Add footer note
   const footerNote = document.createElement('div');
   footerNote.className = 'luxar-help-overlay__footer';
@@ -254,6 +313,7 @@ export function showHelpOverlay() {
   scrollWrapper.appendChild(footerNote);
 
   helpDiv.appendChild(header);
+  helpDiv.appendChild(filterWrap);
 
   helpDiv.appendChild(scrollWrapper);
 
@@ -284,6 +344,13 @@ export function showHelpOverlay() {
 
   // Trap focus within the help overlay
   activeHelpFocusTrapRelease = trapFocus(helpDiv);
+  // Hand initial focus to the filter (registered after the trap's own 0ms
+  // first-focusable timer, so this one wins). Tracked so hideHelpOverlay can
+  // cancel it — an untracked pending timer is the G17 leak class.
+  activeHelpFilterFocusTimer = setTimeout(() => {
+    activeHelpFilterFocusTimer = null;
+    filterInput.focus();
+  }, 0);
 
   // Add global click listener after a short delay to prevent immediate closure.
   // Capture the timer identity so an obsolete callback cannot clear or attach
@@ -313,6 +380,10 @@ export function hideHelpOverlay() {
   if (activeHelpClickTimer !== null) {
     clearTimeout(activeHelpClickTimer);
     activeHelpClickTimer = null;
+  }
+  if (activeHelpFilterFocusTimer !== null) {
+    clearTimeout(activeHelpFilterFocusTimer);
+    activeHelpFilterFocusTimer = null;
   }
 
   // Release focus trap before removing element
