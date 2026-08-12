@@ -510,7 +510,7 @@ describe('LOD Refinement tree', () => {
       count,
       lastMs: 4.2,
       avgMs: 5.1,
-      metadata: { splats: 1_000_000, info: '4.0 MB up' },
+      metadata: { elements: 1_000_000, info: '4.0 MB up' },
     });
   }
 
@@ -522,7 +522,7 @@ describe('LOD Refinement tree', () => {
     );
     expect(html).toContain('Depth Sort');
     expect(html).toContain('8 updates · 5 refinement passes · 3 sorts');
-    expect(html).toContain('1.0M splats');
+    expect(html).toContain('1.0M elements');
     expect(html).toContain('4.0 MB up');
   });
 
