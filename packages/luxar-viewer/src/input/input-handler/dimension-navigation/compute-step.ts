@@ -51,7 +51,11 @@ export function computeDimensionStep(
   direction: -1 | 1,
   selectedDimension: number,
   dims: SimpleDims | null | undefined,
-  dimensionRanges: ReadonlyArray<readonly [number, number]> | null | undefined
+  dimensionRanges: ReadonlyArray<readonly [number, number]> | null | undefined,
+  // A lookup (not a raw number) because the target dimension is resolved
+  // INSIDE this helper. Returns the animation menu's per-dimension Step
+  // override, or null for Auto.
+  getStepOverride?: (dimIndex: number) => number | null
 ): DimensionStepResult | null {
   if (!dims || !dimensionRanges) return null;
 
@@ -66,7 +70,13 @@ export function computeDimensionStep(
   const dimMeta = dims.metadata?.[targetDim];
   const [min, max] = dimensionRanges[targetDim];
 
-  const stepSize = calculateStepSize(targetDim, dims);
+  const stepSize = calculateStepSize(
+    targetDim,
+    dims,
+    {},
+    undefined,
+    getStepOverride?.(targetDim) ?? null
+  );
   const isCyclic = dimMeta?.cyclic || false;
   // Discrete positions snap to the dim's declared grid (fractional steps
   // included), not to integers — matching SceneDimsManager's own snap.

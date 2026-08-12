@@ -40,6 +40,10 @@ export const DEFAULT_NAV_CONFIG: NavigationConfig = {
  * @param dims - Complete dimension configuration including metadata
  * @param modifiers - Keyboard modifier state for fine/coarse control
  * @param config - Navigation configuration (step multipliers, etc.)
+ * @param overrideStep - User-set per-dimension step (the animation menu's
+ *          Step override). A finite positive value REPLACES the base
+ *          derivation (authored step / 1% of range); modifiers and the
+ *          discrete grid quantization still apply on top.
  * @returns Step size for navigation, guaranteed positive and at least one
  *          grid cell (`meta.step`, default 1) for discrete dims
  */
@@ -47,13 +51,16 @@ export function calculateStepSize(
   dimIndex: number,
   dims: SimpleDims,
   modifiers: { shift?: boolean; ctrl?: boolean; alt?: boolean } = {},
-  config: NavigationConfig = DEFAULT_NAV_CONFIG
+  config: NavigationConfig = DEFAULT_NAV_CONFIG,
+  overrideStep?: number | null
 ): number {
   const meta = dims.metadata?.[dimIndex];
 
   // Get base step size
   let stepSize: number;
-  if (meta?.step) {
+  if (overrideStep != null && Number.isFinite(overrideStep) && overrideStep > 0) {
+    stepSize = overrideStep;
+  } else if (meta?.step) {
     stepSize = meta.step;
   } else if (meta?.range) {
     // Calculate step as percentage of range

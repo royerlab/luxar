@@ -416,6 +416,22 @@
   color: var(--luxar-highlight);
 }
 
+/* Custom step-size field in the context menu's Step section. */
+.luxar-dimension-slider__context-step-input {
+  width: 72px;
+  background: var(--luxar-bg-primary);
+  color: var(--luxar-text-primary);
+  border: 1px solid var(--luxar-border-subtle);
+  border-radius: var(--luxar-radius-sm);
+  font-size: var(--luxar-text-sm);
+  padding: 2px var(--luxar-spacing-2);
+}
+
+.luxar-dimension-slider__context-step-input:focus {
+  outline: none;
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
+}
+
 .luxar-dimension-slider__context-radio {
   font-size: var(--luxar-text-sm);
   line-height: 1;

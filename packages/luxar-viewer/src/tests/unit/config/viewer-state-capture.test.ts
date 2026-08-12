@@ -360,6 +360,17 @@ describe('captureViewerState — animation block', () => {
     });
   });
 
+  it('includes step_size only when the per-dimension override is set', () => {
+    const state = buildState([
+      { isPlaying: false, targetFPS: 10, loopMode: 'loop', direction: 'forward', stepSize: 0.25 },
+      { isPlaying: false, targetFPS: 10, loopMode: 'loop', direction: 'forward' },
+    ]);
+    expect(state.animation![0]).toMatchObject({ step_size: 0.25 });
+    // Auto (absent/null) must stay ABSENT — the exported shape for untouched
+    // overrides is unchanged.
+    expect('step_size' in state.animation![1]).toBe(false);
+  });
+
   it('omits animation entirely when NO dimension has playing/queued state (hasAnyState=false)', () => {
     // [P5] symmetry: source uses an explicit `hasAnyState` flag — if NO
     // dimension reports state, the block must NOT emit an `animation: []`

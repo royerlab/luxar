@@ -1,5 +1,6 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
+import { calculateStepSize } from '../input/input-handler/dimension-navigation/step-math';
 import { getViewerContainer } from '../utils/viewer-container';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';
@@ -750,8 +751,31 @@ export class DimensionSliders {
       }
     };
 
+    // Mouse wheel steps the value by the dimension's BASE step (authored
+    // step, else 1% of range); Shift = fine (÷10). Deliberately DECOUPLED
+    // from the animation menu's Step override — hand stepping stays on the
+    // dimension's own grid (user decision). setDimensionValue is the
+    // authoritative clamp + discrete snap; no cyclic wrap on wheel.
+    const wheelHandler = (event: WheelEvent) => {
+      // preventDefault: don't scroll the page (requires { passive: false }).
+      event.preventDefault();
+      // stopPropagation: the window-level wheel handler (FOV zoom +
+      // animation poke) does not check event targets.
+      event.stopPropagation();
+      const wheelStep = calculateStepSize(dimIndex, this.dims, { shift: event.shiftKey });
+      const direction = event.deltaY < 0 ? 1 : -1; // scroll up = increase
+      // Read the live value, not slider.value — the continuous slider's
+      // 0–1000 integer scale would quantize and drift under fine steps.
+      const live = this.dims.currentStep[dimIndex];
+      sceneDimsManager.setDimensionValue(dimIndex, live + direction * wheelStep);
+    };
+
     this.sliderEvents.on(slider, 'input', inputHandler);
     this.sliderEvents.on(slider, 'keydown', keydownHandler);
+    this.sliderEvents.on(sliderContainer, 'wheel', wheelHandler, { passive: false });
+
+    // Discoverability, matching the layers range-slider's affordance.
+    slider.title = 'Scroll to step (Shift = fine)';
 
     sliderContainer.appendChild(progressBar);
     sliderContainer.appendChild(slider);
@@ -1162,6 +1186,111 @@ export class DimensionSliders {
     });
 
     menu.appendChild(loopSection);
+
+    // Step section: the per-tick quantum for animation AND the [ / ] keys.
+    // Presets are multipliers of the dimension's BASE step (authored step,
+    // else 1% of the range); Auto restores the historical behavior
+    // (continuous: fps-derived range/10s traversal; discrete: authored
+    // step). The slider wheel/drag deliberately do NOT follow this override
+    // — hand stepping stays on the base step.
+    const stepSection = document.createElement('div');
+    stepSection.className = 'luxar-dimension-slider__context-section';
+
+    const stepHeader = document.createElement('div');
+    stepHeader.className = 'luxar-dimension-slider__context-header';
+    stepHeader.textContent = 'Step';
+    stepSection.appendChild(stepHeader);
+
+    const currentStepOverride = this.animationManager?.getStepSize(dimIndex) ?? null;
+    const meta = this.dims.metadata?.[dimIndex];
+    const [rangeMin, rangeMax] = this.dimensionRanges[dimIndex];
+    const baseStep = meta?.step ?? (rangeMax - rangeMin) * 0.01;
+    const unit = this.dimensionUnits[dimIndex] || '';
+    const formatStep = (v: number): string =>
+      Number.isInteger(v) ? String(v) : Number(v.toPrecision(3)).toString();
+
+    const addStepItem = (
+      labelText: string,
+      selected: boolean,
+      onPick: () => void
+    ): HTMLDivElement => {
+      const item = document.createElement('div');
+      item.className = 'luxar-dimension-slider__context-item';
+      if (selected) {
+        item.classList.add('luxar-dimension-slider__context-item--selected');
+      }
+      const radio = document.createElement('span');
+      radio.className = 'luxar-dimension-slider__context-radio';
+      radio.textContent = selected ? '●' : '○';
+      const label = document.createElement('span');
+      label.textContent = labelText;
+      item.appendChild(radio);
+      item.appendChild(label);
+      item.addEventListener('click', onPick);
+      stepSection.appendChild(item);
+      return item;
+    };
+
+    addStepItem('Auto', currentStepOverride === null, () => {
+      this.animationManager?.setStepSize(dimIndex, null);
+      this.closeContextMenu();
+    });
+
+    let presetMatched = currentStepOverride === null;
+    for (const m of config.dimensionAnimation.presets.stepMultipliers) {
+      const value = baseStep * m;
+      const selected =
+        currentStepOverride !== null && Math.abs(currentStepOverride - value) <= value * 1e-6;
+      if (selected) presetMatched = true;
+      addStepItem(`×${m} (${formatStep(value)}${unit ? ` ${unit}` : ''})`, selected, () => {
+        this.animationManager?.setStepSize(dimIndex, value);
+        this.closeContextMenu();
+      });
+    }
+
+    // Custom value row. MUST be a number input, never type=range (the E2E
+    // slider helper indexes input[type=range] inside the slider group), and
+    // number inputs are covered by isTypingInInput, so global shortcuts
+    // ([ ] k …) stay suppressed while typing.
+    const customRow = document.createElement('div');
+    customRow.className = 'luxar-dimension-slider__context-item';
+    const customLabel = document.createElement('span');
+    customLabel.className = 'luxar-dimension-slider__context-radio';
+    customLabel.textContent = presetMatched ? '○' : '●';
+    const customInput = document.createElement('input');
+    customInput.type = 'number';
+    customInput.className = 'luxar-dimension-slider__context-step-input';
+    customInput.min = '0';
+    customInput.step = 'any';
+    customInput.placeholder = 'custom';
+    customInput.setAttribute('aria-label', 'Custom step size');
+    if (!presetMatched && currentStepOverride !== null) {
+      customInput.value = formatStep(currentStepOverride);
+    }
+    // Commit once, on Enter or on blur (blur also fires when the
+    // click-outside close removes the menu, so a typed value is not lost).
+    // Escape closes the menu without committing (document-level handler).
+    let committed = false;
+    const commitCustom = (): void => {
+      if (committed) return;
+      const v = parseFloat(customInput.value);
+      if (Number.isFinite(v) && v > 0) {
+        committed = true;
+        this.animationManager?.setStepSize(dimIndex, v);
+      }
+    };
+    customInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        commitCustom();
+        this.closeContextMenu();
+      }
+    });
+    customInput.addEventListener('blur', commitCustom);
+    customRow.appendChild(customLabel);
+    customRow.appendChild(customInput);
+    stepSection.appendChild(customRow);
+
+    menu.appendChild(stepSection);
 
     // Add to document first (needed to measure height)
     getViewerContainer().appendChild(menu);

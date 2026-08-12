@@ -851,7 +851,11 @@ export class InputHandler {
       direction,
       this.selectedDimension,
       sceneDimsManager.getDims(),
-      sceneDimsManager.getDimensionRanges()
+      sceneDimsManager.getDimensionRanges(),
+      // The animation menu's per-dimension Step override also drives [ / ]
+      // (user decision: one quantum for animation + keyboard; the slider
+      // wheel/drag deliberately stay on the dimension's own base step).
+      (d) => this.animationManager?.getStepSize(d) ?? null
     );
     if (!step || !step.changed) return;
 

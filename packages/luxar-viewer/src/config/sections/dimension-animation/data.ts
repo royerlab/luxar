@@ -8,11 +8,13 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
     targetFPS: 10,
     loop: 'loop' as const,
     direction: 'forward' as const,
+    stepSize: null, // Auto: fps-derived (continuous) / authored step (discrete)
   },
   presets: {
     fps: [1, 2, 5, 10, 15, 30, 60],
     customMin: 0.1,
     customMax: 120,
+    stepMultipliers: [0.1, 0.25, 0.5, 1, 2, 5],
   },
   timing: {
     minFrameTimeMs: 16, // ~60fps absolute max
