@@ -6,7 +6,7 @@
  *
  * Features tested:
  * - Play/pause controls
- * - FPS selection (1, 2, 5, 10, 15, 30, 60 FPS)
+ * - FPS selection (0.5, 1, 2, 5, 10, 15, 30, 60, 120 FPS)
  * - Loop modes (once, loop, bounce)
  * - Keyboard shortcuts (K, Home, End, Shift+arrows)
  * - Animation progress and state

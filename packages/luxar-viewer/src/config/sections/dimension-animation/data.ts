@@ -11,13 +11,13 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
     stepSize: null, // Auto: fps-derived (continuous) / authored step (discrete)
   },
   presets: {
-    fps: [1, 2, 5, 10, 15, 30, 60],
+    fps: [0.5, 1, 2, 5, 10, 15, 30, 60, 120],
     customMin: 0.1,
     customMax: 120,
     stepMultipliers: [0.1, 0.25, 0.5, 1, 2, 5],
   },
   timing: {
-    minFrameTimeMs: 16, // ~60fps absolute max
+    minFrameTimeMs: 8, // ~120fps absolute max (needs a ≥120 Hz display to be reached)
     continuousTraverseSeconds: 10, // Full range in 10s for continuous dims
   },
   ui: {

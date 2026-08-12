@@ -563,9 +563,9 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     const auto = items.find((el) => el.textContent?.includes('Auto'))!;
     expect(auto.classList.contains('luxar-dimension-slider__context-item--selected')).toBe(true);
 
-    // ×2 of base 0.5 → 1.
+    // ×2 of base 0.5 → 1; the computed value lives in the chip tooltip.
     const x2 = items.find((el) => el.textContent?.includes('×2'))!;
-    expect(x2.textContent).toContain('(1)');
+    expect((x2 as HTMLElement).title).toContain('= 1');
     (x2 as HTMLElement).click();
     expect(stub.setStepSize).toHaveBeenCalledWith(3, 1);
     sliders.dispose();

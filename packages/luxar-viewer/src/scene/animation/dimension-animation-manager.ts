@@ -5,7 +5,7 @@
  * Integrates with AnimationController for frame updates and SceneDimsManager for dimension value updates.
  *
  * Features:
- * - FPS-based throttling with presets [1, 2, 5, 10, 15, 30, 60]
+ * - FPS-based throttling with presets [0.5, 1, 2, 5, 10, 15, 30, 60, 120]
  * - Loop modes: once, loop, bounce
  * - Per-dimension animation state
  * - Actual FPS measurement and feedback

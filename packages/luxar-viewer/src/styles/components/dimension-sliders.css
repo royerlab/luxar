@@ -364,7 +364,7 @@
 
 .luxar-dimension-slider__context-menu {
   position: fixed;
-  min-width: 160px;
+  width: 248px;
   background: var(--luxar-bg-secondary);
   border: 1px solid var(--luxar-border-strong);
   border-radius: var(--luxar-radius-md);
@@ -379,50 +379,123 @@
 }
 
 .luxar-dimension-slider__context-section {
-  margin-bottom: var(--luxar-spacing-2);
+  margin-bottom: var(--luxar-spacing-3);
 }
 
 .luxar-dimension-slider__context-section:last-child {
-  margin-bottom: 0;
+  margin-bottom: var(--luxar-spacing-1);
+}
+
+/* Micro-header row: the house §8.3 micro-header (uppercase from CSS —
+   the header TEXT is E2E-pinned) + an optional right-aligned muted
+   readout ('fps' unit, the active step quantum). */
+.luxar-dimension-slider__context-header-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--luxar-spacing-3);
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-1) var(--luxar-spacing-2);
 }
 
 .luxar-dimension-slider__context-header {
-  font-size: var(--luxar-text-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--luxar-spacing-3);
+  font-size: var(--luxar-text-xs);
   font-weight: var(--luxar-font-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--luxar-text-secondary);
-  padding: var(--luxar-spacing-2) var(--luxar-spacing-3);
-  margin-bottom: var(--luxar-spacing-1);
-  border-bottom: 1px solid var(--luxar-border-subtle);
+}
+
+.luxar-dimension-slider__context-header::before {
+  content: '';
+  width: 3px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--luxar-success);
+  opacity: 0.55;
+}
+
+.luxar-dimension-slider__context-aside {
+  font-family: var(--luxar-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--luxar-text-xs);
+  color: var(--luxar-text-muted);
+}
+
+/* One wrapping row of selectable chips per section (§6: the sanctioned
+   active-chip/segment idiom — selected = highlight mix, hover = neutral
+   fill only). */
+.luxar-dimension-slider__context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  /* Spread each row's chips across the full width instead of packing
+     left — the gap is the minimum spacing when a row is full. */
+  justify-content: space-between;
+  gap: var(--luxar-spacing-1);
+  padding: 0 var(--luxar-spacing-1);
 }
 
 .luxar-dimension-slider__context-item {
-  display: flex;
+  appearance: none;
+  display: inline-flex;
   align-items: center;
-  gap: var(--luxar-spacing-2);
-  padding: var(--luxar-spacing-2) var(--luxar-spacing-3);
-  cursor: pointer;
+  justify-content: center;
+  padding: 3px var(--luxar-spacing-2);
+  background: var(--luxar-interactive-default);
+  border: 1px solid var(--luxar-border-default);
   border-radius: var(--luxar-radius-sm);
+  color: var(--luxar-text-primary);
   font-size: var(--luxar-text-sm);
-  transition: all 0.1s ease;
+  line-height: 1.4;
+  cursor: pointer;
   user-select: none;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    color 0.1s ease;
 }
 
 .luxar-dimension-slider__context-item:hover {
   background: var(--luxar-interactive-hover);
 }
 
-.luxar-dimension-slider__context-item--selected {
-  font-weight: var(--luxar-font-medium);
-  color: var(--luxar-highlight);
+.luxar-dimension-slider__context-item:focus-visible {
+  outline: none;
+  border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
 }
 
-/* Custom step-size field in the context menu's Step section. */
+.luxar-dimension-slider__context-item--selected {
+  background: color-mix(in srgb, var(--luxar-highlight) 22%, transparent);
+  border-color: color-mix(in srgb, var(--luxar-highlight) 50%, transparent);
+  color: var(--luxar-highlight);
+  font-weight: var(--luxar-font-medium);
+}
+
+/* Numeral chips speak the instrument voice (§8.2). */
+.luxar-dimension-slider__context-item--mono {
+  font-family: var(--luxar-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Loop-mode chips stretch into equal segments. */
+.luxar-dimension-slider__context-item--grow {
+  flex: 1;
+}
+
+/* Custom step-size field, inline at the end of the Step chips row —
+   grows to fill whatever remains of its row (a full line when wrapped). */
 .luxar-dimension-slider__context-step-input {
-  width: 72px;
+  flex: 1 1 64px;
+  min-width: 64px;
+  width: 64px;
   background: var(--luxar-bg-primary);
   color: var(--luxar-text-primary);
   border: 1px solid var(--luxar-border-subtle);
   border-radius: var(--luxar-radius-sm);
+  font-family: var(--luxar-font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--luxar-text-sm);
   padding: 2px var(--luxar-spacing-2);
 }
@@ -430,12 +503,6 @@
 .luxar-dimension-slider__context-step-input:focus {
   outline: none;
   border-color: var(--luxar-border-focus, rgba(76, 175, 80, 0.5));
-}
-
-.luxar-dimension-slider__context-radio {
-  font-size: var(--luxar-text-sm);
-  line-height: 1;
-  min-width: 14px;
 }
 
 /* Theme Overrides for Context Menu */
