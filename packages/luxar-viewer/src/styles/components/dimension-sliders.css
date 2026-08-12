@@ -484,8 +484,13 @@
   flex: 1;
 }
 
-/* Custom step-size field, inline at the end of the Step chips row —
-   grows to fill whatever remains of its row (a full line when wrapped). */
+/* Custom step-size field: its own row under the Step chips (a number input
+   cannot live inside the chips' radiogroup), aligned to the chip padding. */
+.luxar-dimension-slider__context-step-custom {
+  display: flex;
+  padding: var(--luxar-spacing-1) var(--luxar-spacing-1) 0;
+}
+
 .luxar-dimension-slider__context-step-input {
   flex: 1 1 64px;
   min-width: 64px;

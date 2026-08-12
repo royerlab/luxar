@@ -288,6 +288,37 @@ describe('SceneDimsManager', () => {
       expect(snapDiscreteValue(10.3, 1, 10.2, 10.4)).toBeCloseTo(10.4, 10);
     });
 
+    it('snapDiscreteValue: an ON-GRID end of a fractional-step range stays reachable', () => {
+      // Every one of these ends is exactly k·step, but k·step recomputed by
+      // Math.round lands an ulp outside — a strict comparison would step a
+      // whole cell inward and make the frame unreachable.
+      expect(snapDiscreteValue(0.3, 0.1, 0, 0.3)).toBeCloseTo(0.3, 10);
+      expect(snapDiscreteValue(0.7, 0.1, 0, 0.7)).toBeCloseTo(0.7, 10);
+      expect(snapDiscreteValue(0.9, 0.3, 0.9, 5)).toBeCloseTo(0.9, 10);
+      expect(snapDiscreteValue(2.1, 0.7, 2.1, 9)).toBeCloseTo(2.1, 10);
+    });
+
+    it('snapDiscreteValue reproduces the initial position for a fractional step', () => {
+      // resetPositions()/initFromScene park a discrete dim on the first
+      // on-grid point at or above min; navigating back to that exact value
+      // must land on it byte-identically (S-cache keys compare exact floats),
+      // not a whole cell away.
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', range: [0, 10], step: 1, display: true },
+          { name: 'y', unit: '', range: [0, 10], step: 1, display: true },
+          { name: 'z', unit: '', range: [0, 10], step: 1, display: true },
+          { name: 't', unit: '', range: [0.9, 5], step: 0.3, display: false, discrete: true },
+        ],
+      };
+      const m = new SceneDimsManager();
+      m.initFromScene(scene);
+      const initial = m.getDims()!.currentStep[3];
+      m.setDimensionValue(3, initial);
+      expect(m.getDims()!.currentStep[3]).toBe(initial);
+    });
+
     it('should ignore invalid dimension indices', () => {
       const dims = manager.getDims();
       const originalValues = [...dims!.currentStep];

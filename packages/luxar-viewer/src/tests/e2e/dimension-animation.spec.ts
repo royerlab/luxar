@@ -901,25 +901,31 @@ test.describe('Dimension Animation - Error Handling', () => {
     await focusCanvas(page);
 
     // Dim 3 = W, continuous, range [0, 10]. Override step = 2 at slow fps.
+    // Park the playhead on 0 first: W's default position is the range CENTRE
+    // (5), and a loop wrap resets to min — so from 5 the visited values are
+    // 5,7,9,0,2,… and a "multiple of 2" assertion would depend on whether a
+    // wrap happened to land inside the window. Anchored at 0 every reachable
+    // value is a multiple of 2, wrap included.
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
+      const sceneDims = debug?.sceneDimsManager ?? debug?.app?.sceneDimsManager;
+      sceneDims?.setDimensionValue?.(3, 0);
       ih?.animationManager?.setStepSize?.(3, 2);
       ih?.animationManager?.setTargetFPS?.(3, 5);
     });
 
     const initial = await getDimensionValue(page, 3);
+    expect(initial).toBeCloseTo(0, 6);
     await page.keyboard.press('4');
     await page.keyboard.press('k'); // play
     await waitForDimensionValueChange(page, 3, initial, 5000);
     await page.keyboard.press('k'); // pause
 
     const after = await getDimensionValue(page, 3);
-    // Every tick moves exactly 2 (loop wraps at 10 back to 0, preserving the
-    // multiple-of-2 grid) — robust to however many ticks elapsed.
-    const delta = Math.abs(after - initial);
-    expect(delta % 2).toBeCloseTo(0, 6);
-    expect(delta).toBeGreaterThan(0);
+    // Every tick moves exactly 2 — robust to however many ticks (and loop
+    // wraps) elapsed. The wait above already proved the playhead moved.
+    expect(after % 2).toBeCloseTo(0, 6);
   });
 
   test('the step override drives the ] key increment', async ({ page }) => {

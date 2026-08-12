@@ -709,6 +709,10 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
       '.luxar-dimension-slider__context-step-input'
     )!;
     expect(input.type).toBe('number'); // NEVER type=range (E2E slider indexing)
+    // And NEVER inside the chips radiogroup — a radio group may only own
+    // radios, and this is a spinbutton.
+    expect(input.closest('[role="radiogroup"]')).toBeNull();
+    expect(input.closest('.luxar-dimension-slider__context-section')).not.toBeNull();
 
     // Real typing fires an `input` event — the commit is gated on it (an
     // un-edited field must never re-commit its truncated display seed).

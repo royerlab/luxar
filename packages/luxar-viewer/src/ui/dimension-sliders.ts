@@ -1271,11 +1271,14 @@ export class DimensionSliders {
       );
     }
 
-    // Custom value input, inline at the end of the chips row. MUST be a
-    // number input, never type=range (the E2E slider helper indexes
-    // input[type=range] inside the slider group), and number inputs are
-    // covered by isTypingInInput, so global shortcuts ([ ] k …) stay
-    // suppressed while typing.
+    // Custom value input, on its own row directly under the chips — NOT
+    // inside them: the chips row is a radiogroup, whose owned children must
+    // all be radios, and a number input is a spinbutton (assistive tech
+    // would report a broken radio-group ownership). MUST be a number input,
+    // never type=range (the E2E slider helper indexes input[type=range]
+    // inside the slider group), and number inputs are covered by
+    // isTypingInInput, so global shortcuts ([ ] k …) stay suppressed while
+    // typing.
     const customInput = document.createElement('input');
     customInput.type = 'number';
     customInput.className = 'luxar-dimension-slider__context-step-input';
@@ -1312,7 +1315,13 @@ export class DimensionSliders {
       }
     });
     customInput.addEventListener('blur', commitCustom);
-    stepChips.appendChild(customInput);
+    const customRow = document.createElement('div');
+    customRow.className = 'luxar-dimension-slider__context-step-custom';
+    customRow.appendChild(customInput);
+    // makeSection() appended the chips row to its section, so this lands the
+    // field as the chips row's sibling — inside the Step section, outside the
+    // radiogroup.
+    stepChips.parentElement?.appendChild(customRow);
 
     // Add to document first (needed to measure height)
     getViewerContainer().appendChild(menu);

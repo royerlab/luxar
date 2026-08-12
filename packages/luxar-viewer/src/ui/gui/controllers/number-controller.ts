@@ -85,6 +85,10 @@ export class NumberController extends Controller<number> {
         (e: Event) => {
           const wheelEvent = e as WheelEvent;
           wheelEvent.preventDefault();
+          // stopPropagation: the window-level wheel handler drives camera
+          // FOV on Ctrl/Cmd+wheel and does not check event targets, so
+          // without this the coarse tier would also yank the FOV.
+          wheelEvent.stopPropagation();
           if (!this.slider || !this.stepValue) return;
           let multiplier = 0.1;
           if (wheelEvent.shiftKey && wheelEvent.ctrlKey) multiplier = 0.001;
