@@ -3074,3 +3074,213 @@ describe('applyColorAdjustments — colormap vs direct routing', () => {
     expect(calls.scalarRange).toEqual([]);
   });
 });
+
+describe('LayersPanel — filter + context-menu lifecycle across dataset reloads', () => {
+  let container: HTMLElement;
+  let animationController: AnimationController;
+
+  /** A scene with enough layers (10 > FILTER_THRESHOLD 8) to show the filter row. */
+  function makeManyLayerSceneGraph(prefix = 'layer'): SceneNode {
+    return {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: Array.from({ length: 10 }, (_, i) => ({
+        name: `${prefix}${i}`,
+        path: `/${prefix}${i}`,
+        type: 'points',
+        attrs: { layer: true, type: 'points' },
+        children: [],
+      })),
+    } as unknown as SceneNode;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    animationController = makeAnimationController();
+  });
+
+  it('a dataset reload clears the filter — stale queries must not hide the new scene', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('alpha'));
+
+    const input = container.querySelector<HTMLInputElement>('.luxar-panel-filter__input')!;
+    expect(input).not.toBeNull();
+    input.value = 'alpha3';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const filtered = container.querySelectorAll('.luxar-layer-row--filtered').length;
+    expect(filtered).toBe(9); // everything but alpha3
+
+    // Reload with a scene whose names never match the old query. Without
+    // the clear()-side reset, the carried-over filterText re-applies
+    // against a BLANK input and silently hides every new row.
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('beta'));
+    expect(container.querySelectorAll('.luxar-layer-row--filtered').length).toBe(0);
+    const freshInput = container.querySelector<HTMLInputElement>('.luxar-panel-filter__input')!;
+    expect(freshInput.value).toBe('');
+    panel.dispose();
+  });
+
+  it('a dataset reload closes an open context menu (stale captured actions)', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(document.querySelector('.luxar-context-menu')).not.toBeNull();
+
+    // The menu is mounted OUTSIDE the panel (viewer container), so removing
+    // the panel alone would strand it with actions bound to the old scene.
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('next'));
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
+    panel.dispose();
+  });
+
+  it('resetLayer pushes the authored gamma/window back onto the MATERIAL, not just the state', () => {
+    // Reset's material coverage rides on applyColormap's trailing
+    // applyComposed (the same dependency resetAllLayers documents). If that
+    // tail is ever refactored away, reset would leave the material rendering
+    // the pre-reset gamma/window while the controls show authored values —
+    // this test pins the dependency at the material boundary.
+    const updateGamma = vi.fn();
+    const updateIntensity = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: {},
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity,
+      updateOffset: vi.fn(),
+      updateGamma,
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/layer0';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeManyLayerSceneGraph());
+
+    // Drag the layer away from its authored state.
+    panel.layerState.setGamma('/layer0', 2.5);
+    updateGamma.mockClear();
+    updateIntensity.mockClear();
+
+    // Reset via the row context menu item (the real user path).
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const reset = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-context-menu__item')
+    ).find((el) => el.textContent === 'Reset this layer')!;
+    reset.click();
+
+    // State restored AND the material saw the authored values again.
+    expect(panel.layerState.getLayer('/layer0')!.gamma).toBe(1.0);
+    expect(updateGamma).toHaveBeenCalledWith(1.0);
+    expect(updateIntensity).toHaveBeenCalled(); // composed window re-pushed
+    panel.dispose();
+  });
+
+  it('Escape from the HEADER menu returns focus to the focused header child, not <body>', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+
+    // The native ContextMenu key fires `contextmenu` at the focused element —
+    // here the header's close button. The header wrapper itself is a plain
+    // <div>; forcing restoreFocus onto it would silently fail and strand
+    // focus on <body>.
+    const closeBtn = container.querySelector<HTMLElement>('.luxar-layers-panel__close')!;
+    closeBtn.focus();
+    closeBtn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const menu = document.querySelector('.luxar-context-menu')!;
+    expect(menu).not.toBeNull();
+
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.activeElement).toBe(closeBtn);
+    panel.dispose();
+  });
+
+  it('the pinned row aria-label survives a menu open/close (only aria-expanded moves)', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    const labelBefore = row.getAttribute('aria-label');
+    expect(labelBefore).toBe('layer0 (points)'); // the E2E/AT-pinned "name (type)" shape
+
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    expect(row.getAttribute('aria-label')).toBe(labelBefore);
+
+    document
+      .querySelector('.luxar-context-menu')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    expect(row.getAttribute('aria-label')).toBe(labelBefore);
+    panel.dispose();
+  });
+
+  it('the roving tab stop moves off a filtered row (listbox stays Tab-reachable)', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('alpha'));
+
+    // The panel's initial tab stop sits on the first row (alpha0). Filter it
+    // out: a display:none row is unfocusable, so leaving tabIndex=0 there
+    // would make the whole listbox unreachable by Tab.
+    const input = container.querySelector<HTMLInputElement>('.luxar-panel-filter__input')!;
+    input.value = 'alpha1';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('.luxar-layer-row'));
+    const tabStops = rows.filter((r) => r.tabIndex === 0);
+    expect(tabStops.length).toBe(1);
+    expect(tabStops[0].classList.contains('luxar-layer-row--filtered')).toBe(false);
+    expect(tabStops[0].textContent).toContain('alpha1');
+    panel.dispose();
+  });
+
+  it('right-clicking a text field inside the panel leaves the native menu alone', () => {
+    // The delegated handler suppresses the native menu everywhere on the
+    // glass surface, but a text field has no replacement verbs of ours —
+    // swallowing it there costs the user right-click paste.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('alpha'));
+
+    const input = container.querySelector<HTMLInputElement>('.luxar-panel-filter__input')!;
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    input.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
+
+    // A row still gets ours, suppression included.
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    const rowEv = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row.dispatchEvent(rowEv);
+    expect(rowEv.defaultPrevented).toBe(true);
+    expect(document.querySelector('.luxar-context-menu')).not.toBeNull();
+    panel.dispose();
+  });
+
+  it('Shift+F10 on the focused EYE opens the eye menu, not the row menu', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+
+    const eye = container.querySelector<HTMLElement>('.luxar-layer-row__eye')!;
+    eye.focus();
+    eye.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true }));
+    const menu = document.querySelector('.luxar-context-menu')!;
+    expect(menu).not.toBeNull();
+    const labels = Array.from(menu.querySelectorAll('.luxar-context-menu__label')).map(
+      (el) => el.textContent
+    );
+    // Eye menu = visibility verbs only; the row menu's items must be absent.
+    expect(labels).toContain('Invert visibility');
+    expect(labels).not.toContain('Copy layer path');
+    panel.dispose();
+  });
+});

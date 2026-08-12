@@ -26,6 +26,11 @@ import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-s
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
+import { openContextMenu, type ContextMenuItem } from '../overlay-widgets/context-menu';
+import { BLENDING_MODES } from '../../rendering/blending-state';
+import type { BlendingMode } from '../../rendering';
+import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
+import { resolveLayerBlendingMode } from './layer-state';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LayerApplyEngine } from './layer-apply';
@@ -55,6 +60,10 @@ const ERROR_ICON =
 export class LayersPanel {
   private container: HTMLElement;
   private rootGroup: THREE.Group | null = null;
+  /** Late-bound per-layer camera framing (SceneManager.fitCameraToObject). */
+  private cameraFramer: ((obj: THREE.Object3D) => boolean) | null = null;
+  /** Close handle of the open context menu, if any. */
+  private contextMenuClose: (() => void) | null = null;
   private sceneGraph: SceneNode | null = null;
   private animationController: AnimationController;
 
@@ -88,6 +97,11 @@ export class LayersPanel {
 
   private panelEl: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
+  /** Live filter over layer names; only rendered when the scene has many layers. */
+  private filterWrapEl: HTMLElement | null = null;
+  private filterInputEl: HTMLInputElement | null = null;
+  private noMatchesEl: HTMLElement | null = null;
+  private filterText = '';
   private visible = false;
   /**
    * Tracks every event listener attached during buildPanel/renderList
@@ -251,6 +265,10 @@ export class LayersPanel {
 
   hide(): void {
     if (!this.panelEl) return;
+    // The menu is mounted on the viewer container, not the panel — hiding
+    // the panel (L key / rail while a menu is open) must not strand a
+    // floating menu over a hidden panel.
+    this.contextMenuClose?.();
     this.panelEl.style.display = 'none';
     this.visible = false;
     this.repositionGUI();
@@ -292,12 +310,321 @@ export class LayersPanel {
     this.updateRowErrorStates();
   }
 
+  /**
+   * Inject the per-layer camera framer (the app wires
+   * SceneManager.fitCameraToObject, same late-binding pattern as the
+   * failed-loads provider). Null disables the "Frame camera" menu item.
+   */
+  setCameraFramer(framer: ((obj: THREE.Object3D) => boolean) | null): void {
+    this.cameraFramer = framer;
+  }
+
   /** Inject a callback that marks the GPU pick buffer dirty (PickingSystem.markDirty). Late-bound so it survives per-dataset picking re-creation. */
   setPickBufferInvalidator(fn: (() => void) | null): void {
     this.pickBufferInvalidator = fn;
   }
 
+  // ====================================================================
+  // Right-click context menus (shared openContextMenu utility)
+  // ====================================================================
+
+  /**
+   * Open the eye / row / header menu. `layerPath` is null for the header
+   * menu. The opener gets aria-expanded while the menu is up; focus returns
+   * to it on close (the utility handles both via onClose/focus-restore).
+   */
+  private openLayerContextMenu(
+    kind: 'eye' | 'row' | 'header',
+    layerPath: string | null,
+    x: number,
+    y: number,
+    opener: HTMLElement | null
+  ): void {
+    this.contextMenuClose?.();
+    const layer = layerPath ? this.state.getLayer(layerPath) : undefined;
+    const items =
+      kind === 'header' || !layer
+        ? this.buildHeaderMenuItems()
+        : kind === 'eye'
+          ? this.buildEyeMenuItems(layer)
+          : this.buildRowMenuItems(layer);
+    opener?.setAttribute('aria-expanded', 'true');
+    this.contextMenuClose = openContextMenu({
+      x,
+      y,
+      ariaLabel:
+        kind === 'header' ? 'Layers panel actions' : `Layer actions for ${layer?.name ?? ''}`,
+      items,
+      // Explicit for FOCUSABLE openers (rows carry a tabindex, eyes are
+      // buttons): a mouse right-click does not focus them first, so the
+      // utility's activeElement default would return focus somewhere
+      // unrelated. The header opener is a plain <div> — focusing it fails
+      // silently and would strand focus on <body> when the native
+      // ContextMenu key fires at a focused header child (the close button),
+      // so there we keep the utility's activeElement default instead.
+      restoreFocus: opener?.matches('button, [tabindex]') ? opener : null,
+      onClose: () => {
+        opener?.setAttribute('aria-expanded', 'false');
+        this.contextMenuClose = null;
+      },
+    });
+  }
+
+  /** Eye button: visibility verbs only. */
+  private buildEyeMenuItems(layer: LayerInfo): ContextMenuItem[] {
+    const soloed = this.state.soloedPath === layer.path;
+    return [
+      {
+        label: soloed ? 'Un-solo (restore visibility)' : 'Solo — hide all others',
+        kind: 'radio',
+        checked: soloed,
+        action: () => this.soloLayer(layer.path),
+      },
+      { label: 'Show all layers', action: () => this.setAllVisible(true) },
+      { label: 'Hide all layers', action: () => this.setAllVisible(false) },
+      { label: 'Invert visibility', action: () => this.invertVisibility() },
+    ];
+  }
+
+  /** Row: layer verbs + appearance submenus. */
+  private buildRowMenuItems(layer: LayerInfo): ContextMenuItem[] {
+    const soloed = this.state.soloedPath === layer.path;
+    const obj = this.rootGroup?.getObjectByName(layer.path) ?? null;
+    const items: ContextMenuItem[] = [
+      {
+        label: soloed ? 'Un-solo (restore visibility)' : 'Solo — hide all others',
+        kind: 'radio',
+        checked: soloed,
+        action: () => this.soloLayer(layer.path),
+      },
+      {
+        label: 'Frame camera on layer',
+        disabled: !obj || !this.cameraFramer,
+        action: () => {
+          // False = no framable geometry YET (a partition whose parts are
+          // still streaming). The object exists so the item is enabled —
+          // surface the no-op instead of silently doing nothing.
+          if (obj && this.cameraFramer && !this.cameraFramer(obj)) {
+            showToast(`Nothing to frame yet in "${layer.name}" (still loading)`);
+          }
+        },
+      },
+      {
+        label: 'Reset this layer',
+        action: () => this.resetLayer(layer.path),
+      },
+      {
+        label: 'Copy layer path',
+        action: () => {
+          // The Clipboard API is absent on non-secure origins and its write
+          // can reject (permission denied) — both must surface as feedback,
+          // not an unhandled rejection and silence.
+          const write = navigator.clipboard?.writeText(layer.path);
+          if (!write) {
+            showToast('Clipboard unavailable (needs a secure context)');
+            return;
+          }
+          write.then(
+            () => showToast('Layer path copied'),
+            () => showToast('Could not copy layer path')
+          );
+        },
+      },
+    ];
+    if (layer.supportsColormap) {
+      const current = this.state.getLayer(layer.path)?.colormap;
+      const sub: ContextMenuItem[] = [
+        {
+          label: '(direct colors)',
+          kind: 'radio',
+          checked: !current,
+          action: () => this.setLayerColormap(layer.path, undefined),
+        },
+      ];
+      for (const names of Object.values(COLORMAP_CATEGORIES)) {
+        for (const name of names) {
+          sub.push({
+            label: name,
+            kind: 'radio',
+            checked: current === name,
+            action: () => this.setLayerColormap(layer.path, name),
+          });
+        }
+      }
+      items.push({ label: 'Colormap', separatorBefore: true, submenu: sub });
+    }
+    items.push({
+      label: 'Blending',
+      separatorBefore: !layer.supportsColormap,
+      submenu: BLENDING_MODES.map((mode) => ({
+        label: mode,
+        kind: 'radio' as const,
+        checked: this.state.getLayer(layer.path)?.blendingMode === mode,
+        action: () => this.setLayerBlending(layer.path, mode),
+      })),
+    });
+    items.push({
+      label: 'Apply appearance to all layers',
+      action: () => this.applyAppearanceToAll(layer.path),
+    });
+    return items;
+  }
+
+  private buildHeaderMenuItems(): ContextMenuItem[] {
+    return [
+      { label: 'Show all layers', action: () => this.setAllVisible(true) },
+      { label: 'Hide all layers', action: () => this.setAllVisible(false) },
+      { label: 'Invert visibility', action: () => this.invertVisibility() },
+      { label: 'Reset all layers', separatorBefore: true, action: () => this.resetAllLayers() },
+    ];
+  }
+
+  // ---- menu actions ----
+
+  /** Push every layer's current state.visible into the scene objects. */
+  private applyAllVisibilities(): void {
+    for (const l of this.state.getLayers()) {
+      this.applyEngine.applyVisibility(l.path, l.visible);
+    }
+  }
+
+  private soloLayer(path: string): void {
+    this.state.solo(path);
+    this.applyAllVisibilities();
+  }
+
+  private setAllVisible(visible: boolean): void {
+    this.state.setVisibleMany(this.state.getLayers().map((l) => ({ path: l.path, visible })));
+    this.applyAllVisibilities();
+  }
+
+  private invertVisibility(): void {
+    this.state.setVisibleMany(
+      this.state.getLayers().map((l) => ({ path: l.path, visible: !l.visible }))
+    );
+    this.applyAllVisibilities();
+  }
+
+  /**
+   * Reset ONE layer to its authored state. Re-derives the LayerInfo with a
+   * throwaway LayerStateManager over the kept scene graph (deliberately not
+   * factoring the private walkSceneGraph derivation — this reuses it
+   * verbatim, so reset can never drift from load), applies it through the
+   * state manager (which preserves selection and clears any solo capture —
+   * a direct Object.assign here would rewrite visibility behind the
+   * capture's back), and patches only this row (renderList would drop
+   * focus and reset the failed-loads signature).
+   */
+  private resetLayer(path: string): void {
+    if (!this.sceneGraph) return;
+    const live = this.state.getLayer(path);
+    if (!live) return;
+    const scratch = new LayerStateManager();
+    scratch.initFromSceneGraph(this.sceneGraph);
+    const fresh = scratch.getLayer(path);
+    scratch.dispose();
+    if (!fresh) return;
+    this.state.resetLayerState(path, fresh);
+    // Same apply set as resetAllLayers(), for the same reasons:
+    // applyVisibility unconditionally (a hidden layer whose authored default
+    // is visible must come back); applyColormap restores the authored
+    // palette (or none) AND then recomposes display range / gamma / opacity /
+    // absorption / blending onto the materials via its trailing
+    // applyComposed (layer-apply.ts — the material-state reset test pins
+    // this dependency); applyMeshAppearance covers the mesh-only shading
+    // uniforms, which are not composed.
+    this.applyEngine.applyVisibility(path, live.visible);
+    this.applyEngine.applyColormap(live);
+    this.applyEngine.applyMeshAppearance(live);
+    this.refreshRowVisual(path);
+    this.controls.render();
+  }
+
+  /** Sync one row's eye icon + hidden class to the live state (no rebuild). */
+  private refreshRowVisual(path: string): void {
+    const row = this.rowElements.get(path);
+    const live = this.state.getLayer(path);
+    if (!row || !live) return;
+    row.classList.toggle('luxar-layer-row--hidden', !live.visible);
+    const eye = row.querySelector<HTMLElement>('.luxar-layer-row__eye');
+    if (eye) {
+      eye.innerHTML = live.visible ? EYE_ICON : EYE_OFF_ICON;
+      const tooltip = live.visible ? 'Hide layer' : 'Show layer';
+      eye.title = tooltip;
+      eye.setAttribute('aria-label', `${tooltip}: ${live.name}`);
+      eye.setAttribute('aria-pressed', live.visible ? 'true' : 'false');
+    }
+  }
+
+  /**
+   * Set one layer's colormap with the fail-closed contract the dropdown
+   * uses (layer-controls): re-default the window on off↔on flips BEFORE
+   * applying, and if the C1 guard rejects the palette on every leaf, drop
+   * it and restore the identity window rather than leaving contradictory
+   * state.
+   */
+  private setLayerColormap(path: string, cmName: string | undefined): void {
+    const live = this.state.getLayer(path);
+    if (!live) return;
+    const wasColormapped = live.scalarWindow;
+    live.colormap = cmName;
+    if (wasColormapped !== !!cmName) {
+      this.state.setColormapWindow(path, !!cmName);
+    }
+    if (!this.applyEngine.applyColormap(live) && cmName) {
+      live.colormap = undefined;
+      this.state.setColormapWindow(path, false);
+      this.applyEngine.applyColormap(live);
+    }
+    this.controls.render();
+  }
+
+  /** Set one layer's blending mode (resolved per type, explicit ownership). */
+  private setLayerBlending(path: string, mode: BlendingMode): void {
+    const live = this.state.getLayer(path);
+    if (!live) return;
+    live.blendingMode = resolveLayerBlendingMode(live.type, mode);
+    live.blendingModeExplicit = true;
+    this.applyEngine.applyBlendingMode(live);
+    this.controls.render();
+  }
+
+  /**
+   * Copy the source layer's appearance to every other layer, type-gated:
+   * display window clamped into each target's data bounds, gamma verbatim,
+   * blending resolved per target type, colormap only where supported.
+   * Order matters: the colormap copy runs LAST, so a target whose colormap
+   * mode flips gets that mode's re-defaulted window (via setLayerColormap)
+   * rather than the copied one — a window is only meaningful within one
+   * mode, so carrying it across the flip would mis-scale the new value.
+   * Deliberately NOT copied: mesh-only knobs, volumetric-only absorption,
+   * and opacity/visibility — those are per-layer compositing choices, not
+   * "appearance" (copying opacity would flatten a scene the user balanced
+   * layer-by-layer).
+   */
+  private applyAppearanceToAll(sourcePath: string): void {
+    const src = this.state.getLayer(sourcePath);
+    if (!src) return;
+    for (const l of this.state.getLayers()) {
+      if (l.path === sourcePath) continue;
+      const min = Math.max(src.displayMin, l.dataMin);
+      const max = Math.min(src.displayMax, l.dataMax);
+      if (min < max) {
+        this.state.setDisplayRange(l.path, min, max);
+        this.applyEngine.applyDisplayRange(l);
+      }
+      this.state.setGamma(l.path, src.gamma);
+      this.applyEngine.applyGamma(l);
+      l.blendingMode = resolveLayerBlendingMode(l.type, src.blendingMode);
+      l.blendingModeExplicit = true;
+      this.applyEngine.applyBlendingMode(l);
+      if (l.supportsColormap) this.setLayerColormap(l.path, src.colormap);
+    }
+    this.controls.render();
+  }
+
   dispose(): void {
+    this.contextMenuClose?.();
     this.clear();
     this.state.dispose();
   }
@@ -335,6 +662,18 @@ export class LayersPanel {
     this.panelEl?.remove();
     this.panelEl = null;
     this.listEl = null;
+    this.noMatchesEl = null;
+    // Filter state must not survive a dataset swap: initFromScene() routes
+    // through here, and a stale filterText would silently hide the NEW
+    // scene's rows behind a blank input.
+    this.filterText = '';
+    this.filterWrapEl = null;
+    this.filterInputEl = null;
+    // An open context menu is mounted on the viewer container (outside the
+    // panel just removed) and its captured actions point at the old scene —
+    // close it on the reload path too, not only in dispose().
+    this.contextMenuClose?.();
+    this.contextMenuClose = null;
   }
 
   // ─── DOM Construction ──────────────────────────────────
@@ -342,7 +681,7 @@ export class LayersPanel {
   private buildPanel(): void {
     // Panel container
     const panel = document.createElement('div');
-    panel.className = 'luxar-layers-panel luxar-glass-surface';
+    panel.className = 'luxar-layers-panel luxar-glass-surface luxar-panel-pop';
     panel.style.zIndex = String(config.ui.zIndex.layersPanel);
     panel.style.display = 'none'; // Hidden by default
     this.panelEl = panel;
@@ -370,6 +709,50 @@ export class LayersPanel {
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
+    // Live layer filter (shared .luxar-panel-filter recipe). Hidden for the
+    // common small scene — renderList() shows it above the threshold.
+    const filterWrap = document.createElement('div');
+    filterWrap.className = 'luxar-layers-panel__filter luxar-panel-filter';
+    filterWrap.style.display = 'none';
+    const filterIcon = document.createElement('span');
+    filterIcon.className = 'luxar-panel-filter__icon';
+    filterIcon.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L21 21"/></svg>';
+    filterIcon.setAttribute('aria-hidden', 'true');
+    const filterInput = document.createElement('input');
+    filterInput.type = 'text';
+    filterInput.className = 'luxar-panel-filter__input';
+    filterInput.placeholder = 'Filter layers…';
+    filterInput.setAttribute('aria-label', 'Filter layers by name');
+    filterInput.autocomplete = 'off';
+    this.events.on(filterInput, 'input', () => {
+      this.filterText = filterInput.value;
+      this.applyRowFilter();
+    });
+    this.events.on(filterInput, 'keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
+      // Escape with a query clears it and stays; an empty Escape falls
+      // through to the panel-coordinator (closes the panel) as before.
+      if (key === 'Escape' && filterInput.value) {
+        e.stopPropagation();
+        filterInput.value = '';
+        this.filterText = '';
+        this.applyRowFilter();
+        return;
+      }
+      // Contain ordinary typing (the help filter's convention). The built-in
+      // dispatcher already ignores shortcuts while a text input has focus
+      // (context-manager → isTypingInInput), so this is belt-and-braces for
+      // document-level listeners outside it (host pages, embeds). Tab keeps
+      // bubbling for focus traversal; empty Escape falls through above.
+      if (key !== 'Escape' && key !== 'Tab') e.stopPropagation();
+    });
+    filterWrap.appendChild(filterIcon);
+    filterWrap.appendChild(filterInput);
+    this.filterWrapEl = filterWrap;
+    this.filterInputEl = filterInput;
+    panel.appendChild(filterWrap);
+
     // Layer list (scrollable). ARIA listbox semantics so keyboard users can
     // navigate rows with ArrowUp/ArrowDown and select with Enter/Space.
     // Multi-select via Ctrl/Cmd/Shift is reflected with aria-multiselectable.
@@ -381,10 +764,54 @@ export class LayersPanel {
     this.listEl = list;
     panel.appendChild(list);
 
+    // Zero-match note (same affordance as the help overlay's) — without it a
+    // fully-filtered list just collapses and reads as broken. Lives OUTSIDE
+    // the list so renderList() rebuilds never wipe it.
+    const noMatches = document.createElement('div');
+    noMatches.className = 'luxar-layers-panel__no-matches';
+    noMatches.textContent = 'No layers match.';
+    noMatches.style.display = 'none';
+    this.noMatchesEl = noMatches;
+    panel.appendChild(noMatches);
+
     // Controls section
     const controls = document.createElement('div');
     controls.className = 'luxar-layers-panel__controls';
     panel.appendChild(controls);
+
+    // Right-click menus. ONE delegated listener: suppress the native menu
+    // over the glass surface (the rail's rationale), then route to the
+    // eye / row / header menu. Right-clicking an unselected row selects it
+    // first (Finder/napari convention); an already-selected row keeps the
+    // current multi-selection.
+    this.events.on(panel, 'contextmenu', (e) => {
+      const me = e as MouseEvent;
+      const target = me.target as HTMLElement;
+      // …except over a text field, where the native menu is the only way to
+      // paste: the layer filter above and the range slider's bound editor
+      // both live inside this panel, and we offer no clipboard verbs of our
+      // own to replace it.
+      if (target.closest('input[type="text"], textarea')) return;
+      e.preventDefault();
+      const eye = target.closest('.luxar-layer-row__eye') as HTMLElement | null;
+      const row = target.closest('.luxar-layer-row') as HTMLElement | null;
+      const header = target.closest('.luxar-layers-panel__header') as HTMLElement | null;
+      if (row) {
+        const path = row.dataset.layerPath;
+        const layer = path ? this.state.getLayer(path) : undefined;
+        if (!layer) return;
+        if (!layer.selected) this.state.select(layer.path, 'single');
+        this.openLayerContextMenu(
+          eye ? 'eye' : 'row',
+          layer.path,
+          me.clientX,
+          me.clientY,
+          eye ?? row
+        );
+      } else if (header) {
+        this.openLayerContextMenu('header', null, me.clientX, me.clientY, header);
+      }
+    });
 
     this.container.appendChild(panel);
 
@@ -442,6 +869,47 @@ export class LayersPanel {
     // while a failure persists).
     this.lastFailedLoadsSignature = null;
     this.updateRowErrorStates();
+
+    // The filter affordance only pays for itself on layer-heavy scenes.
+    if (this.filterWrapEl) {
+      const show = layers.length > LayersPanel.FILTER_THRESHOLD;
+      this.filterWrapEl.style.display = show ? '' : 'none';
+      if (!show && this.filterInputEl) {
+        this.filterInputEl.value = '';
+        this.filterText = '';
+      }
+    }
+    this.applyRowFilter();
+  }
+
+  /** Scenes with more layers than this get the live name filter. */
+  private static readonly FILTER_THRESHOLD = 8;
+
+  /**
+   * Apply the live name filter to the rows (case-insensitive substring).
+   * Hidden rows keep their DOM (state indices stay valid) and are skipped
+   * by the listbox arrow navigation.
+   */
+  private applyRowFilter(): void {
+    const q = this.filterText.trim().toLowerCase();
+    let anyVisible = false;
+    for (const [path, row] of this.rowElements) {
+      const layer = this.state.getLayer(path);
+      const match = !q || (layer?.name ?? '').toLowerCase().includes(q);
+      row.classList.toggle('luxar-layer-row--filtered', !match);
+      if (match) anyVisible = true;
+    }
+    if (this.noMatchesEl) {
+      this.noMatchesEl.style.display = anyVisible || !q ? 'none' : '';
+    }
+    // The filter moves which rows are focusable — re-place the roving tab
+    // stop so it never sits on a display:none row (Tab would skip the list).
+    this.updateRowHighlights();
+  }
+
+  /** True when the row for a path is hidden by the live filter. */
+  private isRowFiltered(path: string): boolean {
+    return this.rowElements.get(path)?.classList.contains('luxar-layer-row--filtered') ?? false;
   }
 
   /** Update selection highlights and visibility classes without rebuilding DOM */
@@ -456,8 +924,10 @@ export class LayersPanel {
       row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
 
       // First selected row is the keyboard tab stop; others get tabIndex -1
-      // (still focusable programmatically for ArrowUp/Down).
-      if (layer.selected && !hasFocusable) {
+      // (still focusable programmatically for ArrowUp/Down). A row hidden by
+      // the live filter (display: none) is not focusable, so parking the tab
+      // stop on it would make the whole listbox unreachable by Tab.
+      if (layer.selected && !hasFocusable && !this.isRowFiltered(layer.path)) {
         row.tabIndex = 0;
         hasFocusable = true;
       } else {
@@ -472,14 +942,19 @@ export class LayersPanel {
         eyeBtn.title = tooltip;
         eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
         eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
+        eyeBtn.setAttribute('aria-haspopup', 'menu');
       }
     }
 
-    // If nothing is selected, make the first row the tab stop so users can
-    // enter the listbox with the keyboard.
+    // If nothing (visible) is selected, make the first UNFILTERED row the
+    // tab stop so users can enter the listbox with the keyboard.
     if (!hasFocusable) {
-      const first = this.rowElements.values().next().value as HTMLElement | undefined;
-      if (first) first.tabIndex = 0;
+      for (const [path, row] of this.rowElements) {
+        if (!this.isRowFiltered(path)) {
+          row.tabIndex = 0;
+          break;
+        }
+      }
     }
   }
 
@@ -579,6 +1054,12 @@ export class LayersPanel {
     row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
     row.setAttribute('aria-label', `${layer.name} (${layer.type})`);
     row.tabIndex = -1; // updateRowHighlights() promotes the active one to 0
+    // Context-menu affordances. The menu itself renders OUTSIDE the listbox
+    // (role="option" permits no role="menu" descendant) — these attributes
+    // only announce it. The row aria-label above is test-pinned; never fold
+    // menu state into it.
+    row.dataset.layerPath = layer.path;
+    row.setAttribute('aria-haspopup', 'menu');
 
     // Eye toggle — visibility is independent of selection. <button> already
     // has role=button, is focusable, and triggers click on Space/Enter, so we
@@ -658,14 +1139,23 @@ export class LayersPanel {
     // (and selects on simple navigation), Enter/Space select with the
     // current modifier.
     this.events.on(row, 'keydown', (e) => {
-      const layers = this.state.getLayers();
+      // Navigate over the VISIBLE rows only — the live filter hides rows via
+      // a class while keeping their DOM, so index math runs on the filtered
+      // list.
+      const layers = this.state.getLayers().filter((l) => !this.isRowFiltered(l.path));
       const idx = layers.findIndex((l) => l.path === layer.path);
       if (idx < 0) return;
 
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
         e.preventDefault();
         const nextIdx =
-          e.key === 'ArrowDown' ? Math.min(layers.length - 1, idx + 1) : Math.max(0, idx - 1);
+          e.key === 'ArrowDown'
+            ? Math.min(layers.length - 1, idx + 1)
+            : e.key === 'ArrowUp'
+              ? Math.max(0, idx - 1)
+              : e.key === 'Home'
+                ? 0
+                : layers.length - 1;
         const next = layers[nextIdx];
         const nextRow = this.rowElements.get(next.path);
         if (nextRow) {
@@ -678,6 +1168,27 @@ export class LayersPanel {
         if (e.ctrlKey || e.metaKey) mode = 'add';
         else if (e.shiftKey) mode = 'range';
         this.state.select(layer.path, mode);
+      } else if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') {
+        // Keyboard parity for the right-click menu. Route by the FOCUSED
+        // element, matching the mouse path: the eye button advertises its
+        // own aria-haspopup, so menu keys on it must open the eye menu,
+        // not the row's.
+        e.preventDefault();
+        const live = this.state.getLayer(layer.path);
+        if (!live) return;
+        if (!live.selected) this.state.select(layer.path, 'single');
+        const eye = (e.target as HTMLElement | null)?.closest?.(
+          '.luxar-layer-row__eye'
+        ) as HTMLElement | null;
+        const anchor = eye ?? row;
+        const r = anchor.getBoundingClientRect();
+        this.openLayerContextMenu(
+          eye ? 'eye' : 'row',
+          layer.path,
+          r.left + 12,
+          r.bottom - 4,
+          anchor
+        );
       }
     });
 

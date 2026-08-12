@@ -11,6 +11,9 @@
   /* Positioning */
   position: fixed;
   left: 50%;
+  /* Entry pop composed with translateX (shared .luxar-panel-pop would wipe
+     the centering transform mid-animation). */
+  animation: luxar-dim-sliders-pop-kf 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
   bottom: var(--luxar-spacing-10);
   transform: translateX(-50%);
 
@@ -520,7 +523,17 @@
 /* No light-theme hover override any more: the base rule already uses the
    theme-owned --luxar-interactive-hover, which is correct in every theme. */
 
+@keyframes luxar-dim-sliders-pop-kf {
+  from {
+    transform: translateX(-50%) scale(0.975);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .luxar-dimension-sliders {
+    animation: none;
+  }
+
   .luxar-dimension-slider__context-menu {
     animation: none !important;
     opacity: 1 !important;

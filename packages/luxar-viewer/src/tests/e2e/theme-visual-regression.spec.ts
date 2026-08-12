@@ -540,9 +540,11 @@ test('URL parameter sets initial theme', async ({ page }) => {
   const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
   expect(theme).toBe('frosted-glass');
 
-  // Verify CSS variable
+  // Verify CSS variable. The pinned value is frosted-glass's DARK frost
+  // (#1480 — a white frost went illegible over bright scenes); keep in sync
+  // with themes/frosted-glass.theme.ts `background.primary`.
   const bgColor = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--luxar-bg-primary')
   );
-  expect(bgColor.trim()).toBe('rgba(255, 255, 255, 0.15)');
+  expect(bgColor.trim()).toBe('rgba(28, 30, 36, 0.5)');
 });

@@ -48,6 +48,8 @@ from ..conftest import (
     cholesky_rows_nd,
     count_range_warnings,
     finalized_group_keys,
+    grid_mesh,
+    int64_rgb,
     open_ranged_scene,
     open_scene,
     random_positions,
@@ -1236,3 +1238,189 @@ class TestTheGraftGateIsReachedThroughThePublicFileDoor:
         assert expected in str(split)
         assert "is not supported on a grafted multi-node" not in str(split)
         assert "g" not in compiler.store
+
+
+# ---------------------------------------------------------------------------
+# Unwritable colour DTYPE, pre-split (#1489)
+# ---------------------------------------------------------------------------
+
+#: Vertices per side of the dtype cases' mesh. 15x15 = 225 vertices / 392
+#: triangles: comfortably above ``_HALF``, so ``max_elements=_HALF`` is a real
+#: cut rather than a fall-through to a plain leaf.
+_MESH_SIDE = 15
+_MESH_N = _MESH_SIDE * _MESH_SIDE
+
+
+def _add_coloured(scene: Any, geometry: str, colors: Any, **extra: Any) -> Any:
+    """Add one node named ``n`` of ``geometry`` carrying ``colors``.
+
+    One call site for all four geometry types so the dtype cases below differ
+    only in the structural kwarg — the property under test is that the verdict
+    does NOT depend on the geometry.
+    """
+    if geometry == "points":
+        return scene.add_points(
+            "n", random_positions(_N, seed=71), colors=colors, **extra
+        )
+    if geometry == "lines":
+        return scene.add_lines(
+            "n",
+            random_positions(_N, seed=72),
+            widths=0.3,
+            line_type="segments",
+            colors=colors,
+            **extra,
+        )
+    if geometry == "gsplats":
+        return scene.add_gsplats(
+            "n",
+            centers=random_positions(_N, seed=73),
+            amplitudes=np.full(_N, 1.0, dtype=np.float32),
+            cholesky_factors=cholesky_rows(_N),
+            colors=colors,
+            **extra,
+        )
+    vertices, faces = grid_mesh(_MESH_SIDE)
+    return scene.add_mesh("n", vertices, faces, colors=colors, **extra)
+
+
+def _coloured_element_count(geometry: str) -> int:
+    return _MESH_N if geometry == "mesh" else _N
+
+
+#: ``(id, partition spec)`` for the dtype cases. Two of these REALLY split at
+#: these counts — measured, uint8 colours, parts per geometry:
+#: ``max_elements=100`` → 2/2/2/4 (points/lines/gsplats/mesh) and
+#: ``max_elements=25`` → 8/12/8/20. ``partition=True`` does NOT: the default
+#: ``max_elements`` is 1,000,000, so it writes a plain leaf, and it is listed
+#: under a name that says so rather than dropped, because the refusal must hold
+#: on the fall-through path too. ``{"parts": N}`` is deliberately absent — no
+#: adder reads that key, so it was never a partition spec at all, only a plain
+#: leaf wearing the label.
+_PARTITION_SPECS = [
+    ("default_no_split", True),
+    ("max_elements_half", {"max_elements": _HALF}),
+    ("max_elements_quarter", {"max_elements": _HALF // 4}),
+]
+_PARTITION_IDS = [spec_id for spec_id, _ in _PARTITION_SPECS]
+#: The ids from :data:`_PARTITION_SPECS` that must produce a real wrapper.
+_SPLITTING_IDS = {"max_elements_half", "max_elements_quarter"}
+
+
+class TestPartitionRefusesAnUnwritableColorDtype:
+    """A colour DTYPE the leaf cannot store must not strand a partial node (#1489).
+
+    The same bug class as everything above, one validator hole over: the encoder
+    refuses an integer COLOR array that is not ``uint8``/``uint16``, but the
+    shared pre-write validator checked only type, shape and finiteness — so the
+    refusal landed from inside ``write_colors``, one dataset AFTER ``positions``
+    (measured: ``n/`` on disk holding ``positions`` and nothing else). ``int64``
+    is not a contrived dtype here; it is what ``np.array([[255, 0, 0]])`` gives
+    you on Linux.
+
+    Parity with the flat path is asserted in the strong sense (same type,
+    byte-identical message) for the same reason the wrong-length cases do it: the
+    two paths now run the ONE validator, and a substring match would survive a
+    divergence. Mesh joins these cases because ``kind=partition`` is one of its
+    two structural paths — the geometry is irrelevant to the verdict, which is
+    exactly the claim.
+
+    :data:`_PARTITION_SPECS` is the parametrization, and
+    ``test_the_same_colours_as_uint8_still_partition`` runs over the SAME list —
+    which is what keeps the class honest. An earlier cut parametrized over
+    ``partition=True`` and ``{"parts": 4}``: measured at these counts, NEITHER
+    splits (both give ``kind=leaf``, 0 children — no adder reads a ``"parts"``
+    key at all, and the ``max_elements`` default is 1,000,000), so two thirds of
+    the class silently re-ran the flat path while its control only ever exercised
+    the one spec that did split. ``default_no_split`` is kept deliberately and
+    named for what it is.
+    """
+
+    @pytest.mark.parametrize("geometry", ["points", "lines", "gsplats", "mesh"])
+    @pytest.mark.parametrize("spec_id,spec", _PARTITION_SPECS, ids=_PARTITION_IDS)
+    def test_int64_colors_are_refused_exactly_as_the_flat_path(
+        self, tmp_path: Any, geometry: str, spec_id: str, spec: Any
+    ) -> None:
+        tag = f"{geometry}_{spec_id}"
+        compiler, scene, path = open_scene(tmp_path, f"dtype_{tag}.luxar.zarr")
+        _, flat_scene, _ = open_scene(tmp_path, f"dtype_flat_{tag}.luxar.zarr")
+        colors = int64_rgb(_coloured_element_count(geometry))
+
+        flat = refusal(lambda: _add_coloured(flat_scene, geometry, colors))
+        split = refusal(lambda: _add_coloured(scene, geometry, colors, partition=spec))
+
+        assert_same_refusal(flat, split)
+        assert "Integer COLOR arrays must use dtype uint8 or uint16" in str(split)
+        assert "int64" in str(split)
+        assert "n" not in compiler.store
+        # Not merely absent from the live store: absent from the DELIVERED scene.
+        assert "n" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize(
+        "spec", [None, {"max_elements": _HALF}], ids=["flat", "split"]
+    )
+    def test_a_complex_colour_array_is_refused_too(
+        self, tmp_path: Any, spec: Any
+    ) -> None:
+        """The same stranding, one dtype KIND over — which is why the rule is a
+        whitelist (#1489).
+
+        ``complex64`` is ``np.number``, so the finiteness check passes it and the
+        integer rule never sees it; measured with the rule neutered, a VARYING
+        complex array reached the per-channel encoder, raised ``color_mode
+        required for float COLOR arrays`` and left ``n/positions`` on disk.
+        Varying, not uniform, on purpose: a uniform one takes the broadcast
+        encoding and used to be WRITTEN (as a complex64 zarr array), which is the
+        one behaviour this change deliberately takes away.
+        """
+        tag = "flat" if spec is None else "split"
+        compiler, scene, path = open_scene(tmp_path, f"dtype_cplx_{tag}.luxar.zarr")
+        rng = np.random.default_rng(74)
+        colors = (rng.random((_N, 3)) + 0j).astype(np.complex64)
+        extra = {} if spec is None else {"partition": spec}
+
+        split = refusal(
+            lambda: scene.add_points(
+                "n", random_positions(_N, seed=75), colors=colors, **extra
+            )
+        )
+
+        assert "COLOR arrays must be floating point, or integer uint8 or uint16" in str(
+            split
+        )
+        assert "complex64" in str(split)
+        assert "n" not in compiler.store
+        assert "n" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize("geometry", ["points", "lines", "gsplats", "mesh"])
+    @pytest.mark.parametrize("spec_id,spec", _PARTITION_SPECS, ids=_PARTITION_IDS)
+    def test_the_same_colours_as_uint8_still_partition(
+        self, tmp_path: Any, geometry: str, spec_id: str, spec: Any
+    ) -> None:
+        """The negative control, over the SAME specs the refusal is parametrized on.
+
+        Two jobs. It pins that only the DTYPE was ever wrong — the identical call
+        with ``.astype(np.uint8)`` writes. And, because it runs the same list, it
+        pins WHICH specs actually reach the wrapper: without that, a spec that
+        quietly falls through to a plain leaf makes its refusal case a re-run of
+        the flat path, asserting nothing about the partition gate. That is exactly
+        what ``{"parts": 4}`` was doing. ``default_no_split`` is asserted to be a
+        plain leaf, so the two claims cannot swap places unnoticed.
+        """
+        compiler, scene, path = open_scene(
+            tmp_path, f"dtype_ok_{geometry}_{spec_id}.luxar.zarr"
+        )
+        colors = int64_rgb(_coloured_element_count(geometry)).astype(np.uint8)
+
+        _add_coloured(scene, geometry, colors, partition=spec)
+        compiler.finalize()
+
+        if spec_id not in _SPLITTING_IDS:
+            leaf = zarr.open_group(path, mode="r")["n"]
+            assert leaf.attrs.get("kind") != "partition"
+            assert sorted(leaf.group_keys()) == []
+            return
+
+        store = zarr.open_group(path, mode="r")
+        assert store["n"].attrs["kind"] == "partition"
+        assert len(sorted(store["n"].group_keys())) > 1

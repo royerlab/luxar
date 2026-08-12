@@ -401,7 +401,7 @@ describe('depth-sort coordinator', () => {
     const { total, events } = profiler.getDepthSortCompletions();
     expect(total).toBe(1);
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ seq: 1, kernelMs: 4, splats: 3 });
+    expect(events[0]).toMatchObject({ seq: 1, kernelMs: 4, elements: 3 });
     // boundaryMs = workerMs − kernelMs; queueMs/lastMs are wall-clock, so
     // just assert boundaryMs and non-negative/finite latencies.
     expect(events[0].boundaryMs).toBe(2);
@@ -2343,7 +2343,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     simulateMeshRender(mesh);
 
     expect(root.count).toBe(1);
-    expect(root.metadata?.splats).toBe(2);
+    expect(root.metadata?.elements).toBe(2);
     // Uploaded (`up`) now, not merely scheduled — the buffer reached the GPU.
     expect(root.metadata?.info).toMatch(/up$/);
     // The apply duration is recorded separately from the resolve round-trip.
@@ -3359,7 +3359,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(root.count).toBe(0);
     simulateMeshRender(mesh);
     expect(root.count).toBe(1);
-    expect(root.metadata?.splats).toBe(12);
+    expect(root.metadata?.elements).toBe(12);
     expect(root.metadata?.info).toMatch(/up$/); // uploaded, not scheduled
     expect(Number.isFinite(root.metadata?.applyMs)).toBe(true);
     expect(root.metadata?.applyMs).toBeGreaterThanOrEqual(0);

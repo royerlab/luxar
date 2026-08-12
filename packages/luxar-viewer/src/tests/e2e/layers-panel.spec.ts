@@ -2,9 +2,11 @@
  * E2E tests for the Layers Panel
  *
  * Tests the napari-inspired per-layer control panel that opens with the L key.
- * Covers: visibility toggle, selection, blending mode, gamma, and panel lifecycle.
+ * Covers: visibility toggle, selection, blending mode, gamma, context menus,
+ * the live filter's computed-style hiding, and panel lifecycle.
  *
- * Dataset: sharpness_showcase_example.luxar.zarr (8+ point cloud nodes with layer=True)
+ * Dataset: layers_test_example.luxar.zarr (4 layered nodes incl. a composite
+ * group and a visible=False layer — see the DATASET constant below).
  */
 
 import { test, expect } from './fixtures';
@@ -584,5 +586,117 @@ test.describe('Layers Panel', () => {
     // both guards against drift).
     const selectedRow = rows.nth(nextSelected);
     await expect(selectedRow).toHaveClass(/luxar-layer-row--selected/);
+  });
+
+  /**
+   * Dispatch a synthetic `contextmenu` on an element with EXPLICIT
+   * client coordinates. Playwright's native right-click is unreliable
+   * against delegated handlers, and a coordinate-less synthetic event
+   * lands at (0, 0) — the menu positioning tolerates that, but the
+   * panel's delegated handler resolves its target via the event target,
+   * so dispatch on the element itself with its real mid-point.
+   */
+  async function dispatchContextMenu(
+    page: import('@playwright/test').Page,
+    selector: string,
+    nth = 0
+  ): Promise<void> {
+    await page
+      .locator(selector)
+      .nth(nth)
+      .evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: r.left + r.width / 2,
+            clientY: r.top + r.height / 2,
+          })
+        );
+      });
+  }
+
+  test('row context menu: Solo hides all siblings, re-Solo restores the pre-solo set', async ({
+    page,
+  }) => {
+    await openLayersPanel(page);
+    const rows = page.locator('.luxar-layer-row');
+    const rowCount = await rows.count();
+    expect(rowCount).toBeGreaterThan(2);
+
+    // layers_test_example ships HiddenLayer with visible=False — record the
+    // authored hidden-set so the restore assertion covers a pre-solo hidden
+    // layer surviving the round-trip (the capture, not blanket-show-all).
+    const hiddenBefore = await rows.evaluateAll((els) =>
+      els.map((el) => el.classList.contains('luxar-layer-row--hidden'))
+    );
+
+    await dispatchContextMenu(page, '.luxar-layer-row', 0);
+    const menu = page.locator('.luxar-context-menu');
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute('role', 'menu');
+
+    await menu.getByRole('menuitemradio', { name: 'Solo — hide all others' }).click();
+    await expect(menu).toBeHidden();
+
+    // Solo: row 0 visible, every other row carries --hidden.
+    const afterSolo = await rows.evaluateAll((els) =>
+      els.map((el) => el.classList.contains('luxar-layer-row--hidden'))
+    );
+    expect(afterSolo[0]).toBe(false);
+    expect(afterSolo.slice(1).every(Boolean)).toBe(true);
+
+    // Re-open on the same row: the item reads as the un-solo toggle.
+    await dispatchContextMenu(page, '.luxar-layer-row', 0);
+    await page
+      .locator('.luxar-context-menu')
+      .getByRole('menuitemradio', { name: 'Un-solo (restore visibility)' })
+      .click();
+
+    // Restore: the TRUE pre-solo visibility set, authored hidden layer included.
+    const afterRestore = await rows.evaluateAll((els) =>
+      els.map((el) => el.classList.contains('luxar-layer-row--hidden'))
+    );
+    expect(afterRestore).toEqual(hiddenBefore);
+  });
+
+  test('Shift+F10 on a focused row opens the context menu; Escape closes and returns focus', async ({
+    page,
+  }) => {
+    await openLayersPanel(page);
+    const row = page.locator('.luxar-layer-row').first();
+    await row.focus();
+    await page.keyboard.press('Shift+F10');
+
+    const menu = page.locator('.luxar-context-menu');
+    await expect(menu).toBeVisible();
+    // Focus moves into the menu (roving menuitem focus, not the row).
+    const focusInMenu = await page.evaluate(
+      () => !!document.activeElement?.closest('.luxar-context-menu')
+    );
+    expect(focusInMenu).toBe(true);
+
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    // Focus returns to the opener row.
+    const focusOnRow = await page.evaluate(
+      () => !!document.activeElement?.classList.contains('luxar-layer-row')
+    );
+    expect(focusOnRow).toBe(true);
+  });
+
+  test('filtered rows are actually hidden (computed style, not just a class)', async ({ page }) => {
+    // Pins the CSS cascade: .luxar-layer-row--filtered { display: none } must
+    // come AFTER the base .luxar-layer-row { display: flex } rule — at equal
+    // specificity, source order decides, and a regression leaves the filter
+    // toggling a class that does nothing (unit tests can't see the cascade).
+    await openLayersPanel(page);
+    const row = page.locator('.luxar-layer-row').first();
+    await expect(row).toBeVisible();
+    await row.evaluate((el) => el.classList.add('luxar-layer-row--filtered'));
+    await expect(row).toBeHidden();
+    await row.evaluate((el) => el.classList.remove('luxar-layer-row--filtered'));
+    await expect(row).toBeVisible();
   });
 });
