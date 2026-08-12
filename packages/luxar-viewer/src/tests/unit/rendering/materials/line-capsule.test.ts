@@ -3,6 +3,10 @@
  * reference (`_shared/line-capsule.ts`) — the single source both shader
  * backends fold from (#1352).
  */
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { GAUSSIAN_EQUIVALENT_TRUNCATION } from '../../../../rendering/materials/_shared/falloff';
@@ -232,6 +236,122 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       );
       expect(minErr, `ql ${ql} min`).toBeGreaterThan(-0.13);
       expect(maxErr, `ql ${ql} max`).toBeLessThan(0.06);
+    }
+  });
+});
+
+describe('cut-normal precision regression lock (#1502)', () => {
+  // A per-leg snap of the cut normal (`round(nLoc * 1024.0) / 1024.0`) does
+  // not cancel between the two legs of a joint — each builds it in its own
+  // local (u, v) basis — and since the cut spans the full stencil the
+  // disagreement grows with distance from the joint, banding near-hairpin
+  // joints along the whole rod. The composition sweep above only sees a snap
+  // re-added to the CPU model; unit CI pins the four SHADER surfaces with
+  // nothing at all (the TSL pair only through the codegen snapshots, and
+  // `e2e-tests` in `ci.yml` is `if: false`), hence a source-text lock in the
+  // spirit of `line/join-width-tsl.test.ts` — whose two small helpers are
+  // copied rather than exported, to leave that file alone. Every match runs
+  // on COMMENT-STRIPPED text, so the notes at the shader sites can neither
+  // satisfy nor break it.
+  const HERE = path.dirname(fileURLToPath(import.meta.url));
+  const SRC_ROOT = path.resolve(HERE, '../../../..');
+  const readSource = (rel: string): string => readFileSync(path.join(SRC_ROOT, rel), 'utf8');
+  const stripComments = (source: string): string =>
+    source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  // [source, its own cut-normal shape, how many construction sites it has]:
+  // two per shader (end A and end B), one in the CPU model. Keyed on the
+  // locals, never on the varying names — those are being renamed elsewhere.
+  // The 40-char gap is slack for prettier: `vec2(dot(n2, u), dot(n2, v))`
+  // sits ~71 chars deep against printWidth 100, so one more nesting level
+  // wraps the two `dot()` args and a tighter gap would red on a reformat.
+  const SOURCES: Array<[string, RegExp, number]> = [
+    ['rendering/materials/_shared/line-capsule.ts', /legLocal\(leg,\s*partner\.dir\[0\]/g, 1],
+    [
+      'rendering/materials/line/shader-glsl-capsule.ts',
+      /dot\(n2,\s*u\)[\s\S]{0,40}dot\(n2,\s*v\)/g,
+      2,
+    ],
+    [
+      'rendering/materials/line/shader-tsl-capsule.ts',
+      /dot\(n2,\s*u\)[\s\S]{0,40}dot\(n2,\s*v\)/g,
+      2,
+    ],
+    ['rendering/picking/line/shaders-capsule.ts', /dot\(n2,\s*u\)[\s\S]{0,40}dot\(n2,\s*v\)/g, 2],
+    ['rendering/picking/line/pick-capsule.tsl.ts', /dot\(n2,\s*u\)[\s\S]{0,40}dot\(n2,\s*v\)/g, 2],
+  ];
+
+  // Each site is scanned within ±600 chars: far enough to catch a snap on
+  // the next line, far short of the ≥2600-char gap to the other end's site,
+  // so the rest of these 478-652 line modules stays out of scope — `floor()`
+  // and `1024` are ordinary there (integer texel math, texture widths).
+  const WINDOW = 600;
+
+  it('keeps the cut normal unquantised at every construction site', () => {
+    for (const [rel, shape, count] of SOURCES) {
+      const stripped = stripComments(readSource(rel));
+      expect(stripped.length, `${rel}: source too short — did the read fail?`).toBeGreaterThan(
+        1000
+      );
+      const matches = [...stripped.matchAll(shape)];
+      expect(
+        matches.length,
+        `${rel}: expected ${count} cut-normal construction site(s), found ` +
+          `${matches.length} — the shape regex drifted, so this pin now guards ` +
+          'the wrong thing (or nothing)'
+      ).toBe(count);
+      for (const match of matches) {
+        const start = Math.max(0, match.index - WINDOW);
+        const window = stripped.slice(start, match.index + match[0].length + WINDOW);
+        // `\b1024\b` so `10240`/`0.1024` cannot false-red (it still matches
+        // the historical `1024.0`, since `.` is a non-word character), and
+        // `round(?:Even)?` to catch GLSL ES 3.0's `roundEven()`.
+        expect(
+          window,
+          `${rel}: the cut normal must stay full precision — the two legs ` +
+            'build it in different local bases, so any per-leg rounding never ' +
+            'cancels and the error grows with distance along the rod (#1502). ' +
+            'Out of scope here: an explicit narrowing or packing of the normal ' +
+            '(packHalf2x16, an ivec2 cast, fract-based rounding) — a token scan ' +
+            'cannot tell a cut-normal lane from an unrelated one.'
+        ).not.toMatch(/\b(?:round(?:Even)?|floor|trunc|ceil)\s*\(|\b1024\b/);
+      }
+    }
+  });
+
+  it('keeps every GLSL capsule stage pinned at highp float (#1502)', () => {
+    // three.js prepends `precision <capabilities.precision> float;` to the
+    // module source, and that precision follows the renderer's
+    // `webgl.renderer.precision` config, which can be mediump. Since the
+    // module source lands AFTER the prefix, each stage's own
+    // `precision highp float;` is what actually pins the cut normal — losing
+    // it narrows the normal per leg with nothing in the source looking wrong.
+    // Checked per STAGE, on the compiled strings: a whole-file `toContain`
+    // cannot tell "the vertex stage lost its highp" from "both are fine".
+    // The precision STATEMENT, not the bare token: the quad sibling and
+    // `picking/point/shaders.ts` legitimately declare individual varyings
+    // mediump/lowp for bandwidth, which is honest work here too. TSL is
+    // excluded — three.js manages precision there, so there is no pragma.
+    const STAGES: Array<[string, string]> = [
+      ['shader-glsl-capsule.ts vertex', CAPSULE_LINE_VERTEX_SHADER],
+      ['shader-glsl-capsule.ts fragment', CAPSULE_LINE_FRAGMENT_SHADER],
+      ['shaders-capsule.ts (pick) vertex', CAPSULE_LINE_PICK_VERTEX_SHADER],
+      ['shaders-capsule.ts (pick) fragment', CAPSULE_LINE_PICK_FRAGMENT_SHADER],
+    ];
+    for (const [label, src] of STAGES) {
+      const stripped = stripComments(src);
+      expect(
+        stripped,
+        `${label}: must still declare "precision highp float;" — losing it ` +
+          "lets three.js's prefix (from the renderer's precision config) run " +
+          'the cut normal at mediump/lowp, which reintroduces #1502'
+      ).toContain('precision highp float;');
+      expect(
+        stripped,
+        `${label}: must not narrow the default float precision — a later ` +
+          'precision statement overrides the highp one above it and ' +
+          'reintroduces #1502'
+      ).not.toMatch(/precision\s+(?:mediump|lowp)\s+float/);
     }
   });
 });

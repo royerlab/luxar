@@ -306,6 +306,8 @@ export function capsuleLineWebGPUFactory(
           const nRaw: TSLNode = qhat.sub(u).toVar(); // q − m, m = +u at A
           const nl: TSLNode = length(nRaw).toVar();
           If(nl.greaterThan(1e-3), () => {
+            // Cut normal: keep full precision — no per-leg quantisation
+            // (see `_shared/line-capsule.ts`'s note; #1502).
             const n2: TSLNode = nRaw.div(nl).toVar();
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.lessThan(-1e-3), () => {
