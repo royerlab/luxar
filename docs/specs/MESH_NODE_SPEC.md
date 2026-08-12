@@ -557,6 +557,9 @@ rebuilt; the vertex attribute buffers are uploaded once, in full, and left alone
 `displayDims` change: because `position` and `normal` are both `displayDims`-derived (§6.1, §3.4), it
 re-extracts and re-uploads the `position` buffer and re-decides the `normal` attribute (§7). This is
 re-extraction of the display-space projection, **not** compaction — compaction is still never done.
+A reveal-ladder level is a second exception: each level writes its grown vertex/face prefix into the SAME
+capacity-sized buffers (sized to the ladder's lifetime totals, never resized), rather than uploading
+"once, in full" the way an unladdered mesh does.
 `drawElements` never fetches an unreferenced vertex, so culled vertices cost nothing to draw, and the
 mesh is resident in full anyway (§7). This deliberately avoids:
 

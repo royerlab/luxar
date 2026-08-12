@@ -187,6 +187,13 @@ describe('commitMeshGeometry', () => {
     // Only the prefix is DRAWN, which is the other half of the contract: a bigger
     // buffer must not put stale tail triangles on screen.
     expect(mesh.geometry.drawRange.count).toBe(3);
+    // The real pin for `committedVertexCount`: `n_vertices` (12), `position.count`
+    // (12) and `data.vertexCount` (3) all disagree here, so this is the only case
+    // that can tell "stamped from the committed data" apart from "stamped from
+    // the node attrs" or "read back off `position.count`" — the sibling assertion
+    // below (in the non-ladder test) has all three equal to 3 and would pass for
+    // any of the three wrong sources.
+    expect(mesh.userData.committedVertexCount).toBe(3);
   });
 
   it('populates the placeholder and stamps the visible counts', async () => {
@@ -202,6 +209,10 @@ describe('commitMeshGeometry', () => {
     expect(mesh.geometry.getAttribute('position').count).toBe(3);
     expect(mesh.userData.visibleTriangleCount).toBe(1);
     expect(mesh.userData.loadedViewVersion).toBe(7);
+    // Stamped separately from `position.count`: that attribute is capacity-sized
+    // for a reveal ladder (#1521) and would otherwise report the ladder's
+    // lifetime total rather than what this commit actually received (#1522).
+    expect(mesh.userData.committedVertexCount).toBe(3);
   });
 
   it('applies the node transform to the placeholder, like the sibling factories', () => {

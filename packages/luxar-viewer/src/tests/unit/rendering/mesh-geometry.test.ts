@@ -209,8 +209,13 @@ describe('updateMeshGeometry', () => {
   });
 
   it('does not recompute bounds when position is unchanged', () => {
+    // Identity alone cannot prove this: three's `computeBoundingSphere()` mutates
+    // the existing `Sphere` in place, so `toBe(sphere)` would hold even if the
+    // recompute ran. Spying on the compute calls is the real assertion.
     const g = seeded();
-    const sphere = g.boundingSphere;
+    // Prime the geometry's upload stamps with one real update first — a
+    // freshly-created geometry never stamped `meshUploadedVertexCount`, so the very
+    // next call would see `countChanged` fire regardless of `positionChanged`.
     updateMeshGeometry(g, {
       position: g.getAttribute('position').array as Float32Array,
       positionChanged: true,
@@ -219,8 +224,93 @@ describe('updateMeshGeometry', () => {
       vertexCount: 3,
       faceCount: 1,
     });
-    // Same object identity — computeBoundingSphere() would have replaced it.
-    expect(g.boundingSphere).toBe(sphere);
+    const computeBox = vi.spyOn(g, 'computeBoundingBox');
+    const computeSphere = vi.spyOn(g, 'computeBoundingSphere');
+    updateMeshGeometry(g, {
+      position: g.getAttribute('position').array as Float32Array,
+      positionChanged: false,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: null,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    expect(computeBox).not.toHaveBeenCalled();
+    expect(computeSphere).not.toHaveBeenCalled();
+  });
+
+  it('bounds the position in-place upload to the written prefix', () => {
+    // Mirrors the index-buffer range assertion in `applyMeshIndices` — a byte-count
+    // vs. element-count mistake here is a real GL `INVALID_VALUE` at draw time,
+    // invisible in jsdom without asserting the range itself.
+    const g = seeded();
+    const positionAttr = g.getAttribute('position') as THREE.BufferAttribute;
+    const next = new Float32Array([0, 0, 0, 5, 0, 0, 0, 5, 0]);
+    updateMeshGeometry(g, {
+      position: next,
+      positionChanged: true,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: null,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    expect(positionAttr.updateRanges).toEqual([{ start: 0, count: next.length }]);
+
+    // Two commits without an intervening render must not stack ranges — a real
+    // renderer clears them after upload, so this is hygiene rather than a
+    // correctness bug, but unbounded growth between frames is not left to chance.
+    const third = new Float32Array([0, 0, 0, 9, 0, 0, 0, 9, 0]);
+    updateMeshGeometry(g, {
+      position: third,
+      positionChanged: true,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: null,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    expect(positionAttr.updateRanges).toHaveLength(1);
+  });
+
+  it('rebinds position once at ladder level 0 from the real 1-vertex placeholder, then writes level 1 in place', () => {
+    // Every other ladder test in this file seeds `createMeshGeometry` WITH
+    // `capacityVertexCount` already set. Production never does that:
+    // `create-mesh-node.ts` builds the real placeholder — `placeholder()` above —
+    // with NO capacity, so the real level-0 commit goes through the REBIND branch
+    // instead of the in-place-copy path every other ladder test exercises from its
+    // second commit on.
+    const g = placeholder();
+    const totals = { vertices: 20, faces: 10 };
+    const level0Position = new Float32Array(10 * 3).fill(1);
+    const rebuiltLevel0 = updateMeshGeometry(g, {
+      position: level0Position,
+      positionChanged: true,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: null,
+      vertexCount: 10,
+      faceCount: 5,
+      vertexCountGrows: true,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+    expect(rebuiltLevel0).toBe(true); // the placeholder → real-buffer grow-rebind
+    const positionAttr = g.getAttribute('position') as THREE.BufferAttribute;
+    expect(positionAttr.count).toBe(totals.vertices); // capacity-sized, not 10
+
+    const level1Position = new Float32Array(20 * 3).fill(1);
+    level1Position[15 * 3] = 42; // a distinctive value in the newly-revealed tail
+    const rebuiltLevel1 = updateMeshGeometry(g, {
+      position: level1Position,
+      positionChanged: true,
+      indices: new Uint32Array(Array.from({ length: 30 }, (_, i) => i % 20)),
+      colors: null,
+      vertexCount: 20,
+      faceCount: 10,
+      vertexCountGrows: true,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+    expect(rebuiltLevel1).toBe(false); // written in place, not rebound
+    expect(g.getAttribute('position')).toBe(positionAttr);
+    expect((g.getAttribute('position').array as Float32Array)[15 * 3]).toBe(42);
   });
 
   it('keeps the length-change warning for live nodes but not the placeholder grow', () => {
@@ -328,16 +418,30 @@ describe('updateMeshGeometry', () => {
   });
 
   it('leaves the color buffer untouched on a subsequent slice move', () => {
-    // The guard is keyed off vertexCount, so once colors are installed (count 3) a
-    // later slice move at the SAME vertexCount must NOT re-create/re-upload the
-    // buffer — only the index rebuilds. Tying color to position identity would fail
-    // this, since `projectMeshTo3D` reallocates position every call.
+    // The guard is keyed off the capacity plus the `meshColorsInstalled` marker
+    // (see the color guard in `updateMeshGeometry`), and currency past that is
+    // tracked by the SOURCE array's identity (`isAttributeCurrent`, #1522), not by
+    // vertexCount alone — a later slice move at the SAME vertexCount must NOT
+    // re-create/re-upload the buffer, only the index rebuilds. Tying color to
+    // position identity would fail this differently: `projectMeshTo3D` REUSES one
+    // loader-owned position buffer across epochs (`MeshGeometryConfig.position`),
+    // so position identity alone cannot even signal a slice move, let alone gate
+    // color off it correctly.
+    //
+    // The SAME `colors` array is passed both times, matching production: the
+    // whole-node loader serves one cached `LoadedMeshData` for the node's
+    // lifetime, so `data.colors` is identity-stable across epochs exactly like
+    // `data.normals`/`data.scalars`. A fresh array with equal content, unlike
+    // here, legitimately re-uploads — see the next test, the colour mirror of
+    // `replaceVertexAttribute`'s "new array, same length" case for
+    // `normal`/`aScalar`.
     const g = placeholder();
+    const colors = new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]);
     updateMeshGeometry(g, {
       position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
       positionChanged: true,
       indices: new Uint32Array([0, 1, 2]),
-      colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
+      colors,
       colorComponents: 3,
       vertexCount: 3,
       faceCount: 1,
@@ -348,7 +452,7 @@ describe('updateMeshGeometry', () => {
       position: new Float32Array([0, 0, 0, 2, 0, 0, 0, 2, 0]),
       positionChanged: true,
       indices: new Uint32Array([2, 1, 0]),
-      colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
+      colors,
       colorComponents: 3,
       vertexCount: 3,
       faceCount: 1,
@@ -357,6 +461,40 @@ describe('updateMeshGeometry', () => {
     // No re-upload either: an unchanged `version` proves the buffer wasn't dirtied.
     expect((g.getAttribute('color') as THREE.BufferAttribute).version).toBe(versionBefore);
     // Nothing rebound → the commit skips the WebGPU RenderObject eviction.
+    expect(rebuilt).toBe(false);
+  });
+
+  it('re-uploads in place when a NEW colours array with the same content arrives', () => {
+    // The colour mirror of the `normal`/`aScalar` "copies in place when a NEW
+    // array of the same length arrives" case above. Dropping the
+    // `meshColorsSource === colors` term from the currency check would report
+    // this as already-current (since count and content are unchanged), leaving
+    // the version un-bumped — currently passes the whole suite without this test.
+    const g = placeholder();
+    const first = new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]);
+    updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: true,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: first,
+      colorComponents: 3,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    const colorAttr = g.getAttribute('color') as THREE.BufferAttribute;
+    const versionBefore = colorAttr.version;
+    const second = new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]); // same content, new array
+    const rebuilt = updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: false,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: second,
+      colorComponents: 3,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    expect(g.getAttribute('color')).toBe(colorAttr); // same object, not rebound
+    expect(colorAttr.version).toBeGreaterThan(versionBefore);
     expect(rebuilt).toBe(false);
   });
 });
@@ -536,6 +674,20 @@ describe('the `normal` / `aScalar` attributes — replaced, never added or remov
     expect(attr.version).toBeGreaterThan(before);
   });
 
+  it('bounds the normal in-place upload to the written prefix', () => {
+    // Mirrors the index-buffer range assertion in `applyMeshIndices`.
+    const geometry = createMeshGeometry(cfg({ normals: new Float32Array(9) }));
+    const attr = geometry.getAttribute('normal') as THREE.BufferAttribute;
+    const next = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    updateMeshGeometry(geometry, cfg({ normals: next, positionChanged: false }));
+    expect(attr.updateRanges).toEqual([{ start: 0, count: next.length }]);
+
+    // Two commits without an intervening render must not stack ranges.
+    const third = new Float32Array([0, 1, 0, 1, 0, 0, 0, 0, 1]);
+    updateMeshGeometry(geometry, cfg({ normals: third, positionChanged: false }));
+    expect(attr.updateRanges).toHaveLength(1);
+  });
+
   it('re-uploads NOTHING when the same array arrives again — the steady state', () => {
     // The whole-node loader serves one cached `LoadedMeshData` for the node's
     // lifetime and the commit passes `data.normals` / `data.scalars` every epoch, so
@@ -565,6 +717,74 @@ describe('the `normal` / `aScalar` attributes — replaced, never added or remov
 
     expect(normalAttr.version, 'normal buffer re-uploaded on a slice move').toBe(normalVersion);
     expect(scalarAttr.version, 'scalar buffer re-uploaded on a slice move').toBe(scalarVersion);
+  });
+
+  it('on a LADDER, re-uploads nothing within a level but bumps on a new one (regression for #1522 fix A)', () => {
+    // Before the fix, currency for `normal`/`aScalar` was tracked by comparing
+    // `existing.array` (the capacity-sized bound buffer) against `data` directly.
+    // Once a ladder's first level rebinds that buffer to a capacity-sized COPY,
+    // `existing.array !== data` is permanently true — including for the level
+    // that produced it — so every slice move re-uploaded the WHOLE capacity
+    // buffer with no update ranges, on every level, forever. `isAttributeCurrent`
+    // fixes that by tracking the SOURCE array's own identity instead.
+    const totals = { vertices: 20, faces: 10 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      normals: new Float32Array(3),
+      scalars: new Float32Array(1),
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    function commitLevel(vertexCount: number, normals: Float32Array, scalars: Float32Array): void {
+      const faceCount = Math.floor((vertexCount / totals.vertices) * totals.faces);
+      const indices = new Uint32Array(faceCount * 3);
+      for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+      updateMeshGeometry(geometry, {
+        position: new Float32Array(vertexCount * 3),
+        positionChanged: true,
+        indices,
+        colors: null,
+        normals,
+        scalars,
+        vertexCount,
+        faceCount,
+        vertexCountGrows: true,
+        capacityVertexCount: totals.vertices,
+        capacityFaceCount: totals.faces,
+      });
+    }
+
+    const level0Normals = new Float32Array(10 * 3).fill(1);
+    const level0Scalars = new Float32Array(10).fill(0.5);
+    commitLevel(10, level0Normals, level0Scalars);
+    const normalAttr = geometry.getAttribute('normal') as THREE.BufferAttribute;
+    const scalarAttr = geometry.getAttribute('aScalar') as THREE.BufferAttribute;
+    const normalVersionLevel0 = normalAttr.version;
+    const scalarVersionLevel0 = scalarAttr.version;
+
+    // Several sweeps at the SAME level, with the SAME arrays (matching production:
+    // the whole-node loader's memoized `LoadedMeshData` hands back identical
+    // `data.normals`/`data.scalars` every sweep) — no version change expected.
+    commitLevel(10, level0Normals, level0Scalars);
+    commitLevel(10, level0Normals, level0Scalars);
+    expect(normalAttr.version).toBe(normalVersionLevel0);
+    expect(scalarAttr.version).toBe(scalarVersionLevel0);
+
+    // A new level — a longer prefix, fresh arrays — must bump both.
+    const level1Normals = new Float32Array(20 * 3).fill(2);
+    const level1Scalars = new Float32Array(20).fill(0.75);
+    commitLevel(20, level1Normals, level1Scalars);
+    expect(normalAttr.version).toBeGreaterThan(normalVersionLevel0);
+    expect(scalarAttr.version).toBeGreaterThan(scalarVersionLevel0);
+    // Same attribute objects throughout — never orphaned (#1521).
+    expect(geometry.getAttribute('normal')).toBe(normalAttr);
+    expect(geometry.getAttribute('aScalar')).toBe(scalarAttr);
   });
 });
 
@@ -666,5 +886,569 @@ describe('capacity sizing — a reveal ladder must not orphan GPU buffers (#1521
     const colors = new Float32Array(6);
     const attr = createMeshColorAttribute(colors, 3, 2);
     expect(attr.array).toBe(colors);
+  });
+});
+
+describe('a superseded ladder commit must not strand the newly revealed vertices (#1522 fix B)', () => {
+  it('uploads a grown prefix even when positionChanged is false and the key is unchanged', () => {
+    // The bug: an aborted commit lets `projectMeshTo3D` stamp the loader-owned
+    // scratch's `displayDimsKey` (so the NEXT sweep reads `positionChanged ===
+    // false`) while the geometry itself never received that level's data. The key
+    // is also unchanged (same `displayDims` throughout), so `keyChanged` cannot
+    // see the gap either — only a stamped vertex COUNT can. This reproduces the
+    // second sweep directly: same key, `positionChanged: false`, but a longer
+    // prefix than the geometry has ever uploaded.
+    const totals = { vertices: 20, faces: 10 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    // Level 0: a real commit, the normal way — positionChanged true, a key stamped.
+    const level0Position = new Float32Array(10 * 3).fill(1);
+    updateMeshGeometry(geometry, {
+      position: level0Position,
+      positionChanged: true,
+      positionKey: '0,1,2',
+      indices: new Uint32Array([0, 1, 2]),
+      colors: null,
+      vertexCount: 10,
+      faceCount: 5,
+      vertexCountGrows: true,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+    const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
+
+    // Level 1: the superseded-then-resumed sweep. Vertex 15 (index 5 of the newly
+    // revealed 10-vertex tail) carries a distinctive nonzero value; a stranded
+    // commit would leave it at the zero `atCapacity` filled the buffer with.
+    const level1Position = new Float32Array(20 * 3).fill(1);
+    level1Position[15 * 3] = 42;
+    updateMeshGeometry(geometry, {
+      position: level1Position,
+      positionChanged: false, // the projection saw no displayDims change
+      positionKey: '0,1,2', // same key — keyChanged cannot see the gap either
+      indices: new Uint32Array(Array.from({ length: 30 }, (_, i) => i % 20)),
+      colors: null,
+      vertexCount: 20,
+      faceCount: 10,
+      vertexCountGrows: true,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    // The attribute object is never rebound — only its contents change.
+    expect(geometry.getAttribute('position')).toBe(positionAttr);
+    // The newly revealed vertex reached the buffer instead of staying at the
+    // origin-collapsing zero fill.
+    expect((geometry.getAttribute('position').array as Float32Array)[15 * 3]).toBe(42);
+  });
+});
+
+describe('color refresh — a reveal ladder must update its colour prefix, alpha included (#1522)', () => {
+  /**
+   * Colours for a ladder committed up through `counts[i]` vertices, `values[i]`
+   * per component (RGB, or RGBA when `alphas` is given). Mirrors how a real
+   * ladder's levels concatenate: an earlier level's bytes are carried forward
+   * unchanged, and only the newly revealed tail gets the new level's fill —
+   * unlike a naive test double that re-fills the whole array every commit, which
+   * would pass even if the "revealed" range were never touched.
+   */
+  function ladderColors<A extends Uint8Array | Uint16Array | Float32Array>(
+    ctor: new (n: number) => A,
+    counts: number[],
+    values: number[],
+    components: 3 | 4,
+    alphas?: number[]
+  ): A {
+    const total = counts[counts.length - 1]!;
+    const arr = new ctor(total * components);
+    let start = 0;
+    for (let i = 0; i < counts.length; i++) {
+      for (let v = start; v < counts[i]!; v++) {
+        const base = v * components;
+        arr[base] = values[i]!;
+        arr[base + 1] = values[i]!;
+        arr[base + 2] = values[i]!;
+        if (components === 4) arr[base + 3] = alphas ? alphas[i]! : 255;
+      }
+      start = counts[i]!;
+    }
+    return arr;
+  }
+
+  it('writes a growing uint8 RGB ladder into the SAME buffer, alpha included', () => {
+    // The bug: once `color` is bound at the node's capacity, every level binds at
+    // the same count, so the old count-only guard treated every level after the
+    // first as "already installed" and never touched the buffer again — a
+    // revealed vertex kept the zero-filled slot it was born with. Alpha is the
+    // load-bearing component here: `vAlpha = sanitizeAlpha(color.a)` is the
+    // mesh's ENTIRE coverage term (shader-glsl.ts), so a zero there makes the
+    // revealed surface invisible, not merely the wrong colour.
+    const totals = { vertices: 300, faces: 100 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    function commit(vertexCount: number, counts: number[], values: number[]): void {
+      const faceCount = Math.floor((vertexCount / totals.vertices) * totals.faces);
+      const indices = new Uint32Array(faceCount * 3);
+      for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+      updateMeshGeometry(geometry, {
+        position: new Float32Array(vertexCount * 3),
+        positionChanged: true,
+        indices,
+        colors: ladderColors(Uint8Array, counts, values, 3),
+        colorComponents: 3,
+        vertexCount,
+        faceCount,
+        vertexCountGrows: true,
+        capacityVertexCount: totals.vertices,
+        capacityFaceCount: totals.faces,
+      });
+    }
+
+    commit(100, [100], [11]);
+    const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
+    commit(200, [100, 200], [11, 22]);
+    commit(300, [100, 200, 300], [11, 22, 33]);
+
+    // The attribute OBJECT never changed — the buffer was never orphaned (#1521).
+    expect(geometry.getAttribute('color')).toBe(colorAttr);
+    const color = geometry.getAttribute('color') as THREE.BufferAttribute;
+    const at = (v: number): number[] => Array.from(color.array).slice(v * 4, v * 4 + 4);
+    expect(at(0)).toEqual([11, 11, 11, 255]);
+    expect(at(150)).toEqual([22, 22, 22, 255]);
+    expect(at(250)).toEqual([33, 33, 33, 255]);
+  });
+
+  it('bounds the colour refresh upload to the committed prefix', () => {
+    // Mirrors the index-buffer range assertion in `applyMeshIndices` — a
+    // byte-count vs. element-count mistake here is a real GL `INVALID_VALUE` at
+    // draw time, invisible in jsdom without asserting the range itself.
+    const g = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+    });
+    const colors = new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]);
+    // The install (placeholder → real buffer) rebinds via `setAttribute` and needs
+    // no range of its own — the whole new buffer uploads regardless. The REFRESH
+    // this test is about only starts on the second commit.
+    updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: true,
+      indices: new Uint32Array([0, 1, 2]),
+      colors,
+      colorComponents: 3,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    const colorAttr = g.getAttribute('color') as THREE.BufferAttribute;
+
+    const second = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: false,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: second,
+      colorComponents: 3,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    expect(colorAttr.updateRanges).toEqual([{ start: 0, count: 3 * colorAttr.itemSize }]);
+
+    // A THIRD commit with no intervening render must not stack a second range.
+    const third = new Uint8Array([9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: false,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: third,
+      colorComponents: 3,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    expect(colorAttr.updateRanges).toEqual([{ start: 0, count: 3 * colorAttr.itemSize }]);
+  });
+
+  it('carries the AUTHORED alpha for a later-revealed vertex in an RGBA ladder', () => {
+    // The RGBA sibling of the case above: no padding, so the guard's format
+    // check is exercised at itemSize 4 natively rather than via the pad path.
+    const totals = { vertices: 200, faces: 100 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    function commit(
+      vertexCount: number,
+      counts: number[],
+      values: number[],
+      alphas: number[]
+    ): void {
+      const faceCount = Math.floor((vertexCount / totals.vertices) * totals.faces);
+      const indices = new Uint32Array(faceCount * 3);
+      for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+      updateMeshGeometry(geometry, {
+        position: new Float32Array(vertexCount * 3),
+        positionChanged: true,
+        indices,
+        colors: ladderColors(Uint8Array, counts, values, 4, alphas),
+        colorComponents: 4,
+        vertexCount,
+        faceCount,
+        vertexCountGrows: true,
+        capacityVertexCount: totals.vertices,
+        capacityFaceCount: totals.faces,
+      });
+    }
+
+    commit(100, [100], [40], [128]);
+    commit(200, [100, 200], [40, 80], [128, 200]);
+
+    const color = geometry.getAttribute('color') as THREE.BufferAttribute;
+    // Vertex 150 was only revealed by the second commit — its alpha must be the
+    // AUTHORED 200, not the 0 a never-updated slot would carry.
+    expect(color.array[150 * 4 + 3]).toBe(200);
+  });
+
+  it('carries the AUTHORED channel values for a later-revealed vertex in a float32 RGB mesh', () => {
+    // The float32 case is black-but-opaque when broken (the size-3 attribute's
+    // `w = 1.0` default hides the alpha symptom), so this asserts RGB directly.
+    const totals = { vertices: 200, faces: 100 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    function commit(vertexCount: number, counts: number[], values: number[]): void {
+      const faceCount = Math.floor((vertexCount / totals.vertices) * totals.faces);
+      const indices = new Uint32Array(faceCount * 3);
+      for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+      updateMeshGeometry(geometry, {
+        position: new Float32Array(vertexCount * 3),
+        positionChanged: true,
+        indices,
+        colors: ladderColors(Float32Array, counts, values, 3),
+        colorComponents: 3,
+        vertexCount,
+        faceCount,
+        vertexCountGrows: true,
+        capacityVertexCount: totals.vertices,
+        capacityFaceCount: totals.faces,
+      });
+    }
+
+    // 0.25 / 0.5 are exactly representable in float32, so the equality check
+    // below isn't fighting binary rounding on top of the thing under test.
+    commit(100, [100], [0.25]);
+    commit(200, [100, 200], [0.25, 0.5]);
+
+    const color = geometry.getAttribute('color') as THREE.BufferAttribute;
+    expect(Array.from(color.array).slice(150 * 3, 150 * 3 + 3)).toEqual([0.5, 0.5, 0.5]);
+  });
+
+  it('re-uploads nothing for an unladdered mesh across slice moves, but bumps per ladder level', () => {
+    // The steady-state control mirroring the `normal`/`aScalar` version check: an
+    // UNLADDERED padded-RGB mesh driven through several slice moves with the
+    // SAME colours array must not dirty the buffer, while a ladder — whose
+    // committed prefix genuinely grows — must dirty it once per level.
+    const colors = new Uint8Array([10, 10, 10, 20, 20, 20, 30, 30, 30]);
+    const geometry = createMeshGeometry({
+      position: new Float32Array(9),
+      positionChanged: true,
+      indices: new Uint32Array([0, 1, 2]),
+      colors,
+      colorComponents: 3,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
+    const versionAfterCreate = colorAttr.version;
+
+    for (const indices of [
+      new Uint32Array([0, 1, 2]),
+      new Uint32Array([]),
+      new Uint32Array([0, 1, 2]),
+    ]) {
+      updateMeshGeometry(geometry, {
+        position: new Float32Array(9),
+        positionChanged: false,
+        indices,
+        colors,
+        colorComponents: 3,
+        vertexCount: 3,
+        faceCount: 1,
+      });
+    }
+    expect(colorAttr.version, 'colour buffer re-uploaded on a slice move').toBe(versionAfterCreate);
+
+    // Now grow a ladder from a fresh placeholder: each level's PREFIX genuinely
+    // changes, so the version must advance every time.
+    const totals = { vertices: 30, faces: 10 };
+    const ladder = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+    function commitLevel(vertexCount: number, faceCount: number, byte: number): void {
+      const indices = new Uint32Array(faceCount * 3);
+      for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+      updateMeshGeometry(ladder, {
+        position: new Float32Array(vertexCount * 3),
+        positionChanged: true,
+        indices,
+        colors: new Uint8Array(vertexCount * 3).fill(byte),
+        colorComponents: 3,
+        vertexCount,
+        faceCount,
+        vertexCountGrows: true,
+        capacityVertexCount: totals.vertices,
+        capacityFaceCount: totals.faces,
+      });
+    }
+    commitLevel(10, 3, 1);
+    const ladderAttr = ladder.getAttribute('color') as THREE.BufferAttribute;
+    const versionLevel0 = ladderAttr.version;
+    commitLevel(20, 6, 2);
+    expect(ladderAttr.version).toBeGreaterThan(versionLevel0);
+    const versionLevel1 = ladderAttr.version;
+    commitLevel(30, 10, 3);
+    expect(ladderAttr.version).toBeGreaterThan(versionLevel1);
+  });
+
+  it("re-commits nothing when the SAME colours array is committed again after the ladder's last level", () => {
+    // `refreshMeshColors` stamps its OWN currency (`meshColorsSource`/
+    // `meshColorsCount`) after every write. Deleting those two stamp lines
+    // passes the whole rest of the suite, because no other ladder test commits
+    // the identical array object twice at the same level — every `commitLevel`
+    // helper above allocates a fresh array per call. Without the stamp, the
+    // pad loop and the version bump would re-run on every repeat commit too.
+    const totals = { vertices: 300, faces: 100 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    function commit(vertexCount: number, colors: Uint8Array): void {
+      const faceCount = Math.floor((vertexCount / totals.vertices) * totals.faces);
+      const indices = new Uint32Array(faceCount * 3);
+      for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+      updateMeshGeometry(geometry, {
+        position: new Float32Array(vertexCount * 3),
+        positionChanged: true,
+        indices,
+        colors,
+        colorComponents: 3,
+        vertexCount,
+        faceCount,
+        vertexCountGrows: true,
+        capacityVertexCount: totals.vertices,
+        capacityFaceCount: totals.faces,
+      });
+    }
+
+    commit(100, ladderColors(Uint8Array, [100], [11], 3));
+    const lastLevelColors = ladderColors(Uint8Array, [100, 300], [11, 33], 3);
+    commit(300, lastLevelColors);
+    const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
+    const versionAfterLastLevel = colorAttr.version;
+
+    // The SAME array object, same vertexCount — a slice move at the ladder's
+    // completed level, not a new one.
+    commit(300, lastLevelColors);
+    expect(colorAttr.version).toBe(versionAfterLastLevel);
+    // And the padded bytes are still exactly what the last real write produced —
+    // proof the pad loop did not silently re-run and (say) re-derive them wrong.
+    expect(Array.from(colorAttr.array).slice(0, 4)).toEqual([11, 11, 11, 255]);
+  });
+
+  it('pads a growing Uint16 RGB ladder with the 65535 opaque alpha, mirroring the Uint8 case', () => {
+    // The `uint16` pad path is otherwise untested for the ladder in-place writer —
+    // only `createMeshColorAttribute`'s unit tests exercise it, and those never go
+    // through `refreshMeshColors`.
+    const totals = { vertices: 300, faces: 100 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    function commit(vertexCount: number, counts: number[], values: number[]): void {
+      const faceCount = Math.floor((vertexCount / totals.vertices) * totals.faces);
+      const indices = new Uint32Array(faceCount * 3);
+      for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+      updateMeshGeometry(geometry, {
+        position: new Float32Array(vertexCount * 3),
+        positionChanged: true,
+        indices,
+        colors: ladderColors(Uint16Array, counts, values, 3),
+        colorComponents: 3,
+        vertexCount,
+        faceCount,
+        vertexCountGrows: true,
+        capacityVertexCount: totals.vertices,
+        capacityFaceCount: totals.faces,
+      });
+    }
+
+    commit(100, [100], [111]);
+    const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
+    commit(300, [100, 300], [111, 222]);
+
+    expect(geometry.getAttribute('color')).toBe(colorAttr); // never orphaned
+    const at = (v: number): number[] => Array.from(colorAttr.array).slice(v * 4, v * 4 + 4);
+    expect(at(0)).toEqual([111, 111, 111, 65535]);
+    expect(at(150)).toEqual([222, 222, 222, 65535]);
+  });
+
+  it('leaves a not-yet-revealed vertex all zeros — the pad loop stops at vertexCount, not the capacity', () => {
+    // The pad loop's bound is `v < vertexCount`; if it instead ran to the
+    // capacity (or if it wrote past the committed prefix for any other reason)
+    // this would fail. Regression for a mutation on the loop bound.
+    const totals = { vertices: 300, faces: 100 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+    updateMeshGeometry(geometry, {
+      position: new Float32Array(100 * 3),
+      positionChanged: true,
+      indices: new Uint32Array(30),
+      colors: ladderColors(Uint8Array, [100], [11], 3),
+      colorComponents: 3,
+      vertexCount: 100,
+      faceCount: 10,
+      vertexCountGrows: true,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+    const color = geometry.getAttribute('color') as THREE.BufferAttribute;
+    // Vertex 150 is well past the 100-vertex committed prefix.
+    expect(Array.from(color.array).slice(150 * 4, 150 * 4 + 4)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('falls back to a rebind when the bound format cannot hold a new dtype, and reports true', () => {
+    // The format-mismatch path: an installed `float32` RGB attribute cannot hold a
+    // later `Uint8Array` RGB commit in place (different `constructor`, different
+    // itemSize post-pad), so `refreshMeshColors` must report `false` and the
+    // caller rebinds — the ONLY way a genuinely authored dtype change reaches the
+    // shader instead of being silently dropped.
+    const geometry = createMeshGeometry({
+      position: new Float32Array(9),
+      positionChanged: true,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]),
+      colorComponents: 3,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    const before = geometry.getAttribute('color');
+    const rebuilt = updateMeshGeometry(geometry, {
+      position: new Float32Array(9),
+      positionChanged: false,
+      indices: new Uint32Array([0, 1, 2]),
+      colors: new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80, 90]),
+      colorComponents: 3,
+      vertexCount: 3,
+      faceCount: 1,
+    });
+    const after = geometry.getAttribute('color') as THREE.BufferAttribute;
+    expect(after).not.toBe(before); // a NEW attribute object
+    expect(after.itemSize).toBe(4); // uint8 RGB pads to RGBA
+    expect(Array.from(after.array).slice(0, 4)).toEqual([10, 20, 30, 255]);
+    expect(rebuilt).toBe(true);
+  });
+
+  it("returns false for a writing refresh — a commit must not evict three's RenderObject cache", () => {
+    // `attributesRebuilt` (surfaced as this function's return value) drives the
+    // WebGPU RenderObject eviction. A ladder level that WRITES into the
+    // already-bound buffer (as opposed to installing it for the first time) must
+    // report `false`, or every level would needlessly evict a live render object.
+    const totals = { vertices: 300, faces: 100 };
+    const geometry = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+      capacityVertexCount: totals.vertices,
+      capacityFaceCount: totals.faces,
+    });
+
+    function commit(vertexCount: number, counts: number[], values: number[]): boolean {
+      const faceCount = Math.floor((vertexCount / totals.vertices) * totals.faces);
+      const indices = new Uint32Array(faceCount * 3);
+      for (let i = 0; i < indices.length; i++) indices[i] = i % vertexCount;
+      return updateMeshGeometry(geometry, {
+        position: new Float32Array(vertexCount * 3),
+        positionChanged: true,
+        indices,
+        colors: ladderColors(Uint8Array, counts, values, 3),
+        colorComponents: 3,
+        vertexCount,
+        faceCount,
+        vertexCountGrows: true,
+        capacityVertexCount: totals.vertices,
+        capacityFaceCount: totals.faces,
+      });
+    }
+
+    commit(100, [100], [11]); // level 0 — the install, may legitimately rebind
+    const rebuiltOnWrite = commit(200, [100, 200], [11, 22]); // level 1 — a write
+    expect(rebuiltOnWrite).toBe(false);
   });
 });
