@@ -163,12 +163,53 @@ def test_write_image_labels_csr_materializes_a_one_shot_iterable_once() -> None:
     assert bytes(data) == b"AAABBBCCC"
 
 
+def test_validate_image_labels_for_writing_refuses_a_one_shot_iterable() -> None:
+    """The PRE-WRITE gate refuses a one-shot dense iterable outright (#1491).
+
+    It cannot both validate every entry's type and leave the sequence intact
+    for its caller to encode, and it has no way to return its own materialised
+    copy — so draining it would leave the writer nothing to see and stamp an
+    all-empty CSR. Refusing the container up front is what keeps every gate
+    that calls this (a writer's step-0 sweep, a ``substitutive_lod=``
+    wrapper's pre-split gate) from stranding a node.
+    """
+    with pytest.raises(TypeError, match="must be a re-iterable sequence"):
+        validate_image_labels_for_writing(_OneShotImageLabels([b"a", b"b", b"c"]), 3)
+
+    # A re-iterable sequence of the same content is accepted, and repeatedly:
+    # the check must not consume anything it looks at.
+    labels = [b"a", b"b", b"c"]
+    validate_image_labels_for_writing(labels, 3)
+    validate_image_labels_for_writing(labels, 3)
+
+
+def test_validate_image_labels_for_writing_rejects_a_non_integral_sparse_key() -> None:
+    """An in-range but non-integral sparse key is refused BEFORE the write.
+
+    ``{1.5: b"x"}`` cleared the bounds check (``0 <= 1.5 < 3``) and then
+    raised ``TypeError: list indices must be integers or slices, not float``
+    from ``write_image_labels_csr``'s own ``normalized[idx]`` subscript —
+    post-write, with the caller's other arrays already on disk. Same for a
+    ``np.float64``, which is how it arises in practice (an arithmetic slip on
+    an index). ``int`` / ``bool`` / any numpy integer satisfy
+    ``operator.index`` and are unaffected.
+    """
+    for key in (1.5, np.float64(1.0), "0"):
+        with pytest.raises(TypeError, match="index must be an integer"):
+            validate_image_labels_for_writing({key: b"x"}, 3)
+
+    # The control: a numpy integer key IS a legal index and still round-trips.
+    g = _group()
+    write_image_labels_csr(g, {np.int64(1): b"\x01\x02"}, 3, DEFAULT_COMP)
+    assert list(g["image_label_offsets"][:]) == [0, 0, 2, 2]
+
+
 def test_write_image_labels_csr_reports_an_already_drained_one_shot_iterable() -> None:
-    """If a one-shot iterable was ALREADY walked once (e.g. by an earlier
-    pre-write gate on the same call — see ``core.group.compositing``'s
-    pre-split channel gate), this function's own materialisation sees zero
-    items and its length check reports that clearly, instead of writing an
-    all-empty CSR silently.
+    """If the CALLER already walked a one-shot iterable before handing it over,
+    this function's own materialisation sees zero items and its length check
+    reports that clearly, instead of writing an all-empty CSR silently. (The
+    gates above never reach this state — they refuse a one-shot container
+    outright; see the test above.)
     """
     items = [b"AAA", b"BBB", b"CCC"]
     drained = _OneShotImageLabels(items)

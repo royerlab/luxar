@@ -7,6 +7,7 @@ encoded image bytes ready for CSR-style storage.
 
 from __future__ import annotations
 
+import operator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional
 
@@ -187,10 +188,11 @@ def validate_image_labels_for_writing(image_labels: Any, n_elements: int) -> Non
     every fail-fast gate that calls this run them before anything is written,
     without duplicating either set of rules.
 
-    Checks run in a fixed order — length/bounds structural check first, THEN
-    a type check of EVERY entry — for both the dense sequence form and the
-    sparse ``dict`` form, and this reordering changes behaviour for both, not
-    just the ``dict`` one. For the sparse form specifically: ALL key-bound
+    Checks run in a fixed order — structural checks on the container first
+    (a dense sequence's length, or every sparse key's integrality and bounds),
+    THEN a type check of EVERY entry — for both the dense sequence form and
+    the sparse ``dict`` form, and this reordering changes behaviour for both,
+    not just the ``dict`` one. For the sparse form specifically: ALL key
     checks run before ANY item's type is inspected. Pre-#1491,
     ``write_image_labels_csr`` interleaved the two per key (bound-check
     ``idx``, then immediately :func:`normalize_image_label` ``item``), so a
@@ -235,9 +237,10 @@ def validate_image_labels_for_writing(image_labels: Any, n_elements: int) -> Non
 
     Args:
         image_labels: Per-element images, either the dense sequence form (one
-            entry per element, checked by length) or the sparse
-            ``Dict[int, Any]`` form (checked by key bounds; a missing index
-            just means no image, so absence is never an error).
+            entry per element, checked by length; must be RE-iterable, see
+            above) or the sparse ``Dict[int, Any]`` form (keys checked for
+            integer-index semantics and bounds; a missing index just means no
+            image, so absence is never an error).
         n_elements: Expected element count.
 
     Raises:
@@ -245,7 +248,9 @@ def validate_image_labels_for_writing(image_labels: Any, n_elements: int) -> Non
             sequence's length does not equal ``n_elements``, or an entry is
             an ``ndarray`` with an unsupported shape (from
             :func:`check_image_label_type`).
-        TypeError: If an entry's type is not one
+        TypeError: If a dict key is not usable as an integer index (a
+            ``float``, a ``str``, ...), the dense form is a single-pass
+            iterable, or an entry's type is not one
             :func:`check_image_label_type` accepts.
         ImportError: If an entry needs Pillow (anything that is not ``None`` /
             ``bytes`` / ``bytearray`` / ``Path`` / ``str``) and Pillow is not
@@ -253,7 +258,21 @@ def validate_image_labels_for_writing(image_labels: Any, n_elements: int) -> Non
     """
     if isinstance(image_labels, dict):
         for idx in image_labels:
-            if idx < 0 or idx >= n_elements:
+            # An index TYPE check before the bounds one: a key is used as
+            # ``normalized[idx]`` in write_image_labels_csr, so anything
+            # without integer-index semantics (a float, a np.float64 from an
+            # arithmetic slip, a str) raises TypeError from that subscript —
+            # POST-write, the exact strand this gate exists to close. `int`,
+            # `bool` and any numpy integer satisfy operator.index; `float`
+            # deliberately does not, even at an integral value.
+            try:
+                key = operator.index(idx)
+            except TypeError:
+                raise TypeError(
+                    f"Image label index must be an integer, got "
+                    f"{type(idx).__name__}: {idx!r}"
+                ) from None
+            if key < 0 or key >= n_elements:
                 raise ValueError(
                     f"Image label index {idx} out of range [0, {n_elements})"
                 )
@@ -264,6 +283,27 @@ def validate_image_labels_for_writing(image_labels: Any, n_elements: int) -> Non
             raise ValueError(
                 f"Image labels length ({len(image_labels)}) must match "
                 f"element count ({n_elements})"
+            )
+        # The per-entry sweep below WALKS the sequence, and every caller of
+        # this gate walks it again afterwards (the writer materialises and
+        # encodes it; a substitutive_lod= wrapper forwards it to the finest
+        # child, which re-runs this same gate). A single-pass iterable — one
+        # whose ``__iter__`` hands back the same, already-advancing iterator —
+        # therefore has nothing left for that second walk, and this gate has
+        # no way to hand its own materialised copy back to the caller. Refuse
+        # it HERE, before anything is written, rather than let the walk-two
+        # report "Image labels length (0)" mid-write with the node's other
+        # arrays already on disk. Detected WITHOUT consuming an item: a
+        # re-iterable sequence (list / tuple / ndarray / pandas.Series / any
+        # __getitem__ sequence) hands out a FRESH iterator per iter() call, so
+        # only a one-shot one compares identical.
+        if iter(image_labels) is iter(image_labels):
+            raise TypeError(
+                "image_labels must be a re-iterable sequence (list, tuple, "
+                "ndarray, ...) or a dict; got a single-pass iterable of type "
+                f"{type(image_labels).__name__}, which cannot be validated "
+                "before the write without consuming it. Materialise it first: "
+                "image_labels=list(...)."
             )
         for item in image_labels:
             check_image_label_type(item)
@@ -309,22 +349,23 @@ def write_image_labels_csr(
         ``pandas.Series``, which are all re-iterable) passed directly to this
         call is walked exactly once and works.
 
-        The residual failure mode lives upstream of this function: a
-        single-pass iterable already drained by an EARLIER pre-write gate on
-        the same call has nothing left by the time this function's own
-        materialisation runs — see the ``ValueError`` below. A bare generator
-        never even reaches that far, since the upstream gate's own length
-        check needs ``len()`` and fails immediately with ``TypeError: object
-        of type 'generator' has no len()``.
+        A single-pass iterable is only supported on a call that comes STRAIGHT
+        here, though. Every gate above this function (a writer's step-0 sweep,
+        a ``substitutive_lod=`` wrapper's pre-split gate) walks the value
+        itself and cannot hand its own materialised copy back to its caller,
+        so :func:`validate_image_labels_for_writing` refuses a one-shot dense
+        iterable outright — before anything is written — rather than draining
+        it and leaving this function nothing to encode. A bare generator is
+        refused one step earlier still, by that gate's ``len()``:
+        ``TypeError: object of type 'generator' has no len()``.
 
     Raises:
         ValueError: Also raised (via :func:`validate_image_labels_for_writing`)
-            if a single-pass ``image_labels`` iterable was already drained by
-            an earlier pre-write gate on the same call (e.g. the
-            ``substitutive_lod=`` wrapper's pre-split channel gate) — this
-            function's own materialisation then sees zero items and its
-            length check reports ``Image labels length (0) must match
-            element count (N)`` instead of writing an all-empty CSR.
+            if ``image_labels`` is a single-pass iterable the CALLER had
+            already drained before calling this — the materialisation then
+            sees zero items and the length check reports ``Image labels
+            length (0) must match element count (N)`` instead of writing an
+            all-empty CSR.
     """
     # Length/index/type checks now shared with the callers' pre-write gates —
     # see validate_image_labels_for_writing. Materialise the dense form ONCE

@@ -94,10 +94,24 @@ it can then assume `item` is one of the accepted types (and, for an
 No store, no file reads, no PIL round-trip — but calls `check_image_label_type`
 (#1491), so it is not entirely PIL-free: a Pillow-absent entry still raises
 that function's `ImportError`. Checks, in order: (1) a dense sequence's length
-must equal `n_elements`, or a sparse `Dict[int, item]`'s keys must all be in
+must equal `n_elements`, or a sparse `Dict[int, item]`'s keys must each be a
+real integer index (`operator.index` — `int` / `bool` / any numpy integer pass,
+a `float` or `str` does not, even at an integral value) and in
 `[0, n_elements)`; (2) **only once every key/length check has passed**, every
-entry's TYPE via `check_image_label_type`. Raises `ValueError` for (1),
-whatever `check_image_label_type` raises for (2).
+entry's TYPE via `check_image_label_type`. Raises `ValueError` for an
+out-of-range key or a length mismatch, `TypeError` for a non-integral key, and
+whatever `check_image_label_type` raises for (2). A non-integral key used to
+clear the bounds check and then raise `TypeError: list indices must be
+integers` from `write_image_labels_csr`'s own `normalized[idx]` subscript, i.e.
+post-write — the same strand, one rule over.
+
+The dense form must be RE-iterable (`list` / `tuple` / `ndarray` /
+`pandas.Series` / any `__getitem__` sequence). A single-pass iterable — one
+whose `__iter__` hands back the same, already-advancing iterator — is refused
+with a `TypeError` naming `list(...)` as the fix, since this gate's own
+per-entry sweep would drain it and it cannot hand a materialised copy back to
+its caller; draining it would leave the writer nothing to encode and stamp an
+all-empty CSR. The check is `iter(x) is iter(x)`, which consumes nothing.
 
 `write_image_labels_csr` now calls this instead of checking length/index
 inline, and so does the pre-split gate on the Points/Lines `substitutive_lod=`
@@ -148,10 +162,10 @@ concrete `list` exactly ONCE, before either validating or encoding it (#1491)
 — so a single-pass iterable (one whose `__iter__` keeps returning the same,
 already-advanced iterator; `list` / `tuple` / `ndarray` / `pandas.Series` are
 all re-iterable and unaffected) passed directly to this call IS supported: it
-is walked exactly once and works. The residual failure mode is upstream: if
-it was already drained by an earlier pre-write gate on the same call (the
-`substitutive_lod=` wrapper's pre-split channel gate calls
-`validate_image_labels_for_writing` too, see above), this function's own
+is walked exactly once and works. Reaching this function through any GATE with
+one is not: `validate_image_labels_for_writing` refuses a one-shot container
+before the node is created (see above), because a gate cannot walk it and
+still hand it on. If the CALLER drained it itself before calling this, the
 materialisation sees zero items and raises `Image labels length (0) must
 match element count (N)` instead of silently writing an all-empty CSR.
 Length/index/type checks (now including the `ndarray` shape check) are

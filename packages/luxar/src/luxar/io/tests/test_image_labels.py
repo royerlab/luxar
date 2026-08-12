@@ -250,27 +250,17 @@ class TestImageLabelValidation:
         store = zarr.open_group(path, mode="r")
         assert "pts" not in store
 
-    def test_one_shot_iterable_raises_instead_of_writing_empty_labels(self, tmp_path):
-        """A single-pass ``Sized`` ``image_labels`` fails loudly, not silently (#1491).
+    def test_one_shot_iterable_is_refused_before_anything_is_written(self, tmp_path):
+        """A single-pass ``Sized`` ``image_labels`` is refused up front (#1491).
 
-        Before this fix, a container with ``__len__`` but a one-shot
-        ``__iter__`` (drained by the pre-write channel gate's type sweep,
-        then materialised again by the writer) reached the writer's
-        blob-encoding loop already exhausted, silently writing an all-empty
-        CSR with ``has_image_labels=True`` stamped. That is exactly the
-        class of failure #1491 closes for a mistyped/mis-shaped entry, so it
-        must not reappear here for an unusual container.
-
-        Unlike a mistyped/mis-shaped entry, this does NOT stay
-        write-nothing: the length is right and every real item's type is
-        valid, so the FIRST gate to walk the iterator (the pre-write channel
-        sweep) finds nothing wrong and consumes it harmlessly; only the
-        SECOND walk — this function's own materialisation, inside the
-        writer — discovers it is empty. By then ``positions``/``radii`` are
-        already on disk, same as any other post-write failure (the module's
-        step-0 comment calls this the pre-existing "F7 residual": the
-        fail-fast gate is best-effort, not transactional). What #1491
-        guarantees here is the loud, specific error, not a rolled-back node.
+        A container with ``__len__`` but a one-shot ``__iter__`` cannot be
+        validated pre-write AND encoded afterwards: the gate's own type sweep
+        would drain it, and the gate cannot hand its materialised copy back to
+        the caller, so the writer's blob loop would reach an exhausted
+        iterator and stamp an all-empty CSR (``has_image_labels=True``,
+        offsets all zero) — the silent-corruption class #1491 exists to close.
+        The gate therefore rejects the container itself, before the node is
+        created, and says what to pass instead.
         """
 
         class OneShot:
@@ -290,15 +280,56 @@ class TestImageLabelValidation:
 
         with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
             scene = compiler.create_scene(dimensions=_make_3d_dims())
-            with pytest.raises(ValueError, match=r"Image labels length \(0\)"):
+            with pytest.raises(ValueError, match="must be a re-iterable sequence"):
                 scene.add_points("pts", positions, image_labels=blobs)
 
         store = zarr.open_group(path, mode="r")
-        # Positions/radii land on disk before the (later) failure — see the
-        # docstring above — but NOT an all-empty image_label CSR: that is the
-        # silent-corruption failure mode this test exists to rule out.
-        assert "pts" in store
-        assert "image_label_offsets" not in store["pts"]
+        # Nothing at all — not a node with positions/radii and no images.
+        assert "pts" not in store
+
+    def test_non_integral_sparse_key_is_refused_before_anything_is_written(
+        self, tmp_path
+    ):
+        """An in-range but non-integral sparse key is refused pre-write (#1491).
+
+        ``{1.5: blob}`` passed the bounds check (``0 <= 1.5 < 3``) and then
+        blew up as ``TypeError: list indices must be integers`` from the
+        writer's own ``normalized[idx]`` subscript — after positions/radii
+        were on disk. A ``np.float64`` from an arithmetic slip
+        (``n / 2``) reaches the same place, which is how this happens in
+        practice rather than as a literal.
+        """
+        positions = np.random.rand(3, 3).astype(np.float32)
+
+        for i, key in enumerate((1.5, np.float64(1.0))):
+            path = str(tmp_path / f"badkey{i}.luxar.zarr")
+            with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
+                scene = compiler.create_scene(dimensions=_make_3d_dims())
+                with pytest.raises(ValueError, match="index must be an integer"):
+                    scene.add_points("pts", positions, image_labels={key: b"blob"})
+
+            store = zarr.open_group(path, mode="r")
+            assert "pts" not in store
+
+    def test_numpy_integer_sparse_key_still_works(self, tmp_path):
+        """The control: a ``np.int64`` key is a legal index and must still write.
+
+        The integrality check uses ``operator.index``, which every numpy
+        integer type satisfies — so tightening the gate must not reject the
+        keys an ``argwhere``/``nonzero`` result naturally produces.
+        """
+        path = str(tmp_path / "test.luxar.zarr")
+        positions = np.random.rand(3, 3).astype(np.float32)
+        blob = _make_fake_jpeg(20)
+
+        with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
+            scene = compiler.create_scene(dimensions=_make_3d_dims())
+            scene.add_points("pts", positions, image_labels={np.int64(1): blob})
+
+        decoded = _decode_image_labels_from_zarr(path, "pts")
+        assert decoded[0] == b""
+        assert decoded[1] == blob
+        assert decoded[2] == b""
 
 
 class TestImageLabelZarrProperties:
