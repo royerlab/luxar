@@ -1,8 +1,11 @@
 /**
  * Pure step-size + next-position math for nD navigation. Computes how
- * far to move per [/] key press (with Shift/Ctrl fine/coarse modifiers)
- * and where the next position lands, including discrete rounding and
- * wrap-around or clamping at the dimension's bounds.
+ * far to move per [/] key press or slider wheel notch — the modifier
+ * tiers (Shift fine ÷10, Ctrl coarse ×10, Ctrl+Shift extra-fine ÷100)
+ * only reach here from the slider wheel: the [/] key bindings match the
+ * unmodified key, so Shift+[ arrives as '{' and never fires — and where
+ * the next position lands, including discrete rounding and wrap-around
+ * or clamping at the dimension's bounds.
  *
  * @module input/input-handler/dimension-navigation/step-math
  */
@@ -35,11 +38,16 @@ export const DEFAULT_NAV_CONFIG: NavigationConfig = {
  * - Continuous dimensions (time): Step by 1% of range by default
  * - Shift modifier: Fine control (10x smaller steps)
  * - Ctrl modifier: Coarse control (10x larger steps)
+ * - Ctrl+Shift together: Extra-fine control (100x smaller steps)
  *
  * @param dimIndex - Zero-based index of dimension to navigate
  * @param dims - Complete dimension configuration including metadata
  * @param modifiers - Keyboard modifier state for fine/coarse control
  * @param config - Navigation configuration (step multipliers, etc.)
+ * @param overrideStep - User-set per-dimension step (the animation menu's
+ *          Step override). A finite positive value REPLACES the base
+ *          derivation (authored step / 1% of range); modifiers and the
+ *          discrete grid quantization still apply on top.
  * @returns Step size for navigation, guaranteed positive and at least one
  *          grid cell (`meta.step`, default 1) for discrete dims
  */
@@ -47,13 +55,16 @@ export function calculateStepSize(
   dimIndex: number,
   dims: SimpleDims,
   modifiers: { shift?: boolean; ctrl?: boolean; alt?: boolean } = {},
-  config: NavigationConfig = DEFAULT_NAV_CONFIG
+  config: NavigationConfig = DEFAULT_NAV_CONFIG,
+  overrideStep?: number | null
 ): number {
   const meta = dims.metadata?.[dimIndex];
 
   // Get base step size
   let stepSize: number;
-  if (meta?.step) {
+  if (overrideStep != null && Number.isFinite(overrideStep) && overrideStep > 0) {
+    stepSize = overrideStep;
+  } else if (meta?.step) {
     stepSize = meta.step;
   } else if (meta?.range) {
     // Calculate step as percentage of range
@@ -63,8 +74,12 @@ export function calculateStepSize(
     stepSize = 1.0; // Default
   }
 
-  // Apply modifiers
-  if (modifiers.shift) {
+  // Apply modifiers. Shift and Ctrl do not cancel out when held together:
+  // Ctrl+Shift is one more rung in the fine direction (÷100), not a
+  // coarse/fine tug-of-war.
+  if (modifiers.shift && modifiers.ctrl) {
+    stepSize /= config.fineStepDivisor * config.fineStepDivisor; // Extra-fine
+  } else if (modifiers.shift) {
     stepSize /= config.fineStepDivisor; // Fine control
   } else if (modifiers.ctrl) {
     stepSize *= config.coarseStepMultiplier; // Coarse control

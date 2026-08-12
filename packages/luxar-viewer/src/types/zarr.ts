@@ -195,6 +195,8 @@ export interface ZarrViewerConfig {
     target_fps?: number;
     loop?: string;
     direction?: string;
+    /** Per-dimension step override (absent = Auto). */
+    step_size?: number;
   }>;
 }
 

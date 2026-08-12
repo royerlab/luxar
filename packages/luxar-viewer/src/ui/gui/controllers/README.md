@@ -34,14 +34,21 @@ The most complex controller. Optionally renders a range slider (when both `min` 
 
 **Slider behavior**
 
-| Interaction  | Effect                                                                                                            |
-| ------------ | ----------------------------------------------------------------------------------------------------------------- |
-| Drag         | Live `change` events; `finishChange` on `mouseup` / `touchend`.                                                   |
-| Wheel scroll | Fine-tune by `step × 0.1`; `Shift+Scroll` for `step × 10`. Debounced `finishChange` 150 ms after scrolling stops. |
-| Double-click | Reset to the value captured at construction (`initialValue`).                                                     |
-| Alt+click    | Focus and select the companion number input for keyboard entry.                                                   |
+| Interaction  | Effect                                                                                                                                       |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Drag         | Live `change` events; `finishChange` on `mouseup` / `touchend`.                                                                              |
+| Wheel scroll | Fine-tune by `step × 0.1`; `Shift` finer, `Ctrl` coarse, `Ctrl+Shift` finest (below). Debounced `finishChange` 150 ms after scrolling stops. |
+| Double-click | Reset to the value captured at construction (`initialValue`).                                                                                |
+| Alt+click    | Focus and select the companion number input for keyboard entry.                                                                              |
 
 The slider's `title` tooltip advertises these shortcuts.
+
+The wheel modifier tiers are relative to the `step × 0.1` base and match every
+other slider in the app (dimension sliders, layers range sliders): `Shift`
+divides by 10, `Ctrl` multiplies by 10 (one full `step`), `Ctrl+Shift` divides
+by 100. The handler reads whichever scroll axis carries the motion — Shift+wheel
+arrives as a horizontal scroll on a standard mouse — and stops propagation, so
+the window-level `Ctrl`+wheel FOV zoom never fires alongside the coarse tier.
 
 **Number input behavior**
 

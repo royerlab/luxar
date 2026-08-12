@@ -5,7 +5,7 @@
  * Integrates with AnimationController for frame updates and SceneDimsManager for dimension value updates.
  *
  * Features:
- * - FPS-based throttling with presets [1, 2, 5, 10, 15, 30, 60]
+ * - FPS-based throttling with presets [0.5, 1, 2, 5, 10, 15, 30, 60, 120]
  * - Loop modes: once, loop, bounce
  * - Per-dimension animation state
  * - Actual FPS measurement and feedback
@@ -31,6 +31,7 @@
 import * as THREE from 'three';
 import type { AnimationController } from './animation-controller';
 import type { SceneDimsManager } from '../scene-dims-manager';
+import { snapDiscreteValue } from '../scene-dims-manager';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
@@ -226,7 +227,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
       const [min, max] = this.dimensionRanges[dimIndex];
       const metadata = dims.metadata?.[dimIndex];
-      const step = metadata?.discrete ? (metadata.step ?? 1.0) : null;
+      const step = this.resolveAnimationStep(state, metadata);
 
       // Next value + boundary handling (pure — see advance-value.ts). The
       // manager APPLIES the returned direction; peekNextValue() does not.
@@ -305,7 +306,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     const [min, max] = this.dimensionRanges[dimIndex];
     const metadata = dims.metadata?.[dimIndex];
-    const step = metadata?.discrete ? (metadata.step ?? 1.0) : null;
+    const step = this.resolveAnimationStep(state, metadata);
 
     const result = advanceDimensionValue({
       current: dims.currentStep[dimIndex],
@@ -317,7 +318,15 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       targetFPS: state.targetFPS,
       continuousTraverseMs: config.dimensionAnimation.timing.continuousTraverseSeconds * 1000,
     });
-    return result.shouldStop ? null : result.value;
+    if (result.shouldStop) return null;
+    // Predict the EXACT landing: setDimensionValue snaps a discrete dim to
+    // its 0-anchored grid inside the range. Mid-range ticks are already
+    // on-grid (the step is quantized), but a loop wrap targets the raw
+    // range end — when that end is off-grid (min 0.5 on a step-1 grid) the
+    // unsnapped value would warm a t+1 slice the playhead never visits.
+    return metadata?.discrete
+      ? snapDiscreteValue(result.value, metadata.step || 1.0, min, max)
+      : result.value;
   }
 
   /** Indices of every dimension currently playing. */
@@ -364,18 +373,11 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       let state = this.animationStates.get(dimIndex);
 
       if (!state) {
-        // Create new state with defaults
-        const currentTime = performance.now();
-        state = {
-          isPlaying: false,
-          targetFPS: options?.targetFPS ?? config.dimensionAnimation.defaults.targetFPS,
-          loopMode: options?.loopMode ?? config.dimensionAnimation.defaults.loop,
-          direction: options?.direction ?? config.dimensionAnimation.defaults.direction,
-          lastUpdateTime: currentTime,
-          frameCount: 0,
-          lastFPSMeasurementTime: currentTime,
-          actualFPS: 0,
-        };
+        // Create new state with defaults, then apply the caller's options.
+        state = this.createDefaultState();
+        if (options?.targetFPS !== undefined) state.targetFPS = options.targetFPS;
+        if (options?.loopMode !== undefined) state.loopMode = options.loopMode;
+        if (options?.direction !== undefined) state.direction = options.direction;
         this.animationStates.set(dimIndex, state);
       } else {
         // Update existing state
@@ -546,17 +548,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     // Create state if it doesn't exist (for pre-configuring settings before starting animation)
     if (!state) {
-      const currentTime = performance.now();
-      state = {
-        isPlaying: false,
-        targetFPS: config.dimensionAnimation.defaults.targetFPS,
-        loopMode: config.dimensionAnimation.defaults.loop,
-        direction: config.dimensionAnimation.defaults.direction,
-        lastUpdateTime: currentTime,
-        frameCount: 0,
-        lastFPSMeasurementTime: currentTime,
-        actualFPS: 0,
-      };
+      state = this.createDefaultState();
       this.animationStates.set(dimIndex, state);
     }
 
@@ -615,6 +607,95 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   }
 
   /**
+   * Fresh per-dimension state seeded from config.dimensionAnimation.defaults.
+   * Single source for play()/setTargetFPS()/setLoopMode()/setStepSize() so a
+   * new default (like stepSize) cannot be forgotten at one call site.
+   */
+  private createDefaultState(): DimensionAnimationState {
+    const currentTime = performance.now();
+    return {
+      isPlaying: false,
+      targetFPS: config.dimensionAnimation.defaults.targetFPS,
+      loopMode: config.dimensionAnimation.defaults.loop,
+      direction: config.dimensionAnimation.defaults.direction,
+      stepSize: config.dimensionAnimation.defaults.stepSize,
+      lastUpdateTime: currentTime,
+      frameCount: 0,
+      lastFPSMeasurementTime: currentTime,
+      actualFPS: 0,
+    };
+  }
+
+  /**
+   * The per-tick step handed to advanceDimensionValue: the user's explicit
+   * override when set (quantized to the authored grid for discrete dims,
+   * one cell minimum — see #1520), else the authored step for discrete
+   * dims, else null (continuous fps-derived increment). MUST be used by
+   * BOTH updateDimension and peekNextValue — the playhead and the t+1
+   * prefetch have to agree.
+   */
+  private resolveAnimationStep(
+    state: DimensionAnimationState,
+    metadata: { discrete?: boolean; step?: number } | undefined
+  ): number | null {
+    const override = state.stepSize;
+    if (override == null) {
+      return metadata?.discrete ? (metadata.step ?? 1.0) : null;
+    }
+    if (metadata?.discrete) {
+      // Quantize a discrete dim's override to the authored grid, one cell
+      // minimum — the same rule as calculateStepSize's discrete branch.
+      // Handing a sub-grid override to advanceDimensionValue would let
+      // setDimensionValue's snap round every tick straight back to where it
+      // started (playback frozen, no warning), and a non-multiple of the
+      // grid would land the snapped playhead on a different value than the
+      // unsnapped peekNextValue prefetch (#1520).
+      const gridStep = metadata.step && metadata.step > 0 ? metadata.step : 1;
+      return Math.max(gridStep, Math.round(override / gridStep) * gridStep);
+    }
+    return override;
+  }
+
+  /**
+   * Set (or clear, with null) the per-dimension step override. Drives the
+   * animation per-tick increment AND the [ / ] keyboard navigation; the
+   * slider wheel/drag deliberately stay on the dimension's own base step.
+   * Values are validated (finite, > 0) and clamped to the dimension's range
+   * width so one step can never overshoot the whole range.
+   */
+  setStepSize(dimIndex: number, stepSize: number | null): void {
+    if (stepSize !== null && (!Number.isFinite(stepSize) || stepSize <= 0)) {
+      log.warning(
+        Modules.ANIMATION,
+        `setStepSize(${dimIndex}): rejecting invalid step ${stepSize} (must be finite and > 0)`
+      );
+      return;
+    }
+    let state = this.animationStates.get(dimIndex);
+    if (!state) {
+      state = this.createDefaultState();
+      this.animationStates.set(dimIndex, state);
+    }
+    let applied = stepSize;
+    if (applied !== null && this.dimensionRanges && dimIndex < this.dimensionRanges.length) {
+      const [min, max] = this.dimensionRanges[dimIndex];
+      const width = max - min;
+      if (width > 0 && applied > width) applied = width;
+    }
+    state.stepSize = applied;
+    this.dispatchEvent({ type: 'stepChange', dimIndex, stepSize: applied });
+    log.info(
+      Modules.ANIMATION,
+      `Set dimension ${dimIndex} step to ${applied === null ? 'auto' : applied}`
+    );
+  }
+
+  /** The per-dimension step override, or null when on Auto / no state yet. */
+  getStepSize(dimIndex: number): number | null {
+    return this.animationStates.get(dimIndex)?.stepSize ?? null;
+  }
+
+  /**
    * Set loop mode for a dimension
    *
    * @param dimIndex - Dimension index
@@ -625,17 +706,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     // Create state if it doesn't exist (for pre-configuring settings before starting animation)
     if (!state) {
-      const currentTime = performance.now();
-      state = {
-        isPlaying: false,
-        targetFPS: config.dimensionAnimation.defaults.targetFPS,
-        loopMode: config.dimensionAnimation.defaults.loop,
-        direction: config.dimensionAnimation.defaults.direction,
-        lastUpdateTime: currentTime,
-        frameCount: 0,
-        lastFPSMeasurementTime: currentTime,
-        actualFPS: 0,
-      };
+      state = this.createDefaultState();
       this.animationStates.set(dimIndex, state);
     }
 

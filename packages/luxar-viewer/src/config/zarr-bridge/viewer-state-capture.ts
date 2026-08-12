@@ -130,6 +130,9 @@ export function captureViewerState(
           target_fps: state.targetFPS,
           loop: state.loopMode,
           direction: state.direction,
+          // Conditional: Auto (null) stays absent, keeping the exported
+          // shape identical for states that never touched the override.
+          ...(state.stepSize != null ? { step_size: state.stepSize } : {}),
         });
       } else {
         animEntries.push({});
