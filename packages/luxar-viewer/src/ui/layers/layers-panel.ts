@@ -779,15 +779,20 @@ export class LayersPanel {
     controls.className = 'luxar-layers-panel__controls';
     panel.appendChild(controls);
 
-    // Right-click menus. ONE delegated listener: always suppress the native
-    // menu over the glass surface (the rail's rationale), then route to the
+    // Right-click menus. ONE delegated listener: suppress the native menu
+    // over the glass surface (the rail's rationale), then route to the
     // eye / row / header menu. Right-clicking an unselected row selects it
     // first (Finder/napari convention); an already-selected row keeps the
     // current multi-selection.
     this.events.on(panel, 'contextmenu', (e) => {
-      e.preventDefault();
       const me = e as MouseEvent;
       const target = me.target as HTMLElement;
+      // …except over a text field, where the native menu is the only way to
+      // paste: the layer filter above and the range slider's bound editor
+      // both live inside this panel, and we offer no clipboard verbs of our
+      // own to replace it.
+      if (target.closest('input[type="text"], textarea')) return;
+      e.preventDefault();
       const eye = target.closest('.luxar-layer-row__eye') as HTMLElement | null;
       const row = target.closest('.luxar-layer-row') as HTMLElement | null;
       const header = target.closest('.luxar-layers-panel__header') as HTMLElement | null;
@@ -863,7 +868,9 @@ export class LayersPanel {
     // of early-returning on an unchanged signature (e.g. after resetAllLayers()
     // while a failure persists).
     this.lastFailedLoadsSignature = null;
-    this.updateRowErrorStates(); // Filter affordance only pays for itself on layer-heavy scenes.
+    this.updateRowErrorStates();
+
+    // The filter affordance only pays for itself on layer-heavy scenes.
     if (this.filterWrapEl) {
       const show = layers.length > LayersPanel.FILTER_THRESHOLD;
       this.filterWrapEl.style.display = show ? '' : 'none';

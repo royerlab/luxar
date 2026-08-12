@@ -3244,6 +3244,28 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it('right-clicking a text field inside the panel leaves the native menu alone', () => {
+    // The delegated handler suppresses the native menu everywhere on the
+    // glass surface, but a text field has no replacement verbs of ours —
+    // swallowing it there costs the user right-click paste.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph('alpha'));
+
+    const input = container.querySelector<HTMLInputElement>('.luxar-panel-filter__input')!;
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    input.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(document.querySelector('.luxar-context-menu')).toBeNull();
+
+    // A row still gets ours, suppression included.
+    const row = container.querySelector<HTMLElement>('.luxar-layer-row')!;
+    const rowEv = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row.dispatchEvent(rowEv);
+    expect(rowEv.defaultPrevented).toBe(true);
+    expect(document.querySelector('.luxar-context-menu')).not.toBeNull();
+    panel.dispose();
+  });
+
   it('Shift+F10 on the focused EYE opens the eye menu, not the row menu', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
