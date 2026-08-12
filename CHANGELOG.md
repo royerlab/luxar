@@ -6,64 +6,6 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
-#### The viewer loads a mesh reveal ladder
-
-`data/scene-loader/loaders/loader-factory.ts` used to REFUSE a mesh node
-declaring `n_additive_sublods > 1`. It now builds one — `MeshProgressiveLoader`
-over the `additive_<i>` subgroups — so a mesh authored with `additive_lod=`
-loads, and the surface grows as its levels arrive instead of appearing whole.
-
-What changed is the claim, not the principle. Mesh still has no additive LEVEL
-OF DETAIL and never will: a prefix of an arbitrary index buffer is a holed
-surface, not a coarser one. What it has is a REVEAL, and the writer earns that
-word — it admits only orderings whose every prefix is one connected patch, so
-what streams in is a growing surface.
-
-**The loader is half the size of its three siblings, and the reason is
-structural.** They are per-slice streaming ladders whose sub-loaders answer a
-range query, so a slice move genuinely changes what each level holds; that
-forces a view-state equality check, a reset generation, a departure-store /
-restore against the `SliceCache`, and a per-view concat. A mesh level is
-whole-node resident, so the ladder is **view-independent**: only the level count
-decides what is loaded, and the cull decides what is drawn exactly as for an
-unladdered mesh. So there is no `SliceCache` entry (each sub-loader's decode IS
-the cache, for the node's lifetime), and the concat memo keys on the level count
-alone — which means a slice move returns the same object, and with it the same
-loader-owned projection scratch. Had the ladder reset per view like its
-siblings, every scrub frame would have reallocated and re-uploaded the whole
-vertex buffer (#1245).
-
-**Faces are offset, not copied.** Each level's indices are local to its own
-vertex table, so the concat adds the running vertex count — the same value-adding
-loop `concatenateLinesData` uses for segments, and the reason faces cannot go
-through `concatRequiredField`. Getting this wrong does not crash: it draws a
-plausible surface stitched from the wrong vertices, which is why the tests assert
-index VALUES and that every index addresses a real vertex of the merged buffer.
-
-**`committedEnergyFraction` exists and returns `null`, and both halves matter.**
-Absent, `stampLadderComplete` takes the non-progressive branch and stamps a
-half-revealed mesh as carrying all its energy; numeric, `energyCompensation`
-brightens it by `1/e(k)` — right for a coarse prefix of an emissive cloud,
-exactly wrong for a partial object at full brightness (`MESH_NODE_SPEC.md`
-§9.1). Returning `null` makes the stamp ABSENT, which the display gate reads as
-unstamped and answers with committed-count crossover. Three latches hold it: the
-writer refuses the energy keys, the factory reads no energy table, and this
-getter. The unit test asserts the consequence through `stampLadderComplete`
-rather than the getter, with a control pinning the other branch.
-
-Mesh also joins the refinement gate as a fourth phase (`queue-next.ts`,
-`lifecycle/load-scene.ts`, `data/mesh/lod-refinement.ts`), and
-`commit-mesh-geometry.ts` now calls `stampLadderComplete` — without it the
-never-downgrade display gate reads a half-revealed mesh as complete.
-
-Verified in a browser against a store written by the Python half, not only in
-unit tests: a 4-level icosphere ladder streams to 4/4 (3,607 vertices / 5,120
-faces), every face index addresses a real vertex, the energy stamp is absent on
-the laddered node and `1` on an identical unladdered one beside it, and the two
-render the same surface. That comparison is also what found a writer bug — the
-ladder's parent group was missing the attrs that describe the surface, so the
-laddered copy drew faceted and forced double-sided (fixed on the authoring side).
-
 #### Viewer stylesheets: a phantom radius token, magic z-indexes, duplicated rgba
 
 Three kinds of drift in the viewer CSS, all mechanical and all chosen to be
