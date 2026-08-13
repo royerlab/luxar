@@ -2638,9 +2638,17 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
-                    # Neutral, not ACES: the palette is a CATEGORICAL encoding of
-                    # taxonomic group, and ACES's filmic rolloff shifts hues
-                    # enough to blur the legend's identity with the globe.
+                    # Neutral, not ACES (#1459): hue here is a CATEGORICAL
+                    # encoding of taxonomic group, and the scene runs far over
+                    # range (GLOBE_INTENSITY 4.88, OCCURRENCE_INTENSITY 100.0).
+                    # Over range Neutral is the hue-exact option — it scales
+                    # every channel and adds the same amount to all, which
+                    # cannot move the hue angle — while "None" would clip and
+                    # clipping shifts hue when several channels clip unequally,
+                    # and ACES shifts hue by design. The cost is the chroma of
+                    # the hottest occurrence peaks; that is the trade being
+                    # taken, so moving this pin trades hue fidelity for chroma
+                    # and needs a live A/B.
                     tone_mapping="Neutral",
                     camera=globe_camera(10.0, 25.0, distance=2.95),
                     # Open on (All life, All years) -- the slots the summary

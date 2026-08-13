@@ -30,7 +30,10 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     // Tone mapping (ACES gives the most consistent, pleasing HDR look).
     // Note: ACES intentionally shifts hues, which can distort color LUTs;
     // the Python compiler warns when a colormap LUT is used so authors can
-    // switch to Neutral if exact hue fidelity matters.
+    // switch to None — an exact passthrough — if exact hue fidelity
+    // matters and the scene stays inside [0, 1]. (Neutral is not an identity
+    // anywhere: it subtracts an offset even below its knee, and well above 1.0
+    // it desaturates hard — hue is kept, chroma is not.)
     toneMapping: 'ACES' as const,
     vignetteEnabled: false, // Vignette disabled by default
     vignetteDarkness: 0.5, // Vignette darkness (0-1)

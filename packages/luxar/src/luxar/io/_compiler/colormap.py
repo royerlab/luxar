@@ -47,8 +47,11 @@ def write_colormap_lut_if_needed(
     # shifts hues for a pleasing HDR look. ACES is the right default for
     # almost every scene, but that hue shift does distort the exact colors of
     # a colormap LUT, so flag it for authors who have not considered the
-    # choice at all — they may want to pin tone_mapping="Neutral" when the LUT
-    # carries a scientific color encoding.
+    # choice at all — when the LUT carries a scientific color encoding and the
+    # scene stays inside [0, 1], tone_mapping="None" is an exact
+    # passthrough ("Neutral" is not an identity anywhere: it subtracts an
+    # offset even below its knee, and over range it keeps the hue angle but
+    # sheds chroma, while a "None" clamp keeps chroma and can shift hue).
     #
     # Fires ONLY when the author set no tone_mapping. An explicit value —
     # including "ACES" — is a deliberate decision and must not be second-
@@ -70,8 +73,9 @@ def write_colormap_lut_if_needed(
             "viewer's default 'ACES' applies. ACES intentionally shifts hues, "
             "which can distort LUT colors. That is usually the look you want; "
             "if exact colormap fidelity matters (e.g. for scientific color "
-            "encoding), set tone_mapping='Neutral' in the scene's "
-            "viewer_config — or set 'ACES' explicitly to silence this.",
+            "encoding) and the scene stays inside [0, 1], set "
+            "tone_mapping='None' in the scene's viewer_config — an exact "
+            "passthrough — or set 'ACES' explicitly to silence this.",
             UserWarning,
             stacklevel=3,
         )

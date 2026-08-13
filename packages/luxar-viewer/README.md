@@ -555,7 +555,7 @@ renderingControls: {
     bloomRadius: 1.0,           // Bloom spread
     bloomLevels: 8,             // Mipmap levels (1-12, lower = faster)
     toneMapping: 'ACES',        // Default. Options: None, Linear, Reinhard, Cineon, ACES, AgX, Neutral
-                                // (use 'Neutral' for exact colormap-LUT fidelity)
+                                // (use 'None' for exact colormap-LUT fidelity inside [0, 1])
     exposure: 0.0,              // Log2 stops (0 = neutral, +1 = 2x brighter)
   },
 },

@@ -98,8 +98,12 @@ validated), `--tone-mapping` (scene `viewer_config`, validated against
 Colormap/gamma/intensity/layer flow through `**attrs`; tone-mapping goes through
 `ViewerConfig` on `create_scene`. Prefer `--tone-mapping ACES` (the house
 default; passing it explicitly records the choice and silences the compiler's
-LUT notice, which fires only when nothing was chosen), and reach for `Neutral`
-when a colormap carries an exact scientific color encoding — ACES shifts hues.
+LUT notice, which fires only when nothing was chosen). When a colormap carries
+an exact scientific color encoding — ACES shifts hues — reach for `None`, an
+exact passthrough, provided the scene stays inside [0, 1]; `Neutral` is not
+an identity anywhere (it subtracts an offset even below its knee, and over range
+it keeps hue but sheds chroma, while a `None` clamp keeps chroma and can shift
+hue instead).
 
 ## Refactor invariants
 

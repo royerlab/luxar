@@ -46,7 +46,7 @@ function toneMappingModeDefine(mode: THREE.ToneMapping): string {
     case THREE.NeutralToneMapping:
       return '6';
     default:
-      return '6'; // Neutral — preserves hue fidelity for scientific data
+      return '6'; // Neutral — a gentle, hue-preserving rolloff
   }
 }
 

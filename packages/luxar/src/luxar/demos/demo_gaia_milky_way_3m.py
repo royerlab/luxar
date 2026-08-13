@@ -330,8 +330,13 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # background black (a high exposure floods the faint-star haze into a
             # grey wash), a raised bloom threshold blooms only the brightest
             # stars, and ACES (set explicitly, the house default) supplies the
-            # filmic rolloff. It does shift blue/red star hues a little; Neutral
-            # is the alternative if true stellar colour ever matters more.
+            # filmic rolloff. It does shift blue/red star hues a little; "None"
+            # is the alternative if true stellar colour ever matters more
+            # (#1459) — an exact passthrough, but not a free swap here: bloom is
+            # on (strength 0.15, threshold 0.85) and is summed into the HDR
+            # sample BEFORE tone mapping (`sampleHdrPlusBloom` in the viewer's
+            # mega shader), so a "None" pin would flat-clip the bloomed star
+            # cores that ACES's rolloff is holding together.
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(

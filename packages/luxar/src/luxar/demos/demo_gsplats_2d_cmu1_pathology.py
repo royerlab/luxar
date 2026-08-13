@@ -436,7 +436,8 @@ def create_luxar_scene(
             # ACES, set explicitly (the house default; its filmic rolloff suits
             # the bright slide background). ACES does shift hues, so if faithful
             # H&E stain colour ever matters more than the filmic look here,
-            # Neutral is the documented alternative.
+            # "None" is the documented alternative (#1459) — an exact
+            # passthrough, as long as the render sits inside [0, 1].
             viewer_config = ViewerConfig(
                 control_type="ortho",
                 tone_mapping="ACES",

@@ -472,7 +472,7 @@ HDR bloom via the separate `BloomChain` pre-pass:
 Multiple tone mapping operators (all run inside the mega-shader via THREE's `<tonemapping_pars_fragment>` chunk):
 
 - ACES Filmic (default) - Industry standard cinematic look
-- Neutral - Minimal color shift, preserves hue fidelity for scientific data
+- Neutral - Gentle rolloff; well above 1.0 it desaturates hard (hue is kept, chroma is not) — inside [0, 1] use None instead, which is exact
 - AgX - Modern alternative
 - Reinhard / Cineon - Classic operators
 - Linear - Clamp/saturate to [0, 1]

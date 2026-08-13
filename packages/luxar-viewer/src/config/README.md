@@ -195,7 +195,7 @@ renderingControls: {
     msaaEnabled: false,         // Incompatible with additive blending
     msaaSamples: 4,
     ssaaEnabled: false,
-    toneMapping: 'ACES',        // Default; use 'Neutral' for exact colormap-LUT fidelity
+    toneMapping: 'ACES',        // Default; use 'None' for exact colormap-LUT fidelity inside [0, 1]
     // Detector noise (physics-based: Poisson + Gaussian + FPN)
     detectorNoiseEnabled: false,
     detectorNoiseReadoutSigma: 0.002,  // Temporal readout noise

@@ -98,8 +98,11 @@ Appearance is baked in here:
 - `--tone-mapping` (default `ACES`, the viewer default) — `None`/`Linear`/`Reinhard`/
   `Cineon`/`ACES`/`AgX`/`Neutral`. Prefer `ACES` and pass it explicitly (that
   records the choice and silences the compiler's LUT notice, which only fires
-  when nothing was chosen); reach for `Neutral` when the colormap carries an
-  exact scientific color encoding (ACES shifts hues).
+  when nothing was chosen); when the colormap carries an exact scientific color
+  encoding (ACES shifts hues) reach for `None` — an exact passthrough — as
+  long as the scene stays inside [0, 1]. `Neutral` is not an identity anywhere:
+  it subtracts an offset even below its knee, and over range it keeps the hue
+  angle but sheds chroma (a `None` clamp keeps chroma and can shift hue).
 - `--gamma` (1.0) — display gamma.
 - `--intensity` (1.0) — display intensity multiplier.
 - `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.
