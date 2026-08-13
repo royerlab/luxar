@@ -46,6 +46,25 @@ def add_gsplats_from_file_impl(
     if not path.exists():
         raise FileNotFoundError(f"GSplats file not found: {path}")
 
+    # The #1496 ``**attrs`` pair, run HERE rather than left to the two branches
+    # below, because this one public method has two of them and they must not word
+    # the same fault differently — the concern the stored-column-count check below
+    # already states for itself. A matrix-shaped file goes to
+    # ``add_gsplats_from_data_impl``, which runs this pair at its own entry; a
+    # nested one goes to ``graft_gsplat_node``, which runs it at ITS entry, below
+    # this function's ``dim_order`` refusal and column-count check. So without a
+    # copy here the two halves disagreed: measured with a 4-column store into a
+    # 3-dimension scene plus ``colors=<arr>``, the matrix-shaped file answered the
+    # collision while the partition file answered ``Dimension mismatch for 'g':
+    # centers array has 4 columns …`` — the same call, the same mistake, a
+    # different verdict decided by a structural property of the file the caller
+    # may not even know. Running it above both branches makes the collision
+    # outrank this function's own checks on BOTH, which is the same precedence
+    # ``add_gsplats_from_data_impl`` gives it. Below the existence check, because
+    # a missing file is not an attrs question at all.
+    strip_absent_attr_kwargs(attrs)
+    reject_data_owned_channels(name, attrs)
+
     # Classical (photogrammetric) splat files — INRIA/SuperSplat .ply,
     # antimatter15 .splat, Niantic .spz — are imported on the fly and embedded
     # through the normal data path, so `scene.add_gsplats_from_file("garden",
@@ -372,20 +391,24 @@ def graft_gsplat_node(
     from ..compositing import COMPOSITING_ATTRS
 
     # The graft door's half of the #1496 ``**attrs`` normalisation — the identical
-    # two calls the ``from_data`` entry runs, so ``graft_gsplat_node(..., colors=
-    # None)`` behaves exactly like the other doors and a non-None ``colors=`` is
-    # refused here rather than from inside ``part_0``.
+    # pair the ``from_data`` entry and ``add_gsplats_from_file_impl`` run, so a
+    # DIRECT ``graft_gsplat_node(..., colors=None)`` (this function is called by
+    # tests and by its own recursion, not only through the file door) behaves like
+    # every other door and a non-None ``colors=`` is refused here rather than from
+    # inside ``part_0``.
     #
-    # The two are load-bearing to different degrees, deliberately kept together.
-    # The REFUSAL must be here: this function builds its wrappers from the on-disk
-    # tree BEFORE the first leaf is written, so a collision judged one level down
-    # (by ``add_gsplats_from_data_impl``, where every terminal leaf write does
-    # funnel through) leaves a childless ``kind=partition`` / ``kind=lod`` group
-    # behind — measured, with these two lines removed. The STRIP would in fact
-    # survive that removal, since non-compositing attrs ride down to those same
-    # per-leaf calls, which strip again at the top of their own body; it is stated
-    # here anyway so the pair reads as one rule rather than half a rule delegated,
-    # and so this function's own checks below see normalised attrs.
+    # Only the REFUSAL can be observed here, and it is genuinely load-bearing:
+    # this function builds its wrappers from the on-disk tree BEFORE the first
+    # leaf write, so a collision judged one level down (by
+    # ``add_gsplats_from_data_impl``, where every terminal leaf write does funnel
+    # through) leaves a childless ``kind=partition`` / ``kind=lod`` group behind —
+    # measured, with these two lines removed. The ``strip_absent_attr_kwargs``
+    # call, by contrast, is UNREACHABLE IN EFFECT and no test can cover it: the
+    # very next statement strips the same dict again (defensively, see
+    # :func:`_reject_labels_on_a_grafted_wrapper`), and the per-leaf calls
+    # underneath strip it a third time. It is kept as the entry-level statement of
+    # intent — the pair is one rule and reads as one — not because anything
+    # depends on it; if you delete it, nothing observable changes.
     strip_absent_attr_kwargs(attrs)
     reject_data_owned_channels(name, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)

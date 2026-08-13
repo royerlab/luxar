@@ -162,7 +162,7 @@ apart.
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pytest
@@ -1616,35 +1616,66 @@ class TestGSplatsFromDataNodeAttrsGateStillForwardsPartition:
 # live for the rest of the family that reaches this adder through ``**attrs``,
 # and generalised the strip into ``from_data.ABSENT_WHEN_NONE_ATTRS`` — derived
 # from the gate's own ``GATE_FORWARDED_LEAF_PARAMS`` so the two lists cannot
-# drift, and wider than it on purpose (``colors`` and ``truncation_radius``
-# belong to the None-means-absent set but must NOT be excluded from the gate,
-# since a non-None value of either still has to be judged).
+# drift, and wider than it on purpose (``colors``, ``truncation_radius``,
+# ``colormap`` and ``coverage_fraction`` belong to the None-means-absent set but
+# must NOT be excluded from the gate, since a non-None value of any of them still
+# has to be judged).
 #
-# Measured on main, with a 2-level substitutive ``GSplatData`` in a 3-dim scene:
+# Measured on main, with a 2-level substitutive ``GSplatData`` in a 3-dim scene.
+# Three severities, which is why one rule beats four ad-hoc patches:
 #
 #   * ``partition=None`` + ``lod_group=True, additive_lod={"n_lods": 2}`` →
 #     ``Could not add gsplats 'child_0': Unknown node attribute 'partition'. Did
 #     you mean 'absorption'?``, with ``g`` left on disk as a CHILDLESS
-#     ``kind=lod`` group surviving ``finalize()``. Route-dependent, which is what
-#     makes it so easy to miss: the same key was fine on ``lod_group`` alone and
-#     on the bare flat route, and merely refused (nothing written) on
-#     flat+ladder.
+#     ``kind=lod`` group surviving ``finalize()`` — a refusal that ALSO stranded.
+#     Route-dependent, which is what makes it so easy to miss: the same key was
+#     fine on ``lod_group`` alone and on the bare flat route, and merely refused
+#     (nothing written) on flat+ladder.
 #   * ``colors=None`` → a raw ``TypeError`` ("got multiple values for keyword
 #     argument 'colors'") on the flat route and ``Unknown node attribute
-#     'colors'. Did you mean 'colormap'?`` on the other three.
-#   * ``truncation_radius=None`` → ``Truncation radius must be convertible to
-#     float, got NoneType`` on all four: consistent, but semantically wrong. The
-#     key is one this adder INJECTS from ``result.truncation_radius``, so an
-#     explicit None was overwriting the data's own value rather than declining to
-#     override it.
+#     'colors'. Did you mean 'colormap'?`` on the other three;
+#     ``truncation_radius=None`` → ``Truncation radius must be convertible to
+#     float, got NoneType`` on all four. Refusals that wrote nothing, but
+#     semantically wrong: ``truncation_radius`` is a key this adder INJECTS from
+#     ``result.truncation_radius``, so an explicit None was overwriting the data's
+#     own value rather than declining to override it.
+#   * ``colormap=None`` and ``coverage_fraction=None`` were ACCEPTED and wrote
+#     something WRONG — the silent half, and the reason ``colormap`` is in the set
+#     at all. ``validate_render_attrs`` guards its colormap check on ``is not
+#     None``, so the None survives to ``compositing.sync_custom_colormap_attr``,
+#     which rewrites it to ``'custom'`` (a None is not a str in
+#     ``BUILTIN_COLORMAP_NAMES``) and writes no ``colormap_lut``; measured on
+#     uncoloured data, ``colormap='custom'`` where the omitted-key control writes
+#     ``colormap='gray'``, and the viewer (``build-scene-graph.ts``) answers a
+#     ``'custom'`` with no LUT by warning and falling back to VIRIDIS. So the node
+#     rendered in the wrong colormap and nothing complained.
+#     ``coverage_fraction=None`` wrote a literal ``coverage_fraction: null``
+#     selector threshold on the flat route, and on the multi-substitutive route
+#     tripped the "must not be passed" refusal for a caller who effectively passed
+#     nothing.
 #
-# Deliberately NOT in the set, and left refused: ``opacity`` / ``blending_mode``
-# / ``layer`` / ``visible`` / ``scalars``. Those are pure render attrs where None
-# is genuinely not a value, so reading it as "absent" would only mask typos.
+# Deliberately NOT in the set: every other render attr, because each refuses a
+# None LOUDLY on its own and reading it as "absent" would only mask typos.
+# Measured, one call each: ``opacity`` / ``gamma`` / ``intensity`` /
+# ``absorption`` answer "must be convertible to float, got NoneType",
+# ``blending_mode`` "must be a string, got NoneType", ``layer`` / ``visible``
+# "must be a boolean, got NoneType" — their value validators run
+# unconditionally, unlike the colormap one. ``scalars=None`` refuses too but for
+# a different reason worth keeping straight: GSplats has no scalars channel at
+# all, so it is an ``Unknown node attribute``, value irrelevant.
 
 #: A per-splat RGB row distinctive enough that reading it back proves the DATA's
 #: own colours survived, not merely that some colour channel exists.
 _C1496_RGB = (0.25, 0.5, 1.0)
+
+#: The fixture's truncation radius. Deliberately NOT ``DEFAULT_TRUNCATION_RADIUS``
+#: (2.75): the writer stamps that same default when the attr is ABSENT
+#: (``io/_compiler/gsplat_assembly.py``), so a fixture carrying the default makes
+#: "on disk == data.truncation_radius" true whether the data was consulted or not.
+#: Measured: with the fixture at 2.75, a mutant stripping ``truncation_radius``
+#: AFTER the injection instead of before passed every test in this section; at
+#: 4.25 it writes 2.75 where the omitted-key control writes 4.25, and dies.
+_TRUNCATION_1496 = 4.25
 
 #: ``(tag, collapse_to_one_level, extra call kwargs)`` for the four routes
 #: ``add_gsplats_from_data`` can take. Parametrizing over all four is the point:
@@ -1657,6 +1688,47 @@ _FROM_DATA_ROUTES = [
     ("lod_group_ladder", False, {"lod_group": True, "additive_lod": {"n_lods": 2}}),
 ]
 
+#: Every key whose None must read as absent, minus the two label channels
+#: #1471 already covers next door. ``colormap`` is listed last because it is the
+#: one whose None was SILENTLY wrong rather than refused.
+_ABSENT_WHEN_NONE_KEYS = [
+    "partition",
+    "colors",
+    "truncation_radius",
+    "coverage_fraction",
+    "colormap",
+]
+
+#: The four channels ``add_gsplats_from_data_impl`` forwards off the
+#: ``GSplatData`` itself, so a caller value under the same name is a collision.
+#: ``centers`` was missed in the first cut of #1496 and was the one member of the
+#: four still able to strand a wrapper at the graft door.
+_DATA_OWNED = ["colors", "centers", "amplitudes", "cholesky_factors"]
+
+#: ``(channel, value tag, value)`` — every channel in BOTH value shapes a
+#: collision can arrive in, minus the one combination that is not a collision.
+#:
+#: ``None`` matters as much as an array. ``centers`` / ``amplitudes`` /
+#: ``cholesky_factors`` are REQUIRED positional params of the leaf adder with no
+#: None default, so their None is a collision like any other value — and a mutant
+#: weakening the refusal to ``if attrs.get(kwarg) is not None`` passes an
+#: array-only parametrize while restoring the exact pre-fix behaviour for
+#: ``amplitudes=None`` (flat ``TypeError``, split ``Unknown node attribute``).
+#: ``colors=None`` is the excluded combination: ``colors`` has a None default at
+#: the leaf, so its None is stripped as ABSENT, which is what
+#: ``test_none_is_indistinguishable_from_omitting_the_key`` asserts instead. That
+#: asymmetry between the four channels is the whole reason the exclusion is
+#: spelled as a condition here rather than the lists being crossed blindly.
+_COLLISION_CASES = [
+    (channel, tag, value)
+    for channel in _DATA_OWNED
+    for tag, value in (
+        ("array", np.zeros((8, 3), dtype=np.float32)),
+        ("none", None),
+    )
+    if not (channel == "colors" and value is None)
+]
+
 
 def _coloured_1496_data(collapse: bool = False) -> Any:
     """A 2-level substitutive ``GSplatData`` whose every splat carries ``_C1496_RGB``.
@@ -1666,6 +1738,12 @@ def _coloured_1496_data(collapse: bool = False) -> Any:
     (the same trick ``TestTheGsplatsAdditiveLadderStillHasNoLabelsChannel`` uses).
     Every level is coloured identically so the readback below can assert the same
     row wherever the route happens to put its first leaf.
+
+    Every sub-LOD also carries the explicitly non-default
+    :data:`_TRUNCATION_1496` — see that constant for why the default value made
+    the truncation assertions inert. ``truncation_radius`` lives on
+    ``AdditiveSubLOD`` and ``GSplatData.truncation_radius`` reads it back off the
+    rungs, so setting it per rung is how a fixture gets a non-default one.
     """
     data = _multi_substitutive_data(
         lambda n, seed: random_positions(n, seed=seed),
@@ -1673,6 +1751,7 @@ def _coloured_1496_data(collapse: bool = False) -> Any:
         colors_for=lambda n, _level: np.tile(
             np.asarray(_C1496_RGB, dtype=np.float32), (n, 1)
         ),
+        truncation_radius=_TRUNCATION_1496,
     )
     return data.at_substitutive(0) if collapse else data
 
@@ -1705,6 +1784,24 @@ def _truncation_radii(store: Any, node: str = "g") -> Dict[str, Any]:
         found[node] = group.attrs["truncation_radius"]
     for child in sorted(group.group_keys()):
         found.update(_truncation_radii(store, f"{node}/{child}"))
+    return found
+
+
+def _node_attrs(store: Any, node: str = "g") -> Dict[str, Any]:
+    """The FULL attrs dict of every node in the subtree at ``node``, by path.
+
+    The whole dict, not a chosen subset, because the two keys whose ``None`` was
+    silently accepted rather than refused each wrote a DIFFERENT attr wrong —
+    ``colormap='custom'`` for one, a null ``coverage_fraction`` for the other —
+    and a subset picked to catch today's two would not catch a third. Comparing
+    against a control store built from the identical fixture makes that safe: the
+    seeds are fixed, so every derived attr (bounds, counts, hashes) matches
+    exactly, and any difference at all is the key under test leaking through.
+    """
+    group = store[node]
+    found: Dict[str, Any] = {node: dict(group.attrs)}
+    for child in sorted(group.group_keys()):
+        found.update(_node_attrs(store, f"{node}/{child}"))
     return found
 
 
@@ -1757,7 +1854,7 @@ class TestAnExplicitNoneMeansAbsentOnTheGSplatsDataDoor:
         # The bug's signature was this list being EMPTY.
         assert sorted(store["g"].group_keys()) == ["child_0", "child_1"]
 
-    @pytest.mark.parametrize("key", ["partition", "colors", "truncation_radius"])
+    @pytest.mark.parametrize("key", _ABSENT_WHEN_NONE_KEYS)
     @pytest.mark.parametrize("route,collapse,extra", _FROM_DATA_ROUTES)
     def test_none_is_indistinguishable_from_omitting_the_key(
         self,
@@ -1767,14 +1864,19 @@ class TestAnExplicitNoneMeansAbsentOnTheGSplatsDataDoor:
         collapse: bool,
         extra: Dict[str, Any],
     ) -> None:
-        """All three keys, all four routes, against the omitted-key control.
+        """All five keys, all four routes, against the omitted-key control.
 
-        Stated as a comparison rather than as three hand-written expectations
-        because "means absent" IS the contract: the store written with
-        ``key=None`` must have the same node names as the store written without
-        the key at all. That catches a strip that runs on only some routes, and
-        it catches a strip that deletes the key but perturbs what is written
-        (e.g. by dropping the data's colours along with the None).
+        Stated as a comparison against a control store rather than as five
+        hand-written expectations because "means absent" IS the contract: the store
+        written with ``key=None`` must be indistinguishable from the store written
+        without the key at all. That catches a strip that runs on only some routes,
+        a strip that deletes the key but perturbs what is written (e.g. by dropping
+        the data's colours along with the None), AND — the reason this compares
+        ATTRS and not only node names — the two keys whose None was silently
+        ACCEPTED and written wrong rather than refused: pre-fix, ``colormap=None``
+        wrote ``colormap='custom'`` here where the control writes ``'gray'``, and
+        ``coverage_fraction=None`` wrote a literal null where the control writes no
+        such attr at all. A node-names-only check passes both.
         """
         compiler, scene, path = open_scene(tmp_path, f"none_{key}_{route}.luxar.zarr")
         control_compiler, control_scene, control_path = open_scene(
@@ -1792,7 +1894,88 @@ class TestAnExplicitNoneMeansAbsentOnTheGSplatsDataDoor:
         control = zarr.open_group(control_path, mode="r")
         assert sorted(store["g"].group_keys()) == sorted(control["g"].group_keys())
         assert _deepest_first_leaf(store) == _deepest_first_leaf(control)
-        assert _truncation_radii(store) == _truncation_radii(control)
+        assert _node_attrs(store) == _node_attrs(control)
+
+    @pytest.mark.parametrize("route,collapse,extra", _FROM_DATA_ROUTES)
+    def test_colormap_none_writes_gray_not_a_lutless_custom(
+        self, tmp_path: Any, route: str, collapse: bool, extra: Dict[str, Any]
+    ) -> None:
+        """The silent member of the set, pinned by the VALUE on disk (#1496).
+
+        Named separately from the control comparison above because this is the one
+        case whose pre-fix symptom was not an error of any kind. ``colormap=None``
+        passes ``validate_render_attrs`` (its colormap check is guarded on ``is not
+        None``), reaches ``compositing.sync_custom_colormap_attr``, and is rewritten
+        to ``'custom'`` because a None is not a str in ``BUILTIN_COLORMAP_NAMES`` —
+        with no ``colormap_lut`` written beside it. The viewer's
+        ``build-scene-graph.ts`` sees ``colormap === 'custom'``, cannot find the
+        LUT, warns, and falls back to VIRIDIS. So a caller writing the idiomatic
+        ``colormap=maybe_colormap`` got a node rendered in viridis where they asked
+        for the ``'gray'`` default, and nothing anywhere said so.
+
+        Uncoloured data on purpose: that is the case with a positive expectation
+        (``'gray'``). On coloured data the correct answer is that no ``colormap``
+        attr is written at all, which the control comparison above covers.
+
+        Asserted over EVERY node that carries a ``colormap``, not one named node,
+        because the four routes do not agree on which node that is: a laddered
+        write puts it on the ladder PARENT (``g`` / ``g/child_0``) and leaves the
+        ``additive_<i>`` rungs without one, so a first-leaf readback fails on two
+        of the four routes for a reason that has nothing to do with the fix.
+        """
+        compiler, scene, path = open_scene(
+            tmp_path, f"none_colormap_{route}.luxar.zarr"
+        )
+
+        scene.add_gsplats_from_data(
+            "g",
+            _multi_substitutive_3d_data().at_substitutive(0)
+            if collapse
+            else _multi_substitutive_3d_data(),
+            **extra,
+            colormap=None,
+        )
+        compiler.finalize()
+
+        attrs = _node_attrs(zarr.open_group(path, mode="r"))
+        colormaps = {n: a["colormap"] for n, a in attrs.items() if "colormap" in a}
+        assert colormaps, "no node carried a colormap at all"
+        assert set(colormaps.values()) == {"gray"}, (
+            f"expected the omitted-key default everywhere, got {colormaps}; "
+            "'custom' means the None survived into sync_custom_colormap_attr and "
+            "the viewer will render viridis"
+        )
+        assert not any("colormap_lut" in a for a in attrs.values())
+
+    @pytest.mark.parametrize("route,collapse,extra", _FROM_DATA_ROUTES)
+    def test_coverage_fraction_none_writes_no_selector_threshold(
+        self, tmp_path: Any, route: str, collapse: bool, extra: Dict[str, Any]
+    ) -> None:
+        """The other silently-accepted member: no ``coverage_fraction: null`` on disk.
+
+        ``coverage_fraction`` travels in ``**attrs`` exactly like the rest and is
+        ``pop``ped with a ``None`` default by both sibling wrappers, so a missing
+        key and a None-valued one are already the same thing to THEM — but not to
+        the flat route, which wrote the None straight through as a node attr
+        (measured: ``coverage_fraction: null``), nor to the multi-substitutive
+        route, which refused with "must not be passed" for a caller who effectively
+        passed nothing. Asserting the ABSENCE of the key, not merely a non-null
+        value, is the point: a null selector threshold is what the viewer would
+        have to interpret.
+        """
+        compiler, scene, path = open_scene(
+            tmp_path, f"none_coverage_{route}.luxar.zarr"
+        )
+
+        scene.add_gsplats_from_data(
+            "g", _coloured_1496_data(collapse), **extra, coverage_fraction=None
+        )
+        compiler.finalize()
+
+        store = zarr.open_group(path, mode="r")
+        assert store["g"].attrs.get("coverage_fraction", "<absent>") == "<absent>", (
+            "the caller passed nothing, so nothing should have been written"
+        )
 
     @pytest.mark.parametrize("route,collapse,extra", _FROM_DATA_ROUTES)
     def test_colors_none_leaves_the_data_s_own_colours_on_disk(
@@ -1833,14 +2016,23 @@ class TestAnExplicitNoneMeansAbsentOnTheGSplatsDataDoor:
         key therefore suppressed that injection and then failed the render-attr
         float conversion — so this is the one member of the set whose fix is
         visible as a VALUE on disk rather than only as a node that got written.
-        Asserting the value (and that every node in the subtree agrees on it)
-        is what separates the fix from a strip placed BELOW the injection, which
-        would delete the key too late and silently write no radius at all.
+
+        What separates the fix from a strip placed BELOW the injection is the
+        fixture's NON-DEFAULT radius, not the assertion's shape. A late strip does
+        not "write no radius": the writer stamps ``DEFAULT_TRUNCATION_RADIUS``
+        (2.75) for an absent attr (``io/_compiler/gsplat_assembly.py``), so it
+        writes the DEFAULT where the fix writes the data's own value. With a
+        fixture at 2.75 those two are the same number and this test cannot tell
+        them apart — measured, that mutant passed. At
+        :data:`_TRUNCATION_1496` = 4.25 it writes 2.75 and dies. Hence also the
+        explicit "not the default" assertion below rather than a bare
+        ``assert radii``, which is satisfied by the default too.
         """
         compiler, scene, path = open_scene(
             tmp_path, f"none_truncation_{route}.luxar.zarr"
         )
         data = _coloured_1496_data(collapse)
+        assert data.truncation_radius == pytest.approx(_TRUNCATION_1496)
 
         scene.add_gsplats_from_data("g", data, **extra, truncation_radius=None)
         compiler.finalize()
@@ -1849,7 +2041,12 @@ class TestAnExplicitNoneMeansAbsentOnTheGSplatsDataDoor:
         assert radii, "no node carried a truncation_radius at all"
         distinct = set(radii.values())
         assert len(distinct) == 1, f"nodes disagree on truncation_radius: {radii}"
-        assert distinct.pop() == pytest.approx(data.truncation_radius)
+        written = distinct.pop()
+        assert written == pytest.approx(_TRUNCATION_1496), (
+            f"wrote {written}; DEFAULT_TRUNCATION_RADIUS (2.75) here means the "
+            "data's own radius was never consulted — the key was stripped after "
+            "the injection rather than before it"
+        )
 
     @pytest.mark.parametrize("route,collapse,extra", _FROM_DATA_ROUTES)
     def test_an_explicit_truncation_radius_still_overrides_the_data(
@@ -1878,33 +2075,47 @@ class TestAnExplicitNoneMeansAbsentOnTheGSplatsDataDoor:
 
 
 class TestGSplatsFromDataRefusesDataOwnedChannels:
-    """A non-None ``colors``/``amplitudes``/``cholesky_factors`` is a collision (#1496).
+    """A ``colors``/``centers``/``amplitudes``/``cholesky_factors`` kwarg collides (#1496).
 
-    These three are not attrs at all: ``add_gsplats_from_data_impl`` passes each
-    of them POSITIONALLY off the ``GSplatData`` on the flat route, and hands the
+    These four are not attrs at all: ``add_gsplats_from_data_impl`` passes every
+    one of them POSITIONALLY off the ``GSplatData`` on the flat route
+    (``centers=result.centers``, ``colors=result.colors``, …), and hands the
     per-level arrays to each child on a split one. So a caller value under the
     same name has nowhere to go — and on a split route could not be split anyway,
     a coarse level being merged representatives rather than a subset (the same
     argument ``labels_on_wrapper_reason`` makes).
 
-    Pre-fix the four routes gave three different answers for one mistake: a raw
-    ``TypeError`` from Python on the flat route, and ``Unknown node attribute
-    'colors'. Did you mean 'colormap'?`` on the rest — a true-in-form but
-    misleading verdict, since the key is not unknown, it is taken, and following
-    its advice (switch to ``colormap=``) silently changes what you asked for.
+    Pre-fix the four routes gave TWO answers for one mistake: a raw ``TypeError``
+    from Python on the flat route ("got multiple values for keyword argument"),
+    and — byte-identically across the other three — ``Unknown node attribute
+    'colors'. Did you mean 'colormap'?``, a true-in-form but misleading verdict,
+    since the key is not unknown, it is taken, and following its advice (switch to
+    ``colormap=``) silently changes what you asked for.
+
+    WHAT THESE CASES DISCRIMINATE, precisely, because the answer differs by door
+    and it would be easy to imply more than is true. On the four ``from_data``
+    routes nothing was EVER written for any of the four channels: measured with
+    the refusal disabled, all four routes leave an empty store, so the
+    ``"g" not in ...`` assertions below are honest regression guards but are not
+    what proves the fix — the exception TYPE and the message are. The stranding
+    half of #1496 lives at the GRAFT door, and
+    ``TestTheGraftDoorNormalisesAttrsTheSameWay`` below is where a store
+    assertion does the discriminating.
     """
 
-    @pytest.mark.parametrize("channel", ["colors", "amplitudes", "cholesky_factors"])
+    @pytest.mark.parametrize("channel,value_tag,value", _COLLISION_CASES)
     @pytest.mark.parametrize("route,collapse,extra", _FROM_DATA_ROUTES)
     def test_refused_as_a_value_error_with_nothing_written(
         self,
         tmp_path: Any,
         channel: str,
+        value_tag: str,
+        value: Any,
         route: str,
         collapse: bool,
         extra: Dict[str, Any],
     ) -> None:
-        """Every channel, every route: a ``ValueError`` naming the collision.
+        """Every channel, both value shapes, every route: a ``ValueError``.
 
         The exception TYPE is asserted through ``refusal`` + an explicit
         ``isinstance``, not just the message: the flat route used to leak a raw
@@ -1913,16 +2124,24 @@ class TestGSplatsFromDataRefusesDataOwnedChannels:
         with ``except ValueError`` around an ``add_gsplats_from_data`` would have
         seen the flat route escape it.
 
-        One ``(8, 3)`` array serves all three channels, wrong shape and all: the
-        refusal is by KEY, above any shape validator, and feeding each channel a
-        plausibly-shaped array would only leave open whether it was the shape that
-        was refused. The tie-break case below uses correctly-shaped ones.
+        ``value_tag="none"`` is not padding. ``centers`` / ``amplitudes`` /
+        ``cholesky_factors`` are required positional params of the leaf adder with
+        no None default, so a None for them is a collision like any other value —
+        and a mutant weakening the refusal to ``if attrs.get(kwarg) is not None``
+        passes an array-only parametrize while restoring the pre-fix behaviour
+        exactly (measured: ``amplitudes=None`` back to a flat ``TypeError`` and a
+        split ``Unknown node attribute``). ``colors=None`` is excluded from the
+        cases for the opposite reason — see :data:`_COLLISION_CASES`.
+
+        One ``(8, 3)`` array serves every channel in the array shape, wrong shape
+        and all: the refusal is by KEY, above any shape validator, and feeding each
+        channel a plausibly-shaped array would only leave open whether it was the
+        shape that was refused. The tie-break case below uses correctly-shaped ones.
         """
         compiler, scene, path = open_scene(
-            tmp_path, f"collide_{channel}_{route}.luxar.zarr"
+            tmp_path, f"collide_{channel}_{value_tag}_{route}.luxar.zarr"
         )
         data = _coloured_1496_data(collapse)
-        value = np.zeros((8, 3), dtype=np.float32)
 
         split = refusal(
             lambda: scene.add_gsplats_from_data("g", data, **extra, **{channel: value})
@@ -1937,9 +2156,9 @@ class TestGSplatsFromDataRefusesDataOwnedChannels:
         assert "g" not in compiler.store
         assert "g" not in finalized_group_keys(compiler, path)
 
-    @pytest.mark.parametrize("channel", ["colors", "amplitudes", "cholesky_factors"])
+    @pytest.mark.parametrize("channel,value_tag,value", _COLLISION_CASES)
     def test_the_flat_and_lod_group_routes_answer_identically(
-        self, tmp_path: Any, channel: str
+        self, tmp_path: Any, channel: str, value_tag: str, value: Any
     ) -> None:
         """Parity between the two routes that used to differ in exception TYPE.
 
@@ -1949,11 +2168,12 @@ class TestGSplatsFromDataRefusesDataOwnedChannels:
         is where ``assert_same_refusal`` earns its keep: it compares type as well
         as message, and type is precisely what diverged.
         """
-        _, flat_scene, _ = open_scene(tmp_path, f"parity_{channel}_flat.luxar.zarr")
-        compiler, scene, path = open_scene(
-            tmp_path, f"parity_{channel}_split.luxar.zarr"
+        _, flat_scene, _ = open_scene(
+            tmp_path, f"parity_{channel}_{value_tag}_flat.luxar.zarr"
         )
-        value = np.zeros((8, 3), dtype=np.float32)
+        compiler, scene, path = open_scene(
+            tmp_path, f"parity_{channel}_{value_tag}_split.luxar.zarr"
+        )
 
         flat = refusal(
             lambda: flat_scene.add_gsplats_from_data(
@@ -1969,12 +2189,12 @@ class TestGSplatsFromDataRefusesDataOwnedChannels:
         assert_same_refusal(flat, split)
         assert "g" not in finalized_group_keys(compiler, path)
 
-    def test_colors_is_answered_before_the_other_two(self, tmp_path: Any) -> None:
-        """The tie-break, pinned: a call passing all three hears about ``colors``.
+    def test_colors_is_answered_before_the_other_three(self, tmp_path: Any) -> None:
+        """The tie-break, pinned: a call passing all four hears about ``colors``.
 
         Deterministic ordering is the same property the ``labels`` before
         ``image_labels`` convention buys next door. Without a test, a dict
-        iteration order or a reordered tuple would silently change which of three
+        iteration order or a reordered tuple would silently change which of four
         equally-true faults the user is shown.
         """
         compiler, scene, _ = open_scene(tmp_path, "collide_tiebreak.luxar.zarr")
@@ -1985,18 +2205,82 @@ class TestGSplatsFromDataRefusesDataOwnedChannels:
                 _coloured_1496_data(),
                 lod_group=True,
                 colors=np.zeros((8, 3), dtype=np.float32),
+                centers=random_positions(8, seed=97),
                 amplitudes=np.ones(8, dtype=np.float32),
                 cholesky_factors=cholesky_rows_nd(8, 3),
             )
         )
 
         assert "colors cannot be passed as a keyword here" in str(split)
+        assert "centers cannot" not in str(split)
         assert "amplitudes cannot" not in str(split)
         assert "cholesky_factors cannot" not in str(split)
         assert "g" not in compiler.store
 
+    def test_the_collision_outranks_a_dim_order_spec_fault(self, tmp_path: Any) -> None:
+        """Precedence control for the entry refusal, with its own negative half.
 
-def _partition_of_two_leaves() -> Any:
+        This section's other precedence tests all pin something the ``from_data``
+        gate must NOT outrank; this one pins the opposite, because the #1496 pair
+        sits at the adder ENTRY and therefore outranks every check inside
+        ``_reject_before_wrapper`` — the ``dim_order`` spec validators and the rank
+        guard included. That is deliberate (a channel collision means the adder
+        cannot build the call it is about to make at all), but it is a real
+        precedence claim and it needs the control: drop ``colors=`` from the same
+        call and the ``dim_order`` fault must be the one reported, or this test
+        would pass just as well against an implementation that had broken the
+        ``dim_order`` check outright.
+        """
+        compiler, scene, _ = open_scene(tmp_path, "collide_vs_dim_order.luxar.zarr")
+        _, control_scene, _ = open_scene(
+            tmp_path, "collide_vs_dim_order_control.luxar.zarr"
+        )
+
+        both = refusal(
+            lambda: scene.add_gsplats_from_data(
+                "g",
+                _coloured_1496_data(),
+                lod_group=True,
+                dim_order=["X", "Y", "X"],
+                colors=np.zeros((8, 3), dtype=np.float32),
+            )
+        )
+        control = refusal(
+            lambda: control_scene.add_gsplats_from_data(
+                "g", _coloured_1496_data(), lod_group=True, dim_order=["X", "Y", "X"]
+            )
+        )
+
+        assert "colors cannot be passed as a keyword here" in str(both)
+        assert "duplicate" not in str(both)
+        # The control proves the dim_order check is alive and merely outranked.
+        assert "duplicate" in str(control)
+        assert "cannot be passed as a keyword here" not in str(control)
+        assert "g" not in compiler.store
+
+
+def _graft_leaf(n: int, seed: int, ndim: int = 3) -> Any:
+    """One flat ``GSplatLeaf`` for the graft fixtures below."""
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.tree import GSplatLeaf
+
+    centers = (
+        bad_ndim_positions(n, seed=seed, ndim=ndim)
+        if ndim != 3
+        else random_positions(n, seed=seed)
+    )
+    return GSplatLeaf(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=centers,
+                amplitudes=np.ones(n, dtype=np.float32),
+                cholesky_factors=cholesky_rows_nd(n, ndim),
+            )
+        ]
+    )
+
+
+def _partition_of_two_leaves(ndim: int = 3) -> Any:
     """A 2-leaf ``kind=partition`` tree — the shape the graft door actually sees.
 
     Non-matrix-shaped on purpose: ``add_gsplats_from_file_impl`` sends every
@@ -2005,22 +2289,30 @@ def _partition_of_two_leaves() -> Any:
     richer ``_nested_partition_tree``; this is the minimum that exercises the
     ``**attrs`` entry, restated locally rather than imported across the two test
     packages.)
+
+    ``ndim=4`` gives the same shape with one column too many for a 3-dimension
+    scene, which is what the ``add_gsplats_from_file`` precedence case needs.
     """
-    from luxar.gsplats.gsplat_data import AdditiveSubLOD
-    from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+    from luxar.gsplats.tree import GSplatPartition
 
-    def leaf(n: int, seed: int) -> Any:
-        return GSplatLeaf(
-            additive_sublods=[
-                AdditiveSubLOD(
-                    centers=random_positions(n, seed=seed),
-                    amplitudes=np.ones(n, dtype=np.float32),
-                    cholesky_factors=cholesky_rows_nd(n, 3),
-                )
-            ]
-        )
+    return GSplatPartition(
+        children=[_graft_leaf(8, 11, ndim), _graft_leaf(6, 12, ndim)], max_elements=8
+    )
 
-    return GSplatPartition(children=[leaf(8, 11), leaf(6, 12)], max_elements=8)
+
+def _partition_inside_a_lod_group() -> Any:
+    """A ``kind=partition`` nested inside a ``kind=lod`` — the recursive graft shape.
+
+    The ``overview`` recipe's shape (a coarse cap level beside a fine partition
+    branch), and the only one of the graft fixtures here where
+    ``graft_gsplat_node`` recurses into ITSELF with ``child_attrs``. Worth its own
+    fixture because the entry pair must hold for the outer call whether or not the
+    recursion re-runs it: a normalisation that only worked one level deep would
+    pass every flat-partition case above.
+    """
+    from luxar.gsplats.tree import GSplatLodGroup
+
+    return GSplatLodGroup(children=[_graft_leaf(2, 21), _partition_of_two_leaves()])
 
 
 class TestTheGraftDoorNormalisesAttrsTheSameWay:
@@ -2031,67 +2323,101 @@ class TestTheGraftDoorNormalisesAttrsTheSameWay:
     same reason the #1471 labels gate needed a second half here. Leaving the
     normalisation to the per-leaf ``add_gsplats_from_data_impl`` underneath would
     be too late by exactly one wrapper: it runs after ``part_0`` has a parent.
+
+    This is the door where the #1496 collision genuinely STRANDED, unlike the four
+    ``from_data`` routes (see ``TestGSplatsFromDataRefusesDataOwnedChannels``'s
+    docstring). Measured pre-fix through the public API: ``add_gsplats_from_file``
+    of a nested ``.gsplats.zarr`` plus ``centers=np.zeros((8, 3))`` raised a raw
+    ``TypeError`` AND left ``g`` on disk as a childless ``kind=partition``
+    surviving ``finalize()``.
     """
 
-    @pytest.mark.parametrize("key", ["colors", "partition", "truncation_radius"])
+    @pytest.mark.parametrize("key", _ABSENT_WHEN_NONE_KEYS)
+    @pytest.mark.parametrize(
+        "shape,tree_for",
+        [
+            ("partition", _partition_of_two_leaves),
+            ("nested", _partition_inside_a_lod_group),
+        ],
+    )
     def test_none_grafts_exactly_as_omitting_the_key_does(
-        self, tmp_path: Any, key: str
+        self, tmp_path: Any, key: str, shape: str, tree_for: Any
     ) -> None:
         """The graft door reads a ``None`` as absent, same as the data door.
 
-        Honest about its own power: for these three keys the graft would pass even
-        WITHOUT the strip at the graft entry, because a graft routes non-compositing
-        attrs into ``child_attrs`` and every terminal leaf write funnels through
+        Honest about its own power: every one of these would pass even WITHOUT the
+        strip at the graft entry, because a graft routes non-compositing attrs into
+        ``child_attrs`` and every terminal leaf write funnels through
         ``add_gsplats_from_data_impl``, which strips again at the top of its body.
-        The case is here for the property, not for the placement — the placement is
-        what the non-``None`` sibling below pins, and that one DOES fail (measured)
-        with the graft-entry calls removed. Together they say: the graft door's
-        answer is the data door's answer, whichever half of the rule you ask about.
+        The cases are here for the PROPERTY (this door's answer is the data door's
+        answer) and to cover the nested shape at all; the graft-entry PLACEMENT is
+        what the non-``None`` sibling below pins, and that one does fail with the
+        entry pair removed.
+
+        Both container shapes, because ``nested`` is the only fixture where
+        ``graft_gsplat_node`` recurses into itself carrying ``child_attrs`` — the
+        outer call's normalisation has to hold for the inner one too.
         """
         from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
 
-        compiler, scene, path = open_scene(tmp_path, f"graft_none_{key}.luxar.zarr")
+        compiler, scene, path = open_scene(
+            tmp_path, f"graft_none_{shape}_{key}.luxar.zarr"
+        )
         control_compiler, control_scene, control_path = open_scene(
-            tmp_path, f"graft_omitted_{key}.luxar.zarr"
+            tmp_path, f"graft_omitted_{shape}_{key}.luxar.zarr"
         )
 
-        graft_gsplat_node(
-            scene, name="g", node=_partition_of_two_leaves(), **{key: None}
-        )
-        graft_gsplat_node(control_scene, name="g", node=_partition_of_two_leaves())
+        graft_gsplat_node(scene, name="g", node=tree_for(), **{key: None})
+        graft_gsplat_node(control_scene, name="g", node=tree_for())
         compiler.finalize()
         control_compiler.finalize()
 
         store = zarr.open_group(path, mode="r")
         control = zarr.open_group(control_path, mode="r")
-        assert store["g"].attrs["kind"] == "partition"
-        assert sorted(store["g"].group_keys()) == ["part_0", "part_1"]
-        assert _truncation_radii(store) == _truncation_radii(control)
+        expected_kind = "partition" if shape == "partition" else "lod"
+        assert store["g"].attrs["kind"] == expected_kind
+        assert sorted(store["g"].group_keys()) == sorted(control["g"].group_keys())
+        assert _node_attrs(store) == _node_attrs(control)
 
-    @pytest.mark.parametrize("channel", ["colors", "amplitudes", "cholesky_factors"])
+    @pytest.mark.parametrize("channel,value_tag,value", _COLLISION_CASES)
+    @pytest.mark.parametrize(
+        "shape,tree_for",
+        [
+            ("partition", _partition_of_two_leaves),
+            ("nested", _partition_inside_a_lod_group),
+        ],
+    )
     def test_a_non_none_data_channel_is_refused_before_the_wrapper_exists(
-        self, tmp_path: Any, channel: str
+        self,
+        tmp_path: Any,
+        channel: str,
+        value_tag: str,
+        value: Any,
+        shape: str,
+        tree_for: Any,
     ) -> None:
         """Same refusal as the data door, and — the point — nothing on disk.
 
-        A graft writes its wrapper first, so an implementation that only added
-        the check to ``add_gsplats_from_data_impl`` would refuse from inside
-        ``part_0`` and leave ``g`` behind as a childless ``kind=partition``. The
-        store assertion, not the message one, is what tells the two apart.
+        A graft writes its wrapper first, so an implementation that only added the
+        check to ``add_gsplats_from_data_impl`` would refuse from inside ``part_0``
+        and leave ``g`` behind as a childless wrapper. Both halves of that are
+        asserted, and it is worth being precise about which one bites first:
+        measured against the graft-entry pair removed, the test dies on the
+        ``"Could not add gsplats 'g': "`` PREFIX assertion (the refusal names
+        ``part_0``, one level down), before the store assertions are ever reached.
+        The store assertions are what make the failure the right SHAPE of failure —
+        they are the ones that say a childless wrapper survived ``finalize()``,
+        which the message alone does not — but the prefix is the tripwire.
         """
         from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
 
         compiler, scene, path = open_scene(
-            tmp_path, f"graft_collide_{channel}.luxar.zarr"
+            tmp_path, f"graft_collide_{shape}_{channel}_{value_tag}.luxar.zarr"
         )
-        value = np.zeros((8, 3), dtype=np.float32)
 
         split = refusal(
             lambda: graft_gsplat_node(
-                scene,
-                name="g",
-                node=_partition_of_two_leaves(),
-                **{channel: value},
+                scene, name="g", node=tree_for(), **{channel: value}
             )
         )
 
@@ -2099,8 +2425,99 @@ class TestTheGraftDoorNormalisesAttrsTheSameWay:
         assert str(split).startswith("Could not add gsplats 'g': ")
         assert f"{channel} cannot be passed as a keyword here" in str(split)
         assert "part_0" not in str(split)
+        assert "child_0" not in str(split)
         assert "g" not in compiler.store
         assert "g" not in finalized_group_keys(compiler, path)
+
+
+class TestBothAddGsplatsFromFileBranchesAgreeOnTheCollision:
+    """One public method, two structural branches, one verdict (#1496).
+
+    ``add_gsplats_from_file`` sends a matrix-shaped store down
+    ``add_gsplats_from_data_impl`` and a nested one to ``graft_gsplat_node``. Both
+    of those now run the #1496 pair at their own entry — but the graft one runs it
+    BELOW this method's own ``dim_order`` refusal and stored-column-count check, so
+    with the pair left to the branches the two halves disagreed: measured with a
+    4-column store into a 3-dimension scene plus ``colors=<arr>``, the
+    matrix-shaped file answered the collision and the partition file answered
+    ``Dimension mismatch for 'g': centers array has 4 columns …``. Same call, same
+    mistake, a verdict decided by a structural property of the file the caller may
+    not even know about — exactly what ``from_io``'s own comment on the
+    column-count check says must not happen ("a bare raise here would make the two
+    halves of ``add_gsplats_from_file`` word the same fault differently").
+
+    Fixed by running the pair once at the top of ``add_gsplats_from_file_impl``,
+    above both branches. The graft-entry copy stays for the direct-call door.
+    """
+
+    @staticmethod
+    def _write(tmp_path: Any, tag: str, node: Any) -> str:
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        file_path = str(tmp_path / f"{tag}.gsplats.zarr")
+        write_gsplats_tree(file_path, node)
+        return file_path
+
+    @pytest.mark.parametrize(
+        "branch,node_for",
+        [
+            # Matrix-shaped (one bare leaf) -> the data path.
+            ("matrix", lambda: _graft_leaf(8, 31, 4)),
+            # Nested (kind=partition root) -> the graft path.
+            ("partition", lambda: _partition_of_two_leaves(4)),
+        ],
+    )
+    def test_the_collision_wins_on_both_branches(
+        self, tmp_path: Any, branch: str, node_for: Any
+    ) -> None:
+        """A 4-column store plus ``colors=<arr>``: the collision, on both branches.
+
+        The width fault is what makes this a precedence test rather than a repeat
+        of the graft cases above — it is a fault only THIS method can see, and it
+        used to outrank the collision on one branch and not the other.
+        """
+        file_path = self._write(tmp_path, f"cf_{branch}", node_for())
+        compiler, scene, path = open_scene(
+            tmp_path, f"file_collide_{branch}.luxar.zarr"
+        )
+
+        split = refusal(
+            lambda: scene.add_gsplats_from_file(
+                "g", file_path, colors=np.zeros((8, 3), dtype=np.float32)
+            )
+        )
+
+        assert isinstance(split, ValueError), f"got {type(split).__name__}"
+        assert "colors cannot be passed as a keyword here" in str(split)
+        assert "Dimension mismatch" not in str(split)
+        assert "g" not in compiler.store
+        assert "g" not in finalized_group_keys(compiler, path)
+
+    @pytest.mark.parametrize(
+        "branch,node_for",
+        [
+            ("matrix", lambda: _graft_leaf(8, 31, 4)),
+            ("partition", lambda: _partition_of_two_leaves(4)),
+        ],
+    )
+    def test_without_the_collision_both_branches_still_report_the_width(
+        self, tmp_path: Any, branch: str, node_for: Any
+    ) -> None:
+        """The control: the width check is alive on both branches, merely outranked.
+
+        Without this, the case above would pass just as well against an
+        implementation that had broken the stored-column-count check outright — and
+        that check is itself a #1446 anti-stranding gate, so silently losing it
+        would be a regression of the same kind this PR is fixing.
+        """
+        file_path = self._write(tmp_path, f"cw_{branch}", node_for())
+        compiler, scene, _ = open_scene(tmp_path, f"file_width_{branch}.luxar.zarr")
+
+        split = refusal(lambda: scene.add_gsplats_from_file("g", file_path))
+
+        assert "centers array has 4 columns" in str(split)
+        assert "cannot be passed as a keyword here" not in str(split)
+        assert "g" not in compiler.store
 
 
 def _coloured_multi_substitutive_data(ndim: int) -> Any:
@@ -2368,17 +2785,29 @@ def _multi_substitutive_data(
     n_fine: int = 8,
     n_coarse: int = 2,
     colors_for: Any = None,
+    truncation_radius: Optional[float] = None,
 ) -> Any:
     """A 2-level substitutive ``GSplatData`` built from two per-level factories.
 
     Stored levels rather than a compute spec, for the same reason as the 4-column
     twin above: ``lod_group=`` then needs no reduce, so the pre-fix path really
     did reach ``add_lod_group`` and strand a childless ``kind=lod`` group.
+
+    ``truncation_radius`` defaults to None = leave ``AdditiveSubLOD``'s own
+    default (``DEFAULT_TRUNCATION_RADIUS``, 2.75), which every caller but the
+    #1496 one wants. That one needs a NON-default radius, because the writer
+    stamps 2.75 when the attr is absent — so a fixture at the default cannot tell
+    "the data's radius was used" from "no radius was passed at all". See
+    :data:`_TRUNCATION_1496`.
     """
     from luxar.gsplats.gsplat_data import (
         AdditiveSubLOD,
         GSplatData,
         SubstitutiveLevel,
+    )
+
+    radius = (
+        {} if truncation_radius is None else {"truncation_radius": truncation_radius}
     )
 
     def level(n: int, seed: int, compression_factor: int, level_index: int) -> Any:
@@ -2391,6 +2820,7 @@ def _multi_substitutive_data(
                     # ``colors_for`` takes the level index as well as the count so
                     # a case can colour ONE level (see the coarse-only case).
                     colors=None if colors_for is None else colors_for(n, level_index),
+                    **radius,
                 )
             ],
             compression_factor=compression_factor,

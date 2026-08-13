@@ -60,29 +60,69 @@ in `**attrs` and is forwarded verbatim to children, where `validate_render_attrs
 rejects an unknown key by NAME and never looks at its value. So a
 present-but-`None` key is not the same thing as an absent one, and the idiomatic
 `partition=maybe_partition` call refused from inside `child_0` with the
-`kind=lod` wrapper already on disk. Two entry-point calls, run in this order
-above every route (and mirrored at the graft entry in `from_io.py`), settle it:
+`kind=lod` wrapper already on disk. Two entry-point calls, run in this order at
+the top of `add_gsplats_from_data_impl` — and at the top of
+`add_gsplats_from_file_impl` and of `graft_gsplat_node` in `from_io.py` — settle
+it:
 
 1. `strip_absent_attr_kwargs(attrs)` deletes every `ABSENT_WHEN_NONE_ATTRS` key
-   valued `None` — `labels`, `image_labels`, `partition`, `colors` (all four
-   named params of the leaf `Group.add_gsplats` defaulting to `None`, so `None`
-   already means "absent" one level down) plus `truncation_radius` (which this
-   module *injects* from `result.truncation_radius`, so an explicit `None` must
-   mean "no override" rather than clobbering the data's own value).
-2. `reject_data_owned_channels(name, attrs)` refuses a present, **non-`None`**
-   `colors` / `amplitudes` / `cholesky_factors` (asked in that order) with a
-   `ValueError` naming the collision — this adder passes all three positionally
-   from the `GSplatData`, and on a split route they cannot be sliced per level
-   anyway. Previously the flat route leaked Python's raw `TypeError` ("got
-   multiple values for keyword argument 'colors'") and the other three answered
-   the misleading `Unknown node attribute 'colors'. Did you mean 'colormap'?`.
+   valued `None`:
+   - `labels`, `image_labels`, `partition`, `colors` — named params of the leaf
+     `Group.add_gsplats` defaulting to `None`, so `None` already means "absent"
+     one level down;
+   - `truncation_radius` — which this module *injects* from
+     `result.truncation_radius`, so an explicit `None` must mean "no override"
+     rather than clobbering the data's own value;
+   - `colormap` and `coverage_fraction` — the two render attrs whose `None` no
+     value validator catches, so it reached disk and wrote something **wrong**
+     rather than refusing. `validate_render_attrs` guards its colormap check on
+     `is not None`, and `compositing.sync_custom_colormap_attr` then rewrites the
+     `None` to `'custom'` with no `colormap_lut`, which the viewer answers by
+     warning and falling back to viridis — measured, `colormap=None` wrote
+     `'custom'` where the omitted key writes `'gray'`. `coverage_fraction=None`
+     wrote a literal `coverage_fraction: null` selector threshold.
+     Every *other* render attr is deliberately left refusing a `None` (`opacity`
+     / `gamma` / `intensity` / `absorption` "must be convertible to float, got
+     NoneType", `blending_mode` "must be a string", `layer` / `visible` "must be
+     a boolean", `scalars` an unknown attribute) — those are loud, so reading
+     their `None` as "absent" would only mask typos.
+2. `reject_data_owned_channels(name, attrs)` refuses a `colors` key **with a
+   value**, or a `centers` / `amplitudes` / `cholesky_factors` key **at all**
+   (asked in that order), with a `ValueError` naming the collision — this adder
+   passes all four positionally from the `GSplatData`, and on a split route they
+   cannot be sliced per child anyway. Previously the flat route leaked Python's
+   raw `TypeError` ("got multiple values for keyword argument 'colors'") and the
+   other three answered the misleading `Unknown node attribute 'colors'. Did you
+   mean 'colormap'?`.
+
+   The asymmetry is real and worth stating precisely: this step tests `kwarg in
+   attrs` with no value check, so `amplitudes=None` and
+   `cholesky_factors=None` are refused as well — those three are required
+   positional params of the leaf adder with no `None` default, so no "absent"
+   reading exists for them and `amplitudes=maybe_amps` is *not* a safe call form.
+   `colors` looks like an exception only because step 1 already deleted a `None`
+   one. That also makes `colors` the one key here whose refusal message is not
+   literally true of every value ("cannot be passed as a keyword here", yet
+   `colors=None` is passed and accepted), so its message carries an extra clause
+   saying so.
 
 `ABSENT_WHEN_NONE_ATTRS` is *derived* from `GATE_FORWARDED_LEAF_PARAMS`, the
 node-attrs gate's own exclusion tuple, so the two cannot drift; they differ
 because they answer different questions. The gate's set is "leaf named params
-this adder forwards onward STRUCTURALLY" — `colors` and `truncation_radius` are
-deliberately **not** in it, because a non-`None` value of either must still be
-judged (a collision, and a legitimate override that has to be validated).
+this adder forwards onward STRUCTURALLY" — `colors`, `truncation_radius`,
+`colormap` and `coverage_fraction` are deliberately **not** in it, because a
+non-`None` value of each must still be judged (a collision, a legitimate
+override, a colormap name to validate, a real threshold).
+
+Both calls sit at the adder ENTRY, so they outrank everything below —
+`_reject_before_wrapper`'s `dim_order` spec validators and rank guard, and the
+`coverage_fraction` refusal. That is deliberate: a channel collision means the
+adder cannot build the call it is about to make. In `from_io.py` they run once at
+the top of `add_gsplats_from_file_impl` rather than being left to its two
+branches, because the graft branch reaches its own copy only *below* that method's
+`dim_order` refusal and stored-column-count check — so with the pair left to the
+branches, one public method gave two different verdicts for the same mistake
+depending on whether the file happened to be matrix-shaped.
 
 ### `from_io.py` — load/fit then delegate
 
