@@ -9,7 +9,11 @@
  *   ``positionBounds`` into one world-space box via ``displayDims`` +
  *   ``matrixWorld``.
  * - {@link projectBoxDiagonalPx} — project that box through the camera to a
- *   screen-space pixel diagonal (with near-plane saturation).
+ *   screen-space pixel diagonal (with near-plane saturation). The legacy
+ *   ``selector: 'coverage'`` metric.
+ * - {@link projectBoxAreaFraction} — project that box to the fraction of the
+ *   viewport AREA its screen-space rect covers (same near-plane saturation).
+ *   The ``selector: 'screen-area'`` metric.
  * - {@link pickChildWithHysteresis} — pick the level for a coverage metric,
  *   with asymmetric downgrade hysteresis.
  *
@@ -73,6 +77,130 @@ export function projectBoxDiagonalPx(
   viewport: { width: number; height: number },
   precomputedProjView?: THREE.Matrix4
 ): number {
+  const rect = projectBoxNdcRect(box, camera, precomputedProjView);
+  if (rect === null) return Number.POSITIVE_INFINITY;
+  const widthPx = rect.halfW * viewport.width;
+  const heightPx = rect.halfH * viewport.height;
+  return Math.hypot(widthPx, heightPx);
+}
+
+/**
+ * Half-extent (as a fraction of its viewport axis) below which a projected
+ * rect's thin dimension counts as DEGENERATE for {@link projectBoxAreaFraction}:
+ * effectively lower-dimensional content (an axis-aligned straight polyline, a
+ * planar dataset viewed edge-on, 1D/2D bounds on a mapped axis) whose
+ * area-product would read ~0 no matter how much of the screen it spans —
+ * permanently pinning it to the coarsest level. ``1e-3`` ≈ one pixel on a
+ * ~1080p viewport: anything rendering thinner than a pixel genuinely reads as
+ * a line, and for a line the faithful "portion of the screen occupied" is its
+ * linear span, not the vanishing area. The fallback is a continuous RAMP over
+ * ``[0, this]`` (see the function doc), not a cliff.
+ *
+ * Exported so tests pin the ramp against the real constant (and so the
+ * ``@link`` references above resolve in TypeDoc).
+ */
+export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
+
+/**
+ * Project a world-space :type:`BoundingBox` through the camera and return the
+ * fraction of the viewport AREA its screen-space AABB **visibly** covers — the
+ * metric for ``selector: 'screen-area'``.
+ *
+ * **Clipped to the viewport.** The projected rect is intersected with the
+ * viewport before the area is taken, so the metric reads the portion of the
+ * screen ACTUALLY occupied: a node whose rect extends far off-screen but
+ * clips only a corner reads that small visible fraction (and picks a coarse
+ * level) instead of an arbitrarily large unclipped product — which matters
+ * while panning across partition tiles. The metric therefore tops out at
+ * exactly ``1.0`` (full coverage); the natural pick uses ``threshold <=
+ * metric``, so the fills-screen partition threshold (1.0) is satisfied the
+ * moment coverage is complete, and stays satisfied while zoomed past it. In
+ * NDC each axis spans 2, so the covered fraction is the product of the
+ * clipped half-extents — viewport-size independent by construction (the same
+ * framing yields the same fraction on any monitor).
+ *
+ * **Degenerate (lower-dimensional) CONTENT ramps to its LINEAR span.** For a
+ * rect whose RAW (pre-clip) thin half-extent is below
+ * {@link DEGENERATE_RECT_HALF_EXTENT} — sub-pixel thin content: an
+ * axis-aligned straight polyline, an edge-on plane — the area product reads
+ * ~0 regardless of how much screen the content spans, which would pin it to
+ * the coarsest level forever (the legacy diagonal metric never had this
+ * failure mode — a diagonal reads the long extent). The metric is therefore
+ * ``max(area, clippedSpan × (1 − rawThin/DEGENERATE_RECT_HALF_EXTENT))``: at
+ * zero thickness it reads the full CLIPPED linear span (a full-width line =
+ * 1.0, so the halving ladder keeps its meaning for 1D content), decays
+ * CONTINUOUSLY to the plain area product as the thickness reaches the
+ * sub-pixel floor — no cliff for the hysteresis to oscillate across when an
+ * edge-on plane rotates through the boundary — and is exactly the area
+ * product everywhere above it. A both-axes-degenerate rect (a point) still
+ * reads ~0 → coarsest. The ramp is gated on the RAW thinness so it fires only
+ * for intrinsically thin content — a wide 2D node whose CLIPPED sliver
+ * happens to be thin (mostly panned off-screen) honestly reads its tiny
+ * visible area rather than being inflated to a full linear span.
+ *
+ * **Fully off-screen rects read exactly 0.** A clipped interval that is
+ * INVERTED (no viewport overlap on that axis) zeroes the whole metric before
+ * the degenerate ramp can see it — otherwise a zero-thickness clipped axis
+ * would be indistinguishable from off-screen and the ramp would return the
+ * other axis's span for geometry not on screen at all (the world-space
+ * frustum gate catches most of these, but it is conservative near frustum
+ * corners, so this function must not rely on it).
+ *
+ * Same near-plane saturation contract as {@link projectBoxDiagonalPx}: under
+ * a PERSPECTIVE camera, bounds reaching the near plane have no meaningful
+ * projection (the homogeneous divide degenerates), so the metric saturates to
+ * ``+Infinity`` → finest. An ORTHOGRAPHIC projection never degenerates
+ * (``w`` stays 1) so no saturation applies — the plain clipped metric is
+ * already well-defined, and a camera inside a large node reads full coverage
+ * naturally because its rect spans the viewport. Both selectors share this
+ * contract by design (see the v3.4 spec's normative metric rules).
+ *
+ * Exported for unit testing.
+ */
+export function projectBoxAreaFraction(
+  box: BoundingBox,
+  camera: THREE.Camera,
+  precomputedProjView?: THREE.Matrix4
+): number {
+  const rect = projectBoxNdcRect(box, camera, precomputedProjView);
+  if (rect === null) return Number.POSITIVE_INFINITY;
+  // Intersect with the viewport (NDC [-1, 1] per axis). Keep the SIGNED
+  // overlaps: a negative value means no viewport overlap on that axis —
+  // fully off-screen, metric 0 — and must not be conflated with a genuine
+  // zero-thickness visible interval (a line lying inside the viewport), which
+  // clamping alone would do.
+  const overlapW = Math.min(rect.maxX, 1) - Math.max(rect.minX, -1);
+  const overlapH = Math.min(rect.maxY, 1) - Math.max(rect.minY, -1);
+  if (overlapW < 0 || overlapH < 0) return 0;
+  const halfW = overlapW * 0.5;
+  const halfH = overlapH * 0.5;
+  const span = Math.max(halfW, halfH);
+  const area = halfW * halfH;
+  // Continuous degenerate ramp, gated on the RAW (pre-clip) thinness so only
+  // intrinsically thin content takes it (see the doc above).
+  const rawThin = Math.min(rect.maxX - rect.minX, rect.maxY - rect.minY) * 0.5;
+  const degenerate = span * Math.max(0, 1 - rawThin / DEGENERATE_RECT_HALF_EXTENT);
+  return Math.max(area, degenerate);
+}
+
+/** Reused result object for {@link projectBoxNdcRect} (no per-call allocation). */
+const NDC_RECT_SCRATCH = { halfW: 0, halfH: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 };
+
+/**
+ * Shared 8-corner projection for the two metrics above: the box's screen-space
+ * AABB as raw NDC bounds (``minX``/``maxX``/``minY``/``maxY``, unclamped) plus
+ * the HALF-NDC spans (``ndcExtent / 2`` per axis — i.e. the fraction of the
+ * viewport covered along each axis, unclamped) the diagonal metric consumes.
+ * Returns ``null`` when any corner's homogeneous ``w`` falls to/below
+ * {@link W_EPSILON} (camera inside / straddling the box — callers saturate to
+ * ``+Infinity``). The returned object is a module-scope scratch: consume it
+ * before the next call.
+ */
+function projectBoxNdcRect(
+  box: BoundingBox,
+  camera: THREE.Camera,
+  precomputedProjView?: THREE.Matrix4
+): { halfW: number; halfH: number; minX: number; maxX: number; minY: number; maxY: number } | null {
   // Combined projection × view. ``evaluatePerFrame`` already builds this product
   // once per frame (``FRUSTUM_MATRIX_SCRATCH``) and passes it in via
   // ``precomputedProjView`` so we don't recompute the 4×4 per group. Standalone
@@ -98,7 +226,7 @@ export function projectBoxDiagonalPx(
     if (w <= W_EPSILON) {
       // Camera inside / straddling the bbox near plane → group fills the
       // screen → saturate so the finest child is selected.
-      return Number.POSITIVE_INFINITY;
+      return null;
     }
     const ndcX = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w;
     const ndcY = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
@@ -107,9 +235,13 @@ export function projectBoxDiagonalPx(
     if (ndcY < minY) minY = ndcY;
     if (ndcY > maxY) maxY = ndcY;
   }
-  const widthPx = (maxX - minX) * 0.5 * viewport.width;
-  const heightPx = (maxY - minY) * 0.5 * viewport.height;
-  return Math.hypot(widthPx, heightPx);
+  NDC_RECT_SCRATCH.halfW = (maxX - minX) * 0.5;
+  NDC_RECT_SCRATCH.halfH = (maxY - minY) * 0.5;
+  NDC_RECT_SCRATCH.minX = minX;
+  NDC_RECT_SCRATCH.maxX = maxX;
+  NDC_RECT_SCRATCH.minY = minY;
+  NDC_RECT_SCRATCH.maxY = maxY;
+  return NDC_RECT_SCRATCH;
 }
 
 /**

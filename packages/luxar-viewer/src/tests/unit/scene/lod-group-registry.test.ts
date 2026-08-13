@@ -24,11 +24,13 @@ import {
   FILL_FACTOR,
   LODGroupRegistry,
   pickChildWithHysteresis,
+  projectBoxAreaFraction,
   projectBoxDiagonalPx,
   SCREEN_FILL_DIAGONAL_RATIO,
   type LODGroupChild,
   type LODGroupEntry,
 } from '../../../scene/lod-group-registry';
+import { DEGENERATE_RECT_HALF_EXTENT } from '../../../scene/lod-selector-math';
 import {
   calculateCameraDistance,
   type BoundingBox,
@@ -266,6 +268,145 @@ describe('projectBoxDiagonalPx', () => {
     // heightPx=1·0.5·600=300 → hypot=500. Confirms w stays 1 (no saturation)
     // AND the manual column-major NDC computation is correct for ortho.
     expect(diagonal).toBeCloseTo(500, 1);
+  });
+
+  // ── projectBoxAreaFraction — the selector='screen-area' metric ──────────
+  describe('projectBoxAreaFraction', () => {
+    it('returns 1.0 for a screen-filling box (full NDC extent)', () => {
+      const box: BoundingBox = { min: { x: -1, y: -1, z: 0 }, max: { x: 1, y: 1, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(1.0, 6);
+    });
+
+    it('returns the covered AREA fraction, not an extent: half-NDC box → 1/4', () => {
+      // Half the screen along EACH axis covers a quarter of its area — the
+      // property the whole selector is named for. An extent-shaped mutant
+      // (returning halfW, or hypot-like math) would give 0.5/0.7 here.
+      const box: BoundingBox = { min: { x: -0.5, y: -0.5, z: 0 }, max: { x: 0.5, y: 0.5, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.25, 6);
+    });
+
+    it('multiplies the two axis fractions (asymmetric rect)', () => {
+      // x spans the full screen (fraction 1), y a quarter of it (0.25) → 0.25.
+      // Pins the PRODUCT against a max/min/hypot-of-axes mutant.
+      const box: BoundingBox = { min: { x: -1, y: -0.25, z: 0 }, max: { x: 1, y: 0.25, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.25, 6);
+    });
+
+    it('clips to the viewport: past full-screen the metric tops out at exactly 1.0', () => {
+      // NDC extent 4 per axis, but only the [-1,1]² viewport is VISIBLE →
+      // occupancy 1.0 exactly. The natural pick uses `threshold <= metric`,
+      // so the fills-screen partition threshold (1.0) is satisfied the moment
+      // coverage is complete and stays satisfied while zoomed past it.
+      const box: BoundingBox = { min: { x: -2, y: -2, z: 0 }, max: { x: 2, y: 2, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(1.0, 6);
+    });
+
+    it('clips to the viewport: a huge rect intersecting only a screen corner reads its small VISIBLE fraction', () => {
+      // Rect spans NDC [0.5, 10] on both axes — enormous unclipped (~22.5 area
+      // units) but only the [0.5, 1]² corner is on screen: visible fraction =
+      // (0.25)·(0.25) = 0.0625. The review-caught failure: unclipped, this
+      // read arbitrarily large occupancy and pinned the finest level while
+      // panning across partition tiles.
+      const box: BoundingBox = { min: { x: 0.5, y: 0.5, z: 0 }, max: { x: 10, y: 10, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.0625, 6);
+    });
+
+    it('saturates to +Infinity when the camera is inside the box (perspective)', () => {
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      expect(projectBoxAreaFraction(box, perspectiveAtOrigin())).toBe(Number.POSITIVE_INFINITY);
+    });
+
+    it('a fully off-screen DEGENERATE rect reads 0, not the other axis span', () => {
+      // The review-caught interaction bug between clipping and the degenerate
+      // ramp: after clamping, "no viewport overlap on Y" and "zero-thickness
+      // visible line" both produced a zero clipped half-extent, so this
+      // full-width rect entirely above the viewport (y in [2, 3]) returned
+      // 1.0 (finest) instead of 0 — selecting expensive levels for geometry
+      // not on screen at all whenever the conservative frustum gate let it
+      // through near a corner.
+      const box: BoundingBox = { min: { x: -1, y: 2, z: 0 }, max: { x: 1, y: 3, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBe(0);
+      // Off-screen zero-thickness line (raw-degenerate AND off-screen) too.
+      const line: BoundingBox = { min: { x: -1, y: 2, z: 0 }, max: { x: 1, y: 2, z: 0 } };
+      expect(projectBoxAreaFraction(line, identityCamera())).toBe(0);
+      // And plain off-screen non-degenerate.
+      const sq: BoundingBox = { min: { x: 2, y: 2, z: 0 }, max: { x: 4, y: 4, z: 0 } };
+      expect(projectBoxAreaFraction(sq, identityCamera())).toBe(0);
+    });
+
+    it('a wide 2D node panned to a thin visible sliver reads its tiny area, not a linear span', () => {
+      // The ramp is gated on RAW (pre-clip) thinness: this square is 2 NDC
+      // units tall (not thin content) but only a 0.001-half sliver remains on
+      // screen — the honest visible occupancy is ~0.001, and inflating it to
+      // the full-width linear span (1.0 → finest) would resurrect the
+      // unclipped-corner cost while panning.
+      const box: BoundingBox = { min: { x: -1, y: 0.998, z: 0 }, max: { x: 1, y: 3, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.001, 5);
+    });
+
+    it('degenerate rect (zero thickness) falls back to the LINEAR span, not area 0', () => {
+      // An axis-aligned straight polyline: full-width, zero-height projected
+      // bounds. The raw area product is exactly 0, which would pin the node to
+      // the coarsest level forever no matter how much screen it spans (the
+      // review-caught regression: the legacy diagonal metric read the long
+      // extent for these shapes). The metric must instead read the linear
+      // span: full width → 1.0.
+      const line: BoundingBox = { min: { x: -1, y: 0, z: 0 }, max: { x: 1, y: 0, z: 0 } };
+      expect(projectBoxAreaFraction(line, identityCamera())).toBeCloseTo(1.0, 6);
+      // Same for the vertical orientation (branch must take max, not halfW).
+      const vline: BoundingBox = { min: { x: 0, y: -0.5, z: 0 }, max: { x: 0, y: 0.5, z: 0 } };
+      expect(projectBoxAreaFraction(vline, identityCamera())).toBeCloseTo(0.5, 6);
+    });
+
+    it('a point (both axes degenerate) still reads ~0 → coarsest', () => {
+      const point: BoundingBox = { min: { x: 0.2, y: 0.2, z: 0 }, max: { x: 0.2, y: 0.2, z: 0 } };
+      expect(projectBoxAreaFraction(point, identityCamera())).toBeCloseTo(0, 6);
+    });
+
+    it('barely-non-degenerate rects stay on the area product (no early fallback)', () => {
+      // Thickness just ABOVE the sub-pixel degeneracy floor must NOT take the
+      // linear-span ramp — otherwise every thin-but-real object would jump
+      // to a wildly finer level. halfH = 0.01 (≈10px on 1080p) → area path:
+      // 1.0 × 0.01 = 0.01, NOT the linear 1.0.
+      const thin: BoundingBox = { min: { x: -1, y: -0.01, z: 0 }, max: { x: 1, y: 0.01, z: 0 } };
+      expect(projectBoxAreaFraction(thin, identityCamera())).toBeCloseTo(0.01, 6);
+    });
+
+    it('the degenerate fallback is a CONTINUOUS ramp, not a cliff at the floor', () => {
+      // Review-caught oscillation hazard: a hard cutover at the degeneracy
+      // floor meant halfH=0.001 → 1.0 (finest) vs halfH=0.001001 → ~0.001
+      // (coarsest) — a three-orders jump no hysteresis can absorb when an
+      // edge-on plane rotates across it. The metric is now
+      // max(area, span·(1 − thin/floor)):
+      //   thin = floor/2 (0.0005): max(0.0005, 1·0.5) = 0.5 — midway;
+      //   thin = floor exactly:    max(0.001, 1·0)   = 0.001 — meets the
+      //     area product with NO jump (the ramp has decayed to zero);
+      //   and values sampled across the floor differ smoothly.
+      const floor = DEGENERATE_RECT_HALF_EXTENT;
+      const mk = (halfH: number): BoundingBox => ({
+        min: { x: -1, y: -halfH, z: 0 },
+        max: { x: 1, y: halfH, z: 0 },
+      });
+      expect(projectBoxAreaFraction(mk(floor / 2), identityCamera())).toBeCloseTo(0.5, 6);
+      expect(projectBoxAreaFraction(mk(floor), identityCamera())).toBeCloseTo(floor, 6);
+      // Just below vs just above the floor: both ~the area product — smooth.
+      const below = projectBoxAreaFraction(mk(floor * 0.99), identityCamera());
+      const above = projectBoxAreaFraction(mk(floor * 1.01), identityCamera());
+      expect(Math.abs(below - above)).toBeLessThan(0.02);
+    });
+
+    it('never saturates for an orthographic camera (w stays 1) — the projection stays well-defined', () => {
+      // INTENDED, and identical to the legacy diagonal metric's contract (the
+      // ortho pin above): saturation is the PERSPECTIVE near-plane guard,
+      // where the homogeneous divide degenerates. Ortho never degenerates, so
+      // the plain clipped metric applies — here the camera is inside the box
+      // and the box's rect covers NDC ±0.5 per axis → 0.5 × 0.5 = 0.25 (a
+      // camera inside a LARGE node reads full coverage naturally instead;
+      // this box simply doesn't span the viewport). See the v3.4 spec's
+      // normative metric rules.
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      expect(projectBoxAreaFraction(box, orthoAtOrigin())).toBeCloseTo(0.25, 6);
+    });
   });
 });
 
@@ -582,6 +723,154 @@ describe('LODGroupRegistry — auto evaluation', () => {
     }
   });
 
+  it("selector='screen-area': picks by the fraction of the viewport AREA occupied", () => {
+    // Derived screen-area ladder [0, 1/8, 1/4, 1/2]. A box spanning NDC
+    // [-0.74, 0.74] × [-0.5, 0.5] covers 0.74 × 0.5 = 37% of the screen — the
+    // measured zebrahub "clearly zoomed out" pose that motivated this selector
+    // (the legacy diagonal metric still read 2.37/4 there and held the finest
+    // level, i.e. index 3 under these thresholds). Under screen-area, 1/4 ≤
+    // 0.37 < 1/2 → level 2 of 4: one step coarser, as the user expects.
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: zebraBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[2].object.visible).toBe(true);
+    expect(children[3].object.visible, 'finest must NOT hold at 37% occupancy').toBe(false);
+  });
+
+  it("selector='screen-area': the finest level holds while the node occupies at least half the screen", () => {
+    // Area = 0.8 × 0.8 = 64% ≥ 1/2 → finest. The literal statement of the
+    // occupancy-halving rule's anchor.
+    const bigBox = { min: [-0.8, -0.8, -0.5], max: [0.8, 0.8, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: bigBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
+  });
+
+  it("selector='screen-area' is viewport-size independent (same pick on any monitor)", () => {
+    // The metric is built from NDC fractions, so pixel dimensions must not
+    // matter. Same 37%-occupancy box, tiny and 4K viewports → same level.
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
+    for (const viewport of [
+      { width: 400, height: 300 },
+      { width: 3840, height: 2160 },
+    ]) {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => viewport,
+        getDisplayDims: () => [0, 1, 2],
+      });
+      const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+        ...makeChild(t),
+        positionBounds: zebraBox,
+      }));
+      const entry = makeEntry(children, 0, '/g');
+      entry.selector = 'screen-area';
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      expect(children[2].object.visible, `level 2 at ${viewport.width}x${viewport.height}`).toBe(
+        true
+      );
+    }
+  });
+
+  it("selector='screen-area': a degenerate (zero-thickness) node spanning the screen picks the finest, not the coarsest", () => {
+    // Regression for the review-caught failure: an axis-aligned straight
+    // polyline projects to a zero-height rect, whose raw area product is 0 —
+    // permanently coarsest under a naive area metric even at full screen
+    // width. The degenerate fallback reads the linear span (1.0 here ≥ the
+    // 0.5 finest threshold) → finest.
+    const lineBox = { min: [-1, 0, 0], max: [1, 0, 0] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: lineBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
+    expect(children[0].object.visible, 'must NOT be pinned to the coarsest').toBe(false);
+  });
+
+  it("selector='screen-area': a fitted high-aspect object reads its literal occupancy (one level below finest) — BY DESIGN", () => {
+    // The occupancy rule applied verbatim, pinning the DELIBERATE revision of
+    // the old diagonal-anchored opening-framing guarantee: a fitted full-width
+    // but quarter-height object occupies 25% of the screen, so on the standard
+    // 4-level derived ladder [0, ⅛, ¼, ½] it opens at the SECOND-FINEST level
+    // (0.25 sits exactly on that threshold — thresholds are inclusive) with
+    // full detail one modest zoom away. Under the retired diagonal metric the
+    // same rod read ≈ its LENGTH and pinned the finest level — exactly how
+    // dense sub-pixel elongated content rendered its most expensive level
+    // across the whole zoom range. NOT the degenerate ramp's territory: the
+    // rod is 0.25 half-extents thick, far above the sub-pixel floor.
+    const rodBox = { min: [-1, -0.25, -0.1], max: [1, 0.25, 0.1] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: rodBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[2].object.visible, 'second-finest at 25% occupancy').toBe(true);
+    expect(children[3].object.visible, 'finest requires ≥ half-screen occupancy').toBe(false);
+    expect(children[0].object.visible, 'NOT pinned to the coarsest').toBe(false);
+  });
+
+  it("selector='screen-area': a two-level ladder holds the coarsest for a fitted 25%-occupancy object (the documented degenerate-config case)", () => {
+    // With only [0, 0.5] there is no intermediate level for the rod's 25%
+    // occupancy to land on — it stays coarse until half-screen. Pinned as
+    // INTENDED: two-level ladders trade granularity away everywhere, and the
+    // per-level halving that would catch this needs levels to halve onto.
+    const rodBox = { min: [-1, -0.25, -0.1], max: [1, 0.25, 0.1] };
+    const reg = makeRegistry();
+    const children = [0, 0.5].map((t) => ({ ...makeChild(t), positionBounds: rodBox }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true);
+  });
+
+  it('an entry WITHOUT a selector keeps the legacy diagonal metric', () => {
+    // The zebrahub-pose box under the LEGACY metric: projected diagonal =
+    // hypot(0.74·800, 0.5·600) = hypot(592, 300) ≈ 663.7 px on 800×600
+    // (viewport diagonal 1000) → metric ≈ 663.7/250 ≈ 2.65 ≥ threshold 0.5·…
+    // — with the same [0, 0.125, 0.25, 0.5] thresholds every level qualifies,
+    // so the FINEST is picked. This is exactly the mis-selection the
+    // screen-area selector fixes; pinning it here proves the two entries
+    // genuinely take different code paths (a selector-ignoring mutant would
+    // make this and the 37% test disagree).
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: zebraBox,
+    }));
+    reg.register(makeEntry(children, 0, '/g')); // no entry.selector
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
+  });
+
   it('skips evaluation when the viewport has zero size', () => {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();
@@ -626,10 +915,12 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
   const DEFAULT_FOV = 47;
 
   /**
-   * The auto-derived `sqrt(N_i / N_finest)` ladder of a K=8 / 3-level
-   * substitutive LOD (what the `arxiv_papers` demo writes): counts
-   * N/512, N/64, N/8, N → coverage fractions sqrt(1/512), sqrt(1/64),
-   * sqrt(1/8), 1.
+   * A stamped 4-level substitutive ladder (values as a pre-halving LEGACY
+   * store wrote them, consumed under `selector: 'coverage'` — the registry
+   * uses whatever thresholds are stamped, so this fixture stays valid for
+   * old datasets; new stores derive the screen-area occupancy-halving
+   * whole-object ladder [0, 0.125, 0.25, 0.5] under `selector:
+   * 'screen-area'`).
    */
   const SUBSTITUTIVE_LADDER = [0, 0.125, 0.35355, 1.0];
 

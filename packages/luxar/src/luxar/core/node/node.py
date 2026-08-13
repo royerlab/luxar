@@ -407,20 +407,24 @@ class Node:
     ) -> "Group":
         """Create and add a child kind=lod ``Group`` node.
 
-        A kind=lod ``Group`` picks one of N alternative children at runtime
-        based on the projected bbox diagonal in pixels and each child's
-        ``coverage_fraction`` threshold (a viewport-relative fraction the viewer
-        multiplies by half of the fitted screen axis). Children are added via
-        the inherited ``add_*`` methods on the returned ``Group`` and each must
-        carry a ``coverage_fraction`` attribute. Children must be added in
-        strictly increasing ``coverage_fraction`` order, coarsest ``0.0`` →
-        finest ``1.0`` (a WHOLE-OBJECT ladder's anchor: shown at any normal
-        full-frame view). Values above ``1.0``, up to ``MAX_COVERAGE_FRACTION``
-        (4.0, roughly a screen-filling object), hold a level until it is larger
-        still — which a hand-built ladder may ask for and which a
-        **partition-bound** ladder derives automatically (its switching group is
-        one tile). The resolved ``display_type`` of
-        the finest child becomes the group's user-facing geometry type.
+        A kind=lod ``Group`` picks one of N alternative children at runtime by
+        comparing the group's on-screen size against each child's
+        ``coverage_fraction`` threshold; ``selector`` names the UNITS of those
+        thresholds. Under ``selector="screen-area"`` (what every auto-derived
+        ladder stamps) a threshold is a literal screen-area fraction — the
+        node's projected bbox rect area over the viewport area — so a derived
+        whole-object ladder reads ``[0, …, 1/4, 1/2]`` (full detail while the
+        node occupies at least half the screen; one level coarser per halving
+        of occupied area) and a partition tile anchors at ``1.0``
+        (fills-screen). The default ``selector="coverage"`` is the legacy
+        diagonal metric (projected bbox diagonal over half the fitted screen
+        axis, bounded by ``MAX_COVERAGE_FRACTION`` = 4.0), kept for
+        hand-authored ladders and existing datasets whose values were tuned in
+        those units. Children are added via the inherited ``add_*`` methods on
+        the returned ``Group``, each carrying a ``coverage_fraction`` attribute,
+        in strictly increasing order (coarsest ``0.0`` first). The resolved
+        ``display_type`` of the finest child becomes the group's user-facing
+        geometry type.
 
         Example::
 
@@ -431,8 +435,10 @@ class Node:
 
         Args:
             name: Name of the lod-kind group.
-            selector: Selector mode. Currently only ``"coverage"`` is
-                supported.
+            selector: Units of the children's ``coverage_fraction`` thresholds:
+                ``"coverage"`` (legacy diagonal metric, the default for
+                hand-built ladders) or ``"screen-area"`` (literal screen-area
+                fractions — what derived ladders use).
             default_level: Initial active level index for the
                 manual-override UI (0-based).
             **attrs: Additional node attributes (transform, layer, etc.).
