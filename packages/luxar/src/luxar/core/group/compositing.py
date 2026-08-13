@@ -362,9 +362,13 @@ def validate_labels_before_split(labels: Any, n_elements: int) -> None:
     hoisting the check above the adder's positions/attr gates (and above the
     range half of ``_validate_data_dimensions``, which still runs only in the
     single-leaf write) would change which error a multi-fault call reports. The
-    count half of that validator is the acknowledged exception — #1446 moved it
+    count half of that validator is one acknowledged exception — #1446 moved it
     to the top of every leaf adder, so a wrong column count outranks this gate on
-    both paths, by design. Same reasoning, and the same house rule, as
+    both paths, by design. Since #1529, the Points/Lines node-attrs gate
+    (``validate_render_attrs``) is a second: it too now runs at the adder
+    entry, above this gate, so an attrs fault outranks it on those two paths
+    as well (GSplats, which has no such entry gate, is unaffected). Same
+    reasoning, and the same house rule, as
     ``adders/mesh.py::_validate_partition_sources``.
 
     No-op when ``labels`` is ``None``.
@@ -491,13 +495,16 @@ def validate_points_channels_before_split(
     the only one exposed to this.)
 
     The CHANNEL verdict is identical with and without a wrapper. Note the gate
-    runs ABOVE the positions / attr checks on the split paths, so a call that
-    ALSO trips one of those (a NaN position, an unknown attr) reports the
-    channel fault first here and the positions/attr fault on the plain-leaf
-    path. Both refuse, and neither writes. The scene-DIMENSION count is the
-    exception: since #1446 every leaf adder checks it above its split branches,
-    so a wrong column count is reported first on BOTH paths and this gate is
-    never reached (see :func:`validate_labels_before_split`).
+    runs ABOVE the positions checks on the split paths, so a call that ALSO
+    trips a bad position (a NaN) reports the channel fault first here and the
+    positions fault on the plain-leaf path. Both refuse, and neither writes.
+    The scene-DIMENSION count is one exception: since #1446 every leaf adder
+    checks it above its split branches, so a wrong column count is reported
+    first on BOTH paths and this gate is never reached (see
+    :func:`validate_labels_before_split`). The node-attrs gate is a second
+    exception here: since #1529 ``validate_render_attrs`` also runs at the
+    Points/Lines adder entry, above this gate, so an unknown/reserved attr
+    wins there too instead of reporting the channel fault.
 
     Call as the FIRST statement of a wrapper impl, never from a leaf adder — see
     :func:`validate_labels_before_split` for why the placement is load-bearing.
