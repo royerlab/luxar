@@ -422,6 +422,14 @@ def write_mesh(
     ctx.write_colormap_lut(group, attrs)
 
     # 5. Attrs. Transform / nd_transform were already normalized in the gate.
+    # POPPED BEFORE the attrs land, not after. `_skip_scene_bounds` is private
+    # plumbing between the ladder writers and this one — it says "the parent will
+    # aggregate the bbox, do not do it per level" — and popping it below the
+    # `group.attrs.update(attrs)` wrote it to disk on every sub-LOD of every
+    # ladder. Harmless to a reader that ignores unknown keys, but it is an
+    # internal flag in the on-disk format, and it round-trips: a tool that reads
+    # a level's attrs and re-writes them hands it back as a caller attr.
+    skip_scene_bounds = bool(attrs.pop("_skip_scene_bounds", False))
     apply_default_render_attrs(attrs)
     group.attrs.update(attrs)
     group.attrs["type"] = "mesh"
@@ -446,7 +454,7 @@ def write_mesh(
     group.attrs["position_bounds"] = position_bounds
     metadata["position_bounds"] = position_bounds
 
-    if not attrs.pop("_skip_scene_bounds", False):
+    if not skip_scene_bounds:
         ctx.update_scene_bounds(position_bounds)
 
     # 6. Labels (CSR). Per-vertex, like the lines writer.

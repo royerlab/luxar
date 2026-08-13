@@ -520,6 +520,14 @@ def write_lines(
     # (must match write_points/write_gsplats)
     apply_default_render_attrs(attrs)
 
+    # POPPED BEFORE the attrs land, not after. `_skip_scene_bounds` is private
+    # plumbing between the ladder writers and this one — "the parent aggregates
+    # the bbox, do not do it per level" — and popping it below the
+    # `group.attrs.update(attrs)` wrote it to disk on every sub-LOD of every
+    # ladder. Harmless to a reader that ignores unknown keys, but it is an
+    # internal flag in the on-disk format, and it round-trips: a tool that reads a
+    # level's attrs and re-writes them hands it back as a caller attr.
+    skip_scene_bounds = bool(attrs.pop("_skip_scene_bounds", False))
     # Set attributes (all core metadata per spec Section 6.6)
     group.attrs.update(attrs)
     group.attrs["type"] = "lines"
@@ -550,7 +558,7 @@ def write_lines(
     # Update scene-level bounds (union of all node bounds). Skipped
     # when ``write_lines_multi_lod`` is the caller — the parent
     # writer aggregates global bounds once.
-    if not attrs.pop("_skip_scene_bounds", False):
+    if not skip_scene_bounds:
         ctx.update_scene_bounds(position_bounds)
 
     # Write labels if provided (CSR-style: label_offsets + label_bytes)

@@ -36,6 +36,10 @@ import typer
 from arbol import aprint, asection
 
 from ...core.group.lod.group import MESH_SUBSTITUTIVE_METHODS
+from ...core.group.lod.mesh import (
+    DEFAULT_MESH_ADDITIVE_METHOD,
+    MESH_ADDITIVE_METHODS,
+)
 
 
 def _ancestor_group_paths(node_path: str) -> List[str]:
@@ -444,6 +448,250 @@ def _pick_mesh(scene: Any, input_path: Path, node_name: Optional[str]) -> str:
     return str(meshes[0])
 
 
+#: The two ladder flavours `luxar mesh lod` can write. Named rather than spelled
+#: inline because every gate below compares against them, and `gsplat lod` already
+#: taught that a mode implied by "which flags you happened to pass" is the thing
+#: worth removing from a flag surface.
+RECIPE_LEVELS = "levels"
+RECIPE_REVEAL = "reveal"
+MESH_LOD_RECIPES = (RECIPE_LEVELS, RECIPE_REVEAL)
+
+
+#: Defaults of the substitutive knobs, so the cross-recipe gate can tell "the user
+#: typed this" from "typer supplied the default". Typer gives no such signal, and
+#: without it `--recipe reveal` would be refused for flags nobody passed.
+_LEVELS_DEFAULT = 3
+_COMPRESSION_DEFAULT = 4
+_SUBST_METHOD_DEFAULT = "auto"
+
+
+def _reject_cross_recipe_flags(
+    *,
+    recipe: str,
+    add_method: Optional[str],
+    n_lods: Optional[int],
+    counts: Optional[str],
+    reveal_centre: Optional[str],
+    spatial_dims: Optional[str],
+    levels_given: bool,
+    compression_given: bool,
+    subst_method_given: bool,
+) -> None:
+    """Refuse a knob used against the recipe it does not belong to.
+
+    An error rather than a silent no-op, and the message names BOTH flags — the
+    one typed and the one that does the same job under the chosen recipe. A user
+    who passes ``--n-lods`` has said what they want; dropping it and writing a
+    3-level decimation instead would answer a different question without saying so.
+
+    Checked here, before ``run_lod`` opens anything, so a rejected invocation
+    cannot have deleted an existing output — the same pre-deletion discipline the
+    method validation follows.
+    """
+    if recipe not in MESH_LOD_RECIPES:
+        raise typer.BadParameter(
+            f"--recipe must be one of {' | '.join(MESH_LOD_RECIPES)}; got {recipe!r}."
+        )
+
+    if recipe == RECIPE_LEVELS:
+        reveal_only = [
+            ("--add-method", add_method is not None, "-m/--add-method"),
+            ("--n-lods", n_lods is not None, "--n-lods"),
+            ("--counts", counts is not None, "--counts/--breakpoints"),
+            ("--reveal-centre", reveal_centre is not None, "--reveal-centre"),
+            ("--spatial-dims", spatial_dims is not None, "--spatial-dims"),
+        ]
+        substitutive_equivalent = {
+            "--n-lods": "-L/--levels",
+            "--add-method": "--subst-method",
+        }
+        # `-m cluster` is the pre-rename spelling of `--subst-method cluster`, and
+        # `-m` now belongs to the additive ordering — so this gate is where that
+        # migration lands. Carry the VALUE into the replacement rather than naming
+        # the flag alone: a pointer the user can paste is the whole point, and the
+        # long `--method` form has always carried it.
+        if add_method is not None and add_method in MESH_SUBSTITUTIVE_METHODS:
+            raise typer.BadParameter(
+                f"-m/--add-method names the reveal ordering, but {add_method!r} is a "
+                f"decimation method. -m was the old short form of --method; use "
+                f"--subst-method {add_method} (with the default --recipe "
+                f"{RECIPE_LEVELS}), or pass --recipe {RECIPE_REVEAL} for a reveal."
+            )
+        for flag, given, shown in reveal_only:
+            if not given:
+                continue
+            equivalent = substitutive_equivalent.get(flag)
+            instead = (
+                f"; --recipe levels uses {equivalent} instead"
+                if equivalent
+                else "; --recipe levels has no equivalent"
+            )
+            raise typer.BadParameter(
+                f"{shown} applies to --recipe {RECIPE_REVEAL}{instead}. "
+                f"Pass --recipe {RECIPE_REVEAL}, or drop {shown}."
+            )
+        return
+
+    # recipe == reveal: the substitutive knobs are the ones that do not apply.
+    for flag, given, equivalent in (
+        ("-L/--levels", levels_given, "--n-lods"),
+        ("-K/--compression-factor", compression_given, "no equivalent"),
+        ("--subst-method", subst_method_given, "-m/--add-method"),
+    ):
+        if not given:
+            continue
+        instead = (
+            f"; --recipe {RECIPE_REVEAL} uses {equivalent} instead"
+            if equivalent != "no equivalent"
+            else f"; --recipe {RECIPE_REVEAL} has no equivalent (its levels are a "
+            "face PARTITION, not a reduction, so there is no per-level factor)"
+        )
+        raise typer.BadParameter(
+            f"{flag} applies to --recipe {RECIPE_LEVELS}{instead}. "
+            f"Pass --recipe {RECIPE_LEVELS}, or drop {flag}."
+        )
+    if n_lods is not None and counts is not None:
+        raise typer.BadParameter(
+            "--n-lods and --counts both size the ladder; pass one. --n-lods asks "
+            "for N equal-count levels, --counts gives the cumulative boundaries."
+        )
+
+
+def _parse_counts_spec(spec: str) -> Any:
+    """``--counts`` as the resolver wants it: a list of ints, or a tagged string.
+
+    A ``<word>:`` prefix marks the resolver's own string vocabulary and is handed
+    over verbatim so its diagnostics survive. Everything else is a bare comma list
+    of CUMULATIVE face counts, which the resolver takes only as a list — passing
+    that form as a string reaches it as an unrecognized tag and reports the
+    vocabulary rather than the mistake.
+    """
+    text = spec.strip()
+    if ":" in text.split(",", 1)[0]:
+        return text
+    try:
+        parsed = [int(t) for t in text.split(",") if t.strip() != ""]
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"--counts must be comma-separated integers (cumulative face counts) "
+            f"or a tagged spec like 'stream:2000'; got {spec!r}"
+        ) from e
+    if not parsed:
+        raise typer.BadParameter("--counts must list >=1 boundary")
+    return parsed
+
+
+def _build_reveal_spec(
+    *,
+    add_method: Optional[str],
+    n_lods: Optional[int],
+    counts: Optional[str],
+    reveal_centre: Optional[str],
+    spatial_dims: Optional[str],
+    ndim: int,
+) -> Dict[str, Any]:
+    """Assemble the ``additive_lod=`` spec for ``--recipe reveal``.
+
+    Only keys the caller actually gave are included, so the resolver's own
+    defaults (``method="radial"``, four levels) stay the single source of truth for
+    what an unqualified reveal means — a CLI that restated them would be a second
+    place for that answer to live.
+
+    ``counts`` is split between the two forms the resolver actually takes. Its
+    STRING vocabulary is only ``stream:<c>`` / ``energy:<fractions>``; a bare
+    comma list has to arrive as a list of ints, so a plain ``--counts 100,300,600``
+    is parsed here and anything with a ``<word>:`` prefix is passed through
+    untouched. The prefixed forms keep their own diagnostics that way — including
+    the mesh-specific refusal of ``energy:`` (a mesh has no energy to take
+    fractions of), which this must not pre-empt with a parse error.
+    """
+    from ..reveal_options import parse_reveal_knobs
+
+    method = (add_method or DEFAULT_MESH_ADDITIVE_METHOD).replace("_", "-")
+    if method not in MESH_ADDITIVE_METHODS:
+        # Pre-validated for the same reason `--subst-method` is: the output
+        # deletion below is irreversible, and a bad method should not cost an
+        # existing store. Derived from the registry, never a literal.
+        raise typer.BadParameter(
+            f"--add-method must be one of {', '.join(sorted(MESH_ADDITIVE_METHODS))}; "
+            f"got {method!r}. A mesh ladder is a REVEAL, so only orderings whose "
+            "every prefix is one connected patch are admitted."
+        )
+
+    # The same parser `gsplat lod` uses, so the two commands cannot disagree about
+    # what `--reveal-centre 1,2,3 --spatial-dims 2,0,1` means — including that the
+    # dims order is load-bearing because it pairs with the centre's coordinates.
+    parsed_centre, parsed_dims = parse_reveal_knobs(
+        reveal_centre, spatial_dims, method, ndim
+    )
+
+    spec: Dict[str, Any] = {"method": method}
+    if n_lods is not None:
+        spec["n_lods"] = n_lods
+    if counts is not None:
+        spec["counts"] = _parse_counts_spec(counts)
+    if parsed_centre is not None:
+        spec["reveal_centre"] = parsed_centre
+    if parsed_dims is not None:
+        spec["spatial_dims"] = parsed_dims
+    return spec
+
+
+def _build_ladder_specs(
+    *,
+    recipe: str,
+    levels: int,
+    compression_factor: int,
+    method: str,
+    add_method: Optional[str],
+    n_lods: Optional[int],
+    counts: Optional[str],
+    reveal_centre: Optional[str],
+    spatial_dims: Optional[str],
+    ndim: int,
+) -> "tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]":
+    """Build the ``(substitutive, additive)`` spec pair for ``recipe``.
+
+    Exactly one is ever non-``None``: `add_mesh` refuses `additive_lod=` alongside
+    `substitutive_lod=`, so `--recipe` selects rather than the two composing.
+
+    Both arms VALIDATE before returning, and that is the load-bearing part — the
+    caller deletes an existing output under `--overwrite` before it writes, so a
+    knob rejected only by the adder would be diagnosed with the previous store
+    already gone. `--subst-method qem` did exactly that once. These are the very
+    resolvers `add_mesh` runs, so the two cannot disagree about what is accepted.
+
+    Extracted from :func:`run_lod`, which the complexity ratchet flagged at 11 the
+    moment it grew a second recipe.
+    """
+    from ...core.group.lod.mesh import (
+        resolve_additive_axis_mesh,
+        resolve_substitutive_axis_mesh,
+    )
+
+    if recipe == RECIPE_REVEAL:
+        additive_spec = _build_reveal_spec(
+            add_method=add_method,
+            n_lods=n_lods,
+            counts=counts,
+            reveal_centre=reveal_centre,
+            spatial_dims=spatial_dims,
+            ndim=ndim,
+        )
+        # A COPY: the resolver pops as it validates, and the spec still has to
+        # reach `add_mesh` whole.
+        resolve_additive_axis_mesh(dict(additive_spec))
+        return None, additive_spec
+
+    substitutive_spec: Dict[str, Any] = {
+        "levels": levels,
+        "compression_factor": compression_factor,
+        "method": method,
+    }
+    resolve_substitutive_axis_mesh(substitutive_spec)
+    return substitutive_spec, None
+
+
 def run_lod(
     *,
     input_path: Path,
@@ -453,8 +701,20 @@ def run_lod(
     compression_factor: int,
     method: str,
     overwrite: bool,
+    recipe: str = RECIPE_LEVELS,
+    add_method: Optional[str] = None,
+    n_lods: Optional[int] = None,
+    counts: Optional[str] = None,
+    reveal_centre: Optional[str] = None,
+    spatial_dims: Optional[str] = None,
 ) -> List[int]:
-    """Write ``input_path``'s mesh as a substitutive ladder. Returns the counts.
+    """Write ``input_path``'s mesh as a ladder of ``recipe``. Returns the counts.
+
+    ``levels`` selects the SUBSTITUTIVE flavour — decimated levels that REPLACE one
+    another — and ``reveal`` the additive one, whose levels are disjoint face groups
+    the viewer concatenates, so a prefix is a partial surface rather than a coarse
+    one. ``add_mesh`` refuses the two together, which is why one ``--recipe``
+    selects rather than the knobs composing.
 
     ``output_path`` is normalized to ``<stem>.luxar.zarr`` — the store the
     compiler actually writes — before any guard or deletion looks at it.
@@ -462,7 +722,6 @@ def run_lod(
     from luxar import LuxarZarrCompiler
 
     from ...core.group.adders.mesh import validate_scalar_data_range
-    from ...core.group.lod.mesh import resolve_substitutive_axis_mesh
     from ...core.viewer_config import ViewerConfig
     from ...io._compiler.node_common import KNOWN_RENDER_ATTRS
     from ...io.reader import LuxarScene
@@ -521,17 +780,18 @@ def run_lod(
             f"{data.faces.shape[0]:,} faces"
         )
 
-        spec: Dict[str, Any] = {
-            "levels": levels,
-            "compression_factor": compression_factor,
-            "method": method,
-        }
-        # Validated HERE rather than inside `add_mesh`, because the deletion
-        # below is irreversible: `--method qem` used to remove an existing output
-        # and only then discover the method does not exist. This is the very
-        # validator `add_mesh` runs, so the two cannot disagree about what is
-        # accepted.
-        resolve_substitutive_axis_mesh(spec)
+        substitutive_spec, additive_spec = _build_ladder_specs(
+            recipe=recipe,
+            levels=levels,
+            compression_factor=compression_factor,
+            method=method,
+            add_method=add_method,
+            n_lods=n_lods,
+            counts=counts,
+            reveal_centre=reveal_centre,
+            spatial_dims=spatial_dims,
+            ndim=int(data.vertices.shape[1]),
+        )
 
         # The authored ATTRS of the source node: the placement (transform /
         # nd_transform), the nD visibility broadcast, and the render attrs.
@@ -657,7 +917,8 @@ def run_lod(
                 _scalar_data_range=scalar_range,
                 shading=data.metadata.get("shading"),
                 double_sided=bool(data.metadata.get("double_sided", True)),
-                substitutive_lod=spec,
+                substitutive_lod=substitutive_spec,
+                additive_lod=additive_spec,
                 **forwarded,
             )
 
@@ -665,17 +926,45 @@ def run_lod(
     # the viewer can select among its levels, and a store that came out with one
     # level (or with duplicate counts) still "succeeds" at the API boundary.
     written = LuxarScene.load(output_path)
-    counts = sorted(
+    if recipe == RECIPE_REVEAL:
+        # A reveal is ONE node carrying `additive_<i>` subgroups, not N sibling
+        # nodes, so the substitutive read-back below would count 1 and report a
+        # perfectly good ladder as "too coarse to reduce". The levels are read
+        # from the parent's own declaration and each subgroup's face count.
+        (mesh_path,) = written.list_meshes()
+        parent = written.get_node_metadata(mesh_path)
+        n_levels = int(parent.get("n_additive_sublods", 0))
+        if n_levels < 2:
+            aprint(
+                "Note: the surface produced fewer than two levels, so a plain mesh "
+                "leaf was written instead of a reveal ladder."
+            )
+            return []
+        level_faces = [
+            int(written.get_node_metadata(f"{mesh_path}/additive_{i}")["n_faces"])
+            for i in range(n_levels)
+        ]
+        aprint(
+            f"✓ {n_levels} reveal levels on disk, face counts {level_faces} "
+            f"(sum {sum(level_faces):,} = the source's faces; the levels are a "
+            "PARTITION, not copies)"
+        )
+        return level_faces
+
+    # `vertex_counts`, not `counts`: the latter is now a PARAMETER (the reveal
+    # breakpoint spec), and reusing the name shadowed it. mypy caught it, which is
+    # the whole reason the parameter is typed rather than left as Any.
+    vertex_counts = sorted(
         int(written.get_node_metadata(m)["n_vertices"]) for m in written.list_meshes()
     )
-    if len(counts) < 2:
+    if len(vertex_counts) < 2:
         aprint(
             "Note: the surface was too coarse to reduce, so a plain mesh leaf was "
             "written instead of a ladder."
         )
     else:
-        aprint(f"✓ {len(counts)} levels on disk, vertex counts {counts}")
-    return counts
+        aprint(f"✓ {len(vertex_counts)} levels on disk, vertex counts {vertex_counts}")
+    return vertex_counts
 
 
 def lod_command(
@@ -712,6 +1001,64 @@ def lod_command(
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace an existing output."
     ),
+    recipe: str = typer.Option(
+        RECIPE_LEVELS,
+        "--recipe",
+        help=(
+            f"Which ladder to build: {' | '.join(MESH_LOD_RECIPES)}. "
+            "'levels' decimates the surface into coarse levels that REPLACE one "
+            "another (the default, and what this command has always done). "
+            "'reveal' writes an additive ladder of disjoint face groups the viewer "
+            "concatenates, so a prefix is a partial surface rather than a coarse "
+            "one — a mesh has no coarse prefix, which is why the two are separate "
+            "recipes and `add_mesh` refuses them together."
+        ),
+    ),
+    add_method: Optional[str] = typer.Option(
+        None,
+        "--add-method",
+        "-m",
+        help=(
+            "[--recipe reveal] Reveal ordering, one of "
+            f"{', '.join(sorted(MESH_ADDITIVE_METHODS))} "
+            f"(default {DEFAULT_MESH_ADDITIVE_METHOD}). Only orderings whose every "
+            "prefix is ONE connected patch are admitted — that restriction is what "
+            "makes a partial load a growing surface rather than lace."
+        ),
+    ),
+    n_lods: Optional[int] = typer.Option(
+        None,
+        "--n-lods",
+        help="[--recipe reveal] Number of levels in the ladder (default 4).",
+    ),
+    counts: Optional[str] = typer.Option(
+        None,
+        "--counts",
+        "--breakpoints",
+        help=(
+            "[--recipe reveal] Explicit level boundaries as CUMULATIVE face counts "
+            "(e.g. 500,2000,10000), or a streaming ladder as 'stream:C'. Mutually "
+            "exclusive with --n-lods."
+        ),
+    ),
+    reveal_centre: Optional[str] = typer.Option(
+        None,
+        "--reveal-centre",
+        help=(
+            "[--recipe reveal] Comma-separated centre the shells grow from. "
+            "Defaults to the mesh's own bounding-box centre, so a surface far from "
+            "the origin still grows from its middle."
+        ),
+    ),
+    spatial_dims: Optional[str] = typer.Option(
+        None,
+        "--spatial-dims",
+        help=(
+            "[--recipe reveal] Comma-separated columns the shell distance spans. "
+            "ORDER IS SIGNIFICANT — it pairs with --reveal-centre's coordinates. "
+            "Use it to keep a stacked time/channel column out of the distance."
+        ),
+    ),
     # Declared only so the body can raise a pointer; see `gsplat lod`'s pair of
     # hidden options for the general reason (typer rejects an unknown option
     # before the body runs, so an undeclared flag is undiagnosable).
@@ -722,13 +1069,17 @@ def lod_command(
     # says `-m qem` would, after that, be naming the additive-ordering flag with a
     # decimation value. Typer's own "No such option: -m" says nothing about that.
     #
-    # BOTH former spellings are declared on the one option, because both were real:
-    # `mesh lod` took `-m/--method` until the rename. `gsplat lod` declares only the
-    # long form for its pair, and correctly so — there `-m` still exists and still
-    # means the additive method, so it needs no pointer. Here it is gone, and an
-    # undeclared short form gets typer's bare "No such option" instead of the
-    # migration pointer this whole option exists to raise.
-    legacy_method: Optional[str] = typer.Option(None, "--method", "-m", hidden=True),
+    # ONLY the long form now. `-m` was declared here while it was RESERVED; it has
+    # since been claimed by `--add-method` above, which is exactly what the
+    # reservation was for — so `-m` is a live flag again rather than a migration
+    # pointer, and declaring it twice would be a typer conflict.
+    #
+    # A legacy `-m cluster` therefore reaches `--add-method` and is refused there.
+    # That refusal names `--subst-method` when the value is a decimation method, so
+    # the migration is still spelled out; see `_build_reveal_spec`. This is the
+    # "one token, two replacements" case the rename comment predicted, now resolved
+    # by the recipe: `-m` belongs to the additive ordering on both commands.
+    legacy_method: Optional[str] = typer.Option(None, "--method", hidden=True),
 ) -> None:
     """Build a substitutive LOD ladder for a mesh scene.
 
@@ -762,10 +1113,21 @@ def lod_command(
     # which is precisely the collision this rename removes from the flag surface.
     if legacy_method is not None:
         raise typer.BadParameter(
-            "--method / -m was renamed to --subst-method (2026-08: no method flag "
-            "is bare, and -m is reserved for the additive ordering, as on "
-            f"`gsplat lod`); use --subst-method {legacy_method}."
+            "--method was renamed to --subst-method (2026-08: no method flag is "
+            "bare). -m is no longer an alias for it — it now names the reveal "
+            f"ordering, as on `gsplat lod`; use --subst-method {legacy_method}."
         )
+    _reject_cross_recipe_flags(
+        recipe=recipe,
+        add_method=add_method,
+        n_lods=n_lods,
+        counts=counts,
+        reveal_centre=reveal_centre,
+        spatial_dims=spatial_dims,
+        levels_given=levels != _LEVELS_DEFAULT,
+        compression_given=compression_factor != _COMPRESSION_DEFAULT,
+        subst_method_given=method != _SUBST_METHOD_DEFAULT,
+    )
     try:
         run_lod(
             input_path=input_path,
@@ -775,6 +1137,12 @@ def lod_command(
             compression_factor=compression_factor,
             method=method,
             overwrite=overwrite,
+            recipe=recipe,
+            add_method=add_method,
+            n_lods=n_lods,
+            counts=counts,
+            reveal_centre=reveal_centre,
+            spatial_dims=spatial_dims,
         )
     except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
         aprint(f"Error: {exc}")
