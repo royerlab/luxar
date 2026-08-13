@@ -1169,6 +1169,85 @@ def test_writer_derives_coverage_fractions_for_meta_less_lod_group() -> None:
         )
 
 
+def test_writer_selector_threshold_consistency_gate() -> None:
+    """A group's meta ``selector`` describes its AUTHORED thresholds, so the
+    writer may preserve it only when EVERY child carries one. Three arms:
+
+    * PARTIALLY-authored + ``selector="coverage"`` — without the gate, the
+      writer's fallback derivation (screen-area units) filled the gaps under
+      the legacy stamp: a mixed-units store. The gate scrubs the authored
+      remnant, re-derives the whole ladder, and stamps ``screen-area`` so the
+      written pair agrees.
+    * FULLY authored + ``selector="coverage"`` — preserved verbatim (this is
+      the legacy round-trip; the values must NOT be re-derived).
+    * Unknown meta selector — refused before anything is written (the reader
+      whitelists stale spellings away on LOAD; one arriving here is a
+      hand-built tree that would otherwise write an out-of-vocabulary
+      selector into a store claiming v3.4 compliance).
+    """
+    import tempfile
+    from pathlib import Path
+
+    import zarr
+
+    from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+
+    def _leaf(n: int, seed: int, cov: float | None) -> GSplatLeaf:
+        rng = np.random.default_rng(seed)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        meta = {} if cov is None else {"coverage_fraction": cov}
+        return GSplatLeaf(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=rng.uniform(0, 100, (n, 3)).astype(np.float32),
+                    amplitudes=np.ones(n, dtype=np.float32),
+                    cholesky_factors=chol,
+                )
+            ],
+            meta=meta,
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Arm 1: partially authored (legacy value on child_0 only) under a
+        # "coverage" stamp → uniform re-derivation + screen-area stamp.
+        mixed = GSplatLodGroup(
+            children=[_leaf(50, 0, cov=0.0), _leaf(800, 1, cov=None)],
+            meta={"selector": "coverage"},
+        )
+        p1 = Path(tmpdir) / "mixed.gsplats.zarr"
+        write_gsplats_tree(p1, mixed, ordering="none")
+        r1 = zarr.open_group(str(p1), mode="r")
+        assert r1.attrs["selector"] == "screen-area"
+        assert r1["child_0"].attrs["coverage_fraction"] == 0.0
+        assert r1["child_1"].attrs["coverage_fraction"] == pytest.approx(
+            WHOLE_OBJECT_FINEST_ANCHOR
+        )
+
+        # Arm 2: fully authored legacy ladder → selector AND values preserved.
+        legacy = GSplatLodGroup(
+            children=[_leaf(50, 2, cov=0.0), _leaf(800, 3, cov=2.0)],
+            meta={"selector": "coverage"},
+        )
+        p2 = Path(tmpdir) / "legacy.gsplats.zarr"
+        write_gsplats_tree(p2, legacy, ordering="none")
+        r2 = zarr.open_group(str(p2), mode="r")
+        assert r2.attrs["selector"] == "coverage"
+        assert r2["child_1"].attrs["coverage_fraction"] == 2.0  # NOT re-derived
+
+        # Arm 3: out-of-vocabulary selector → refused, nothing written.
+        bogus = GSplatLodGroup(
+            children=[_leaf(50, 4, cov=0.0), _leaf(800, 5, cov=1.0)],
+            meta={"selector": "pixel_size"},
+        )
+        p3 = Path(tmpdir) / "bogus.gsplats.zarr"
+        with pytest.raises(ValueError, match="must be one of"):
+            write_gsplats_tree(p3, bogus, ordering="none")
+
+
 class TestBarrierAwareOrdering:
     """End-to-end: a 4D leaf with a time barrier writes single-timepoint chunks
     (the fix for per-timepoint viewer-load locality)."""

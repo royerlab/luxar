@@ -571,6 +571,47 @@ def write_gsplat_node(
         # only sets the threshold for meta-less (e.g. hand-built) trees. Without it a
         # nested lod-of-Group child carried no threshold and the selector was stuck
         # always-finest.
+        #
+        # SELECTOR/THRESHOLD CONSISTENCY. The group's meta selector describes
+        # its AUTHORED thresholds, so it may only be preserved when every child
+        # actually carries one — otherwise the fallback derivation (screen-area
+        # units) would fill the gaps under a stamp claiming different units.
+        # For such a PARTIALLY-authored tree the authored remnant is scrubbed
+        # and the WHOLE ladder re-derived, so the written pair is uniformly
+        # screen-area (mirrors the matrix path, which always re-derives both).
+        # An unknown meta selector is refused before anything is written — the
+        # reader whitelists stale spellings away on load, so one arriving here
+        # is a hand-built tree that would otherwise write a store claiming
+        # v3.4 compliance with an out-of-vocabulary selector.
+        from luxar.typing_utils.constants import LOD_SELECTORS
+
+        meta_selector = node.meta.get("selector")
+        if meta_selector is not None and meta_selector not in LOD_SELECTORS:
+            raise ValueError(
+                f"kind=lod group meta carries selector={meta_selector!r}; must "
+                f"be one of {sorted(LOD_SELECTORS)} (it names the units of the "
+                "children's coverage_fraction thresholds)"
+            )
+        authored_all = all("coverage_fraction" in (c.meta or {}) for c in on_disk)
+        if not authored_all and any(
+            "coverage_fraction" in (c.meta or {}) for c in on_disk
+        ):
+            from arbol import aprint
+
+            from luxar.gsplats.tree import without_meta_key
+
+            aprint(
+                "  ⚠️  kind=lod group has a PARTIALLY-authored coverage_fraction "
+                "ladder — scrubbing the authored remnant and re-deriving the "
+                "whole ladder (screen-area units) so the written selector and "
+                "thresholds agree."
+            )
+            on_disk = [without_meta_key(c, "coverage_fraction") for c in on_disk]
+        selector_out = (
+            str(meta_selector)
+            if (meta_selector is not None and authored_all)
+            else "screen-area"
+        )
         derived_cov = derive_cov([total_splats(c) for c in on_disk])
         child_bounds: List[Dict[str, List[float]]] = []
         for i, child in enumerate(on_disk):
@@ -610,12 +651,12 @@ def write_gsplat_node(
         group.attrs["kind"] = "lod"
         # The selector names the UNITS of the children's coverage_fraction
         # thresholds, so it must travel with them. A tree read from an existing
-        # store carries its on-disk mode in meta (preserved with the authored
-        # thresholds the leaf writer honors over the derived fallback);
-        # everything else — fresh recipe/backfill trees and the meta-less
-        # hand-built case whose thresholds THIS writer just derived — is in
-        # screen-area units (every live derivation is).
-        group.attrs["selector"] = str(node.meta.get("selector", "screen-area"))
+        # store carries its on-disk mode in meta (preserved — with its FULLY
+        # authored thresholds — by the consistency gate above); everything
+        # else — fresh recipe/backfill trees, the meta-less hand-built case,
+        # and partially-authored trees whose ladder the gate just re-derived —
+        # is in screen-area units (every live derivation is).
+        group.attrs["selector"] = selector_out
         # The viewer's INITIAL level (before the coverage selector runs) — the
         # COARSEST child (child_0). This is purely a progressive-load hint: it
         # makes the scene appear instantly at low detail, then refine. It is

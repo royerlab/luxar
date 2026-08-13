@@ -316,6 +316,34 @@ describe('projectBoxDiagonalPx', () => {
       expect(projectBoxAreaFraction(box, perspectiveAtOrigin())).toBe(Number.POSITIVE_INFINITY);
     });
 
+    it('a fully off-screen DEGENERATE rect reads 0, not the other axis span', () => {
+      // The review-caught interaction bug between clipping and the degenerate
+      // ramp: after clamping, "no viewport overlap on Y" and "zero-thickness
+      // visible line" both produced a zero clipped half-extent, so this
+      // full-width rect entirely above the viewport (y in [2, 3]) returned
+      // 1.0 (finest) instead of 0 — selecting expensive levels for geometry
+      // not on screen at all whenever the conservative frustum gate let it
+      // through near a corner.
+      const box: BoundingBox = { min: { x: -1, y: 2, z: 0 }, max: { x: 1, y: 3, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBe(0);
+      // Off-screen zero-thickness line (raw-degenerate AND off-screen) too.
+      const line: BoundingBox = { min: { x: -1, y: 2, z: 0 }, max: { x: 1, y: 2, z: 0 } };
+      expect(projectBoxAreaFraction(line, identityCamera())).toBe(0);
+      // And plain off-screen non-degenerate.
+      const sq: BoundingBox = { min: { x: 2, y: 2, z: 0 }, max: { x: 4, y: 4, z: 0 } };
+      expect(projectBoxAreaFraction(sq, identityCamera())).toBe(0);
+    });
+
+    it('a wide 2D node panned to a thin visible sliver reads its tiny area, not a linear span', () => {
+      // The ramp is gated on RAW (pre-clip) thinness: this square is 2 NDC
+      // units tall (not thin content) but only a 0.001-half sliver remains on
+      // screen — the honest visible occupancy is ~0.001, and inflating it to
+      // the full-width linear span (1.0 → finest) would resurrect the
+      // unclipped-corner cost while panning.
+      const box: BoundingBox = { min: { x: -1, y: 0.998, z: 0 }, max: { x: 1, y: 3, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.001, 5);
+    });
+
     it('degenerate rect (zero thickness) falls back to the LINEAR span, not area 0', () => {
       // An axis-aligned straight polyline: full-width, zero-height projected
       // bounds. The raw area product is exactly 0, which would pin the node to

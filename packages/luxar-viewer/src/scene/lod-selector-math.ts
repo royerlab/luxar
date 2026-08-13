@@ -119,20 +119,32 @@ export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
  * clipped half-extents — viewport-size independent by construction (the same
  * framing yields the same fraction on any monitor).
  *
- * **Degenerate (lower-dimensional) rects ramp to their LINEAR span.** For a
- * rect whose thin (clipped) half-extent is below
- * {@link DEGENERATE_RECT_HALF_EXTENT} — sub-pixel thin: an axis-aligned
- * straight polyline, an edge-on plane — the area product reads ~0 regardless
- * of how much screen the content spans, which would pin it to the coarsest
- * level forever (the legacy diagonal metric never had this failure mode — a
- * diagonal reads the long extent). The metric is therefore
- * ``max(area, span × (1 − thin/DEGENERATE_RECT_HALF_EXTENT))``: at zero
- * thickness it reads the full linear span (a full-width line = 1.0, so the
- * halving ladder keeps its meaning for 1D content), decays CONTINUOUSLY to
- * the plain area product as the thickness reaches the sub-pixel floor — no
- * cliff for the hysteresis to oscillate across when an edge-on plane rotates
- * through the boundary — and is exactly the area product everywhere above it.
- * A both-axes-degenerate rect (a point) still reads ~0 → coarsest.
+ * **Degenerate (lower-dimensional) CONTENT ramps to its LINEAR span.** For a
+ * rect whose RAW (pre-clip) thin half-extent is below
+ * {@link DEGENERATE_RECT_HALF_EXTENT} — sub-pixel thin content: an
+ * axis-aligned straight polyline, an edge-on plane — the area product reads
+ * ~0 regardless of how much screen the content spans, which would pin it to
+ * the coarsest level forever (the legacy diagonal metric never had this
+ * failure mode — a diagonal reads the long extent). The metric is therefore
+ * ``max(area, clippedSpan × (1 − rawThin/DEGENERATE_RECT_HALF_EXTENT))``: at
+ * zero thickness it reads the full CLIPPED linear span (a full-width line =
+ * 1.0, so the halving ladder keeps its meaning for 1D content), decays
+ * CONTINUOUSLY to the plain area product as the thickness reaches the
+ * sub-pixel floor — no cliff for the hysteresis to oscillate across when an
+ * edge-on plane rotates through the boundary — and is exactly the area
+ * product everywhere above it. A both-axes-degenerate rect (a point) still
+ * reads ~0 → coarsest. The ramp is gated on the RAW thinness so it fires only
+ * for intrinsically thin content — a wide 2D node whose CLIPPED sliver
+ * happens to be thin (mostly panned off-screen) honestly reads its tiny
+ * visible area rather than being inflated to a full linear span.
+ *
+ * **Fully off-screen rects read exactly 0.** A clipped interval that is
+ * INVERTED (no viewport overlap on that axis) zeroes the whole metric before
+ * the degenerate ramp can see it — otherwise a zero-thickness clipped axis
+ * would be indistinguishable from off-screen and the ramp would return the
+ * other axis's span for geometry not on screen at all (the world-space
+ * frustum gate catches most of these, but it is conservative near frustum
+ * corners, so this function must not rely on it).
  *
  * Same near-plane saturation contract as {@link projectBoxDiagonalPx}: camera
  * inside / straddling the box → ``+Infinity`` → finest level.
@@ -146,17 +158,22 @@ export function projectBoxAreaFraction(
 ): number {
   const rect = projectBoxNdcRect(box, camera, precomputedProjView);
   if (rect === null) return Number.POSITIVE_INFINITY;
-  // Intersect with the viewport (NDC [-1, 1] per axis → half-extent ≤ 1).
-  // projectBoxNdcRect returns half-extents of the CENTERED span; recompute
-  // the clipped overlap from the stored NDC bounds.
-  const halfW = Math.max(0, (Math.min(rect.maxX, 1) - Math.max(rect.minX, -1)) * 0.5);
-  const halfH = Math.max(0, (Math.min(rect.maxY, 1) - Math.max(rect.minY, -1)) * 0.5);
+  // Intersect with the viewport (NDC [-1, 1] per axis). Keep the SIGNED
+  // overlaps: a negative value means no viewport overlap on that axis —
+  // fully off-screen, metric 0 — and must not be conflated with a genuine
+  // zero-thickness visible interval (a line lying inside the viewport), which
+  // clamping alone would do.
+  const overlapW = Math.min(rect.maxX, 1) - Math.max(rect.minX, -1);
+  const overlapH = Math.min(rect.maxY, 1) - Math.max(rect.minY, -1);
+  if (overlapW < 0 || overlapH < 0) return 0;
+  const halfW = overlapW * 0.5;
+  const halfH = overlapH * 0.5;
   const span = Math.max(halfW, halfH);
-  const thin = Math.min(halfW, halfH);
   const area = halfW * halfH;
-  // Continuous degenerate ramp: full linear span at zero thickness, decaying
-  // to the plain area product at the sub-pixel floor (see the doc above).
-  const degenerate = span * Math.max(0, 1 - thin / DEGENERATE_RECT_HALF_EXTENT);
+  // Continuous degenerate ramp, gated on the RAW (pre-clip) thinness so only
+  // intrinsically thin content takes it (see the doc above).
+  const rawThin = Math.min(rect.maxX - rect.minX, rect.maxY - rect.minY) * 0.5;
+  const degenerate = span * Math.max(0, 1 - rawThin / DEGENERATE_RECT_HALF_EXTENT);
   return Math.max(area, degenerate);
 }
 

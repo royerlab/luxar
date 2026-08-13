@@ -60,8 +60,10 @@ DEFAULT_LINE_JOIN: Final[str] = "miter"
 #                occupied area); a partition tile anchors at 1.0 (fills-screen).
 #                What every DERIVED ladder stamps.
 # "coverage"     legacy diagonal metric: the viewer compares against projected
-#                bbox diagonal / (FILL_FACTOR=0.25 × viewport diagonal), bounded
-#                by MAX_COVERAGE_FRACTION=4.0. Kept for existing datasets and
+#                bbox diagonal / (FILL_FACTOR=0.5 × min(viewport.width,
+#                viewport.height) — the fitted screen axis; see the FILL_FACTOR
+#                doc in scene/lod-group-registry.ts), bounded by
+#                MAX_COVERAGE_FRACTION=4.0. Kept for existing datasets and
 #                for explicit `coverage_fractions=[...]` lists, whose authored
 #                values were tuned in these units.
 #
