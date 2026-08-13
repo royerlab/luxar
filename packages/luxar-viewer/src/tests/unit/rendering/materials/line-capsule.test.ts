@@ -261,7 +261,8 @@ describe('cut-normal precision regression lock (#1502)', () => {
 
   // [source, its own cut-normal shape, how many construction sites it has]:
   // two per shader (end A and end B), one in the CPU model. Keyed on the
-  // locals, never on the varying names — those are being renamed elsewhere.
+  // locals, never on the varying names — those get renamed as the joint
+  // packing evolves (#1540).
   // The 40-char gap is slack for prettier: `vec2(dot(n2, u), dot(n2, v))`
   // sits ~71 chars deep against printWidth 100, so one more nesting level
   // wraps the two `dot()` args and a tighter gap would red on a reformat.
@@ -282,9 +283,11 @@ describe('cut-normal precision regression lock (#1502)', () => {
   ];
 
   // Each site is scanned within ±600 chars: far enough to catch a snap on
-  // the next line, far short of the ≥2600-char gap to the other end's site,
-  // so the rest of these 478-652 line modules stays out of scope — `floor()`
-  // and `1024` are ordinary there (integer texel math, texture widths).
+  // the next line, far short of the ≥2350-char gap to the other end's site,
+  // so the rest of these 263-649 line modules stays out of scope. None of
+  // them holds a `floor()` or a `1024` today, but siblings like
+  // `picking/picking-system.ts` do (integer texel math, buffer dims), so a
+  // whole-file scan would be one texel helper away from a false red.
   const WINDOW = 600;
 
   it('keeps the cut normal unquantised at every construction site', () => {
