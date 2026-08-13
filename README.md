@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 80 bundled demos
+luxar demo              # Browse the 83 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,7 +103,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 category, what it needs, and whether you have already built it:
 
 ```
-🎬 [Luxar] 80 demos
+🎬 [Luxar] 83 demos
 
   #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
 ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ category, what it needs, and whether you have already built it:
   7  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
   9  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
  25  gsplats_2d_cmu1_pathology              gsplats      medical        ⬇150MB GPU* LFS      cached
- 27  gsplats_3d_acto3d_heart                gsplats      microscopy     ⬇13MB GPU* LFS       cached
+ 27  gsplats_3d_acto3d_heart                gsplats      microscopy     ⬇13MB GPU            cached
  ...
 
 Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>
@@ -495,9 +495,14 @@ from screen-space derivatives. `normal_dims` is required whenever you *do* pass
 them, because in nD there is no implicit "first three dimensions".
 
 Spatial partitioning **is** supported — `add_mesh(partition=…)` splits a large
-surface into frustum-cullable parts, though each part still loads whole. LOD and
-`volumetric` blending are not, and neither degrades silently: `add_mesh` raises
-on both, and a `volumetric` that reaches the viewer by *inheritance* from an
+surface into frustum-cullable parts, though each part still loads whole.
+Substitutive LOD (`add_mesh(substitutive_lod=…)`, decimated by
+`luxar.mesh.decimate`) and a spatially coherent *reveal* additive ladder
+(`add_mesh(additive_lod=…)`, `method="radial"`) both ship. What is still
+refused — and neither degrades silently — is an additive ladder over an
+*arbitrary* order (a prefix of an arbitrarily ordered index buffer is a holed
+surface, not a coarser one) and `volumetric` blending: `add_mesh` raises on
+both, and a `volumetric` that reaches the viewer by *inheritance* from an
 ancestor group logs a warning naming the node and falls back to `opaque`. See
 [the mesh spec](docs/specs/MESH_NODE_SPEC.md) §9 for why, per exclusion.
 
