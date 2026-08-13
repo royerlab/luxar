@@ -11,7 +11,7 @@ from luxar.core.mesh import Mesh
 from luxar.core.points import Points
 
 
-# [Python-R1/core-MAJOR / feedback_geometry_symmetry] Points / Lines /
+# Geometry-type symmetry: Points / Lines /
 # GSplats / Mesh expose a parallel "common interface" of properties
 # (n_elements, has_colors, has_labels, has_image_labels) and follow the
 # same metadata-key convention. The original tests in this file exercise
