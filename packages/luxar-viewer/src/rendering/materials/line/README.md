@@ -277,6 +277,28 @@ quadrature-validated CPU reference, the Abel-transform sharpness LUT, the
 ray-integral shared-math module, and the pick pair) lives in git history
 at the deletion's branch point, `1481995d9`.
 
+## Primitive selection: the auto policy
+
+Which primitive a lines node builds is decided ONCE, at material
+construction, by `types/line-primitive.ts` — every consumer (visual +
+picking, both backends) resolves through the same seam, so the pick
+footprint always rasterizes the stencil the eye sees. Precedence:
+`?linePrimitive=` (session override, the A/B escape hatch) > the
+`Settings → Advanced → Line primitive` policy (`capsule` / `quad`
+force one primitive) > the `auto` rule. Auto keeps the capsule default
+but builds the cheaper quad for nodes whose effective segment load —
+authored `n_segments` × a rendered-width factor normalized by the
+node's authored extent — reaches 2 M. The threshold is a measured
+budget choice, not a crossover: on a discrete NVIDIA GPU the capsule's
+GPU pass costs ~1.5× the quad at every thin-line count and 3.2–3.4× on
+wide lines, while an Apple GPU barely registers the difference
+(1.04–1.11×); past ~2 M thin segments the capsule's extra cost alone
+exceeds a quarter of a 60 fps frame on the NVIDIA class. The resolved
+primitive is stamped on `userData.linePrimitive` (both backends stamp
+the RESOLVED value) and carried through `clone()`, the node-factory
+retro picking pass, and TSL graph rebuilds — the sizing never re-runs
+after first build.
+
 ## Capsule primitive (the DEFAULT since the #1352 flip)
 
 THE default line primitive (flipped from `screen-space` after the #1352

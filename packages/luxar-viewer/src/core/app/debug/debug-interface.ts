@@ -21,6 +21,7 @@ import { materialManager, type BlendingMode } from '../../../rendering/material-
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
 import { noteDepthSortCommit, resortForCapture } from '../../../rendering/depth-sort-coordinator';
 import { setCommittedData } from '../../../types/committed-data';
+import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import type { LoadedPointsData } from '../../../types/points';
 import type { SyntheticInjectionResult, SyntheticSceneSpec } from '../../../scene/synthetic-scene';
 import { computeDebugState, computeDrawOrder } from './debug-state';
@@ -229,12 +230,18 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           // material-manager so the same blending / dispatch logic
           // production uses applies. Picking material is intentionally
           // skipped — the synthetic scenarios don't exercise picking.
+          // Mirror createLinesNode's per-node auto-policy sizing so the
+          // synthetic path builds the same primitive production would for
+          // a node of this count (count-only: synthetic walks author no
+          // extent metadata). An explicit ?linePrimitive= arm still wins
+          // inside the resolver, so bench A/B arms are unaffected.
           const material = materialManager.getLineMaterial({
             blendingMode,
             opacity: 1.0,
             gamma: 1.0,
             intensity: 1.0,
             offset: 0.0,
+            primitive: resolveLinePrimitiveForNode({ nSegments: cfg.segmentCount }),
           });
           const mesh = createInstancedLinesMesh(cfg, material);
           const clamped = clampLineCapacity(cfg.segmentCount);
