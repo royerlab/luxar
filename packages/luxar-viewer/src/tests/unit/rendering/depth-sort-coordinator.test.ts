@@ -1048,6 +1048,37 @@ describe('depth-sort coordinator', () => {
     expect(parts.map((m) => m.renderOrder)).toEqual([0, 1, 2, 3]);
   });
 
+  it('a tree that names only SOME parts falls the whole group back to depth order', async () => {
+    // `partRank` is `ranks.get(partIndex) ?? -1`, so a stored tree whose leaf set
+    // does not cover every part leaves ranked and unranked members side by side.
+    // Comparing those two keys in one comparator is non-transitive (ranked pairs
+    // by rank, mixed pairs by depth), and Array.sort may then return an order
+    // satisfying NEITHER key. The group must fall back to depth wholesale, which
+    // is approximate but well-defined.
+    //
+    // Tree ranks parts 0 and 1 only; parts 2 and 3 are unnamed. Depths are set so
+    // the correct depth order (far → near) is 3, 2, 1, 0 — the exact REVERSE of
+    // the partial ranking, so a comparator that let the ranks leak through could
+    // not produce this result by luck.
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const parts = [0, 1, 2, 3].map(() => makeGSplatsMesh(2, 'normal'));
+    parts.forEach((mesh, i) => {
+      // More negative view-z = farther, so part 3 is farthest.
+      mesh.geometry.boundingSphere!.center.set(0, 0, -10 * (i + 1));
+    });
+    makePartitionWrapper(bspTree, parts);
+    for (const m of parts) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Farthest (part 3) draws first.
+    expect(parts.map((m) => m.renderOrder)).toEqual([3, 2, 1, 0]);
+  });
+
   it('maps BSP split axes through displayDims, not straight to x/y/z', async () => {
     // A serialized `axis` is a CENTER-COLUMN index; `eyeLocal` is in display
     // space (x/y/z = displayDims[0..2]). Reading axis 1 as "y" is only right

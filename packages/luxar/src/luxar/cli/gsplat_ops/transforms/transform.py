@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -12,6 +12,91 @@ from arbol import aprint, asection
 from ...utils import format_memory_size
 from ..encoding import _resolve_encoding_mode
 from .parsing import parse_csv_floats
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import numpy as np
+
+    from luxar.gsplats.tree import GSplatNode
+
+
+def _composed_affine(
+    ndim: int,
+    scale_matrix: "Optional[np.ndarray]",
+    rot_matrix: "Optional[np.ndarray]",
+    translate_vec: "Optional[np.ndarray]",
+    center_shift: "Optional[np.ndarray]",
+) -> "tuple[np.ndarray, np.ndarray]":
+    """The single affine equivalent to the geometry transforms, in applied order.
+
+    ``gsplat transform`` applies scale, then rotation, then translation, then a
+    centroid re-origin — each as its own pass over the leaves. Composing them
+    once, here, lets a partition's split planes take the SAME motion in one step
+    (``p -> linear @ p + offset``) instead of threading four incremental updates
+    through the leaf loop.
+    """
+    import numpy as np
+
+    linear = np.eye(ndim)
+    offset = np.zeros(ndim)
+    for matrix in (scale_matrix, rot_matrix):
+        if matrix is not None:
+            linear = matrix @ linear
+            offset = matrix @ offset
+    if translate_vec is not None:
+        offset = offset + np.asarray(translate_vec, dtype=float)
+    if center_shift is not None:
+        offset = offset - np.asarray(center_shift, dtype=float)
+    return linear, offset
+
+
+def _map_partition_planes(
+    node: "GSplatNode", linear: "np.ndarray", shift: "np.ndarray"
+) -> "GSplatNode":
+    """Carry every partition's split planes through the composed geometry affine.
+
+    A ``bsp_tree``'s ``split`` is a coordinate in the centers' own space, so a
+    transform that moves centers invalidates it. Preserving one verbatim would be
+    worse than having none: a stale plane still produces a valid-looking part
+    permutation, so the viewer's back-to-front order degrades SILENTLY instead of
+    falling back to its documented centroid heuristic.
+
+    Translation, per-axis scale and quarter-turn rotations map cleanly (a mirror
+    also swaps each node's halves). An arbitrary rotation shears the cells out of
+    axis-alignment, which the serialized format cannot express — that tree is
+    dropped, and the resulting ordering downgrade is announced rather than left
+    for someone to discover in the viewer.
+    """
+    from dataclasses import replace
+
+    from luxar.core.group.partition import map_serialized_bsp_tree
+    from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+    dropped = 0
+
+    def walk(current: "GSplatNode") -> "GSplatNode":
+        nonlocal dropped
+        if isinstance(current, GSplatPartition):
+            mapped = map_serialized_bsp_tree(current.bsp_tree, linear, shift)
+            if current.bsp_tree is not None and mapped is None:
+                dropped += 1
+            return replace(
+                current,
+                children=[walk(c) for c in current.children],
+                bsp_tree=mapped,
+            )
+        if isinstance(current, GSplatLodGroup):
+            return replace(current, children=[walk(c) for c in current.children])
+        return current
+
+    result = walk(node)
+    if dropped:
+        aprint(
+            f"⚠️ Dropped the split planes of {dropped} partition(s): this transform "
+            "does not map axis-aligned cells to axis-aligned cells (an arbitrary "
+            "rotation). Parts will be ordered by centroid instead of exactly; "
+            "re-partition after rotating to restore exact ordering."
+        )
+    return result
 
 
 def run_transform_dataset(
@@ -260,7 +345,11 @@ def run_transform_dataset(
                     "(structure preserved)."
                 )
 
-                from luxar.gsplats.tree import GSplatLeaf, GSplatNode
+                from luxar.gsplats.tree import GSplatLeaf
+
+                # Centroid shift applied by --center, captured for the split-plane
+                # remap below (it is only known once the centroid is measured).
+                center_shift: "Optional[np.ndarray]" = None
 
                 def _leaf_op(
                     op: "Callable[[GSplatData], GSplatData]",
@@ -305,6 +394,7 @@ def run_transform_dataset(
                             node = map_leaves(
                                 node, _leaf_op(lambda gd: gd.translate(-shift))
                             )
+                            center_shift = np.asarray(shift, dtype=float)
                             aprint(
                                 "Centered spatial axes at the global "
                                 "amplitude-weighted centroid"
@@ -352,6 +442,10 @@ def run_transform_dataset(
                     from luxar.gsplats.tree import without_meta_key
 
                     node = without_meta_key(node, "coverage_fraction")
+                    linear, offset = _composed_affine(
+                        d, scale_matrix, rot_matrix, translate_vec, center_shift
+                    )
+                    node = _map_partition_planes(node, linear, offset)
                 result_node = node
 
             # Summary
