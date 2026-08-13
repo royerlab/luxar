@@ -14,6 +14,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { log } from '../../../utils/log';
 import {
+  applyMeshIndices,
   createMeshColorAttribute,
   createMeshDefaultColorAttribute,
   createMeshIndexAttribute,
@@ -97,8 +98,8 @@ describe('createMeshIndexAttribute', () => {
   it('keys the dtype on vertexCount, NOT on the largest index present', () => {
     // vertexCount is fixed for the node; the largest index actually drawn changes with
     // the slice. Keying off the observed maximum would let the dtype differ between
-    // epochs, defeating the buffer reuse — and re-binding a drawn geometry's index with
-    // a different dtype is the attribute-identity change WebGPU does not tolerate.
+    // epochs, defeating the buffer reuse — and every dtype flip on an already-drawn
+    // geometry costs a `setIndex` that orphans the old attribute's GPU buffer.
     const sparse = new Uint32Array([0, 1, 2]); // max index 2, but a big node
     expect(createMeshIndexAttribute(sparse, 200_000, 1).array).toBeInstanceOf(Uint32Array);
     const dense = new Uint32Array([60000, 60001, 60002]); // large indices, small node
@@ -559,8 +560,9 @@ describe('applyMeshIndices — the index buffer is allocated once per node', () 
   it('bounds the index upload to the rewritten prefix', () => {
     // Reusing the buffer must not mean re-uploading all of it: a large mesh with a
     // small visible set would then move far more bytes per slice change than the old
-    // reallocating path did, trading the leak for a bandwidth regression. The classic
-    // WebGL backend honours update ranges (the WebGPU ones re-upload in full).
+    // reallocating path did, trading the leak for a bandwidth regression. All three
+    // backends honour update ranges — the classic WebGL backend and both of
+    // WebGPURenderer's backends (native WebGPU and the WebGL2 fallback).
     const g = placeholder();
     updateMeshGeometry(g, { ...real, indices: new Uint32Array(0) });
     updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
@@ -600,6 +602,62 @@ describe('applyMeshIndices — the index buffer is allocated once per node', () 
     updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
     const rebuilt = updateMeshGeometry(g, { ...real, indices: new Uint32Array(0) });
     expect(rebuilt).toBe(false);
+  });
+
+  it('keeps the SAME index attribute after the WebGPU backend substitutes its array in place', () => {
+    // `WebGPUAttributeUtils.createAttribute` rewrites a non-normalized Uint16Array
+    // index attribute to Uint32Array IN PLACE the first time it uploads it — it
+    // assigns straight into `bufferAttribute.array`, so the attribute OBJECT survives
+    // but its `.array` is now a Uint32Array that `createMeshIndexAttribute` never
+    // allocated. The old predicate compared "does this match what I would allocate"
+    // and always lost that comparison after this substitution, forcing a `setIndex`
+    // (the exact leak this function exists to avoid) on every epoch after the first
+    // WebGPU upload. Reproducing the substitution by hand here, rather than mocking
+    // `applyMeshIndices` itself, is what makes this an honest regression test for #1532.
+    const g = placeholder();
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
+    const indexAttr = g.index!;
+    indexAttr.array = new Uint32Array(indexAttr.array as Uint16Array);
+
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array([2, 0, 1]) });
+    expect(g.index).toBe(indexAttr); // reused, not rebound — no new GPU buffer
+    expect(Array.from((g.index!.array as Uint32Array).slice(0, 3))).toEqual([2, 0, 1]);
+    expect(g.drawRange.count).toBe(3);
+  });
+
+  it('still rebinds when the existing buffer is too narrow to carry the needed indices', () => {
+    // The relaxation is not blanket: a Uint16Array cannot hold an index >= 65536 no
+    // matter what mutated it, so growing from a sub-65536-vertex node to one that
+    // needs 32-bit indices must still take the `setIndex` branch. Calling
+    // `applyMeshIndices` directly on a bare geometry is the cheapest honest way to
+    // exercise a `vertexCount` that demands Uint32Array without allocating a
+    // hundreds-of-MB position buffer to get there.
+    const geometry = new THREE.BufferGeometry();
+    const oldAttr = new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1, false);
+    geometry.setIndex(oldAttr);
+
+    applyMeshIndices(geometry, new Uint32Array([0, 1, 2]), 70000, 1);
+
+    expect(geometry.index).not.toBe(oldAttr); // rebound, not reused
+    expect(geometry.index!.array).toBeInstanceOf(Uint32Array);
+  });
+
+  it('still rebinds at exactly 65536 vertices, where truncation is not the reason', () => {
+    // The boundary is strict `<`, not `<=`. It is not about truncation here: 65,535,
+    // the largest index a 65,536-vertex node can produce, is exactly representable in
+    // 16 bits, so nothing would be lost writing it into a Uint16Array. The reason is
+    // that 65,535 is reserved by three itself — a 16-bit index array containing it is
+    // rejected on WebGL2 and rewritten to an out-of-range value on WebGPU — so a
+    // 65,536-vertex node must never be handed a 16-bit index buffer at all. Mutating
+    // the boundary to `<=` passes the whole suite without this case.
+    const geometry = new THREE.BufferGeometry();
+    const oldAttr = new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1, false);
+    geometry.setIndex(oldAttr);
+
+    applyMeshIndices(geometry, new Uint32Array([65535, 0, 1]), 65536, 1);
+
+    expect(geometry.index).not.toBe(oldAttr); // rebound, not reused
+    expect(geometry.index!.array).toBeInstanceOf(Uint32Array);
   });
 });
 
@@ -874,8 +932,8 @@ describe('capacity sizing — a reveal ladder must not orphan GPU buffers (#1521
     expect(geometry.getAttribute('position').count).toBe(140_000);
     expect(geometry.index!.count).toBe(70_000 * 3);
     // And the dtype is chosen from the TOTAL, so it cannot flip Uint16 → Uint32 on
-    // an already-drawn geometry when the reveal crosses 65,536 vertices — the
-    // attribute-identity change the WebGPU backend does not tolerate.
+    // an already-drawn geometry when the reveal crosses 65,536 vertices — the flip
+    // that would force a `setIndex` and orphan the previous level's GPU buffer.
     expect(geometry.index!.array).toBeInstanceOf(Uint32Array);
   });
 
