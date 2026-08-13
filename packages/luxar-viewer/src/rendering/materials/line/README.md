@@ -2,8 +2,11 @@
 
 > Thick-line material stack — instanced-quad geometry, shifted-truncated super-Gaussian soft falloff, and continuous polyline joints — paired across the GLSL `ShaderMaterial` and TSL `NodeMaterial` backends.
 
-This folder holds the four-file material stack that renders one of Luxar's
-four first-class geometry types. Each line segment is drawn as an instanced
+This folder holds the six-file material stack that renders one of Luxar's
+four first-class geometry types, with two selectable primitives: the
+classic screen-space quad described in the next sections, and the capsule
+(the default since the #1352 flip — see its own section below). Under the
+quad, each line segment is drawn as an instanced
 screen-space quad expanded perpendicular to its pixel-space direction; the
 fragment stage shades a shifted-truncated super-Gaussian perpendicular
 cross-section, with a per-endpoint joint code keeping interior polyline joints
@@ -303,10 +306,10 @@ profile; approximate math fine"):
    integral and no per-fragment camera-space solve. End-on stability comes
    from the distance field itself (a point's field is radial).
 2. **One profile for all blending modes.** The capsule is peak-shaped by
-   construction; there is no peak/sum lane split and
-   `LUXAR_PEAK_PROJECTION` is never stamped. The blending-mode tails
-   (volumetric τ map, max premultiply, colormap, NO_GOG, gamma) are cribbed
-   from the quad fragment unchanged.
+   construction; there is no peak/sum lane split (the deleted volumetric
+   primitive's `LUXAR_PEAK_PROJECTION` define went with it). The
+   blending-mode tails (volumetric τ map, max premultiply, colormap,
+   NO_GOG, gamma) are cribbed from the quad fragment unchanged.
 3. **Compact support.** The quartic hits exact zero at the rim (the 2σ
    trim), so there is no truncation constant and no shifted-Gaussian
    renormalization.
@@ -474,9 +477,9 @@ fast-path on WebGPU.
 The GLSL strings are the authoritative spec for the rendering math; the
 TSL factory must produce a graph that emits the same per-pixel result.
 `tsl-shader-parity.spec.ts` (e2e) renders identical scenes through both
-backends and pixel-compares. GLSL3 sources are **never** deleted from
-this folder (see `feedback_keep_glsl_reference.md` in project memory) —
-they remain the readable reference even after the TSL path stabilises.
+backends and pixel-compares. GLSL3 sources of the shipping primitives are
+**never** deleted from this folder — they remain the readable reference
+even after the TSL path stabilises.
 
 ## See Also
 
@@ -484,6 +487,6 @@ they remain the readable reference even after the TSL path stabilises.
 - `../../README.md` — Rendering package overview and where line materials sit in the pipeline
 - `../../line-geometry.ts` — `InstancedBufferGeometry` builder, the 6-texel layout, and the fused texel writer this shader reads
 - `../../material-manager.ts` — creates the per-node line materials and owns the camera-broadcast loop
-- `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage expansion math of whichever primitive the session resolves (screen-space quad or volumetric stadium)
+- `../../picking/line/material.ts` / `material-tsl.ts` — picking counterparts; share the vertex-stage expansion math of whichever primitive the session resolves (screen-space quad or capsule)
 - `../../../tests/e2e/tsl-shader-parity.spec.ts` — GLSL ↔ TSL parity harness
 - `../../../tests/e2e/line-join-artifact.spec.ts` / `../../../tests/helpers/line-join-metrics.ts` — the joint-artifact acceptance measurement described above (#780 / #785 / #790)

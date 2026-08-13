@@ -9,7 +9,7 @@
  * adds the `uNodeId` uniform and `vNodeId` / `vElementId` varyings,
  * emitting `(nodeId, elementId-low16, brightness, elementId-high16)` with
  * brightness-as-depth (`gl_FragDepth = 1 − brightness`), identical to the
- * screen-space and volumetric pick variants. Like those, the pick pass
+ * screen-space pick variant. Like it, the pick pass
  * ignores per-element alpha and node opacity — faint-but-hoverable stays
  * consistent across primitives.
  *
