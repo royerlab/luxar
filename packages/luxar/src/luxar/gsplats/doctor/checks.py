@@ -1,0 +1,243 @@
+"""The checks ``gsplat doctor`` runs, and the registry it runs them from.
+
+Adding a check means writing a function of the same shape and appending it to
+:data:`ALL_CHECKS` — nothing else in the doctor knows about any particular
+condition. A check reads the store, decides what is wrong, and attaches a
+closure that would repair it; it must NOT write, because the user may only have
+asked for a diagnosis. Split this module into a package when the list outgrows
+one file.
+
+Conventions worth keeping:
+
+* Report a condition even when it cannot be repaired — a finding with no ``fix``
+  and a concrete ``remedy`` is more use than silence.
+* Never repair on a guess. Where the correct value cannot be recovered from the
+  store, say so and name what can produce it.
+* Repairs here are attr-level: the doctor's finalize re-stamps the root
+  ``content_hash`` and re-consolidates metadata for the whole run, so a fix must
+  not do either itself.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+import numpy as np
+
+from .model import Check, Finding
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import zarr
+
+__all__ = ["ALL_CHECKS", "check_partition_split_planes"]
+
+
+def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]":
+    """Every group in the store, depth-first, with its store-relative path."""
+    out = [(path, group)]
+    for name in sorted(group.group_keys()):
+        out.extend(_iter_groups(group[name], f"{path}/{name}" if path else name))
+    return out
+
+
+def _part_boxes(
+    group: "zarr.Group",
+) -> "Optional[List[Tuple[np.ndarray, np.ndarray]]]":
+    """Each part's content box, indexed by ``child_index``.
+
+    ``None`` when the parts do not describe a usable box set: a missing
+    ``position_bounds``, a ``child_index`` that is not a permutation of
+    ``0..n-1``, or fewer than three spatial dims (the split axes the serialized
+    format admits). Only the first three dims are read — a stacked time/channel
+    axis is never a split axis.
+    """
+    by_index: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+    names = [n for n in group.group_keys() if str(n).startswith("part_")]
+    if not names:
+        return None
+    for name in names:
+        child = group[name]
+        bounds = child.attrs.get("position_bounds")
+        index = child.attrs.get("child_index")
+        if bounds is None or index is None:
+            return None
+        try:
+            lo = np.asarray(bounds["min"], dtype=float)
+            hi = np.asarray(bounds["max"], dtype=float)
+        except (KeyError, TypeError, ValueError):
+            return None
+        if lo.shape != hi.shape or lo.size < 3:
+            return None
+        by_index[int(index)] = (lo[:3], hi[:3])
+    if sorted(by_index) != list(range(len(names))):
+        return None
+    return [by_index[i] for i in range(len(names))]
+
+
+def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
+    """A ``kind=partition`` should record how its parts stack up (``bsp_tree``).
+
+    The viewer orders partition parts back-to-front by traversing those planes —
+    exact for any camera pose, including inside the volume. Without them it sorts
+    parts by content centroid, which is not a valid painter's order: it flips
+    discretely as the camera moves, so an order-dependent blending mode
+    (``normal`` or ``volumetric``) pops at the seams on every orbit.
+
+    Two conditions, both silent in the viewer:
+
+    * **Missing.** Written by a producer that did not record its planes (any
+      tiled fit before #1555), or dropped by a tool that rebuilt the tree. When
+      the parts are disjoint the planes are recoverable from the part boxes, so
+      this repairs itself; when they are not — a uniform-tiled fit keeps each
+      tile's apodization halo, so its parts genuinely intersect — no exact tree
+      exists and the finding stands unfixed rather than inventing one.
+    * **Stale or mismatched.** Present but disagreeing with where the parts
+      actually sit: planes left in a pre-transform coordinate space, or labels
+      naming a different part set. Worse than missing, because the traversal
+      still returns a plausible permutation — the ordering is confidently wrong
+      instead of falling back. Repaired by recovering planes when possible, and
+      by REMOVING the tree when not: the centroid fallback is at least honest.
+    """
+    from luxar.core.group.partition import (
+        reconstruct_serialized_bsp_tree,
+        serialized_bsp_tree_separates,
+    )
+
+    findings: List[Finding] = []
+    for path, group in _iter_groups(root):
+        if group.attrs.get("kind") != "partition":
+            continue
+        where = path or "<root>"
+        boxes = _part_boxes(group)
+        stored = group.attrs.get("bsp_tree")
+
+        if stored is not None and boxes is not None:
+            if serialized_bsp_tree_separates(dict(stored), boxes):
+                continue  # healthy
+            rebuilt = reconstruct_serialized_bsp_tree(boxes)
+            findings.append(_stale_finding(group, where, len(boxes), rebuilt))
+            continue
+
+        if stored is not None:
+            # Cannot judge it: no usable part boxes to check against. Say so
+            # rather than either trusting or condemning the tree.
+            findings.append(
+                Finding(
+                    check="split-planes",
+                    severity="note",
+                    path=where,
+                    summary="split planes present but not verifiable",
+                    detail=(
+                        "The parts carry no usable position_bounds, so there is "
+                        "nothing to check the stored planes against."
+                    ),
+                    remedy="Re-run doctor after re-writing the store with a current Luxar.",
+                )
+            )
+            continue
+
+        if boxes is None:
+            findings.append(
+                Finding(
+                    check="split-planes",
+                    severity="warning",
+                    path=where,
+                    summary="no split planes, and the part boxes cannot be read",
+                    detail=(
+                        "Parts are ordered by centroid, which is not a valid "
+                        "painter's order and pops at the seams under `normal` or "
+                        "`volumetric` blending."
+                    ),
+                    remedy="Re-fit, or re-write the store, with a current Luxar.",
+                )
+            )
+            continue
+
+        rebuilt = reconstruct_serialized_bsp_tree(boxes)
+        findings.append(_missing_finding(group, where, len(boxes), rebuilt))
+    return findings
+
+
+def _missing_finding(
+    group: "zarr.Group", where: str, n_parts: int, rebuilt: Optional[Dict[str, Any]]
+) -> Finding:
+    detail = (
+        f"{n_parts} parts are ordered by content centroid, which is not a valid "
+        "painter's order: it flips discretely as the camera moves, so an "
+        "order-dependent blending mode pops at the seams on every orbit."
+    )
+    if rebuilt is None:
+        return Finding(
+            check="split-planes",
+            severity="warning",
+            path=where,
+            summary="no split planes, and the parts are not disjoint",
+            detail=detail
+            + " The parts overlap, so no exact ordering exists to recover — "
+            "typical of a uniform-tiled fit, whose apodized tiles keep their halo.",
+            remedy=(
+                "Re-fit with a current Luxar, which records the tiling's own "
+                "planes (approximate for uniform tiling, and documented as such)."
+            ),
+        )
+
+    def apply() -> None:
+        group.attrs["bsp_tree"] = rebuilt
+
+    return Finding(
+        check="split-planes",
+        severity="error",
+        path=where,
+        summary=f"no split planes recorded for {n_parts} parts",
+        detail=detail,
+        remedy=(
+            "Recover them from the part boxes — the parts are disjoint, so the "
+            "planes are exact."
+        ),
+        fix=apply,
+    )
+
+
+def _stale_finding(
+    group: "zarr.Group", where: str, n_parts: int, rebuilt: Optional[Dict[str, Any]]
+) -> Finding:
+    detail = (
+        "The stored planes do not separate the parts they name, so the viewer "
+        "orders confidently WRONG rather than falling back to centroids. Usually "
+        "a tree left behind in a pre-transform coordinate space, or one written "
+        "against a different part set."
+    )
+    if rebuilt is None:
+
+        def drop() -> None:
+            del group.attrs["bsp_tree"]
+
+        return Finding(
+            check="split-planes",
+            severity="error",
+            path=where,
+            summary="split planes disagree with the parts, and cannot be rebuilt",
+            detail=detail,
+            remedy=(
+                "Remove them, so ordering falls back to the centroid heuristic — "
+                "approximate, but honest. Re-fit to get exact ordering back."
+            ),
+            fix=drop,
+        )
+
+    def replace() -> None:
+        group.attrs["bsp_tree"] = rebuilt
+
+    return Finding(
+        check="split-planes",
+        severity="error",
+        path=where,
+        summary=f"split planes disagree with the {n_parts} parts they name",
+        detail=detail,
+        remedy="Rebuild them from the part boxes, which are disjoint.",
+        fix=replace,
+    )
+
+
+#: Every check, in the order the doctor runs them.
+ALL_CHECKS: "List[Check]" = [check_partition_split_planes]

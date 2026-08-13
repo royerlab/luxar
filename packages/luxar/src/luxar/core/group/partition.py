@@ -28,10 +28,13 @@ This module hosts:
   returns a list of index arrays into the original positions.
 * :func:`median_bsp_polylines` / :func:`midpoint_bsp_polylines` — the
   polyline-atomic variants for ``add_lines``.
-* :func:`prune_serialized_bsp_tree` / :func:`map_serialized_bsp_tree` — the
-  algebra on the *serialized* (``bsp_tree`` attr) form of that tree: renumbering
-  it after empty regions are dropped, and mapping its split coordinates through
-  an affine on the centers (or refusing, when the affine is not axis-preserving).
+* :func:`prune_serialized_bsp_tree` / :func:`map_serialized_bsp_tree` /
+  :func:`reconstruct_serialized_bsp_tree` / :func:`serialized_bsp_tree_separates`
+  — the algebra on the *serialized* (``bsp_tree`` attr) form of that tree:
+  renumbering it after empty regions are dropped, mapping its split coordinates
+  through an affine on the centers (or refusing, when the affine is not
+  axis-preserving), recovering planes from disjoint part boxes, and checking a
+  stored tree against where the parts actually sit.
 * :func:`validate_partition_group` — the well-formedness check (free function,
   matches the validator pattern in ``core/group/lod/gsplats.py``).
 * :func:`reject_mismatched_partition_parent` — the add-time half of that
@@ -54,6 +57,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Sequence,
     Union,
 )
 
@@ -177,6 +181,15 @@ class BSPNode:
 # grid does not.
 
 
+def serialized_bsp_leaf_labels(node: Dict[str, Any]) -> List[int]:
+    """The ``part`` labels a serialized tree references, in left-first order."""
+    if "part" in node:
+        return [int(node["part"])]
+    return serialized_bsp_leaf_labels(node["left"]) + serialized_bsp_leaf_labels(
+        node["right"]
+    )
+
+
 def prune_serialized_bsp_tree(
     tree: Optional[Dict[str, Any]], keep: Iterable[int]
 ) -> Optional[Dict[str, Any]]:
@@ -210,17 +223,7 @@ def prune_serialized_bsp_tree(
     if not keep_set:
         return None
 
-    labels: set = set()
-
-    def collect(node: Dict[str, Any]) -> None:
-        if "part" in node:
-            labels.add(int(node["part"]))
-            return
-        collect(node["left"])
-        collect(node["right"])
-
-    collect(tree)
-    if not keep_set.issubset(labels):
+    if not keep_set.issubset(serialized_bsp_leaf_labels(tree)):
         return None
 
     renumber = {label: i for i, label in enumerate(sorted(keep_set))}
@@ -243,6 +246,133 @@ def prune_serialized_bsp_tree(
         }
 
     return walk(tree)
+
+
+#: Node-visit budget for :func:`reconstruct_serialized_bsp_tree`. The search
+#: backtracks over candidate planes, so a pathological layout could explore an
+#: exponential number of them; boxes that really came from a BSP find their split
+#: almost immediately, so a generous flat cap separates "no decomposition exists"
+#: from "this is taking suspiciously long" without a timing dependency.
+_RECONSTRUCT_VISIT_BUDGET = 200_000
+
+
+def reconstruct_serialized_bsp_tree(
+    boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+) -> Optional[Dict[str, Any]]:
+    """Recover split planes from a set of DISJOINT axis-aligned part boxes.
+
+    The inverse of the producers: given only where each part's content sits, find
+    a recursive axis-aligned decomposition that separates them. Used to retrofit a
+    ``bsp_tree`` onto a partition written before its producer recorded one — the
+    parts are already disjoint cells, so the planes are recoverable and the viewer
+    can order them exactly instead of guessing from centroids.
+
+    Any plane that fully separates the two groups yields a correct painter's
+    order, so this does not need to recover the ORIGINAL planes — only valid ones.
+    At each step it scans the boxes' own faces as candidate cuts and takes the
+    first that splits the set cleanly, recursing on both sides.
+
+    Leaves carry each box's index in ``boxes`` verbatim, so a caller can pair the
+    result with :func:`prune_serialized_bsp_tree` if the part set changes.
+
+    Returns ``None`` when no such decomposition exists — boxes that overlap (a
+    uniform-tiled fit keeps each tile's apodization halo, so its parts genuinely
+    intersect) or interlock in a pinwheel have no separating plane, and the
+    honest answer is no tree rather than an invented one. Also ``None`` past an
+    internal search budget, so a pathological layout degrades instead of hanging.
+    """
+    if not boxes:
+        return None
+
+    visits = [0]
+
+    def build(items: "List[int]") -> Optional[Dict[str, Any]]:
+        visits[0] += 1
+        if visits[0] > _RECONSTRUCT_VISIT_BUDGET:
+            return None
+        if len(items) == 1:
+            return {"part": int(items[0])}
+        for axis in range(3):
+            # Candidate cuts are the boxes' own faces: any separating plane can
+            # be slid onto one without changing which side anything falls.
+            cuts = sorted(
+                {float(boxes[i][0][axis]) for i in items}
+                | {float(boxes[i][1][axis]) for i in items}
+            )
+            for cut in cuts:
+                low = [i for i in items if float(boxes[i][1][axis]) <= cut]
+                high = [i for i in items if float(boxes[i][0][axis]) >= cut]
+                # A clean split: every box strictly on one side, both sides used.
+                if not low or not high or len(low) + len(high) != len(items):
+                    continue
+                left = build(low)
+                if left is None:
+                    continue
+                right = build(high)
+                if right is None:
+                    continue
+                return {
+                    "axis": axis,
+                    "split": cut,
+                    "left": left,
+                    "right": right,
+                }
+        return None
+
+    return build(list(range(len(boxes))))
+
+
+def serialized_bsp_tree_separates(
+    tree: Optional[Dict[str, Any]],
+    boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+) -> bool:
+    """True when every plane in ``tree`` really separates the parts below it.
+
+    The soundness check a stored tree cannot self-report: its planes live in the
+    centers' coordinate space, so a tree that outlived a transform of those
+    centers — or that was written against a different part set — still traverses
+    to a valid-looking permutation while ordering the parts wrongly. Comparing it
+    against where the parts actually sit is the only way to catch that.
+
+    Requires the leaf labels to be exactly ``0..len(boxes)-1``, each once.
+    """
+    if tree is None:
+        return False
+    try:
+        labels = serialized_bsp_leaf_labels(tree)
+    except (KeyError, TypeError):  # malformed node shape
+        return False
+    if sorted(labels) != list(range(len(boxes))):
+        return False
+    return _node_separates(tree, boxes)
+
+
+def _node_separates(
+    node: Dict[str, Any],
+    boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+) -> bool:
+    """Recursive half of :func:`serialized_bsp_tree_separates`."""
+    if "part" in node:
+        return True
+    axis = int(node.get("axis", -1))
+    if axis not in (0, 1, 2):
+        return False
+    split = float(node["split"])
+    # `left` holds coord < split, `right` holds coord >= split, so a left box
+    # must END at or before the plane and a right box START at or after it.
+    if any(
+        float(boxes[i][1][axis]) > split
+        for i in serialized_bsp_leaf_labels(node["left"])
+    ):
+        return False
+    if any(
+        float(boxes[i][0][axis]) < split
+        for i in serialized_bsp_leaf_labels(node["right"])
+    ):
+        return False
+    return _node_separates(node["left"], boxes) and _node_separates(
+        node["right"], boxes
+    )
 
 
 def _axis_image(

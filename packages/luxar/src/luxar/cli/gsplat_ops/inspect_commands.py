@@ -19,6 +19,8 @@ from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 if TYPE_CHECKING:
     import numpy as np
 
+    from luxar.gsplats.doctor import Finding
+
 
 def _ascii_histogram(
     data: "np.ndarray", bins: int = 40, width: int = 60, title: str = "Distribution"
@@ -911,9 +913,108 @@ def annotate_quality(
         raise typer.Exit(1)
 
 
+_SEVERITY_MARK = {"error": "❌", "warning": "⚠️ ", "note": "ℹ️ "}
+
+
+def _print_finding(finding: "Finding") -> None:
+    """One doctor finding: what it is, what it costs, and where it stands."""
+    mark = _SEVERITY_MARK.get(finding.severity, "•")
+    aprint(f"{mark} [{finding.path}] {finding.summary}")
+    if finding.detail:
+        aprint(f"     {finding.detail}")
+    if finding.fixed:
+        aprint(f"     ✅ fixed: {finding.remedy}")
+    elif finding.fixable:
+        aprint(f"     🔧 fixable: {finding.remedy} — re-run with --fix")
+    elif finding.remedy:
+        aprint(f"     → {finding.remedy}")
+
+
+def doctor(
+    path: Path = typer.Argument(
+        ..., exists=True, help="Path to a .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        help="Repair what can be repaired, in place. Requires an UNCOMPRESSED "
+        ".gsplats.zarr directory. Without this, doctor only reports.",
+    ),
+    info: bool = typer.Option(
+        True,
+        "--info/--no-info",
+        help="Also print the full `gsplat info` report above the diagnosis.",
+    ),
+    histograms: bool = typer.Option(
+        False,
+        "--histograms/--no-histograms",
+        help="Include the info report's ASCII histograms (implies --info).",
+    ),
+    json_out: Optional[Path] = typer.Option(
+        None, "--json", help="Write the findings to a JSON file as well."
+    ),
+) -> None:
+    """Examine a .gsplats.zarr, diagnose known problems, and optionally fix them.
+
+    A dataset can load perfectly and still be missing something a later Luxar
+    learned to record, or be carrying metadata that went stale under an edit —
+    conditions that are invisible in the viewer, because the scene still renders,
+    just not as well as it should. Doctor names those, explains what each costs,
+    and with --fix repairs the ones whose correct value can be recovered from the
+    store itself. No re-fitting, and the root content_hash is re-stamped so the
+    viewer's cache invalidates.
+
+    Currently diagnosed:
+
+    - Partition split planes (bsp_tree): missing, or stale after a transform.
+      Without them the viewer orders parts by centroid, which is not a valid
+      painter's order — it pops at the seams under `normal`/`volumetric`
+      blending. Recovered from the part boxes when those are disjoint.
+
+    Exits non-zero when a problem is left standing, so it can gate a pipeline.
+
+    Examples:
+        luxar gsplat doctor data.gsplats.zarr
+        luxar gsplat doctor data.gsplats.zarr --fix
+        luxar gsplat doctor data.gsplats.zarr --no-info --json report.json
+    """
+    import json as _json
+
+    from luxar.gsplats.doctor import diagnose_store
+
+    if histograms:
+        info = True
+    if info:
+        info_dataset(path, show_histograms=histograms, bins=40)
+
+    with asection(f"Diagnosing: {path.name}"):
+        try:
+            report = diagnose_store(path, fix=fix)
+        except ValueError as exc:
+            aprint(f"❌ {exc}")
+            raise typer.Exit(1) from None
+
+        if not report.findings:
+            aprint(f"✅ No problems found ({len(report.checks_run)} check(s) run).")
+        for finding in report.findings:
+            _print_finding(finding)
+
+        if json_out is not None:
+            json_out.write_text(_json.dumps(report.as_dict(), indent=2))
+            aprint(f"Wrote {json_out}")
+
+        unresolved = report.unresolved
+        if unresolved:
+            aprint(f"\n{len(unresolved)} problem(s) outstanding.")
+            raise typer.Exit(1)
+        if report.fix and any(f.fixed for f in report.findings):
+            aprint("\n✅ All diagnosed problems repaired.")
+
+
 def register_inspect_commands(app: typer.Typer) -> None:
     """Register the inspect commands onto ``app_gsplat``."""
     app.command("info")(info_dataset)
+    app.command("doctor")(doctor)
     app.command("napari")(napari_viewer)
     app.command("view")(quick_view)
     app.command("compare")(compare_quality)

@@ -28,6 +28,8 @@ import pytest
 from luxar.core.group.partition import (
     map_serialized_bsp_tree,
     prune_serialized_bsp_tree,
+    reconstruct_serialized_bsp_tree,
+    serialized_bsp_tree_separates,
     spatial_bsp_tree,
 )
 
@@ -281,3 +283,66 @@ def test_traversal_is_a_correct_painters_order_from_every_camera_pose() -> None:
 
     assert constrained > 0, "no constrained pairs — the check would be vacuous"
     assert violations == 0
+
+
+# ── reconstruct_serialized_bsp_tree / serialized_bsp_tree_separates ──────
+
+
+class TestReconstructAndVerify:
+    @staticmethod
+    def _boxes_from(points: np.ndarray, max_elements: int) -> list:
+        tree = spatial_bsp_tree(points, max_elements, rule="median")
+        return (
+            [
+                (points[leaf.indices].min(axis=0), points[leaf.indices].max(axis=0))
+                for leaf in tree.leaves()
+            ],
+            tree.to_serializable(),
+        )
+
+    def test_planes_are_recovered_from_disjoint_part_boxes(self) -> None:
+        rng = np.random.default_rng(1)
+        points = rng.uniform(0, 100, size=(600, 3))
+        boxes, _ = self._boxes_from(points, 80)
+        rebuilt = reconstruct_serialized_bsp_tree(boxes)
+        assert rebuilt is not None
+        assert sorted(_leaf_labels(rebuilt)) == list(range(len(boxes)))
+        # Recovered planes need not be the ORIGINAL ones — only valid ones.
+        assert serialized_bsp_tree_separates(rebuilt, boxes)
+
+    def test_the_producers_own_tree_verifies_against_its_boxes(self) -> None:
+        rng = np.random.default_rng(1)
+        points = rng.uniform(0, 100, size=(600, 3))
+        boxes, original = self._boxes_from(points, 80)
+        assert serialized_bsp_tree_separates(original, boxes)
+
+    def test_overlapping_boxes_have_no_decomposition(self) -> None:
+        # A uniform-tiled fit keeps each tile's apodization halo, so its parts
+        # genuinely intersect and no exact ordering exists to recover.
+        boxes = [
+            (np.array([0.0, 0.0, 0.0]), np.array([10.0, 10.0, 10.0])),
+            (np.array([5.0, 5.0, 5.0]), np.array([15.0, 15.0, 15.0])),
+        ]
+        assert reconstruct_serialized_bsp_tree(boxes) is None
+
+    def test_no_boxes_yields_no_tree(self) -> None:
+        assert reconstruct_serialized_bsp_tree([]) is None
+
+    def test_a_stale_tree_fails_verification(self) -> None:
+        """The whole point of the check: planes left in a pre-transform space
+        still traverse to a valid permutation, so only comparing them against
+        where the parts actually sit can catch them."""
+        rng = np.random.default_rng(1)
+        points = rng.uniform(0, 100, size=(600, 3))
+        boxes, original = self._boxes_from(points, 80)
+        moved = [(lo * 4.0, hi * 4.0) for lo, hi in boxes]
+        assert not serialized_bsp_tree_separates(original, moved)
+
+    def test_a_tree_naming_the_wrong_part_set_fails_verification(self) -> None:
+        rng = np.random.default_rng(1)
+        points = rng.uniform(0, 100, size=(600, 3))
+        boxes, _ = self._boxes_from(points, 80)
+        assert not serialized_bsp_tree_separates(
+            {"axis": 0, "split": 50.0, "left": {"part": 0}, "right": {"part": 1}}, boxes
+        )
+        assert not serialized_bsp_tree_separates(None, boxes)
