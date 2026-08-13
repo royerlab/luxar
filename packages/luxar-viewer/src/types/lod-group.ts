@@ -8,8 +8,9 @@ import type { BlendingMode } from './blending';
  * (0..4; the auto-derived WHOLE-OBJECT ladder uses 0..1, while an explicitly
  * authored or partition-bound ladder may reach 4.0) the viewer multiplies by
  * half of the viewport's fitted screen axis (`min(width, height)` — the
- * extent the camera framing actually fits, so the comparison stays invariant
- * across aspect ratio), so a `coverage_fraction` of 1.0 activates once the
+ * extent the camera framing actually fits, so the comparison holds across
+ * aspect ratio — exactly for a landscape viewport, within ~25% for a portrait
+ * one), so a `coverage_fraction` of 1.0 activates once the
  * object's projected bbox diagonal reaches half of the fitted screen axis —
  * i.e. at any normal full-frame view — and coarser children step in as it
  * shrinks below that. Children are

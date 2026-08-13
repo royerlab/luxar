@@ -71,12 +71,15 @@ to `MAX_COVERAGE_FRACTION` = `4.0`). At render time the
 viewer multiplies each child's `coverage_fraction` by half of the current
 viewport's **fitted screen axis** (`min(viewport.width, viewport.height)` in
 pixels, times a fill-factor constant of `0.5` — the extent the camera framing
-actually fits, so the comparison stays invariant across aspect ratio, not just
+actually fits, so the comparison holds across aspect ratio and not just
 viewport size) and picks the finest child whose resulting pixel threshold is
 satisfied by the group's on-screen size — so the finest level activates once
 the object's projected bbox diagonal reaches half of the fitted screen axis,
 i.e. at any normal full-frame view, and coarser levels step in as it shrinks
-below that, identically on any monitor/viewport/aspect ratio.
+below that, identically on any monitor or viewport size. Across aspect ratio
+the switch point is *exact* for a landscape viewport (aspect >= 1) and within
+~25% of that value for a portrait one, where the camera fit distance itself
+varies with aspect.
 
 | Symbol | Purpose |
 |--------|---------|

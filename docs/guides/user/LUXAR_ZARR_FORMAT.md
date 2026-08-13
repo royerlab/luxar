@@ -301,7 +301,11 @@ direction to suppress flicker). Because the threshold is viewport-relative,
 the finest child (`coverage_fraction` 1.0) activates once the object's projected
 bbox diagonal reaches half of the fitted screen axis — i.e. at any
 normal full-frame view — and coarser children step in as it shrinks below that,
-identically on any monitor/viewport size or aspect ratio. When the camera is
+identically on any monitor or viewport size. Across aspect ratio the switch
+point is *exact* for a landscape viewport (aspect >= 1, where the camera fit
+does not depend on width) and within ~25% of that value for a portrait one
+(below aspect 1 the fit distance itself varies with aspect, so a box's own
+depth no longer cancels out). When the camera is
 inside or straddling a group's bounding box, the group is treated as filling
 the screen and its **finest** child is selected.
 

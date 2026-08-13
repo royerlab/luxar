@@ -247,12 +247,14 @@ ratio, it is immune to non-displayed-dimension multiplicity (e.g. a stacked
 time axis inflates every level's count equally and cancels out). At render
 time the viewer multiplies `coverage_fraction` by the viewport's fitted screen
 axis (`min(width, height)` in pixels — the extent the camera framing actually
-fits, so the comparison stays invariant across aspect ratio, not just viewport
+fits, so the comparison holds across aspect ratio and not just viewport
 size — times a fill-factor constant of `0.5`) to get a pixel threshold, so a
 `coverage_fraction` of `1.0` activates once the object's projected bbox diagonal
 reaches half of the fitted screen axis — i.e. at any normal full-frame
 view — and coarser levels step in as it shrinks below that, identically on any
-monitor/viewport/aspect ratio. (Same contract as
+monitor or viewport size. Across aspect ratio the switch point is *exact* for a
+landscape viewport (aspect >= 1) and within ~25% of that value for a portrait
+one, where the camera fit distance itself varies with aspect. (Same contract as
 `docs/guides/user/LUXAR_ZARR_FORMAT.md`.)
 
 **Which anchor the finest child gets.** A **whole-object** ladder (the `levels`
