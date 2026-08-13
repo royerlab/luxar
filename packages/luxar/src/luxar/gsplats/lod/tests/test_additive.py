@@ -709,13 +709,16 @@ def test_radial_centre_defaults_to_bbox_not_scene_origin():
     here = _ray_gsplat(radii)
     far = _ray_gsplat(radii, offset=1000.0)
 
-    # The 1000-unit translation is irrelevant because the centre travels with
-    # the data. Under a scene-origin default the far set would instead reveal
-    # strictly left-to-right.
-    assert np.array_equal(
-        compute_additive_order(here, method="radial"),
-        compute_additive_order(far, method="radial"),
-    )
+    far_order = compute_additive_order(far, method="radial")
+
+    # Pin the far set's ORDER, not just its agreement with the near one: both
+    # rays are monotone in r, so a scene-origin default reveals each of them
+    # strictly left-to-right and the two still agree. Only the absolute order
+    # separates the two defaults — from the middle out, r=3 first.
+    assert list(radii[far_order]) == pytest.approx([3.0, 2.0, 4.0, 1.0, 5.0])
+    # And the 1000-unit translation is irrelevant: the centre travels with the
+    # data, so the near set ranks identically.
+    assert np.array_equal(compute_additive_order(here, method="radial"), far_order)
 
 
 def test_radial_explicit_centre_overrides_the_bbox():
@@ -1037,7 +1040,7 @@ def test_radial_reveal_centre_length_checked_against_selected_dims() -> None:
     """`reveal_centre` is validated against the SELECTED axes, not ndim: one
     selected axis but a three-vector centre is a mismatch and must be rejected."""
     data = _ray_gsplat(np.array([1.0, 2.0, 3.0], dtype=np.float32))  # 3D
-    with pytest.raises((ValueError, AssertionError)):
+    with pytest.raises(ValueError, match="one coordinate per spatial axis"):
         compute_additive_order(
             data, method="radial", spatial_dims=[0], reveal_centre=[0.0, 0.0, 0.0]
         )
