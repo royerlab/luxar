@@ -307,6 +307,14 @@ def _validate_merge_volume_refit(manifest: "BatchManifest") -> None:
             "stacked axis, so time and channel cannot both map onto it. Merge "
             "without the re-fit, or fit one channel at a time."
         )
+    # Classify every label through the shared vocabulary, so an unrecognised one
+    # is named here rather than surfacing from the loader further down. (It would
+    # still be caught before any part is written — the source is resolved ahead of
+    # the stream — but the message would not mention the merge.)
+    from luxar.io.volume import _axis_kind
+
+    for label in labels:
+        _axis_kind(label, "--axes")
     if not any(x in ("z", "y", "x", "depth", "height", "width") for x in labels):
         raise ValueError(
             f"merge: --axes {manifest.axes!r} names no spatial axis, so there is "

@@ -208,6 +208,19 @@ class TestMergePipelineProvenance:
                 )
             )
 
+        # An unrecognised axis label, named by the front door rather than
+        # surfacing from the loader further down.
+        with pytest.raises(ValueError, match="not recognised"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=1,
+                    n_channels=1,
+                    n_tiles=1,
+                    input_path=str(source),
+                    axes="q,z,y",
+                )
+            )
+
         # A folded CHANNEL axis: a merged part carries ONE stacked axis, so time
         # and channel cannot both map onto it.
         with pytest.raises(ValueError, match="folded channel axis"):
