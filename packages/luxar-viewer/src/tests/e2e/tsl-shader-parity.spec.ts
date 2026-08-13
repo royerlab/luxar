@@ -2539,6 +2539,9 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-capsule-joint',
     'line-capsule-fold',
     'line-capsule-fold-thin',
+    // The 2.11 px fold: the only fixture whose joint takes #1495's floored
+    // sharp-turn exception (under the width gate, at/above the AA floor).
+    'line-capsule-fold-mid',
     'line-capsule-taper',
     'line-capsule-colormap',
     'line-capsule-max',
