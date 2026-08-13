@@ -42,8 +42,10 @@ active, each side of a joint decodes to exactly its own segment id.
 
 Same dispatch, third variant. The capsule pick shaders duplicate the visual
 capsule's vertex stage exactly — stencil-local corners, half-disc bisector
-joints (same shared joint-code cap rule, same AA-ramp deficit composition) — and the
-fragment shades the same quartic
+joints (same shared joint-code cap rule, same AA-ramp deficit composition;
+and the same exception, that a cut end reserves the FULL disc rather than its
+half whenever a deficit packet exists, since the deficit term reaches as far
+as the leg's own profile does — #1488) — and the fragment shades the same quartic
 profile of the 2D point-to-segment distance, so `brightness = profile ×
 fade` tracks the visible pixels one-for-one (the capsule is peak-shaped by
 construction; there is no separate peak lane to select). Per-element alpha

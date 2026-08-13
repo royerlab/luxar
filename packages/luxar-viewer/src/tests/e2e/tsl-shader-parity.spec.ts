@@ -2549,6 +2549,15 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-capsule-pick-sideon',
     'line-capsule-pick-endon',
     'line-capsule-pick-joint',
+    // The joint fixture that STRESSES the deficit branch (#1488). The folds
+    // above already open the packet gate through the angle clause, but with
+    // congruent legs the deficit term is ~0 there; this opens it through the
+    // taper clause with a fat vertex between thin neighbours, so the branch
+    // and the full-disc stencil reach it depends on carry real signal. It has
+    // its own divergent-pixel test below — the shared mean cannot see this
+    // failure shape. No pick twin: see `buildDeficitPacketJoinTexelSource`,
+    // which records why one is not viable in this harness.
+    'line-capsule-joint-taper',
   ] as const) {
     test(`${variant}: capsule line primitive parity across backends`, async ({ page }) => {
       await bootHarness(page);
@@ -2563,6 +2572,51 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       ).toBeLessThan(2.0);
     });
   }
+
+  test('line-capsule-joint-taper: no structurally divergent pixel (#1488)', async ({ page }) => {
+    // WHY THE SHARED LOOP CANNOT DO THIS. With `shader-tsl-capsule.ts`
+    // reverted at BOTH ends to the half-disc reach (a TSL-only #1488 revert),
+    // 271 of this fixture's 494 covered pixels differ AT ALL, worst channel
+    // diff 255 — a joint disc chopped in half on one backend — and yet
+    // `meanAbsDiffPerCoveredPixel` reads 1.5764, UNDER the loop's 2.0, so the
+    // variant test passes. The mean divides summed channel error by
+    // `covered * 4` over the UNION of both footprints: footprint-invariant by
+    // design, but it dilutes exactly this failure shape, a localized
+    // structural break inside a much larger rendered V.
+    //
+    // WHAT THIS ASSERTS INSTEAD, and its measured margins — note the
+    // population is NOT the 271 above, which counts any difference at all,
+    // but only pixels past the 24/255 tolerance:
+    //   shipped:  0 such pixels (1 pixel differs at all, worst channel 10 —
+    //             a rasterisation-boundary flip, comfortably under 24);
+    //   reverted: 12 such pixels, worst channel 255.
+    // The allowance of 4 sits 3x under the revert and leaves room for that
+    // boundary ribbon shifting with a driver. It is headroom for
+    // rasterisation, not for structure.
+    await bootHarness(page);
+    const variant = 'line-capsule-joint-taper';
+    const glslPixels = await runGLSL(page, variant);
+    const tslResult = await runTSL(page, variant);
+    assertBothRendered(glslPixels, tslResult.pixels, variant);
+
+    const CHANNEL_TOLERANCE = 24;
+    let divergent = 0;
+    let worst = 0;
+    for (let i = 0; i < glslPixels.length; i += 4) {
+      let pixelWorst = 0;
+      for (let c = 0; c < 4; c++) {
+        pixelWorst = Math.max(pixelWorst, Math.abs(glslPixels[i + c] - tslResult.pixels[i + c]));
+      }
+      worst = Math.max(worst, pixelWorst);
+      if (pixelWorst > CHANNEL_TOLERANCE) divergent++;
+    }
+    expect(
+      divergent,
+      `${variant}: pixels diverging by >${CHANNEL_TOLERANCE}/255 between backends ` +
+        `(worst channel diff ${worst}) — the deficit branch and its full-disc ` +
+        'stencil reach must agree on both backends'
+    ).toBeLessThanOrEqual(4);
+  });
 
   test('line-capsule pick footprint agrees with the fat visual footprint (#1352)', async ({
     page,

@@ -826,7 +826,7 @@ function buildScaledJoinTexelSource(): LineTexelSource {
 }
 
 /**
- * SHARP-FOLD joint (#1352): two segments sharing a vertex with a ~150°
+ * SHARP-FOLD joint (#1352): two segments sharing a vertex with a 122.7°
  * direction change. Every interior end renders its half of the joint
  * DISC (round cap partitioned at the bisector), so the wide variant
  * (width 0.3 ⇒ ~12 px capsule radius at ortho scale 64) fills its fold
@@ -848,6 +848,86 @@ function buildFoldJoinTexelSource(width: number): LineTexelSource {
     // seg1's START joins seg0 (slot 0, shares its END ⇒ code −(slot+3) = −3).
     startJointCode: new Float32Array([0, -3]),
     endJointCode: new Float32Array([2, 0]),
+  };
+}
+
+/**
+ * DEFICIT-PACKET joint (#1488): {@link buildJoinTexelSource}'s V with
+ * ALTERNATING vertex widths, so the packet gate opens on the TAPER clause and
+ * the deficit term has real work to do.
+ *
+ * The gate is not otherwise unreached here — {@link buildFoldJoinTexelSource}
+ * at width 0.3 opens it via the ANGLE clause (its fold turns the direction by
+ * 122.7°, giving dot(q_hat, u) = -+0.540, just past the -+0.5 threshold, at
+ * radius 12.65 px ⇒ rMax 13.15, well over the 4 px width gate). Its legs are
+ * CONGRUENT, though, so the deficit term it computes is ~0 and the branch is
+ * exercised without being stressed: reverting the TSL reach to the half disc
+ * moves 244 of that fixture's pixels at up to 255 per channel, yet dilutes to
+ * a shared-loop mean of 0.1956 and fails nothing. (`line-capsule-fold-thin`
+ * is width-gated off at rMax 2.0; `line-capsule-joint`, uniform 0.1 widths,
+ * genuinely closes all four clauses at both ends and never reaches the branch
+ * at all.)
+ *
+ * This fixture instead opens the gate the way the deficit rule was designed
+ * for — a fat vertex between thin neighbours, where the fat disc keeps the
+ * half a thin partner cannot render — so the chop a short reach produces is
+ * large, local and worth asserting on. See the dedicated divergent-pixel test
+ * in `tsl-shader-parity.spec.ts`, which the shared mean cannot replace.
+ *
+ * Widths, and why each number matters (ortho, uOrthoLineScale 64, radius =
+ * width x 64 x CAPSULE_RADIUS_PER_QUAD_HALFWIDTH = width x 42.18 px):
+ *   Shared vertex 0.20 -> 8.44 px; both OUTER ends 0.06 -> 2.53 px. A fat
+ *   vertex between two thin neighbours is precisely the case the deficit rule
+ *   exists for (its disc keeps the half a thin partner cannot render).
+ *   - Both outer radii clear the 1.5 px AA floor (2.53 px), so the taper is
+ *     AUTHORED rather than manufactured by the clamp — a floored partner would
+ *     open the ratio clause for the wrong reason.
+ *   - rMax = max(8.44, 2.53) + 0.5 apron = 8.94 px at BOTH segments, 2.2x
+ *     CAPSULE_JOINT_PACKET_MIN_RADIUS_PX = 4 px. Below that width gate the
+ *     vertex stage skips the packet math outright and the fixture would be
+ *     vacuous however steep the taper.
+ *   - The gate opens on the TAPER-RATIO clause alone, at both ends:
+ *     |1 - 2.53/8.44| = 0.700, 35x the 0.02 tolerance. The other three stay
+ *     closed and are worth knowing as such — own-widening (2.53 > 8.44 x 1.02
+ *     is false), partner length (21.47 px projected vs the 2 x 8.44 = 16.87 px
+ *     threshold, clear by 27%), and the turn, whose clause is SIGNED: end A
+ *     needs dot(q_hat, u) > +0.5 and measures -0.6, end B needs < -0.5 and
+ *     measures +0.6, so both are the wrong sign and the clause is shut.
+ *
+ * Positions, lengths and joint codes are {@link buildJoinTexelSource}'s
+ * untouched: same V, same slot wiring, so the only difference from
+ * `line-capsule-joint` is which vertex-stage branch runs.
+ *
+ * VISUAL ONLY — there is deliberately no pick twin. The two pick surfaces
+ * carry the same packet branch and the same reach rule, so one would be
+ * worth having, but this harness cannot host it: `line-capsule-pick-joint`
+ * ALREADY spends 1.8462 of its 2.0 per-covered-pixel budget on 7 pixels in
+ * column x = 31, the shared-vertex column, where the two backends attribute
+ * the seam to different legs (GLSL writes [255, 255, b, 0] with b in 0..3;
+ * TSL writes [255, 0, B, 0] with B in 22..254 — a different element id AND a
+ * different brightness). Widening the joint reproduces that signature on 18
+ * pixels and a pick twin measures 3.1265, over budget. The failure is the
+ * pick pass's seam attribution, unrelated to the deficit region or the
+ * stencil reach, so a twin would only land a red test that blames the wrong
+ * thing. Nor would bolting the visual twin's divergent-pixel test onto it
+ * help: with the twin built and the pick TSL reach reverted, the >24/255
+ * population stays at 18 and the mean moves only 3.1265 -> 3.2840. The reach
+ * IS observable on this surface — the population differing AT ALL moves
+ * 18 -> 272 of 492 covered, worst channel 255 — just not by either metric
+ * this suite scores by. A future pick twin would therefore have to assert an
+ * ANY-DIFFERENCE population bound, and to do it outside the shared
+ * mean-based loop, which fails the fixture at 3.1265 on the pre-existing seam
+ * before the reach is even in question. Until then the pick surfaces'
+ * full-disc reach is pinned by the unit source pin in
+ * `tests/unit/rendering/materials/line-capsule.test.ts` alone.
+ */
+function buildDeficitPacketJoinTexelSource(): LineTexelSource {
+  const src = buildJoinTexelSource();
+  return {
+    ...src,
+    // seg0 runs thin -> fat into the shared vertex; seg1 runs fat -> thin out.
+    startWidths: new Float32Array([0.06, 0.2]),
+    endWidths: new Float32Array([0.2, 0.06]),
   };
 }
 
@@ -2219,7 +2299,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
   },
-  // ~150° fold, WIDE: the end's half of the joint disc fills the fold
+  // 122.7° fold, WIDE: the end's half of the joint disc fills the fold
   // tip (no chopped notch, no double-bright overlap).
   'line-capsule-fold': {
     source: CAPSULE_LINE_SOURCE,
@@ -2455,5 +2535,23 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
         isOrtho: true,
       }) as unknown as THREE.Material,
     buildMesh: (material) => buildJoinMesh(buildJoinTexelSource(), material),
+  },
+  // The V again with alternating vertex widths, so the joint packet gate
+  // opens and the DEFICIT rule (plus the full-disc stencil reach it needs,
+  // #1488) runs on both backends — see buildDeficitPacketJoinTexelSource.
+  'line-capsule-joint-taper': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildDeficitPacketJoinTexelSource()), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildJoinMesh(buildDeficitPacketJoinTexelSource(), material),
   },
 };
