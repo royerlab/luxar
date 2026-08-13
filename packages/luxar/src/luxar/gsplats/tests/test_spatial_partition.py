@@ -130,7 +130,9 @@ def test_spatial_partition_emits_bsp_tree_and_is_plane_consistent():
     assert _bsp_leaf_order(tree) == list(range(len(leaves)))
 
     # Split axes are spatial (0/1/2) — comparable in the viewer's 3D space.
-    part_centers = {i: leaf.additive_sublods[0].centers for i, leaf in enumerate(leaves)}
+    part_centers = {
+        i: leaf.additive_sublods[0].centers for i, leaf in enumerate(leaves)
+    }
 
     def parts_under(node: dict) -> list[int]:
         if "part" in node:
@@ -143,8 +145,12 @@ def test_spatial_partition_emits_bsp_tree_and_is_plane_consistent():
         ax = node["axis"]
         assert ax in (0, 1, 2)
         sp = node["split"]
-        left_coords = np.concatenate([part_centers[p][:, ax] for p in parts_under(node["left"])])
-        right_coords = np.concatenate([part_centers[p][:, ax] for p in parts_under(node["right"])])
+        left_coords = np.concatenate(
+            [part_centers[p][:, ax] for p in parts_under(node["left"])]
+        )
+        right_coords = np.concatenate(
+            [part_centers[p][:, ax] for p in parts_under(node["right"])]
+        )
         # left holds coord < split; right holds coord >= split (ties → left).
         assert left_coords.max() <= sp + 1e-4
         assert right_coords.min() >= sp - 1e-4
@@ -159,11 +165,15 @@ def test_spatial_partition_bsp_tree_round_trips_on_disk():
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / "part.gsplats.zarr"
         src = data.to_spatial_partition(max_elements=40)
-        write_gsplats_tree(p, src, ordering="none", encoding_mode=EncodingMode.PRECISION)
+        write_gsplats_tree(
+            p, src, ordering="none", encoding_mode=EncodingMode.PRECISION
+        )
         root = zarr.open_group(str(p), mode="r")
         assert "bsp_tree" in root.attrs
         # Same leaf→part structure survives the write.
-        assert _bsp_leaf_order(dict(root.attrs["bsp_tree"])) == _bsp_leaf_order(src.bsp_tree)
+        assert _bsp_leaf_order(dict(root.attrs["bsp_tree"])) == _bsp_leaf_order(
+            src.bsp_tree
+        )
         # And read_gsplat_node restores it onto the in-memory node (disk→node),
         # the path the scene graft depends on.
         node = read_gsplat_node(root, root)
@@ -476,3 +486,107 @@ def test_partition_from_regions_single_region_recipe_returns_bare_part_node():
     )
     assert isinstance(node, GSplatLeaf)  # not wrapped in a GSplatPartition
     assert node.n_additive_sublods == 3
+
+
+# ── bsp_tree survives the tree-rebuilding helpers and the CLI ops ────────
+#
+# `GSplatPartition.bsp_tree` defaults to None, so any rebuild that forgets the
+# field DROPS the split planes rather than erroring — the partition still loads,
+# still renders, and merely loses exact ordering. These lock the field to the
+# rebuilders and to the two commands built on them.
+
+
+def _partition_with_tree(parts: int = 4, per_part: int = 50) -> "GSplatPartition":
+    """A real BSP partition (so it genuinely carries planes) of ``parts`` parts."""
+    rng = np.random.default_rng(11)
+    n = parts * per_part
+    centers = (rng.random((n, 3)) * 100).astype(np.float32)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    data = GSplatData(
+        centers=centers,
+        amplitudes=rng.uniform(0.2, 1.0, size=(n,)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    node = data.to_spatial_partition(max_elements=per_part + per_part // 2)
+    assert node.bsp_tree is not None
+    return node
+
+
+def test_partition_from_regions_prunes_the_producers_tree_to_surviving_parts():
+    """Empty regions drop out, so the caller's labels — not positions — decide
+    which leaves survive, and the survivors are renumbered to child_index."""
+    from luxar.gsplats.tree import GSplatPartition
+
+    # Regions labelled 0, 1, 2; the middle one is empty and will be dropped.
+    regions = [_region(30, 0.0, 0), _region(0, 50.0, 1), _region(30, 100.0, 2)]
+    node = GSplatData.partition_from_regions(
+        regions,
+        bsp_tree={
+            "axis": 0,
+            "split": 50.0,
+            "left": {"part": 0},
+            "right": {
+                "axis": 0,
+                "split": 100.0,
+                "left": {"part": 1},
+                "right": {"part": 2},
+            },
+        },
+        region_labels=[0, 1, 2],
+    )
+    assert isinstance(node, GSplatPartition)
+    assert node.n_children == 2
+    assert node.bsp_tree == {
+        "axis": 0,
+        "split": 50.0,
+        "left": {"part": 0},
+        "right": {"part": 1},
+    }
+
+
+def test_partition_from_regions_rejects_mismatched_labels():
+    with pytest.raises(ValueError, match="region_labels"):
+        GSplatData.partition_from_regions(
+            [_region(10, 0.0, 0), _region(10, 50.0, 1)], region_labels=[0]
+        )
+
+
+def test_map_leaves_preserves_bsp_tree():
+    """`gsplat additive` and friends re-ladder leaves without moving anything —
+    dropping the planes there is pure loss."""
+    from luxar.gsplats.tree import map_leaves
+
+    node = _partition_with_tree()
+    rebuilt = map_leaves(node, lambda leaf: leaf)
+    assert rebuilt.bsp_tree == node.bsp_tree
+
+
+def test_without_meta_key_preserves_bsp_tree():
+    from luxar.gsplats.tree import without_meta_key
+
+    node = _partition_with_tree()
+    assert without_meta_key(node, "coverage_fraction").bsp_tree == node.bsp_tree
+
+
+@pytest.mark.parametrize("topology", ["tiles", "adaptive"])
+def test_lod_recipes_carry_the_bsp_tree(topology):
+    """`tiles`/`adaptive` wrap each part in its own LOD without changing the part
+    set, so the planes must ride along."""
+    from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
+
+    rng = np.random.default_rng(5)
+    n = 400
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    data = GSplatData(
+        centers=(rng.random((n, 3)) * 100).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, size=(n,)).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    params = RecipeParams(
+        max_elements=120, n_lods=2, compression_factor=2, levels=2, device="cpu"
+    )
+    node = build_recipe(data, topology, params)
+    assert node.bsp_tree is not None
+    assert sorted(_bsp_leaf_order(node.bsp_tree)) == list(range(node.n_children))

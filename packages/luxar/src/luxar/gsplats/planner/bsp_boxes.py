@@ -61,6 +61,12 @@ def plan_partition(
     leaf holds ~the calibrated reference content and therefore gets ~the
     calibrated ``k_star`` budget — the cleanest "calibrate at the scale you fit
     at" coupling.
+
+    The recursion's split planes are retained on :attr:`FitPlan.bsp_tree` (leaf
+    labels index :attr:`FitPlan.boxes`). They used to be discarded, leaving the
+    fitted partition with no way to say how its parts stack up and the viewer
+    guessing from part centroids — which is not a valid painter's order and pops
+    at the seams as the camera orbits (#1541).
     """
     dens = _density_from(density)
     if target_features is None:
@@ -70,7 +76,11 @@ def plan_partition(
 
     leaves: List[Tuple[int, int, int, int, int, int]] = []
 
-    def _split(box: Tuple[int, int, int, int, int, int], depth: int) -> None:
+    def _split(box: Tuple[int, int, int, int, int, int], depth: int) -> dict:
+        # Returns this box's serialized `bsp_tree` node. A leaf's label is its
+        # index in `leaves`, hence its index in the returned FitPlan.boxes (built
+        # from `leaves` in order below), so a downstream prune can map it to a
+        # written child_index.
         z0, z1, y0, y1, x0, x1 = box
         w = field.box_weight(*box)
         dims = [z1 - z0, y1 - y0, x1 - x0]
@@ -78,7 +88,7 @@ def plan_partition(
         can = max(dims) >= 2 * min_leaf
         if (not must and w <= target_features) or not can or depth > 24:
             leaves.append(box)
-            return
+            return {"part": len(leaves) - 1}
         cand = [a for a in range(3) if dims[a] >= 2 * min_leaf]
         if must:
             over = [a for a in cand if dims[a] > max_leaf]
@@ -98,7 +108,7 @@ def plan_partition(
                 best = (score, ax, m)
         if best is None:
             leaves.append(box)
-            return
+            return {"part": len(leaves) - 1}
         _, ax, m = best
         if m.sum() <= 0:  # uniform fallback -> geometric midpoint
             m = np.ones_like(m)
@@ -119,10 +129,18 @@ def plan_partition(
         lo, hi = list(box), list(box)
         lo[2 * ax + 1] = cut
         hi[2 * ax] = cut
-        _split(tuple(lo), depth + 1)  # type: ignore[arg-type]
-        _split(tuple(hi), depth + 1)  # type: ignore[arg-type]
+        # `lo` is the half-open [.., cut) side, i.e. `coord < cut` — the same
+        # convention the serialized tree's `left` carries (and the same one
+        # `_fit_one_box`'s core-box keep-mask applies), so the plane separates the
+        # two subtrees exactly and the viewer can paint far-side-first.
+        return {
+            "axis": int(ax),
+            "split": float(cut),
+            "left": _split(tuple(lo), depth + 1),  # type: ignore[arg-type]
+            "right": _split(tuple(hi), depth + 1),  # type: ignore[arg-type]
+        }
 
-    _split((0, Z, 0, Y, 0, X), 0)
+    bsp_tree = _split((0, Z, 0, Y, 0, X), 0)
 
     boxes = [
         PlanBox(
@@ -140,6 +158,7 @@ def plan_partition(
         min_leaf=int(min_leaf),
         max_leaf=int(max_leaf),
         density=_as_dict(dens),
+        bsp_tree=bsp_tree,
         meta={"target_features": int(target_features), "cell": int(c)},
     )
 

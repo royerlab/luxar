@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 from arbol import aprint, asection
 
+from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.gsplats.batch.manifest import BatchManifest, output_filename
 
 if TYPE_CHECKING:
@@ -390,6 +391,94 @@ def _recipe_pipeline_info(
     return info
 
 
+def _slot_bsp_tree(
+    manifest: BatchManifest, output_dir: Path, verbose: bool
+) -> Optional[Dict[str, Any]]:
+    """Split planes over the batch's spatial slots, labelled by SLOT index.
+
+    Recovers the decomposition the fit array worked from, so the merged partition
+    can tell the viewer how its parts stack up (#1541) instead of leaving it to
+    guess from part centroids. Two modes, two sources:
+
+    * ``content`` — the shared :class:`FitPlan` at ``manifest.plan_path`` carries
+      the planner's own recursion, and slot ``k`` IS ``plan.boxes[k]`` (that is the
+      ``--plan-box k`` contract each array task fits against). Exact: boxes are
+      core-disjoint.
+    * ``uniform`` — the tile grid is a deterministic function of the tiling
+      geometry, so :func:`~luxar.gsplats.tiling.compute_tile_specs` reproduces it
+      exactly, and ``TileSpec.index`` is the slot index. Approximate: apodized
+      tiles keep their overlap band (see
+      :func:`~luxar.gsplats.tiling.grid_bsp_tree`).
+
+    Returns ``None`` — the documented centroid fallback — when the source is
+    missing or unusable: a plan written before this landed, an unreadable
+    ``plan.json``, an incomplete manifest, or a box count that disagrees with the
+    plan (which would mislabel every leaf).
+    """
+    if manifest.mode == "content":
+        return _content_slot_bsp_tree(manifest, output_dir, verbose)
+    return _uniform_slot_bsp_tree(manifest, verbose)
+
+
+def _content_slot_bsp_tree(
+    manifest: BatchManifest, output_dir: Path, verbose: bool
+) -> Optional[Dict[str, Any]]:
+    """The shared ``FitPlan``'s own recursion, keyed by ``--plan-box`` slot."""
+    if not manifest.plan_path:
+        return None
+    plan_path = Path(manifest.plan_path)
+    if not plan_path.is_absolute():
+        plan_path = output_dir / plan_path
+    try:
+        from luxar.gsplats.planner.spec import FitPlan
+
+        plan = FitPlan.from_json(plan_path)
+    except Exception as exc:  # unreadable / malformed / absent
+        if verbose:
+            aprint(f"  No split planes: could not read {plan_path} ({exc!r})")
+        return None
+    if plan.bsp_tree is None:
+        return None
+    if plan.n_boxes != manifest.n_tiles:
+        # The plan and the array disagree on the slot space, so leaf labels would
+        # not name the boxes the tasks actually fitted.
+        if verbose:
+            aprint(
+                f"  No split planes: plan has {plan.n_boxes} boxes but the "
+                f"manifest expects {manifest.n_tiles} slots"
+            )
+        return None
+    return plan.bsp_tree
+
+
+def _uniform_slot_bsp_tree(
+    manifest: BatchManifest, verbose: bool
+) -> Optional[Dict[str, Any]]:
+    """The tile grid, recomputed from the manifest's tiling geometry."""
+    if not manifest.spatial_shape:
+        return None
+    from luxar.gsplats.tiling import compute_tile_specs, grid_bsp_tree
+
+    try:
+        specs = compute_tile_specs(
+            tuple(manifest.spatial_shape),
+            manifest.tile_size,
+            manifest.tile_overlap,
+        )
+    except ValueError as exc:  # geometry the tiler rejects (e.g. overlap >= size)
+        if verbose:
+            aprint(f"  No split planes: cannot rebuild the tile grid ({exc!r})")
+        return None
+    if len(specs) != manifest.n_tiles:
+        if verbose:
+            aprint(
+                f"  No split planes: recomputed grid has {len(specs)} tiles but "
+                f"the manifest expects {manifest.n_tiles}"
+            )
+        return None
+    return grid_bsp_tree(specs)
+
+
 def _merge_partition(
     manifest: BatchManifest,
     output_dir: Path,
@@ -465,10 +554,21 @@ def _merge_partition(
         return final_path
 
     # K > 1 → streaming partition, one part per spatial tile.
+    #
+    # Split planes for the viewer's exact back-to-front part order (#1541). The
+    # plan is not stored on the manifest itself: `content` mode points at the
+    # shared FitPlan JSON every array task fits a box from, and `uniform` mode is
+    # a deterministic function of the tiling geometry, so both are recoverable
+    # here. Leaf labels are SLOT indices (k below) and get renumbered to written
+    # part indices by the provider once the loop has skipped its empty slots.
+    slot_tree = _slot_bsp_tree(manifest, output_dir, verbose)
+    kept_slots: List[int] = []
+
     def _parts() -> "Iterator[GSplatNode]":
         from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
 
         kept = 0
+        kept_slots.clear()
         for k in range(n_k):
             part = _build_part_for_tile(
                 tiles_dir, k, t_indices, c_indices, n_k, channel_colors, label
@@ -486,6 +586,7 @@ def _merge_partition(
             )
             assert isinstance(node, (GSplatLeaf, GSplatLodGroup))
             kept += 1
+            kept_slots.append(k)
             if verbose:
                 aprint(
                     f"  part {kept - 1} <- tile {k}: "
@@ -505,6 +606,8 @@ def _merge_partition(
             max_elements=0,
             pipeline_info=pipeline_info,
             barrier_dims=barrier_dims,
+            # Resolved after the stream, when `kept_slots` is complete.
+            bsp_tree=lambda: prune_serialized_bsp_tree(slot_tree, kept_slots),
         )
         if verbose:
             aprint(f"  Wrote kind=partition with {n_written} parts{recipe_label}")

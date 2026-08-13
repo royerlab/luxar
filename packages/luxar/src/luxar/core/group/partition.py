@@ -28,6 +28,10 @@ This module hosts:
   returns a list of index arrays into the original positions.
 * :func:`median_bsp_polylines` / :func:`midpoint_bsp_polylines` — the
   polyline-atomic variants for ``add_lines``.
+* :func:`prune_serialized_bsp_tree` / :func:`map_serialized_bsp_tree` — the
+  algebra on the *serialized* (``bsp_tree`` attr) form of that tree: renumbering
+  it after empty regions are dropped, and mapping its split coordinates through
+  an affine on the centers (or refusing, when the affine is not axis-preserving).
 * :func:`validate_partition_group` — the well-formedness check (free function,
   matches the validator pattern in ``core/group/lod/gsplats.py``).
 * :func:`reject_mismatched_partition_parent` — the add-time half of that
@@ -42,7 +46,16 @@ This module hosts:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Union,
+)
 
 import numpy as np
 from arbol import aprint
@@ -142,6 +155,190 @@ class BSPNode:
             }
 
         return build(self)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Serialized-tree algebra (the JSON / zarr-attr dict form)
+# ────────────────────────────────────────────────────────────────────────
+#
+# These operate on the ``{"axis", "split", "left", "right"}`` / ``{"part": i}``
+# dicts :meth:`BSPNode.to_serializable` emits — the form stored as the
+# ``bsp_tree`` partition attr and consumed by the viewer — NOT on
+# :class:`BSPNode`. Producers that never build a ``BSPNode`` (the content
+# planner's box recursion, the uniform tile grid) emit that dict directly, so
+# the transformations a stored tree needs over its lifetime live here rather
+# than on the dataclass.
+#
+# Leaf ``part`` refs are OPAQUE LABELS here: each producer stamps the index of
+# the region it split out, and :func:`prune_serialized_bsp_tree` renumbers them
+# to the surviving ``child_index`` values once empty regions have been dropped.
+# Nothing in this section relies on leaves being numbered in DFS order — which
+# :meth:`BSPNode.to_serializable` does, but a median split over a row-major tile
+# grid does not.
+
+
+def prune_serialized_bsp_tree(
+    tree: Optional[Dict[str, Any]], keep: Iterable[int]
+) -> Optional[Dict[str, Any]]:
+    """Drop leaves outside ``keep`` and renumber the survivors to ``0..m-1``.
+
+    Every tiled producer plans more regions than it writes: a box whose budget
+    rounds to zero, a tile that fits no splats, a part emptied by a cull, a
+    batch slot empty at every timepoint. The parts are then written in ascending
+    original order with ``child_index`` counted over the SURVIVORS
+    (``partition_from_regions``'s comprehension, ``write_partition_streaming``'s
+    ``n_written``), so a tree still labelled with pre-drop indices points the
+    viewer at the wrong parts — and does it silently, because the result is
+    still a valid permutation.
+
+    An internal node that loses one side entirely collapses into its surviving
+    child: with nothing beyond the plane, the plane carries no ordering
+    information.
+
+    Returns ``None`` — meaning "no tree", the documented centroid fallback — for
+    a ``None`` input, when every leaf is dropped, and when ``keep`` is not a
+    subset of the tree's labels. That last case is deliberately a total
+    give-up rather than a partial tree: a rank map covering only some parts is
+    exactly what leaves the viewer mixing ranked and unranked members.
+
+    ``keep`` is in the tree's own label space, and the renumbering is by
+    ascending label — the order the writers assign ``child_index`` in.
+    """
+    if tree is None:
+        return None
+    keep_set = {int(k) for k in keep}
+    if not keep_set:
+        return None
+
+    labels: set = set()
+
+    def collect(node: Dict[str, Any]) -> None:
+        if "part" in node:
+            labels.add(int(node["part"]))
+            return
+        collect(node["left"])
+        collect(node["right"])
+
+    collect(tree)
+    if not keep_set.issubset(labels):
+        return None
+
+    renumber = {label: i for i, label in enumerate(sorted(keep_set))}
+
+    def walk(node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if "part" in node:
+            part = int(node["part"])
+            return {"part": renumber[part]} if part in renumber else None
+        left = walk(node["left"])
+        right = walk(node["right"])
+        if left is None:
+            return right
+        if right is None:
+            return left
+        return {
+            "axis": int(node["axis"]),
+            "split": float(node["split"]),
+            "left": left,
+            "right": right,
+        }
+
+    return walk(tree)
+
+
+def _axis_image(
+    axis: int, linear: NDArray[np.floating], offset: NDArray[np.floating]
+) -> Optional[tuple]:
+    """Image of split axis ``axis`` under an affine, or ``None`` if it has none.
+
+    A plane ``coord[axis] == s`` stays axis-aligned only when the affine sends
+    that axis to a single other axis and nothing else lands on it: column
+    ``axis`` must have one nonzero, at row ``b``, and row ``b`` one nonzero, at
+    column ``axis``. Returns ``(b, coefficient, offset[b])``; ``b`` must be one
+    of the three axes the serialized format admits.
+    """
+    ndim = int(linear.shape[0])
+    if axis >= ndim:
+        return None
+    # Scale-relative tolerance: a rotation matrix's "zero" entries are only zero
+    # to within the trig round-off of however it was constructed.
+    atol = 1e-9 * max(1.0, float(np.max(np.abs(linear))))
+    rows = np.flatnonzero(np.abs(linear[:, axis]) > atol)
+    if rows.size != 1:
+        return None
+    image = int(rows[0])
+    if image > 2:
+        return None
+    cols = np.flatnonzero(np.abs(linear[image, :]) > atol)
+    if cols.size != 1 or int(cols[0]) != axis:
+        return None
+    return image, float(linear[image, axis]), float(offset[image])
+
+
+def map_serialized_bsp_tree(
+    tree: Optional[Dict[str, Any]],
+    linear: Optional[NDArray[np.floating]] = None,
+    shift: Optional[NDArray[np.floating]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Map split coordinates through an affine on the centers, or give up.
+
+    ``split`` is a coordinate in the centers' own space, so any transform that
+    moves centers invalidates a stored tree. Preserving one verbatim is WORSE
+    than dropping it: a stale plane still yields a plausible permutation, so the
+    ordering degrades silently instead of falling back to the documented
+    centroid heuristic.
+
+    An axis-aligned BSP survives exactly those affines that carry axis-aligned
+    planes to axis-aligned planes — translation, per-axis scale, and rotations
+    by multiples of 90 degrees. Formally, source axis ``a`` has an image axis
+    ``b`` only when column ``a`` of ``linear`` has a single nonzero, at row
+    ``b``, AND row ``b`` has a single nonzero, at column ``a``. Then
+    ``split' = linear[b, a] * split + shift[b]``, and a NEGATIVE coefficient
+    mirrors the two halves, so ``left``/``right`` swap (``coord < split``
+    inverts under a reflection).
+
+    Returns ``None`` when a split axis actually used by the tree has no such
+    image: an arbitrary rotation shears the cells out of axis-alignment and the
+    serialized format cannot express the result. ``b`` must also land in
+    ``0``/``1``/``2``, the only axes the format admits.
+
+    ``linear`` is the linear part and ``shift`` the translation of
+    ``p -> linear @ p + shift``; either may be ``None`` for identity/zero, and
+    both ``None`` returns ``tree`` unchanged (an intensity-only transform).
+    """
+    if tree is None:
+        return None
+    if linear is None and shift is None:
+        return tree
+
+    if linear is not None:
+        lin = np.asarray(linear, dtype=float)
+        ndim = int(lin.shape[0])
+    else:
+        ndim = int(np.asarray(shift).shape[0])
+        lin = np.eye(ndim)
+    off = np.zeros(ndim) if shift is None else np.asarray(shift, dtype=float)
+
+    def walk(node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if "part" in node:
+            return {"part": int(node["part"])}
+        image = _axis_image(int(node["axis"]), lin, off)
+        if image is None:
+            return None
+        axis, coef, beta = image
+        left = walk(node["left"])
+        right = walk(node["right"])
+        if left is None or right is None:
+            return None
+        if coef < 0:
+            left, right = right, left
+        return {
+            "axis": axis,
+            "split": coef * float(node["split"]) + beta,
+            "left": left,
+            "right": right,
+        }
+
+    return walk(tree)
 
 
 def _bsp_tree_median(
