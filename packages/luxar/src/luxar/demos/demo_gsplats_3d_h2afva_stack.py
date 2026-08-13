@@ -277,17 +277,24 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     # comes down to keep the near face off the clip point (raising
                     # one without the other either washes out or goes muddy). Both
                     # were dialled in against this dataset in the Layers panel.
+                    #
+                    # Opacity stays at its 1.0 default: with volumetric the depth
+                    # cueing is absorption's job, so dimming the layer as well only
+                    # costs signal on the far side.
                     blending_mode="volumetric",
                     absorption=1.34,
-                    opacity=0.71,
-                    colormap="viridis",
+                    # `plasma` over `viridis`: on emission–absorption the bright
+                    # end carries the near surface, and plasma's yellow-to-magenta
+                    # ramp separates the nuclei from the tissue behind them where
+                    # viridis's green-to-yellow crowds them together.
+                    colormap="plasma",
                     # On a COLORMAPPED node `intensity`/`offset` are not a colour
                     # gain — they ARE the scalar window feeding the LUT, as
                     # `intensity = 1/(hi-lo)`, `offset = -lo/(hi-lo)`. This is the
-                    # 0.001–0.135 window (the data reaches 0.146), which is what
+                    # 0.001–0.111 window (the data reaches 0.146), which is what
                     # the panel's DISPLAY RANGE shows.
-                    intensity=7.462687,
-                    offset=-0.007463,
+                    intensity=9.090909,
+                    offset=-0.009091,
                     gamma=2.2,
                     layer=True,
                 )
