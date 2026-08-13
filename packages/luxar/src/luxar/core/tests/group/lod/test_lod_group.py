@@ -194,23 +194,20 @@ class TestLODGroupValidation:
                 validate_lod_group(lod)
 
     def test_validate_non_monotonic_raises(self, tmp_path) -> None:
+        # A floor-legal ladder (coarsest 0.0) whose LATER entries descend —
+        # otherwise the coarsest-must-be-0.0 check fires first and this test
+        # would pass for the wrong reason.
         with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             lod = scene.add_lod_group("multires")
-            lod.add_gsplats(
-                "c0",
-                centers=_CENTERS,
-                amplitudes=1.0,
-                cholesky_factors=_CHOL,
-                coverage_fraction=0.5,
-            )
-            lod.add_gsplats(
-                "c1",
-                centers=_CENTERS,
-                amplitudes=1.0,
-                cholesky_factors=_CHOL,
-                coverage_fraction=0.1,  # < previous — invalid
-            )
+            for cname, cf in (("c0", 0.0), ("c1", 0.5), ("c2", 0.1)):
+                lod.add_gsplats(
+                    cname,
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,  # c2 < c1 — invalid
+                )
             with pytest.raises(ValueError, match="strictly greater"):
                 validate_lod_group(lod)
 
@@ -306,6 +303,25 @@ class TestLODGroupValidation:
                     coverage_fraction=cf,
                 )
             with pytest.raises(ValueError, match="not a finite number"):
+                validate_lod_group(lod)
+
+    def test_validate_rejects_nonzero_coarsest_floor(self, tmp_path) -> None:
+        """The coarsest child must be EXACTLY 0.0 — the always-eligible floor
+        the format requires. A strictly-ascending ladder like [0.25, 0.5] used
+        to validate, leaving no eligible child below 0.25 occupancy (what
+        rendered there depended on selector fallback, not the ladder)."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires", selector="screen-area")
+            for i, cf in enumerate([0.25, 0.5]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            with pytest.raises(ValueError, match="must be exactly 0.0"):
                 validate_lod_group(lod)
 
     def test_validate_rejects_negative_coverage_fraction(self, tmp_path) -> None:

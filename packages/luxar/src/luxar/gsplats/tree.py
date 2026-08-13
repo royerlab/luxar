@@ -508,6 +508,67 @@ def node_from_substitutive_levels(levels: "List[SubstitutiveLevel]") -> GSplatNo
     )
 
 
+def gate_authored_selector(
+    children: "List[GSplatNode]",
+    meta_selector: "Optional[str]",
+    *,
+    source: str,
+) -> "Tuple[List[GSplatNode], str]":
+    """The SELECTOR/THRESHOLD CONSISTENCY gate both serializers share.
+
+    A ``kind=lod`` group's meta ``selector`` describes its AUTHORED per-child
+    ``coverage_fraction`` thresholds, so the two writers
+    (``io/_compiler/gsplat_tree.write_gsplat_node`` and
+    ``gsplats_pipeline/from_io.graft_gsplat_node``) must agree on when it can
+    be preserved — otherwise a store grafted into a scene would render
+    differently from the same store opened directly. Returns the (possibly
+    scrubbed) children and the selector to stamp:
+
+    * unknown ``meta_selector`` → ``ValueError`` before anything is written
+      (the READER whitelists stale spellings away; one arriving here is a
+      hand-built tree that would otherwise write an out-of-vocabulary
+      selector into a store claiming v3.4 compliance);
+    * PARTIALLY-authored ladder → the authored remnant is scrubbed (warned)
+      so the caller's fallback derivation covers every child uniformly, and
+      the stamp is ``"screen-area"`` (the units of every live derivation);
+    * fully authored + explicit selector → preserved verbatim, after
+      validating the thresholds against that selector's contract;
+    * fully authored + NO selector → legacy ``"coverage"`` (the viewer's own
+      missing-selector fallback; authored = legacy is the library-wide
+      convention), likewise validated.
+    """
+    from arbol import aprint
+
+    from luxar.typing_utils.constants import LOD_SELECTORS
+
+    if meta_selector is not None and meta_selector not in LOD_SELECTORS:
+        raise ValueError(
+            f"kind=lod group meta carries selector={meta_selector!r}; must "
+            f"be one of {sorted(LOD_SELECTORS)} (it names the units of the "
+            "children's coverage_fraction thresholds)"
+        )
+    authored = ["coverage_fraction" in (c.meta or {}) for c in children]
+    if not all(authored) and any(authored):
+        aprint(
+            f"  ⚠️  {source}: PARTIALLY-authored coverage_fraction ladder — "
+            "scrubbing the authored remnant and re-deriving the whole ladder "
+            "(screen-area units) so the written selector and thresholds agree."
+        )
+        children = [without_meta_key(c, "coverage_fraction") for c in children]
+        return children, "screen-area"
+    if not all(authored):
+        return children, "screen-area"
+    from luxar.core.group.lod.group import validate_authored_coverage_ladder
+
+    selector_out = str(meta_selector) if meta_selector is not None else "coverage"
+    validate_authored_coverage_ladder(
+        [float(c.meta["coverage_fraction"]) for c in children],
+        selector_out,
+        source=source,
+    )
+    return children, selector_out
+
+
 def tree_from_substitutive_levels(
     levels: "List[SubstitutiveLevel]",
     coverage: "Optional[Callable[[List[int]], List[float]]]" = None,

@@ -21,6 +21,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -281,6 +282,100 @@ def _meta_less_ladder():
     for leaf in children:
         assert not leaf.meta, "the fixture must carry no authored coverage_fraction"
     return GSplatLodGroup(children=children)
+
+
+def _authored_ladder(covs, selector=None):
+    """The meta-less fixture with per-child authored ``coverage_fraction``
+    (``None`` entries stay meta-less) and an optional group meta selector."""
+    from luxar.gsplats.tree import GSplatLodGroup
+
+    base = _meta_less_ladder()
+    children = []
+    for child, cov in zip(base.children, covs):
+        meta = dict(child.meta)
+        if cov is not None:
+            meta["coverage_fraction"] = cov
+        children.append(type(child)(additive_sublods=child.additive_sublods, meta=meta))
+    gmeta = {} if selector is None else {"selector": selector}
+    return GSplatLodGroup(children=children, meta=gmeta)
+
+
+def test_graft_selector_threshold_consistency_gate() -> None:
+    """The graft applies the SAME all-or-none gate as the standalone writer, so
+    a store grafted into a scene renders like the same store opened directly:
+
+    * PARTIALLY authored under ``selector="coverage"`` → scrubbed, whole ladder
+      re-derived, wrapper stamped ``screen-area`` (no mixed-units ladder);
+    * fully authored + SELECTOR-LESS → legacy ``"coverage"`` with values
+      preserved (the viewer's own missing-selector fallback);
+    * unknown selector → refused;
+    * authored thresholds validated against the selector (screen-area cap 1.0,
+      coarsest floor exactly 0.0).
+    """
+    from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+    from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Arm 1: partial + legacy stamp → screen-area + full re-derivation.
+        p1 = Path(tmp) / "mixed.luxar.zarr"
+        with LuxarZarrCompiler(p1, encoding_mode=EncodingMode.PRECISION) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            graft_gsplat_node(
+                scene,
+                name="lad",
+                node=_authored_ladder([0.0, None, 2.0], selector="coverage"),
+            )
+        r1 = zarr.open_group(str(p1), mode="r")
+        assert r1["lad"].attrs["selector"] == "screen-area"
+        assert _ladder_child_coverage(r1["lad"]) == [
+            0.0,
+            0.25,
+            WHOLE_OBJECT_FINEST_ANCHOR,
+        ]
+
+        # Arm 2: fully authored, selector-less → legacy stamp, values verbatim.
+        p2 = Path(tmp) / "selectorless.luxar.zarr"
+        with LuxarZarrCompiler(p2, encoding_mode=EncodingMode.PRECISION) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            graft_gsplat_node(scene, name="lad", node=_authored_ladder([0.0, 0.5, 2.0]))
+        r2 = zarr.open_group(str(p2), mode="r")
+        assert r2["lad"].attrs["selector"] == "coverage"
+        assert _ladder_child_coverage(r2["lad"]) == [0.0, 0.5, 2.0]
+
+        # Arm 3: unknown selector → refused.
+        with LuxarZarrCompiler(
+            Path(tmp) / "bogus.luxar.zarr", encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="must be one of"):
+                graft_gsplat_node(
+                    scene,
+                    name="lad",
+                    node=_authored_ladder([0.0, 0.5, 1.0], selector="pixel_size"),
+                )
+
+        # Arm 4: authored contract enforced — 2.0 out of the screen-area range,
+        # and a non-zero coarsest floor refused.
+        with LuxarZarrCompiler(
+            Path(tmp) / "over.luxar.zarr", encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match=r"must lie in \[0, 1\]"):
+                graft_gsplat_node(
+                    scene,
+                    name="lad",
+                    node=_authored_ladder([0.0, 0.5, 2.0], selector="screen-area"),
+                )
+        with LuxarZarrCompiler(
+            Path(tmp) / "floor.luxar.zarr", encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="must be exactly 0.0"):
+                graft_gsplat_node(
+                    scene,
+                    name="lad",
+                    node=_authored_ladder([0.25, 0.5, 1.0], selector="screen-area"),
+                )
 
 
 def _ladder_child_coverage(lod_group) -> list:

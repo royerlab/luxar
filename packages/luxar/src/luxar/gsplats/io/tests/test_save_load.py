@@ -1274,12 +1274,27 @@ def test_writer_selector_threshold_consistency_gate() -> None:
                 Path(tmpdir) / "over.gsplats.zarr", over_range, ordering="none"
             )
         non_monotonic = GSplatLodGroup(
-            children=[_leaf(50, 10, cov=0.5), _leaf(800, 11, cov=0.25)],
+            children=[
+                _leaf(50, 10, cov=0.0),
+                _leaf(200, 14, cov=0.5),
+                _leaf(800, 11, cov=0.25),
+            ],
             meta={"selector": "screen-area"},
         )
         with pytest.raises(ValueError, match="strictly greater"):
             write_gsplats_tree(
                 Path(tmpdir) / "nonmono.gsplats.zarr", non_monotonic, ordering="none"
+            )
+        # The coarsest child must be exactly 0.0 (the always-eligible floor the
+        # format requires) — [0.25, 0.5] is strictly ascending and in range but
+        # leaves no eligible child below 0.25 occupancy.
+        no_floor = GSplatLodGroup(
+            children=[_leaf(50, 12, cov=0.25), _leaf(800, 13, cov=0.5)],
+            meta={"selector": "screen-area"},
+        )
+        with pytest.raises(ValueError, match="must be exactly 0.0"):
+            write_gsplats_tree(
+                Path(tmpdir) / "nofloor.gsplats.zarr", no_floor, ordering="none"
             )
 
 

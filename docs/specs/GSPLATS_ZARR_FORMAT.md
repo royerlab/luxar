@@ -260,7 +260,32 @@ deliberately independent of per-level element counts (a count ratio is blind
 to element size, overlap, and intent; the retired derivation
 `sqrt(N_i/N_finest)` held the finest level until the object was far away on
 dense sub-pixel data). The metric is built from NDC fractions, so selection is
-identical on any monitor/viewport. Under the legacy `selector: "coverage"`
+identical on any monitor/viewport.
+
+Two refinements are NORMATIVE parts of the `screen-area` metric (they decide
+which end of a ladder renders, so consumers must agree on them):
+
+* **Visible occupancy.** The projected rect is intersected with the viewport
+  before the area is taken; a rect with no viewport overlap on either axis
+  reads exactly `0` (coarsest), and full coverage tops out at exactly `1.0`
+  (thresholds are satisfied inclusively, `threshold <= metric`). A camera
+  inside or straddling the node's bounds saturates the metric to the finest
+  level.
+* **Degenerate (lower-dimensional) content.** A node whose projected bounds
+  are (near-)zero-thickness — an axis-aligned straight polyline, a planar
+  dataset viewed edge-on — has area ~0 no matter how much screen it spans.
+  When the RAW (pre-clip) thin half-extent is at/below a sub-pixel floor
+  `ε` (implementations should use `ε` ≈ one pixel of the viewport axis; the
+  reference viewer uses 1e-3 of the axis), the metric is
+  `max(area, clippedSpan × (1 − rawThin/ε))` — a continuous ramp from the
+  clipped LINEAR span at zero thickness down to the plain area product at the
+  floor, so a full-width line reads `1.0` (its faithful occupancy) instead of
+  being pinned to the coarsest level, an edge-on rotation crosses no
+  discontinuity, and a wide node panned to a thin visible sliver still reads
+  its true (tiny) visible area because the gate is on the content's raw
+  thinness, not the clipped one.
+
+Under the legacy `selector: "coverage"`
 (older stores; never written for derived ladders since v3.4) the thresholds
 are diagonal-metric units in `[0, 4]`: the viewer compares them against the
 projected bbox diagonal over `FILL_FACTOR=0.5 ×` the fitted screen axis

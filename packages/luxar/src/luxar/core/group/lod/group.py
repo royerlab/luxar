@@ -637,11 +637,72 @@ def validate_lod_group(group: "Node") -> None:
                 f"coverage_fraction={value}, must lie in [0, {cap:g}] under "
                 f"selector={selector!r}. " + cap_rationale
             )
+        # The coarsest child is the ALWAYS-ELIGIBLE floor: the format requires
+        # exactly 0.0, or below the first threshold no child qualifies at all
+        # and what renders depends on selector fallback rather than the ladder.
+        # After the range check, so an out-of-range coarsest (e.g. negative)
+        # keeps its range diagnosis.
+        if i == 0 and value != 0.0:
+            raise ValueError(
+                f"LOD-group child 0 ({child.name!r}) has "
+                f"coverage_fraction={value}; the coarsest child must be "
+                "exactly 0.0 (the always-eligible floor — otherwise no child "
+                "qualifies below the first threshold)"
+            )
         if value <= prev:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) has "
                 f"coverage_fraction={value}, must be strictly greater than "
                 f"previous child's {prev}"
+            )
+        prev = value
+
+
+def validate_authored_coverage_ladder(
+    values: "List[float]", selector: str, *, source: str
+) -> None:
+    """Refuse an AUTHORED coverage ladder that breaks its selector's contract.
+
+    The list form of :func:`validate_lod_group`'s per-child checks, shared by
+    the two detached-tree writers (``io/_compiler/gsplat_tree.write_gsplat_node``
+    and ``gsplats_pipeline/from_io.graft_gsplat_node``), which walk
+    ``GSplatNode`` trees rather than scene ``Node``s and so cannot call that
+    validator directly. ``values`` are coarsest→finest; checks are: finite,
+    coarsest exactly ``0.0`` (the always-eligible floor the format requires),
+    within ``[0, cap]`` where the cap is the selector's fills-screen ceiling
+    (:data:`PARTITION_FINEST_AREA` for ``"screen-area"``,
+    :data:`MAX_COVERAGE_FRACTION` for the legacy ``"coverage"``), strictly
+    ascending. Derived ladders satisfy all of this by construction; only
+    authored (preserved) ladders need the gate.
+    """
+    cap = PARTITION_FINEST_AREA if selector == "screen-area" else MAX_COVERAGE_FRACTION
+    prev = float("-inf")
+    for i, value in enumerate(values):
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(
+                f"{source}: child {i} has authored coverage_fraction={value}, "
+                "which is not a finite number"
+            )
+        if value < 0.0 or value > cap:
+            raise ValueError(
+                f"{source}: child {i} has authored coverage_fraction={value}, "
+                f"must lie in [0, {cap:g}] under selector={selector!r}"
+            )
+        # After the range check, so an out-of-range coarsest keeps its range
+        # diagnosis; an in-range non-zero coarsest gets the floor one.
+        if i == 0 and value != 0.0:
+            raise ValueError(
+                f"{source}: child 0 has authored coverage_fraction={value}; "
+                "the coarsest child must be exactly 0.0 (the always-eligible "
+                "floor — otherwise no child qualifies below the first "
+                "threshold)"
+            )
+        if value <= prev:
+            raise ValueError(
+                f"{source}: child {i} has authored coverage_fraction={value}, "
+                f"must be strictly greater than the previous child's {prev} "
+                "(coarsest→finest)"
             )
         prev = value
 

@@ -462,18 +462,25 @@ def graft_gsplat_node(
         derive_cov = (
             partitioned_coverage_fractions if partition_bound else coverage_fractions
         )
+        # SELECTOR/THRESHOLD CONSISTENCY — the shared all-or-none gate (see
+        # ``gsplats.tree.gate_authored_selector``), the same one the standalone
+        # writer runs, so a store grafted into a scene renders identically to
+        # the same store opened directly.
+        from luxar.gsplats.tree import gate_authored_selector
+
+        on_disk, selector_out = gate_authored_selector(
+            on_disk,
+            (node.meta or {}).get("selector"),
+            source="kind=lod group (scene graft)",
+        )
         derived_cov = derive_cov([total_splats(c) for c in on_disk])
         # default_level = 0 = the COARSEST child (child_0): the viewer's initial
         # progressive-load level, decoupled from the data-model default (see
         # gsplat_tree.write_gsplat_node / add_gsplats_as_lod_group_impl). Loading
         # the finest by default would render "backwards".
-        # Selector = the UNITS of the thresholds this wrapper ends up with. A
-        # tree read from disk carries its mode in meta (its authored per-child
-        # values win below); a meta-less tree gets this graft's own derivation,
-        # which is in screen-area units — same rule as the standalone writer.
         wrapper = parent_node.add_lod_group(
             name,
-            selector=str((node.meta or {}).get("selector", "screen-area")),
+            selector=selector_out,
             **wrapper_attrs,
         )
         for i, child in enumerate(on_disk):

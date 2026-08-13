@@ -2822,11 +2822,17 @@ class TestTransformCommand:
 
         # multiscale-like: lod( coarse_leaf, partition[ leaf, leaf ] ); stamp a
         # deliberately-wrong coverage_fraction on the partition GROUP node.
+        # The ladder must be FULLY authored (coarse leaf too): the writer's
+        # selector/threshold consistency gate re-derives partially-authored
+        # ladders at the first write, which would erase the stale value before
+        # the transform ever saw it — the very premise this test needs.
         STALE = 0.5
         fine = GSplatPartition(
             children=[_leaf(1.0, 0), _leaf(1.0, 1)], meta={"coverage_fraction": STALE}
         )
-        root = GSplatLodGroup(children=[_leaf(0.3, 2), fine])
+        coarse = _leaf(0.3, 2)
+        coarse.meta["coverage_fraction"] = 0.0
+        root = GSplatLodGroup(children=[coarse, fine])
 
         src = tmp_path / "multiscale.gsplats.zarr"
         write_gsplats_tree(src, root)

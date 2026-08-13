@@ -298,7 +298,10 @@ child whose threshold is satisfied (with 10% asymmetric hysteresis on the
 downgrade direction to suppress flicker). The derived whole-object ladder is
 `[0, …, 1/8, 1/4, 1/2]` — full detail while the object occupies at least half
 the screen, one level coarser per halving of occupied area — identically on
-any monitor/viewport size (the metric is built from NDC fractions). Under the
+any monitor/viewport size (the metric is built from NDC fractions; the rect
+is clipped to the viewport, off-screen reads 0, and sub-pixel-thin content
+ramps to its clipped linear span — see the normative metric definition in
+`docs/specs/GSPLATS_ZARR_FORMAT.md`). Under the
 legacy `selector: "coverage"` (older stores, and explicitly authored
 `coverage_fractions=[...]` lists) the thresholds are diagonal-metric units in
 `[0, 4]`: the viewer compares them against the projected bbox diagonal over
