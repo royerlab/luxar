@@ -20,12 +20,17 @@ luxar gsplat fit --help      # a single command and all its options
 
 The list of commands on this page is checked against the live Typer application by
 an automated test —
-`packages/luxar/src/luxar/cli/tests/test_docs_command_coverage.py`. The test walks
+`packages/luxar/src/luxar/cli/tests/test_docs_command_coverage.py`. One check walks
 the registered command tree, extracts every `luxar ...` invocation from the code
 blocks on this page, and compares the two sets in **both directions**: a newly
 added command must be documented here, and a documented command that was removed,
 renamed, or hidden must be pruned — either way the test fails.
-(Hidden/internal commands and groups are excluded.)
+(Hidden/internal commands and groups are excluded.) A second check in the same file
+walks every per-command section heading and verifies each option spelling its prose
+names in inline code against the live command's declared options — a heading that names a
+command GROUP is checked against the union of its subcommands' options instead,
+since a group's prose legitimately names its subcommands' flags — so a stale or
+invented flag fails too, not just a stale command path.
 
 ## Top-level commands
 
@@ -176,7 +181,7 @@ time, chosen by how much of the screen the object covers.
 Takes an input scene and an output scene, plus `-L/--levels` (default 3),
 `-K/--compression-factor` (default 4 — level *i* targets `V / K**i` vertices),
 `--node`, `--subst-method` and `--overwrite`. The output path is normalized to the
-canonical `<stem>.luxar.zarr`, so `-o out` writes `out.luxar.zarr`; that
+canonical `<stem>.luxar.zarr`, so an output argument of `out` writes `out.luxar.zarr`; that
 normalized path is what `--overwrite` replaces and what the same-path guard
 compares against.
 

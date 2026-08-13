@@ -496,9 +496,14 @@ from screen-space derivatives. `normal_dims` is required whenever you *do* pass
 them, because in nD there is no implicit "first three dimensions".
 
 Spatial partitioning **is** supported — `add_mesh(partition=…)` splits a large
-surface into frustum-cullable parts, though each part still loads whole. LOD and
-`volumetric` blending are not, and neither degrades silently: `add_mesh` raises
-on both, and a `volumetric` that reaches the viewer by *inheritance* from an
+surface into frustum-cullable parts, though each part still loads whole.
+Substitutive LOD (`add_mesh(substitutive_lod=…)`, decimated by
+`luxar.mesh.decimate`) and a spatially coherent *reveal* additive ladder
+(`add_mesh(additive_lod=…)`, `method="radial"`) both ship. What is still
+refused — and neither degrades silently — is an additive ladder over an
+*arbitrary* order (a prefix of an arbitrarily ordered index buffer is a holed
+surface, not a coarser one) and `volumetric` blending: `add_mesh` raises on
+both, and a `volumetric` that reaches the viewer by *inheritance* from an
 ancestor group logs a warning naming the node and falls back to `opaque`. See
 [the mesh spec](docs/specs/MESH_NODE_SPEC.md) §9 for why, per exclusion.
 
