@@ -33,6 +33,7 @@ import {
   calculateCameraDistance,
   type BoundingBox,
 } from '../../../scene/scene-manager/clipping/bounds-math';
+import { updateCameraAspect } from '../../../utils/camera-utils';
 
 // ────────────────────────────────────────────────────────────────────────
 // pickChildWithHysteresis — pure selector math
@@ -812,8 +813,10 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
     // this file and asserts the same relation). Unlike the pre-#1410 scheme, a
     // screen-filling object's raw ratio is no longer exactly 1.0 (that identity
     // only held for the old diagonal normalisation) — SCREEN_FILL_DIAGONAL_RATIO
-    // is the (aspect-dependent, ~2 across 16:9…21:9) multiple of the fitted axis
-    // a screen-filling diagonal actually measures. See the `FILL_FACTOR` doc.
+    // is the multiple of the fitted axis a screen-filling diagonal actually
+    // measures. That multiple is aspect-dependent (1.41 at 1:1, 2.57 at 21:9);
+    // the constant is anchored at 16:9, where it is 2.04. See the
+    // `FILL_FACTOR` doc.
     expect(SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR).toBeCloseTo(4.0, 10);
   });
 
@@ -882,6 +885,87 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
           `${shape.name} on ${viewport.name} within 25% of the aspect >= 1 value`
         ).toBeLessThan(0.25);
       }
+    }
+  });
+
+  it('pins the resize-without-a-re-fit asymmetry documented on FILL_FACTOR', () => {
+    // The flip side of the fix, and the one case where the new denominator can
+    // move MORE than the old one. `updateCameraAspect` (utils/camera-utils.ts)
+    // only touches `camera.aspect` on a window resize — it preserves the
+    // vertical fov and never re-fits the distance — so with HEIGHT held fixed
+    // the projected pixel diagonal is completely unchanged (the viewport-width
+    // term cancels out of the NDC→pixel conversion), while the denominator
+    // keeps shrinking once width < height.
+    //
+    // This test exists so those claims in the `FILL_FACTOR` doc stay honest:
+    // adding a camera re-fit on resize (the real fix, deliberately out of scope
+    // here) is supposed to break it, at which point the doc gets updated too.
+    const height = 900;
+    const baseline = { width: 1600, height };
+    const bounds = centredBounds(100, 100, 100);
+    // ONE camera, framed for the baseline viewport, reused at every width —
+    // this is a resize, not a re-fit.
+    const camera = framedCamera(bounds, baseline);
+    const box = toBox(bounds);
+
+    /** What the viewer itself does on a resize — and all it does. */
+    const diagonalAt = (width: number) => {
+      updateCameraAspect(camera, width, height);
+      return projectBoxDiagonalPx(box, camera, { width, height });
+    };
+    const newMetric = (width: number) =>
+      diagonalAt(width) / (FILL_FACTOR * Math.min(width, height));
+    // The pre-#1410 denominator, for the comparison the doc block records.
+    const oldMetric = (width: number) => diagonalAt(width) / (0.25 * Math.hypot(width, height));
+
+    const baseDiagonal = diagonalAt(baseline.width);
+    const inflation = (width: number) => ({
+      now: newMetric(width) / newMetric(baseline.width),
+      before: oldMetric(width) / oldMetric(baseline.width),
+    });
+
+    // (1) Narrowing the window does not change the projected diagonal at all.
+    for (const width of [900, 506, 500, 200]) {
+      expect(diagonalAt(width), `diagonal unchanged at ${width}×${height}`).toBeCloseTo(
+        baseDiagonal,
+        9
+      );
+    }
+
+    // (2) Down to the crossover at `height² / width0` (506px here, aspect
+    // ≈0.56) the NEW normalisation is the better-behaved of the two: while the
+    // viewport is still landscape the metric does not move at all, where the
+    // diagonal denominator already inflated it.
+    expect(inflation(900).now).toBeCloseTo(1.0, 9); // square: exactly stable now…
+    expect(inflation(900).before).toBeCloseTo(1.442, 3); // …but ×1.44 before
+    const crossover = inflation(506);
+    expect(crossover.now).toBeCloseTo(crossover.before, 2);
+
+    // (3) Past it, narrowing inflates faster than it used to — `min(w, h)` is
+    // unbounded below where `hypot(w, h)` floors at `height`.
+    expect(inflation(500).now).toBeCloseTo(1.8, 3);
+    expect(inflation(500).before).toBeCloseTo(1.783, 3);
+    expect(inflation(200).now).toBeCloseTo(4.5, 3);
+    expect(inflation(200).before).toBeCloseTo(1.991, 3);
+
+    // (4) …and what that means through the real selector, not just the
+    // arithmetic above: a zoomed-out cube sitting on level 2 at the baseline
+    // (metric ≈0.47) is pushed onto the finest level by an extreme narrowing
+    // alone (≈2.13), with the camera never moving.
+    const zoomedOut = framedCamera(bounds, baseline, 4);
+    for (const [viewport, expected] of [
+      [baseline, 2],
+      [{ width: 200, height }, 3],
+    ] as const) {
+      updateCameraAspect(zoomedOut, viewport.width, viewport.height);
+      const reg = registryFor(zoomedOut, viewport);
+      const children = ladderChildren(bounds);
+      reg.register(makeEntry(children, 3, '/g'));
+      reg.evaluatePerFrame();
+      expect(
+        children[expected].object.visible,
+        `level ${expected} at ${viewport.width}×${viewport.height}`
+      ).toBe(true);
     }
   });
 

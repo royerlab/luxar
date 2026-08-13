@@ -94,9 +94,10 @@ if TYPE_CHECKING:
 #: actually fits. A *screen-filling* object's projected diagonal is not simply
 #: ``fittedAxisPx`` (that identity only held for the pre-#1410 viewport-diagonal
 #: normalisation); it is ``hypot(aspect, 1) / min(aspect, 1)`` times it —
-#: aspect-DEPENDENT, not a constant — measured **2.83 at 1:1, 3.33 at 4:3, 3.61
-#: at 3:2, 3.77 at 16:10, 4.08 at 16:9, 5.15 at a real 21:9 panel (2560x1080),
-#: 7.39 at 32:9**, and equal
+#: aspect-DEPENDENT, not a constant — so the coverage METRIC such an object
+#: produces (that ratio ÷ ``FILL_FACTOR``) measures **2.83 at 1:1, 3.33 at 4:3,
+#: 3.61 at 3:2, 3.77 at 16:10, 4.08 at 16:9, 5.15 at a real 21:9 panel
+#: (2560x1080), 7.39 at 32:9**, and is equal
 #: to exactly 4.0 only at aspect ratio √3 ≈ 1.73. ``SCREEN_FILL_DIAGONAL_RATIO``
 #: pins the mainstream-aspect approximation of that ratio to a round ``2``
 #: (measured 2.04 at 16:9 — the reference aspect it is anchored at — 2.57 at

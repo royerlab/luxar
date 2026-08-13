@@ -896,9 +896,11 @@ def test_max_coverage_fraction_matches_the_viewer_fill_factor() -> None:
     projected diagonal is no longer simply the fitted axis (that identity only
     held for the old diagonal normalisation); it is
     ``SCREEN_FILL_DIAGONAL_RATIO`` times it — and only APPROXIMATELY, since that
-    ratio (``hypot(aspect, 1) / min(aspect, 1)``) is itself aspect-dependent
-    (2.83 at 1:1, 4.08 at 16:9, 5.08 at 21:9 — exact only at aspect √3 ≈ 1.73;
-    see the ``FILL_FACTOR`` doc in ``lod-group-registry.ts``). So a
+    ratio (``hypot(aspect, 1) / min(aspect, 1)``) is itself aspect-dependent, so
+    the metric it yields (the ratio ÷ ``FILL_FACTOR``) measures 2.83 at 1:1,
+    4.08 at 16:9 and 5.15 at a real 21:9 panel (2560×1080) — exactly 4.0 only at
+    aspect √3 ≈ 1.73; see the ``FILL_FACTOR`` doc in
+    ``lod-group-registry.ts``. So a
     screen-filling object produces a metric of *approximately*
     ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` at the mainstream aspect
     ratios the constant targets — the largest value an authored threshold can
