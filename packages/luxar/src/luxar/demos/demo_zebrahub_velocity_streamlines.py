@@ -1182,14 +1182,21 @@ def main() -> None:
 
     cache_dir = args.cache_dir.expanduser()
 
-    # Thresholds come from the auto-derivation (screen-occupancy halving:
-    # full lines while the embryo spans at least half the screen, one level
-    # coarser per halving of on-screen extent).
-    streamline_lod = (
-        dict(compression_factor=4, levels=3, device=args.lod_device)
-        if args.streamline_lod
-        else None
-    )
+    # Thresholds come from the auto-derivation (screen-area occupancy halving:
+    # full lines while the embryo occupies at least half the screen, one level
+    # coarser per halving of occupied area). Routed through
+    # substitutive_lod_or_flat: building a ladder needs torch + scipy (not core
+    # deps), and the helper degrades to a flat leaf with a notice instead of a
+    # mid-build ModuleNotFoundError (the class-wide gate in
+    # tests/test_substitutive_lod_gated.py enforces this shape).
+    from luxar.demos import substitutive_lod_or_flat
+
+    streamline_lod = None
+    if args.streamline_lod:
+        streamline_lod = substitutive_lod_or_flat(
+            dict(compression_factor=4, levels=3, device=args.lod_device),
+            geometry="Lines",
+        )
     lod_suffix = "_lod" if args.streamline_lod else ""
 
     if args.output is not None:

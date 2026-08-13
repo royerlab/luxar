@@ -278,10 +278,13 @@ def test_bridge_default_level_is_derived_finest():
 
 
 def test_tree_from_substitutive_levels_stamps_coverage_fractions():
-    """The builder back-fills per-child ``coverage_fraction`` = ``sqrt(N_i/N_finest)``
-    (coarsest 0.0, finest 1.0). ``levels`` is finest-first; the tree stores children
-    coarsest-first, so the stamped fractions are ascending coarsest→finest."""
-    import math
+    """The builder back-fills per-child ``coverage_fraction`` by SCREEN-AREA
+    occupancy halving (coarsest 0.0, finest at the half-screen anchor 0.5, one
+    area-halving per level — count-independent) and stamps the units as
+    ``selector="screen-area"`` on the group meta. ``levels`` is finest-first;
+    the tree stores children coarsest-first, so the stamped fractions are
+    ascending coarsest→finest."""
+    from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
 
     # finest-first levels: counts 800, 200, 50 (coarsest = 50, last).
     levels = [
@@ -292,10 +295,42 @@ def test_tree_from_substitutive_levels_stamps_coverage_fractions():
     node = tree_from_substitutive_levels(levels)
     cov = [c.meta["coverage_fraction"] for c in node.children]  # coarsest-first
     assert cov[0] == 0.0  # coarsest = always-eligible floor
-    # coarsest-first counts are [50, 200, 800]; N_finest = 800.
-    assert cov[1] == pytest.approx(math.sqrt(200 / 800))
-    assert cov[2] == pytest.approx(1.0)  # finest rung is anchored at 1.0
+    assert cov[1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR / 2)  # one halving
+    assert cov[2] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)  # 0.5 = half screen
     assert cov[2] > cov[1] > cov[0]  # ascending coarsest→finest
+    # Derived thresholds carry their units.
+    assert node.meta["selector"] == "screen-area"
+
+
+def test_tree_from_substitutive_levels_custom_coverage_keeps_legacy_selector():
+    """A CUSTOM ``coverage`` callable is authored code whose thresholds predate
+    the screen-area units, so without an explicit ``selector=`` the group must
+    stay on the legacy ``"coverage"`` stamp — an unchanged external caller's
+    values keep the diagonal semantics they were written against (same
+    compatibility class as explicit ``coverage_fractions=[...]`` lists). An
+    explicit ``selector="screen-area"`` (what the recipes pass, since they
+    thread the built-in area derivations through this parameter) wins."""
+    levels = [
+        SubstitutiveLevel(additive_sublods=[_sublod(800, seed=0)], level_index=0),
+        SubstitutiveLevel(additive_sublods=[_sublod(50, seed=1)], level_index=1),
+    ]
+
+    def custom(counts):
+        return [0.0, 2.0]  # legacy diagonal units
+
+    node = tree_from_substitutive_levels(levels, coverage=custom)
+    assert node.meta["selector"] == "coverage"
+    assert [c.meta["coverage_fraction"] for c in node.children] == [0.0, 2.0]
+
+    from luxar.core.group.lod.group import partitioned_coverage_fractions
+
+    node_area = tree_from_substitutive_levels(
+        levels, coverage=partitioned_coverage_fractions, selector="screen-area"
+    )
+    assert node_area.meta["selector"] == "screen-area"
+
+    with pytest.raises(ValueError, match="selector must be one of"):
+        tree_from_substitutive_levels(levels, selector="pixel_size")
 
 
 def test_non_matrix_trees_have_no_matrix_projection():
@@ -321,8 +356,10 @@ def test_tree_from_empty_levels_raises():
 
 def test_lod_group_back_fills_coverage_fraction():
     """A multi-substitutive tree gets per-child coverage_fraction so the viewer
-    selector isn't stuck at the finest level (decision 7 / R3). Finest carries the
-    highest fraction (1.0); the coarsest is 0.0 (always eligible)."""
+    selector isn't stuck at the finest level (decision 7 / R3). Finest carries
+    the highest fraction (the half-screen-area anchor, 0.5); the coarsest is
+    0.0 (always eligible)."""
+    from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
 
     levels = [
         SubstitutiveLevel(additive_sublods=[_sublod(100, seed=0)], level_index=0),
@@ -335,9 +372,9 @@ def test_lod_group_back_fills_coverage_fraction():
     # children are coarsest-first: [0]=coarsest(25), [1]=finest(100)
     coarse_cov = node.children[0].meta["coverage_fraction"]
     finest_cov = node.children[1].meta["coverage_fraction"]
-    # Coverage fractions = sqrt(N_i/N_finest): coarsest is the 0.0 floor, finest 1.0.
+    # Screen-area occupancy halving: coarsest is the 0.0 floor, finest 0.5.
     assert coarse_cov == 0.0
-    assert finest_cov == pytest.approx(1.0)
+    assert finest_cov == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
     assert finest_cov > coarse_cov
 
 

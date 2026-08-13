@@ -85,45 +85,51 @@ export function projectBoxDiagonalPx(
 }
 
 /**
- * A projected rect whose SMALLER half-extent is at/below this fraction of its
- * viewport axis is treated as DEGENERATE by {@link projectBoxAreaFraction}:
+ * Half-extent (as a fraction of its viewport axis) below which a projected
+ * rect's thin dimension counts as DEGENERATE for {@link projectBoxAreaFraction}:
  * effectively lower-dimensional content (an axis-aligned straight polyline, a
  * planar dataset viewed edge-on, 1D/2D bounds on a mapped axis) whose
  * area-product would read ~0 no matter how much of the screen it spans —
  * permanently pinning it to the coarsest level. ``1e-3`` ≈ one pixel on a
  * ~1080p viewport: anything rendering thinner than a pixel genuinely reads as
  * a line, and for a line the faithful "portion of the screen occupied" is its
- * linear span, not the vanishing area.
+ * linear span, not the vanishing area. The fallback is a continuous RAMP over
+ * ``[0, this]`` (see the function doc), not a cliff.
  */
 const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
 
 /**
  * Project a world-space :type:`BoundingBox` through the camera and return the
- * fraction of the viewport AREA its screen-space AABB covers — the metric for
- * ``selector: 'screen-area'``.
+ * fraction of the viewport AREA its screen-space AABB **visibly** covers — the
+ * metric for ``selector: 'screen-area'``.
  *
- * In NDC each axis spans 2, so the covered fraction of the viewport is simply
- * ``(ndcWidth / 2) × (ndcHeight / 2)`` — viewport-size independent by
- * construction (the same object framing yields the same fraction on any
- * monitor). The rect is deliberately NOT clamped to the viewport: past
- * full-screen the value keeps growing monotonically (>1), so the partition
- * fills-screen threshold (1.0) is crossed cleanly rather than asymptotically
- * approached, and the hysteresis band around it behaves like any other level
- * boundary.
+ * **Clipped to the viewport.** The projected rect is intersected with the
+ * viewport before the area is taken, so the metric reads the portion of the
+ * screen ACTUALLY occupied: a node whose rect extends far off-screen but
+ * clips only a corner reads that small visible fraction (and picks a coarse
+ * level) instead of an arbitrarily large unclipped product — which matters
+ * while panning across partition tiles. The metric therefore tops out at
+ * exactly ``1.0`` (full coverage); the natural pick uses ``threshold <=
+ * metric``, so the fills-screen partition threshold (1.0) is satisfied the
+ * moment coverage is complete, and stays satisfied while zoomed past it. In
+ * NDC each axis spans 2, so the covered fraction is the product of the
+ * clipped half-extents — viewport-size independent by construction (the same
+ * framing yields the same fraction on any monitor).
  *
- * **Degenerate (lower-dimensional) rects fall back to their LINEAR span.**
- * When the smaller half-extent is at/below {@link DEGENERATE_RECT_HALF_EXTENT}
- * (sub-pixel thin — an axis-aligned straight polyline, an edge-on plane), the
- * area product reads ~0 regardless of how much screen the content spans, which
- * would pin it to the coarsest level forever (the legacy diagonal metric never
- * had this failure mode — a diagonal reads the long extent). The metric then
- * becomes the LARGER half-extent: for effectively-1D content, "portion of the
- * screen occupied" is its linear span, so a full-width line reads 1.0 and the
- * halving ladder keeps its meaning. A both-axes-degenerate rect (a point)
- * still reads ~0 → coarsest, which is right. The regime switch is a jump, but
- * it can only be crossed by content hovering at exactly sub-pixel thickness
- * (e.g. one frame of an edge-on rotation), and the downgrade hysteresis
- * absorbs the boundary.
+ * **Degenerate (lower-dimensional) rects ramp to their LINEAR span.** For a
+ * rect whose thin (clipped) half-extent is below
+ * {@link DEGENERATE_RECT_HALF_EXTENT} — sub-pixel thin: an axis-aligned
+ * straight polyline, an edge-on plane — the area product reads ~0 regardless
+ * of how much screen the content spans, which would pin it to the coarsest
+ * level forever (the legacy diagonal metric never had this failure mode — a
+ * diagonal reads the long extent). The metric is therefore
+ * ``max(area, span × (1 − thin/DEGENERATE_RECT_HALF_EXTENT))``: at zero
+ * thickness it reads the full linear span (a full-width line = 1.0, so the
+ * halving ladder keeps its meaning for 1D content), decays CONTINUOUSLY to
+ * the plain area product as the thickness reaches the sub-pixel floor — no
+ * cliff for the hysteresis to oscillate across when an edge-on plane rotates
+ * through the boundary — and is exactly the area product everywhere above it.
+ * A both-axes-degenerate rect (a point) still reads ~0 → coarsest.
  *
  * Same near-plane saturation contract as {@link projectBoxDiagonalPx}: camera
  * inside / straddling the box → ``+Infinity`` → finest level.
@@ -137,31 +143,38 @@ export function projectBoxAreaFraction(
 ): number {
   const rect = projectBoxNdcRect(box, camera, precomputedProjView);
   if (rect === null) return Number.POSITIVE_INFINITY;
-  const thin = Math.min(rect.halfW, rect.halfH);
-  if (thin <= DEGENERATE_RECT_HALF_EXTENT) {
-    // Lower-dimensional content: the area product would under-report to ~0.
-    // Its linear span is the faithful occupancy reading (see the doc above).
-    return Math.max(rect.halfW, rect.halfH);
-  }
-  return rect.halfW * rect.halfH;
+  // Intersect with the viewport (NDC [-1, 1] per axis → half-extent ≤ 1).
+  // projectBoxNdcRect returns half-extents of the CENTERED span; recompute
+  // the clipped overlap from the stored NDC bounds.
+  const halfW = Math.max(0, (Math.min(rect.maxX, 1) - Math.max(rect.minX, -1)) * 0.5);
+  const halfH = Math.max(0, (Math.min(rect.maxY, 1) - Math.max(rect.minY, -1)) * 0.5);
+  const span = Math.max(halfW, halfH);
+  const thin = Math.min(halfW, halfH);
+  const area = halfW * halfH;
+  // Continuous degenerate ramp: full linear span at zero thickness, decaying
+  // to the plain area product at the sub-pixel floor (see the doc above).
+  const degenerate = span * Math.max(0, 1 - thin / DEGENERATE_RECT_HALF_EXTENT);
+  return Math.max(area, degenerate);
 }
 
 /** Reused result object for {@link projectBoxNdcRect} (no per-call allocation). */
-const NDC_RECT_SCRATCH = { halfW: 0, halfH: 0 };
+const NDC_RECT_SCRATCH = { halfW: 0, halfH: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 };
 
 /**
  * Shared 8-corner projection for the two metrics above: the box's screen-space
- * AABB extent as HALF-NDC spans (``ndcExtent / 2`` per axis — i.e. the fraction
- * of the viewport covered along each axis, unclamped). Returns ``null`` when
- * any corner's homogeneous ``w`` falls to/below {@link W_EPSILON} (camera
- * inside / straddling the box — callers saturate to ``+Infinity``). The
- * returned object is a module-scope scratch: consume it before the next call.
+ * AABB as raw NDC bounds (``minX``/``maxX``/``minY``/``maxY``, unclamped) plus
+ * the HALF-NDC spans (``ndcExtent / 2`` per axis — i.e. the fraction of the
+ * viewport covered along each axis, unclamped) the diagonal metric consumes.
+ * Returns ``null`` when any corner's homogeneous ``w`` falls to/below
+ * {@link W_EPSILON} (camera inside / straddling the box — callers saturate to
+ * ``+Infinity``). The returned object is a module-scope scratch: consume it
+ * before the next call.
  */
 function projectBoxNdcRect(
   box: BoundingBox,
   camera: THREE.Camera,
   precomputedProjView?: THREE.Matrix4
-): { halfW: number; halfH: number } | null {
+): { halfW: number; halfH: number; minX: number; maxX: number; minY: number; maxY: number } | null {
   // Combined projection × view. ``evaluatePerFrame`` already builds this product
   // once per frame (``FRUSTUM_MATRIX_SCRATCH``) and passes it in via
   // ``precomputedProjView`` so we don't recompute the 4×4 per group. Standalone
@@ -198,6 +211,10 @@ function projectBoxNdcRect(
   }
   NDC_RECT_SCRATCH.halfW = (maxX - minX) * 0.5;
   NDC_RECT_SCRATCH.halfH = (maxY - minY) * 0.5;
+  NDC_RECT_SCRATCH.minX = minX;
+  NDC_RECT_SCRATCH.maxX = maxX;
+  NDC_RECT_SCRATCH.minY = minY;
+  NDC_RECT_SCRATCH.maxY = maxY;
   return NDC_RECT_SCRATCH;
 }
 

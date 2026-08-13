@@ -500,6 +500,8 @@ def node_from_substitutive_levels(levels: "List[SubstitutiveLevel]") -> GSplatNo
 def tree_from_substitutive_levels(
     levels: "List[SubstitutiveLevel]",
     coverage: "Optional[Callable[[List[int]], List[float]]]" = None,
+    *,
+    selector: "Optional[str]" = None,
 ) -> GSplatNode:
     """Build a node tree from the historical 2-D matrix representation.
 
@@ -525,20 +527,40 @@ def tree_from_substitutive_levels(
     ladder that is bound to a spatial partition (the ``adaptive`` recipe's
     per-tile groups) passes
     :func:`~luxar.core.group.lod.group.partitioned_coverage_fractions` instead,
-    which keeps the pre-#1361 fills-screen anchor. See that function for the rule
+    which keeps the fills-screen anchor. See that function for the rule
     and why a per-tile ladder must not take the whole-object anchor.
+
+    ``selector`` names the UNITS the produced thresholds are in (stamped onto
+    the group meta, honored by both serializers). When omitted it follows the
+    library convention — DERIVED thresholds are screen-area, custom/authored
+    ones are legacy: ``"screen-area"`` for the built-in derivation
+    (``coverage is None``), and the legacy ``"coverage"`` when a custom
+    ``coverage`` callable is supplied, so an unchanged external caller's
+    callback-produced thresholds keep the diagonal semantics they were written
+    against rather than being silently reinterpreted as area fractions. A
+    caller whose callable produces area fractions (the recipes pass the
+    built-in area derivations through this parameter) says so explicitly with
+    ``selector="screen-area"``.
 
     This is the inverse of :func:`substitutive_levels_from_tree` for any tree
     that is matrix-shaped (a leaf, or a lod group whose children are all leaves).
     """
+    from luxar.typing_utils.constants import LOD_SELECTORS
+
+    if selector is None:
+        selector = "screen-area" if coverage is None else "coverage"
+    if selector not in LOD_SELECTORS:
+        raise ValueError(
+            f"selector must be one of {sorted(LOD_SELECTORS)}, got {selector!r}"
+        )
     node = node_from_substitutive_levels(levels)
     if isinstance(node, GSplatLeaf):
         return node
 
     # Back-fill per-child coverage_fraction. The derivation is single-sourced in
-    # core (coarsest child = 0.0, finest = 1.0, ascending) and uses only per-level
-    # splat-count ratios. Children and counts are both coarsest-first — a straight
-    # 1:1 mapping.
+    # core (coarsest child = 0.0, ascending to the selector's finest anchor) and
+    # uses only per-level splat counts. Children and counts are both
+    # coarsest-first — a straight 1:1 mapping.
     from luxar.core.group.lod.group import coverage_fractions
 
     derive = coverage if coverage is not None else coverage_fractions
@@ -550,11 +572,9 @@ def tree_from_substitutive_levels(
     fractions_coarsest_first = derive(counts_coarsest_first)
     for leaf, fraction in zip(node.children, fractions_coarsest_first):
         leaf.meta.setdefault("coverage_fraction", fraction)
-    # Both built-in derivations emit SCREEN-AREA fractions, so stamp the mode
-    # alongside the thresholds (the serializers honor a group's meta selector; a
-    # caller passing a custom ``coverage`` callable must produce area units too,
-    # or override this meta key itself).
-    node.meta.setdefault("selector", "screen-area")
+    # Stamp the units alongside the thresholds (the serializers honor a group's
+    # meta selector) — see the ``selector`` parameter doc for the default rule.
+    node.meta.setdefault("selector", selector)
 
     return node
 

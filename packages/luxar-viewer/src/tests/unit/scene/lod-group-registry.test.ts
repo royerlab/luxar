@@ -289,12 +289,23 @@ describe('projectBoxDiagonalPx', () => {
       expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.25, 6);
     });
 
-    it('is unclamped past full-screen (metric keeps growing monotonically)', () => {
-      // NDC extent 4 per axis → area fraction 4.0 (>1). Deliberate: the tile
-      // fills-screen threshold (1.0) must be CROSSED, not asymptotically
-      // approached, so its hysteresis band works like any other boundary.
+    it('clips to the viewport: past full-screen the metric tops out at exactly 1.0', () => {
+      // NDC extent 4 per axis, but only the [-1,1]² viewport is VISIBLE →
+      // occupancy 1.0 exactly. The natural pick uses `threshold <= metric`,
+      // so the fills-screen partition threshold (1.0) is satisfied the moment
+      // coverage is complete and stays satisfied while zoomed past it.
       const box: BoundingBox = { min: { x: -2, y: -2, z: 0 }, max: { x: 2, y: 2, z: 0 } };
-      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(4.0, 6);
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(1.0, 6);
+    });
+
+    it('clips to the viewport: a huge rect intersecting only a screen corner reads its small VISIBLE fraction', () => {
+      // Rect spans NDC [0.5, 10] on both axes — enormous unclipped (~22.5 area
+      // units) but only the [0.5, 1]² corner is on screen: visible fraction =
+      // (0.25)·(0.25) = 0.0625. The review-caught failure: unclipped, this
+      // read arbitrarily large occupancy and pinned the finest level while
+      // panning across partition tiles.
+      const box: BoundingBox = { min: { x: 0.5, y: 0.5, z: 0 }, max: { x: 10, y: 10, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.0625, 6);
     });
 
     it('saturates to +Infinity when the camera is inside the box (perspective)', () => {
@@ -323,11 +334,33 @@ describe('projectBoxDiagonalPx', () => {
 
     it('barely-non-degenerate rects stay on the area product (no early fallback)', () => {
       // Thickness just ABOVE the sub-pixel degeneracy floor must NOT take the
-      // linear-span branch — otherwise every thin-but-real object would jump
+      // linear-span ramp — otherwise every thin-but-real object would jump
       // to a wildly finer level. halfH = 0.01 (≈10px on 1080p) → area path:
       // 1.0 × 0.01 = 0.01, NOT the linear 1.0.
       const thin: BoundingBox = { min: { x: -1, y: -0.01, z: 0 }, max: { x: 1, y: 0.01, z: 0 } };
       expect(projectBoxAreaFraction(thin, identityCamera())).toBeCloseTo(0.01, 6);
+    });
+
+    it('the degenerate fallback is a CONTINUOUS ramp, not a cliff at the floor', () => {
+      // Review-caught oscillation hazard: a hard cutover at the degeneracy
+      // floor meant halfH=0.001 → 1.0 (finest) vs halfH=0.001001 → ~0.001
+      // (coarsest) — a three-orders jump no hysteresis can absorb when an
+      // edge-on plane rotates across it. The metric is now
+      // max(area, span·(1 − thin/floor)):
+      //   thin = floor/2 (0.0005): max(0.0005, 1·0.5) = 0.5 — midway;
+      //   thin = floor exactly:    max(0.001, 1·0)   = 0.001 — meets the
+      //     area product with NO jump (the ramp has decayed to zero);
+      //   and values sampled across the floor differ smoothly.
+      const mk = (halfH: number): BoundingBox => ({
+        min: { x: -1, y: -halfH, z: 0 },
+        max: { x: 1, y: halfH, z: 0 },
+      });
+      expect(projectBoxAreaFraction(mk(0.0005), identityCamera())).toBeCloseTo(0.5, 6);
+      expect(projectBoxAreaFraction(mk(0.001), identityCamera())).toBeCloseTo(0.001, 6);
+      // Just below vs just above the floor: both ~the area product — smooth.
+      const below = projectBoxAreaFraction(mk(0.00099), identityCamera());
+      const above = projectBoxAreaFraction(mk(0.00101), identityCamera());
+      expect(Math.abs(below - above)).toBeLessThan(0.02);
     });
 
     it('never saturates for an orthographic camera (w stays 1)', () => {

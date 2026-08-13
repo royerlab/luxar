@@ -396,7 +396,14 @@ def _substitutive_for_part(
     # caller overrides it when the "partition" turns out to hold a single part.
     from luxar.gsplats.tree import tree_from_substitutive_levels
 
-    return tree_from_substitutive_levels(sub.substitutive_levels, coverage=coverage)
+    # Explicit selector: both callables this recipe threads through `coverage`
+    # (coverage_fractions / partitioned_coverage_fractions) produce SCREEN-AREA
+    # fractions — without this, a custom-callable default of "coverage" would
+    # mislabel them (that default exists for EXTERNAL callables written in the
+    # legacy diagonal units).
+    return tree_from_substitutive_levels(
+        sub.substitutive_levels, coverage=coverage, selector="screen-area"
+    )
 
 
 def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:

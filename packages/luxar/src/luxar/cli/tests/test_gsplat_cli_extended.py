@@ -4080,12 +4080,14 @@ class TestLODCommand:
     def test_recipe_substitutive_stamps_coverage_fractions(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """#5: `gsplat lod --recipe levels` stamps viewport-relative
-        ``coverage_fraction`` (``sqrt(N_i/N_finest)``) on the on-disk lod children:
-        coarsest = 0.0, finest = 1.0, strictly ascending."""
-        import math
-
+        """#5: `gsplat lod --recipe levels` stamps SCREEN-AREA
+        ``coverage_fraction`` (occupancy halving; group ``selector`` =
+        ``"screen-area"``) on the on-disk lod children: coarsest = 0.0, finest
+        = the half-screen anchor (0.5), one area-halving per level, strictly
+        ascending — independent of per-level counts."""
         import zarr
+
+        from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
 
         out = tmp_path / "sub.gsplats.zarr"
         r = runner.invoke(
@@ -4112,12 +4114,14 @@ class TestLODCommand:
             key=lambda s: int(s.split("_")[1]),
         )
         cov = [float(g[k].attrs["coverage_fraction"]) for k in ch]
-        counts = [int(g[k].attrs["n_splats"]) for k in ch]  # child_0 = coarsest
+        assert g.attrs["selector"] == "screen-area"
         assert cov[0] == 0.0
-        assert cov[-1] == pytest.approx(1.0)
-        # coverage_i = sqrt(n_i / n_finest) for the non-coarsest children.
+        assert cov[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
+        # coverage_i halves per level below the finest (count-independent).
         for i in range(1, len(cov)):
-            assert cov[i] == pytest.approx(math.sqrt(counts[i] / counts[-1]))
+            assert cov[i] == pytest.approx(
+                WHOLE_OBJECT_FINEST_ANCHOR / 2 ** (len(cov) - 1 - i)
+            )
         assert all(cov[i] > cov[i - 1] for i in range(1, len(cov)))
 
     def test_recipe_pyramid(
@@ -4364,20 +4368,21 @@ class TestLODCommand:
     def test_recipe_multiscale_stamps_coverage_fractions(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:
-        """multiscale stamps viewport-relative ``coverage_fraction`` on the coarse
+        """multiscale stamps screen-area ``coverage_fraction`` on the coarse
         cap (0.0, always-eligible) and the fine partition wrapper (the finest rung)
         — the on-disk attrs the viewer's selector reads.
 
-        The finest rung is ``MAX_COVERAGE_FRACTION``, not 1.0: overview's fine child
-        is the whole dataset as a ``kind=partition`` and is by contract a zoom-in
+        The finest rung is ``PARTITION_FINEST_AREA`` (screen-area 1.0 —
+        fills-screen), not the whole-object 0.5: overview's fine child is the
+        whole dataset as a ``kind=partition`` and is by contract a zoom-in
         branch, so the pair keeps the fills-screen anchor rather than the
-        whole-object quarter-viewport one (``partitioned_coverage_fractions``)."""
-        from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+        whole-object half-screen one (``partitioned_coverage_fractions``)."""
+        from luxar.core.group.lod.group import PARTITION_FINEST_AREA
 
         out = tmp_path / "ms.gsplats.zarr"
         fine_cov = self._multiscale_fine_threshold(runner, medium_gsplats, out)
-        # partitioned_coverage_fractions([N_coarse, N_fine]) = [0.0, 4.0].
-        assert fine_cov == pytest.approx(MAX_COVERAGE_FRACTION)
+        # partitioned_coverage_fractions([N_coarse, N_fine]) = [0.0, 1.0].
+        assert fine_cov == pytest.approx(PARTITION_FINEST_AREA)
 
     def test_quiet_suppresses_saved_line(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path

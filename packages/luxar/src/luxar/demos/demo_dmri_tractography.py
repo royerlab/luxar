@@ -57,28 +57,30 @@ Two honest caveats, and the first is the big one:
 
 * **Get close before hover says anything.** Labels ride the *finest* level of
   the substitutive ladder only — the real Lines node; the synthesised coarse
-  gsplat levels carry none. Levels are selected on `coverage_fraction`, the
-  share of the viewport the node's bounds fill, and the finest level of every
-  group is anchored at 1.0, which nothing reaches from the opening pose.
+  gsplat levels carry none. Levels are selected on `coverage_fraction` under
+  `selector="screen-area"`: the fraction of the screen AREA the node's
+  projected bounds occupy, with each group's finest level anchored at 0.5 —
+  a bundle must occupy at least half the screen before its labelled Lines
+  level shows. At the whole-brain opening pose no individual bundle comes
+  close to that (each is a fraction of the brain), so everything sits on its
+  unlabelled coarse level.
 
   The route that works is to **fly the camera into the tractogram**. When the
   camera is inside or straddling a group's bounding box the selector returns
-  `+Infinity` and saturates to the finest level (`projectBoxDiagonalPx` in
+  `+Infinity` and saturates to the finest level (`projectBoxAreaFraction` in
   `scene/lod-selector-math.ts`), so every bundle enclosing the camera becomes
   labelled at once — a cranial nerve needs proximity, not magnification.
-  Zooming from outside works too, it is just slower: roughly measured from the
-  atlas bundle bounding boxes projected through `brain_camera()` at 16:9, the
-  whole tractogram covers ~0.7 of the viewport at the opening pose, the corpus
-  callosum ~0.7, the corticospinal tract ~0.4, the arcuate ~0.3 and a cranial
-  nerve ~0.1 — so about 1.5x of zoom for the biggest tracts and rather more,
-  plus a pan, for the smallest.
+  Zooming from outside works too: a big tract (the corpus callosum) reaches
+  half-screen occupancy after a modest zoom, while a small one (a cranial
+  nerve) needs substantially more, plus a pan.
 
   This is a threshold, not a law: `substitutive_lod` takes an explicit
   `coverage_fractions=[...]` (validated in `core/group/lod/group.py`, consumed
-  in `core/group/adders/lines.py`), so the finest step could be dropped below
-  1.0 to make the big tracts hoverable straight away. It is left at the default
-  on purpose — lowering it selects every tract's full fine level in the default
-  whole-brain view, which is precisely the cost the ladder exists to avoid.
+  in `core/group/adders/lines.py`; an explicit list keeps the legacy
+  `selector="coverage"` diagonal units), so the labelled step could be made
+  reachable earlier. It is left at the default on purpose — lowering it
+  selects every tract's full fine level in the default whole-brain view,
+  which is precisely the cost the ladder exists to avoid.
 
 * Lines labels are stored *per vertex*, so a bundle holds one copy of its string
   per vertex — 168,000 copies at the defaults. Labels here run ~124 bytes on
