@@ -99,10 +99,13 @@ def ladder_child_paths(nodes: Dict[str, Dict[str, Any]]) -> List[str]:
 def level_meshes(store: Path) -> List[Any]:
     """Each level's DECODED mesh, coarsest→finest.
 
-    Through `LuxarScene`, not the raw zarr arrays: per-vertex RGB is stored under
-    a 3-element subarray dtype, so a raw `colors.shape` reads back as `(V,)` and
-    invites the conclusion that the triples were flattened. They are not — the
-    loader is the only lens that shows what the viewer will actually receive.
+    Through `LuxarScene`, not the raw zarr arrays: neither the authored dtype nor
+    the per-vertex count reaches the store intact. Colours are stored under an
+    encoding — a float32 SDR colour as `rgb_uint8`, an HDR one quantized to uint16
+    against a stamped range, a uniform colour as ONE `(1, 3)` row plus an element
+    count — so the raw array reads back with a dtype and a length that are
+    properties of the encoding, not of what was authored. The loader is the only
+    lens that shows what the viewer will actually receive.
 
     Driven off the child list the writer actually produced, and deliberately NOT
     stopping at the first `get_mesh` failure: `get_mesh` raises `ValueError` for a
@@ -118,8 +121,25 @@ def level_meshes(store: Path) -> List[Any]:
 
 
 def level_colors(store: Path) -> List[np.ndarray]:
-    """Each level's decoded colours, coarsest→finest."""
-    return [mesh.colors for mesh in level_meshes(store)]
+    """Each level's decoded colours, coarsest→finest — one RGB triple per vertex.
+
+    The per-vertex COUNT is checked here rather than left to each caller, because
+    a uniform colour is stored as a single broadcast row plus an element count:
+    the callers' value assertions all reduce over the rows, so a level whose count
+    was wrong — or whose row was never expanded at all — holds exactly one correct
+    colour and satisfies every one of them, while handing the viewer a colour
+    buffer that does not match its own geometry.
+    """
+    out: List[np.ndarray] = []
+    for index, mesh in enumerate(level_meshes(store)):
+        colors = mesh.colors
+        assert colors is not None, f"level {index} decodes with no colours"
+        assert colors.shape == (len(mesh.vertices), 3), (
+            f"level {index} decodes {colors.shape} colours for "
+            f"{len(mesh.vertices)} vertices, not one RGB triple each"
+        )
+        out.append(colors)
+    return out
 
 
 def ladder_children(nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -201,8 +221,7 @@ class TestLadderShape:
         # forwarded the wrong colour, which pops on the switch exactly as visibly
         # as a colourless one.
         for index, level in enumerate(level_colors(tmp_path / "ladder.luxar.zarr")):
-            assert level is not None, f"level {index} decodes with no colours"
-            unique = np.unique(np.asarray(level).reshape(-1, 3), axis=0)
+            unique = np.unique(level, axis=0)
             assert unique.shape[0] == 1, f"level {index} is no longer one colour"
             assert tuple(int(v) for v in unique[0]) == (200, 0, 0), (
                 f"level {index} carries {unique[0]}, not the authored colour"
@@ -263,13 +282,9 @@ class TestLadderShape:
         # and none worth speaking of for the float rows.
         slack = 1.0 if np.issubdtype(np.dtype(dtype), np.integer) else 1e-4
         for index, level in enumerate(levels):
-            assert level is not None, f"level {index} lost its colours entirely"
             assert level.dtype == dtype, (
                 f"level {index} came back as {level.dtype}, not {dtype.__name__} — "
                 "a dtype change rescales the colours the viewer shows"
-            )
-            assert level.ndim == 2 and level.shape[1] == 3, (
-                f"level {index} is {level.shape}, not (V, 3)"
             )
             gradient, flat_low, flat_high = (
                 level[:, 0].astype(np.float64),
@@ -301,10 +316,13 @@ class TestLadderShape:
 
     def test_a_broadcast_1x3_colour_row_reaches_every_level(self, tmp_path):
         # The other shape #1355 measured: a `(1, 3)` row is the writer's own
-        # broadcast form, and it used to reach the decimator, where `colors.shape[1]`
-        # on a single row produced a level with one vertex's colour for all of them.
-        # Distinct from the uniform TUPLE above — that never becomes an array at
-        # all, so it takes a different branch and cannot cover this one.
+        # broadcast form, and an ndarray-vs-not discriminator classifies it as
+        # per-vertex data, so it reaches the decimator — which cannot cluster-average
+        # one row against V vertices and raises a bare `ValueError` the adder's
+        # funnel does not dress up. It has to be forwarded verbatim to every level
+        # instead, which is what the shape-based discriminator does. Distinct from
+        # the uniform TUPLE above — that never becomes an array at all, so it takes
+        # a different branch and cannot cover this one.
         verts, faces = octasphere(3)
         store = tmp_path / "ladder.luxar.zarr"
         with LuxarZarrCompiler(store) as compiler:
@@ -320,9 +338,8 @@ class TestLadderShape:
         levels = level_colors(store)
         assert len(levels) == 3, "2 coarse levels + the original"
         for index, level in enumerate(levels):
-            assert level is not None, f"level {index} lost the broadcast colour"
             assert level.dtype == np.uint8
-            unique = np.unique(level.reshape(-1, 3), axis=0)
+            unique = np.unique(level, axis=0)
             assert unique.shape[0] == 1, (
                 f"level {index} holds {unique.shape[0]} colours; a broadcast row is "
                 "one colour for the whole surface"
