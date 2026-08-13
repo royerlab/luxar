@@ -202,6 +202,28 @@ def is_lfs_pointer(path: Path) -> bool:
         return False
 
 
+def _unshippable_reason(demo_name: str) -> Optional[str]:
+    """Why *demo_name*'s data is not shipped, or ``None`` if it should be.
+
+    The manifest is the single source of truth for dataset disposition, so this
+    asks it rather than keeping a second list that could drift: a
+    ``local-compute`` / ``regenerate`` bucket means the data is deliberately
+    absent (we may not redistribute it, or it is cheap to rebuild). Any failure
+    to answer is reported as "shippable", which preserves the previous
+    behaviour — a missing file then raises the ordinary git-lfs error rather
+    than being silently excused.
+    """
+    try:
+        from .data_fetch import DatasetNotFound, dataset_spec, load_manifest
+
+        spec = dataset_spec(demo_name, load_manifest())
+    except (DatasetNotFound, KeyError, OSError, ValueError):
+        return None
+    if spec.get("bucket") not in ("local-compute", "regenerate"):
+        return None
+    return str(spec.get("reason") or spec.get("strategy") or "not redistributable")
+
+
 def _validate_lfs_files(paths: list[Path]) -> None:
     """Raise a helpful error if any *paths* are missing or are LFS pointers."""
     missing = [p for p in paths if not p.exists()]
@@ -659,6 +681,18 @@ def load_precomputed_gsplats(
             cache_file = cache_dir / fname
             lfs_file = lfs_dir / fname
             if _cache_is_stale(cache_file, lfs_file):
+                # A dataset we are not allowed to redistribute is ABSENT ON
+                # PURPOSE, so "run git lfs pull" would send the caller after a
+                # file that no longer exists in the repository and never will.
+                # Returning None instead routes the demo to its own
+                # fetch-the-raw-source-and-rebuild path, which is how these
+                # datasets are meant to ship.
+                if not lfs_file.exists() and not cache_file.exists():
+                    reason = _unshippable_reason(demo_name)
+                    if reason is not None:
+                        aprint(f"{demo_name} is not redistributable: {reason}")
+                        aprint("Rebuilding it locally from the original source…")
+                        return None
                 _validate_lfs_files([lfs_file])
                 aprint(f"Copying {fname} from package data to cache")
                 shutil.copy2(lfs_file, cache_file)

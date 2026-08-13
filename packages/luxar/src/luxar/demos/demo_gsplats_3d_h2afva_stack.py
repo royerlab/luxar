@@ -14,8 +14,7 @@ progressively, which is what makes a stack this size interactive.
 
 A second, toggleable layer draws that structure: one coloured wireframe box per
 part (press **L** for the Layers panel to show or hide it). The boxes are each
-part's content bounds — the extent the viewer actually culls against — so they
-overlap wherever neighbouring parts share splats.
+part's content bounds — the extent the viewer actually culls against.
 
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). Raw acquisition:
@@ -164,10 +163,16 @@ def partition_box_lines(node: Any) -> tuple[np.ndarray, np.ndarray]:
 
     The box drawn is each part's **content bounds** (the axis-aligned extent of
     the splat centers it holds), which is what the viewer frustum-culls against.
-    It is deliberately NOT the planner's box: a content-tiled fit does not store
-    its plan, and its boxes were built with an overlap margin, so the drawn boxes
-    genuinely do overlap where neighbouring parts share splats. Each part gets a
-    distinct hue so adjacent boxes stay tellable apart.
+    It is deliberately NOT the planner's box, which a content-tiled fit does not
+    store.
+
+    These boxes are **disjoint**: measured on this dataset, 0 of the 820 part
+    pairs intersect. The fit ran with an overlap margin, but that margin is a
+    fitting-time apodisation — each part's splats are cropped back to its core —
+    so the parts genuinely tile the volume rather than sharing splats. On screen
+    they nonetheless read as interleaved, because 41 nested 3D slabs projected to
+    2D cross each other's edges. Each part gets a distinct hue so neighbours stay
+    tellable apart.
     """
     verts: list[np.ndarray] = []
     cols: list[np.ndarray] = []
