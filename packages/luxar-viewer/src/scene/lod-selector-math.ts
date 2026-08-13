@@ -85,6 +85,19 @@ export function projectBoxDiagonalPx(
 }
 
 /**
+ * A projected rect whose SMALLER half-extent is at/below this fraction of its
+ * viewport axis is treated as DEGENERATE by {@link projectBoxAreaFraction}:
+ * effectively lower-dimensional content (an axis-aligned straight polyline, a
+ * planar dataset viewed edge-on, 1D/2D bounds on a mapped axis) whose
+ * area-product would read ~0 no matter how much of the screen it spans —
+ * permanently pinning it to the coarsest level. ``1e-3`` ≈ one pixel on a
+ * ~1080p viewport: anything rendering thinner than a pixel genuinely reads as
+ * a line, and for a line the faithful "portion of the screen occupied" is its
+ * linear span, not the vanishing area.
+ */
+const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
+
+/**
  * Project a world-space :type:`BoundingBox` through the camera and return the
  * fraction of the viewport AREA its screen-space AABB covers — the metric for
  * ``selector: 'screen-area'``.
@@ -98,6 +111,20 @@ export function projectBoxDiagonalPx(
  * approached, and the hysteresis band around it behaves like any other level
  * boundary.
  *
+ * **Degenerate (lower-dimensional) rects fall back to their LINEAR span.**
+ * When the smaller half-extent is at/below {@link DEGENERATE_RECT_HALF_EXTENT}
+ * (sub-pixel thin — an axis-aligned straight polyline, an edge-on plane), the
+ * area product reads ~0 regardless of how much screen the content spans, which
+ * would pin it to the coarsest level forever (the legacy diagonal metric never
+ * had this failure mode — a diagonal reads the long extent). The metric then
+ * becomes the LARGER half-extent: for effectively-1D content, "portion of the
+ * screen occupied" is its linear span, so a full-width line reads 1.0 and the
+ * halving ladder keeps its meaning. A both-axes-degenerate rect (a point)
+ * still reads ~0 → coarsest, which is right. The regime switch is a jump, but
+ * it can only be crossed by content hovering at exactly sub-pixel thickness
+ * (e.g. one frame of an edge-on rotation), and the downgrade hysteresis
+ * absorbs the boundary.
+ *
  * Same near-plane saturation contract as {@link projectBoxDiagonalPx}: camera
  * inside / straddling the box → ``+Infinity`` → finest level.
  *
@@ -110,6 +137,12 @@ export function projectBoxAreaFraction(
 ): number {
   const rect = projectBoxNdcRect(box, camera, precomputedProjView);
   if (rect === null) return Number.POSITIVE_INFINITY;
+  const thin = Math.min(rect.halfW, rect.halfH);
+  if (thin <= DEGENERATE_RECT_HALF_EXTENT) {
+    // Lower-dimensional content: the area product would under-report to ~0.
+    // Its linear span is the faithful occupancy reading (see the doc above).
+    return Math.max(rect.halfW, rect.halfH);
+  }
   return rect.halfW * rect.halfH;
 }
 

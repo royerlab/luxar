@@ -302,6 +302,34 @@ describe('projectBoxDiagonalPx', () => {
       expect(projectBoxAreaFraction(box, perspectiveAtOrigin())).toBe(Number.POSITIVE_INFINITY);
     });
 
+    it('degenerate rect (zero thickness) falls back to the LINEAR span, not area 0', () => {
+      // An axis-aligned straight polyline: full-width, zero-height projected
+      // bounds. The raw area product is exactly 0, which would pin the node to
+      // the coarsest level forever no matter how much screen it spans (the
+      // review-caught regression: the legacy diagonal metric read the long
+      // extent for these shapes). The metric must instead read the linear
+      // span: full width → 1.0.
+      const line: BoundingBox = { min: { x: -1, y: 0, z: 0 }, max: { x: 1, y: 0, z: 0 } };
+      expect(projectBoxAreaFraction(line, identityCamera())).toBeCloseTo(1.0, 6);
+      // Same for the vertical orientation (branch must take max, not halfW).
+      const vline: BoundingBox = { min: { x: 0, y: -0.5, z: 0 }, max: { x: 0, y: 0.5, z: 0 } };
+      expect(projectBoxAreaFraction(vline, identityCamera())).toBeCloseTo(0.5, 6);
+    });
+
+    it('a point (both axes degenerate) still reads ~0 → coarsest', () => {
+      const point: BoundingBox = { min: { x: 0.2, y: 0.2, z: 0 }, max: { x: 0.2, y: 0.2, z: 0 } };
+      expect(projectBoxAreaFraction(point, identityCamera())).toBeCloseTo(0, 6);
+    });
+
+    it('barely-non-degenerate rects stay on the area product (no early fallback)', () => {
+      // Thickness just ABOVE the sub-pixel degeneracy floor must NOT take the
+      // linear-span branch — otherwise every thin-but-real object would jump
+      // to a wildly finer level. halfH = 0.01 (≈10px on 1080p) → area path:
+      // 1.0 × 0.01 = 0.01, NOT the linear 1.0.
+      const thin: BoundingBox = { min: { x: -1, y: -0.01, z: 0 }, max: { x: 1, y: 0.01, z: 0 } };
+      expect(projectBoxAreaFraction(thin, identityCamera())).toBeCloseTo(0.01, 6);
+    });
+
     it('never saturates for an orthographic camera (w stays 1)', () => {
       // Same setup as the diagonal ortho pin: x,y=±5 → NDC ±0.5 per axis →
       // fractions 0.5 × 0.5 = 0.25.
@@ -677,6 +705,26 @@ describe('LODGroupRegistry — auto evaluation', () => {
         true
       );
     }
+  });
+
+  it("selector='screen-area': a degenerate (zero-thickness) node spanning the screen picks the finest, not the coarsest", () => {
+    // Regression for the review-caught failure: an axis-aligned straight
+    // polyline projects to a zero-height rect, whose raw area product is 0 —
+    // permanently coarsest under a naive area metric even at full screen
+    // width. The degenerate fallback reads the linear span (1.0 here ≥ the
+    // 0.5 finest threshold) → finest.
+    const lineBox = { min: [-1, 0, 0], max: [1, 0, 0] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: lineBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
+    expect(children[0].object.visible, 'must NOT be pinned to the coarsest').toBe(false);
   });
 
   it('an entry WITHOUT a selector keeps the legacy diagonal metric', () => {
