@@ -1474,6 +1474,47 @@ class TestMeshLodOutputPaths:
         assert not (source / "nested.luxar.zarr").exists()
         assert LuxarScene.load(source).get_mesh("surf").faces.shape[0] > 0
 
+    def test_an_unrecognized_recipe_is_refused_before_the_output_is_deleted(
+        self, tmp_path: Path
+    ) -> None:
+        """`--recipe` is validated at the CLI, but `run_lod` is directly callable.
+
+        A misspelled recipe used to fall through to the substitutive arm, so
+        `recipe="reveaal"` silently wrote a DECIMATED ladder where a reveal was
+        asked for — a different product, not a near miss.
+
+        The output-preserved half is a REGRESSION pin, not a bug being fixed:
+        specs are already built ~100 lines before the `--overwrite` `rmtree`, so
+        no store was ever lost to this. It is asserted because that ordering is
+        what keeps the raise cheap, and nothing else pins it.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        before = _run(run_lod, source, out)
+
+        with pytest.raises(ValueError, match="recipe must be one of"):
+            run_lod(
+                input_path=source,
+                output_path=out,
+                node_name=None,
+                levels=2,
+                compression_factor=4,
+                method="auto",
+                overwrite=True,
+                recipe="reveaal",
+            )
+        # Still the SUBSTITUTIVE ladder the first run wrote — not deleted, and not
+        # replaced by the reveal's shape. Asserted on the store, since a wrong
+        # product here is precisely a store with the other topology in it.
+        assert out.is_dir()
+        group = zarr.open_group(str(out), mode="r")["surf"]
+        assert group.attrs["kind"] == "lod"
+        assert "n_additive_sublods" not in group.attrs
+        assert len(before) == len([k for k in group.keys() if k.startswith("child_")])
+
 
 def test_every_method_named_in_the_help_EXAMPLES_is_a_real_method() -> None:
     """A copy-pasteable example must not name a method the command rejects.

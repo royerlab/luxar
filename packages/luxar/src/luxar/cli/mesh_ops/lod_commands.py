@@ -698,6 +698,15 @@ def _build_ladder_specs(
         resolve_additive_axis_mesh(dict(additive_spec))
         return None, additive_spec
 
+    if recipe != RECIPE_LEVELS:
+        # Named explicitly rather than falling through to the substitutive arm.
+        # `run_lod` is directly callable, so an unrecognized recipe reaching here
+        # would quietly write the OTHER flavour — `recipe="reveaal"` producing a
+        # decimated ladder is not a near-miss, it is a different product.
+        raise ValueError(
+            f"recipe must be one of {' | '.join(MESH_LOD_RECIPES)}; got {recipe!r}."
+        )
+
     substitutive_spec: Dict[str, Any] = {
         "levels": levels,
         "compression_factor": compression_factor,
@@ -734,6 +743,17 @@ def run_lod(
     ``output_path`` is normalized to ``<stem>.luxar.zarr`` — the store the
     compiler actually writes — before any guard or deletion looks at it.
     """
+    # `--recipe` is validated at the CLI in `_reject_cross_recipe_flags`, but
+    # `run_lod` is a public entry point too, so it states its own contract rather
+    # than trusting its caller. Stated HERE, at the top, so the rejection does not
+    # depend on where `_build_ladder_specs` happens to sit relative to the
+    # `--overwrite` deletion — that ordering is correct today (specs are built
+    # ~100 lines before the `rmtree`) and this keeps it from becoming load-bearing.
+    if recipe not in MESH_LOD_RECIPES:
+        raise ValueError(
+            f"recipe must be one of {' | '.join(MESH_LOD_RECIPES)}; got {recipe!r}."
+        )
+
     from luxar import LuxarZarrCompiler
 
     from ...core.group.adders.mesh import validate_scalar_data_range
