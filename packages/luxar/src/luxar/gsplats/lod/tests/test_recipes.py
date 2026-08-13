@@ -844,3 +844,96 @@ def test_overview_cap_keeps_no_energy_weight_under_a_reveal_ordering():
     ordered_cap_stats = ordered.children[0].meta.get("stats", {})
     assert "quality" in ordered_cap_stats
     assert "reference_energy" in ordered_cap_stats
+
+
+def test_every_volume_forwarding_site_also_forwards_the_axis_map():
+    """Structural guard against a fix-N-minus-1.
+
+    ``RecipeParams`` carries the source volume AND the map saying which volume
+    axis holds which center dim. Four different recipe paths reach
+    ``make_substitutive_lod``, and one of them originally forwarded ``volume``
+    without ``volume_axes``: a stacked target then fell back to the identity map,
+    every re-fit tripped the frame guard, and `--recipe levels --refine volume`
+    reported success while refining nothing at all.
+
+    Counting the two forwardings in the source is crude but catches exactly the
+    regression that happened — a new path that copies the ``volume=`` line and
+    forgets its partner.
+    """
+    from pathlib import Path
+
+    import luxar.gsplats.lod.recipes as recipes_module
+
+    source = Path(recipes_module.__file__).read_text()
+    volume_sites = source.count("volume=params.volume,")
+    axes_sites = source.count("volume_axes=params.volume_axes,")
+    assert volume_sites > 0, "sanity: the forwarding pattern moved"
+    assert axes_sites == volume_sites, (
+        f"{volume_sites} sites forward `volume` but {axes_sites} forward "
+        "`volume_axes`; a stacked target would silently frame-mismatch on the "
+        "path that drops it"
+    )
+
+
+def test_levels_recipe_refines_a_stacked_target_through_the_ladder():
+    """End-to-end at the recipe layer, on the path the CLI actually takes.
+
+    `levels` builds through ``make_lod_pyramid`` (ladders are on by default), a
+    different route to the reduction than the per-part ``adaptive`` path, so it
+    needs its own coverage: the unit tests on ``make_substitutive_lod`` passed
+    throughout while this route was broken.
+    """
+    import numpy as np
+
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.utils.trils import embed_cholesky_packed
+
+    size, n_t = 20, 3
+    rng = np.random.default_rng(0)
+    grid = np.mgrid[0:size, 0:size, 0:size].astype(np.float32)
+    field = np.zeros((size,) * 3, np.float32)
+    for _ in range(5):
+        c = rng.uniform(5, 15, 3)
+        s = rng.uniform(1.6, 2.2)
+        field += rng.uniform(0.4, 1.0) * np.exp(
+            -sum((grid[d] - c[d]) ** 2 for d in range(3)) / (2 * s * s)
+        )
+    # Source array is (t, z, y, x) — time FIRST, as microscopy data comes.
+    vol = np.stack([(1.0 + 0.3 * t) * field for t in range(n_t)]).astype(np.float32)
+
+    fit = fit_gaussian_splats(
+        vol[0], seeds=80, n_iters=150, device="cpu", verbose=False
+    )
+    n = fit.n_splats
+    packed = embed_cholesky_packed(
+        np.asarray(fit.cholesky_factors), 3, 4, [0, 1, 2], fill_sigma={3: 1e-4}
+    )
+    data = GSplatData(
+        centers=np.concatenate(
+            [
+                np.column_stack([np.asarray(fit.centers), np.full(n, float(t))])
+                for t in range(n_t)
+            ]
+        ).astype(np.float32),
+        amplitudes=np.tile(np.asarray(fit.amplitudes), n_t).astype(np.float32),
+        cholesky_factors=np.tile(packed, (n_t, 1)).astype(np.float32),
+    )
+
+    p = _params(
+        compression_factor=4,
+        levels=1,
+        refine="volume",
+        refine_iters=25,
+        volume=vol,
+        volume_axes=(1, 2, 3, 0),  # splats are (z,y,x,t); volume is (t,z,y,x)
+        coarsen_dims=(0, 1, 2),
+        device="cpu",
+    )
+    out = build_recipe(data, "levels", p)
+    stats = out.substitutive_levels[1].stats["refine_stats"]
+    assert stats["frame_mismatch_frac"] == 0.0, (
+        "every group tripped the frame guard — the axis map did not reach the "
+        f"reduction through this path (stats: {stats})"
+    )
+    assert stats["improved_frac"] > 0.0, "no group's re-fit was kept"
+    assert stats["mse_stored"] <= stats["mse_seed"] + 1e-12

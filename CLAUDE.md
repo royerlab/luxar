@@ -534,9 +534,20 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --refine l2 
 # <vol>` warm-start re-fits each merged level against the SOURCE VOLUME itself
 # (full fit seeded by the merge; +5-12 dB over the merge on real microscopy;
 # each level keeps whichever of merge/re-fit renders closer — never worse).
-# Needs the volume in hand: lod --target only (fit-time/batch are follow-ups);
-# levels/overview recipes, no barrier dims. `--refine-iters` default 300 here.
+# Needs the volume in hand: lod --target only (fit-time/batch are follow-ups).
+# Works on levels/overview AND per-tile `adaptive`, with or without barrier dims:
+# each re-fit is handed the sub-volume it is responsible for (a barrier group gets
+# its own timepoint slice, a tile its own crop), and a per-tile re-fit that leaves
+# its tile is discarded in favour of the merge. The volume is only SLICED, never
+# read whole, so a lazy zarr target stays lazy. `--refine-iters` default 300 here.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --target vol.tiff --refine volume
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --target vol.tiff --refine volume
+# A STACKED target needs --target-axes: fitted splats put spatial dims first and
+# the stacked axis LAST, while the source array is usually time-FIRST, so the
+# identity map would target the wrong axis. (Contrast --timepoint, which slices
+# ONE timepoint out; --target-axes keeps the axis so the re-fit walks it.)
+luxar gsplat lod tl.gsplats.zarr out.gsplats.zarr --recipe levels --refine volume \
+    --target movie.zarr --array-key h2afva/fused --target-axes time,z,y,x --coarsen-dims 0,1,2
 # Barrier-aware coarsening (levels/overview/adaptive): --coarsen-dims
 # lists the center-column indices coarsening may merge over; the rest become hard
 # barriers (a categorical/time/channel axis), so coarse splats never blend across

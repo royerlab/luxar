@@ -61,8 +61,13 @@ def decode_flat_channel_index(
     return tuple(coords)
 
 
-def _axis_kind(label: str) -> str:
-    """Classify one ``--axes`` label as time, channel or spatial."""
+def _axis_kind(label: str, flag: str = "--axes") -> str:
+    """Classify one axis label as time, channel or spatial.
+
+    ``flag`` names the option being parsed, so a typo is reported against the
+    option the user actually typed: this vocabulary is shared by ``--axes`` and
+    ``--target-axes``, which mean different things.
+    """
     if label in ("t", "time"):
         return "t"
     if label in ("c", "channel", "ch", "camera", "cam"):
@@ -70,12 +75,14 @@ def _axis_kind(label: str) -> str:
     if label in ("z", "y", "x", "depth", "height", "width"):
         return "s"
     raise ValueError(
-        f"--axes label {label!r} not recognised; use time/t, "
+        f"{flag} label {label!r} not recognised; use time/t, "
         "channel/c/ch/camera/cam, or z/y/x (depth/height/width)."
     )
 
 
-def volume_axes_from_spec(axes: str, ndim: int) -> tuple:
+def volume_axes_from_spec(
+    axes: str, ndim: int, *, flag: str = "--target-axes"
+) -> tuple:
     """Map each SPLAT center dim to the volume axis that holds it.
 
     The counterpart of :func:`_apply_axes_spec` for the case where a non-spatial
@@ -91,10 +98,10 @@ def volume_axes_from_spec(axes: str, ndim: int) -> tuple:
     labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
     if len(labels) != ndim:
         raise ValueError(
-            f"axes spec has {len(labels)} labels but the splats are {ndim}D; "
+            f"{flag} has {len(labels)} labels but the splats are {ndim}D; "
             "give one label per dimension."
         )
-    kinds = [_axis_kind(label) for label in labels]
+    kinds = [_axis_kind(label, flag) for label in labels]
     spatial = [i for i, k in enumerate(kinds) if k == "s"]
     stacked = [i for i, k in enumerate(kinds) if k in ("t", "c")]
     return tuple(spatial + stacked)

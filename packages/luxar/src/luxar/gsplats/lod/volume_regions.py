@@ -105,10 +105,13 @@ def select_sub_volume(
     free_dims = tuple(d for d in range(ndim) if d not in bset)
     if volume_axes is None:
         volume_axes = tuple(range(ndim))
-    if len(volume_axes) != ndim:
+    # A permutation, not merely the right length: a duplicate or out-of-range
+    # entry otherwise surfaces as numpy's "repeated axis in transpose" or a bare
+    # IndexError, neither of which names the argument at fault.
+    if sorted(int(a) for a in volume_axes) != list(range(ndim)):
         raise ValueError(
-            f"volume_axes must have one entry per center dim ({ndim}); "
-            f"got {len(volume_axes)}"
+            f"volume_axes must be a permutation of 0..{ndim - 1} (one volume "
+            f"axis per center dim, each used once); got {tuple(volume_axes)!r}"
         )
     vshape = tuple(int(s) for s in volume.shape)
     if len(vshape) != ndim:
@@ -277,10 +280,17 @@ def merge_volume_refit_stats(sink: Dict, group: Dict, *, weight: int) -> None:
         # so the aggregate can read worse than the seed even though every piece
         # stored the better of the two. `mse_stored <= mse_seed` is the
         # never-worse property, and it must survive aggregation to be checkable.
+        #
+        # Read the VERDICT rather than re-deriving it as min(seed, refit): the
+        # two agree only while MSE is the sole arbiter. A re-fit rejected for
+        # leaving its tile can hold the LOWER MSE and still not be what was
+        # stored, and min() would then credit the level with an error it never
+        # achieved — precisely in the case the containment guard exists for.
+        seed_kept = bool(group.get("seed_won")) or bool(group.get("tile_escape"))
         contribution = {
             "mse_seed": float(group["mse_seed"]),
             "mse_refit": float(group["mse_refit"]),
-            "mse_stored": min(float(group["mse_seed"]), float(group["mse_refit"])),
+            "mse_stored": float(group["mse_seed"] if seed_kept else group["mse_refit"]),
         }
         if prev_w + w > 0:
             for key, value in contribution.items():

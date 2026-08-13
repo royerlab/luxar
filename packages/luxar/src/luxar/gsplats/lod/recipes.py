@@ -240,6 +240,7 @@ def build_levels(data: GSplatData, params: RecipeParams) -> GSplatData:
         refine=params.refine,  # type: ignore[arg-type]
         refine_iters=params.refine_iters,
         volume=params.volume,
+        volume_axes=params.volume_axes,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -262,6 +263,7 @@ def build_levels_matrix(data: GSplatData, params: RecipeParams) -> GSplatData:
         refine=params.refine,
         refine_iters=params.refine_iters,
         volume=params.volume,
+        volume_axes=params.volume_axes,
         device=params.device,
         coarsen_dims=params.coarsen_dims,
         n_additive_lods=params.n_lods,
@@ -566,6 +568,7 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
         refine=params.refine,  # type: ignore[arg-type]
         refine_iters=params.refine_iters,
         volume=params.volume,
+        volume_axes=params.volume_axes,
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,

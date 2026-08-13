@@ -822,6 +822,14 @@ def make_substitutive_lod(
             "`volume` is only consumed by refine='volume'; "
             f"got volume with refine={refine!r}"
         )
+    if volume_axes is not None and volume is None:
+        # An axis map describes a volume. Silently ignoring it would let a
+        # typo'd or misplaced map vanish without trace, and the map is exactly
+        # what decides whether a stacked re-fit targets the right axis.
+        raise ValueError(
+            "`volume_axes` describes the layout of `volume`, but no volume was "
+            "given; pass volume=... (with refine='volume') or drop volume_axes"
+        )
     K = int(compression_factor)
     L_levels = int(levels)
 
