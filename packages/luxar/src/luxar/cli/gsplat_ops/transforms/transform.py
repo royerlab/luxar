@@ -442,6 +442,12 @@ def run_transform_dataset(
                     from luxar.gsplats.tree import without_meta_key
 
                     node = without_meta_key(node, "coverage_fraction")
+                    # The selector names the UNITS of the thresholds just
+                    # scrubbed, so it goes with them: the writer re-derives in
+                    # screen-area units and re-stamps that mode. Keeping a
+                    # legacy store's "coverage" stamp here would mislabel the
+                    # fresh area values.
+                    node = without_meta_key(node, "selector")
                     linear, offset = _composed_affine(
                         d, scale_matrix, rot_matrix, translate_vec, center_shift
                     )

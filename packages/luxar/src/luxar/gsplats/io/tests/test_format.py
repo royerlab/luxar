@@ -1,4 +1,4 @@
-"""Tests for the v3.3 ``.gsplats.zarr`` node-tree format compliance.
+"""Tests for the v3.4 ``.gsplats.zarr`` node-tree format compliance.
 
 A single splat set saved via :func:`save_gsplats` is a **leaf node at the file
 root**: the arrays (``centers`` / ``amplitudes`` / ``cholesky_factors_diag`` /

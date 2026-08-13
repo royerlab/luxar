@@ -11,8 +11,9 @@ Five input shapes are auto-detected:
   ``kind=lod`` groups still carry the pre-v3.2 ``selector='pixel_size'`` /
   per-child ``min_pixel_size`` attrs (renamed in v3.2 to ``selector='coverage'``
   / ``coverage_fraction``). Re-written through the current node-tree
-  reader/writer, which derives fresh ``coverage_fraction`` thresholds from the
-  per-level splat counts and stamps the current format (v3.3).
+  reader/writer, which derives fresh screen-area ``coverage_fraction``
+  thresholds (``selector='screen-area'``, occupancy halving) and stamps the
+  current format (v3.4).
 
 Each legacy decoder is *frozen* here (the v1.x and v2.0 decode loops were removed
 from the live ``load_gsplats`` path at the v3.0 cutover) and the result is
@@ -35,6 +36,7 @@ from luxar.gsplats.gsplat_data import (
     SubstitutiveLevel,
 )
 from luxar.gsplats.io._archive import extract_compressed_zarr
+from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 __all__ = ["migrate_format", "detect_legacy_format"]
@@ -106,9 +108,15 @@ def detect_legacy_format(input_path: Path) -> str:
                         f"Input {input_path} is already format v{fv} "
                         f"(a current node-tree format); no migration needed."
                     )
-                if fv in ("3.2", "3.3"):
-                    # v3.3 only adds the optional luxar_delta_v1 filter on
-                    # quantized arrays — nothing to migrate in either version.
+                if fv in SUPPORTED_FORMAT_VERSIONS and fv not in ("3.0", "3.1"):
+                    # Every supported node-tree version past the v3.2 selector
+                    # rename is current for migration purposes: v3.3 only adds
+                    # the optional luxar_delta_v1 filter, v3.4 only widens the
+                    # kind=lod selector vocabulary — nothing to migrate.
+                    # Derived from SUPPORTED_FORMAT_VERSIONS so a future bump
+                    # cannot silently push current stores into the
+                    # "unrecognised layout" catch-all below (v3.4 did exactly
+                    # that while this was a hardcoded ("3.2", "3.3") tuple).
                     raise ValueError(
                         f"Input {input_path} is already format v{fv} "
                         f"(a current node-tree format); no migration needed."
@@ -364,8 +372,9 @@ def _read_v3_root(
     Used for the ``v3.x-lod-pixel-size`` migration: the arrays and topology are
     already current, only the ``kind=lod`` selector attrs are stale. The live
     reader ignores the legacy ``min_pixel_size`` / ``selector='pixel_size'``
-    attrs, and the live writer re-derives fresh ``coverage_fraction``
-    thresholds (``sqrt(N_i/N_finest)``) from the per-level splat counts on the
+    attrs, and the live writer re-derives fresh screen-area
+    ``coverage_fraction`` thresholds (occupancy halving; ``selector`` stamped
+    ``'screen-area'``) on the
     subsequent :func:`write_gsplats_tree` — so read→write *is* the migration.
 
     Returns ``(node, fitting_info, fitting_config, provenance_info,

@@ -1,30 +1,31 @@
 """luxar.core.group.lod.group – Geometry-agnostic helpers for the LOD-kind Group.
 
-The LOD-kind ``Group`` selects one of N alternative children at runtime based
-on a view-driven metric (currently: the projected bbox diagonal in pixels). It
-is geometry-agnostic — children can be ``points``, ``lines``, ``gsplats``,
-``mesh``, or themselves a specialized group (``kind=lod`` / ``kind=partition``).
+The LOD-kind ``Group`` selects one of N alternative children at runtime by
+comparing the group's on-screen size against each child's ``coverage_fraction``
+threshold. It is geometry-agnostic — children can be ``points``, ``lines``,
+``gsplats``, ``mesh``, or themselves a specialized group (``kind=lod`` /
+``kind=partition``).
 
 Each child carries its own ``coverage_fraction`` attribute (strictly monotonic
-increasing in coarsest→finest order; coarsest = 0.0, finest = 1.0 for a
-WHOLE-OBJECT ladder and ``MAX_COVERAGE_FRACTION`` = 4.0 for a partition-bound
-one). This is a **dimensionless, viewport-relative** threshold: the viewer
-multiplies it by half of the current viewport's *fitted axis* — the smaller of
-its width/height, i.e. ``min(viewport.width, viewport.height)`` in pixels, which
-is the extent the camera framing actually fits (see ``scene/lod-group-registry.ts``'s
-``FILL_FACTOR`` doc) — and picks the finest child whose resulting pixel
-threshold is satisfied by the group's on-screen size. So coverage 1.0 activates
-once the object's projected bbox diagonal reaches half of the fitted screen axis
-— i.e. at any normal full-frame view — and coarser levels step in geometrically
-as it shrinks below that, on any monitor or aspect ratio. 4.0 is *approximately*
-"this node alone fills the viewport" — exactly so only near aspect ratio
-√3 ≈ 1.73; the real screen-fill metric ranges from ~2.8 (1:1) to ~7.4 (32:9),
-see ``MAX_COVERAGE_FRACTION`` below — which is nonetheless the right anchor for
-one tile of a spatial partition (see ``partitioned_coverage_fractions``): a
-tiled layer's per-tile anchor was already a coarse heuristic (each tile's own
-in-scene size varies with camera distance and framing anyway), so trading
-aspect-exactness there for the whole-object ladder being aspect-exact instead
-(the case #1410 actually regressed) is the right side to be approximate on.
+increasing in coarsest→finest order, coarsest = 0.0); the group's ``selector``
+attr names the UNITS those thresholds are in:
+
+* ``selector="screen-area"`` — what every DERIVED ladder stamps. A threshold is
+  a literal **screen-area fraction**: the group's projected bbox rect area over
+  the viewport area. The derived whole-object ladder is
+  ``[0, …, 1/8, 1/4, 1/2]`` (:data:`WHOLE_OBJECT_FINEST_ANCHOR` — full detail
+  while the node occupies at least half the screen, one level coarser per
+  halving of occupied area) and a partition tile anchors at
+  :data:`PARTITION_FINEST_AREA` = 1.0 (the tile alone fills the screen).
+* ``selector="coverage"`` — the legacy diagonal metric, kept for existing
+  datasets and for explicit ``coverage_fractions=[...]`` lists (whose authored
+  values were tuned in these units): the viewer compares the threshold against
+  ``projected bbox diagonal / (FILL_FACTOR=0.5 × fittedAxisPx)``, where
+  ``fittedAxisPx`` is ``min(viewport.width, viewport.height)`` — the extent the
+  camera framing actually fits (#1410 re-anchored this normalisation from the
+  viewport diagonal). So 1.0 = half the fitted screen axis (a normal
+  full-frame view) and :data:`MAX_COVERAGE_FRACTION` = 4.0 ≈ a screen-filling
+  object (exact only near aspect √3 — see its doc).
 
 The standalone builder ``add_lod_group()`` lets users assemble these by hand; the
 convenience paths (e.g. ``Scene.add_gsplats_from_data(..., lod_group=...)``,
@@ -32,12 +33,13 @@ convenience paths (e.g. ``Scene.add_gsplats_from_data(..., lod_group=...)``,
 them via
 ``derive_coverage_fractions``, which picks between ``coverage_fractions`` and
 ``partitioned_coverage_fractions`` from the insertion point's ancestry. Both share
-one shape, ``coverage_i ∝ sqrt(N_i / N_finest)`` where ``N_i`` is level *i*'s
-element count. Because it is a **ratio** of counts, it
-is immune to non-displayed-dimension multiplicity (e.g. a stacked time axis inflates
-every level's count equally and cancels), and it makes no absolute-resolution claim
-(a coarse/blocky level is simply mapped onto a smaller apparent size, not a true
-detail estimate).
+one shape — SCREEN-OCCUPANCY HALVING: the finest level holds while the object
+occupies at least half the screen (whole-object anchor area 0.5; a partition
+tile anchors at fills-screen area 1.0), and every halving of occupied area steps
+one level coarser. The element counts set only the ladder's LENGTH: authored
+detail is meant to be viewed full screen, and the derivation is deliberately
+count-independent (a count ratio knows nothing about element size, overlap, or
+intent — see ``coverage_fractions``).
 
 Almost everything here is type-agnostic and shared across all leaf geometries
 (Points, Lines, GSplats, Mesh) and the Partition kind; the one exception is the
@@ -49,7 +51,7 @@ types (e.g. ``lod.gsplats`` for ``GSplatData``).
 
 This module hosts:
 
-* ``coverage_fractions`` (``sqrt(N_i / N_finest)``, coarsest 0.0) and its shared
+* ``coverage_fractions`` (screen-occupancy halving, coarsest 0.0) and its shared
   ``_apply_monotonicity_guard``, its partition-bound sibling
   ``partitioned_coverage_fractions``, and the ``derive_coverage_fractions`` /
   ``is_partition_bound`` pair the scene adders use to choose between them from
@@ -84,52 +86,37 @@ if TYPE_CHECKING:
     from ...node import Node
 
 
-#: Upper bound on any ``coverage_fraction`` — authored OR derived.
+#: Upper bound on any ``coverage_fraction`` — the LEGACY ``selector="coverage"``
+#: ceiling, and (being the larger of the two selectors' ceilings) the loosest
+#: bound the explicit-list validators enforce.
 #:
-#: This is ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (the viewer's LOD anchor,
-#: ``FILL_FACTOR = 0.5`` — see ``scene/lod-group-registry.ts``): the viewer
+#: This is ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (the viewer's legacy LOD
+#: anchor, ``FILL_FACTOR = 0.5`` — see ``scene/lod-group-registry.ts``): under
+#: ``selector="coverage"`` the viewer
 #: compares each threshold against ``coverage metric = projected bbox diagonal /
 #: (FILL_FACTOR × fittedAxisPx)``, where ``fittedAxisPx`` is
 #: ``min(viewport.width, viewport.height)`` — the extent the camera framing
-#: actually fits. A *screen-filling* object's projected diagonal is not simply
-#: ``fittedAxisPx`` (that identity only held for the pre-#1410 viewport-diagonal
-#: normalisation); it is ``hypot(aspect, 1) / min(aspect, 1)`` times it —
-#: aspect-DEPENDENT, not a constant — so the coverage METRIC such an object
-#: produces (that ratio ÷ ``FILL_FACTOR``) measures **2.83 at 1:1, 3.33 at 4:3,
-#: 3.61 at 3:2, 3.77 at 16:10, 4.08 at 16:9, 5.15 at a real 21:9 panel
-#: (2560x1080), 7.39 at 32:9**, and is equal
-#: to exactly 4.0 only at aspect ratio √3 ≈ 1.73. ``SCREEN_FILL_DIAGONAL_RATIO``
-#: pins the mainstream-aspect approximation of that ratio to a round ``2``
-#: (measured 2.04 at 16:9 — the reference aspect it is anchored at — 2.57 at
-#: 21:9), so ``MAX_COVERAGE_FRACTION = SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR
-#: = 2 / 0.5 = 4.0`` — the same numeric value as before issue #1410
-#: re-anchored the normalisation from the viewport diagonal to the fitted
-#: screen axis, but no longer an EXACT "a screen-filling object produces this
-#: metric" identity at every aspect ratio the way it was under the old
-#: (diagonal) normalisation — only approximately so, and only near the
-#: mainstream range. The bound still means, approximately, "a level may be
-#: required to fill the screen, at most"; a partition-bound ladder therefore
-#: now needs somewhat MORE projected size to reach its finest level at
-#: square-ish/portrait-ish aspect ratios than before #1410 (×1.41 at 1:1,
-#: ×1.20 at 4:3, ×1.06 at 16:10, ~×1.0 at 16:9) and somewhat LESS at
-#: ultrawide ones (×0.78 at a real 21:9 panel) — an accepted, deliberate
-#: trade against the #1410 fix: the whole-object ladder
-#: (``coverage_fractions``, anchored at 1.0) is what a normal full-frame
-#: view hits, and that is where #1410's wide-aspect blur actually showed up;
-#: a tiled layer's per-tile anchor was
-#: already an approximation (each tile's own on-screen size already varies
-#: with camera distance and framing), so it is the right place to keep
-#: absorbing the aspect dependence.
+#: actually fits (#1410 re-anchored the normalisation from the viewport
+#: diagonal to this fitted axis). A *screen-filling* object's projected
+#: diagonal is ``hypot(aspect, 1) / min(aspect, 1)`` times the fitted axis —
+#: aspect-DEPENDENT — and ``SCREEN_FILL_DIAGONAL_RATIO`` pins the
+#: mainstream-aspect approximation of that ratio to a round ``2`` (measured
+#: 2.04 at 16:9, the reference aspect), so ``MAX_COVERAGE_FRACTION =
+#: SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR = 2 / 0.5 = 4.0``. The bound
+#: therefore means, approximately (exact only near aspect √3), "a level may be
+#: required to fill the screen, at most" — see the #1410/#1542 notes in
+#: ``lod-group-registry.ts`` for the per-aspect table. (Under
+#: ``selector="screen-area"`` the same fills-screen meaning is carried EXACTLY
+#: by :data:`PARTITION_FINEST_AREA` = 1.0 — the area metric is aspect-free by
+#: construction; derived ladders never exceed it.)
 #:
-#: ``1.0`` is the finest anchor of a WHOLE-OBJECT ladder (reached at half the
-#: fitted screen axis, i.e. any normal full-frame view) — see
-#: :func:`coverage_fractions`, whose *derived* output contract stays ``[0, 1]``.
-#: Values above ``1.0`` hold a level until *later* than that, which is what a
+#: Values above a whole-object anchor hold a level until *later*, which is what a
 #: spatially tiled layer needs (each tile projects to only a fraction of the
 #: viewport). They arrive three ways:
 #:
 #: 1. an explicit ``coverage_fractions=[...]`` list on ``substitutive_lod=`` /
-#:    ``lod_group=`` (checked by the resolvers in this module);
+#:    ``lod_group=`` (checked by the resolvers in this module; explicit lists
+#:    keep the legacy selector, so this constant IS their ceiling);
 #: 2. automatically, via :func:`partitioned_coverage_fractions` — what every
 #:    partition-bound producer derives (the ``adaptive`` / ``overview`` gsplat
 #:    recipes, the two gsplat writers' topology-aware fallback, and the scene
@@ -138,9 +125,6 @@ if TYPE_CHECKING:
 #:    shape ``examples/partition_of_lod_example.py`` builds), for which
 #:    :func:`validate_lod_group` is the only guard — it bypasses the resolvers
 #:    entirely.
-#:
-#: So this bound is not an author-only escape hatch: it is also the finest value a
-#: derived ladder can take.
 MAX_COVERAGE_FRACTION: Final = 4.0
 
 
@@ -241,71 +225,113 @@ def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
         prev = v
 
 
+#: Whole-object ladders anchor their FINEST level at HALF THE SCREEN AREA.
+#: Under ``selector="screen-area"`` the per-child ``coverage_fraction`` IS a
+#: screen-area fraction (projected bbox rect area / viewport area), so the
+#: rule reads literally: full detail while the node occupies at least half
+#: the screen (0.5), one level coarser per halving of occupied area
+#: (…, 1/8, 1/4, 1/2). A partition tile anchors at 1.0 (the tile alone
+#: fills the screen). Validated live on the zebrahub streamlines: a pose
+#: whose bbox rect covered ~37% of the screen read as "clearly zoomed out"
+#: to the user while the old diagonal metric still measured 2.37/4 — and a
+#: #1361-style opening framing can measure a diagonal fraction as low as
+#: 0.31 while its AREA occupancy is high, so no diagonal anchor can satisfy
+#: both. Area is the semantics the user actually means by "portion of the
+#: screen occupied". Count-independent: the element counts set only the
+#: ladder's LENGTH (the old ``sqrt(N_i/N_finest)`` count-ratio derivation is
+#: retired; legacy datasets keep their stamped values under the legacy
+#: ``selector="coverage"`` diagonal metric).
+#:
+#: **Elongated / flat content reads its literal occupancy — by design.** A
+#: fitted high-aspect object (say full-width but a quarter of the viewport
+#: tall) occupies 25% of the screen at the opening framing, so it opens ONE
+#: LEVEL below finest on the standard 4-level ladder (0.25 sits exactly on
+#: the second-finest threshold) and reaches full detail after one modest zoom.
+#: That is the occupancy rule applied verbatim, and the deliberate REVISION of
+#: the old diagonal-anchored opening-framing guarantee (#1361): the diagonal
+#: metric read elongated content HIGH (a rod's diagonal ≈ its length), which
+#: is exactly how dense sub-pixel streamlines ended up rendering their most
+#: expensive level across the entire usable zoom range. Under occupancy the
+#: trade runs the other way — predictable coarsening everywhere, full detail
+#: whenever the content actually fills half the screen — and an author who
+#: wants a high-aspect object finest-at-opening can say so with an explicit
+#: ``coverage_fractions=[...]`` list.
+WHOLE_OBJECT_FINEST_ANCHOR: Final = 0.5
+
+#: A partition TILE's finest anchor under ``selector="screen-area"``: the
+#: tile alone occupying the whole screen (area fraction 1.0) — the
+#: fills-screen semantics the adaptive/overview recipes rely on.
+PARTITION_FINEST_AREA: Final = 1.0
+
+
 def coverage_fractions(element_counts: list[int]) -> list[float]:
-    """Auto-derive monotonic viewport-relative ``coverage_fraction`` thresholds.
+    """Auto-derive viewport-relative ``coverage_fraction`` thresholds by
+    SCREEN-OCCUPANCY HALVING.
 
-    Coarsest child (index 0) gets ``0.0`` (always-eligible floor); each subsequent
-    child *i* gets ``sqrt(N_i / N_finest)`` where ``N_finest`` is the finest (last)
-    level's splat count — so the finest child is ``1.0`` and activates once the
-    object's projected bbox diagonal reaches half of the fitted screen axis
-    (``min(viewport.width, viewport.height)``), i.e. at any normal full-frame view
-    (the viewer multiplies each fraction by half of the current viewport's fitted
-    axis in pixels). Coarser levels land at geometric fractions below and step in
-    as the object shrinks.
+    Coarsest child (index 0) gets ``0.0`` (always-eligible floor); the finest
+    child gets :data:`WHOLE_OBJECT_FINEST_ANCHOR` (``0.5`` — half the SCREEN
+    AREA under ``selector="screen-area"``, i.e. the full-detail level holds
+    while the object occupies at least half the screen); each level between
+    halves once more — one halving of occupied AREA per level
+    (…, 1/8, 1/4, 1/2). The element counts are used only for the ladder's
+    LENGTH — the thresholds assume the author's levels are a geometric detail
+    ladder meant to be consumed one halving of screen occupancy at a time,
+    which is what every recipe (K-fold substitutive reductions) produces.
 
-    Because the fraction is a **ratio** of splat counts:
-
-    * any non-displayed-dimension multiplicity (e.g. a stacked time axis that
-      inflates every level's count by the same factor) **cancels**;
-    * no absolute on-screen size or physical element radius is assumed — a
-      coarse/blocky level is simply mapped onto a smaller apparent size, not a
-      claim about true resolvable detail.
-
-    ``sqrt`` is the screen-area law (a level with 4× the splats is ~2× denser
-    linearly), giving ~2×-per-level spacing for the usual K=4 substitutive ladder.
+    Count-INDEPENDENCE is deliberate: the retired ``sqrt(N_i/N_finest)``
+    derivation (a diagonal metric) held the finest
+    level until the object was far away, and spaced levels by a count ratio
+    that is blind to element size, overlap, and intent — dense additive data
+    (millions of sub-pixel streamlines) rendered its most expensive level
+    across nearly the whole usable zoom range. Occupancy halving instead
+    assumes the author's detail is meant to be viewed full screen and steps
+    predictably with zoom, whatever the compression factor.
 
     Args:
         element_counts: One entry per child, in coarsest→finest order. Must be
-            non-empty and the finest (last) entry must be > 0.
+            non-empty and the finest (last) entry must be > 0 (an empty finest
+            level means a reduction culled every representative — a broken
+            ladder worth failing loudly on, even though the thresholds no
+            longer read the counts).
 
     Returns:
-        List of coverage fractions in ``[0, 1]``, same length as ``element_counts``,
-        strictly monotonic increasing with the finest anchored at ``1.0``; the
-        monotonicity guard resolves any equal/non-monotone entries by nudging the
-        earlier (coarser) entries *downward*, so the ``[0, 1]`` contract holds
-        for degenerate ladders too (the derived values always round-trip through
-        the explicit-``coverage_fractions=`` validators).
+        List of screen-area fractions in ``[0, 0.5]``, same length as
+        ``element_counts``, strictly monotonic increasing: coarsest ``0.0``,
+        finest ``0.5``, one area-halving between levels (the derived values
+        round-trip through the explicit-``coverage_fractions=`` validators).
     """
     if not element_counts:
         raise ValueError("element_counts must be non-empty")
     n_finest = element_counts[-1]
     if n_finest <= 0:
         raise ValueError(
-            "finest LOD level is empty (0 elements), so per-level coverage "
-            "fractions cannot be derived (they normalise by the finest count). "
-            "This usually means a reduction culled every representative — e.g. the "
-            f"input splats all have non-positive amplitude. Got "
-            f"element_counts={list(element_counts)}."
+            "finest LOD level is empty (0 elements) — a reduction culled every "
+            "representative (e.g. the input splats all have non-positive "
+            f"amplitude). Got element_counts={list(element_counts)}."
         )
+    levels = len(element_counts)
     fractions: list[float] = [0.0]
-    for n in element_counts[1:]:
-        fractions.append((n / n_finest) ** 0.5)
-    return _apply_monotonicity_guard(fractions, "coverage_fractions")
+    for i in range(1, levels):
+        fractions.append(WHOLE_OBJECT_FINEST_ANCHOR / float(2 ** (levels - 1 - i)))
+    return _apply_monotonicity_guard(
+        fractions, "coverage_fractions", cap=WHOLE_OBJECT_FINEST_ANCHOR
+    )
 
 
 def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     """:func:`coverage_fractions` re-anchored at **fills-screen** for a ladder
     that is bound to a spatial partition.
 
-    **The rule.** The viewer's half-fitted-axis anchor (``FILL_FACTOR`` 0.5) is
-    calibrated for a lod group whose levels are alternative renderings of the
-    WHOLE object, seen at a normal full-frame view — that is the #1361 fix. Two
+    **The rule.** The whole-object half-screen anchor
+    (:data:`WHOLE_OBJECT_FINEST_ANCHOR`) is calibrated for a lod group whose
+    levels are alternative renderings of the WHOLE object, seen at a normal
+    full-frame view — the guarantee #1361 established. Two
     topologies opt out of it, for two DIFFERENT reasons — one geometric, one a
     product contract. Do not conflate them:
 
     * **A per-part ladder** (one ``kind=lod`` group per BSP tile — the
       ``adaptive`` recipe). This one is GEOMETRY. The switching group's bbox is a
-      single TILE, so its projected diagonal is intrinsically a fraction of the
+      single TILE, so its projected rect is intrinsically a fraction of the
       whole object's and the metric reads systematically low; a whole-object
       anchor would make every tile select its finest level while the object is
       merely full-frame.
@@ -329,23 +355,20 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     held back until the object overfills the screen (the very #1361 blur). Both
     tree writers' topology fallbacks and ``build_adaptive`` special-case it.
 
-    In both cases the ladder keeps the pre-#1361 anchor by scaling the derived
-    fractions by :data:`MAX_COVERAGE_FRACTION`
-    (``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``), so the
-    finest lands on ``4.0`` — which in coverage-metric space means exactly what
-    ``1.0`` meant before the anchor moved. This is the same ×4 rescale the
-    hand-tuned ``demo_biodiversity_planetary_scale`` ladder uses, so all three
-    are one rule rather than three special cases.
+    In both cases the ladder is re-anchored at fills-screen by scaling the
+    derived fractions by ``PARTITION_FINEST_AREA / WHOLE_OBJECT_FINEST_ANCHOR``
+    (×2 in area units), so the finest lands on :data:`PARTITION_FINEST_AREA` =
+    ``1.0`` — the tile alone occupying the whole screen.
 
     Scaling is order-preserving and by a power of two (hence exact in binary
     floating point), so strict ascent survives, ``0.0`` stays ``0.0``, and the
-    output lands in ``[0, MAX_COVERAGE_FRACTION]`` — the explicit-list bound —
-    with the finest exactly on it.
+    output lands in ``[0, PARTITION_FINEST_AREA]`` with the finest exactly on
+    it.
 
     **The assumption.** The rule rests on the partition being a real TILING, i.e.
     >= 2 parts, so that a part genuinely projects to a fraction of the whole. A
     ONE-PART ``kind=partition`` breaks it: the "tile" IS the whole object, and this
-    anchor is then a factor of 4 too coarse. The two entries below are the ones
+    anchor is then a factor of 2 too coarse (in screen-area units). The two entries below are the ones
     that have been audited — the tree-building producers that CAN see the sibling
     count (they exclude the shape), and the scene-adder path (which cannot). Read
     the list as illustrative, not exhaustive:
@@ -364,7 +387,7 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     * The SCENE-ADDER path (:func:`derive_coverage_fractions`) genuinely cannot
       check it: part 0's ladder is derived before part 1 has been added, so the
       sibling count does not exist yet. This is a documented caveat, not a coded
-      guard — the only place the ×4 anchor can be applied to a lone part. The
+      guard — the only place the tile anchor can be applied to a lone part. The
       compiler's finalize walk, which DOES see the final sibling count, warns
       about it after the fact (``io/_compiler/finalize/lod_backfill.py::
       warn_one_part_partition_anchors``); it does not rewrite anything, because an
@@ -374,7 +397,7 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     Two further producers reach this anchor for a lone part and are known,
     pre-existing, and out of scope here: ``GSplatData.partition_from_regions``
     (``gsplats/_data/composition.py``) returns the bare ``build_part_lod(...)``
-    node — a 4.0-anchored ``kind=lod`` with no partition wrapper at all — when
+    node — a tile-anchored ``kind=lod`` with no partition wrapper at all — when
     exactly one region is non-empty, and the tiled batch merge
     (``gsplats/batch/merge_orchestrator.py::_finalize_part_node``) hands the same
     ``build_part_lod`` node to the streaming writer for a single-tile run, which
@@ -385,10 +408,15 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
             contract as :func:`coverage_fractions`).
 
     Returns:
-        The derived ladder scaled by :data:`MAX_COVERAGE_FRACTION`: coarsest
-        ``0.0``, finest ``MAX_COVERAGE_FRACTION``, strictly ascending.
+        The derived ladder re-anchored at fills-screen: coarsest ``0.0``,
+        finest :data:`PARTITION_FINEST_AREA` (``1.0``), strictly ascending.
     """
-    return [f * MAX_COVERAGE_FRACTION for f in coverage_fractions(element_counts)]
+    # Under selector="screen-area" a tile's fills-screen anchor is area 1.0:
+    # ×(1.0 / whole-object 0.5) = ×2 → [0, …, 1/4, 1/2, 1].
+    return [
+        f * (PARTITION_FINEST_AREA / WHOLE_OBJECT_FINEST_ANCHOR)
+        for f in coverage_fractions(element_counts)
+    ]
 
 
 def is_partition_bound(node: "Node") -> bool:
@@ -471,32 +499,39 @@ def derive_coverage_fractions(
     aprint(
         f"  🧩 Substitutive-LOD '{name}': kind=partition ancestor detected — "
         "anchoring this per-tile ladder at fills-screen (finest "
-        f"coverage_fraction={fractions[-1]:.1f}, not 1.0), since a tile's projected "
-        "size is only a fraction of the whole object's."
+        f"coverage_fraction={fractions[-1]:.1f} of the screen area, not "
+        f"{WHOLE_OBJECT_FINEST_ANCHOR:.1f}), since a tile's projected size is "
+        "only a fraction of the whole object's."
     )
     return fractions
 
 
-def _apply_monotonicity_guard(thresholds: list[float], source: str) -> list[float]:
-    """Enforce strict ascending thresholds WITHIN ``[0, 1]``, then assert.
+def _apply_monotonicity_guard(
+    thresholds: list[float], source: str, cap: float = 1.0
+) -> list[float]:
+    """Enforce strict ascending thresholds WITHIN ``[0, cap]``, then assert.
 
-    Defensive: guarantee strict monotonicity even when later children have the
-    same (or fewer) elements than a previous level — WITHOUT ever breaching the
-    viewport-relative contract (all values in ``[0, 1]``, coarsest ``0.0``,
-    finest ``1.0``). An upward bump would push equal-tail ladders above 1.0
-    (e.g. counts ``[10, 1000, 1000]``), silently moving the finest level's
-    switch point *later* than the anchor the derivation promises — the explicit
+    ``cap`` is the derivation's finest anchor (``WHOLE_OBJECT_FINEST_ANCHOR``
+    for the halving ladder). The nudging below existed for degenerate COUNT
+    ladders (equal/zero counts); the halving derivation is strictly ascending
+    by construction, so this is now purely defensive.
+
+    Defensive: guarantee strict monotonicity even for degenerate input —
+    WITHOUT ever breaching the derivation's contract (all values in
+    ``[0, cap]``, coarsest ``0.0``, finest ``cap``). An upward bump would push
+    equal entries above the anchor, silently moving the finest level's switch
+    point *later* than the anchor the derivation promises — the explicit
     ``coverage_fractions=[...]`` escape hatch (bounded by
-    ``MAX_COVERAGE_FRACTION``) is where an author opts into that deliberately,
-    not something a count ladder should trigger by accident. So duplicates
-    resolve by nudging the *earlier* (coarser) entries DOWNWARD instead, and the
-    derived output stays inside ``[0, 1]`` — a strict subset of what the
-    explicit-input validators accept, so a derived list always round-trips.
+    ``MAX_COVERAGE_FRACTION``) is where an author opts into that deliberately.
+    So duplicates resolve by nudging the *earlier* (coarser) entries DOWNWARD
+    instead, and the derived output stays inside ``[0, cap]`` — a strict subset
+    of what the explicit-input validators accept, so a derived list always
+    round-trips.
 
     Strategy (total — never raises on derived input):
 
-    1. Cap the finest (last) entry at the ``1.0`` anchor (only a non-monotone
-       count ladder can derive above it; a monotone one lands exactly on 1.0).
+    1. Cap the finest (last) entry at the ``cap`` anchor (the halving
+       derivation lands exactly on it by construction).
     2. Backward pass: any earlier entry not strictly below its successor is
        nudged down to ``successor / 1.1`` — a *relative* nudge, so near-equal
        levels separate proportionally to their scale, always toward 0 and
@@ -512,7 +547,7 @@ def _apply_monotonicity_guard(thresholds: list[float], source: str) -> list[floa
     """
     n = len(thresholds)
     if n >= 2:
-        thresholds[-1] = min(thresholds[-1], 1.0)
+        thresholds[-1] = min(thresholds[-1], cap)
         for i in range(n - 2, 0, -1):
             if thresholds[i] >= thresholds[i + 1]:
                 thresholds[i] = thresholds[i + 1] / _MONOTONIC_NUDGE
@@ -550,10 +585,14 @@ def validate_lod_group(group: "Node") -> None:
     - the per-child ``coverage_fraction`` values are not strictly monotonic
       increasing in insertion order;
     - any ``coverage_fraction`` is not finite (NaN / ±inf), or falls outside
-      ``[0, MAX_COVERAGE_FRACTION]`` (the same bound the
-      explicit-``coverage_fractions=`` resolvers enforce — this is the check for
-      a hand-built ``add_lod_group`` ladder, which does not go through those
-      resolvers).
+      the range the group's ``selector`` implies: ``[0,
+      PARTITION_FINEST_AREA]`` (= ``[0, 1]``) under ``selector="screen-area"``
+      (whose thresholds are literal screen-area fractions — a value above the
+      fills-screen area is unreachable and would hold a level forever), or
+      ``[0, MAX_COVERAGE_FRACTION]`` under the legacy ``"coverage"`` diagonal
+      metric (the same bound the explicit-``coverage_fractions=`` resolvers
+      enforce). This is the check for a hand-built ``add_lod_group`` ladder,
+      which does not go through those resolvers.
 
     Call this manually before finalizing if you want eager validation;
     otherwise the viewer falls back to silently ignoring malformed
@@ -568,8 +607,50 @@ def validate_lod_group(group: "Node") -> None:
             f"LOD group '{group.path or group.name}' has "
             f"default_level={default_level}, must be in [0, {n_children})"
         )
+    # The threshold ceiling depends on the group's selector UNITS: screen-area
+    # fractions top out at the fills-screen area (1.0 — anything above is
+    # unreachable and would hold a level forever), while the legacy diagonal
+    # metric tops out at 1/FILL_FACTOR (4.0). Only a MISSING selector defaults
+    # to legacy (the viewer loader's own fallback); a PRESENT value outside the
+    # vocabulary is rejected — node attrs are mutable, so a modified/imported
+    # group could otherwise pass validation and serialize an invalid selector
+    # (matching add_lod_group_impl and gate_authored_selector).
+    from ....typing_utils.constants import LOD_SELECTORS
+
+    raw_selector = group.attrs.get("selector")
+    if raw_selector is not None and raw_selector not in LOD_SELECTORS:
+        raise ValueError(
+            f"LOD group '{group.path or group.name}' carries "
+            f"selector={raw_selector!r}; must be one of {sorted(LOD_SELECTORS)} "
+            "(it names the units of the children's coverage_fraction "
+            "thresholds)"
+        )
+    selector = str(raw_selector) if raw_selector is not None else "coverage"
+    if selector == "screen-area":
+        cap = PARTITION_FINEST_AREA
+        cap_rationale = (
+            "Screen-area thresholds are literal screen-area fractions; the "
+            f"ceiling {PARTITION_FINEST_AREA:g} is the fills-screen anchor (a "
+            "derived WHOLE-OBJECT ladder anchors its finest lower still, at "
+            f"{WHOLE_OBJECT_FINEST_ANCHOR:g} = half the screen)."
+        )
+    else:
+        cap = MAX_COVERAGE_FRACTION
+        cap_rationale = (
+            "The upper bound is SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — "
+            "roughly the diagonal metric a screen-filling object produces; "
+            "values above a whole-object anchor hold a level until the object "
+            "is larger still (what an explicit list may ask for)."
+        )
+    _validate_lod_group_children(group.children, selector, cap, cap_rationale)
+
+
+def _validate_lod_group_children(
+    children: List["Node"], selector: str, cap: float, cap_rationale: str
+) -> None:
+    """Per-child ladder checks for ``validate_lod_group`` (same errors)."""
     prev = float("-inf")
-    for i, child in enumerate(group.children):
+    for i, child in enumerate(children):
         if "coverage_fraction" not in child.attrs:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) is missing "
@@ -585,23 +666,78 @@ def validate_lod_group(group: "Node") -> None:
                 f"LOD-group child {i} ({child.name!r}) has "
                 f"coverage_fraction={value}, which is not a finite number"
             )
-        if value < 0.0 or value > MAX_COVERAGE_FRACTION:
+        if value < 0.0 or value > cap:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) has "
-                f"coverage_fraction={value}, must lie in "
-                f"[0, {MAX_COVERAGE_FRACTION:g}]. The upper bound is "
-                "SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly the coverage metric "
-                "a screen-filling object produces; 1.0 is a WHOLE-OBJECT ladder's "
-                "finest anchor (half the fitted screen axis), and higher values "
-                "hold a level until the object is larger still (what a "
-                "partition-bound ladder derives, and what an explicit list may "
-                "ask for)."
+                f"coverage_fraction={value}, must lie in [0, {cap:g}] under "
+                f"selector={selector!r}. " + cap_rationale
+            )
+        # The coarsest child is the ALWAYS-ELIGIBLE floor: the format requires
+        # exactly 0.0, or below the first threshold no child qualifies at all
+        # and what renders depends on selector fallback rather than the ladder.
+        # After the range check, so an out-of-range coarsest (e.g. negative)
+        # keeps its range diagnosis.
+        if i == 0 and value != 0.0:
+            raise ValueError(
+                f"LOD-group child 0 ({child.name!r}) has "
+                f"coverage_fraction={value}; the coarsest child must be "
+                "exactly 0.0 (the always-eligible floor — otherwise no child "
+                "qualifies below the first threshold)"
             )
         if value <= prev:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) has "
                 f"coverage_fraction={value}, must be strictly greater than "
                 f"previous child's {prev}"
+            )
+        prev = value
+
+
+def validate_authored_coverage_ladder(
+    values: "List[float]", selector: str, *, source: str
+) -> None:
+    """Refuse an AUTHORED coverage ladder that breaks its selector's contract.
+
+    The list form of :func:`validate_lod_group`'s per-child checks, shared by
+    the two detached-tree writers (``io/_compiler/gsplat_tree.write_gsplat_node``
+    and ``gsplats_pipeline/from_io.graft_gsplat_node``), which walk
+    ``GSplatNode`` trees rather than scene ``Node``s and so cannot call that
+    validator directly. ``values`` are coarsest→finest; checks are: finite,
+    coarsest exactly ``0.0`` (the always-eligible floor the format requires),
+    within ``[0, cap]`` where the cap is the selector's fills-screen ceiling
+    (:data:`PARTITION_FINEST_AREA` for ``"screen-area"``,
+    :data:`MAX_COVERAGE_FRACTION` for the legacy ``"coverage"``), strictly
+    ascending. Derived ladders satisfy all of this by construction; only
+    authored (preserved) ladders need the gate.
+    """
+    cap = PARTITION_FINEST_AREA if selector == "screen-area" else MAX_COVERAGE_FRACTION
+    prev = float("-inf")
+    for i, value in enumerate(values):
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(
+                f"{source}: child {i} has authored coverage_fraction={value}, "
+                "which is not a finite number"
+            )
+        if value < 0.0 or value > cap:
+            raise ValueError(
+                f"{source}: child {i} has authored coverage_fraction={value}, "
+                f"must lie in [0, {cap:g}] under selector={selector!r}"
+            )
+        # After the range check, so an out-of-range coarsest keeps its range
+        # diagnosis; an in-range non-zero coarsest gets the floor one.
+        if i == 0 and value != 0.0:
+            raise ValueError(
+                f"{source}: child 0 has authored coverage_fraction={value}; "
+                "the coarsest child must be exactly 0.0 (the always-eligible "
+                "floor — otherwise no child qualifies below the first "
+                "threshold)"
+            )
+        if value <= prev:
+            raise ValueError(
+                f"{source}: child {i} has authored coverage_fraction={value}, "
+                f"must be strictly greater than the previous child's {prev} "
+                "(coarsest→finest)"
             )
         prev = value
 
@@ -772,14 +908,14 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
     * ``dict(...)`` → keys ``compression_factor`` (alias ``K``), ``levels``
       (alias ``n_lods``), ``method`` (reduction algorithm), ``truncation_radius``,
       ``device``, ``seed``, ``coverage_fractions`` (explicit per-level
-      viewport-relative thresholds, strict-ascending in
-      [0, ``MAX_COVERAGE_FRACTION``] — 1.0 is a whole-object ladder's finest
-      anchor, above it holds a level until the object is larger still),
-      ``coarsen_dims``,
+      thresholds in the LEGACY ``selector="coverage"`` diagonal units,
+      strict-ascending in [0, ``MAX_COVERAGE_FRACTION``] — an explicit list
+      keeps that selector, so authored values keep meaning what they always
+      did), ``coarsen_dims``,
       ``max_aspect`` (per-splat anisotropy cap on the coarse levels, default 3.0;
       ``None`` disables — see :func:`luxar.gsplats.lift._cap_aspect`).
       Unrecognized keys raise. LOD switch thresholds are otherwise auto-derived by
-      :func:`derive_coverage_fractions` (``sqrt(N_i/N_finest)``, re-anchored at
+      :func:`derive_coverage_fractions` (screen-occupancy halving, re-anchored at
       fills-screen when the insertion point is partition-bound) — no method
       selector or per-dataset anchor knob.
     """
@@ -847,11 +983,11 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
             raise ValueError(
                 "substitutive_lod=dict(coverage_fractions=...): values must lie in "
                 f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
-                f"{explicit_coverage}. The upper bound is "
-                "SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly the "
-                "coverage metric a screen-filling object produces; 1.0 is a "
-                "whole-object ladder's finest anchor (half the fitted screen "
-                "axis)."
+                f"{explicit_coverage}. An explicit list keeps the legacy "
+                "selector='coverage' diagonal units, whose upper bound is "
+                "SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly the metric a "
+                "screen-filling object produces. (Omit the list for the "
+                "derived screen-area ladder.)"
             )
 
     # Dims coarsening may cluster over; complement = hard grouping barriers.
