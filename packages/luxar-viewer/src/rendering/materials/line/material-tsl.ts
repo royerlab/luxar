@@ -25,9 +25,7 @@ import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { lineWebGPUFactory, type LineTSLNodes } from './shader-tsl';
-import { volumetricLineWebGPUFactory } from './shader-tsl-volumetric';
 import { capsuleLineWebGPUFactory } from './shader-tsl-capsule';
-import { getLineRadialLUTTexture } from '../_shared/line-integral-lut';
 import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 import type { LineJoinStyle } from '../../../types/line-join';
@@ -43,7 +41,6 @@ import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   isVolumetricMode,
-  usesPeakProjection,
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -74,10 +71,6 @@ interface LineMaterialTSLNodeTable {
   uColormapTex?: TSLNode;
   uScalarMin?: TSLNode;
   uScalarScale?: TSLNode;
-  /** Sharpness radial LUT (#1352 PR-4) — created lazily on the first
-   * volumetric-primitive rebuild (building the LUT costs real CPU, so
-   * screen-space materials must never trigger it). */
-  uLineRadialLUT?: TSLNode;
 }
 
 export class LineTSLMaterial
@@ -232,16 +225,6 @@ export class LineTSLMaterial
     if (isVolumetricMode(this.userData.blendingMode as BlendingMode)) {
       this.defines.LUXAR_VOLUMETRIC = '';
     }
-    // Volumetric PRIMITIVE only: peak vs sum ray projection is a graph
-    // variant; the define is its rebuild-boundary tracker (same pattern
-    // as the two above, and the same define the GLSL twin stamps).
-    if (
-      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) ===
-        'volumetric' &&
-      usesPeakProjection((this.userData.blendingMode as BlendingMode) ?? 'additive')
-    ) {
-      this.defines.LUXAR_PEAK_PROJECTION = '';
-    }
 
     // Capture explicit overrides BEFORE the first rebuild —
     // `rebuildGraph`'s tail re-applies them over the factory's
@@ -311,20 +294,8 @@ export class LineTSLMaterial
     const primitive = resolveLinePrimitive(
       this.userData.linePrimitive as LinePrimitive | undefined
     );
-    const isVolumetric = primitive === 'volumetric';
     const isCapsule = primitive === 'capsule';
-    // Sharpness radial LUT node (#1352 PR-4): created lazily on the first
-    // volumetric rebuild — the singleton texture costs real CPU to build,
-    // so screen-space materials must never trigger it. The texture
-    // identity never changes afterwards, so no rebind chokepoint needed.
-    if (isVolumetric && !this.tslNodes.uLineRadialLUT) {
-      this.tslNodes.uLineRadialLUT = texture(getLineRadialLUTTexture());
-    }
-    const factory = isCapsule
-      ? capsuleLineWebGPUFactory
-      : isVolumetric
-        ? volumetricLineWebGPUFactory
-        : lineWebGPUFactory;
+    const factory = isCapsule ? capsuleLineWebGPUFactory : lineWebGPUFactory;
     factory(
       this.tslNodes as LineTSLNodes,
       {
@@ -541,23 +512,6 @@ export class LineTSLMaterial
     } else if (!wantsVolumetric && hasVolumetric) {
       delete this.defines.LUXAR_VOLUMETRIC;
       definesChanged = true;
-    }
-    // Volumetric PRIMITIVE only (#1352): peak vs sum ray projection is a
-    // graph variant; the define is its rebuild-boundary tracker. The
-    // screen-space graph has no such split — never stamped there.
-    if (
-      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) ===
-      'volumetric'
-    ) {
-      const wantsPeak = usesPeakProjection(mode);
-      const hasPeak = 'LUXAR_PEAK_PROJECTION' in this.defines;
-      if (wantsPeak && !hasPeak) {
-        this.defines.LUXAR_PEAK_PROJECTION = '';
-        definesChanged = true;
-      } else if (!wantsPeak && hasPeak) {
-        delete this.defines.LUXAR_PEAK_PROJECTION;
-        definesChanged = true;
-      }
     }
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;
