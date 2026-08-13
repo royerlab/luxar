@@ -171,7 +171,7 @@ class RecipeParams:
     # ``core.group.lod.group.coverage_fractions``. No method selector or
     # per-dataset anchor knob: the fraction is a count ratio (immune to
     # non-displayed-dimension multiplicity) and the viewer anchors the finest at
-    # a quarter of the live viewport diagonal (any normal full-frame view).
+    # half of the live fitted screen axis (any normal full-frame view).
     # Q·e quality stamps: measure each coarse substitutive level's mixture-L²
     # quality Q vs its group's finest content and stamp it (with the
     # reference_energy weight w) into level_stats — the build-time half of the
@@ -391,7 +391,7 @@ def _substitutive_for_part(
     # the switching group's bbox is one BSP tile, intrinsically a fraction of the
     # whole object's, so its metric reads systematically low. They therefore keep
     # the fills-screen anchor (finest = MAX_COVERAGE_FRACTION) instead of the
-    # whole-object quarter-viewport one — see partitioned_coverage_fractions.
+    # whole-object half-fitted-axis one — see partitioned_coverage_fractions.
     # Without this every tile would sit on its FINEST level while the object is
     # merely full-frame (~16x the resident geometry for a K=4/L=2 ladder). The
     # caller overrides it when the "partition" turns out to hold a single part.
@@ -457,7 +457,7 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     and the fine partition takes over once you zoom the node up to filling the
     viewport. The fills-screen anchor is deliberate here — see
     ``partitioned_coverage_fractions`` for why a partition-bound ladder does not
-    take the whole-object quarter-viewport anchor (no per-dataset tuning; see
+    take the whole-object half-fitted-axis anchor (no per-dataset tuning; see
     ``RecipeParams``).
     """
     from luxar.gsplats.tree import total_splats
