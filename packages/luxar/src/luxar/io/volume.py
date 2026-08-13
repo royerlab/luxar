@@ -61,6 +61,45 @@ def decode_flat_channel_index(
     return tuple(coords)
 
 
+def _axis_kind(label: str) -> str:
+    """Classify one ``--axes`` label as time, channel or spatial."""
+    if label in ("t", "time"):
+        return "t"
+    if label in ("c", "channel", "ch", "camera", "cam"):
+        return "c"
+    if label in ("z", "y", "x", "depth", "height", "width"):
+        return "s"
+    raise ValueError(
+        f"--axes label {label!r} not recognised; use time/t, "
+        "channel/c/ch/camera/cam, or z/y/x (depth/height/width)."
+    )
+
+
+def volume_axes_from_spec(axes: str, ndim: int) -> tuple:
+    """Map each SPLAT center dim to the volume axis that holds it.
+
+    The counterpart of :func:`_apply_axes_spec` for the case where a non-spatial
+    axis must be KEPT rather than sliced away: a volume re-fit of a stacked
+    timelapse walks the barrier axis itself, one slice per group.
+
+    Luxar's fitted splats order their center columns spatial-first (in the
+    array's own spatial order) with stacked time/channel dims LAST, while a
+    source array is usually the other way round (``t, z, y, x``). So the mapping
+    is the spatial axis positions followed by the stacked ones:
+    ``"t,z,y,x"`` gives ``(1, 2, 3, 0)``.
+    """
+    labels = [a.strip().lower() for a in axes.split(",") if a.strip() != ""]
+    if len(labels) != ndim:
+        raise ValueError(
+            f"axes spec has {len(labels)} labels but the splats are {ndim}D; "
+            "give one label per dimension."
+        )
+    kinds = [_axis_kind(label) for label in labels]
+    spatial = [i for i, k in enumerate(kinds) if k == "s"]
+    stacked = [i for i, k in enumerate(kinds) if k in ("t", "c")]
+    return tuple(spatial + stacked)
+
+
 def _apply_axes_spec(
     arr: np.ndarray,
     axes: str,
@@ -85,19 +124,7 @@ def _apply_axes_spec(
             f"(shape {arr.shape}); give one label per dimension."
         )
 
-    def _kind(label: str) -> str:
-        if label in ("t", "time"):
-            return "t"
-        if label in ("c", "channel", "ch", "camera", "cam"):
-            return "c"
-        if label in ("z", "y", "x", "depth", "height", "width"):
-            return "s"
-        raise ValueError(
-            f"--axes label {label!r} not recognised; use time/t, "
-            "channel/c/ch/camera/cam, or z/y/x (depth/height/width)."
-        )
-
-    kinds = [_kind(label) for label in labels]
+    kinds = [_axis_kind(label) for label in labels]
     index: list = [slice(None)] * arr.ndim
     for i, k in enumerate(kinds):
         if k in ("t", "c"):

@@ -4043,14 +4043,17 @@ class TestLODCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
-    def test_refine_volume_rejected_for_adaptive_recipe(
+    def test_refine_volume_accepted_for_adaptive_recipe(
         self,
         runner: CliRunner,
         medium_gsplats: Path,
         small_volume_npy: Path,
         tmp_path: Path,
     ) -> None:
-        """Per-part levels would re-fit against the FULL volume — rejected."""
+        """Per-part levels re-fit against each tile's own CROP of the volume, so
+        the adaptive recipe now accepts ``--refine volume``. It used to be
+        rejected because a part fitted against the FULL volume is pulled out of
+        its tile to explain a neighbour's signal."""
         out = tmp_path / "x.gsplats.zarr"
         result = runner.invoke(
             app,
@@ -4063,13 +4066,35 @@ class TestLODCommand:
                 "adaptive",
                 "--refine",
                 "volume",
+                "--refine-iters",
+                "3",
                 "--target",
                 str(small_volume_npy),
             ],
         )
+        assert result.exit_code == 0, self._io(result)
+        assert out.exists()
+
+    def test_target_axes_requires_a_target(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """``--target-axes`` describes a ``--target``; alone it is a typo, not a
+        silently ignored option."""
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(tmp_path / "x.gsplats.zarr"),
+                "--recipe",
+                "levels",
+                "--target-axes",
+                "t,z,y,x",
+            ],
+        )
         assert result.exit_code != 0
-        assert "adaptive" in self._io(result)
-        assert not out.exists()
+        assert "--target-axes" in self._io(result)
 
     def test_recipe_levels_with_refine_volume_smoke(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
