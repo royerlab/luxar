@@ -391,9 +391,10 @@ export interface LODGroupEntry {
    * group's ``selector`` attr): ``'screen-area'`` compares them against the
    * projected bbox rect's fraction of the viewport AREA
    * (``projectBoxAreaFraction``); ``'coverage'`` — the legacy diagonal metric
-   * (``projectBoxDiagonalPx / (FILL_FACTOR × viewportDiagonal)``) — is the
-   * default when absent, so older stores and test-constructed entries keep
-   * their behaviour.
+   * (``projectBoxDiagonalPx / (FILL_FACTOR × min(viewport.width,
+   * viewport.height))``, the fitted screen axis) — is the default when
+   * absent, so older stores and test-constructed entries keep their
+   * behaviour.
    */
   selector?: 'coverage' | 'screen-area';
   /** Current selector mode (``'auto'`` or ``{ lockLevel: i }``). */

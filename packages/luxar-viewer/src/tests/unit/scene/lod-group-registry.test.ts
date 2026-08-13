@@ -804,6 +804,47 @@ describe('LODGroupRegistry — auto evaluation', () => {
     expect(children[0].object.visible, 'must NOT be pinned to the coarsest').toBe(false);
   });
 
+  it("selector='screen-area': a fitted high-aspect object reads its literal occupancy (one level below finest) — BY DESIGN", () => {
+    // The occupancy rule applied verbatim, pinning the DELIBERATE revision of
+    // the old diagonal-anchored opening-framing guarantee: a fitted full-width
+    // but quarter-height object occupies 25% of the screen, so on the standard
+    // 4-level derived ladder [0, ⅛, ¼, ½] it opens at the SECOND-FINEST level
+    // (0.25 sits exactly on that threshold — thresholds are inclusive) with
+    // full detail one modest zoom away. Under the retired diagonal metric the
+    // same rod read ≈ its LENGTH and pinned the finest level — exactly how
+    // dense sub-pixel elongated content rendered its most expensive level
+    // across the whole zoom range. NOT the degenerate ramp's territory: the
+    // rod is 0.25 half-extents thick, far above the sub-pixel floor.
+    const rodBox = { min: [-1, -0.25, -0.1], max: [1, 0.25, 0.1] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: rodBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[2].object.visible, 'second-finest at 25% occupancy').toBe(true);
+    expect(children[3].object.visible, 'finest requires ≥ half-screen occupancy').toBe(false);
+    expect(children[0].object.visible, 'NOT pinned to the coarsest').toBe(false);
+  });
+
+  it("selector='screen-area': a two-level ladder holds the coarsest for a fitted 25%-occupancy object (the documented degenerate-config case)", () => {
+    // With only [0, 0.5] there is no intermediate level for the rod's 25%
+    // occupancy to land on — it stays coarse until half-screen. Pinned as
+    // INTENDED: two-level ladders trade granularity away everywhere, and the
+    // per-level halving that would catch this needs levels to halve onto.
+    const rodBox = { min: [-1, -0.25, -0.1], max: [1, 0.25, 0.1] };
+    const reg = makeRegistry();
+    const children = [0, 0.5].map((t) => ({ ...makeChild(t), positionBounds: rodBox }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[0].object.visible).toBe(true);
+  });
+
   it('an entry WITHOUT a selector keeps the legacy diagonal metric', () => {
     // The zebrahub-pose box under the LEGACY metric: projected diagonal =
     // hypot(0.74·800, 0.5·600) = hypot(592, 300) ≈ 663.7 px on 800×600

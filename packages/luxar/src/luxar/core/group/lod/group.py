@@ -241,6 +241,21 @@ def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
 #: ladder's LENGTH (the old ``sqrt(N_i/N_finest)`` count-ratio derivation is
 #: retired; legacy datasets keep their stamped values under the legacy
 #: ``selector="coverage"`` diagonal metric).
+#:
+#: **Elongated / flat content reads its literal occupancy — by design.** A
+#: fitted high-aspect object (say full-width but a quarter of the viewport
+#: tall) occupies 25% of the screen at the opening framing, so it opens ONE
+#: LEVEL below finest on the standard 4-level ladder (0.25 sits exactly on
+#: the second-finest threshold) and reaches full detail after one modest zoom.
+#: That is the occupancy rule applied verbatim, and the deliberate REVISION of
+#: the old diagonal-anchored opening-framing guarantee (#1361): the diagonal
+#: metric read elongated content HIGH (a rod's diagonal ≈ its length), which
+#: is exactly how dense sub-pixel streamlines ended up rendering their most
+#: expensive level across the entire usable zoom range. Under occupancy the
+#: trade runs the other way — predictable coarsening everywhere, full detail
+#: whenever the content actually fills half the screen — and an author who
+#: wants a high-aspect object finest-at-opening can say so with an explicit
+#: ``coverage_fractions=[...]`` list.
 WHOLE_OBJECT_FINEST_ANCHOR: Final = 0.5
 
 #: A partition TILE's finest anchor under ``selector="screen-area"``: the

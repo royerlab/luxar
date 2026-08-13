@@ -262,6 +262,16 @@ to element size, overlap, and intent; the retired derivation
 dense sub-pixel data). The metric is built from NDC fractions, so selection is
 identical on any monitor/viewport.
 
+Note the semantics this deliberately REVISES: under the retired diagonal
+metric, a fitted high-aspect object read HIGH (a rod's diagonal ≈ its
+length) and dense elongated content could render its most expensive level
+across the whole usable zoom range. Under occupancy the same object reads
+its literal screen share — a fitted full-width, quarter-height object opens
+at 25% occupancy, one level below finest on the standard 4-level ladder,
+with full detail one modest zoom away. Authors who want a high-aspect
+object finest-at-opening use an explicit `coverage_fractions=[...]` list
+(legacy units).
+
 Two refinements are NORMATIVE parts of the `screen-area` metric (they decide
 which end of a ladder renders, so consumers must agree on them):
 
