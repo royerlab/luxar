@@ -771,7 +771,9 @@ describe('preflightMesh — (d) normal_dims well-formedness', () => {
 
 /**
  * `accountedBytes` is now a production value — the mesh reveal ladder
- * (`loader-factory.ts`'s `createProgressiveMeshLoader`) sums it across every
+ * (`mesh-progressive-loader.ts`'s `MeshProgressiveLoader.assertWithinByteBudget`,
+ * on the ladder's first load; deliberately NOT the `createProgressiveMeshLoader`
+ * factory, which has no failure containment around it) sums it across every
  * level to charge the whole ladder against ONE budget. So it needs its own
  * pinning, independent of the acceptance/rejection tests above: not just that
  * SOME number comes back, but that the number IS the arithmetic the ceiling
