@@ -909,10 +909,12 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
   const DEFAULT_FOV = 47;
 
   /**
-   * A stamped 4-level substitutive ladder (values as a pre-halving store
-   * wrote them — the registry consumes whatever thresholds are stamped, so
-   * this fixture stays valid for old datasets; new stores derive the
-   * screen-occupancy halving [0, 0.5, 1, 2]).
+   * A stamped 4-level substitutive ladder (values as a pre-halving LEGACY
+   * store wrote them, consumed under `selector: 'coverage'` — the registry
+   * uses whatever thresholds are stamped, so this fixture stays valid for
+   * old datasets; new stores derive the screen-area occupancy-halving
+   * whole-object ladder [0, 0.125, 0.25, 0.5] under `selector:
+   * 'screen-area'`).
    */
   const SUBSTITUTIVE_LADDER = [0, 0.125, 0.35355, 1.0];
 

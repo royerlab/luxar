@@ -813,10 +813,12 @@ def write_scene(
     ``streamline_lod`` is a ``substitutive_lod=`` spec dict for the
     streamlines layer (``--streamline-lod``): the coarse levels are
     synthesised gsplat impressions of the line field, swapped in by
-    projected coverage, so zoomed-out framings render a cheap glow
-    instead of all the polylines. The finest level (the full lines) still
-    renders at any full-frame view — the ladder buys zoom-OUT speed, not
-    default-framing speed.
+    screen-area occupancy (``selector="screen-area"``), so zoomed-out
+    framings render a cheap glow instead of all the polylines. The finest
+    level (the full lines) renders while the embryo occupies at least HALF
+    the screen — which the opening framing satisfies for this roughly
+    isotropic field — and each halving of occupied area steps one level
+    coarser.
     """
     n_classes = len(data.anatomy_categories)
     palette = categorical_palette(n_classes)
