@@ -86,6 +86,28 @@ def write_ladder(tmp_path: Path, verts, faces, **kwargs) -> Dict[str, Dict[str, 
     return read_nodes(store)
 
 
+def level_colors(store: Path) -> List[np.ndarray]:
+    """Each level's DECODED colours, coarsest→finest.
+
+    Through `LuxarScene`, not the raw zarr arrays: per-vertex RGB is stored under
+    a 3-element subarray dtype, so a raw `colors.shape` reads back as `(V,)` and
+    invites the conclusion that the triples were flattened. They are not — the
+    loader is the only lens that shows what the viewer will actually receive.
+    """
+    from luxar.io.reader import LuxarScene
+
+    scene = LuxarScene.load(store)
+    out: List[np.ndarray] = []
+    index = 0
+    while True:
+        try:
+            mesh = scene.get_mesh(f"surf/child_{index}")
+        except (KeyError, ValueError):
+            return out
+        out.append(mesh.colors)
+        index += 1
+
+
 def ladder_children(nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The mesh children of the `surf` group, in written (coarsest→finest) order."""
     kids = [
@@ -168,17 +190,103 @@ class TestLadderShape:
             "renders default white and pops on the LOD switch"
         )
 
-    def test_colors_survive_to_the_coarse_levels(self, tmp_path):
-        # Averaged per cluster by the decimator; the point here is only that they
-        # are CARRIED — a level that silently lost its colours would render black
-        # against a coloured finest level, which reads as a flicker on LOD switch.
-        verts, faces = octasphere(3)
-        colors = np.zeros((len(verts), 3), dtype=np.uint8)
-        colors[:, 0] = 200
-        children = ladder_children(
-            write_ladder(tmp_path, verts, faces, colors=colors, substitutive_lod=True)
+    @pytest.mark.parametrize(
+        "dtype,low,high",
+        [
+            (np.uint8, 0, 200),
+            (np.uint16, 300, 50000),
+            (np.float32, 0.1, 0.8),  # SDR
+            (np.float32, 0.5, 4.0),  # HDR — must not be clipped to 1.0
+        ],
+        ids=["uint8", "uint16", "float32-sdr", "float32-hdr"],
+    )
+    def test_coarse_levels_keep_the_colour_VALUES_and_dtype(
+        self, tmp_path, dtype, low, high
+    ):
+        # #1355: every documented `colors` shape but `uint8 (V,3)` either lost the
+        # colour, corrupted it, or crashed, while the finest child kept it — so the
+        # surface CHANGED COLOUR as the camera pulled back and the viewer swapped
+        # levels. The three causes are fixed; this pins the fix.
+        #
+        # Reading the VALUES back, because `has_colors` cannot see any of it: a
+        # level that came back black, clipped, or cast to another dtype sets the
+        # flag just the same. That is what the previous version of this test
+        # asserted, and it would have passed against every row of the issue table.
+        #
+        # A GRADIENT, not a uniform colour: the writer broadcasts a constant to a
+        # `(1, 3)` row, which skips per-cluster averaging entirely. The old test
+        # used a uniform colour and so never exercised the averaging path at all.
+        verts, faces = octasphere(4)
+        ramp = (verts[:, 2] - verts[:, 2].min()) / np.ptp(verts[:, 2])
+        colors = (low + ramp[:, None] * (high - low)).astype(dtype) * np.ones(
+            3, dtype=dtype
         )
-        assert all(c["has_colors"] for c in children)
+        store = tmp_path / "ladder.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "surf",
+                verts,
+                faces,
+                colors=colors,
+                substitutive_lod={"levels": 3, "compression_factor": 4},
+            )
+
+        levels = level_colors(store)
+        assert len(levels) >= 2, "a ladder needs at least one coarse level"
+        for index, level in enumerate(levels):
+            assert level is not None, f"level {index} lost its colours entirely"
+            assert level.dtype == dtype, (
+                f"level {index} came back as {level.dtype}, not {dtype.__name__} — "
+                "a dtype change rescales the colours the viewer shows"
+            )
+            assert level.ndim == 2 and level.shape[1] == 3, (
+                f"level {index} is {level.shape}, not (V, 3)"
+            )
+            # Averaging can only move values INSIDE the input range, never past it.
+            # This is the clipping check: an HDR level squashed to 1.0 fails `>=`
+            # on the top end, and a level that came back black fails it too.
+            assert level.min() >= low - 1e-4
+            assert level.max() <= high + 1e-4
+            assert level.max() > level.min(), (
+                f"level {index} collapsed to a single colour — the gradient is gone"
+            )
+            # The top of the ramp must SURVIVE, not merely be within bounds. A
+            # level averaged down to the middle of the range keeps a gradient and
+            # stays in range while still washing the surface out on the switch.
+            assert level.max() >= low + 0.5 * (high - low)
+
+    def test_a_broadcast_1x3_colour_row_reaches_every_level(self, tmp_path):
+        # The other shape #1355 measured: a `(1, 3)` row is the writer's own
+        # broadcast form, and it used to reach the decimator, where `colors.shape[1]`
+        # on a single row produced a level with one vertex's colour for all of them.
+        # Distinct from the uniform TUPLE above — that never becomes an array at
+        # all, so it takes a different branch and cannot cover this one.
+        verts, faces = octasphere(3)
+        store = tmp_path / "ladder.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "surf",
+                verts,
+                faces,
+                colors=np.array([[200, 30, 30]], dtype=np.uint8),
+                substitutive_lod={"levels": 2, "compression_factor": 4},
+            )
+
+        levels = level_colors(store)
+        assert len(levels) >= 2
+        for index, level in enumerate(levels):
+            assert level is not None, f"level {index} lost the broadcast colour"
+            assert level.dtype == np.uint8
+            unique = np.unique(level.reshape(-1, 3), axis=0)
+            assert unique.shape[0] == 1, (
+                f"level {index} holds {unique.shape[0]} colours; a broadcast row is "
+                "one colour for the whole surface"
+            )
+            assert tuple(int(v) for v in unique[0]) == (200, 30, 30), (
+                f"level {index} carries {unique[0]}, not the authored colour"
+            )
 
     def test_scalars_reach_every_level_of_a_colormapped_ladder(
         self, tmp_path: Path
