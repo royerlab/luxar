@@ -94,26 +94,144 @@ def labels_on_a_laddered_leaf_reason(kwarg: str) -> str:
     )
 
 
-def strip_absent_label_kwargs(attrs: Dict[str, Any]) -> None:
-    """Delete ``labels`` / ``image_labels`` from ``attrs`` when their value is None.
+# The ``**attrs`` keys the ``lod_group=`` node-attrs gate must NOT judge, because
+# they are named parameters of the LEAF ``Group.add_gsplats`` that this adder
+# forwards onward STRUCTURALLY rather than colliding with a value of its own —
+# see the rule stated in full at the gate itself (:func:`_reject_before_wrapper`).
+GATE_FORWARDED_LEAF_PARAMS = ("labels", "image_labels", "partition")
+
+# The keys for which a present-but-``None`` value means ABSENT, and which are
+# therefore DELETED from ``**attrs`` before dispatch (#1471, #1496). Two families,
+# and the rule for each is why the set is not simply the tuple above:
+#
+#   * every key in ``GATE_FORWARDED_LEAF_PARAMS`` — each is a named param of the
+#     leaf ``Group.add_gsplats`` DEFAULTING TO None, so None already means
+#     "absent" one level down;
+#   * ``colors`` — the same kind of leaf named param (default None), except that
+#     this adder passes it POSITIONALLY from the data, so a NON-None value is a
+#     collision rather than something to forward (see
+#     :func:`reject_data_owned_channels`) and it must stay OUT of the gate's
+#     exclusion tuple above;
+#   * ``truncation_radius`` — not a leaf named param at all but a key this adder
+#     INJECTS from ``result.truncation_radius`` a few lines into
+#     :func:`add_gsplats_from_data_impl`; an explicit None used to OVERWRITE the
+#     data's own value and then fail the render-attr validator, so under the same
+#     rule it must mean "no override" and let the data's value stand. A NON-None
+#     value here is a legitimate override, so it likewise does not belong in the
+#     gate's exclusion tuple — the gate should and does still validate it.
+#
+# Spelled once, derived, and commented on purpose: the two sets answer different
+# questions ("may this key ride onward untouched?" vs "does None mean absent for
+# this key?") and a hand-copied second list would be free to drift.
+ABSENT_WHEN_NONE_ATTRS = GATE_FORWARDED_LEAF_PARAMS + ("colors", "truncation_radius")
+
+# The channels this adder supplies FROM the ``GSplatData`` itself, so a
+# caller-supplied value under the same name is a collision, never a forward.
+# Asked in THIS order (see :func:`reject_data_owned_channels`).
+DATA_OWNED_CHANNELS = ("colors", "amplitudes", "cholesky_factors")
+
+
+def strip_absent_attr_kwargs(attrs: Dict[str, Any]) -> None:
+    """Delete every :data:`ABSENT_WHEN_NONE_ATTRS` key from ``attrs`` valued None.
 
     ``labels=None`` means "no labels" — that is how the leaf adders read it, since
-    they bind both as named params defaulting to None. Here they arrive inside
-    ``**attrs``, where a present-but-None KEY is a different thing entirely: it
-    survives into ``child_attrs`` and reaches ``validate_render_attrs``, which
-    rejects an unknown key by NAME and never looks at its value. So the idiomatic
+    they bind it (and ``image_labels``, ``partition``, ``colors``) as named params
+    defaulting to None. Here they arrive inside ``**attrs``, where a
+    present-but-None KEY is a different thing entirely: it survives into
+    ``child_attrs`` and reaches ``validate_render_attrs``, which rejects an unknown
+    key by NAME and never looks at its value. So the idiomatic
     ``labels=maybe_labels`` call stranded a childless wrapper with ``Unknown node
     attribute 'labels'`` raised from inside ``child_0``, whenever a child took the
     additive-ladder writer — which every level of a stock ``gsplat lod --recipe
     levels`` file does, its stream ladders being on by default (#1471).
 
+    #1496 generalised that from the two label channels to the whole set above,
+    because the identical shape was live for the rest of it. Measured on the
+    ``lod_group=True, additive_lod={"n_lods": 2}`` route: ``partition=None`` raised
+    ``Unknown node attribute 'partition'`` from inside ``child_0`` and left the
+    ``kind=lod`` wrapper on disk, childless, through ``finalize()`` — while the
+    very same call with the key omitted wrote both children. ``colors=None`` was
+    refused on every route (as a raw ``TypeError`` on the flat one, "multiple
+    values for keyword argument"), and ``truncation_radius=None`` clobbered the
+    data's own radius and then failed the float conversion. One rule — an explicit
+    None means absent — answers all of them.
+
     Mutates in place and returns None: every caller owns the dict it passes (its
     own ``**attrs``), and handing back a copy would only invite one of them to
     forget to use it.
     """
-    for key in ("labels", "image_labels"):
+    for key in ABSENT_WHEN_NONE_ATTRS:
         if key in attrs and attrs[key] is None:
             del attrs[key]
+
+
+def data_owned_channel_reason(kwarg: str) -> str:
+    """Why a caller cannot pass a splat channel this adder reads off the data.
+
+    ONE template for the three channels and for both doors that refuse them (the
+    ``from_data`` dispatch and the graft entry in ``from_io``), for the same
+    reason :func:`labels_on_wrapper_reason` is one template: the argument is
+    identical in every instance and near-copies would drift. Only the closing
+    remedy varies, and only for ``colors``, which is the one of the three with an
+    appearance alternative worth naming.
+    """
+    colormap_hint = (
+        " If you meant to recolour the node rather than replace its per-splat "
+        "colours, pass colormap= instead."
+        if kwarg == "colors"
+        else ""
+    )
+    return (
+        f"{kwarg} cannot be passed as a keyword here: this adder supplies it from "
+        f"the GSplatData itself (result.{kwarg} on the flat route, each additive "
+        "sub-LOD's own array on a split one), so a caller-supplied value collides "
+        "with the one already being passed rather than travelling through — on "
+        'the flat route Python itself answers "got multiple values for keyword '
+        f"argument '{kwarg}'\". Nor could it be split across a wrapper's "
+        "children: a coarser substitutive level holds merged representatives and "
+        "an additive rung holds a prefix, each with its own element count, so no "
+        f"single array has a per-element correspondence to carry. Set {kwarg} on "
+        f"the GSplatData before adding it.{colormap_hint}"
+    )
+
+
+def reject_data_owned_channels(name: str, attrs: Dict[str, Any]) -> None:
+    """Refuse a present, NON-None ``colors`` / ``amplitudes`` / ``cholesky_factors``.
+
+    Run at the ENTRY of :func:`add_gsplats_from_data_impl` (and of the graft door),
+    before any route is chosen and before anything is written, so every route gives
+    the same answer and none of them strands a wrapper. Pre-#1496 the four routes
+    disagreed three ways for the identical mistake: a raw ``TypeError`` from Python
+    on the flat route, and ``Unknown node attribute 'colors'. Did you mean
+    'colormap'?`` — a real but misleading verdict, since the key is not unknown, it
+    is taken — on the other three.
+
+    The exception TYPE is load-bearing, not incidental: the leaf adders' funnel
+    converts both ``ValueError`` and ``TypeError`` to a ``ValueError``, and the
+    parity tests compare types, so leaking the flat route's ``TypeError`` would be
+    a divergence in its own right. The ``Could not add gsplats '<name>': `` prefix
+    is applied by hand for the reason :func:`_reject_before_wrapper` gives at
+    length: this module has no try/except funnel, and the prefixed form is what
+    every sibling refusal here produces.
+
+    A present-but-None ``colors`` is NOT refused — :func:`strip_absent_attr_kwargs`
+    has already deleted it by the time this runs, under the "an explicit None means
+    absent" rule (#1496). ``amplitudes`` / ``cholesky_factors`` have no such
+    reading: they are REQUIRED positional params of the leaf adder with no None
+    default, so a None there is refused with everything else.
+
+    ``colors`` is asked first, then ``amplitudes``, then ``cholesky_factors``, so a
+    call passing several is answered deterministically — same tie-break convention
+    as the ``labels`` before ``image_labels`` order the label gates keep. ``colors``
+    leads rather than following the leaf signature's order because it is the one of
+    the three a caller plausibly reaches for on purpose (an appearance override);
+    the two required data channels follow in that signature's own order.
+    """
+    for kwarg in DATA_OWNED_CHANNELS:
+        if kwarg in attrs:
+            raise ValueError(
+                f"Could not add gsplats '{name}': {data_owned_channel_reason(kwarg)}"
+            )
 
 
 def _reject_before_wrapper(
@@ -285,7 +403,9 @@ def _reject_before_wrapper(
         # hears about the attrs fault first, exactly as ``add_gsplats_impl``'s
         # own gate outranks ITS post-entry checks.
         #
-        # ``labels`` / ``image_labels`` / ``partition`` are excluded here. The
+        # ``labels`` / ``image_labels`` / ``partition`` are excluded here —
+        # :data:`GATE_FORWARDED_LEAF_PARAMS`, spelled once at module level
+        # because :data:`ABSENT_WHEN_NONE_ATTRS` is derived from it. The
         # RULE, not just the list: a key is excluded exactly when it is a NAMED
         # parameter of the LEAF ``Group.add_gsplats`` (so genuinely meaningful
         # inside ``**attrs`` on this adder — unlike on ``add_points``/
@@ -301,16 +421,21 @@ def _reject_before_wrapper(
         # function computes itself.
         #
         # ``colors`` / ``amplitudes`` / ``cholesky_factors`` are deliberately
-        # NOT excluded: unlike ``partition``, this adder itself forwards those
-        # three positionally from the ``GSplatData`` (``result.colors``, etc.)
-        # on the single-substitutive path, so a caller-supplied value under the
-        # same name would collide with what this adder already passes rather
-        # than travel through untouched — refusing it here, with nothing
-        # written, is an improvement over the raw ``TypeError`` (Python's own
-        # "multiple values for keyword argument") plus childless-wrapper strand
-        # that open issue #1496 documents for that shape, though it does not
-        # close #1496's broader present-but-None/conflicting-``**attrs``
-        # question. ``scalars`` is likewise left unexcluded: GSplats has no
+        # NOT excluded, and since #1496 they can no longer even reach this gate:
+        # unlike ``partition``, this adder itself forwards those three
+        # positionally from the ``GSplatData`` (``result.colors``, etc.) on the
+        # single-substitutive path, so a caller-supplied value under the same
+        # name collides with what this adder already passes rather than
+        # travelling through untouched. A None one is deleted up front by
+        # :func:`strip_absent_attr_kwargs` and a non-None one is refused up
+        # front by :func:`reject_data_owned_channels`, both at the entry of
+        # ``add_gsplats_from_data_impl`` — with nothing written, and with the
+        # same verdict on all four routes, in place of the raw ``TypeError``
+        # (Python's own "multiple values for keyword argument") on the flat one
+        # and the misleading ``Unknown node attribute 'colors'. Did you mean
+        # 'colormap'?`` on the rest (#1496). Leaving them unexcluded here is
+        # what keeps this gate honest should either of those doors ever be
+        # bypassed. ``scalars`` is likewise left unexcluded: GSplats has no
         # scalars channel at all (unlike Points/Mesh), so it is correctly
         # unknown on this door too.
         from ....io._compiler.node_common import (
@@ -321,7 +446,7 @@ def _reject_before_wrapper(
         attrs_for_gate = {
             k: v
             for k, v in (attrs or {}).items()
-            if k not in ("labels", "image_labels", "partition")
+            if k not in GATE_FORWARDED_LEAF_PARAMS
         }
         validate_render_attrs(attrs_for_gate, reserved_attrs=GSPLATS_RESERVED_ATTRS)
         # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
@@ -404,14 +529,22 @@ def add_gsplats_from_data_impl(
     if not isinstance(result, GSplatData):
         raise TypeError(f"Expected GSplatData, got {type(result).__name__}")
 
-    # Normalise "no labels" to "no key" for the whole dispatch — a present-but-None
-    # key is otherwise an unknown ATTR to every writer downstream. Done here rather
-    # than per-branch because all three targets forward ``**attrs`` verbatim, and
-    # it is a no-op on the flat route (``Group.add_gsplats`` binds both as named
-    # params defaulting to None). See :func:`strip_absent_label_kwargs`.
-    strip_absent_label_kwargs(attrs)
+    # Normalise "an explicit None" to "no key" for the whole dispatch — a
+    # present-but-None key is otherwise an unknown ATTR to every writer downstream.
+    # Done here rather than per-branch because all three targets forward ``**attrs``
+    # verbatim, and it is a no-op on the flat route for the keys the leaf adder
+    # binds as named params defaulting to None. See
+    # :func:`strip_absent_attr_kwargs`.
+    strip_absent_attr_kwargs(attrs)
+    # Then refuse what an explicit non-None value of those same channels would
+    # collide with, before ANY route is taken and before anything is written.
+    # Above every branch on purpose (#1496) — see
+    # :func:`reject_data_owned_channels`.
+    reject_data_owned_channels(name, attrs)
 
-    # Propagate truncation_radius through attrs (unless caller overrode it)
+    # Propagate truncation_radius through attrs (unless caller overrode it — and
+    # an explicit ``truncation_radius=None`` is NOT an override, having just been
+    # stripped above, so the data's own value applies).
     if "truncation_radius" not in attrs:
         attrs["truncation_radius"] = result.truncation_radius
 

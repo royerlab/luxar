@@ -178,7 +178,9 @@ LOD wrapper builders:
   so gets its own message, `labels_on_a_laddered_leaf_reason`; the two multi-leaf
   doors share one template
   (`gsplats_pipeline.from_data.labels_on_wrapper_reason`). An explicit
-  `labels=None` is normalised away first (`strip_absent_label_kwargs`) so it means
+  `labels=None` is normalised away first (`strip_absent_attr_kwargs`, which since
+  #1496 does the same for `image_labels` / `partition` / `colors` /
+  `truncation_radius`) so it means
   "absent" rather than an unknown attr key. Label a single-level node
   (`lod_group=False`) or a single-leaf file, or hand-build the wrapper and give
   each child its own labels.

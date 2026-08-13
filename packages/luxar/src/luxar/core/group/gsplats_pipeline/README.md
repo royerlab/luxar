@@ -53,6 +53,37 @@ Branch selection then keys off `result.n_substitutive` and
 result is multi-substitutive raises `ValueError` — thresholds are derived
 per-child instead (or set via `lod_group=dict(coverage_fractions=[...])`).
 
+#### An explicit `None` means absent (#1496)
+
+Everything that is not a named parameter of `add_gsplats_from_data_impl` arrives
+in `**attrs` and is forwarded verbatim to children, where `validate_render_attrs`
+rejects an unknown key by NAME and never looks at its value. So a
+present-but-`None` key is not the same thing as an absent one, and the idiomatic
+`partition=maybe_partition` call refused from inside `child_0` with the
+`kind=lod` wrapper already on disk. Two entry-point calls, run in this order
+above every route (and mirrored at the graft entry in `from_io.py`), settle it:
+
+1. `strip_absent_attr_kwargs(attrs)` deletes every `ABSENT_WHEN_NONE_ATTRS` key
+   valued `None` — `labels`, `image_labels`, `partition`, `colors` (all four
+   named params of the leaf `Group.add_gsplats` defaulting to `None`, so `None`
+   already means "absent" one level down) plus `truncation_radius` (which this
+   module *injects* from `result.truncation_radius`, so an explicit `None` must
+   mean "no override" rather than clobbering the data's own value).
+2. `reject_data_owned_channels(name, attrs)` refuses a present, **non-`None`**
+   `colors` / `amplitudes` / `cholesky_factors` (asked in that order) with a
+   `ValueError` naming the collision — this adder passes all three positionally
+   from the `GSplatData`, and on a split route they cannot be sliced per level
+   anyway. Previously the flat route leaked Python's raw `TypeError` ("got
+   multiple values for keyword argument 'colors'") and the other three answered
+   the misleading `Unknown node attribute 'colors'. Did you mean 'colormap'?`.
+
+`ABSENT_WHEN_NONE_ATTRS` is *derived* from `GATE_FORWARDED_LEAF_PARAMS`, the
+node-attrs gate's own exclusion tuple, so the two cannot drift; they differ
+because they answer different questions. The gate's set is "leaf named params
+this adder forwards onward STRUCTURALLY" — `colors` and `truncation_radius` are
+deliberately **not** in it, because a non-`None` value of either must still be
+judged (a collision, and a legitimate override that has to be validated).
+
 ### `from_io.py` — load/fit then delegate
 
 Both functions produce a `GSplatData` and hand it to
@@ -106,11 +137,15 @@ Both functions produce a `GSplatData` and hand it to
   is the remedy the message names. Both doors of the gate share one message
   template, `from_data.labels_on_wrapper_reason(kwarg, structure, remedy)`, with
   the two `*_STRUCTURE` / `*_REMEDY` constants beside it, so the wording cannot
-  drift apart. `from_data.strip_absent_label_kwargs` runs first on both and
+  drift apart. `from_data.strip_absent_attr_kwargs` runs first on both and
   DELETES a present-but-`None` key: the leaf adders bind both as named params
   defaulting to `None`, but inside `**attrs` a `None`-valued key is still an
   unknown attr to `validate_render_attrs` (which matches by name, never by
   value), so the idiomatic `labels=maybe_labels` used to strand a wrapper.
+  Since #1496 the graft entry also runs the same two `**attrs` calls the
+  `from_data` entry does — see *An explicit `None` means absent* below — so
+  `graft_gsplat_node(..., colors=None)` behaves identically to the other doors
+  and a non-`None` `colors=` is refused before any wrapper exists.
 - `add_gsplats_from_volume_impl` — fits in one step. With
   `progressive=True` it calls `fit_progressive_gaussian_splats`
   (honoring `max_splats_per_pass`, `psnr_patience`, `max_passes`);

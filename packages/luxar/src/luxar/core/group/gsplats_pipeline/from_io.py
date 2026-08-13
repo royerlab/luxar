@@ -17,7 +17,8 @@ from .from_data import (
     add_gsplats_from_data_impl,
     labels_on_a_laddered_leaf_reason,
     labels_on_wrapper_reason,
-    strip_absent_label_kwargs,
+    reject_data_owned_channels,
+    strip_absent_attr_kwargs,
 )
 
 if TYPE_CHECKING:
@@ -181,9 +182,16 @@ def _reject_labels_on_a_grafted_wrapper(
       ``additive_lod=`` is each refused by the leaf ADDER (``Group.add_gsplats``
       and the ``from_data`` dispatch below it), one level down, for that
       kwarg's own reason. Pre-existing #1496-family residual, unchanged in
-      both directions here and out of scope for a LENGTH fix.
+      both directions here and out of scope for a LENGTH fix — and untouched
+      by #1496's own ``**attrs`` normalisation at the top of
+      ``graft_gsplat_node`` either, which only reads a ``None`` as absent and
+      refuses a data-owned CHANNEL: a decomposition kwarg carrying a real
+      value is neither.
 
-      This check is the FIRST statement of ``graft_gsplat_node``, so a call
+      This check runs at the TOP of ``graft_gsplat_node`` — below only the
+      #1496 normalisation pair (:func:`~luxar.core.group.gsplats_pipeline.from_data.strip_absent_attr_kwargs`
+      and :func:`~luxar.core.group.gsplats_pipeline.from_data.reject_data_owned_channels`,
+      which touch none of the faults listed next) — so a call
       that ALSO trips an unrelated fault (an unknown attr, a bad node name, a
       duplicate sibling name, NaN centers) hears the label fault here, where
       the flat path answers the other fault first — both refuse, and neither
@@ -217,11 +225,12 @@ def _reject_labels_on_a_grafted_wrapper(
     """
     from luxar.gsplats.tree import iter_leaves
 
-    # Defensive only — every terminal write under a graft funnels through
-    # ``add_gsplats_from_data_impl``, which strips at the top of its own body.
+    # Defensive only — ``graft_gsplat_node`` now strips at its own entry, above
+    # this call, and every terminal write under a graft funnels through
+    # ``add_gsplats_from_data_impl``, which strips again at the top of its body.
     # Kept so this function's own ``is not None`` test reads the same normalised
-    # attrs its callers will, rather than depending on that.
-    strip_absent_label_kwargs(attrs)
+    # attrs its callers will, rather than depending on either of them.
+    strip_absent_attr_kwargs(attrs)
     # ``labels`` before ``image_labels`` (the leaf adders' signature order), so a
     # call passing both is answered deterministically — same tie-break as the
     # ``lod_group=`` half of the gate.
@@ -362,6 +371,23 @@ def graft_gsplat_node(
 
     from ..compositing import COMPOSITING_ATTRS
 
+    # The graft door's half of the #1496 ``**attrs`` normalisation — the identical
+    # two calls the ``from_data`` entry runs, so ``graft_gsplat_node(..., colors=
+    # None)`` behaves exactly like the other doors and a non-None ``colors=`` is
+    # refused here rather than from inside ``part_0``.
+    #
+    # The two are load-bearing to different degrees, deliberately kept together.
+    # The REFUSAL must be here: this function builds its wrappers from the on-disk
+    # tree BEFORE the first leaf is written, so a collision judged one level down
+    # (by ``add_gsplats_from_data_impl``, where every terminal leaf write does
+    # funnel through) leaves a childless ``kind=partition`` / ``kind=lod`` group
+    # behind — measured, with these two lines removed. The STRIP would in fact
+    # survive that removal, since non-compositing attrs ride down to those same
+    # per-leaf calls, which strip again at the top of their own body; it is stated
+    # here anyway so the pair reads as one rule rather than half a rule delegated,
+    # and so this function's own checks below see normalised attrs.
+    strip_absent_attr_kwargs(attrs)
+    reject_data_owned_channels(name, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)
 
     if isinstance(node, GSplatLeaf):
