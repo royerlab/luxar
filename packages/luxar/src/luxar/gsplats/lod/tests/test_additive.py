@@ -709,13 +709,16 @@ def test_radial_centre_defaults_to_bbox_not_scene_origin():
     here = _ray_gsplat(radii)
     far = _ray_gsplat(radii, offset=1000.0)
 
-    # The 1000-unit translation is irrelevant because the centre travels with
-    # the data. Under a scene-origin default the far set would instead reveal
-    # strictly left-to-right.
-    assert np.array_equal(
-        compute_additive_order(here, method="radial"),
-        compute_additive_order(far, method="radial"),
-    )
+    far_order = compute_additive_order(far, method="radial")
+
+    # Pin the far set's ORDER, not just its agreement with the near one: both
+    # rays are monotone in r, so a scene-origin default reveals each of them
+    # strictly left-to-right and the two still agree. Only the absolute order
+    # separates the two defaults — from the middle out, r=3 first.
+    assert list(radii[far_order]) == pytest.approx([3.0, 2.0, 4.0, 1.0, 5.0])
+    # And the 1000-unit translation is irrelevant: the centre travels with the
+    # data, so the near set ranks identically.
+    assert np.array_equal(compute_additive_order(here, method="radial"), far_order)
 
 
 def test_radial_explicit_centre_overrides_the_bbox():
@@ -974,3 +977,70 @@ def test_radial_rejects_malformed_spatial_dims(dims: list[int], match: str) -> N
     data = _make_random_gsplat(n=8, ndim=3, seed=3)
     with pytest.raises(ValueError, match=match):
         compute_additive_order(data, method="radial", spatial_dims=dims)
+
+
+def test_radial_excludes_an_asymmetric_degenerate_time_axis() -> None:
+    """Default shell axes are the non-degenerate (real-sigma) ones, so a stacked
+    time axis is excluded EVEN when it is asymmetric enough to reorder — the
+    discriminating case #1452 flagged (the symmetric two-timepoint fixture
+    cancels and cannot catch a `dims = arange(ndim)` regression).
+
+    Three timepoints t in {0, 1, 5} at the SAME spatial point (real spatial
+    sigma, zero time sigma). Spatial-only, all three tie at spatial distance 0
+    and the stable sort keeps input order [0, 1, 2]. Had the degenerate time
+    axis entered the distance, its bbox centre would sit at t=2.5 and reorder
+    them (t=1 nearest -> [1, 0, 2]).
+    """
+    t = np.array([0.0, 1.0, 5.0], dtype=np.float32)
+    n = t.size
+    centers = np.zeros((n, 4), dtype=np.float32)
+    centers[:, 0] = 2.0  # identical spatial coords (a single point)
+    centers[:, 3] = t
+    diag_idx = np.cumsum(np.arange(1, 5)) - 1
+    chol = np.zeros((n, 10), dtype=np.float32)
+    chol[:, diag_idx] = 0.4  # non-degenerate spatial sigma
+    chol[:, diag_idx[3]] = 0.0  # degenerate (stacked) time axis
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+    order = compute_additive_order(data, method="radial")
+
+    assert list(order) == [0, 1, 2]
+
+
+def test_radial_spatial_dims_override_selects_the_shell_axes() -> None:
+    """`spatial_dims=` overrides the default selection: a ray that varies only
+    along axis 3 is ordered by axis 3 when it is named explicitly, and
+    `reveal_centre` carries one coordinate PER SELECTED axis (not per ndim)."""
+    r = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+    n = r.size
+    centers = np.zeros((n, 4), dtype=np.float32)
+    centers[:, 3] = r  # variation only along axis 3
+    diag_idx = np.cumsum(np.arange(1, 5)) - 1
+    chol = np.zeros((n, 10), dtype=np.float32)
+    chol[:, diag_idx] = 0.4
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+
+    order = compute_additive_order(
+        data, method="radial", spatial_dims=[3], reveal_centre=[1.0]
+    )
+
+    # Aimed at r=1 along the selected axis -> reveals strictly outward.
+    assert list(r[order]) == pytest.approx([1.0, 2.0, 3.0, 4.0, 5.0])
+
+
+def test_radial_reveal_centre_length_checked_against_selected_dims() -> None:
+    """`reveal_centre` is validated against the SELECTED axes, not ndim: one
+    selected axis but a three-vector centre is a mismatch and must be rejected."""
+    data = _ray_gsplat(np.array([1.0, 2.0, 3.0], dtype=np.float32))  # 3D
+    with pytest.raises(ValueError, match="one coordinate per spatial axis"):
+        compute_additive_order(
+            data, method="radial", spatial_dims=[0], reveal_centre=[0.0, 0.0, 0.0]
+        )

@@ -2250,6 +2250,116 @@ class TestTransformCommand:
         np.testing.assert_array_equal(rot_c[:, 1], orig_c[:, 1])
         np.testing.assert_array_equal(rot_c[:, 3], orig_c[:, 3])
 
+    # ── a partition's split planes across transform / additive ──────────
+    #
+    # `bsp_tree` records how the parts stack up, in the CENTERS' coordinate
+    # space. Two ways to get it wrong, both silent: drop it (ordering quietly
+    # degrades to the centroid heuristic) or keep it stale after moving the
+    # centers (the traversal still returns a valid-looking permutation, so the
+    # viewer draws confidently in the wrong order).
+
+    @staticmethod
+    def _partition_store(path: Path, n: int = 400) -> None:
+        """Write a real BSP partition, so it genuinely carries split planes."""
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        rng = np.random.default_rng(17)
+        chol = np.zeros((n, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        node = GSplatData(
+            centers=(rng.random((n, 3)) * 100).astype(np.float32),
+            amplitudes=rng.uniform(0.2, 1.0, size=(n,)).astype(np.float32),
+            cholesky_factors=chol,
+        ).to_spatial_partition(max_elements=n // 4)
+        assert node.bsp_tree is not None
+        write_gsplats_tree(path, node)
+
+    @staticmethod
+    def _assert_planes_match_centers(path: Path) -> None:
+        """Every stored plane must still separate the parts it claims to."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        node, _ = load_gsplat_node(path)
+        tree = node.bsp_tree
+        assert tree is not None, "partition lost its split planes"
+
+        def labels(nd: dict) -> list[int]:
+            if "part" in nd:
+                return [nd["part"]]
+            return labels(nd["left"]) + labels(nd["right"])
+
+        def centers(i: int) -> np.ndarray:
+            return np.concatenate(
+                [np.asarray(s.centers) for s in node.children[i].additive_sublods]
+            )
+
+        def check(nd: dict) -> None:
+            if "part" in nd:
+                return
+            axis, split = nd["axis"], nd["split"]
+            for label in labels(nd["left"]):
+                assert centers(label)[:, axis].max() < split
+            for label in labels(nd["right"]):
+                assert centers(label)[:, axis].min() >= split
+            check(nd["left"])
+            check(nd["right"])
+
+        check(tree)
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--scale", "4,1,1"],
+            ["--translate", "10,-5,3"],
+            ["--center"],
+            ["--rotate-z", "90"],
+            ["--scale-intensity", "0.5"],
+            ["--scale", "2,2,2", "--translate", "5,5,5", "--center"],
+        ],
+    )
+    def test_transform_carries_partition_split_planes(
+        self, runner: CliRunner, tmp_path: Path, args: list
+    ) -> None:
+        """Axis-preserving transforms keep the planes AND move them correctly."""
+        src = tmp_path / "part.gsplats.zarr"
+        self._partition_store(src)
+        out = tmp_path / "out.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "transform", str(src), str(out), *args])
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        self._assert_planes_match_centers(out)
+
+    def test_transform_drops_split_planes_on_an_arbitrary_rotation(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A non-quarter-turn rotation shears the cells out of axis-alignment,
+        which the format cannot express — drop the tree, and say so."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        src = tmp_path / "part.gsplats.zarr"
+        self._partition_store(src)
+        out = tmp_path / "rot37.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "transform", str(src), str(out), "--rotate-z", "37"]
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        node, _ = load_gsplat_node(out)
+        assert node.bsp_tree is None
+        assert "Dropped the split planes" in result.stdout
+
+    def test_additive_preserves_partition_split_planes(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Re-laddering leaves moves no centers, so the planes stay valid."""
+        src = tmp_path / "part.gsplats.zarr"
+        self._partition_store(src)
+        out = tmp_path / "laddered.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "additive", str(src), str(out), "--n-lods", "2"]
+        )
+        assert result.exit_code == 0, f"additive failed: {result.stdout}"
+        self._assert_planes_match_centers(out)
+
     @pytest.mark.parametrize(
         "bad_value",
         [
