@@ -80,7 +80,12 @@ function level(
  * ladder of default-tiny levels never trips the aggregate the budget describe
  * below exercises. `preflightError`, when set, makes `runPreflight()` REJECT
  * instead of resolving — simulating a level whose own metadata open fails (a
- * transient network blip, in the real class).
+ * transient network blip or a malformed store; the gate propagates either one
+ * unlatched, without reading its kind).
+ * `preflightErrorAfterDispose` rejects only once `dispose()` has been called,
+ * which is what the REAL `MeshWholeNodeLoader` does to an in-flight
+ * `runPreflight()`: its `dispose()` nulls `preflight`, so the call throws
+ * `LoaderError('Unexpected', …, 'mesh loader not initialized')`.
  */
 function subLoader(
   data: LoadedMeshData,
@@ -89,6 +94,7 @@ function subLoader(
     gate?: Promise<void>;
     accountedBytes?: number;
     preflightError?: Error | null;
+    preflightErrorAfterDispose?: Error | null;
     preflightGate?: Promise<void>;
   } = {}
 ): MeshWholeNodeLoader & { calls: number; disposed: boolean; preflightCalls: number } {
@@ -99,6 +105,7 @@ function subLoader(
     runPreflight: vi.fn(async () => {
       stub.preflightCalls++;
       if (opts.preflightGate) await opts.preflightGate;
+      if (opts.preflightErrorAfterDispose && stub.disposed) throw opts.preflightErrorAfterDispose;
       if (opts.preflightError) throw opts.preflightError;
       return { accountedBytes: opts.accountedBytes ?? 1, nVertices: 0, nFaces: 0, ndim: 0 };
     }),
@@ -573,8 +580,51 @@ describe('MeshProgressiveLoader — aggregate byte budget (#1517)', () => {
     expect(data.faceCount).toBeGreaterThan(0);
   });
 
+  it('a dispose() racing the gate whose in-flight runPreflight REJECTS still resolves with the empty payload', async () => {
+    // The shape the REAL sub-loader produces, and the one a post-await
+    // `_disposed` check alone cannot cover: `MeshProgressiveLoader.dispose()`
+    // disposes every level and `MeshWholeNodeLoader.dispose()` bumps its
+    // generation and nulls `preflight`, so the in-flight `runPreflight()` throws
+    // `LoaderError('Unexpected', …, 'mesh loader not initialized')` — the
+    // `Promise.all` REJECTS instead of resolving late.
+    //
+    // The mutation this kills: delete the catch's `if (this._disposed) return;`
+    // and `updateView` REJECTS with that teardown `LoaderError` instead of
+    // resolving with the ladder's empty payload — a dataset switch mis-counted
+    // as a load failure, the very outcome the streaming loop's two `_disposed`
+    // re-checks exist to prevent. The `faceCount === 0` assertion below IS the
+    // test.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tornDown = new LoaderError(
+      'Unexpected',
+      '/surf/additive_0',
+      new Error('mesh loader not initialized')
+    );
+    const subs = [
+      subLoader(level(4, [0, 1, 2]), {
+        preflightGate: gate,
+        preflightErrorAfterDispose: tornDown,
+      }),
+      subLoader(level(3, [0, 1, 2])),
+    ];
+    const loader = new MeshProgressiveLoader(subs, subs.length, '/surf');
+
+    const inFlight = loader.updateView(VIEW);
+    loader.dispose();
+    release();
+
+    const data = await inFlight;
+    expect(data.faceCount).toBe(0);
+  });
+
   it('a dispose() racing the gate on an OVER-BUDGET ladder resolves (empty payload) rather than rejecting', async () => {
-    // The mutation-proved version of the dispose race: without this test, "make
+    // The RESOLVE shape of the dispose race (its rejection sibling is the test
+    // above): this stub keeps resolving after `dispose()`, which the real
+    // sub-loader does not do, so what this pins is the post-await `_disposed`
+    // re-check on the aggregate comparison. Without the test, "make
     // the post-await `_disposed` re-check a no-op" survives, because a ladder
     // whose levels are all comfortably under budget can't tell "returned early"
     // from "computed the sum and it happened to pass". Push every level's own

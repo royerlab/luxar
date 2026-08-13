@@ -31,14 +31,24 @@ path a leaf's fetch already uses, so a level's rejection is recorded, retried
 and reported like any other load failure, and the ladder is never latched as
 admitted until every level has actually been accounted for.
 
-An aggregate over-budget refusal is now sticky: unlike a level's own transient
-preflight failure, the sum comparison is deterministic once every level's
-metadata has opened, so a stale re-check on every later `updateView` was
-recomputing the same verdict forever and kept `hasMoreLODs` reporting `true` —
-enough to keep a dead node in the slice-scrub refinement loop indefinitely.
-The refusal is now cached and `hasMoreLODs` reads it directly, so an
-over-budget ladder is refused once and then left alone. Gating on every
-level's metadata before level 0 paints also has a cost on a store without
-consolidated metadata (a serialized round of `.zarray`/`.zattrs` opens per
-level); for a Luxar-written store, which always carries `.zmetadata`, that
-cost is close to zero.
+The aggregate refusal is latched rather than re-derived, and that matters
+because the new check is itself the hazard: a ladder it refuses never loads a
+level, so its loaded-level count never grows, `hasMoreLODs` keeps reporting
+`true`, and every slice scrub re-fires refinement on a node that can never
+succeed — burning its failure budget and toasting "showing a partial surface"
+for a surface of which not one triangle was ever committed. The sum is
+deterministic once every level's metadata has opened, since nothing is left to
+vary, so it is computed once, cached, rethrown as the same error object with no
+further preflight calls, and read directly by `hasMoreLODs` so the node leaves
+the refinement loop instead of being re-failed forever.
+
+A level's own preflight rejection is not latched: it propagates as itself, and a
+later attempt genuinely re-preflights, because the ladder is never marked
+admitted until every level has been accounted for and a failed metadata open
+caches nothing. A `dispose()` racing the gate — which reaches it as a rejection
+from the torn-down sub-loaders — resolves quietly with the ladder's empty
+payload instead of being recorded as a load failure. Gating on every level's
+metadata before level 0 paints also has a cost on a store without consolidated
+metadata (a serialized round of `.zarray`/`.zattrs` opens per level); for a
+Luxar-written store, which always carries `.zmetadata`, that cost is close to
+zero.

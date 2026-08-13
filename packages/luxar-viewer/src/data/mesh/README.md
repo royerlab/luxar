@@ -146,10 +146,12 @@ a leaf's own budget is enforced (inside `MeshWholeNodeLoader.fetch()`) — and
 still before any level's chunks are fetched. Charging it there rather than at
 construction gives the ladder the same failure containment as a leaf: a
 refusal is recorded and retryable instead of vanishing the node or going
-uncounted. Without the check at all, a ladder whose levels are individually
-under budget could still sum to N× it — the levels concatenate into one
-node's buffers and all stay resident, so a ladder cannot buy itself N budgets
-by splitting into levels.
+uncounted — retryable for a level's own preflight rejection, that is; the
+aggregate over-budget verdict is latched and rethrown from cache, since no retry
+can make the sum fit. Without the check at all, a ladder whose levels are
+individually under budget could still sum to N× it — the levels concatenate into
+one node's buffers and all stay resident, so a ladder cannot buy itself N
+budgets by splitting into levels.
 
 ## nD semantics: whole-triangle cull
 

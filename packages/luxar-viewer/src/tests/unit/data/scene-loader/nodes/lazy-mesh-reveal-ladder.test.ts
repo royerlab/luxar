@@ -16,8 +16,9 @@
  * level from cheap-attached to displayed is unconditional — but nothing ever
  * asks for a second one: `hasMoreLODs?.() ?? false` is permanently `false`, so
  * the ladder is stuck at whatever its first streaming pass happened to load. A
- * mesh reveal ladder is a growing SUBSET OF FACES — concentric shells around
- * the node's own bbox centre (spec §9.1), not a decimation — so that stuck
+ * mesh reveal ladder is a growing SUBSET OF FACES — one connected patch grown
+ * best-first through face adjacency, keyed on radius from the reveal centre
+ * (spec §9.1, explicitly not a radius sort), not a decimation — so that stuck
  * state is a permanently holed surface, not a blurrier-but-complete one.
  *
  * ## What is real here, and what is not
@@ -154,14 +155,28 @@ function levelData(faceCount: number): LoadedMeshData {
 }
 
 /**
- * A `MeshWholeNodeLoader`-shaped stub for one ladder level: the one method
- * `MeshProgressiveLoader`'s streaming loop calls. Always reports
+ * A `MeshWholeNodeLoader`-shaped stub for one ladder level: the three methods
+ * `MeshProgressiveLoader` calls — the `updateViewWithResidency` its streaming
+ * loop fetches through, the `runPreflight` its aggregate byte-budget gate calls
+ * once per level before any level is fetched, and the `dispose` it forwards to
+ * every level on teardown. Always reports
  * `allResident: false` — see the module doc for why that is the faithful
  * (not merely convenient) choice.
  */
 function stubLevelLoader(faceCount: number): MeshWholeNodeLoader {
   const data = levelData(faceCount);
   return {
+    // The preflight figure is derived from the payload this stub actually hands
+    // back rather than invented, but its exact value is immaterial here: nine
+    // tiny triangles sit many orders of magnitude under the per-node budget, so
+    // this test exercises the ladder DRAIN, not the budget gate (which has its
+    // own coverage in mesh-progressive-loader.test.ts).
+    runPreflight: vi.fn(async () => ({
+      nVertices: data.vertexCount,
+      nFaces: data.faceCount,
+      ndim: data.ndim,
+      accountedBytes: data.vertices.byteLength + data.faces.byteLength,
+    })),
     updateViewWithResidency: vi.fn(async () => ({ data, allResident: false })),
     dispose: vi.fn(),
   } as unknown as MeshWholeNodeLoader;

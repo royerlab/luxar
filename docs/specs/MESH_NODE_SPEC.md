@@ -352,7 +352,9 @@ N nodes can still sum to N×budget, so the "one node lost, not the scene" guaran
 imposes no aggregate cap. A §9.1 reveal ladder is a single node for this purpose: its levels are summed
 and charged once against the same ceiling, on the ladder's first load — before any level's chunks are
 fetched, and at the same point a leaf's own budget is enforced, so a refusal gets the same failure
-containment (recorded, retryable) as a leaf's. Any failure fails
+containment (recorded, banner entry, siblings unaffected) as a leaf's — retryable for a level's own
+preflight rejection, while the aggregate over-budget verdict is cached and re-thrown rather than
+re-derived, no retry being able to make the sum fit. Any failure fails
 the node with a `LoaderError` (one node lost, not the scene)
 **without fetching a single chunk**, preserving the blast radius before allocation.
 

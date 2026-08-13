@@ -62,6 +62,7 @@ import type {
   MeshViewState,
 } from '../../types/mesh';
 import type { MeshWholeNodeLoader } from './mesh-whole-node-loader';
+import type { MeshPreflightResult } from './preflight';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
@@ -259,20 +260,21 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private _disposed = false;
   /**
    * Latched once {@link assertWithinByteBudget} has fully accounted the ladder
-   * and admitted it. Set ONLY on that success path — never on a rejection —
-   * so a level whose `runPreflight()` failed transiently gets a genuine
-   * re-check on the next `updateView` rather than a cached pass.
+   * and admitted it. Set ONLY on that success path — never on a rejection — so
+   * a rejection is never cached as a pass: a live instance genuinely
+   * re-preflights on the next `updateView` (a failed `initialize()` caches
+   * nothing), and a disposed one is terminal and simply returns from the gate's
+   * first line. The one verdict that CANNOT come out differently is latched
+   * separately, on {@link _budgetRefusal}, so it is not re-derived either.
    */
   private _budgetChecked = false;
   /**
    * The sticky AGGREGATE-over-budget refusal, once thrown — deliberately the
-   * mirror image of {@link _budgetChecked} above.
+   * mirror image of {@link _budgetChecked} above, which is never set on a
+   * rejection.
    *
-   * A level's own `runPreflight()` rejection (a network blip on that level's
-   * metadata open) is transient by nature and must stay unlatched, which is
-   * why `_budgetChecked` above is never set on a rejection. The AGGREGATE
-   * comparison this field guards is the opposite case: DETERMINISTIC. By the
-   * time `assertWithinByteBudget` reaches the sum, every level's
+   * The AGGREGATE comparison this field guards is DETERMINISTIC. By the time
+   * `assertWithinByteBudget` reaches the sum, every level's
    * `MeshPreflightResult` came from an `initialize()` that already succeeded
    * and is cached (`MeshWholeNodeLoader.doInitialize` never re-runs once
    * `this.handles` is set) — there is no I/O left to vary, so re-running the
@@ -288,10 +290,40 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    *
    * So the refusal is computed once, cached here, and every later call
    * rethrows the SAME `LoaderError` object with no further `runPreflight()`
-   * calls. `hasMoreLODs` also reads this field directly (see below) and
+   * calls. `hasMoreLODs` also reads this field directly (see above) and
    * reports `false` once it is set, which is what actually removes the dead
    * node from `queueNext`'s refinement loop rather than merely making its
    * gate cheap to re-fail.
+   *
+   * A level's OWN `runPreflight()` rejection stays unlatched — and NOT because
+   * it is always transient. `preflightMesh` raises a deterministic
+   * `LoaderError('Validation')` for a genuinely malformed store, so some of
+   * those rejections do repeat forever. The reason is that the error KIND
+   * cannot be trusted to separate the two here, and it fails in both
+   * directions. Over-inclusive: a 404 on `additive_2/normals` while a store is
+   * still being written arrives as `Validation` BY DESIGN —
+   * `mesh-whole-node-loader.ts`'s optional-array open catch reads a zarr
+   * not-found as "the presence flag disagrees with the store", leaves the slot
+   * empty, and `preflightMesh`'s flag-with-no-array check then `rejectMesh`es
+   * it. A genuinely transient outage lands in that same branch, because
+   * `MultiLevelCachingStore.get` returns `undefined` for a retry-exhausted
+   * `NetworkError` to keep zarrita's "key missing" contract — so an offline
+   * blip on an optional array is indistinguishable here from a store that
+   * really lacks it. Under-inclusive: an
+   * absent REQUIRED `vertices`/`faces` array throws zarrita's `NotFoundError`,
+   * which `classifyLoaderError` matches nowhere and files as `Unexpected`. So
+   * latching by kind would strand nodes that the failed-loads banner's manual
+   * Retry and the LOD registry's not-ready self-heal — both of which
+   * deliberately IGNORE the kind — recover the moment the store or the
+   * connection is fixed, and would treat two 404s a few array names apart
+   * oppositely.
+   *
+   * The residual cost is real and accepted: while no level has committed, the
+   * refinement loop keeps re-firing on a deterministically broken level, and
+   * its "showing a partial surface" toast is inaccurate there too. Separating
+   * the two honestly would mean marking determinism where each rejection is
+   * CONSTRUCTED (in `preflight.ts` and the open catches) rather than inferring
+   * it from the kind after the fact — deliberately out of scope here.
    */
   private _budgetRefusal: LoaderError | null = null;
   /**
@@ -391,8 +423,11 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * around it. A leaf's own byte budget is enforced inside
    * `MeshWholeNodeLoader.fetch()`, i.e. inside `loadMeshNodeExpensive`'s try —
    * so charging the LADDER at the equivalent point, its own first load, gives
-   * it the identical containment (failure recorded, retryable, banner shown)
-   * as well as the identical ceiling: ladder ≡ leaf in both respects. It is
+   * it the identical containment (failure recorded, banner shown, siblings
+   * unaffected) as well as the identical ceiling: ladder ≡ leaf in both
+   * respects. Retryability carries over for a level's OWN rejection; the
+   * aggregate over-budget verdict is deliberately cached and rethrown instead,
+   * since no retry can make the sum fit (see {@link _budgetRefusal}). It is
    * still strictly before any chunk is fetched — `runPreflight()` only opens
    * metadata — so the two-stage gate's "refuse before allocation" property
    * survives the move unchanged.
@@ -458,7 +493,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * charged term is `stored_i + 4·decoded_i` (plus that level's own
    * `maxChunk_i`, which is transient and never resident); true residency after
    * a full reveal is `decoded_i` held by the level's own loader PLUS its share
-   * of the memoized concat copy (`concatenateMemoized` above) — the per-level
+   * of the memoized concat copy (`concatenateMemoized` below) — the per-level
    * buffers stay resident AND the concat holds a second copy of the same
    * values, so residency is ≈ `2·decoded_i`. The ratio of the two depends on
    * how much narrower the stored dtype is than the always-4-byte decoded
@@ -482,22 +517,43 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * and the failed level's own `initialize()` cached nothing, so the retry
    * genuinely re-preflights rather than replaying a stale rejection.
    *
-   * The AGGREGATE over-budget refusal below is the opposite case — deterministic
-   * once every level's preflight has succeeded — and is latched instead; see
-   * {@link _budgetRefusal}.
+   * Propagating is not the same as forgetting, though: the AGGREGATE
+   * over-budget refusal below IS latched on the way out and rethrown as the
+   * same error object rather than re-derived. A level's own rejection is not —
+   * see {@link _budgetRefusal} for why the error kind cannot be trusted to tell
+   * a deterministic one from a transient one here.
    */
   private async assertWithinByteBudget(): Promise<void> {
     if (this._budgetChecked || this._disposed) return;
-    // The aggregate refusal is deterministic (see `_budgetRefusal`'s
-    // docstring) — rethrow the cached error rather than re-running every
-    // level's `runPreflight()` for a verdict that cannot change.
+    // A latched refusal is deterministic (see `_budgetRefusal`'s docstring) —
+    // rethrow the cached error rather than re-running every level's
+    // `runPreflight()` for a verdict that cannot change.
     if (this._budgetRefusal) throw this._budgetRefusal;
 
-    const results = await Promise.all(this.lodLoaders.map((loader) => loader.runPreflight()));
+    let results: MeshPreflightResult[];
+    try {
+      results = await Promise.all(this.lodLoaders.map((loader) => loader.runPreflight()));
+    } catch (error) {
+      // A dispose() racing the check tore the ladder down mid-await, and with the
+      // real sub-loader that arrives as a REJECTION rather than a late resolve:
+      // `dispose()` disposes every level, and `MeshWholeNodeLoader.dispose()`
+      // bumps its generation and nulls `preflight`, so the in-flight
+      // `runPreflight()` throws `LoaderError('Unexpected', …, 'mesh loader not
+      // initialized')`. Return quietly — the same answer the streaming loop's two
+      // `_disposed` re-checks give, so a teardown is not mis-counted as a load
+      // failure — a teardown is not a verdict about the store. (This composite's
+      // `dispose()` is TERMINAL, unlike `MeshWholeNodeLoader.dispose()`'s
+      // documented state-clearing one: `_disposed` is never cleared and this
+      // gate returns on its first line forever after, so there is nothing left
+      // to latch or to re-check.) Checked FIRST for that reason.
+      if (this._disposed) return;
+      throw error;
+    }
 
-    // A dispose() racing the check above tore the ladder down mid-await — there
-    // is nothing left to charge a budget against, and latching now would skip
-    // a genuine re-check should this instance somehow be asked again.
+    // The other shape of the same race: a dispose() landing after the preflights
+    // RESOLVED. There is nothing left to charge a budget against, and a
+    // torn-down ladder must not throw a refusal at a dataset that is already
+    // gone — so return quietly, exactly as the catch above does.
     if (this._disposed) return;
 
     const totalBytes = results.reduce((sum, r) => sum + r.accountedBytes, 0);
