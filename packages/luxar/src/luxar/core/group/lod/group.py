@@ -642,8 +642,15 @@ def validate_lod_group(group: "Node") -> None:
             "values above a whole-object anchor hold a level until the object "
             "is larger still (what an explicit list may ask for)."
         )
+    _validate_lod_group_children(group.children, selector, cap, cap_rationale)
+
+
+def _validate_lod_group_children(
+    children: List["Node"], selector: str, cap: float, cap_rationale: str
+) -> None:
+    """Per-child ladder checks for ``validate_lod_group`` (same errors)."""
     prev = float("-inf")
-    for i, child in enumerate(group.children):
+    for i, child in enumerate(children):
         if "coverage_fraction" not in child.attrs:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) is missing "
