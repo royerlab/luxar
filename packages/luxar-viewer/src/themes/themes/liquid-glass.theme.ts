@@ -38,10 +38,26 @@ export const liquidGlassTheme: Theme = {
       overlay: 'rgba(0, 0, 0, 0.6)', // Modal overlay
     },
     text: {
-      // Light text for translucent glass on dark backgrounds
-      primary: 'rgba(255, 255, 255, 0.95)', // Bright white
-      secondary: 'rgba(255, 255, 255, 0.75)', // Translucent white
-      muted: 'rgba(255, 255, 255, 0.5)', // Subtle white
+      // Light text for translucent glass on dark backgrounds. The panel's
+      // actual contrast floor is the `--luxar-glass-tint` dark tint painted
+      // by the `.luxar-glass-surface::after` layer in liquid-glass.css (this
+      // theme's own background.secondary token is a translucent WHITE and is
+      // not what text sits on). Issue #1513: pre-fix, that layer's tint was
+      // painted at an effective 0.385 alpha (a 0.55 tint further multiplied
+      // by a stray `opacity: 0.7` on the same rule, since deleted) — over
+      // the worst-case (pure-white scene) that composited to rgb(157) and
+      // gave primary/secondary/muted 2.61:1 / 2.19:1 / 1.73:1: ALL THREE
+      // failed AA (4.5:1), not only secondary/muted. Raised alongside
+      // frosted-glass's text alphas (same alpha numbers — both themes share
+      // this text-on-dark-tint shape, though the tint values themselves
+      // differ) and alongside deleting the opacity multiplier; now
+      // 7.3:1 / 6.2:1 / 5.0:1. Pinned by
+      // tests/unit/themes/glass-contrast.test.ts, which reads the tint's
+      // declared alpha AND the ::after rule's opacity out of liquid-glass.css
+      // so the two can never drift apart.
+      primary: 'rgba(255, 255, 255, 0.95)', // Bright white — 7.3:1 worst-case
+      secondary: 'rgba(255, 255, 255, 0.85)', // Translucent white — 6.2:1 worst-case
+      muted: 'rgba(255, 255, 255, 0.72)', // Subtle white — 5.0:1 worst-case
       disabled: 'rgba(255, 255, 255, 0.3)', // Very subtle
       inverse: 'rgba(0, 0, 0, 0.85)', // For light backgrounds
     },
