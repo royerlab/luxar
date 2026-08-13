@@ -190,37 +190,70 @@ to ship after). Sequencing is at the bottom.
     instead of the old "run `git lfs pull`", which pointed at a file that no
     longer exists. The Gaia demo had no download path at all and now resolves
     cache-first with an actionable error (see #1461 for the ESA-archive build).
-  - **🔴 REMOVAL IS NOT COMPLETE UNTIL HISTORY IS CLEANED.** GitHub serves LFS
-    objects for any commit, so the four datasets stay fetchable from history
-    until acted on. Enumerated 2026-08-12 by walking every commit that touched
-    the paths: **51 distinct LFS objects, 318.9 MB** (acto3d 36 / tng 4 /
-    tribolium 10 / gaia 1 — each was re-fitted and re-encoded several times).
-    Regenerate the list with the `regenerate_purge_list.py` scratch script rather
-    than trusting a stale copy. Two steps, in this order:
-    1. **Support purge (do while private).** GitHub has no API for this — submit
-       at <https://support.github.com/contact> as repo owner, asking for those 51
-       OIDs specifically and stating that Git LFS must stay enabled (the repo
-       has ~450 MB of legitimate LFS data). Draft ticket text is prepared.
-    2. **`git filter-repo` at launch (open PRs = 0, before the public flip).**
-       Required because ONE revision is not an LFS object at all: blob
-       `bae6bf061658` (39.58 MB, the Gaia zip, in commits `b3032cab7` /
-       `732ebc968`) was committed as raw binary before that path was LFS-tracked,
-       so Support cannot touch it — and it is the CC BY-**NC** dataset, the
-       clearest licensing problem of the four. Command:
+  - **🔴 REMOVAL IS NOT COMPLETE UNTIL HISTORY IS CLEANED — one launch-time
+    operation, and it is gated.** GitHub serves LFS objects for any commit and
+    does NOT garbage-collect unreferenced ones (docs: *"the Git LFS objects still
+    exist on the remote storage and will continue to count toward your Git LFS
+    storage quota"*; the only documented remedies are deleting the repository or
+    contacting Support — a widely repeated "30-day auto-GC" is community
+    folklore GitHub does not guarantee). Enumerated 2026-08-12 by walking every
+    commit that touched the paths: **51 distinct LFS objects, 318.9 MB** (acto3d
+    36 / tng 4 / tribolium 10 / gaia 1 — each was re-fitted several times).
+    Regenerate the list before acting rather than trusting a stale copy.
+    - **ORDER, corrected by GitHub Support 2026-08-12.** We first asked Support
+      to purge the 51 still-referenced OIDs directly, reasoning that they act on
+      OIDs and a rewrite would leave them unfindable. They declined that shape:
+      *"GitHub's documented process does not support directly deleting an
+      arbitrary subset of still-referenced Git LFS objects on request… Support
+      will only assist with full removal after the objects have been orphaned by
+      the history rewrite workflow."* **The rewrite comes FIRST; the ticket is
+      filed afterwards.**
+    - **Two blockers before the rewrite can run at all:**
+      1. **Branch protection refuses it.** `main` has `enforce_admins: true` and
+         `allow_force_pushes: false`, so a force-push is rejected for admins too.
+         Protection must be lifted and restored immediately after (6 required
+         checks incl. `review/gate` to re-add).
+      2. **The PR queue must be drained** (17 open at time of writing, and the
+         fleet keeps adding). The rewrite invalidates every open PR, every agent
+         worktree, and `state/agent-prs.jsonl` — so `luxar-agent pause` first.
+    - **Runbook:**
+      1. `luxar-agent pause`; drain/merge or close all open PRs.
+      2. `brew install git-filter-repo` (not installed on this Mac).
+      3. Fresh clone, then:
 
-           git filter-repo --invert-paths \
-             --path packages/luxar/src/luxar/demos/data/gsplats_tribolium \
-             --path packages/luxar/src/luxar/demos/data/gsplats_acto3d_heart \
-             --path packages/luxar/src/luxar/demos/data/gsplats_tng_cosmic_web \
-             --path packages/luxar/src/luxar/demos/data/milky_way_gaia_3m.zarr.zip
+             git filter-repo --invert-paths \
+               --path packages/luxar/src/luxar/demos/data/gsplats_tribolium \
+               --path packages/luxar/src/luxar/demos/data/gsplats_acto3d_heart \
+               --path packages/luxar/src/luxar/demos/data/gsplats_tng_cosmic_web \
+               --path packages/luxar/src/luxar/demos/data/milky_way_gaia_3m.zarr.zip
 
-       ⚠ Rewrites all ~2,690 commit SHAs. Run it only when the PR queue is
-       drained: it invalidates every open PR, every agent worktree, and the
-       fleet's `state/agent-prs.jsonl` ownership records. `git-filter-repo` is
-       not installed on this Mac (`brew install git-filter-repo`). Verify
-       afterwards that the four paths return nothing from
-       `git log --all -- <path>`, then force-push and have every clone re-clone.
-    - Zero forks today, so there are no third-party copies to chase.
+         KEEP the output: Support wants the `NOTE: First Changed Commit(s)` block
+         and, if printed, `NOTE: There were LFS Objects Orphaned by this rewrite`
+         plus the file it names.
+      4. Verify `git log --all -- <path>` is empty for all four paths, and that
+         blob `bae6bf061658` (the RAW, non-LFS Gaia zip, 39.58 MB — committed
+         before that path was LFS-tracked, so no LFS purge can touch it, and it
+         is the CC BY-**NC** dataset) is gone from every rewritten ref.
+         ⚠ **That local check is necessary but NOT sufficient**, and this blob
+         is the case that proves it: it sits in `b3032cab7`, which is on `main`
+         and so does get rewritten away, *and* in `732ebc968` — a byte-identical
+         commit that no branch, tag or PR ref points at. A ref rewrite cannot
+         reach an unreferenced commit and `git log --all` cannot even see it,
+         yet `git fetch origin 732ebc968…` still succeeds against the remote
+         (checked 2026-08-13) and the API/web still serve it by SHA. So verify
+         against the REMOTE too, from a clone that has no local copy: that fetch
+         must fail before the repo goes public.
+      5. Lift branch protection → `git push --force --mirror origin` → restore
+         protection. ⚠ `--mirror` deletes remote refs absent locally.
+      6. File the Support ticket with repo name, affected-PR count, and the
+         filter-repo NOTE output — and ask, in the same ticket, for the
+         unreferenced commits and cached views to be dropped as well (name
+         `732ebc968` explicitly), not just the orphaned LFS objects. Only
+         GitHub-side GC clears those; step 4's remote fetch is the proof.
+      7. Re-clone everywhere: this Mac's worktrees and obsidian's three checkouts
+         (`luxar-main`, `luxar-fullfit`, `luxar-encode`).
+    - Zero forks today, so no third-party copies to chase. The repo is still
+      private, so nothing is being distributed while this waits.
   - **License audit — DONE (web-verified 2026-07-15).** A gsplat fit / point
     catalog is a *derived* product (lossy transform, not the raw voxels/pixels),
     which is broadly redistributable — but "derived" does **not** launder three
@@ -301,6 +334,45 @@ to ship after). Sequencing is at the bottom.
     - Unit tests in `utils/tests/test_data_fetch.py` (deliberately not counted
       here — the number rots every time a test lands); demo-import tests stay
       green; ruff clean.
+  - **INVENTORY + READINESS — audited 2026-08-12, and made re-runnable.**
+    `python scripts/zenodo_migration_audit.py` cross-references the manifest,
+    the demo registry and the filesystem, so this never has to be reconstructed
+    from memory again. State at the audit:
+    - **3 records to create** (`cc-by`, `cc-by-sa`, `h2afva`) — none exist yet.
+      Record grouping is a ONE-WAY DOOR (records cannot be split or merged after
+      publication), which is why `h2afva` is separate.
+    - **20 datasets ready to upload now (~418 MB)** — 19 whose bytes are still
+      in-tree, plus the 3 new CC-BY ones whose bytes are in `~/.cache` on this
+      Mac (drosophila 2.3 MB, h2afva stack 24.4 MB, h2afva decimation 24.6 MB).
+    - **2 datasets upload from obsidian, not from here — nothing is blocked on a
+      decision any more (both resolved 2026-08-12):**
+      - `gsplats_4d_neuromast_2ch` (~250 MB) — **permission GRANTED by Adrian
+        Jacobo**, so it goes to the `cc-by` record with the rest.
+      - `h2afva` timelapse → its **own record, whose purpose is the FULL 253-tp
+        set** (~16 GB). The 51-tp variant (~2.9 GB) is a strict subset of it and
+        ships anyway: redundant in content, but far easier to pull, so the demo
+        takes 51tp by default and the full timelapse is opt-in. Both variants are
+        already declared; only the files need filling at upload.
+    - **⚠ Record assignment corrected before creation (one-way door).** The
+      single-stack demos — `gsplats_3d_h2afva_stack` and its derived
+      `gsplats_3d_h2afva_decimation` — were pointed at the `h2afva` record; they
+      now go to the general **`cc-by`** record, because a 24 MB single stack
+      ships like every other demo dataset and does not belong in the timelapse
+      archive. Catching this after publication would have been unfixable.
+    - **4 `local-compute` datasets are OUT of scope by licence** and must never
+      be uploaded — they keep their manifest checksums only so a machine that
+      still has the files can verify them.
+    - **Integrity checks that must stay clean:** UNDECLARED-on-disk = 0 (every
+      in-tree data file is manifest-described; a stray one would migrate to
+      nowhere), and 370.6 MB still in-tree is the total the migration removes.
+    - **31 demo caches are deliberately NOT manifest-tracked** — those demos
+      fetch or generate from public sources at runtime (arxiv, caida,
+      earthquakes, flywire, ocean currents, the gsplat interop imports, the
+      zebrahub multiome/velocity set, …). The audit lists them so a NEW dataset
+      that quietly needs hosting cannot hide among them.
+    - **8 manifest datasets are not claimed via `DEMO_META['caches']`** — all 8
+      were grepped 2026-08-12 and every one IS still loaded by a demo through
+      another route. None is orphaned; do not prune them.
   - **Migration runbook (irreversibility rules).** Publishing a Zenodo record is
     **permanent** (no self-delete; files immutable — edits become new versions).
     So: (1) rehearse on **`sandbox.zenodo.org`** first — a published Sandbox record

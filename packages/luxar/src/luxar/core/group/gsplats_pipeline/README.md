@@ -89,8 +89,12 @@ Both functions produce a `GSplatData` and hand it to
   **exactly one leaf with exactly one additive sub-LOD** — the one shape that can
   actually carry them. Leaf COUNT, not node type: a one-part `kind=partition` of
   a flat leaf still has an exact per-element correspondence, so it keeps
-  labelling normally. But a one-part partition of a LADDERED leaf is refused too,
-  for a different reason and with a different message
+  labelling normally **when the list is the right length**; a wrong length is
+  now refused right there too, by the same validators the flat writer runs, so a
+  mismatched `labels=`/`image_labels=` no longer refuses one level down from
+  inside `part_0` with the wrapper already on disk (#1505). But a one-part
+  partition of a LADDERED leaf is refused too, for a different reason and with
+  a different message
   (`labels_on_a_laddered_leaf_reason`): `write_gsplat_leaf_subtree` has no labels
   channel at all, so exempting it would push the refusal down into `part_0` with
   the wrapper already on disk — and `--recipe tiles` carries a stream ladder by
