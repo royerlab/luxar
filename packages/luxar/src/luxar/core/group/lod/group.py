@@ -610,9 +610,22 @@ def validate_lod_group(group: "Node") -> None:
     # The threshold ceiling depends on the group's selector UNITS: screen-area
     # fractions top out at the fills-screen area (1.0 — anything above is
     # unreachable and would hold a level forever), while the legacy diagonal
-    # metric tops out at 1/FILL_FACTOR (4.0). A missing selector is legacy —
-    # same fallback the viewer's loader applies.
-    selector = str(group.attrs.get("selector", "coverage"))
+    # metric tops out at 1/FILL_FACTOR (4.0). Only a MISSING selector defaults
+    # to legacy (the viewer loader's own fallback); a PRESENT value outside the
+    # vocabulary is rejected — node attrs are mutable, so a modified/imported
+    # group could otherwise pass validation and serialize an invalid selector
+    # (matching add_lod_group_impl and gate_authored_selector).
+    from ....typing_utils.constants import LOD_SELECTORS
+
+    raw_selector = group.attrs.get("selector")
+    if raw_selector is not None and raw_selector not in LOD_SELECTORS:
+        raise ValueError(
+            f"LOD group '{group.path or group.name}' carries "
+            f"selector={raw_selector!r}; must be one of {sorted(LOD_SELECTORS)} "
+            "(it names the units of the children's coverage_fraction "
+            "thresholds)"
+        )
+    selector = str(raw_selector) if raw_selector is not None else "coverage"
     if selector == "screen-area":
         cap = PARTITION_FINEST_AREA
         cap_rationale = (

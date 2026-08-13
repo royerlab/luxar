@@ -305,6 +305,26 @@ class TestLODGroupValidation:
             with pytest.raises(ValueError, match="not a finite number"):
                 validate_lod_group(lod)
 
+    def test_validate_rejects_unknown_selector_attr(self, tmp_path) -> None:
+        """A PRESENT selector outside the vocabulary is rejected — node attrs
+        are mutable, so a modified/imported group could otherwise pass
+        validation and serialize an invalid selector. Only a MISSING selector
+        defaults to legacy (the viewer loader's own fallback)."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires")
+            for i, cf in enumerate([0.0, 0.5]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            lod.attrs["selector"] = "pixel_size"  # mutate past the builder gate
+            with pytest.raises(ValueError, match="must be one of"):
+                validate_lod_group(lod)
+
     def test_validate_rejects_nonzero_coarsest_floor(self, tmp_path) -> None:
         """The coarsest child must be EXACTLY 0.0 — the always-eligible floor
         the format requires. A strictly-ascending ladder like [0.25, 0.5] used
