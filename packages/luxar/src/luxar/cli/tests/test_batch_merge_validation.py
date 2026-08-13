@@ -152,10 +152,16 @@ class TestMergePipelineProvenance:
         )
         assert _recipe_pipeline_info("levels", RecipeParams())["refine_iters"] is None
 
-    def test_merge_rejects_refine_volume_front_door(self, tmp_path) -> None:
-        """refine='volume' must be rejected BEFORE the streaming merge writes
-        anything (the deep per-part rejection would fire mid-stream, leaving a
-        half-written store). Fails pre-fix (error surfaced only mid-merge)."""
+    def test_merge_validates_refine_volume_front_door(self, tmp_path) -> None:
+        """A merge-time volume re-fit re-opens the source and crops it per tile, so
+        anything making the source unusable must be caught BEFORE the streaming
+        merge writes a single part — the deep per-part guard would fire mid-stream
+        and leave a half-written store.
+
+        This replaces a test asserting the combination was refused outright. The
+        refusal is now specific: it names what is missing instead of declaring the
+        merge volume-free.
+        """
         import numpy as np
         import pytest
 
@@ -163,20 +169,59 @@ class TestMergePipelineProvenance:
         from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
         from luxar.gsplats.lod.recipes import RecipeParams
 
-        manifest = BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1)
         out_dir = tmp_path / "batch"
         (out_dir / "tiles").mkdir(parents=True)
-        with pytest.raises(ValueError, match="volume-free by design"):
-            merge_batch_results(
+        params = RecipeParams(refine="volume", volume=np.zeros((4, 4, 4), np.float32))
+
+        def _merge(manifest):
+            return merge_batch_results(
                 manifest,
                 out_dir,
                 verbose=False,
                 recipe="levels",
-                recipe_params=RecipeParams(
-                    refine="volume", volume=np.zeros((4, 4, 4), np.float32)
-                ),
+                recipe_params=params,
             )
-        # Nothing was written before the rejection.
+
+        # No source recorded at all.
+        with pytest.raises(ValueError, match="records no input path"):
+            _merge(BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1))
+
+        # A source that has since moved or been deleted.
+        with pytest.raises(ValueError, match="no longer exists"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=1,
+                    n_channels=1,
+                    n_tiles=1,
+                    input_path=str(tmp_path / "gone.zarr"),
+                )
+            )
+
+        # Present, but planned without --axes: the stacked axis cannot be mapped,
+        # and guessing it wrong sends every re-fit at the wrong axis.
+        source = tmp_path / "src.npy"
+        np.save(source, np.zeros((4, 4, 4), np.float32))
+        with pytest.raises(ValueError, match="axis labels"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=1, n_channels=1, n_tiles=1, input_path=str(source)
+                )
+            )
+
+        # A folded CHANNEL axis: a merged part carries ONE stacked axis, so time
+        # and channel cannot both map onto it.
+        with pytest.raises(ValueError, match="folded channel axis"):
+            _merge(
+                BatchManifest(
+                    n_timepoints=2,
+                    n_channels=3,
+                    n_tiles=1,
+                    input_path=str(source),
+                    axes="t,c,z,y,x",
+                )
+            )
+
+        # Every rejection happened before anything was written.
         assert not (out_dir / "merged").exists()
 
     def test_legacy_manifest_recipe_translates_in_provenance(self) -> None:

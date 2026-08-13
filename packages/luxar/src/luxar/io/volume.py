@@ -80,6 +80,40 @@ def _axis_kind(label: str, flag: str = "--axes") -> str:
     )
 
 
+def open_volume_lazy(path: Path, array_key: Optional[str] = None) -> Any:
+    """Open a volume WITHOUT materialising it, when the format allows.
+
+    A zarr store is returned as its array object, so a caller that only ever
+    slices it (a per-timepoint or per-tile volume re-fit) never pays for the
+    whole dataset: a 253-timepoint 407x2048x2048 uint16 timelapse is 431 GB while
+    one timepoint is 3.4 GB. Formats with no lazy reader (.npy/.npz/.tiff) fall
+    back to :func:`load_volume`; those are single volumes by nature, so the
+    fallback is not the case this exists for.
+
+    The returned object supports ``.shape`` and numpy basic indexing — the
+    contract :func:`~luxar.gsplats.lod.volume_regions.select_sub_volume` needs.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".zarr" or (suffix == ".zip" and path.stem.endswith(".zarr")):
+        import zarr
+
+        node = zarr.open(str(path), mode="r")
+        if array_key:
+            try:
+                node = node[array_key]
+            except (KeyError, TypeError) as e:
+                raise ValueError(
+                    f"array key {array_key!r} not found in {path.name}"
+                ) from e
+        if not hasattr(node, "shape"):
+            raise ValueError(
+                f"{path.name} is a zarr GROUP; pass an array_key naming the "
+                "array to re-fit against"
+            )
+        return node
+    return load_volume(path, array_key=array_key)
+
+
 def volume_axes_from_spec(
     axes: str, ndim: int, *, flag: str = "--target-axes"
 ) -> tuple:

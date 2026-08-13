@@ -401,10 +401,19 @@ Engineering guarantees and scope:
 - **Chain semantics** — unlike `l2`, the merge chain continues from the
   *unrefined* merge output; only the stored level is replaced by the re-fit
   (each level's re-fit is independently seeded from its own merge).
-- **Requires the volume in hand** — exposed via `luxar gsplat lod --target
-  <volume> --refine volume` (CLI loads with the shared `load_volume`); the
-  fit-time (`fit --recipe levels`) and batch-merge paths are follow-ups (the
-  batch streaming merge is volume-free by design).
+- **Requires the volume in hand** — exposed at all three entry points:
+  - `gsplat lod --target <volume> --refine volume` (+ `--target-axes` for a
+    stacked target);
+  - `gsplat fit --recipe levels --refine volume` — no `--target` needed, since
+    the volume being fitted is already in hand and the fit emits splats in its
+    voxel frame, so the identity axis map is correct by construction;
+  - `batch-fit merge --recipe levels --refine volume` — the streaming merge
+    re-opens the source the manifest recorded and crops it to each tile as that
+    tile streams. It validates up front (source readable, `--axes` recorded, no
+    folded channel axis) because a per-part failure mid-stream would leave a
+    half-written store. This path composes BOTH mechanisms: each tile-part is
+    cropped spatially AND split per stacked timepoint, which is what a tiled
+    timelapse needs.
 - **Barrier dims and per-tile crops are supported** — both once meant "one
   volume cannot serve every seed", and both are answered the same way: each
   re-fit is handed the sub-volume it is actually responsible for

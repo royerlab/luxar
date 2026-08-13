@@ -524,6 +524,22 @@ def _within_box(
     return True
 
 
+def _with_stored_mse(stats: dict) -> dict:
+    """Record which candidate's error was actually KEPT, on a single-piece refit.
+
+    The aggregated (barrier) path reports this too. Without it here, a consumer
+    reading ``mse_refit`` on a tile whose re-fit was rejected for leaving its
+    tile sees the discarded candidate's error — which can be the LOWER of the two
+    — and concludes the level improved when the merge was kept.
+    """
+    if "mse_seed" in stats and "mse_refit" in stats:
+        kept_seed = bool(stats.get("seed_won")) or bool(stats.get("tile_escape"))
+        stats["mse_stored"] = float(
+            stats["mse_seed"] if kept_seed else stats["mse_refit"]
+        )
+    return stats
+
+
 def _volume_refine_level(
     level: GSplatData,
     # Array-LIKE (see select_sub_volume): a lazy zarr store stays lazy.
@@ -592,10 +608,10 @@ def _volume_refine_level(
             st["tile_escape"] = True
             st["improved"] = False
             st["seed_won"] = True
-            return piece, st
+            return piece, _with_stored_mse(st)
         st = dict(st)
         st["tile_escape"] = False
-        return out, st
+        return out, _with_stored_mse(st)
 
     if not barrier:
         return _one(level, ())

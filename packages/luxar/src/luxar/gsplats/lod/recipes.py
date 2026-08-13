@@ -736,7 +736,13 @@ def uniform_per_part_lod_warning(
     )
 
 
-def build_part_lod(part: GSplatNode, recipe: str, params: RecipeParams) -> GSplatNode:
+def build_part_lod(
+    part: GSplatNode,
+    recipe: str,
+    params: RecipeParams,
+    *,
+    cell: Optional[List[Tuple[float, float]]] = None,
+) -> GSplatNode:
     """Give ONE partition child its own per-part LOD, with depth clamped to the
     part's splat count (so a small part never synthesises degenerate levels).
 
@@ -746,12 +752,19 @@ def build_part_lod(part: GSplatNode, recipe: str, params: RecipeParams) -> GSpla
     without materialising the whole partition. Returns the per-part node:
     a leaf-with-ladder (``stream``) or a substitutive ``GSplatLodGroup``
     (``levels``). Legacy spellings translate via :func:`canonical_recipe_name`.
+
+    ``cell`` is this part's own tile, per center dim, and is required by
+    ``refine="volume"``: the re-fit crops the volume to the tile so it is not
+    tempted to pull splats out of it to explain a neighbour's signal. Callers
+    that know the decomposition (the fit-time assembler, the batch merge) should
+    pass it; without it a volume re-fit refuses rather than targeting the whole
+    volume.
     """
     recipe = canonical_recipe_name(recipe)
     if recipe == "stream":
         return _ladder_for_part(part, params)
     if recipe == "levels":
-        return _substitutive_for_part(part, params)
+        return _substitutive_for_part(part, params, cell=cell)
     raise ValueError(
         f"build_part_lod: {recipe!r} has no per-part form; "
         f"choose from {', '.join(PER_PART_RECIPES)}"

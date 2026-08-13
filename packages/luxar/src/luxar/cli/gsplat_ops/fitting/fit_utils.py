@@ -96,6 +96,8 @@ class FitPipelineCtx:
     recipe_levels: Optional[int]
     recipe_substitutive_method: Optional[str]
     recipe_coarsen_dims: Optional[str]
+    recipe_refine: Optional[str]
+    recipe_refine_iters: Optional[int]
     cal: Optional[Path]
     k_star_ref: Optional[int]
     n_features_ref: Optional[int]
@@ -182,7 +184,9 @@ def resolve_tiling(
     return "content" if has_density else "uniform"
 
 
-def validate_and_build_recipe(ctx: FitPipelineCtx, volume_ndim: int) -> "Any":
+def validate_and_build_recipe(
+    ctx: FitPipelineCtx, volume_ndim: int, volume: "Any" = None
+) -> "Any":
     """Validate per-part ``--recipe`` usage and build its ``RecipeParams``.
 
     Returns ``None`` when no ``--recipe`` was given. Raises
@@ -225,6 +229,13 @@ def validate_and_build_recipe(ctx: FitPipelineCtx, volume_ndim: int) -> "Any":
         levels=ctx.recipe_levels,
         substitutive_method=ctx.recipe_substitutive_method,
         coarsen_dims=ctx.recipe_coarsen_dims,
+        refine=ctx.recipe_refine,
+        refine_iters=ctx.recipe_refine_iters,
+        # `refine="volume"` re-fits against the array being fitted. Unlike
+        # `gsplat lod --target`, no path and no axis map are needed: the volume is
+        # already in hand and the fit emits splats in its own voxel frame, so the
+        # identity map is correct by construction.
+        volume=volume,
         device=ctx.device,
         volume_ndim=volume_ndim,
     )
@@ -787,6 +798,9 @@ def build_fit_recipe_params(
     levels: Optional[int],
     substitutive_method: Optional[str],
     coarsen_dims: Optional[str],
+    refine: Optional[str],
+    refine_iters: Optional[int],
+    volume: "Any",
     device: Optional[str],
     volume_ndim: int,
 ) -> "Any":
@@ -803,6 +817,9 @@ def build_fit_recipe_params(
         levels=levels,
         substitutive_method=substitutive_method,
         coarsen_dims=coarsen_dims,
+        refine=refine,
+        refine_iters=refine_iters,
+        volume=volume,
         device=device,
         volume_ndim=volume_ndim,
     )

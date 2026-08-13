@@ -98,20 +98,12 @@ def merge_batch_results(
                 "(tiles/overview/adaptive) re-partition their input, but each "
                 "tile is already one spatial part."
             )
-        # Front-door: refine="volume" is a whole-dataset re-fit that needs the
-        # source volume in hand; per-part levels reject it deep inside
-        # _substitutive_for_part, which for the STREAMING merge would fire
-        # mid-stream — after parts were already written. Fail here, before any
-        # output exists, with a merge-appropriate message.
+        # Front-door: refine="volume" re-opens the source and crops it per tile,
+        # so anything that makes the source unmappable must fail HERE, before any
+        # output exists — the deep guard would otherwise fire mid-stream, after
+        # parts were already written.
         if recipe_params is not None and recipe_params.refine == "volume":
-            raise ValueError(
-                "merge_batch_results: refine='volume' is not supported at "
-                "batch merge (the streaming merge is volume-free by design, "
-                "and each tile-part would need its own volume crop). Merge "
-                "without it, then run `gsplat lod --recipe levels --target "
-                "<volume> --refine volume` on a flattened copy, or use "
-                "refine='l2'."
-            )
+            _validate_merge_volume_refit(manifest)
         # Per-part LOD on uniform (Hann-apodized) tiles only holds the halo
         # partition-of-unity at the finest level — warn here, the library boundary,
         # so the CLI, the Slurm merge job, and any direct API caller (e.g. the local
@@ -267,11 +259,138 @@ def _build_part_for_tile(
     return part
 
 
+def _validate_merge_volume_refit(manifest: "BatchManifest") -> None:
+    """Refuse a merge-time volume re-fit the source cannot serve, before writing.
+
+    The streaming merge was volume-free by design; it can now re-open the source
+    and hand each tile-part its own crop (and each stacked timepoint its own
+    slice). Three things must hold, and each fails loudly rather than silently
+    leaving the levels unrefined:
+
+    * the source must still be readable at the path the plan recorded — an array
+      moved or deleted since the fit;
+    * the manifest must record ``axes``, since the merged parts put spatial dims
+      first with the stacked axis LAST while the source is usually time-FIRST, and
+      guessing that mapping wrong sends every re-fit at the wrong axis;
+    * folded CHANNEL axes are not supported: a merged part carries one stacked
+      axis, so a source with both time and channel to select from cannot be
+      mapped one-to-one onto it.
+    """
+    from pathlib import Path
+
+    if not manifest.input_path:
+        raise ValueError(
+            "merge: refine='volume' needs the source volume, but the manifest "
+            "records no input path. Merge without it, or run `gsplat lod "
+            "--recipe levels --target <volume> --refine volume` on a flattened "
+            "copy."
+        )
+    source = Path(manifest.input_path)
+    if not source.exists():
+        raise ValueError(
+            f"merge: refine='volume' needs the source volume, but "
+            f"{manifest.input_path} no longer exists. Merge without it, or "
+            "re-run the merge from a machine that can see the source."
+        )
+    if not manifest.axes:
+        raise ValueError(
+            "merge: refine='volume' needs the source's axis labels to map the "
+            "stacked axis (merged parts put spatial dims first and the stacked "
+            "axis LAST; a source is usually time-FIRST). This batch was planned "
+            "without --axes, so re-plan with it, or merge without the re-fit."
+        )
+    labels = [a.strip().lower() for a in manifest.axes.split(",") if a.strip()]
+    if manifest.n_channels and manifest.n_channels > 1:
+        raise ValueError(
+            f"merge: refine='volume' does not support a folded channel axis "
+            f"({manifest.n_channels} channels): a merged part carries ONE "
+            "stacked axis, so time and channel cannot both map onto it. Merge "
+            "without the re-fit, or fit one channel at a time."
+        )
+    if not any(x in ("z", "y", "x", "depth", "height", "width") for x in labels):
+        raise ValueError(
+            f"merge: --axes {manifest.axes!r} names no spatial axis, so there is "
+            "nothing to crop a tile from."
+        )
+
+
+def _merge_refit_volume(manifest: "BatchManifest") -> "tuple[Any, tuple]":
+    """The lazily-opened source and the center-dim -> volume-axis map.
+
+    Validated by :func:`_validate_merge_volume_refit`, so this only has to build
+    what that proved possible. The source is never read whole: each tile-part
+    slices its own timepoint and crop out of it.
+    """
+    from pathlib import Path
+
+    from luxar.io.volume import open_volume_lazy, volume_axes_from_spec
+
+    volume = open_volume_lazy(Path(manifest.input_path), manifest.array_key)
+    axes = volume_axes_from_spec(manifest.axes or "", len(volume.shape), flag="--axes")
+    return volume, axes
+
+
+def _slot_cells(
+    slot_tree: Dict[str, Any], ndim: int
+) -> "Dict[int, List[Tuple[float, float]]]":
+    """Each slot's tile, keyed by slot index, for a per-tile volume crop.
+
+    Derived from the split planes already reconstructed for the viewer's part
+    ordering. Needs the part's ndim, so the caller resolves it on the FIRST part
+    rather than guessing the stacked-axis arity before anything is loaded. An
+    unusable tree yields no cells, which turns the per-tile re-fit off rather
+    than cropping to a wrong box.
+    """
+    from luxar.core.group.partition import serialized_bsp_leaf_cells
+
+    try:
+        return serialized_bsp_leaf_cells(slot_tree, ndim)
+    except (KeyError, TypeError, ValueError):
+        return {}
+
+
+def _cell_for_slot(
+    slot_tree: "Optional[Dict[str, Any]]",
+    cache: "Dict[int, List[Tuple[float, float]]]",
+    slot: int,
+    ndim: int,
+) -> "Optional[List[Tuple[float, float]]]":
+    """One slot's tile, resolving the whole set on first use.
+
+    The cells need the part's ndim, which is only known once a part has been
+    loaded, so they are filled in on the first part rather than guessed from the
+    stacked-axis arity up front. ``cache`` is the caller's dict, kept across the
+    stream so the tree is walked once.
+    """
+    if slot_tree and not cache:
+        cache.update(_slot_cells(slot_tree, ndim))
+    return cache.get(slot)
+
+
+def _with_refit_source(
+    recipe_params: "Optional[RecipeParams]", manifest: BatchManifest
+) -> "Optional[RecipeParams]":
+    """Attach the lazily-opened source volume and its axis map, for a volume re-fit.
+
+    Done once per merge rather than per part: opening a zarr store is cheap but not
+    free, and every part slices the SAME handle. ``_validate_merge_volume_refit``
+    has already proved the source is readable and mappable, so this cannot fail
+    mid-stream after parts were written.
+    """
+    if recipe_params is None or recipe_params.refine != "volume":
+        return recipe_params
+    import dataclasses
+
+    volume, axes = _merge_refit_volume(manifest)
+    return dataclasses.replace(recipe_params, volume=volume, volume_axes=axes)
+
+
 def _finalize_part_node(
     part: "GSplatData",
     recipe: Optional[str],
     recipe_params: "Optional[RecipeParams]",
     n_timepoints: int,
+    cell: "Optional[List[Tuple[float, float]]]" = None,
 ) -> "GSplatNode":
     """Turn one assembled tile-region ``GSplatData`` into its partition-child node.
 
@@ -301,7 +420,7 @@ def _finalize_part_node(
             params = dataclasses.replace(params, coarsen_dims=tuple(range(n_spatial)))
     # build_part_lod clamps LOD depth to the part's splat count (small tiles never
     # synthesise degenerate levels) — the exact per-part logic of tiles/adaptive.
-    return build_part_lod(part.tree, recipe, params)
+    return build_part_lod(part.tree, recipe, params, cell=cell)
 
 
 def _effective_refine_iters(
@@ -538,7 +657,12 @@ def _merge_partition(
                 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
                 node = _finalize_part_node(
-                    part, recipe, recipe_params, manifest.n_timepoints
+                    part,
+                    recipe,
+                    _with_refit_source(recipe_params, manifest),
+                    manifest.n_timepoints,
+                    # One part means no tiling: its "tile" is the whole volume.
+                    cell=[(float("-inf"), float("inf"))] * part.ndim,
                 )
                 write_gsplats_tree(
                     final_path,
@@ -563,6 +687,11 @@ def _merge_partition(
     # part indices by the provider once the loop has skipped its empty slots.
     slot_tree = _slot_bsp_tree(manifest, output_dir, verbose)
     kept_slots: List[int] = []
+    # A per-part volume re-fit crops the source to each tile. The split planes
+    # above ARE those tiles, keyed by the same slot index the loop walks, so the
+    # cells come from the tree already reconstructed for ordering.
+    refit_params = _with_refit_source(recipe_params, manifest)
+    slot_cells: "Dict[int, List[Tuple[float, float]]]" = {}
 
     def _parts() -> "Iterator[GSplatNode]":
         from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
@@ -582,7 +711,11 @@ def _merge_partition(
             # group). Hand the tree node straight to the streaming writer; it
             # writes part_<i>/ then releases the splats.
             node = _finalize_part_node(
-                part, recipe, recipe_params, manifest.n_timepoints
+                part,
+                recipe,
+                refit_params,
+                manifest.n_timepoints,
+                cell=_cell_for_slot(slot_tree, slot_cells, k, part.ndim),
             )
             assert isinstance(node, (GSplatLeaf, GSplatLodGroup))
             kept += 1

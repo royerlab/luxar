@@ -257,6 +257,23 @@ def run_fit_volume(
         help="[--recipe levels] auto (default) / kmeans-lloyd / greedy / greedy-lloyd.",
         rich_help_panel="Per-part LOD",
     ),
+    recipe_refine: Optional[str] = typer.Option(
+        None,
+        "--refine",
+        help="[--recipe levels] refine each per-tile coarse level: none "
+        "(default) | l2 (against its fine input) | volume (re-fit against the "
+        "volume being fitted, cropped to each tile — highest fidelity). No "
+        "--target is needed: the volume is already in hand and the splats are "
+        "in its voxel frame.",
+        rich_help_panel="Per-part LOD",
+    ),
+    recipe_refine_iters: Optional[int] = typer.Option(
+        None,
+        "--refine-iters",
+        help="[--recipe levels] refinement steps per level (default 120 for "
+        "--refine l2, 300 for --refine volume).",
+        rich_help_panel="Per-part LOD",
+    ),
     recipe_coarsen_dims: Optional[str] = typer.Option(
         None,
         "--coarsen-dims",
@@ -541,6 +558,8 @@ def run_fit_volume(
                 recipe_levels=recipe_levels,
                 recipe_substitutive_method=recipe_substitutive_method,
                 recipe_coarsen_dims=recipe_coarsen_dims,
+                recipe_refine=recipe_refine,
+                recipe_refine_iters=recipe_refine_iters,
                 cal=cal,
                 k_star_ref=k_star_ref,
                 n_features_ref=n_features_ref,
@@ -565,7 +584,7 @@ def run_fit_volume(
             warn_ignored_density_flags(ctx)
 
             # Per-part LOD recipe (tiled partition only): validate + build params.
-            recipe_params: "Any" = validate_and_build_recipe(ctx, volume.ndim)
+            recipe_params: "Any" = validate_and_build_recipe(ctx, volume.ndim, volume)
 
             if resolved_tiling == "content":
                 from luxar.cli.gsplat_ops.planner import run_content_fit

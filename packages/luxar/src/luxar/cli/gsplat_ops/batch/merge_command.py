@@ -49,6 +49,26 @@ def run_batch_merge_cmd(
             "recorded at plan time. Mutually exclusive with --flat."
         ),
     ),
+    refine: Optional[str] = typer.Option(
+        None,
+        "--refine",
+        help=(
+            "[--recipe levels] refine each per-tile coarse level: none (default) "
+            "| l2 (against its fine input) | volume (re-open the source the plan "
+            "recorded and re-fit each tile against its OWN crop of it — highest "
+            "fidelity). 'volume' needs the source still readable at the planned "
+            "path and the batch planned with --axes; both are checked before any "
+            "part is written."
+        ),
+    ),
+    refine_iters: Optional[int] = typer.Option(
+        None,
+        "--refine-iters",
+        help=(
+            "[--recipe levels] refinement steps per level (default 120 for "
+            "--refine l2, 300 for --refine volume)."
+        ),
+    ),
     no_recipe: bool = typer.Option(
         False,
         "--no-recipe",
@@ -292,6 +312,8 @@ def run_batch_merge_cmd(
                 levels=levels,
                 substitutive_method=substitutive_method,
                 coarsen_dims=coarsen_dims,
+                refine=refine,
+                refine_iters=refine_iters,
             )
 
         with asection(f"Merging batch results: {output_dir}"):

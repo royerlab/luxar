@@ -534,7 +534,10 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --refine l2 
 # <vol>` warm-start re-fits each merged level against the SOURCE VOLUME itself
 # (full fit seeded by the merge; +5-12 dB over the merge on real microscopy;
 # each level keeps whichever of merge/re-fit renders closer — never worse).
-# Needs the volume in hand: lod --target only (fit-time/batch are follow-ups).
+# Needs the volume in hand, and is available at all three entry points:
+#   lod --target … | fit --recipe levels --refine volume (no --target: the volume
+#   being fitted is already in hand) | batch-fit merge --recipe levels --refine
+#   volume (re-opens the source the manifest recorded, cropping per tile).
 # Works on levels/overview AND per-tile `adaptive`, with or without barrier dims:
 # each re-fit is handed the sub-volume it is responsible for (a barrier group gets
 # its own timepoint slice, a tile its own crop), and a per-tile re-fit that leaves

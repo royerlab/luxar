@@ -34,6 +34,22 @@ _MERGE_ALLOWED_TOKENS = {
 }
 
 
+def _apply_refine(
+    overrides: dict, refine: "Optional[str]", refine_iters: "Optional[int]"
+) -> None:
+    """Validate and record the refine knobs, leaving them unset when not given.
+
+    Unset means the ``RecipeParams`` default ("none"), which keeps a merge
+    byte-identical to one planned before these knobs existed.
+    """
+    from luxar.cli.gsplat_ops.recipe_shared import validate_refine
+
+    if refine is not None:
+        overrides["refine"] = validate_refine(refine, refine_iters)
+    if refine_iters is not None:
+        overrides["refine_iters"] = refine_iters
+
+
 def build_merge_recipe_params(
     stored: dict,
     *,
@@ -44,6 +60,8 @@ def build_merge_recipe_params(
     levels: Optional[int] = None,
     substitutive_method: Optional[str] = None,
     coarsen_dims: Optional[str] = None,
+    refine: Optional[str] = None,
+    refine_iters: Optional[int] = None,
 ) -> "RecipeParams":
     """Build a ``RecipeParams`` for the per-part merge recipe.
 
@@ -54,10 +72,12 @@ def build_merge_recipe_params(
     additive knobs (``additive_method`` / ``breakpoints``) bring
     the merge recipe to parity with ``fit --recipe`` and ``gsplat lod``.
 
-    NOTE: the L2 refine knobs (``refine`` / ``refine_iters`` on ``RecipeParams``)
-    are deliberately NOT exposed at the merge yet — per-part refits across
-    hundreds of tiles need their own perf validation first; the RecipeParams
-    defaults ("none") keep the merge byte-identical to before.
+    ``refine`` / ``refine_iters`` ARE exposed. ``refine="volume"`` re-opens the
+    source the manifest recorded and crops it to each tile as that tile streams,
+    so the merge is no longer volume-free; ``merge_batch_results`` validates the
+    source up front, before any part is written, because a per-part failure
+    mid-stream would leave a half-written store. Left unset, the ``RecipeParams``
+    default ("none") keeps the merge byte-identical to before.
     """
     from luxar.cli.gsplat_ops.recipe_shared import (
         VALID_ADDITIVE_METHODS,
@@ -129,5 +149,10 @@ def build_merge_recipe_params(
     cd = coarsen_dims if coarsen_dims is not None else stored.get("coarsen-dims")
     if cd is not None:
         overrides["coarsen_dims"] = _parse_dims(cd)
+    _apply_refine(
+        overrides,
+        _resolve("refine", refine, str),
+        _resolve("refine-iters", refine_iters, int),
+    )
 
     return RecipeParams(**overrides)
