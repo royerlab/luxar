@@ -92,7 +92,7 @@ class IOAdapterMixin(_GSplatDataOps):
         )
 
         # One authoring path: serialize this dataset's node tree to the current
-        # format (v3.3) via the shared walker (the same machinery the scene
+        # format (v3.4) via the shared walker (the same machinery the scene
         # compiler uses for leaves).
         # Multi-substitutive → a kind=lod group whose per-level coverage_fraction
         # is derived here (screen-area occupancy halving); a single level is a
