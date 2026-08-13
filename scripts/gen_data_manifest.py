@@ -72,7 +72,7 @@ RECORDS = {
         "base_url": None,
     },
     "h2afva": {
-        "title": "h2afva zebrafish histone light-sheet timelapse (Gaussian splats)",
+        "title": "h2afva zebrafish histone light-sheet TIMELAPSE, full 253 timepoints (Gaussian splats; a 51-timepoint subset is included for easier download)",
         "license": "cc-by-4.0",
         "zenodo_concept_doi": None,
         "zenodo_record": None,
@@ -222,6 +222,8 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="Neuromast 2-channel light-sheet timelapse (iSIM)",
         attribution="Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
+        # Permission CONFIRMED by the author 2026-08-12 — no longer blocked;
+        # bytes are on obsidian (~250 MB) awaiting upload to the cc-by record.
         pending_upload=True,
     ),
     "h2afva": dict(
@@ -231,9 +233,11 @@ DATASETS: dict[str, dict] = {
         source="h2afva zebrafish histone light-sheet timelapse (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
         pending_upload=True,
-        # Two size variants in one record: the demo fetches the light default,
-        # the full timelapse is opt-in (avoids a 16 GB first-run download over
-        # Zenodo's best-effort, unguaranteed bandwidth). Files filled at upload.
+        # This record's PURPOSE is the full 253-timepoint timelapse. The 51tp
+        # variant is a strict SUBSET of it, shipped anyway because pulling 2.9 GB
+        # is far easier than 16 GB over Zenodo's best-effort bandwidth — the demo
+        # takes 51tp by default and the full timelapse is opt-in. Redundant in
+        # content, not in usability. Files filled at upload.
         variants={
             "51tp": dict(
                 default=True,
@@ -246,6 +250,33 @@ DATASETS: dict[str, dict] = {
                 note="Full 253-timepoint timelapse — opt-in (large download).",
             ),
         },
+    ),
+    "gsplats_3d_drosophila_gastrulation": dict(
+        bucket="zenodo",
+        record="cc-by",
+        license="cc-by-4.0",
+        source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
+        attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+        pending_upload=True,
+    ),
+    "gsplats_3d_h2afva_stack": dict(
+        bucket="zenodo",
+        # The general cc-by record, NOT the h2afva timelapse one: this is a
+        # single 24 MB stack that ships like every other demo dataset, and
+        # record grouping cannot be changed after publication.
+        record="cc-by",
+        license="cc-by-4.0",
+        source="h2afva zebrafish histone light-sheet, single stack (Royer lab)",
+        attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
+        pending_upload=True,
+    ),
+    "gsplats_3d_h2afva_decimation": dict(
+        bucket="zenodo",
+        record="cc-by",  # derived from the single stack; ships with it
+        license="cc-by-4.0",
+        source="h2afva single stack at four decimation levels (Royer lab)",
+        attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
+        pending_upload=True,
     ),
     # ---- Bucket 3: NOT redistributable → fetch raw + compute locally -------
     "milky_way_gaia_3m": dict(

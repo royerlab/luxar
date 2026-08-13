@@ -427,10 +427,12 @@ bisector, the line through the shared vertex with 2D normal
 `normalize(q̂ − m̂)` in pixel space (the partner's normal is the exact
 negation, so the two half-discs tile the disc exactly at ANY bend angle —
 no notch, no chopped miter tip, no double-bright overlap). The cut spans the
-full joint plane (cap and body) and composes by the DEFICIT rule over a
-1 px AA ramp: on the partner's side each leg renders
-`max(mine − partner, 0)`, so the additive pair composes to
-`max(mine, partner)`. Congruent legs (the common case, and the only case
+full joint plane (cap and body) and composes by the DEFICIT rule over a 1 px
+AA ramp: on the partner's side each leg renders `max(mine − partner, 0)`, so
+the additive pair composes to `max(mine, partner)`. The normal is kept
+unquantised on purpose: each leg builds it in its own local basis, so any
+per-leg rounding never cancels, and the disagreement grows with distance
+from the joint (#1502). Congruent legs (the common case, and the only case
 the fill benchmarks exercise) gate to an exact zero-double-count
 partition — the same domain partition the volumetric primitive
 integrates per ray — while tapered or perspective-diverged partners get
