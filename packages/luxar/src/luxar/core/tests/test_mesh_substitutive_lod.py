@@ -86,8 +86,8 @@ def write_ladder(tmp_path: Path, verts, faces, **kwargs) -> Dict[str, Dict[str, 
     return read_nodes(store)
 
 
-def level_colors(store: Path) -> List[np.ndarray]:
-    """Each level's DECODED colours, coarsest→finest.
+def level_meshes(store: Path) -> List[Any]:
+    """Each level's DECODED mesh, coarsest→finest.
 
     Through `LuxarScene`, not the raw zarr arrays: per-vertex RGB is stored under
     a 3-element subarray dtype, so a raw `colors.shape` reads back as `(V,)` and
@@ -97,15 +97,19 @@ def level_colors(store: Path) -> List[np.ndarray]:
     from luxar.io.reader import LuxarScene
 
     scene = LuxarScene.load(store)
-    out: List[np.ndarray] = []
+    out: List[Any] = []
     index = 0
     while True:
         try:
-            mesh = scene.get_mesh(f"surf/child_{index}")
+            out.append(scene.get_mesh(f"surf/child_{index}"))
         except (KeyError, ValueError):
             return out
-        out.append(mesh.colors)
         index += 1
+
+
+def level_colors(store: Path) -> List[np.ndarray]:
+    """Each level's decoded colours, coarsest→finest."""
+    return [mesh.colors for mesh in level_meshes(store)]
 
 
 def ladder_children(nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -189,6 +193,15 @@ class TestLadderShape:
             "every level keeps the uniform colour; a colourless coarse level "
             "renders default white and pops on the LOD switch"
         )
+        # The VALUE too: `has_colors` is set just the same by a level that
+        # forwarded the wrong colour, which pops on the switch exactly as visibly
+        # as a colourless one.
+        for index, level in enumerate(level_colors(tmp_path / "ladder.luxar.zarr")):
+            unique = np.unique(np.asarray(level).reshape(-1, 3), axis=0)
+            assert unique.shape[0] == 1, f"level {index} is no longer one colour"
+            assert tuple(int(v) for v in unique[0]) == (200, 0, 0), (
+                f"level {index} carries {unique[0]}, not the authored colour"
+            )
 
     @pytest.mark.parametrize(
         "dtype,low,high",
@@ -315,6 +328,7 @@ class TestLadderShape:
         assert all(c["has_scalars"] for c in children), (
             "a level with the colormap but no scalars renders unmapped"
         )
+
         assert all(c["colormap"] == "viridis" for c in children)
 
         loaded = LuxarScene.load(store)
