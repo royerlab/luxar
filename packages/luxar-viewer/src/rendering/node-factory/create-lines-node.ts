@@ -25,7 +25,6 @@ import { resolveColormapWindow } from '../display-range';
 import { parseLineJoinStyle, LINE_JOIN_STYLES } from '../../types/line-join';
 import { resolveLinePrimitiveForNode } from '../../types/line-primitive';
 
-/** Build a Lines mesh + optional picking shadow node. */
 /**
  * Diagonal of a lines node's AUTHORED spatial bounds, or `undefined`
  * when the node carries none — the auto policy's width normalization
@@ -49,6 +48,7 @@ function lineBoundsDiagonal(attrs: LinesMetadata): number | undefined {
   return Number.isFinite(diag) && diag > 0 ? diag : undefined;
 }
 
+/** Build a Lines mesh + optional picking shadow node. */
 export function createLinesNode(
   path: string,
   nodeAttrs: Record<string, unknown>,
