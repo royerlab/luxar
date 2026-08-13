@@ -942,8 +942,8 @@ def add_mesh_impl(
         # validator is read-only, so running it here on the live ``attrs``
         # (not a copy) is safe and idempotent.
         #
-        # MUST stay below the ``_scalar_data_range`` pop above (this
-        # function's first statement): that private key is deliberately
+        # MUST stay below the ``_scalar_data_range`` pop above (near the top
+        # of this function): that private key is deliberately
         # absent from ``_ALLOWED_NODE_ATTRS`` (it never reaches a Node or a
         # caller), and it is real, caller-supplied input on the one live path
         # that sets it — ``luxar mesh lod`` re-authoring a scalars-carrying

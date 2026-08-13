@@ -106,17 +106,18 @@ dedicated ``TestGSplatsFromDataNodeAttrsGate`` section further down this same
 file, which closes the ``lod_group=`` half of the same stranding class);
 #1534 hoists the same check above it.
 
-A round-2 review finding on that same ``lod_group=`` gate: its ``labels``/
-``image_labels`` exclusion list was incomplete. ``partition`` sits in the
-identical position — a named parameter of the LEAF ``Group.add_gsplats`` that
-is NOT a parameter of ``add_gsplats_from_data_impl``, so it arrives inside
-``**attrs`` here and must ride through, unexcluded, to drive each child's own
-BSP split — and a previously-working ``add_gsplats_from_data(..., lod_group=
-<...>, partition={...})`` call started answering ``Unknown node attribute
-'partition'. Did you mean 'absorption'?`` with nothing written. Fixed by
-adding ``partition`` to the exclusion set; see
+That gate's exclusion list is ``labels``/``image_labels``/``partition``, not
+just the first two. ``partition`` sits in the identical position — a named
+parameter of the LEAF ``Group.add_gsplats`` that is NOT a parameter of
+``add_gsplats_from_data_impl``, so it arrives inside ``**attrs`` here and must
+ride through, unexcluded, to drive each child's own BSP split. Excluding only
+``labels``/``image_labels`` makes a previously-working
+``add_gsplats_from_data(..., lod_group=<...>, partition={...})`` call answer
+``Unknown node attribute 'partition'. Did you mean 'absorption'?`` with
+nothing written; see
 ``TestGSplatsFromDataNodeAttrsGateStillForwardsPartition`` further down this
-file. One consequence of this gate now covering the ``lod_group=`` door at
+file, which fails exactly that way if ``partition`` is dropped from the set.
+One consequence of this gate now covering the ``lod_group=`` door at
 all: a bad ``colormap``/``opacity`` VALUE (not just an unknown/reserved KEY)
 now outranks the dedicated labels refusal below, matching the flat path's own
 precedence between its attrs gate and its labels handling — desirable parity,
@@ -1411,10 +1412,10 @@ class TestGSplatsLodGroupDimensionCount:
 
 
 # ---------------------------------------------------------------------------
-# Node-attrs gate on ``add_gsplats_from_data``'s own doors (issue #1534 review
-# finding 2 — a DIFFERENT adder than the four covered by the fifth section's
-# docstring above, which explicitly scopes itself to ``add_points`` /
-# ``add_lines`` / ``add_mesh`` / ``add_gsplats``)
+# Node-attrs gate on ``add_gsplats_from_data``'s own doors (#1534 — a DIFFERENT
+# adder than the four covered by the fifth section's docstring above, which
+# explicitly scopes itself to ``add_points`` / ``add_lines`` / ``add_mesh`` /
+# ``add_gsplats``)
 # ---------------------------------------------------------------------------
 #
 # ``lod_group=`` dispatches through ``_reject_before_wrapper``
@@ -1530,17 +1531,15 @@ class TestGSplatsFromDataNodeAttrsGate:
 class TestGSplatsFromDataNodeAttrsGateStillForwardsPartition:
     """``partition=`` is a leaf ``add_gsplats`` named param, not an unknown attr.
 
-    Regression for a round-2 review finding on this same gate: ``partition`` sits
-    in EXACTLY the position ``labels``/``image_labels`` do — a named parameter of
-    the leaf ``Group.add_gsplats`` that is NOT a named parameter of
-    ``add_gsplats_from_data_impl``, so it arrives inside ``**attrs`` here and must
-    ride, unexcluded, into ``child_attrs`` for each substitutive child to apply
-    its own BSP split. Excluding only ``labels``/``image_labels`` (as this gate
-    did immediately after #1534) made a previously-working
-    ``partition={"max_elements": N}`` call answer ``Unknown node attribute
+    ``partition`` sits in EXACTLY the position ``labels``/``image_labels`` do — a
+    named parameter of the leaf ``Group.add_gsplats`` that is NOT a named
+    parameter of ``add_gsplats_from_data_impl``, so it arrives inside ``**attrs``
+    here and must ride, unexcluded, into ``child_attrs`` for each substitutive
+    child to apply its own BSP split. Measured with ``partition`` dropped from
+    the gate's exclusion set: a previously-working
+    ``partition={"max_elements": N}`` call answers ``Unknown node attribute
     'partition'. Did you mean 'absorption'?`` with nothing written, on a call
-    whose SINGLE-level twin (no ``lod_group=``) kept working — measured before
-    this fix.
+    whose SINGLE-level twin (no ``lod_group=``) keeps working.
     """
 
     def test_partition_still_builds_a_partitioned_child_under_a_ladder(

@@ -144,11 +144,9 @@ def _reject_before_wrapper(
     creates any group, so the ``additive_lod=`` door never stranded and needed no
     change here.
 
-    ``attrs`` (added later than the rest of this gate — the ``lod_group=``
-    stranding this closes was found while reviewing #1534 itself, which
-    hoisted the same check to the top of ``add_mesh_impl`` / ``add_gsplats_impl``)
-    closes the
-    SAME stranding class on THIS door, one level removed: ``child_0``'s own
+    ``attrs`` (#1534, which hoisted the same check to the top of
+    ``add_mesh_impl`` / ``add_gsplats_impl``) closes the SAME stranding class
+    on THIS door, one level removed: ``child_0``'s own
     write already answers a ``GSPLATS_RESERVED_ATTRS`` key (``ordering=``,
     ``position_bounds=``, ...) with the correct *reserved* verdict — unlike
     the Points/Lines/Mesh ADDITIVE bug (#1529/#1534), nothing here calls
