@@ -372,22 +372,23 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    *
    * ## Why here, and not at ladder-construction time
    *
-   * This aggregate used to run in `createProgressiveMeshLoader`
-   * (`../scene-loader/loaders/loader-factory.ts`), during `loadMeshNodeCheap` —
-   * outside `loadMeshNode`'s try/placeholder-attach and before
-   * `registerMeshLoader`. A rejection thrown from there had nowhere to go: no
-   * placeholder to mark failed, no `recordFailure`, no retry, no monitor
-   * banner — a transient blip on one level's metadata open permanently lost
-   * the whole node, silently (`reportLoadOutcome` still logged success). The
-   * alternative — swallowing that rejection — traded that away for the other
-   * failure: `retryFailedLoader` reuses the existing loader rather than
-   * re-entering the factory, so a swallowed level's bytes went uncounted
-   * forever, the level then loaded fine on retry, and the ladder that
-   * motivated this whole check sailed through over budget with nothing left
-   * to refuse it.
+   * The obvious home for this aggregate is where the ladder is BUILT —
+   * `createProgressiveMeshLoader` (`../scene-loader/loaders/loader-factory.ts`),
+   * during `loadMeshNodeCheap` — and that spot is unusable, which is worth
+   * recording because it is the first place a reader will look for it. The
+   * cheap half runs OUTSIDE `loadMeshNode`'s try/placeholder-attach and before
+   * `registerMeshLoader`, so a rejection thrown from there has nowhere to go:
+   * no placeholder to mark failed, no `recordFailure`, no retry, no monitor
+   * banner — a transient blip on one level's metadata open would permanently
+   * lose the whole node, silently (`reportLoadOutcome` still logs success).
+   * Swallowing that rejection instead only trades it for the other failure:
+   * `retryFailedLoader` reuses the existing loader rather than re-entering the
+   * factory, so a swallowed level's bytes would go uncounted forever, the
+   * level would then load fine on retry, and the ladder that motivates this
+   * whole check would sail through over budget with nothing left to refuse it.
    *
-   * Both failure modes trace to the same cause: the check ran somewhere with
-   * no containment. A leaf's own byte budget is enforced inside
+   * Both failure modes trace to the same cause: a check with no containment
+   * around it. A leaf's own byte budget is enforced inside
    * `MeshWholeNodeLoader.fetch()`, i.e. inside `loadMeshNodeExpensive`'s try —
    * so charging the LADDER at the equivalent point, its own first load, gives
    * it the identical containment (failure recorded, retryable, banner shown)
@@ -474,7 +475,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * `initialize()` routes a transient open failure (a network blip) through
    * `classifyLoaderError` precisely so it stays retryable, and that property
    * has to survive reaching here. Letting the rejection propagate instead of
-   * catching it is what is now CORRECT, unlike at the old call site:
+   * catching it is correct HERE, and only because of where "here" is:
    * `loadMeshNodeExpensive`'s catch records the failure and keeps the blip
    * retryable, and a later retry re-enters `updateView`, which re-runs this
    * gate — `_budgetChecked` is latched only on a fully successful accounting,
