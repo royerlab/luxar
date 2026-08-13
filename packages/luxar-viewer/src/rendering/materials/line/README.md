@@ -432,14 +432,22 @@ AA ramp: on the partner's side each leg renders `max(mine − partner, 0)`, so
 the additive pair composes to `max(mine, partner)`. The normal is kept
 unquantised on purpose: each leg builds it in its own local basis, so any
 per-leg rounding never cancels, and the disagreement grows with distance
-from the joint (#1502). Congruent legs (the common case, and the only case
-the fill benchmarks exercise) gate to an exact zero-double-count
-partition — the same domain partition the volumetric primitive
-integrates per ray — while tapered or perspective-diverged partners get
-exactly the light a pure partition would chop (a fat vertex's disc keeps
-the half a thin neighbour cannot render; the numeric composition sweep in
+from the joint (#1502). Congruent legs turning 120° or less (the common case)
+gate to an exact zero-double-count partition — the same domain partition the
+volumetric primitive integrates per ray — while tapered or perspective-diverged
+partners get exactly the light a pure partition would chop (a fat vertex's disc
+keeps the half a thin neighbour cannot render; the numeric composition sweep in
 `line-capsule.test.ts` pins the three reconstruction errors of
-#1494/#1488/#1490). The partner's far endpoint is near-plane-clipped
+#1494/#1488/#1490). Two documented exceptions to that last sentence, both in
+`CAPSULE_JOINT_PACKET_MIN_RADIUS_PX`: the deficit packet is skipped below a
+4 px stencil half-width, so a GENTLE joint thinner than that keeps the plain
+cut — within 0.03 of peak of what a congruent joint at the same angle and
+radius costs anyway, though in absolute terms that reaches −0.09 at 90° and
+−0.19…−0.39 at 120° — and the sharp-turn exception that overrides the skip
+stops at the AA radius floor, because below it the two legs' `widthScale`
+factors disagree, so the PAIR no longer composes to `max` even though each
+deficit stays bounded by its own unscaled profile (#1495).
+The partner's far endpoint is near-plane-clipped
 toward the joint vertex before projecting (a behind-eye projection flips
 and would poison the cut normal), with a joint vertex behind the near
 plane keeping the perpendicular butt. The per-fragment radius is computed EXACTLY from the

@@ -644,7 +644,7 @@ void main() {
 
 						nodeVar136 = vec4( nodeVar176, 0.0, 0.0 );
 
-						if ( ( nodeVar135 > 4.0 ) ) {
+						if ( ( ( nodeVar135 > 4.0 ) || ( ( dot( nodeVar172, nodeVar133 ) > 0.5 ) && ( min( nodeVar121, nodeVar122 ) >= 1.5 ) ) ) ) {
 
 							nodeVar177 = clamp( ( ( ( nodeVar142 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar143 ), 1.5, nodeUniform25 );
 							nodeVar178 = ( ( ( ( abs( ( 1.0 - ( nodeVar177 / max( nodeVar123, 0.0001 ) ) ) ) > 0.02 ) || ( nodeVar124 > ( nodeVar123 * ( 1.0 + 0.02 ) ) ) ) || ( nodeVar171 < ( nodeVar123 * 2.0 ) ) ) || ( dot( nodeVar172, nodeVar133 ) > 0.5 ) );
@@ -819,7 +819,7 @@ void main() {
 
 						nodeVar137 = vec4( nodeVar211, 0.0, 0.0 );
 
-						if ( ( nodeVar135 > 4.0 ) ) {
+						if ( ( ( nodeVar135 > 4.0 ) || ( ( dot( nodeVar207, nodeVar133 ) < -0.5 ) && ( min( nodeVar121, nodeVar122 ) >= 1.5 ) ) ) ) {
 
 							nodeVar212 = clamp( ( ( ( nodeVar142 * nodeUniform24 ) * 0.659010227979693 ) / nodeVar143 ), 1.5, nodeUniform25 );
 							nodeVar213 = ( ( ( ( abs( ( 1.0 - ( nodeVar212 / max( nodeVar124, 0.0001 ) ) ) ) > 0.02 ) || ( nodeVar123 > ( nodeVar124 * ( 1.0 + 0.02 ) ) ) ) || ( nodeVar206 < ( nodeVar124 * 2.0 ) ) ) || ( dot( nodeVar207, nodeVar133 ) < -0.5 ) );
