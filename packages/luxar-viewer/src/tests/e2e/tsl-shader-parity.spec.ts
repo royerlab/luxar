@@ -2549,6 +2549,12 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'line-capsule-pick-sideon',
     'line-capsule-pick-endon',
     'line-capsule-pick-joint',
+    // The only pair that publishes a deficit packet whose partner ENDS inside
+    // the joint disc, so the fragment's far-cap term (#1490) actually runs:
+    // every other capsule joint fixture has uniform widths and a partner
+    // longer than the disc, where that term is inert.
+    'line-capsule-joint-short-partner',
+    'line-capsule-pick-joint-short-partner',
   ] as const) {
     test(`${variant}: capsule line primitive parity across backends`, async ({ page }) => {
       await bootHarness(page);
