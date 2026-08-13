@@ -116,6 +116,8 @@ const AA_NORMAL_TEXT = 4.5;
 
 const AFTER_SELECTOR = "[data-theme='liquid-glass'] .luxar-glass-surface::after";
 const SURFACE_SELECTOR = "[data-theme='liquid-glass'] .luxar-glass-surface";
+const TINT_SELECTOR = "[data-theme='liquid-glass']";
+const TINT_PROPERTY = '--luxar-glass-tint';
 
 /**
  * Count how many times `selector` opens a rule in `css` (comment-stripped).
@@ -229,6 +231,10 @@ function parseOpacityValue(rawValue: string): number {
  *   - a plain duplicate `::after` rule anywhere else in the file (not just
  *     inside an `@media`/`@supports` block) — `countRuleOccurrences` demands
  *     exactly one match;
+ *   - a duplicate `--luxar-glass-tint` declaration anywhere in the file, or
+ *     the declaration moving out of the `[data-theme='liquid-glass']` rule —
+ *     the tint is read from that rule's body, and a second declaration
+ *     (which would win at render time) throws rather than being ignored;
  *   - `opacity` declared more than once in the rule body — the LAST
  *     declaration wins, matching the CSS cascade, not the first;
  *   - a `filter` declaration on the `::after` rule (e.g. `filter:
@@ -253,16 +259,34 @@ function readLiquidGlassEffectiveTint(): Rgba {
   const raw = readFileSync(LIQUID_GLASS_CSS_PATH, 'utf8');
   const css = stripComments(raw);
 
-  const m = css.match(/--luxar-glass-tint:\s*([^;]+);/);
-  if (!m) {
+  // Same cascade hazard as the duplicate-`::after` guard below: CSS applies
+  // the LAST declaration that wins, so reading the first match anywhere in the
+  // file would keep passing against the original value while a later
+  // duplicate (a second `[data-theme='liquid-glass']` block, a `:root`
+  // declaration, an `@media` override) painted something else. Demand exactly
+  // one declaration in the whole file, and read it from the theme rule that is
+  // supposed to own it.
+  const tintDeclarationCount = (css.match(/--luxar-glass-tint\s*:/g) ?? []).length;
+  if (tintDeclarationCount !== 1) {
     throw new Error(
-      `--luxar-glass-tint declaration not found in ${LIQUID_GLASS_CSS_PATH}. ` +
-        'This test reads the panel tint straight out of the stylesheet so it ' +
-        'cannot drift from what the CSS actually paints — if the variable was ' +
-        'renamed or removed, update this test alongside it.'
+      `Expected exactly one "${TINT_PROPERTY}" declaration in ${LIQUID_GLASS_CSS_PATH}, ` +
+        `found ${tintDeclarationCount}. A second declaration later in the file would ` +
+        'win at render time while this test kept reading the first one. Keep the ' +
+        'single source of truth, or update this test if a legitimate reason to ' +
+        'declare it twice ever appears.'
     );
   }
-  const tint = parseRgba(m[1]);
+  const tintDeclarations = findDeclarations(ruleBody(css, TINT_SELECTOR), TINT_PROPERTY);
+  if (tintDeclarations.length !== 1) {
+    throw new Error(
+      `"${TINT_PROPERTY}" is not declared in the "${TINT_SELECTOR}" rule of ` +
+        `${LIQUID_GLASS_CSS_PATH}. This test reads the panel tint straight out of the ` +
+        'stylesheet so it cannot drift from what the CSS actually paints — if the ' +
+        'variable was renamed, removed, or moved to another selector, update this ' +
+        'test alongside it.'
+    );
+  }
+  const tint = parseRgba(tintDeclarations[0]);
 
   const afterOccurrences = countRuleOccurrences(css, AFTER_SELECTOR);
   if (afterOccurrences !== 1) {
