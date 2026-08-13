@@ -153,7 +153,7 @@ def _is_group(command: object) -> bool:
     WRONG here: Typer vendors its own click shim (``typer._click.core``), so a
     live ``TyperGroup``'s MRO is ``(TyperGroup, typer._click.core.Command, ABC,
     object)`` and never includes ``click.Group`` — the isinstance check is
-    False for EVERY group, verified against typer 0.27.0 / click 8.4.2 in this
+    False for EVERY group, verified against typer 0.27 / click 8.4 in this
     repo's environment. That bug is invisible from the test's outcome: it just
     makes every group look like a leaf, so the section below it gets skipped
     and the assertion never fires — a silent false negative, not an error. Duck
