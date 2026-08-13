@@ -4091,10 +4091,12 @@ when the author set no `tone_mapping` at all**. Its predicate was
 deliberate decision, while the message itself speaks of "the viewer's
 _default_", which is only what you get by saying nothing. Any explicit value,
 `"ACES"` included, now silences it. Fifteen demos move from `Neutral` to an
-explicit `ACES`. Two keep `Neutral` as verified exceptions:
+explicit `ACES`. Two kept `Neutral` as verified exceptions:
 `demo_gsplats_3d_tribolium_embryo`, whose pairing with `exposure=1.97` was tuned
 deliberately, and `demo_flywire_connectome`, where ACES blew its luminous
-connection glow out into a white wash. The classical-capture interop demos also
+connection glow out into a white wash — an exception since retired, later in this
+same release, by the A/B render its comment asked for. The classical-capture
+interop demos also
 stay on `Neutral`, via the `build_interop_scene` default — their baked per-splat
 RGB is already display-referred, so ACES would distort it. `CLAUDE.md`, the HDR
 guide, the `gsplat convert` CLI help and the `ViewerConfig.tone_mapping`
