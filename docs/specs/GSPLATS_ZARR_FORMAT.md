@@ -1,7 +1,7 @@
 # luxar.gsplats.io - Technical Specification
 
 **Version**: 3.4.0
-**Last Updated**: 2026-07-13
+**Last Updated**: 2026-08-13
 
 > For a version-policy and migration summary that contrasts this format with the scene container, see [Formats & Migration](../guides/user/FORMAT_AND_MIGRATION.md).
 
