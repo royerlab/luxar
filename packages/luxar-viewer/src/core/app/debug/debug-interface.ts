@@ -240,7 +240,12 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           const clamped = clampLineCapacity(cfg.segmentCount);
           mesh.userData = {
             nodeType: 'lines',
-            attrs: {},
+            // `n_segments` mirrors the authored total a production
+            // `.zattrs` carries (`LinesMetadata.n_segments`) — the
+            // stable per-node count a size-aware primitive policy keys
+            // on. Without it a synthetic 10 M-segment bench scene would
+            // read as "no authored count" and resolve as a tiny scene.
+            attrs: { n_segments: cfg.segmentCount },
             // Mirrors createLinesNode's `attrs.max_width`: the widest
             // authored width, which `spec.width` now controls (the
             // thick perf scenarios inject 3.0, not the 1.0 default).
