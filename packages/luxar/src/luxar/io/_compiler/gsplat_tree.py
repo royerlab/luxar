@@ -556,7 +556,7 @@ def write_gsplat_node(
         # Derive a per-child selector threshold (coarsest→finest) so EVERY child —
         # leaf OR nested Group — is viewer-selectable. Viewport-relative
         # ``coverage_fraction`` = ``sqrt(N_i/N_finest)`` (count ratios; the viewer
-        # multiplies by a quarter of the live viewport diagonal). An authored
+        # multiplies by half of the live fitted screen axis). An authored
         # coverage_fraction on the child still takes precedence: for a leaf child
         # it is merged over these
         # passed attrs by ``_leaf_child_attrs`` in the leaf writer; for a nested group

@@ -1332,3 +1332,85 @@ class TestSingleTileWorkerFloor:
         np.testing.assert_allclose(
             records[0]["data"], volume[specs[0].slices] * w, rtol=1e-5
         )
+
+
+class TestGridBspTree:
+    """Split planes over a uniform tile grid (`grid_bsp_tree`).
+
+    Approximate by nature: apodized tiles keep their overlap band, so parts
+    genuinely intersect and no exact order exists. What must hold is that every
+    tile is named exactly once and every cut lands INSIDE the band it separates —
+    that is what bounds the misordering to the band instead of letting whole
+    tiles swap.
+    """
+
+    @staticmethod
+    def _labels(node: dict) -> list[int]:
+        if "part" in node:
+            return [node["part"]]
+        return TestGridBspTree._labels(node["left"]) + TestGridBspTree._labels(
+            node["right"]
+        )
+
+    def test_every_tile_is_named_exactly_once(self) -> None:
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        specs = compute_tile_specs((100, 80, 80), 40, 8)
+        tree = grid_bsp_tree(specs)
+        assert tree is not None
+        assert sorted(self._labels(tree)) == list(range(len(specs)))
+
+    def test_labels_are_flat_tile_indices_not_dfs_order(self) -> None:
+        """A median split does not visit tiles in row-major order, so the labels
+        must be explicit — DFS-implied numbering would silently mislabel parts."""
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        specs = compute_tile_specs((100, 80, 80), 40, 8)
+        tree = grid_bsp_tree(specs)
+        assert tree is not None
+        assert self._labels(tree) != list(range(len(specs)))
+
+    def test_each_cut_lies_within_the_band_it_separates(self) -> None:
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        specs = compute_tile_specs((100, 80, 80), 40, 8)
+        tree = grid_bsp_tree(specs)
+        assert tree is not None
+        by_index = {s.index: s for s in specs}
+
+        def check(node: dict) -> None:
+            if "part" in node:
+                return
+            axis, split = node["axis"], node["split"]
+            lows = [by_index[i] for i in self._labels(node["left"])]
+            highs = [by_index[i] for i in self._labels(node["right"])]
+            # Every low tile starts before the cut and every high tile ends
+            # after it, and the cut sits inside their shared band: it is at or
+            # after the highest low-side start and at or before the lowest
+            # high-side end.
+            assert max(s.origin[axis] for s in lows) <= split
+            assert min(s.origin[axis] + s.shape[axis] for s in highs) >= split
+            assert min(s.origin[axis] for s in highs) <= split
+            assert max(s.origin[axis] + s.shape[axis] for s in lows) >= split
+            check(node["left"])
+            check(node["right"])
+
+        check(tree)
+
+    def test_a_single_tile_is_a_bare_leaf(self) -> None:
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        assert grid_bsp_tree(compute_tile_specs((30, 30, 30), 64, 8)) == {"part": 0}
+
+    def test_no_specs_yields_no_tree(self) -> None:
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        assert grid_bsp_tree([]) is None
+
+    def test_a_grid_split_beyond_the_third_axis_is_refused(self) -> None:
+        """The serialized format admits split axes 0/1/2 only."""
+        from luxar.gsplats.tiling import grid_bsp_tree
+
+        specs = compute_tile_specs((16, 16, 16, 64), (16, 16, 16, 16), 0)
+        assert len({s.grid_index[3] for s in specs}) > 1
+        assert grid_bsp_tree(specs) is None

@@ -222,7 +222,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 80 bundled demos (table)
+luxar demo                       # List the 83 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -548,11 +548,14 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 # levels, adaptive) are auto-derived as viewport-relative
 # `coverage_fraction` = sqrt(N_i/N_finest). For `levels` (a WHOLE-OBJECT ladder) the
 # finest level shows once the object's
-# projected size reaches ~a quarter of the viewport diagonal (any normal full-frame
-# view) and coarser levels step in as it shrinks below that (the viewer anchors to
-# the live viewport, so it self-calibrates on any monitor — no threshold knob).
+# projected size reaches ~half of the viewport's fitted screen axis (the smaller
+# of its width/height — any normal full-frame view) and coarser levels step in
+# as it shrinks below that (the viewer anchors to the live viewport, so it
+# self-calibrates on any monitor or aspect ratio — no threshold knob).
 # EXCEPTION — `adaptive` and `overview` are PARTITION-BOUND and keep the older
-# fills-screen anchor (finest = 4.0 = 1/FILL_FACTOR), via
+# fills-screen anchor (finest = 4.0 = SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR,
+# approximately — exact only near aspect ratio sqrt(3); see
+# `scene/lod-group-registry.ts`'s `FILL_FACTOR` doc), via
 # `partitioned_coverage_fractions`. For `adaptive` that is geometry (each lod
 # group's bbox is one BSP tile, so it projects to a fraction of the whole object);
 # for `overview` it is the recipe's contract — the coarse cap is what you see at
@@ -641,6 +644,25 @@ luxar gsplat napari splats.gsplats.zarr
 luxar gsplat annotate-quality splats.gsplats.zarr                # e(k) + w only (fast)
 luxar gsplat annotate-quality splats.gsplats.zarr --with-quality # + measured Q per level
 luxar gsplat annotate-quality splats.gsplats.zarr --dry-run      # print stamps, write nothing
+
+# Reduce a dataset to a TARGET SPLAT COUNT (one flat result) — the "this fit is
+# bigger than I need" tool, distinct from `cull` (removes by a quality threshold)
+# and `lod` (builds a multi-level structure). Two families:
+#   merge   cluster neighbours into representatives carrying their combined mass
+#   prefix  keep the first N of an additive ordering (discards splats, dims)
+# `auto` follows the MEASURED crossover: merge below 50% kept, prefix at/above.
+# Foreground PSNR on a 1.65M-splat light-sheet fit (global PSNR flatters
+# everything on a 97.8%-empty stack, so it is not the number to steer by):
+#   kept  50%: merge 44.5 / prefix 45.5 dB   <- prefix wins, little to summarise
+#   kept  25%: merge 41.7 / prefix 39.1 dB
+#   kept  10%: merge 38.3 / prefix 34.5 dB   <- ~10x smaller, recommended point
+#   kept   1%: merge 33.1 / prefix 29.6 dB   <- merge wins by 3.5 dB
+# Quality falls ~3-4 dB per halving with NO knee, so pick from the curve.
+# A partition must be `flatten`ed first (decimate returns a single flat leaf).
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr --target 165000   # absolute count
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr -f 0.1            # share of input
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr -f 0.1 -m merge   # force a family
+# Python: `from luxar.gsplats.lod import decimate` (target=int count | float fraction)
 
 # Inspect, cull, and filter
 luxar gsplat info splats.gsplats.zarr          # Dataset statistics
@@ -1099,7 +1121,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
 - **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
-- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Both structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2) and *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`) — though not in the same call. No *additive* (prefix) LOD ladder — a prefix of an index buffer is a holed surface, not a coarser one — and no `volumetric` blending; both refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
+- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Three structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2), *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`), and a spatially coherent *reveal* additive ladder (`add_mesh(additive_lod={"method": "radial"})`) — though no two of them in the same call. No additive (prefix) LOD ladder over an *arbitrary* order — a prefix of an arbitrarily ordered index buffer is a holed surface, not a coarser one — so a non-reveal method and `volumetric` blending are both still refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists

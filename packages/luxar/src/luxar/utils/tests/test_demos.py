@@ -501,6 +501,55 @@ class TestCacheStaleness:
         assert out is not None and out[0].n_splats == n
 
 
+class TestUnshippableData:
+    """Data we may not redistribute is absent ON PURPOSE.
+
+    Those datasets carry no in-repo copy, so the caller must be routed to its
+    own rebuild path instead of being told to run ``git lfs pull`` for a file
+    that does not exist in the repository and never will.
+    """
+
+    def test_local_compute_dataset_returns_none_instead_of_raising(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import luxar.utils.demos as demos
+
+        # Neither an in-repo copy nor a cached one — the post-removal state of
+        # every `local-compute` dataset on a fresh clone.
+        monkeypatch.setattr(demos, "_DEMOS_DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(demos, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+
+        out = demos.load_precomputed_gsplats(
+            "gsplats_tribolium", ["tribolium.gsplats.zarr.zip"]
+        )
+        assert out is None
+
+    def test_shippable_dataset_still_raises_the_lfs_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A `zenodo` dataset that is merely unpulled must NOT be excused."""
+        import luxar.utils.demos as demos
+
+        monkeypatch.setattr(demos, "_DEMOS_DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(demos, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+
+        with pytest.raises(FileNotFoundError):
+            demos.load_precomputed_gsplats("gsplats_dapi", ["dapi.gsplats.zarr.zip"])
+
+    def test_unknown_dataset_is_treated_as_shippable(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """No manifest entry → no excuse; the ordinary missing-file error wins."""
+        import luxar.utils.demos as demos
+
+        monkeypatch.setattr(demos, "_DEMOS_DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(demos, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+
+        assert demos._unshippable_reason("not_a_dataset") is None
+        with pytest.raises(FileNotFoundError):
+            demos.load_precomputed_gsplats("not_a_dataset", ["x.gsplats.zarr.zip"])
+
+
 # ───────────────────── derived demo ports (launch_viewer) ─────────────────────
 class TestDemoPorts:
     """Stable per-dataset ports so demos never contend for 8000/5173."""

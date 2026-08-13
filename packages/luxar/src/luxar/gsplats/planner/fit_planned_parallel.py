@@ -210,6 +210,10 @@ def fit_planned_parallel(
     # stores). Neither present after a clean exit is a silent spatial hole; a
     # present-but-unreadable store (e.g. OOM mid-save) is corrupt — both fail.
     regions: list[GSplatData] = []  # one core-kept GSplatData per non-empty box
+    # Plan-box index of each region. `budgeted` is already a subset of the boxes
+    # and empty ones drop out below, so position in `regions` is NOT the box index
+    # the plan's split-plane tree is labelled by.
+    region_boxes: list[int] = []
     n_boxes_fit = 0
     missing: list[int] = []
     corrupt: list[tuple[int, str]] = []
@@ -223,6 +227,7 @@ def fit_planned_parallel(
                 continue
             if gd.n_splats > 0:
                 regions.append(gd)
+                region_boxes.append(i)
             n_boxes_fit += 1
         elif Path(str(p) + ".empty").exists():
             n_boxes_fit += 1  # ran, legitimately produced 0 splats
@@ -250,7 +255,13 @@ def fit_planned_parallel(
         # ``recipe`` gives each part its own LOD ladder/group at assembly time
         # (the per-box workers only fit bare leaves).
         result: Any = GSplatData.partition_from_regions(
-            regions, recipe=recipe, recipe_params=recipe_params
+            regions,
+            recipe=recipe,
+            recipe_params=recipe_params,
+            # The planner's own split planes — see the sequential twin in
+            # ``fit_planned``; core-disjoint boxes order exactly.
+            bsp_tree=plan.bsp_tree,
+            region_labels=region_boxes,
         )
     else:
         result = GSplatData(

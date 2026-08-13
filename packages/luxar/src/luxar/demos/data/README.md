@@ -23,13 +23,15 @@ the manifest as one of:
 | Bucket | Meaning |
 |--------|---------|
 | `zenodo` | Redistributable derived product. Fetched on demand from a Zenodo record into `~/.cache/luxar/`, falling back to the in-repo LFS copy until the record URL is populated. |
-| `local-compute` | **Not redistributable.** The demo fetches the raw source and fits/builds locally. These will *not* move to Zenodo, and their in-repo copies are slated for removal. |
+| `local-compute` | **Not redistributable.** The demo fetches the raw source and fits/builds locally. These will *not* move to Zenodo, and their in-repo copies have been removed. |
 | `regenerate` | Cheap to rebuild client-side (no GPU); not hosted at all. |
 
 Four datasets are `local-compute` — `gsplats_tribolium`, `gsplats_acto3d_heart`,
 `gsplats_tng_cosmic_web` and `milky_way_gaia_3m`. Their licenses do not permit
 redistributing even the derived product, so do not migrate those demos to the
-manifest fetch path.
+manifest fetch path. **Their in-repo copies have been removed**: those demos now
+fetch the raw source and rebuild locally (Gaia has no build path yet — see
+royerlab/luxar#1461 — so it reads a hand-placed file from `~/.cache/luxar/`).
 
 Licenses split three ways: mostly CC0 / CC-BY / public domain; **CC BY-SA** for
 `gsplats_zebrafish` and `gsplats_opencell_map4` (the derived product must be
@@ -47,11 +49,9 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 |-----------|------|----------|
 | `gsplats_multichannel/` | 3D organoid multi-channel | 2 channel files (~1.1 MB total) |
 | `gsplats_dapi/` | 3D organoid DAPI nuclei | 1 file (~365 KB) |
-| `gsplats_tribolium/` | 3D Tribolium embryo | 1 file (~1.7 MB) |
 | `gsplats_cells3d/` | 4D cells3d multi-channel | 2 channel files (~1.0 MB total) |
 | `gsplats_kidney/` | 4D kidney multi-channel | 3 channel files (~4.9 MB total) |
 | `gsplats_zebrafish/` | 4D zebrafish timelapse | 1 bundle zip with 64 frames (~11 MB) |
-| `gsplats_acto3d_heart/` | 3D mouse embryo heart (Acto3D) | 3 channel files (~3.5 MB total) |
 | `gsplats_opencell_map4/` | 3D OpenCell MAP4 (cytoskeleton) | 2 channel files (~4.0 MB total) |
 | `gsplats_cmu1_pathology/` | 2D CMU-1 pathology (H&E) | 3 channel files (pending) |
 | `gsplats_celegans/` | 4D C. elegans tracking | 1 bundle zip with 400 timepoints (~64 MB) |
@@ -72,7 +72,6 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 
 ### Other Data Files (top level)
 
-- `milky_way_gaia_3m.zarr.zip` — Gaia DR3 star catalog (3M stars; loaded by `demo_gaia_milky_way_3m.py`)
 - `3d_umap_coords_human.parquet` — Human cell UMAP coordinates
 - `3d_umap_coords_mouse.parquet` — Mouse cell UMAP coordinates
 - `dipc_genome/dipc_gm12878.npz` — Single-cell 3D genome (Dip-C) bead coordinates, GM12878 cell (Lines demo `demo_dipc_3d_genome.py`)
@@ -111,7 +110,7 @@ If demo files are very small (< 1 KB), they're pointer files — run `git lfs pu
 
 ```bash
 # Should show actual file sizes, not ~130 bytes
-ls -lh packages/luxar/src/luxar/demos/data/gsplats_tribolium/
+ls -lh packages/luxar/src/luxar/demos/data/gsplats_kidney/
 ```
 
 ## File Formats
