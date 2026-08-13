@@ -321,6 +321,14 @@ luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --rec
 luxar gsplat batch-fit run vol.zarr out/ --gpus all --tile-size 256            # uniform, all GPUs
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --gpus auto   # content plan
 luxar gsplat batch-fit run vol.zarr out/ --gpus auto --merge-recipe stream --merge-n-lods 4  # per-part LOD at merge
+# `--merge-refine volume` re-opens THIS input at merge time and re-fits each tile
+# against its own crop (and each stacked timepoint against its own slice) — the
+# highest-fidelity coarse levels. Needs --axes recorded and a single channel; both
+# are validated at PLAN time, so a typo costs nothing rather than surfacing after
+# every tile has been fitted. Also on `batch-fit submit` (baked into the Slurm
+# merge job) and on `batch-fit merge` itself as plain `--refine`.
+luxar gsplat batch-fit run vol.zarr out/ --gpus auto --axes time,z,y,x \
+    --merge-recipe levels --merge-levels 1 --merge-refine volume --merge-refine-iters 300
 luxar gsplat batch-fit run vol.zarr out/ --gpus 0,1 --jobs-per-gpu 2 --timepoints ::10   # subset, 2 workers/GPU
 luxar gsplat batch-fit run vol.zarr out/ --gpus cpu                            # CPU fallback
 luxar gsplat batch-fit run vol.zarr out/ --tiling content --cal cal.json --dry-run  # plan only
@@ -356,6 +364,8 @@ luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --iters 8000 --seeds 100000                                         # Override fit params
 luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu \
     --merge-recipe levels --merge-compression-factor 4 --merge-levels 3   # per-part LOD at merge
+luxar gsplat batch-fit submit data.zarr.zip output/ -p gpu --axes time,z,y,x \
+    --merge-recipe levels --merge-refine volume        # + per-tile volume re-fit at merge
 luxar gsplat batch-fit status output/                                       # Check job status
 luxar gsplat batch-fit merge output/                                        # Merge completed tiles → kind=partition
 luxar gsplat batch-fit merge output/ --recipe stream --n-lods 6           # + per-part additive ladder (tiles)

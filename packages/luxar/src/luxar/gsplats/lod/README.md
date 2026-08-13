@@ -407,7 +407,11 @@ Engineering guarantees and scope:
   - `gsplat fit --recipe levels --refine volume` — no `--target` needed, since
     the volume being fitted is already in hand and the fit emits splats in its
     voxel frame, so the identity axis map is correct by construction;
-  - `batch-fit merge --recipe levels --refine volume` — the streaming merge
+  - `batch-fit merge --recipe levels --refine volume` (and the same thing spelled
+    `--merge-refine volume` on `batch-fit run` / `batch-fit submit`, which record
+    it into the manifest so the local auto-merge and the Slurm merge job both
+    pick it up; validated at PLAN time so a typo does not surface after every
+    tile has been fitted) — the streaming merge
     re-opens the source the manifest recorded and crops it to each tile as that
     tile streams. It validates up front (source readable, `--axes` recorded, no
     folded channel axis) because a per-part failure mid-stream would leave a

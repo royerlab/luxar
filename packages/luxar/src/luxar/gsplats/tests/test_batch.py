@@ -2642,3 +2642,69 @@ class TestStatusPackedSacctMapping:
         assert st.failed == 3
         assert st.running == 1
         assert st.unknown == 0
+
+
+class TestMergeRefineReachesEveryConsumer:
+    """`--merge-refine` must survive plan time and reach BOTH merge consumers.
+
+    There are three ways to merge a batch, and they read the recipe knobs from
+    different places: the explicit `batch-fit merge` command takes CLI options,
+    the local auto-merge (`batch-fit run`) reads ONLY the stored
+    `manifest.merge_recipe_args`, and the Slurm merge job gets those same stored
+    args re-emitted as CLI flags. A knob wired into just one of them is silently
+    dropped by the others — which is exactly what happened first time round, with
+    only the explicit command wired.
+    """
+
+    @staticmethod
+    def _args(**kw):
+        from luxar.cli.gsplat_ops.batch.planning import (
+            MergeConfig,
+            resolve_merge_recipe_args,
+        )
+
+        return resolve_merge_recipe_args(MergeConfig(**kw))
+
+    def test_recorded_at_plan_time(self) -> None:
+        args = self._args(recipe="levels", levels=1, refine="volume", refine_iters=7)
+        assert args["refine"] == "volume"
+        assert args["refine-iters"] == "7"
+
+    def test_reaches_the_local_auto_merge(self) -> None:
+        """`batch-fit run` builds its params from the stored dict alone."""
+        from luxar.cli.gsplat_ops.batch.recipe_args import build_merge_recipe_params
+
+        params = build_merge_recipe_params(
+            self._args(recipe="levels", refine="volume", refine_iters=7)
+        )
+        assert params.refine == "volume"
+        assert params.refine_iters == 7
+
+    def test_reaches_the_slurm_merge_job(self) -> None:
+        """The Slurm emitter turns each stored arg into ``--<key> <value>`` for the
+        merge command, so the stored KEY has to match that command's option name."""
+        args = self._args(recipe="levels", refine="volume", refine_iters=7)
+        emitted = " ".join(f"--{k} {v}" for k, v in args.items())
+        assert "--refine volume" in emitted
+        assert "--refine-iters 7" in emitted
+
+    def test_plan_time_validation_bites(self) -> None:
+        """A typo must cost nothing: caught before any tile is fitted, not after."""
+        import typer
+
+        with pytest.raises(typer.BadParameter, match="must be one of"):
+            self._args(recipe="levels", refine="bogus")
+        with pytest.raises(typer.BadParameter, match="only applies with"):
+            self._args(recipe="levels", refine_iters=5)
+        # A knob with no recipe used to be silently dropped.
+        with pytest.raises(typer.BadParameter, match="require a --merge-recipe"):
+            self._args(refine="volume")
+        # `stream` has no coarse levels to refine.
+        with pytest.raises(typer.BadParameter, match="not used by --merge-recipe"):
+            self._args(recipe="stream", refine="volume")
+
+    def test_absent_when_not_requested(self) -> None:
+        """Unset must stay unset, so a plan made before these knobs existed merges
+        byte-identically."""
+        args = self._args(recipe="levels", levels=1)
+        assert "refine" not in args and "refine-iters" not in args
