@@ -17,7 +17,7 @@
       "base_url": null
     },
     "h2afva": {
-      "title": "h2afva zebrafish histone light-sheet timelapse (Gaussian splats)",
+      "title": "h2afva zebrafish histone light-sheet TIMELAPSE, full 253 timepoints (Gaussian splats; a 51-timepoint subset is included for easier download)",
       "license": "cc-by-4.0",
       "zenodo_concept_doi": null,
       "zenodo_record": null,
@@ -376,7 +376,7 @@
     },
     "gsplats_3d_h2afva_stack": {
       "bucket": "zenodo",
-      "record": "h2afva",
+      "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "h2afva zebrafish histone light-sheet, single stack (Royer lab)",
       "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
@@ -392,7 +392,7 @@
     },
     "gsplats_3d_h2afva_decimation": {
       "bucket": "zenodo",
-      "record": "h2afva",
+      "record": "cc-by",
       "license": "cc-by-4.0",
       "source": "h2afva single stack at four decimation levels (Royer lab)",
       "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",

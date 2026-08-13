@@ -333,13 +333,21 @@ to ship after). Sequencing is at the bottom.
     - **20 datasets ready to upload now (~418 MB)** — 19 whose bytes are still
       in-tree, plus the 3 new CC-BY ones whose bytes are in `~/.cache` on this
       Mac (drosophila 2.3 MB, h2afva stack 24.4 MB, h2afva decimation 24.6 MB).
-    - **2 blocked, both needing a decision before they can move:**
-      - `gsplats_4d_neuromast_2ch` — bytes on obsidian (~250 MB), and the demo
-        already documents the pending upload. NEEDS: CC-BY permission from
-        Adrian Jacobo (CZ Biohub SF), then upload + file entries.
-      - `h2afva` (the full timelapse) — bytes on obsidian: 51tp ≈ 2.9 GB,
-        253tp ≈ 16 GB. NEEDS: the size decision (ship 51tp as the default
-        variant and archive 253tp as opt-in, per the variants already declared).
+    - **2 datasets upload from obsidian, not from here — nothing is blocked on a
+      decision any more (both resolved 2026-08-12):**
+      - `gsplats_4d_neuromast_2ch` (~250 MB) — **permission GRANTED by Adrian
+        Jacobo**, so it goes to the `cc-by` record with the rest.
+      - `h2afva` timelapse → its **own record, whose purpose is the FULL 253-tp
+        set** (~16 GB). The 51-tp variant (~2.9 GB) is a strict subset of it and
+        ships anyway: redundant in content, but far easier to pull, so the demo
+        takes 51tp by default and the full timelapse is opt-in. Both variants are
+        already declared; only the files need filling at upload.
+    - **⚠ Record assignment corrected before creation (one-way door).** The
+      single-stack demos — `gsplats_3d_h2afva_stack` and its derived
+      `gsplats_3d_h2afva_decimation` — were pointed at the `h2afva` record; they
+      now go to the general **`cc-by`** record, because a 24 MB single stack
+      ships like every other demo dataset and does not belong in the timelapse
+      archive. Catching this after publication would have been unfixable.
     - **4 `local-compute` datasets are OUT of scope by licence** and must never
       be uploaded — they keep their manifest checksums only so a machine that
       still has the files can verify them.

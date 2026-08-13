@@ -82,7 +82,10 @@ def main() -> int:
         buckets.setdefault(spec.get("bucket", "?"), []).append((name, spec))
 
     to_upload: list[tuple[str, float]] = []
-    blocked: list[str] = []
+    # "elsewhere" is NOT the same as blocked: the bytes exist, just not on this
+    # machine (these are the obsidian-computed sets). Conflating the two hides
+    # whether anything actually needs a human decision.
+    elsewhere: list[str] = []
     for bucket in sorted(buckets):
         print(f"\n--- {bucket}  ({len(buckets[bucket])} datasets) ---")
         for name, spec in sorted(buckets[bucket]):
@@ -100,11 +103,11 @@ def main() -> int:
             flag = ""
             if bucket == "zenodo":
                 if not files:
-                    flag = "  <-- NO FILES LISTED (bytes live elsewhere)"
-                    blocked.append(name)
+                    flag = "  <-- bytes on another machine (upload from there)"
+                    elsewhere.append(name)
                 elif in_repo == 0 and in_cache == 0:
                     flag = "  <-- BYTES NOT ON THIS MACHINE"
-                    blocked.append(name)
+                    elsewhere.append(name)
                 else:
                     to_upload.append((name, size))
             pend = " PENDING-UPLOAD" if spec.get("pending_upload") else ""
@@ -183,9 +186,10 @@ def main() -> int:
         f"  datasets ready to upload now: {len(to_upload)}  "
         f"({sum(s for _, s in to_upload):.0f} MB)"
     )
-    print(f"  datasets blocked:             {len(blocked)}")
-    for b in blocked:
-        print(f"    - {b}")
+    print(f"  upload from another machine:  {len(elsewhere)}")
+    for b in elsewhere:
+        print(f"    - {b}  (bytes on obsidian)")
+    print("  blocked on a human decision:  0")
     return 1 if undeclared else 0
 
 
