@@ -563,24 +563,32 @@ def test_adaptive_recipe_supports_volume_refine_per_tile():
     ]
     assert stats, "no part recorded a volume re-fit — the recipe did not run one"
 
-    # The invariant the old rejection protected: a centre must not migrate out of
+    # The invariant the old rejection protected: a centre must not MIGRATE out of
     # its own tile, or the viewer's per-part frustum culling would stop drawing it
-    # from most viewpoints.
+    # from most viewpoints. The allowance is the level's own median splat sigma,
+    # matching `_relocated`'s reasoning that correcting within a splat's own
+    # footprint is optimization rather than migration — a hard bound instead
+    # discarded half the tiles' re-fits over sub-voxel drift.
+    from luxar.gsplats.lod.volume_refit import _median_splat_sigma
+
     cells = serialized_bsp_leaf_cells(node.bsp_tree, 3)
     for i, child in enumerate(node.children):
         for leaf in iter_leaves(child):
             bounds = center_bounds(leaf)
             if bounds is None:
                 continue
+            slack = max(1e-3, _median_splat_sigma(GSplatData.from_tree(leaf)))
             lo, hi = bounds
             for d in range(3):
-                assert lo[d] >= cells[i][d][0] - 1e-3, (
-                    f"part {i} dim {d}: a centre at {lo[d]} escaped below its "
-                    f"cell {cells[i][d]} — the re-fit left the tile"
+                assert lo[d] >= cells[i][d][0] - slack, (
+                    f"part {i} dim {d}: a centre at {lo[d]} is more than one "
+                    f"sigma ({slack:.3f}) below its cell {cells[i][d]} — the "
+                    "re-fit migrated out of the tile"
                 )
-                assert hi[d] <= cells[i][d][1] + 1e-3, (
-                    f"part {i} dim {d}: a centre at {hi[d]} escaped above its "
-                    f"cell {cells[i][d]} — the re-fit left the tile"
+                assert hi[d] <= cells[i][d][1] + slack, (
+                    f"part {i} dim {d}: a centre at {hi[d]} is more than one "
+                    f"sigma ({slack:.3f}) above its cell {cells[i][d]} — the "
+                    "re-fit migrated out of the tile"
                 )
 
 

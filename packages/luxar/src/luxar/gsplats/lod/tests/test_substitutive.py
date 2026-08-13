@@ -2065,3 +2065,57 @@ def test_allocate_group_M_stable_tie_break():
     # ideal=0.5 each, floor=0, leftover=2 -> first two groups get +1.
     alloc = _allocate_group_M(np.array([10, 10, 10, 10]), 6)
     assert alloc.tolist() == [2, 2, 1, 1]
+
+
+class TestTileContainmentTolerance:
+    """``_within_box`` scales its slack with the splats' own footprint.
+
+    A hard tolerance discarded half of all tiles' re-fits over sub-voxel drift
+    (measured 7/14 across five seeds, each overshoot well under one sigma, and
+    the crop's own outward rounding already reaches that far past the boundary).
+    The slack is one median splat sigma — the same allowance
+    ``volume_refit._relocated`` grants, for the same reason. What must NOT happen
+    is the guard becoming a blanket permission, so these pin both directions.
+    """
+
+    @staticmethod
+    def _at(x: float, sigma: float) -> GSplatData:
+        from luxar.gsplats.utils.trils import pack_tril
+
+        factors = np.zeros((1, 3, 3), np.float32)
+        for d in range(3):
+            factors[:, d, d] = sigma
+        return GSplatData(
+            centers=np.array([[x, 1.0, 1.0]], np.float32),
+            amplitudes=np.ones(1, np.float32),
+            cholesky_factors=pack_tril(factors),
+        )
+
+    BOX = [(0.0, 10.0), (0.0, 10.0), (0.0, 10.0)]
+
+    def test_sub_sigma_drift_is_allowed(self) -> None:
+        from luxar.gsplats.lod.substitutive import _within_box
+
+        assert _within_box(self._at(10.5, sigma=1.0), (0, 1, 2), self.BOX)
+
+    def test_wholesale_migration_is_still_rejected(self) -> None:
+        from luxar.gsplats.lod.substitutive import _within_box
+
+        assert not _within_box(self._at(1e6, sigma=1.0), (0, 1, 2), self.BOX)
+        assert not _within_box(self._at(15.0, sigma=1.0), (0, 1, 2), self.BOX)
+
+    def test_the_slack_scales_with_the_splats_own_size(self) -> None:
+        """The same 0.5-voxel overshoot is optimization for a 1-sigma splat and
+        migration for a 0.05-sigma one. A fixed tolerance cannot express that,
+        and a loose fixed one would wave through the second case."""
+        from luxar.gsplats.lod.substitutive import _within_box
+
+        assert _within_box(self._at(10.5, sigma=1.0), (0, 1, 2), self.BOX)
+        assert not _within_box(self._at(10.5, sigma=0.05), (0, 1, 2), self.BOX)
+
+    def test_infinite_cell_faces_never_reject(self) -> None:
+        """A BSP cell's outer faces are unbounded, so nothing can escape them."""
+        from luxar.gsplats.lod.substitutive import _within_box
+
+        box = [(-np.inf, np.inf), (0.0, 10.0), (0.0, 10.0)]
+        assert _within_box(self._at(1e9, sigma=1.0), (0, 1, 2), box)

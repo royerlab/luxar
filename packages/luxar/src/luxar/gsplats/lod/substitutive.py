@@ -492,7 +492,7 @@ def _within_box(
     dims: Sequence[int],
     box: Sequence[tuple[float, float]],
     *,
-    tol: float = 1e-3,
+    tol: Optional[float] = None,
 ) -> bool:
     """Are every splat's centers still inside their tile, on the boxed dims?
 
@@ -500,7 +500,21 @@ def _within_box(
     partition has never claimed otherwise (its parts are split by centre, and
     ``chunk_bounds`` widens for extent separately). What must not happen is a
     centre migrating into a neighbour's cell.
+
+    ``tol`` defaults to the level's own median splat sigma — the same slack
+    :func:`~.volume_refit._relocated` grants, for the same stated reason: a
+    coarse splat correcting within its own footprint is optimization, not
+    migration. A hard tolerance instead discards a whole tile's re-fit over
+    sub-voxel drift (measured: half the tiles, each overshooting by well under
+    one sigma), and the crop's own outward rounding already reaches that far past
+    the boundary. Sub-sigma overlap also sits well inside what a uniform
+    (apodized) tiling deliberately carries, and part bounds are recomputed from
+    the actual centers at write time, so viewer culling follows the splats.
     """
+    from luxar.gsplats.lod.volume_refit import _median_splat_sigma
+
+    if tol is None:
+        tol = max(1e-3, _median_splat_sigma(data)) if data.n_splats else 1e-3
     centers = np.asarray(data.centers)
     for k, d in enumerate(dims):
         low, high = box[k]

@@ -60,6 +60,60 @@ class SubVolume:
     dims: Tuple[int, ...]
 
 
+def _resolve_volume_axes(
+    volume_axes: Optional[Sequence[int]], ndim: int
+) -> Tuple[int, ...]:
+    """Default the axis map to the identity and insist it is a permutation.
+
+    A duplicate or out-of-range entry otherwise surfaces as numpy's "repeated
+    axis in transpose" or a bare ``IndexError``, neither of which names the
+    argument at fault.
+    """
+    axes = (
+        tuple(range(ndim))
+        if volume_axes is None
+        else tuple(int(a) for a in volume_axes)
+    )
+    if sorted(axes) != list(range(ndim)):
+        raise ValueError(
+            f"volume_axes must be a permutation of 0..{ndim - 1} (one volume "
+            f"axis per center dim, each used once); got {axes!r}"
+        )
+    return axes
+
+
+def _barrier_index(coord: float, dim: int, axis: int, extent: int) -> int:
+    """The voxel index one barrier group sits at, along one volume axis.
+
+    Rounded, not truncated: a barrier coordinate is a discrete label, and
+    quantized storage leaves it a fraction of a step off the integer.
+    """
+    i = int(round(float(coord)))
+    if not 0 <= i < extent:
+        raise ValueError(
+            f"barrier coordinate {coord!r} on center dim {dim} maps to index "
+            f"{i} on volume axis {axis} of extent {extent}; the splats and the "
+            "volume disagree about this axis"
+        )
+    return i
+
+
+def _crop_span(bounds: Tuple[float, float], extent: int) -> Tuple[int, int]:
+    """One axis of a tile box as a half-open voxel slice, clamped to the volume.
+
+    A BSP cell records CUTS, so the outer faces of the root box come back
+    infinite; the volume's own extent is the missing bound. Rounded OUTWARD so a
+    splat on the boundary keeps its support, and a degenerate span falls back to
+    the full extent rather than handing the fit nothing to see.
+    """
+    lo_f, hi_f = bounds
+    lo = 0 if not np.isfinite(lo_f) else max(0, int(np.floor(float(lo_f))))
+    hi = extent if not np.isfinite(hi_f) else min(extent, int(np.ceil(float(hi_f))) + 1)
+    if hi <= lo:
+        return 0, extent
+    return lo, hi
+
+
 def select_sub_volume(
     # Deliberately array-LIKE, not ndarray: the whole point is that a lazy store
     # (a zarr array) can be passed and only the slice is realised.
@@ -103,16 +157,7 @@ def select_sub_volume(
     """
     bset = {int(d) for d in barrier_dims}
     free_dims = tuple(d for d in range(ndim) if d not in bset)
-    if volume_axes is None:
-        volume_axes = tuple(range(ndim))
-    # A permutation, not merely the right length: a duplicate or out-of-range
-    # entry otherwise surfaces as numpy's "repeated axis in transpose" or a bare
-    # IndexError, neither of which names the argument at fault.
-    if sorted(int(a) for a in volume_axes) != list(range(ndim)):
-        raise ValueError(
-            f"volume_axes must be a permutation of 0..{ndim - 1} (one volume "
-            f"axis per center dim, each used once); got {tuple(volume_axes)!r}"
-        )
+    axes = _resolve_volume_axes(volume_axes, ndim)
     vshape = tuple(int(s) for s in volume.shape)
     if len(vshape) != ndim:
         raise ValueError(
@@ -123,15 +168,8 @@ def select_sub_volume(
 
     index: list = [slice(None)] * len(vshape)
     for d, coord in zip(barrier_dims, barrier_coords):
-        ax = int(volume_axes[int(d)])
-        i = int(round(float(coord)))
-        if not 0 <= i < vshape[ax]:
-            raise ValueError(
-                f"barrier coordinate {coord!r} on center dim {d} maps to index "
-                f"{i} on volume axis {ax} of extent {vshape[ax]}; the splats "
-                "and the volume disagree about this axis"
-            )
-        index[ax] = i
+        ax = int(axes[int(d)])
+        index[ax] = _barrier_index(coord, d, ax, vshape[ax])
 
     origin = np.zeros(len(free_dims), dtype=np.float64)
     if box is not None:
@@ -141,18 +179,8 @@ def select_sub_volume(
                 f"({len(free_dims)}); got {len(box)}"
             )
         for k, d in enumerate(free_dims):
-            ax = int(volume_axes[int(d)])
-            lo_f, hi_f = box[k]
-            # A BSP cell records CUTS, so the outer faces of the root box come
-            # back infinite; the volume's own extent is the missing bound.
-            lo = 0 if not np.isfinite(lo_f) else max(0, int(np.floor(float(lo_f))))
-            hi = (
-                vshape[ax]
-                if not np.isfinite(hi_f)
-                else min(vshape[ax], int(np.ceil(float(hi_f))) + 1)
-            )
-            if hi <= lo:  # a degenerate box would give the fit nothing to see
-                lo, hi = 0, vshape[ax]
+            ax = int(axes[int(d)])
+            lo, hi = _crop_span(box[k], vshape[ax])
             index[ax] = slice(lo, hi)
             origin[k] = float(lo)
 
@@ -160,7 +188,7 @@ def select_sub_volume(
     # Integer-indexed axes are gone; the survivors are in VOLUME order, so
     # transpose them into center-dim order before the fit ever sees them.
     survivors = [ax for ax in range(len(vshape)) if not isinstance(index[ax], int)]
-    desired = [int(volume_axes[int(d)]) for d in free_dims]
+    desired = [int(axes[int(d)]) for d in free_dims]
     if desired != survivors:
         arr = np.transpose(arr, [survivors.index(ax) for ax in desired])
     return SubVolume(array=arr, origin=origin, dims=free_dims)
