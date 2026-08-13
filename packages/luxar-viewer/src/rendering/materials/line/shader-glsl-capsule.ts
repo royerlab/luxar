@@ -238,7 +238,8 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       // full caps on the shared vertex — measured +1.00 of peak (a 2x
       // bead, 5 px wide) at every bend angle, i.e. as wide as the line
       // itself, never sub-pixel. Only the deficit PACKET is width-gated
-      // (CAPSULE_JOINT_PACKET_MIN_RADIUS_PX below).
+      // (CAPSULE_JOINT_PACKET_MIN_RADIUS_PX below), and even that gate is
+      // lifted at a sharp turn on an at-or-above-floor segment (#1495).
       // EVERY end is a round cap. A free end keeps the whole disc; an
       // interior end keeps its HALF of the joint disc — the bisector cut
       // partitions the disc exactly between the two legs, so joints are
@@ -278,9 +279,17 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x < -1e-3) {
                 cutA = vec4(nLoc, 0.0, 0.0);
-                // Width gate (see _shared/line-capsule.ts): hairline
-                // joints skip the packet — a deficit there is sub-pixel.
-                if (rMax > ${G.PACKET_MIN_R}) {
+                // Width gate — a cost cap for GENTLE hairline joints. TWO
+                // conditions lift it (#1495): the turn is SHARPER THAN 120°
+                // (the same axis-dot as the sharp clause below, since past
+                // 120° the bisector cuts my rod LENGTHWISE) AND both my raw
+                // radii reach the AA floor (below it vFade's widthScale
+                // differs between legs and the pair beads instead of
+                // composing). Measurements, costs and the three accepted
+                // residuals: CAPSULE_JOINT_PACKET_MIN_RADIUS_PX in
+                // _shared/line-capsule.ts.
+                if (rMax > ${G.PACKET_MIN_R} ||
+                    (dot(qq / ql, u) > 0.5 && min(rawA, rawB) >= ${G.MIN_RADIUS})) {
                   float wFarA = farA.w;
                   float rpFarA;
                   if (uIsOrtho == 1) {
@@ -350,9 +359,9 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x > 1e-3) {
                 cutB = vec4(nLoc, 0.0, 0.0);
-                // Width gate (see _shared/line-capsule.ts): hairline
-                // joints skip the packet — a deficit there is sub-pixel.
-                if (rMax > ${G.PACKET_MIN_R}) {
+                // Width gate + the sharp-turn exception, floored (see end A).
+                if (rMax > ${G.PACKET_MIN_R} ||
+                    (dot(qq / ql, u) < -0.5 && min(rawA, rawB) >= ${G.MIN_RADIUS})) {
                   float wFarB = farB.w;
                   float rpFarB;
                   if (uIsOrtho == 1) {
