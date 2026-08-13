@@ -17,7 +17,7 @@
       "base_url": null
     },
     "h2afva": {
-      "title": "h2afva zebrafish histone light-sheet timelapse (Gaussian splats)",
+      "title": "h2afva zebrafish histone light-sheet TIMELAPSE, full 253 timepoints (Gaussian splats; a 51-timepoint subset is included for easier download)",
       "license": "cc-by-4.0",
       "zenodo_concept_doi": null,
       "zenodo_record": null,
@@ -357,6 +357,69 @@
           "files": []
         }
       }
+    },
+    "gsplats_3d_drosophila_gastrulation": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
+      "attribution": "Royer & Keller labs \u2014 Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+      "pending_upload": true,
+      "dir": "gsplats_3d_drosophila_gastrulation",
+      "files": [
+        {
+          "name": "droso_gastrulation.gsplats.zarr.zip",
+          "sha256": "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af",
+          "bytes": 2377880
+        }
+      ]
+    },
+    "gsplats_3d_h2afva_stack": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "h2afva zebrafish histone light-sheet, single stack (Royer lab)",
+      "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
+      "pending_upload": true,
+      "dir": "gsplats_3d_h2afva_stack",
+      "files": [
+        {
+          "name": "h2afva_tp234.gsplats.zarr.zip",
+          "sha256": "abc4f8731824b8e2c9767e8e517357db19b998cb5299c9c9197ce1b4bea41dbd",
+          "bytes": 25607491
+        }
+      ]
+    },
+    "gsplats_3d_h2afva_decimation": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "h2afva single stack at four decimation levels (Royer lab)",
+      "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
+      "pending_upload": true,
+      "dir": "gsplats_3d_h2afva_decimation",
+      "files": [
+        {
+          "name": "h2afva_full.gsplats.zarr.zip",
+          "sha256": "1d5ac0077db38de43807e4e303d275dffe6c98b48e539a096dc4972067db44bf",
+          "bytes": 18070045
+        },
+        {
+          "name": "h2afva_quarter.gsplats.zarr.zip",
+          "sha256": "3727b6194202fb43527928c967429bf2e1ba42f9aa50877a44b9c5bacd29c0a6",
+          "bytes": 4689769
+        },
+        {
+          "name": "h2afva_tenth.gsplats.zarr.zip",
+          "sha256": "6851f6585149b02d5e7f955e9c7501140fccb512f37d3e2ec20ec36024e34a47",
+          "bytes": 1984957
+        },
+        {
+          "name": "h2afva_twentieth.gsplats.zarr.zip",
+          "sha256": "8f13588289145d92a24423215b5896b679a286c52d04a9854b61b9be1d8e004a",
+          "bytes": 1036456
+        }
+      ]
     },
     "milky_way_gaia_3m": {
       "bucket": "local-compute",

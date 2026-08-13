@@ -23,10 +23,14 @@ parallel to the Points/Lines coarsen suites in ``test_substitutive_*.py``.
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
+
 import numpy as np
 import pytest
 import zarr
 
+from luxar.conftest import find_repo_relative_file, read_ts_number_const
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.group import (
@@ -259,8 +263,9 @@ class TestLODGroupValidation:
         ``[0, MAX_COVERAGE_FRACTION]`` bound.
 
         The bound is a POLICY, not an unreachability fact: a metric above 4.0 is
-        perfectly attainable (it just needs the projected diagonal to exceed the
-        viewport diagonal, i.e. zoomed in past screen-filling). 4.0 is the point
+        perfectly attainable (it just needs the projected diagonal to exceed
+        ``SCREEN_FILL_DIAGONAL_RATIO`` times the fitted screen axis, i.e. zoomed
+        in past screen-filling). 4.0 is the point
         past which a threshold stops expressing anything a viewport-relative
         selector should encode, so authoring above it is refused rather than
         silently honoured."""
@@ -968,18 +973,28 @@ class TestDeriveCoverageFractions:
 
 
 def test_max_coverage_fraction_matches_the_viewer_fill_factor() -> None:
-    """``MAX_COVERAGE_FRACTION`` must stay ``1 / FILL_FACTOR``.
+    """``MAX_COVERAGE_FRACTION`` must stay ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``.
 
     The viewer compares every ``coverage_fraction`` against
-    ``projectedDiagonalPx / (FILL_FACTOR * viewportDiagonalPx)``, so a
-    screen-filling object produces a metric of exactly ``1 / FILL_FACTOR`` — the
-    largest value an authored threshold can usefully take. The two constants live
-    in different languages with no build-time link, so this test IS the link:
-    it parses the TypeScript source. Prose comments on both sides are not enough.
+    ``projectedDiagonalPx / (FILL_FACTOR * fittedAxisPx)`` (issue #1410 moved the
+    denominator from the viewport DIAGONAL to the fitted screen AXIS —
+    ``min(viewport.width, viewport.height)`` — so the metric stays invariant
+    across aspect ratio, not just viewport size). A screen-filling object's
+    projected diagonal is no longer simply the fitted axis (that identity only
+    held for the old diagonal normalisation); it is
+    ``SCREEN_FILL_DIAGONAL_RATIO`` times it — and only APPROXIMATELY, since that
+    ratio (``hypot(aspect, 1) / min(aspect, 1)``) is itself aspect-dependent, so
+    the metric it yields (the ratio ÷ ``FILL_FACTOR``) measures 2.83 at 1:1,
+    4.08 at 16:9 and 5.15 at a real 21:9 panel (2560×1080) — exactly 4.0 only at
+    aspect √3 ≈ 1.73; see the ``FILL_FACTOR`` doc in
+    ``lod-group-registry.ts``. So a
+    screen-filling object produces a metric of *approximately*
+    ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` at the mainstream aspect
+    ratios the constant targets — the largest value an authored threshold can
+    usefully take. The two constants live in different languages with no
+    build-time link, so this test IS the link: it parses the TypeScript
+    source. Prose comments on both sides are not enough.
     """
-    import re
-    from pathlib import Path
-
     from luxar.core.group.lod import group as lod_group_module
 
     # Walk up from luxar/core/group/lod/group.py to the repo root (the ancestor
@@ -987,35 +1002,37 @@ def test_max_coverage_fraction_matches_the_viewer_fill_factor() -> None:
     # a package move would silently break.
     rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
     start = Path(lod_group_module.__file__).resolve()
-    registry = next(
-        (parent / rel for parent in start.parents if (parent / rel).is_file()),
-        None,
-    )
+    registry = find_repo_relative_file(rel, start)
     assert registry is not None, (
         f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
         "update this test — do NOT delete it: it is the only link keeping "
-        "MAX_COVERAGE_FRACTION and the viewer's FILL_FACTOR reciprocal."
+        "MAX_COVERAGE_FRACTION and the viewer's FILL_FACTOR relation."
     )
     source = registry.read_text(encoding="utf-8")
-    # Tolerates `export const`, plain `const`, and an optional type annotation.
-    match = re.search(
-        r"^\s*(?:export\s+)?const\s+FILL_FACTOR\s*(?::\s*number\s*)?=\s*"
-        r"([0-9]*\.?[0-9]+)\s*;",
-        source,
-        re.MULTILINE,
+
+    fill_factor = read_ts_number_const(source, "FILL_FACTOR")
+    screen_fill_diagonal_ratio = read_ts_number_const(
+        source, "SCREEN_FILL_DIAGONAL_RATIO"
     )
-    assert match is not None, (
-        f"no `const FILL_FACTOR = <number>;` declaration found in {registry}. "
-        "If it was renamed or computed, update this test — do NOT delete it."
-    )
-    fill_factor = float(match.group(1))
     assert fill_factor > 0.0, f"FILL_FACTOR must be positive, read {fill_factor}"
-    assert MAX_COVERAGE_FRACTION == pytest.approx(1.0 / fill_factor), (
+    ref_aspect_ratio = math.hypot(16, 9) / 9
+    assert screen_fill_diagonal_ratio == pytest.approx(ref_aspect_ratio, rel=0.03), (
+        f"SCREEN_FILL_DIAGONAL_RATIO ({screen_fill_diagonal_ratio}) should stay close "
+        f"to the 16:9-reference geometric value it stands for (hypot(16, 9) / 9 = "
+        f"{ref_aspect_ratio:.4f}); otherwise it and FILL_FACTOR could compensate for "
+        "each other below (e.g. FILL_FACTOR=0.25 + SCREEN_FILL_DIAGONAL_RATIO=1 keeps "
+        "the product test green while every viewer switch point silently moves 2x) "
+        "and this test would stop being a real cross-language lock."
+    )
+    expected = screen_fill_diagonal_ratio / fill_factor
+    assert MAX_COVERAGE_FRACTION == pytest.approx(expected), (
         f"MAX_COVERAGE_FRACTION ({MAX_COVERAGE_FRACTION}) must equal "
-        f"1 / FILL_FACTOR (1 / {fill_factor} = {1.0 / fill_factor}). These two "
-        "constants are one decision expressed twice: FILL_FACTOR anchors the "
-        "viewer's coverage metric and MAX_COVERAGE_FRACTION bounds what a scene "
-        f"author may write. Change BOTH — {registry} and the constant in "
-        "luxar/core/group/lod/group.py — or the bound stops meaning "
-        "'may be required to fill the screen, at most'."
+        f"SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR "
+        f"({screen_fill_diagonal_ratio} / {fill_factor} = {expected}). These "
+        "constants are one decision expressed twice: FILL_FACTOR and "
+        "SCREEN_FILL_DIAGONAL_RATIO anchor the viewer's coverage metric and "
+        "MAX_COVERAGE_FRACTION bounds what a scene author may write. Change "
+        f"BOTH — {registry} and the constant in luxar/core/group/lod/group.py — "
+        "or the bound stops meaning 'may be required to fill the screen, at "
+        "most'."
     )

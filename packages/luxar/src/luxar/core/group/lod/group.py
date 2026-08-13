@@ -20,9 +20,12 @@ attr names the UNITS those thresholds are in:
 * ``selector="coverage"`` — the legacy diagonal metric, kept for existing
   datasets and for explicit ``coverage_fractions=[...]`` lists (whose authored
   values were tuned in these units): the viewer compares the threshold against
-  ``projected bbox diagonal / (FILL_FACTOR=0.25 × viewport diagonal)``, so 1.0
-  = a quarter-viewport diagonal and :data:`MAX_COVERAGE_FRACTION` = 4.0 = a
-  screen-filling object.
+  ``projected bbox diagonal / (FILL_FACTOR=0.5 × fittedAxisPx)``, where
+  ``fittedAxisPx`` is ``min(viewport.width, viewport.height)`` — the extent the
+  camera framing actually fits (#1410 re-anchored this normalisation from the
+  viewport diagonal). So 1.0 = half the fitted screen axis (a normal
+  full-frame view) and :data:`MAX_COVERAGE_FRACTION` = 4.0 ≈ a screen-filling
+  object (exact only near aspect √3 — see its doc).
 
 The standalone builder ``add_lod_group()`` lets users assemble these by hand; the
 convenience paths (e.g. ``Scene.add_gsplats_from_data(..., lod_group=...)``,
@@ -87,15 +90,25 @@ if TYPE_CHECKING:
 #: ceiling, and (being the larger of the two selectors' ceilings) the loosest
 #: bound the explicit-list validators enforce.
 #:
-#: This is ``1 / FILL_FACTOR`` (the viewer's legacy LOD anchor, ``0.25`` — see
-#: ``scene/lod-group-registry.ts``): under ``selector="coverage"`` the viewer
+#: This is ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (the viewer's legacy LOD
+#: anchor, ``FILL_FACTOR = 0.5`` — see ``scene/lod-group-registry.ts``): under
+#: ``selector="coverage"`` the viewer
 #: compares each threshold against ``coverage metric = projected bbox diagonal /
-#: (FILL_FACTOR × viewport diagonal)``, so an object whose projected diagonal
-#: exactly equals the viewport diagonal — a *screen-filling* object — produces a
-#: metric of ``1 / FILL_FACTOR`` = 4.0. The bound therefore means "a level may be
-#: required to fill the screen, at most". (Under ``selector="screen-area"`` the
-#: same fills-screen meaning is carried by :data:`PARTITION_FINEST_AREA` = 1.0;
-#: derived ladders never exceed it.)
+#: (FILL_FACTOR × fittedAxisPx)``, where ``fittedAxisPx`` is
+#: ``min(viewport.width, viewport.height)`` — the extent the camera framing
+#: actually fits (#1410 re-anchored the normalisation from the viewport
+#: diagonal to this fitted axis). A *screen-filling* object's projected
+#: diagonal is ``hypot(aspect, 1) / min(aspect, 1)`` times the fitted axis —
+#: aspect-DEPENDENT — and ``SCREEN_FILL_DIAGONAL_RATIO`` pins the
+#: mainstream-aspect approximation of that ratio to a round ``2`` (measured
+#: 2.04 at 16:9, the reference aspect), so ``MAX_COVERAGE_FRACTION =
+#: SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR = 2 / 0.5 = 4.0``. The bound
+#: therefore means, approximately (exact only near aspect √3), "a level may be
+#: required to fill the screen, at most" — see the #1410/#1542 notes in
+#: ``lod-group-registry.ts`` for the per-aspect table. (Under
+#: ``selector="screen-area"`` the same fills-screen meaning is carried EXACTLY
+#: by :data:`PARTITION_FINEST_AREA` = 1.0 — the area metric is aspect-free by
+#: construction; derived ladders never exceed it.)
 #:
 #: Values above a whole-object anchor hold a level until *later*, which is what a
 #: spatially tiled layer needs (each tile projects to only a fraction of the
@@ -251,7 +264,7 @@ def coverage_fractions(element_counts: list[int]) -> list[float]:
     which is what every recipe (K-fold substitutive reductions) produces.
 
     Count-INDEPENDENCE is deliberate: the retired ``sqrt(N_i/N_finest)``
-    derivation (a diagonal metric anchored at quarter-viewport) held the finest
+    derivation (a diagonal metric) held the finest
     level until the object was far away, and spaced levels by a count ratio
     that is blind to element size, overlap, and intent — dense additive data
     (millions of sub-pixel streamlines) rendered its most expensive level
@@ -340,7 +353,7 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     **The assumption.** The rule rests on the partition being a real TILING, i.e.
     >= 2 parts, so that a part genuinely projects to a fraction of the whole. A
     ONE-PART ``kind=partition`` breaks it: the "tile" IS the whole object, and this
-    anchor is then a factor of 4 too coarse. The two entries below are the ones
+    anchor is then a factor of 2 too coarse (in screen-area units). The two entries below are the ones
     that have been audited — the tree-building producers that CAN see the sibling
     count (they exclude the shape), and the scene-adder path (which cannot). Read
     the list as illustrative, not exhaustive:
@@ -596,11 +609,10 @@ def validate_lod_group(group: "Node") -> None:
     else:
         cap = MAX_COVERAGE_FRACTION
         cap_rationale = (
-            "The upper bound is 1/FILL_FACTOR — the diagonal metric a "
-            "screen-filling object produces; values above a whole-object "
-            "anchor hold a level until the object is larger still (what a "
-            "partition-bound ladder derives, and what an explicit list may "
-            "ask for)."
+            "The upper bound is SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — "
+            "roughly the diagonal metric a screen-filling object produces; "
+            "values above a whole-object anchor hold a level until the object "
+            "is larger still (what an explicit list may ask for)."
         )
     prev = float("-inf")
     for i, child in enumerate(group.children):
@@ -877,8 +889,9 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
                 f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
                 f"{explicit_coverage}. An explicit list keeps the legacy "
                 "selector='coverage' diagonal units, whose upper bound is "
-                "1/FILL_FACTOR — the metric a screen-filling object produces. "
-                "(Omit the list for the derived screen-area ladder.)"
+                "SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly the metric a "
+                "screen-filling object produces. (Omit the list for the "
+                "derived screen-area ladder.)"
             )
 
     # Dims coarsening may cluster over; complement = hard grouping barriers.

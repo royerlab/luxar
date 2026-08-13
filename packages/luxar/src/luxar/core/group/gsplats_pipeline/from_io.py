@@ -160,7 +160,40 @@ def _reject_labels_on_a_grafted_wrapper(
       around a MULTI-leaf wrapper counts every leaf underneath and is refused
       HERE, at the entry call, naming the caller's node — the recursion never
       runs. A one-child wrapper whose whole nest still resolves to a single flat
-      leaf is exempt for the reason above: that one leaf holds every splat.
+      leaf is exempt for the reason above: that one leaf holds every splat —
+      but the correspondence being EXACT is not the same as it being the right
+      LENGTH (#1505). A wrong-length ``labels`` / ``image_labels`` on this
+      branch used to sail through here and refuse one level down, from inside
+      ``part_0``'s own leaf write, with the wrapper this function was supposed
+      to guard already on disk — the exact strand this gate exists to close,
+      just on its exempt side rather than its refused one. So the exempt
+      branch below now runs the same length/content validators the flat writer
+      runs (``labels`` then ``image_labels``, its own order), and re-raises
+      with the same hand-applied prefix — giving a verdict byte-identical to
+      what the flattened control (the remedy this gate already recommends)
+      would raise on the same arrays, for a SINGLE-FAULT call.
+
+      That closes the wrong-LENGTH case, which is the only one anything
+      upstream of the wrapper can judge. A RIGHT-length list can still strand
+      the same wrapper, when a DECOMPOSITION kwarg is forwarded through the
+      graft onto this same exempt leaf: ``partition=`` (including implicitly,
+      under an auto-partitioning compiler), ``lod_group=`` or
+      ``additive_lod=`` is each refused by the leaf ADDER (``Group.add_gsplats``
+      and the ``from_data`` dispatch below it), one level down, for that
+      kwarg's own reason. Pre-existing #1496-family residual, unchanged in
+      both directions here and out of scope for a LENGTH fix.
+
+      This check is the FIRST statement of ``graft_gsplat_node``, so a call
+      that ALSO trips an unrelated fault (an unknown attr, a bad node name, a
+      duplicate sibling name, NaN centers) hears the label fault here, where
+      the flat path answers the other fault first — both refuse, and neither
+      writes. That is
+      the same SANCTIONED divergence
+      :func:`~luxar.core.group.compositing.validate_points_channels_before_split`
+      documents for "a NaN position, an unknown attr", and which
+      :func:`~luxar.core.group.gsplats_pipeline.from_data._reject_before_wrapper`
+      already makes on the ``lod_group=`` door — not a regression to fix here,
+      only a claim to state accurately.
     * ONE SUB-LOD — because ``write_gsplat_leaf_subtree``, where a laddered leaf
       goes, has no labels channel at all. Exempting a laddered leaf would make
       this gate's contract a lie: the refusal then comes from inside ``part_0``
@@ -207,10 +240,80 @@ def _reject_labels_on_a_grafted_wrapper(
     elif len(only.additive_sublods) > 1:
         reason = labels_on_a_laddered_leaf_reason(kwarg)
     else:
-        return  # one flat leaf — the one shape that can carry them
+        # One flat leaf — the one shape that can carry them, PROVIDED the list is
+        # also the right length (#1505; see the docstring's ONE LEAF bullet).
+        _validate_labelled_leaf_length(name, only.n_splats, attrs)
+        return
     # Prefixed by hand: this module has no try/except funnel, and its sibling
     # checks already report the prefixed form.
     raise ValueError(f"Could not add gsplats '{name}': {reason}")
+
+
+def _validate_labelled_leaf_length(
+    name: str, n_splats: int, attrs: Dict[str, Any]
+) -> None:
+    """Length/content-validate whichever label channel(s) are present.
+
+    Reached only from the one-flat-leaf exempt branch above: that leaf's
+    correspondence is exact, but a wrong-length list still has to be caught
+    HERE, before this function returns and ``graft_gsplat_node`` proceeds to
+    build the wrapper — for a wrong-LENGTH list specifically, there is no gate
+    below this one that runs before ``part_0``'s own leaf write (#1505). (A
+    RIGHT-length list can still strand the same wrapper via a decomposition
+    kwarg forwarded onto the leaf — see the ONE LEAF bullet of
+    :func:`_reject_labels_on_a_grafted_wrapper`'s docstring; that is a
+    different, pre-existing residual this length check does not touch.)
+
+    ``n_splats`` is the exempt leaf's OWN count (``GSplatLeaf.n_splats`` sums
+    over every additive sub-LOD, but this is only ever called with a leaf that
+    has exactly one — the caller already refused more than one above — so the
+    sum degenerates to that sub-LOD's own count, unambiguously).
+
+    Runs ``labels`` then ``image_labels`` — the flat writer's own order
+    (``write_gsplats`` steps 0d then 0e) — and reuses its validators rather
+    than re-implementing either rule:
+
+    * ``labels`` → :func:`~luxar.core.group.compositing.validate_labels_before_split`,
+      which no-ops on ``None`` and otherwise delegates to
+      ``validate_labels_for_writing`` (the same function step 0d calls).
+    * ``image_labels`` → guarded on ``is not None`` here (that validator has no
+      built-in no-op) and then
+      :func:`~luxar.io._compiler.labels.image_labels.validate_image_labels_for_writing`
+      — the store-free pre-write validator #1491 extracted for exactly this
+      kind of hoist, covering the dense length check, the sparse-dict key
+      type/bounds, the one-shot-iterable refusal, and every entry's type.
+
+    Both raise a plain ``ValueError`` (``ValidationError`` is a subclass) or,
+    for a malformed ``image_labels`` (a bad dict key type, a one-shot
+    iterable, a wrongly-typed entry), a ``TypeError`` — caught here and
+    re-raised as ``ValueError`` with the prefix this module applies by hand,
+    ``from e`` so the original stays chained. Catching ``TypeError`` too
+    matters: the leaf adders' own ``except (ValueError, TypeError)`` funnel
+    does the same conversion on the flat path, so skipping it here would make
+    the two paths diverge in exception TYPE, not just message. For a
+    SINGLE-FAULT call the result is a verdict byte-identical to the flattened
+    control's — same validators, same order, same prefix. It is not identical
+    for a call that ALSO trips an unrelated fault (an unknown attr, a bad node
+    name, NaN centers): this function runs first, above where those are
+    checked, so it reports the label fault where the flat path would report
+    the other one — see the ONE LEAF bullet of
+    :func:`_reject_labels_on_a_grafted_wrapper`'s docstring for why that
+    divergence is the same sanctioned trade
+    ``compositing.validate_points_channels_before_split`` already documents.
+    """
+    from ..compositing import validate_labels_before_split
+
+    try:
+        validate_labels_before_split(attrs.get("labels"), n_splats)
+        image_labels = attrs.get("image_labels")
+        if image_labels is not None:
+            from luxar.io._compiler.labels.image_labels import (
+                validate_image_labels_for_writing,
+            )
+
+            validate_image_labels_for_writing(image_labels, n_splats)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Could not add gsplats '{name}': {e}") from e
 
 
 def graft_gsplat_node(
@@ -389,16 +492,34 @@ def graft_gsplat_node(
         return wrapper
 
     if isinstance(node, GSplatPartition):
+        # Local import: the sibling `GSplatLodGroup` branch above imports this
+        # too, but that branch does not run on this path.
+        from luxar.gsplats.tree import total_splats
+
         partition_attrs = dict(wrapper_attrs)
         # Carry the BSP split planes into the scene so the viewer keeps its
         # exact back-to-front part ordering (the standalone file has it; the
         # graft must not drop it). Absent for non-BSP (streamed) partitions.
         if node.bsp_tree is not None:
             partition_attrs["bsp_tree"] = node.bsp_tree
+        # `max_elements` is a per-part CAP, so only a capped splitter sets it
+        # (uniform tiling, BSP `--parts`/`--max-elements`). A CONTENT-tiled fit
+        # balances its boxes by feature density instead and leaves the field at
+        # the `GSplatPartition` default of 0 — which `add_partition_group`
+        # rejects, since it requires >= 1. Derive the honest value in that case:
+        # the largest part IS this partition's effective per-part cap. The
+        # attribute is descriptive downstream (the viewer logs it and does not
+        # branch on it), so deriving cannot change rendering — whereas failing
+        # here made every `fit --tiling content` result ungraftable.
+        cap = int(node.max_elements)
+        if cap < 1:
+            # Floored at 1: an all-empty partition would otherwise derive a cap
+            # of 0 and trip the very validator this branch exists to satisfy.
+            cap = max(1, max(total_splats(child) for child in node.children))
         wrapper = parent_node.add_partition_group(
             name=name,
             display_type="gsplats",
-            max_elements=int(node.max_elements),
+            max_elements=cap,
             **partition_attrs,
         )
         # Everything under a kind=partition is partition-bound — EXCEPT when the

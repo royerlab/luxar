@@ -12,9 +12,11 @@
  *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
  *   3. Project the 8 corners through the camera to NDC and back to
  *      pixel coordinates; the diagonal of the screen-space AABB, divided
- *      by ``FILL_FACTOR × viewportDiagonal``, is the dimensionless
- *      **coverage metric** (1.0 == the object's projected diagonal has
- *      reached ``FILL_FACTOR`` of the viewport diagonal).
+ *      by ``FILL_FACTOR × fittedAxisPx`` (``fittedAxisPx`` is
+ *      ``min(viewport.width, viewport.height)`` — the extent
+ *      ``calculateCameraDistance`` actually fits; see the ``FILL_FACTOR`` doc),
+ *      is the dimensionless **coverage metric** (1.0 == the object's projected
+ *      diagonal has reached ``FILL_FACTOR`` of the fitted axis).
  *   4. Pick the **finest** child whose ``coverage_fraction`` threshold is
  *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
  *      the downgrade direction to suppress threshold-edge flicker.
@@ -107,70 +109,173 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * ladders now use ``selector: 'screen-area'``, whose metric is
  * ``projectBoxAreaFraction`` and does not involve this constant): a threshold
  * of 1.0 is satisfied once the group's projected bbox diagonal reaches
- * ``FILL_FACTOR × viewportDiagonal`` pixels — about a QUARTER of the viewport
- * diagonal. Legacy derived whole-object ladders anchored their finest at 1.0
- * (pre-halving) or 2.0 (halving era); partition-bound ones at 4.0
- * (fills-screen). Lowering the factor shows finer levels sooner, raising it
- * later.
+ * ``FILL_FACTOR × fittedAxisPx`` pixels — i.e. HALF of the **fitted screen
+ * axis** (``fittedAxisPx = min(viewport.width, viewport.height)``), which a
+ * normal full-frame view already exceeds. Coarser children (smaller
+ * fractions) step in as the object shrinks below that. Lowering the factor
+ * shows finer levels sooner, raising it later.
  *
- * Why 0.25 and not 1.0: at 1.0 the finest level only appeared once the object
- * OVERFILLED the screen, so the default opening framing always showed a blurry
- * merged level (#1361). Measuring the real opening framing — the distance
- * ``calculateCameraDistance`` picks (fitRatio 0.75, +20% margin) at the default
- * fov 47, projected through ``projectBoxDiagonalPx`` — puts
- * ``diagonalPx / viewportDiagonal`` in **0.31 – 0.86 at aspect ratios near 16:9,
- * 9:16 and 1:1** (cube 0.51–0.86, "umap-ish" 0.43–0.68, flat pancake 0.43–0.63,
- * the worst being an in-plane elongated 100×1×1 cloud on a portrait viewport at
- * 0.307). Dividing by 0.25 lifts even that worst case to a metric of 1.23 — past
- * the finest threshold of 1.0 with ~23% headroom — while the other three shapes
- * span 1.7–3.4 over those aspects (umap-ish on 9:16 is the low end at 1.73, a cube
- * on 1:1 the high end at 3.43). Downgrades still happen well before the object is
- * tiny: for the usual K=8 / 3-level ladder (thresholds 0, 0.125, 0.354, 1.0) a cube
- * on 16:9 drops off the finest at **~2.0×** zoomed out from the opening framing and
- * reaches the coarsest at **~14×** (~2.1× / ~15.7× counting the downgrade
- * hysteresis); on 1:1 it is ~2.8× / ~20×. Note the metric goes as
- * ``1/(s·d₀ − halfDepth)``, not ``1/s``, so these do not follow from the opening
- * metric by simple proportion — they are solved from the projection.
+ * **Why the fitted axis, not the viewport diagonal (#1410).** The previous
+ * anchor normalised by ``hypot(viewport.width, viewport.height)``, which grows
+ * with width regardless of aspect, while ``calculateCameraDistance`` fits the
+ * VERTICAL fov for aspect ≥ 1 (camera distance has NO aspect dependence there)
+ * and the HORIZONTAL fov for aspect < 1. So a wide-but-not-tall canvas grew the
+ * denominator without the framing showing any more of the object, and the raw
+ * ratio collapsed as the canvas widened — a cube's opening-framing metric fell
+ * from 3.43 at 1:1 to 1.31 at 32:9 under the old scheme, and thinner shapes (an
+ * in-plane rod, a flat pancake) dropped BELOW the finest threshold entirely on
+ * an ultrawide monitor (#1361's blur, returning at wide aspects).
  *
- * **The anchor drifts with viewport ASPECT — super-wide canvases are deliberately
- * not covered.** ``calculateCameraDistance`` fits the object to the VERTICAL fov
- * for any aspect ≥ 1, while this metric normalises by the viewport DIAGONAL, which
- * keeps growing with width. So the framing does not widen with the canvas but the
- * denominator does, and for aspect ≥ 1 the raw fraction falls off exactly as
- * ``raw(aspect) = raw(1) · √2 / hypot(aspect, 1)`` — measured constant to 5 digits
- * across 1:1 … 32:9. A shape therefore stops reaching the finest level beyond its
- * own crossover aspect (where its metric drops under 1.0): ≈ 2.30 for the in-plane
- * rod, ≈ 3.40 for the flat pancake, ≈ 3.69 for "umap-ish", ≈ 4.75 for a cube.
- * Concretely the rod already misses the finest on a 21:9 (metric 0.97) and the
- * pancake misses it on a 32:9 (0.96) — #1361's symptom survives there. Fixing it
- * means changing what the two sides normalise by (fit the diagonal, or normalise by
- * the fitted extent) — NOT lowering this constant further, which would break the
- * partition-bound ladders (see ``partitioned_coverage_fractions``) and still fails
- * 32:9 even at 0.2.
+ * ``fittedAxisPx`` is exactly the extent ``calculateCameraDistance`` fits in
+ * each regime — ``height`` for aspect ≥ 1, ``width`` for aspect < 1 — and this
+ * is provably, not just empirically, the fix for the aspect ≥ 1 case: distance
+ * there has no aspect dependence at all, so a box's camera-relative corner
+ * positions (and hence its Y-axis NDC projection) are IDENTICAL for every
+ * aspect ≥ 1, and the X-axis projection's aspect-dependent scaling exactly
+ * cancels against the viewport-width term when converting NDC to pixels —
+ * leaving the projected pixel diagonal EXACTLY proportional to ``height``,
+ * independent of both aspect and absolute viewport size (verified to 12
+ * significant digits for every shape in the test matrix, at 1:1/16:9/21:9/32:9
+ * viewports of differing absolute size). The aspect < 1 branch is the mirror
+ * image (distance ∝ 1/aspect) and is exactly invariant to viewport SIZE at a
+ * fixed aspect, but only APPROXIMATELY invariant across different aspect < 1
+ * values for a box whose depth (extent along the view axis) is a large
+ * fraction of its in-plane size: there, unlike the aspect ≥ 1 branch, the
+ * camera distance itself changes with aspect, so the near/far corner
+ * correction from the box's own depth no longer cancels exactly. Measured at
+ * the opening framing, 9:16 vs. the (exact) aspect ≥ 1 value: a cube (depth ==
+ * width) is off by ~14%, "umap-ish" 100×80×60 by ~8%, while the two thin
+ * shapes (an in-plane rod, a flat pancake) are off by ~0.1% — all comfortably
+ * inside the headroom below.
  *
- * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on any
- * ``coverage_fraction``, authored or derived — a partition-bound ladder derives
- * exactly this value; see ``core/group/lod/group.py``) is defined as
- * ``1 / FILL_FACTOR``, i.e. the metric a
- * screen-filling object produces. Changing this value must change that one; a
- * Python test (``test_max_coverage_fraction_matches_the_viewer_fill_factor``) reads
- * this file
- * and asserts the two stay reciprocal.
+ * Why 0.5 and not 1.0: at 1.0 the finest level only activates once the object
+ * OVERFILLS the fitted axis, reproducing the original #1361 symptom at the
+ * default opening framing. Measured opening-framing ``diagonalPx /
+ * fittedAxisPx`` across all four shapes in the test matrix, at 1:1, 16:9, 9:16,
+ * 21:9 and 32:9, ranges **0.626 (in-plane rod, worst case) – 1.214 (cube, best
+ * case)**. Dividing by 0.5 turns that into a metric of **1.25 – 2.43** — past
+ * the finest threshold of 1.0 with **~25% headroom even in the worst case** —
+ * and, unlike the old anchor, this range barely moves across aspect ratio (see
+ * above), so there is no longer a wide-canvas crossover where a shape drops
+ * back below the threshold.
+ *
+ * 0.5 was chosen specifically to keep the metric's VALUE unchanged at the
+ * mainstream 16:9 reference, not re-tuned from scratch: at 16:9,
+ * ``fittedAxisPx == height`` and ``diagonalPx / height == (diagonalPx / hypot)
+ * × hypot(16, 9) / 9 ≈ (diagonalPx / hypot) × 2.0398``, so ``new metric == old
+ * metric × 2.0398 / 2 ≈ old metric × 1.02`` — measured as *exactly* a ×1.0199
+ * factor for every shape at 16:9 (it is a pure viewport-geometry constant,
+ * independent of the shape being measured). Every existing ``coverage_fraction``
+ * threshold, the hysteresis band, and the cross-fade band therefore keep their
+ * meaning; the only behavioural change is that the wide-canvas drift is gone.
+ *
+ * **Coupled constant.** Python's ``MAX_COVERAGE_FRACTION`` (the upper bound on
+ * any ``coverage_fraction``, authored or derived — a partition-bound ladder
+ * derives exactly this value; see ``core/group/lod/group.py``) stays ``4.0``,
+ * re-expressed as ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` rather than
+ * ``1 / FILL_FACTOR``: a screen-filling object's projected diagonal is no
+ * longer exactly the fitted axis — that identity only held for the OLD
+ * diagonal normalisation, where a screen-filling box's diagonal trivially
+ * equals the viewport's own diagonal. Under the fitted-axis normalisation it is
+ * instead ``hypot(aspect, 1) / min(aspect, 1)`` times the fitted axis —
+ * aspect-DEPENDENT, not a constant — measured **1.41 at 1:1, 1.67 at 4:3, 1.80
+ * at 3:2, 1.89 at 16:10, 2.04 at 16:9, 2.57 at a real 21:9 panel (2560×1080),
+ * 3.69 at 32:9**. ``SCREEN_FILL_DIAGONAL_RATIO`` does NOT pin an average across
+ * that spread — it is anchored specifically at **16:9, the reference aspect**
+ * (2.04, rounded to a plain ``2``), the same reference the ``FILL_FACTOR``
+ * value 0.5 above is calibrated at. Away from 16:9 the identity is
+ * increasingly approximate: 21:9 alone is ~28% off the round value. So
+ * ``MAX_COVERAGE_FRACTION = 2 / 0.5 = 4.0`` is unchanged in VALUE, and the
+ * switch point it anchors (reaching metric 4.0) still needs
+ * ``diagonalPx ≈ 2 × fittedAxisPx`` at 16:9, matching what
+ * ``diagonalPx ≈ viewportDiagonal`` (metric 4.0 under the OLD scheme) meant
+ * there — but away from 16:9 this is a real, accepted behavioural trade, not
+ * just a units relabelling. Because a screen-filling object's diagonal is
+ * *narrower* than 2·fittedAxisPx at square-ish aspects and *wider* at
+ * ultrawide ones, a partition-bound ladder's finest level (which derives its
+ * anchor from ``MAX_COVERAGE_FRACTION``) now needs a tile to grow LARGER on
+ * screen before showing its finest level at square-ish/portrait-ish windows,
+ * and SMALLER at ultrawide ones, than it did before #1410 — measured as the
+ * ratio of the new required projected diagonal to the old one: **×1.41 at
+ * 1:1, ×1.20 at 4:3, ×1.06 at 16:10, ~×1.0 at 16:9 (by construction), ×0.78 at
+ * a real 21:9 panel, ×0.54 at 32:9**. This is the accepted cost of the fix: the
+ * WHOLE-OBJECT ladder (``coverage_fractions``, anchored at 1.0) is what a
+ * normal full-frame opening view hits, and that is exactly where #1410's
+ * wide-aspect blur showed up — making that anchor aspect-exact was the goal.
+ * A tiled layer's per-tile anchor was already only a heuristic (each tile's
+ * own on-screen footprint already varies with camera distance and framing,
+ * partition shape, etc.), so it is the right place to absorb the residual
+ * aspect dependence rather than the whole-object case. A Python test
+ * (``test_max_coverage_fraction_matches_the_viewer_fill_factor``) reads this
+ * file and asserts the ``MAX_COVERAGE_FRACTION`` relation holds, and
+ * separately that ``SCREEN_FILL_DIAGONAL_RATIO`` itself stays close to the
+ * 16:9 geometric value it stands for (so the two constants can't silently
+ * compensate for each other).
  *
  * Also deliberately NOT covered: a cloud elongated along the VIEW axis (e.g.
- * 1×1×100) measures ~0.006, because ``calculateCameraDistance`` sizes the distance
- * from the largest dimension even when that dimension is pure depth and barely
- * contributes to the projected AABB. That is a camera-framing quirk, not a
- * threshold one.
+ * 1×1×100) measures a metric of only ~0.024 at the default opening framing on a
+ * 16:9 viewport (still far below 1.0), because ``calculateCameraDistance``
+ * sizes the distance from the largest dimension even when that dimension is
+ * pure depth and barely contributes to the projected AABB. That is a
+ * camera-framing quirk, not a normalisation one — the fitted-axis change here
+ * does not touch it; see issue #1410's "Related" note.
+ *
+ * **Known limitation: resize without a re-fit (out of scope here).**
+ * ``updateCameraAspect`` (``utils/camera-utils.ts``) only updates
+ * ``camera.aspect`` (perspective) / the horizontal frustum extent
+ * (orthographic) on a window resize — it preserves the VERTICAL fov / ortho
+ * extent, and the viewer never re-fits the camera distance afterwards. Both
+ * screen-space pixel extents of a projected box then depend on viewport
+ * HEIGHT alone (not width): with vertical fov and distance unchanged, the
+ * horizontal pixel extent is ``(world extent / (z·tan(vFov/2))) ·
+ * (height/2)`` — width cancels out of it algebraically — so narrowing the
+ * window width with height held fixed leaves the projected diagonal in
+ * pixels completely UNCHANGED while ``fittedAxisPx`` (now ``width``, once
+ * width < height) keeps shrinking, inflating the metric by ``height/width``.
+ * Measured (a 100×100×100 cube, default opening framing, 1600×900 baseline
+ * narrowed with height fixed at 900): 1600×900 → 500×900 inflates the metric
+ * ×1.80 (the pre-#1410 diagonal normalisation also inflated here, ×1.78 — a
+ * wash), but 1600×900 → 200×900 inflates ×4.50 vs only ×1.99 under the old
+ * normalisation — because the old denominator (``hypot(width, height)``) is
+ * bounded below by ``height`` as width → 0, while the new one
+ * (``min(width, height)``) is not. This is the flip side of the #1410 fix:
+ * WIDENING a viewport (the actual #1410 symptom) is now exactly stable
+ * (proven above) where it used to decay. NARROWING one is not symmetric: with
+ * ``diagonalPx`` held fixed, the new metric only overtakes the old one PAST a
+ * crossover at ``width = height² / width0`` (506px / aspect ≈ 0.56 for this
+ * baseline) — down to that point the new normalisation is actually LESS
+ * inflated than the old one (e.g. 1600×900 → 500×900, aspect 0.56: ×1.80 new
+ * vs ×1.78 old, already a near-wash), and only below it does narrowing
+ * inflate the metric faster than before (1600×900 → 200×900, aspect 0.22:
+ * ×4.50 new vs ×1.99 old). Not fixed here: re-fitting the camera on resize is
+ * a separate, larger change (it would also move the FRAMING, not just the
+ * LOD selection) and out of scope for this normalisation fix.
  *
  * The selector normalises the projected diagonal by this to a dimensionless
- * coverage metric, so the same thresholds behave identically at a given aspect
- * ratio whatever the pixel size of the viewport.
+ * coverage metric, so the same thresholds behave (near-)identically at any
+ * aspect ratio and any pixel size of the viewport.
  *
  * Exported so tests can pin behaviour against the real constant instead of
- * hard-coding 0.25.
+ * hard-coding 0.5.
  */
-export const FILL_FACTOR = 0.25;
+export const FILL_FACTOR = 0.5;
+
+/**
+ * A screen-filling object's projected pixel diagonal, expressed as a multiple
+ * of the fitted screen axis (``fittedAxisPx``): ``hypot(aspect, 1) / min(aspect,
+ * 1)``. This is aspect-DEPENDENT (1.41 at 1:1 up to 3.69 at 32:9 — see the
+ * ``FILL_FACTOR`` doc above for the full spread); the constant below is
+ * anchored at the **16:9 reference aspect** (2.04, rounded to a plain ``2``),
+ * the same aspect ``FILL_FACTOR`` is calibrated at, NOT an average or a fit
+ * across the mainstream range — it is exact (to ~2%) only near 16:9 and gets
+ * markedly less accurate at more extreme aspects (e.g. ~28% off at a real
+ * 21:9 panel). Named so the ``MAX_COVERAGE_FRACTION`` coupling reads as what
+ * it is — ``coverage metric of a screen-filling object ≈
+ * SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (approximately, at mainstream
+ * aspect ratios) — rather than an unexplained ``1 / FILL_FACTOR``, which was
+ * only exact under the old (diagonal) normalisation, at every aspect ratio.
+ */
+export const SCREEN_FILL_DIAGONAL_RATIO = 2;
 
 /**
  * Frames a lazy level stays in the ``failed`` state before the registry
@@ -192,14 +297,15 @@ export interface LODGroupChild {
   /**
    * Viewport-relative LOD-switch threshold, strictly monotonic increasing in
    * coarsest→finest order (coarsest 0.0; the auto-derived WHOLE-OBJECT ladder
-   * anchors its finest at 1.0). Multiplied by ``FILL_FACTOR × viewportDiagonal``
+   * anchors its finest at 1.0). Multiplied by ``FILL_FACTOR × fittedAxisPx``
    * at selection time to compare against the group's projected bbox diagonal in
-   * pixels — so 1.0 activates once that diagonal reaches about a quarter of the
-   * viewport diagonal (any normal full-frame view), and coarser levels take over
+   * pixels — so 1.0 activates once that diagonal reaches half of the fitted
+   * screen axis (any normal full-frame view), and coarser levels take over
    * as it shrinks. An explicitly authored **or partition-bound** ladder may go up
-   * to ``1/FILL_FACTOR`` (4.0, a screen-filling object) to hold a level until
-   * later than that — a spatially tiled layer's tiles each project to a fraction
-   * of the viewport, so the producer derives that anchor for them automatically.
+   * to ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (4.0, a screen-filling
+   * object) to hold a level until later than that — a spatially tiled layer's
+   * tiles each project to a fraction of the viewport, so the producer derives
+   * that anchor for them automatically.
    * No upper bound is enforced here.
    */
   coverageFraction: number;
@@ -354,8 +460,8 @@ interface LODGroupEntryCache {
    * Per-child ``coverage_fraction`` thresholds (dimensionless, ascending,
    * coarsest 0.0 → finest 1.0), rebuilt once at registration. The selector
    * compares these against the projected bbox diagonal normalised by
-   * ``FILL_FACTOR × viewportDiagonal`` (a dimensionless coverage metric — the
-   * finest, 1.0, activates at a quarter-viewport diagonal), so the list is
+   * ``FILL_FACTOR × fittedAxisPx`` (a dimensionless coverage metric — the
+   * finest, 1.0, activates at half the fitted screen axis), so the list is
    * viewport-independent and needs no per-frame rebuild.
    */
   thresholds: number[];
@@ -747,7 +853,7 @@ export class LODGroupRegistry {
     // Pick the desired child index.
     let desired: number;
     // The dimensionless coverage metric for this frame (projected diagonal ÷
-    // FILL_FACTOR·viewportDiag), hoisted so the coverage-band cross-fade below
+    // FILL_FACTOR·fittedAxisPx), hoisted so the coverage-band cross-fade below
     // can blend around a boundary. -1 ⇒ not computed (locked / off-screen).
     let coverageMetric = -1;
     if (entry.selectorMode !== 'auto') {
@@ -797,14 +903,22 @@ export class LODGroupRegistry {
         const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);
         // Normalise the projected pixel diagonal to a dimensionless **coverage
         // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
-        // viewport diagonal) so the viewport-relative
-        // coverage_fraction thresholds anchor the finest at a quarter-viewport
-        // diagonal — any normal full-frame view — on any monitor.
+        // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
+        // anchor the finest at half the fitted screen axis — any normal
+        // full-frame view — on any monitor OR aspect ratio (see the
+        // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
+        // diagonal it replaces, stays (near-)invariant across aspect ratio).
         // diagonalPx == +Infinity (camera inside the box) → Infinity →
-        // finest, unchanged. viewportDiag is > 0 here (evaluatePerFrame guards
+        // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
         // width/height == 0). ``?lod-finest`` forces Infinity → always finest.
-        const viewportDiag = Math.hypot(viewport.width, viewport.height);
-        coverageMetric = forceFinest ? Infinity : diagonalPx / (FILL_FACTOR * viewportDiag);
+        //
+        // fittedAxisPx mirrors calculateCameraDistance's own fit selection
+        // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
+        // (distance independent of width) and the HORIZONTAL fov for aspect < 1
+        // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
+        // exactly the extent the opening framing fits, on both sides of aspect 1.
+        const fittedAxisPx = Math.min(viewport.width, viewport.height);
+        coverageMetric = forceFinest ? Infinity : diagonalPx / (FILL_FACTOR * fittedAxisPx);
         desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
         entry.offScreen = false;
       }

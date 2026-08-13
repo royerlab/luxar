@@ -131,9 +131,9 @@ def resolve_substitutive_axis_gsplats(
                     f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
                     f"{explicit_coverage_fractions}. An explicit list keeps the "
                     "legacy selector='coverage' diagonal units, whose upper "
-                    "bound is 1/FILL_FACTOR — the metric a screen-filling "
-                    "object produces. (Omit the list for the derived "
-                    "screen-area ladder.)"
+                    "bound is SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly "
+                    "the metric a screen-filling object produces. (Omit the "
+                    "list for the derived screen-area ladder.)"
                 )
 
         if data.n_substitutive > 1 and not recompute:

@@ -9,7 +9,8 @@
  *      threshold whose UNITS the group's ``selector`` attr names: literal
  *      screen-area fractions under ``'screen-area'`` — derived whole-object
  *      ladders span [0, 1/2], a partition tile anchors at 1.0 — or the legacy
- *      diagonal metric under ``'coverage'``, up to 4.0 == ``1/FILL_FACTOR``)
+ *      diagonal metric under ``'coverage'``, up to 4.0 ==
+ *      ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``)
  *      plus its own ``position_bounds`` (the raw nD AABB). Both are read from
  *      the child's zarr attrs.
  *      Legacy (pre-v3.2) datasets that still carry ``min_pixel_size`` /
@@ -177,7 +178,8 @@ function attachLazyChild(
  * ladder anchors its finest at 0.5 (half the screen); a ladder bound to a
  * spatial partition is re-anchored at fills-screen (area 1.0). Explicit
  * ``coverage_fractions=[...]`` lists and older stores keep the legacy
- * ``'coverage'`` diagonal metric (in [0, ``1/FILL_FACTOR``] == [0, 4]).
+ * ``'coverage'`` diagonal metric (in [0,
+ * ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``] == [0, 4]).
  *
  * Datasets written before the v3.2 rename instead carry a
  * per-child ``min_pixel_size`` (absolute pixel thresholds; group ``selector``

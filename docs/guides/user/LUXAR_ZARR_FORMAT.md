@@ -301,8 +301,9 @@ the screen, one level coarser per halving of occupied area — identically on
 any monitor/viewport size (the metric is built from NDC fractions). Under the
 legacy `selector: "coverage"` (older stores, and explicitly authored
 `coverage_fractions=[...]` lists) the thresholds are diagonal-metric units in
-`[0, 4]`: the viewer compares them against the projected bbox diagonal over a
-quarter of the viewport diagonal. When the camera is inside or
+`[0, 4]`: the viewer compares them against the projected bbox diagonal over
+`FILL_FACTOR=0.5 ×` the fitted screen axis (`min(width, height)` — the extent
+the camera framing actually fits). When the camera is inside or
 straddling a group's bounding box, the group is treated as filling the screen
 and its **finest** child is selected (both selectors).
 

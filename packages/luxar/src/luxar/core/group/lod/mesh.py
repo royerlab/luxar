@@ -134,8 +134,9 @@ def _validate_coverage_fractions_spec(value: Any) -> Optional[List[float]]:
             f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
             f"{explicit_coverage}. An explicit list keeps the legacy "
             "selector='coverage' diagonal units, whose upper bound is "
-            "1/FILL_FACTOR — the metric a screen-filling object produces. "
-            "(Omit the list for the derived screen-area ladder.)"
+            "SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly the metric a "
+            "screen-filling object produces. (Omit the list for the derived "
+            "screen-area ladder.)"
         )
     return explicit_coverage
 

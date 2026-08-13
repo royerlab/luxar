@@ -417,8 +417,8 @@ class Node:
         node occupies at least half the screen; one level coarser per halving
         of occupied area) and a partition tile anchors at ``1.0``
         (fills-screen). The default ``selector="coverage"`` is the legacy
-        diagonal metric (projected bbox diagonal over a quarter of the viewport
-        diagonal, bounded by ``MAX_COVERAGE_FRACTION`` = 4.0), kept for
+        diagonal metric (projected bbox diagonal over half the fitted screen
+        axis, bounded by ``MAX_COVERAGE_FRACTION`` = 4.0), kept for
         hand-authored ladders and existing datasets whose values were tuned in
         those units. Children are added via the inherited ``add_*`` methods on
         the returned ``Group``, each carrying a ``coverage_fraction`` attribute,

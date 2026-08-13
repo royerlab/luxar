@@ -500,3 +500,161 @@ class TestMaxPaddedBoxVoxels:
         plan.boxes[1].budget = 0  # the largest padded box is now unbudgeted
         # remaining budgeted boxes pad to 20 in x -> 16*16*20
         assert max_padded_box_voxels(plan) == 16 * 16 * 20
+
+
+# ── Split planes: retained by the plan, carried into the fitted partition ──
+#
+# The planner has always BEEN a recursive BSP; it just discarded the planes,
+# leaving the fitted partition unable to say how its parts stack up and the
+# viewer guessing from part centroids (not a valid painter's order — it pops at
+# the seams as the camera orbits, #1555).
+
+
+def _plan_leaf_labels(node: dict) -> list[int]:
+    if "part" in node:
+        return [node["part"]]
+    return _plan_leaf_labels(node["left"]) + _plan_leaf_labels(node["right"])
+
+
+def test_plan_partition_retains_its_split_planes():
+    """Leaves name every box exactly once, and each plane separates its subtrees."""
+    V = _corner_blobs()
+    plan = plan_volume(
+        V,
+        _density(n_features_reference=40, k_star_reference=600),
+        cell=8,
+        min_leaf=16,
+        max_leaf=32,
+    )
+    assert plan.n_boxes > 1, "need a split plan for this to test anything"
+    assert plan.bsp_tree is not None
+    assert sorted(_plan_leaf_labels(plan.bsp_tree)) == list(range(plan.n_boxes))
+
+    def check(node: dict) -> None:
+        if "part" in node:
+            return
+        axis, split = node["axis"], node["split"]
+        assert axis in (0, 1, 2)
+        # Boxes are half-open [lo, hi) and `left` means `coord < split`, so a
+        # left box must END at or before the plane and a right box START at or
+        # after it — the invariant the painter's traversal rests on.
+        for label in _plan_leaf_labels(node["left"]):
+            assert plan.boxes[label].box[2 * axis + 1] <= split
+        for label in _plan_leaf_labels(node["right"]):
+            assert plan.boxes[label].box[2 * axis] >= split
+        check(node["left"])
+        check(node["right"])
+
+    check(plan.bsp_tree)
+
+
+def test_plan_json_round_trips_the_split_planes():
+    plan = plan_volume(
+        _corner_blobs(),
+        _density(n_features_reference=40, k_star_reference=600),
+        cell=8,
+        min_leaf=16,
+        max_leaf=32,
+    )
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "plan.json"
+        plan.to_json(path)
+        assert FitPlan.from_json(path).bsp_tree == plan.bsp_tree
+
+
+def test_a_plan_json_without_split_planes_still_loads():
+    """A plan written before the field existed must not break the merge."""
+    import json
+    import tempfile
+
+    plan = FitPlan(
+        volume_shape=[8, 8, 8],
+        boxes=[PlanBox(box=[0, 8, 0, 8, 0, 8], n_features=1, budget=1)],
+        overlap=0,
+        feature_method="peaks",
+        min_leaf=4,
+        max_leaf=8,
+    )
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "plan.json"
+        plan.to_json(path)
+        raw = json.loads(path.read_text())
+        raw.pop("bsp_tree", None)
+        path.write_text(json.dumps(raw))
+        assert FitPlan.from_json(path).bsp_tree is None
+
+
+def test_fit_planned_labels_parts_by_box_not_by_position(monkeypatch):
+    """Boxes that fit nothing are skipped, so the Nth PART is not the Nth BOX.
+
+    Stubs the per-box fit (the real one is far too slow for a unit test) and
+    makes box 1 produce nothing: the emitted tree must name the two survivors
+    0 and 1, with the plane that separated boxes 1 and 2 collapsed away.
+    """
+    import importlib
+
+    from luxar.gsplats.tree import GSplatPartition
+
+    # import_module, not `import ... as`: the package re-exports the FUNCTION
+    # `fit_planned`, which shadows the submodule of the same name.
+    fit_planned_mod = importlib.import_module("luxar.gsplats.planner.fit_planned")
+
+    plan = FitPlan(
+        volume_shape=[30, 4, 4],
+        boxes=[
+            PlanBox(box=[0, 10, 0, 4, 0, 4], n_features=1, budget=10),
+            PlanBox(box=[10, 20, 0, 4, 0, 4], n_features=1, budget=10),
+            PlanBox(box=[20, 30, 0, 4, 0, 4], n_features=1, budget=10),
+        ],
+        overlap=0,
+        feature_method="peaks",
+        min_leaf=4,
+        max_leaf=16,
+        bsp_tree={
+            "axis": 0,
+            "split": 10.0,
+            "left": {"part": 0},
+            "right": {
+                "axis": 0,
+                "split": 20.0,
+                "left": {"part": 1},
+                "right": {"part": 2},
+            },
+        },
+    )
+
+    def fake_fit_one_box(V, b, pad, cap, **kwargs):
+        z0, z1 = b.box[0], b.box[1]
+        if z0 == 10:  # box 1 legitimately yields nothing
+            return (
+                np.zeros((0, 3), np.float32),
+                np.zeros((0,), np.float32),
+                np.zeros((0, 6), np.float32),
+            )
+        centers = np.stack(
+            [
+                np.linspace(z0 + 1, z1 - 1, 5),
+                np.full(5, 2.0),
+                np.full(5, 2.0),
+            ],
+            axis=1,
+        ).astype(np.float32)
+        chol = np.zeros((5, 6), np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        return centers, np.full(5, 0.5, np.float32), chol
+
+    monkeypatch.setattr(fit_planned_mod, "_fit_one_box", fake_fit_one_box)
+
+    node = fit_planned_mod.fit_planned(
+        np.zeros((30, 4, 4), np.float32), plan, partition=True, verbose=False
+    )
+    assert isinstance(node, GSplatPartition)
+    assert node.n_children == 2
+    assert node.bsp_tree == {
+        "axis": 0,
+        "split": 10.0,
+        "left": {"part": 0},
+        "right": {"part": 1},
+    }

@@ -309,8 +309,9 @@ def map_leaves(
     """Rebuild the tree with ``fn`` applied to every leaf, preserving its shape.
 
     Walks the (immutable, frozen) tree depth-first and returns a NEW tree of the
-    same shape — same group kinds, ``GSplatPartition.max_elements``, and per-node
-    ``meta`` — in which each :class:`GSplatLeaf` is replaced by ``fn(leaf)``
+    same shape — same group kinds, ``GSplatPartition.max_elements`` and
+    ``bsp_tree``, and per-node ``meta`` — in which each :class:`GSplatLeaf` is
+    replaced by ``fn(leaf)``
     (``fn`` typically returns a transformed leaf). This is the write-side
     workhorse for tree-aware ops (e.g. ``gsplat transform`` on a
     ``kind=partition``) that the flat :class:`~luxar.gsplats.gsplat_data.GSplatData`
@@ -328,6 +329,14 @@ def map_leaves(
             children=[map_leaves(c, fn) for c in node.children],
             max_elements=node.max_elements,
             meta=dict(node.meta),
+            # Part count and order are preserved by construction (one mapped leaf
+            # per input leaf), so the split planes still describe this partition.
+            # CAVEAT for callers: `fn` may MOVE centers, and `split` is a
+            # coordinate in the centers' own space — a caller that transforms
+            # geometry owns re-mapping this (see `map_serialized_bsp_tree`).
+            # Dropping it here instead would silently downgrade every partition
+            # that merely gets re-laddered or intensity-scaled.
+            bsp_tree=node.bsp_tree,
         )
     raise TypeError(  # pragma: no cover - guards against an unknown node type
         f"Unknown gsplat node type: {type(node).__name__}"
@@ -359,6 +368,8 @@ def without_meta_key(node: GSplatNode, key: str) -> GSplatNode:
             children=[without_meta_key(c, key) for c in node.children],
             max_elements=node.max_elements,
             meta=new_meta,
+            # Scrubbing a meta key changes no geometry — keep the split planes.
+            bsp_tree=node.bsp_tree,
         )
     raise TypeError(  # pragma: no cover - guards against an unknown node type
         f"Unknown gsplat node type: {type(node).__name__}"

@@ -119,6 +119,26 @@ def add_gsplats_impl(
         # branch.
         scene._validate_dimension_count(ctr_arr, name, data_type="centers")
 
+        # Node-attrs gate (#1534) — the GSplats peer of the Points/Lines hoist
+        # (#1529). ``partition=`` is this adder's only split path (this module
+        # has no substitutive_lod=/additive_lod=/lod_group= door — those live
+        # on ``add_gsplats_from_data``, a different adder), and it forwards the
+        # non-compositing remainder of ``**attrs`` to each synthesised
+        # ``part_i`` — so a bad attr used to be refused only from inside the
+        # first part, by which point the wrapper's childless ``kind=partition``
+        # group was already on disk. Below the colours and dimension-count
+        # gates above (same precedence those already keep) and above the
+        # partition branch, so nothing is written before it runs. The flat
+        # writer below still validates the same dict once more inside
+        # ``write_gsplats`` — the validator is read-only, so running it here on
+        # the live ``attrs`` (not a copy) is safe and idempotent.
+        from ....io._compiler.node_common import (
+            GSPLATS_RESERVED_ATTRS,
+            validate_render_attrs,
+        )
+
+        validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
+
         # Apply compiler-level auto-partition heuristic (opt-in; default
         # off). User-explicit ``partition=`` always wins.
         partition = resolve_auto_partition(scene, n_splats, partition)

@@ -14,9 +14,11 @@ import type { BlendingMode } from './blending';
  *   level coarser per halving of occupied area); a partition tile anchors at
  *   1.0 (the tile alone fills the screen).
  * - `'coverage'` (legacy, and explicit `coverage_fractions=[...]` lists): the
- *   diagonal metric — projected bbox diagonal / (FILL_FACTOR=0.25 × viewport
- *   diagonal), thresholds in 0..4 (whole-object derived ladders spanned 0..2,
- *   partition-bound ones reach 4.0).
+ *   diagonal metric — projected bbox diagonal / (FILL_FACTOR=0.5 ×
+ *   min(viewport.width, viewport.height), the fitted screen axis — see the
+ *   FILL_FACTOR doc in `scene/lod-group-registry.ts`), thresholds in 0..4
+ *   (whole-object derived ladders spanned 0..1, partition-bound ones reach
+ *   4.0).
  *
  * Children are arbitrary geometry subtrees (points / lines / gsplats /
  * nested specialized groups).

@@ -706,10 +706,18 @@ class TestExtendToAll:
     ) -> None:
         """The pre-write gate covers the ATTRS, not just `extend_to_all`.
 
-        A typo'd `colormap` (or `blending`, or any unknown key) is caught by the
-        same `validate_render_attrs` the child write runs — but the child runs it
-        after the decimation and after `add_lod_group` created the group, so it
-        left the same childless kind=lod group in an incomplete store.
+        A typo'd `colormap` (or `blending`, or any unknown key) is caught by
+        `validate_render_attrs`. Since #1534 that check runs at the very top of
+        `add_mesh_impl`, above every structural branch (this substitutive one
+        included) and above `extend_to_all` resolution — so it fires before any
+        decimation or `add_lod_group` call happens at all, not merely before the
+        finest child's own write. Pre-#1534 the substitutive branch already ran
+        this same validator (just after resolving `extend_to_all`, and inside
+        the wrapper dispatch rather than the adder entry), so this call was
+        already refused before anything was written either way; what changed is
+        only the precedence against `extend_to_all` — see
+        `TestMeshSubstitutiveNodeAttrsGateOutranksExtendToAll` in
+        `tests/group/lod/test_source_validation.py` for that half.
         """
         verts, faces = octasphere(3)
         store = tmp_path / "attr.luxar.zarr"
