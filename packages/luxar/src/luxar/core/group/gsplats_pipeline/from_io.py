@@ -402,7 +402,9 @@ def graft_gsplat_node(
         # here made every `fit --tiling content` result ungraftable.
         cap = int(node.max_elements)
         if cap < 1:
-            cap = max(total_splats(child) for child in node.children)
+            # Floored at 1: an all-empty partition would otherwise derive a cap
+            # of 0 and trip the very validator this branch exists to satisfy.
+            cap = max(1, max(total_splats(child) for child in node.children))
         wrapper = parent_node.add_partition_group(
             name=name,
             display_type="gsplats",

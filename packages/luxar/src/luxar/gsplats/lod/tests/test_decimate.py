@@ -134,6 +134,19 @@ def test_prefix_is_a_subset_of_the_input() -> None:
     assert all(tuple(c) in src for c in np.asarray(out.centers).tolist())
 
 
+def _mass(d: GSplatData) -> float:
+    a = np.asarray(d.amplitudes, dtype=np.float64)
+    chol = np.asarray(d.cholesky_factors, dtype=np.float64)
+    return float(np.sum(a * np.prod(chol[:, [0, 2, 5]], axis=1)))
+
+
+# A merge conserves mass by construction (each representative carries its
+# cluster's combined mass, and the reduction rescales to pin the total), so the
+# tolerance is tight on purpose: a loose band would pass a merge that quietly
+# threw a third of the object away.
+_MASS_TOL = 0.01
+
+
 def test_merge_synthesises_representatives_and_keeps_mass() -> None:
     """The merge family is NOT a subset: it summarises, conserving total mass.
 
@@ -148,13 +161,40 @@ def test_merge_synthesises_representatives_and_keeps_mass() -> None:
     synthesised = [c for c in np.asarray(out.centers).tolist() if tuple(c) not in src]
     assert synthesised, "merge should produce representatives, not a subset"
 
-    def mass(d: GSplatData) -> float:
-        a = np.asarray(d.amplitudes, dtype=np.float64)
-        chol = np.asarray(d.cholesky_factors, dtype=np.float64)
-        return float(np.sum(a * np.prod(chol[:, [0, 2, 5]], axis=1)))
+    ratio = _mass(out) / _mass(data)
+    assert abs(ratio - 1.0) < _MASS_TOL, f"merge lost/gained mass: ratio={ratio:.3f}"
 
-    ratio = mass(out) / mass(data)
-    assert 0.5 < ratio < 2.0, f"merge lost/gained mass: ratio={ratio:.3f}"
+
+@pytest.mark.parametrize("target", [340, 700, 1234])
+def test_merge_conserves_mass_at_an_awkward_target(target) -> None:
+    """Mass survives targets that are NOT a whole fraction of the input.
+
+    The merge used to reduce by an integer FACTOR — the only counts it could
+    land on were N/2, N/3, ... — and trimmed the surplus away to reach anything
+    in between. Each discarded representative carries its whole cluster's mass,
+    so a 340-of-1000 request (factor 2 -> 500 representatives -> drop 160) came
+    back 27% dimmer: the one property merge exists for, lost on most targets.
+    """
+    data = _cloud(1000)
+    out = decimate(data, target=target, method="merge")
+    assert out.n_splats <= target
+    ratio = _mass(out) / _mass(data)
+    assert abs(ratio - 1.0) < _MASS_TOL, f"merge lost/gained mass: ratio={ratio:.3f}"
+
+
+@pytest.mark.parametrize("target", [700, 900, 999])
+def test_explicit_merge_honours_a_target_above_the_crossover(target) -> None:
+    """`-m merge` above 50% is a legal request, and must not silently halve.
+
+    ``auto`` picks prefix up there, but the family is user-selectable and the
+    contract is "at most target, and close to it". An integer compression factor
+    is at least 2, so the old merge path answered every one of these with N/2 —
+    500 splats for a 900 request.
+    """
+    data = _cloud(1000)
+    out = decimate(data, target=target, method="merge")
+    assert out.n_splats <= target
+    assert out.n_splats >= 0.98 * target
 
 
 def test_decimate_rejects_a_bad_target() -> None:

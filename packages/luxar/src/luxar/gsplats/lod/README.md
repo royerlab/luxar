@@ -31,7 +31,7 @@ is built only on demand.
 | File | Role |
 |------|------|
 | `additive.py` | additive axis: ordering + ladder (`make_additive_lod`, `compute_additive_order`) |
-| `substitutive.py` | substitutive axis orchestrator (`make_substitutive_lod`, `_reduce_one_level`, `_pack_level`) |
+| `substitutive.py` | substitutive axis orchestrator (`make_substitutive_lod`, `merge_to_count` — one level, an exact representative count rather than an integer factor, `_reduce_one_level`, `_pack_level`) |
 | `decimate.py` | `decimate` — reduce a dataset to a TARGET SPLAT COUNT, returning one flat `GSplatData` rather than a structure. Wraps the two builders above behind the blunt question "make this smaller": `merge` (a one-level substitutive reduction) vs `prefix` (a prefix of the additive ordering), with `auto` following the measured crossover at 50% kept. Merging leads by 3–4 dB below that, the prefix above it — numbers and method in the module docstring. CLI: `luxar gsplat decimate` |
 | `pyramid.py` | `make_lod_pyramid` — chains substitutive (outer) × additive (inner) |
 | `recipes.py` | intent-first recipe layer (`build_recipe`, `RecipeParams`): composes the builders above into the `flat`/`stream`/`levels`/`tiles`/`overview`/`adaptive` topologies (CLI `gsplat lod --recipe`) |

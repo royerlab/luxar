@@ -43,7 +43,6 @@ Quality falls smoothly (~3-4 dB per halving) with no knee, so there is no single
 
 from __future__ import annotations
 
-import math
 from typing import Literal, Optional, Sequence, Union
 
 import numpy as np
@@ -51,7 +50,7 @@ from arbol import aprint, asection
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lod.additive import compute_additive_order
-from luxar.gsplats.lod.substitutive import make_substitutive_lod
+from luxar.gsplats.lod.substitutive import merge_to_count
 from luxar.utils.lod_methods import AutoOrMethod as AdditiveOrdering
 
 #: Which reduction FAMILY to use — distinct from `AdditiveOrdering`, which
@@ -129,7 +128,8 @@ def decimate(
             :func:`compute_additive_order` (``auto`` / ``self_energy`` /
             ``mass`` / ``greedy`` / ``radial`` / ...).
         device: Device for the clustering pass (merge only).
-        seed: Seed for the clustering pass (merge only).
+        seed: Seed for the ``random`` ordering (prefix only; every other
+            ordering, and the clustering, is deterministic).
         coarsen_dims: Center-column indices merging may combine over; the rest
             are hard barriers (merge only). Default: all dims.
         lloyd_iterations: Lloyd refinement passes (merge only).
@@ -140,7 +140,11 @@ def decimate(
         Returns the input unchanged when ``target`` resolves to the full count.
         ``merge`` can land slightly under the request — the clustering drops
         degenerate (empty / non-positive-mass) clusters, so a 165,340 ask on the
-        1.65M-splat reference dataset yields 165,276.
+        1.65M-splat reference dataset yields 165,276. The one case that lands
+        OVER is a ``coarsen_dims`` target below the number of barrier groups:
+        every group keeps at least one representative rather than whole
+        timepoints/channels being deleted to hit a count (the reduction says so
+        on the console).
 
     Raises:
         ValueError: on an out-of-range target or an unknown method.
@@ -167,39 +171,24 @@ def decimate(
             keep = np.asarray(order)[:n_target]
             out = _subset(data, keep)
         else:
-            # `make_substitutive_lod` reduces by an INTEGER per-level factor, so
-            # the counts it can land on are quantised (N/2, N/3, N/4, ...) and a
-            # requested count generally falls between two of them. Taking
-            # ceil(N/target) would always land on the count BELOW the request —
-            # asking for 10% of 1.65M returned 9.1%, which reads as the tool
-            # ignoring the number you gave it. So undershoot the FACTOR instead
-            # (floor), landing on the first achievable count at or above the
-            # target, then trim the surplus with the additive ordering. The
-            # result is the requested count exactly, still merged rather than
-            # merely subset.
-            factor = max(2, int(math.floor(n_in / n_target)))
-            reduced = make_substitutive_lod(
+            # Ask the merge for the requested count DIRECTLY. The obvious route
+            # — `make_substitutive_lod` — reduces by an INTEGER per-level factor,
+            # so the counts it can land on are quantised (N/2, N/3, N/4, ...) and
+            # a request generally falls between two of them: ceil(N/target)
+            # undershoots (a 10% ask on 1.65M returned 9.1%), and floor(N/target)
+            # overshoots and would need the surplus trimmed away — which throws
+            # out representatives that carry a whole cluster's mass, dimming the
+            # object by up to a third and losing exactly the property merging
+            # exists for. `merge_to_count` asks the same operator for M = target
+            # bins instead, so nothing is discarded and any target is reachable
+            # (a factor >= 2 could never honour a target above half the input).
+            out = merge_to_count(
                 data,
-                compression_factor=factor,
-                levels=1,
-                method="auto",
+                n_target=n_target,
                 lloyd_iterations=lloyd_iterations,
                 device=device,
-                seed=seed,
                 coarsen_dims=coarsen_dims,
-                verbose=verbose,
             )
-            coarse = reduced.at_substitutive(reduced.n_substitutive - 1)
-            out = GSplatData(
-                centers=coarse.centers,
-                amplitudes=coarse.amplitudes,
-                cholesky_factors=coarse.cholesky_factors,
-                colors=coarse.colors,
-                truncation_radius=data.truncation_radius,
-            )
-            if out.n_splats > n_target:
-                order = compute_additive_order(out, method=prefix_method, seed=seed)
-                out = _subset(out, np.asarray(order)[:n_target])
         if verbose:
             aprint(f"Result: {out.n_splats:,} splats")
         return out
