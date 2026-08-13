@@ -123,7 +123,14 @@ was already on disk, and without the type check a right-length list with one
 mistyped OR mis-shaped entry (an `ndarray` of an unsupported shape included —
 `check_image_label_type` validates shape too) used to be refused only after
 the OTHER arrays of that same finest child were already on disk too (#1491)
-— an equally plausible authoring mistake, stranding the same way.
+— an equally plausible authoring mistake, stranding the same way. The GSplats
+graft door's one-flat-leaf label gate
+(`core/group/gsplats_pipeline/from_io.py`'s
+`_reject_labels_on_a_grafted_wrapper` / `_validate_labelled_leaf_length`,
+#1505) calls it too, for the analogous reason one level up: without it, a
+wrong-length value on that exempt leaf used to be refused only from inside
+`part_0`'s own leaf write, with the `kind=partition` wrapper this gate is
+supposed to guard already on disk.
 
 **Deliberate behavioural divergence** introduced by adding the type check:
 checks now run in a fixed order — length/bounds first, THEN every entry's
