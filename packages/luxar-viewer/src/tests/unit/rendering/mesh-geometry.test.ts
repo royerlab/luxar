@@ -98,8 +98,8 @@ describe('createMeshIndexAttribute', () => {
   it('keys the dtype on vertexCount, NOT on the largest index present', () => {
     // vertexCount is fixed for the node; the largest index actually drawn changes with
     // the slice. Keying off the observed maximum would let the dtype differ between
-    // epochs, defeating the buffer reuse — and re-binding a drawn geometry's index with
-    // a different dtype is the attribute-identity change WebGPU does not tolerate.
+    // epochs, defeating the buffer reuse — and every dtype flip on an already-drawn
+    // geometry costs a `setIndex` that orphans the old attribute's GPU buffer.
     const sparse = new Uint32Array([0, 1, 2]); // max index 2, but a big node
     expect(createMeshIndexAttribute(sparse, 200_000, 1).array).toBeInstanceOf(Uint32Array);
     const dense = new Uint32Array([60000, 60001, 60002]); // large indices, small node
@@ -932,8 +932,8 @@ describe('capacity sizing — a reveal ladder must not orphan GPU buffers (#1521
     expect(geometry.getAttribute('position').count).toBe(140_000);
     expect(geometry.index!.count).toBe(70_000 * 3);
     // And the dtype is chosen from the TOTAL, so it cannot flip Uint16 → Uint32 on
-    // an already-drawn geometry when the reveal crosses 65,536 vertices — the
-    // attribute-identity change the WebGPU backend does not tolerate.
+    // an already-drawn geometry when the reveal crosses 65,536 vertices — the flip
+    // that would force a `setIndex` and orphan the previous level's GPU buffer.
     expect(geometry.index!.array).toBeInstanceOf(Uint32Array);
   });
 

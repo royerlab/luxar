@@ -375,10 +375,12 @@ export function createMeshIndexAttribute(
  * stale indices, which is safe precisely because `drawRange` bounds the draw; three
  * clamps it to `index.count`.
  *
- * Reuse also means the index attribute OBJECT is stable after the first commit, so —
- * unlike a per-epoch `setIndex` — a slice move leaves three's cached `RenderObject`
- * untouched. That is why this does not participate in the `attributesRebuilt`
- * eviction contract: it never rebinds anything after the build.
+ * Reuse also means the index attribute OBJECT is stable after the first commit, so a
+ * slice move rebinds nothing. It does not participate in the `attributesRebuilt`
+ * eviction contract either way: the index contributes only its PRESENCE to three's
+ * geometry cache key, and the WebGPU backend re-derives `indexFormat` from
+ * `index.array` on every draw, so even the dtype-widening fall-through below needs no
+ * `RenderObject` eviction — its only cost is the orphaned buffer.
  *
  * A consequence worth knowing when reading counts elsewhere: `index.count` is now the
  * CAPACITY, not what is drawn. `drawRange.count` is the drawn quantity — which is why
@@ -787,8 +789,9 @@ function refreshMeshColors(
  * `RenderObject` cache after a vertex-attribute rebind (its cached `vertexBuffers`
  * keeps pointing at the OLD GPU buffer/pipeline otherwise) — the same contract the
  * points/lines/gsplats commits follow via `invalidateRenderObjectFor`. A pure slice
- * move rebinds no vertex attribute (only `setIndex` runs), so it returns `false` and
- * the commit skips the eviction. The geometry is mutated in place, so no caller
+ * move rebinds nothing at all — the index is written into its existing buffer
+ * ({@link applyMeshIndices}) — so it returns `false` and the commit skips the
+ * eviction. The geometry is mutated in place, so no caller
  * needs it returned.
  */
 export function updateMeshGeometry(
@@ -907,8 +910,10 @@ export function updateMeshGeometry(
   // first-commit grow, so it never changes attribute format. Only authored,
   // non-float32-RGB colors change format ONCE on first install (placeholder
   // `float32x3` → e.g. `unorm8x4`) and never again, so there is no per-rebuild dtype
-  // flip — the WebGPU attribute-identity hazard the surrounding code and
-  // `createMeshIndexAttribute` guard against. `refreshMeshColors` re-validates that
+  // flip — the WebGPU attribute-identity hazard `createMeshGeometry` documents for the
+  // attribute SET. (The index's own dtype stability is a separate, cheaper concern:
+  // see `createMeshIndexAttribute`, where a flip costs a buffer, not a pipeline.)
+  // `refreshMeshColors` re-validates that
   // same format on every refresh and reports `false` (forcing a rebind) if it ever
   // disagrees, rather than assuming it silently still holds.
   //
