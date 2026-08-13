@@ -819,8 +819,8 @@ class TestPartitionBoundAnchorPoints:
         """CHARACTERIZATION of the documented blind spot, not an endorsement.
 
         A hand-built ``kind=partition`` holding exactly ONE part is not a tiling —
-        that part IS the whole object — so the fills-screen anchor is a factor of 4
-        too coarse for it. ``derive_coverage_fractions`` gives it the tile anchor
+        that part IS the whole object — so the fills-screen anchor is a factor of 2
+        too coarse for it (in screen-area units: tile 1.0 vs whole-object 0.5). ``derive_coverage_fractions`` gives it the tile anchor
         (``PARTITION_FINEST_AREA`` = 1.0) anyway, and cannot do otherwise: part 0's
         ladder is derived at ``add_points`` time, when the sibling count does not
         exist yet (part 1 may never be added). That is the caveat spelled out in
