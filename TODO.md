@@ -182,12 +182,67 @@ to ship after). Sequencing is at the bottom.
     is migrated yet.
   - **⚠ Step 4 has a licensing trigger, not just a size one.** `gsplats_tribolium`,
     `gsplats_acto3d_heart`, `gsplats_tng_cosmic_web`, and `milky_way_gaia_3m` are
-    `local-compute` ("cannot redistribute even the derived product") yet their
-    derived files are committed in LFS **today** (see `demos/data/README.md`). All
-    four must be `git rm`-ed before the repo goes public, independently of the
-    Zenodo upload — and those demos must *not* be migrated to the fetch helper (it
-    returns `None` for a `local-compute` dataset, which would silently start a
-    from-scratch rebuild instead of loading the file that is right there).
+    `local-compute` ("cannot redistribute even the derived product"). ✅ **All four
+    `git rm`-ed 2026-08-12**, with the caches seeded on this Mac and obsidian
+    first so local use is unaffected, and `load_precomputed_gsplats` taught to
+    read the manifest: an absent `local-compute` dataset now prints its licensing
+    reason and returns `None` (→ the demo rebuilds from the raw source) instead
+    of the old "run `git lfs pull`", which pointed at a file that no longer
+    exists. The Gaia demo had no download path at all and now resolves
+    cache-first with an actionable error (see #1461 for the ESA-archive build).
+  - **🔴 REMOVAL IS NOT COMPLETE UNTIL HISTORY IS CLEANED — one launch-time
+    operation, and it is gated.** GitHub serves LFS objects for any commit and
+    does NOT garbage-collect unreferenced ones (docs: *"the Git LFS objects still
+    exist on the remote storage and will continue to count toward your Git LFS
+    storage quota"*; the only documented remedies are deleting the repository or
+    contacting Support — a widely repeated "30-day auto-GC" is community
+    folklore GitHub does not guarantee). Enumerated 2026-08-12 by walking every
+    commit that touched the paths: **51 distinct LFS objects, 318.9 MB** (acto3d
+    36 / tng 4 / tribolium 10 / gaia 1 — each was re-fitted several times).
+    Regenerate the list before acting rather than trusting a stale copy.
+    - **ORDER, corrected by GitHub Support 2026-08-12.** We first asked Support
+      to purge the 51 still-referenced OIDs directly, reasoning that they act on
+      OIDs and a rewrite would leave them unfindable. They declined that shape:
+      *"GitHub's documented process does not support directly deleting an
+      arbitrary subset of still-referenced Git LFS objects on request… Support
+      will only assist with full removal after the objects have been orphaned by
+      the history rewrite workflow."* **The rewrite comes FIRST; the ticket is
+      filed afterwards.**
+    - **Two blockers before the rewrite can run at all:**
+      1. **Branch protection refuses it.** `main` has `enforce_admins: true` and
+         `allow_force_pushes: false`, so a force-push is rejected for admins too.
+         Protection must be lifted and restored immediately after (6 required
+         checks incl. `review/gate` to re-add).
+      2. **The PR queue must be drained** (17 open at time of writing, and the
+         fleet keeps adding). The rewrite invalidates every open PR, every agent
+         worktree, and `state/agent-prs.jsonl` — so `luxar-agent pause` first.
+    - **Runbook:**
+      1. `luxar-agent pause`; drain/merge or close all open PRs.
+      2. `brew install git-filter-repo` (not installed on this Mac).
+      3. Fresh clone, then:
+
+             git filter-repo --invert-paths \
+               --path packages/luxar/src/luxar/demos/data/gsplats_tribolium \
+               --path packages/luxar/src/luxar/demos/data/gsplats_acto3d_heart \
+               --path packages/luxar/src/luxar/demos/data/gsplats_tng_cosmic_web \
+               --path packages/luxar/src/luxar/demos/data/milky_way_gaia_3m.zarr.zip
+
+         KEEP the output: Support wants the `NOTE: First Changed Commit(s)` block
+         and, if printed, `NOTE: There were LFS Objects Orphaned by this rewrite`
+         plus the file it names.
+      4. Verify `git log --all -- <path>` is empty for all four paths, and that
+         blob `bae6bf061658` (the RAW, non-LFS Gaia zip, 39.58 MB, from commits
+         `b3032cab7` / `732ebc968`) is gone. It was committed before that path
+         was LFS-tracked, so the rewrite is the ONLY thing that removes it — a
+         purge structurally cannot, and it is the CC BY-**NC** dataset.
+      5. Lift branch protection → `git push --force --mirror origin` → restore
+         protection. ⚠ `--mirror` deletes remote refs absent locally.
+      6. File the Support ticket with repo name, affected-PR count, and the
+         filter-repo NOTE output.
+      7. Re-clone everywhere: this Mac's worktrees and obsidian's three checkouts
+         (`luxar-main`, `luxar-fullfit`, `luxar-encode`).
+    - Zero forks today, so no third-party copies to chase. The repo is still
+      private, so nothing is being distributed while this waits.
   - **License audit — DONE (web-verified 2026-07-15).** A gsplat fit / point
     catalog is a *derived* product (lossy transform, not the raw voxels/pixels),
     which is broadly redistributable — but "derived" does **not** launder three
