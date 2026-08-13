@@ -20,12 +20,17 @@ luxar gsplat fit --help      # a single command and all its options
 
 The list of commands on this page is checked against the live Typer application by
 an automated test —
-`packages/luxar/src/luxar/cli/tests/test_docs_command_coverage.py`. The test walks
+`packages/luxar/src/luxar/cli/tests/test_docs_command_coverage.py`. One check walks
 the registered command tree, extracts every `luxar ...` invocation from the code
 blocks on this page, and compares the two sets in **both directions**: a newly
 added command must be documented here, and a documented command that was removed,
 renamed, or hidden must be pruned — either way the test fails.
-(Hidden/internal commands and groups are excluded.)
+(Hidden/internal commands and groups are excluded.) A second check in the same file
+walks every per-command section heading and verifies each option spelling its prose
+names in inline code against the live command's declared options — a heading that names a
+command GROUP is checked against the union of its subcommands' options instead,
+since a group's prose legitimately names its subcommands' flags — so a stale or
+invented flag fails too, not just a stale command path.
 
 ## Top-level commands
 
@@ -114,11 +119,27 @@ in [Formats & migration](./FORMAT_AND_MIGRATION.md).
 
 ```bash
 luxar gsplat info              # Dataset statistics (splat count, dimensions, bounds, LOD structure)
+luxar gsplat doctor           # Diagnose known problems (--fix repairs what is recoverable, in place)
 luxar gsplat napari           # Open a dataset in napari for visual inspection
 luxar gsplat view             # Open a .gsplats.zarr directly in the web viewer
 luxar gsplat compare          # Compare reconstruction quality vs a reference volume (PSNR/SSIM/MSE)
 luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing dataset, in place
 ```
+
+`doctor` is for the problems you cannot see: a dataset written by an older Luxar
+loads and renders fine while missing something a later version learned to record,
+or carrying metadata that went stale under an edit. Given a dataset path it prints
+the `info` report (suppress with `--no-info`), then a diagnosis, and exits non-zero
+while a problem is still standing — so it can gate a pipeline. Pass `--fix` to
+repair in place (an uncompressed `.gsplats.zarr` directory; unpack a `.zip` first),
+or `--json` to write the findings out for a machine.
+
+It currently diagnoses a `kind=partition` whose split planes (`bsp_tree`) are
+missing, or are present but disagree with where the parts actually sit. Without
+them the viewer orders parts by centroid, which is not a valid painter's order and
+pops at the seams under `normal`/`volumetric` blending; where the parts are
+disjoint the planes are recovered exactly from the part boxes. What cannot be
+repaired is reported with a remedy rather than guessed at.
 
 ### Editing & selection
 
@@ -126,6 +147,7 @@ luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing da
 luxar gsplat transform  # Apply spatial / intensity transforms (scale, rotate, translate, center)
 luxar gsplat merge      # Merge datasets (concatenation, new dimension, or channel colors)
 luxar gsplat cull       # Remove low-contribution splats while preserving visual quality
+luxar gsplat decimate   # Reduce to a TARGET SPLAT COUNT (one flat leaf): merge or prefix
 luxar gsplat filter     # Filter splats by multiple criteria (AND logic; percentile thresholds)
 luxar gsplat slice      # Slice splats by coordinate ranges (numpy-style syntax)
 luxar gsplat partition  # Partition into a single kind=partition file via spatial BSP
@@ -189,7 +211,7 @@ knobs of the chosen recipe — `-L/--levels` (default 3), `-K/--compression-fact
 (default 4 — level *i* targets `V / K**i` vertices) and `--subst-method` for `levels`;
 `-m/--add-method`, `--n-lods`, `--counts`, `--reveal-centre` and `--spatial-dims` for
 `reveal`. The output path is normalized to the
-canonical `<stem>.luxar.zarr`, so `-o out` writes `out.luxar.zarr`; that
+canonical `<stem>.luxar.zarr`, so an output argument of `out` writes `out.luxar.zarr`; that
 normalized path is what `--overwrite` replaces and what the same-path guard
 compares against.
 
@@ -224,7 +246,8 @@ other, not both.
 same shared parser, as on `luxar gsplat lod`. The centre defaults to the mesh's own
 bounding-box centre, so a surface far from the origin still grows from its middle. The
 **order** of `--spatial-dims` is significant: it pairs one-for-one with the centre's
-coordinates, which is why it is not sorted the way `--coarsen-dims` is. Use it to keep a
+coordinates, which is why it is not sorted the way a coarsen-dims barrier set is (there
+the order carries nothing, so sorting is free). Use it to keep a
 stacked time or channel column out of the distance, so shells do not expand through time.
 
 So, given an input and an output scene: `--recipe reveal --n-lods 4` for an

@@ -36,6 +36,7 @@ named, scale-ordered **representation topologies** (``flat`` / ``stream`` /
 from __future__ import annotations
 
 from luxar.gsplats.lod.additive import compute_additive_order, make_additive_lod
+from luxar.gsplats.lod.decimate import PREFIX_ABOVE_FRACTION, decimate
 from luxar.gsplats.lod.pyramid import make_lod_pyramid
 from luxar.gsplats.lod.recipes import (
     COMPOSED_RECIPES,
@@ -51,12 +52,14 @@ from luxar.gsplats.lod.substitutive import make_substitutive_lod
 __all__ = [
     "COMPOSED_RECIPES",
     "MATRIX_RECIPES",
+    "PREFIX_ABOVE_FRACTION",
     "RECIPE_NAMES",
     "RecipeName",
     "RecipeParams",
     "RecipeResult",
     "build_recipe",
     "compute_additive_order",
+    "decimate",
     "make_additive_lod",
     "make_lod_pyramid",
     "make_substitutive_lod",

@@ -245,19 +245,27 @@ level i's total splat count) and strictly ascending coarsest→finest; the
 coarsest child is always `0.0`. Being a count
 ratio, it is immune to non-displayed-dimension multiplicity (e.g. a stacked
 time axis inflates every level's count equally and cancels out). At render
-time the viewer multiplies `coverage_fraction` by the viewport diagonal (times
-a fill-factor constant of `0.25`) to get a pixel threshold, so a
+time the viewer multiplies `coverage_fraction` by the viewport's fitted screen
+axis (`min(width, height)` in pixels — the extent the camera framing actually
+fits, so the comparison holds across aspect ratio and not just viewport
+size — times a fill-factor constant of `0.5`) to get a pixel threshold, so a
 `coverage_fraction` of `1.0` activates once the object's projected bbox diagonal
-reaches about a quarter of the viewport diagonal — i.e. at any normal full-frame
+reaches half of the fitted screen axis — i.e. at any normal full-frame
 view — and coarser levels step in as it shrinks below that, identically on any
-monitor/viewport. (Same contract as
+monitor or viewport size. Across aspect ratio the switch point is *exact* for a
+landscape viewport (aspect >= 1) and within ~25% of that value for a portrait
+one, where the camera fit distance itself varies with aspect. (Same contract as
 `docs/guides/user/LUXAR_ZARR_FORMAT.md`.)
 
 **Which anchor the finest child gets.** A **whole-object** ladder (the `levels`
 recipe, and any `kind=lod` group whose levels are alternative renderings of the
 whole node) anchors its finest at `1.0`, so its values stay in `[0, 1]`. A ladder
-bound to a **spatial partition** anchors its finest at `4.0` = `1 / FILL_FACTOR`
-— the metric a screen-filling node produces — because a tile's projected diagonal
+bound to a **spatial partition** anchors its finest at `4.0` =
+`SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`
+— approximately the metric a screen-filling node produces (exact only near
+aspect ratio √3 ≈ 1.73; the real screen-fill metric ranges from ~2.8 at 1:1 to
+~7.4 at an ultrawide 32:9 — see the `FILL_FACTOR` doc in
+`scene/lod-group-registry.ts`) — because a tile's projected diagonal
 is intrinsically a fraction of the whole object's. That covers the `adaptive`
 recipe (one `kind=lod` group per tile) and the `overview` recipe (whose fine
 child *is* a `kind=partition`, reached by zooming in). See
@@ -283,10 +291,12 @@ The viewer renders ALL parts simultaneously; THREE.js per-mesh frustum culling
 selects visible parts. The partition writer uses recursive BSP (`median`,
 `midpoint`, or `sah` rule) to build spatially balanced parts.
 
-**`bsp_tree` (optional).** When the parts came from a single recursive BSP
-(the `to_spatial_partition` path — the `tiles`/`adaptive` recipes and the
-`gsplat partition` command), the root additionally carries the split-plane
-record of that BSP as a nested dict:
+**`bsp_tree` (optional).** When the parts came from a recursive axis-aligned
+decomposition, the root additionally carries that decomposition's split-plane
+record as a nested dict. Written by every partition producer that has one:
+the `to_spatial_partition` path (the `tiles`/`adaptive` recipes and the
+`gsplat partition` command), a content-tiled fit (the planner's own box
+recursion), a uniform-tiled fit and the batch-fit streaming merge:
 
 ```json
 { "axis": 0, "split": 12.5,
@@ -303,11 +313,31 @@ splits only ever fall on the first three center dims) and `split` coordinate
 Because these are BSP cells, a viewer can order the parts **exactly**
 back-to-front (painter's algorithm, Fuchs–Kedem–Naylor): recurse the far side
 of each split first — correct for any camera pose, including inside the volume.
-This matters only for order-dependent (`normal`/alpha-over) compositing; it is
-inert for additive/commutative rendering. Partitions that did NOT come from a
-single BSP (e.g. a streamed grid/content-box merge — `write_partition_streaming`)
-omit `bsp_tree`; a viewer then falls back to a per-part centroid-distance
-heuristic.
+This matters for order-dependent compositing (`normal`/alpha-over and
+`volumetric`); it is inert for additive/commutative rendering.
+
+Exactness holds wherever the parts are genuinely **disjoint** — every producer
+above except one. A **uniform**-tiled fit is the exception: its tiles are
+apodized and each part keeps its overlap band, so neighbouring parts really do
+share space and no exact part order exists. Its cuts are the midplanes of those
+bands, which confines misordering to the band rather than letting whole tiles
+swap; treat such a tree as a good approximation, not a guarantee.
+
+A partition may still omit `bsp_tree` — a pre-2026.7 store, a decomposition that
+is not axis-aligned, or a transform that could not carry the planes (see below).
+A viewer then falls back to a per-part centroid-distance heuristic, which is
+*not* a valid painter's order: it flips discretely as the camera moves and shows
+as popping at the seams between parts.
+
+**Keeping it valid.** `split` is a coordinate in the centers' own space, so any
+tool that moves centers must map the tree through the same affine or drop it —
+a stale tree is worse than none, since it still yields a plausible permutation
+and so degrades the ordering silently. Translation, per-axis scale and
+quarter-turn rotations map (a reflection also swaps each node's `left`/`right`);
+an arbitrary rotation shears the cells out of axis-alignment and cannot be
+represented, so `gsplat transform` drops the tree and says so. Likewise, a tool
+that DROPS parts must renumber the surviving leaves to the new `child_index`
+values — the leaf labels and the written part indices are the same numbering.
 
 ### Shape 5 — full pyramid (substitutive × additive, nested)
 

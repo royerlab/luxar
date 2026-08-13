@@ -7,9 +7,10 @@ size scalar (a triangle's extent comes from its own vertices, not a per-element
 radius/width/covariance), and neither an LOD nor a partition path *of its own*:
 ``add_mesh(substitutive_lod=...)`` decimates and ``add_mesh(partition=...)``
 splits the surface upstream, and this writer just sees one independent leaf per
-level or per part. (There is no ADDITIVE ladder for any writer to serve — a
-prefix of an index buffer is a holed surface, not a coarse one; see
-``MESH_NODE_SPEC.md`` §9.) What remains is: encode
+level or per part. (``write_mesh_multi_lod`` routes its additive levels through
+this same writer too, one call per level — but a prefix of an index buffer is a
+holed surface, not a coarser one, so what it writes is a REVEAL ladder, not an
+LOD; see ``MESH_NODE_SPEC.md`` §9.) What remains is: encode
 ``vertices`` + ``faces``, encode the optional per-vertex channels, stamp the
 attrs.
 

@@ -488,6 +488,22 @@ def write_gsplats_tree(
         raise
 
 
+def _stamp_optional_bsp_tree(
+    root: Any, provider: Optional[Callable[[], Optional[Dict[str, Any]]]]
+) -> None:
+    """Write the root's optional ``bsp_tree`` attr from a (possibly absent) provider.
+
+    Both "no provider" and "provider returned nothing" mean the same thing to a
+    reader — no split planes, fall back to a centroid order — so they collapse
+    here rather than at the call site.
+    """
+    if provider is None:
+        return
+    tree = provider()
+    if tree is not None:
+        root.attrs["bsp_tree"] = tree
+
+
 def write_partition_streaming(
     path: str | Path,
     part_nodes: Callable[[], Iterator["GSplatNode"]],
@@ -502,6 +518,7 @@ def write_partition_streaming(
     description: Optional[str] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
     barrier_dims: Optional[Sequence[int]] = None,
+    bsp_tree: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
 ) -> int:
     """Write a ``kind=partition`` file part-by-part, holding ≤1 part in memory.
 
@@ -519,10 +536,14 @@ def write_partition_streaming(
     ``position_bounds``), plus the v3.0 self-identifying header. Each part carries
     a ``child_index`` for napari-style sibling ordering — matching
     :func:`~luxar.io._compiler.gsplat_tree.write_gsplat_node`'s partition branch.
-    (The standalone branch additionally writes an optional ``bsp_tree`` split-plane
-    record when the parts came from a single BSP; a streamed grid/content merge has
-    no single tree, so this writer intentionally omits it and the viewer falls back
-    to a per-part centroid order.)
+    ``bsp_tree`` is a PROVIDER, not a value: it is called once, after the part loop
+    has run, and whatever it returns is written as the root's optional split-plane
+    attr (the same one the standalone branch writes). A callable because the
+    surviving part set — the thing the tree's leaf labels must be renumbered
+    against — is only known once the producer has finished skipping empty regions,
+    so the caller prunes inside the provider. Omit it, or return ``None``, and the
+    viewer falls back to a per-part centroid order, which is not a valid painter's
+    order and pops at the seams under order-dependent blending (#1555).
 
     The producer is responsible for skipping empty tile-regions (it must yield
     only non-empty subtrees). Compression is intentionally not supported here
@@ -589,9 +610,8 @@ def write_partition_streaming(
             raise ValueError("write_partition_streaming: no non-empty parts to write")
 
         # Root partition attrs — same set the GSplatPartition branch of
-        # write_gsplat_node emits (type/kind/display_type/max_elements/position_bounds).
-        # That branch may ALSO write an optional bsp_tree; a streamed merge has no
-        # single BSP tree, so this writer omits it (viewer falls back to centroids).
+        # write_gsplat_node emits (type/kind/display_type/max_elements/position_bounds
+        # + the optional bsp_tree).
         root.attrs["type"] = "group"
         root.attrs["kind"] = "partition"
         root.attrs["display_type"] = "gsplats"
@@ -599,6 +619,9 @@ def write_partition_streaming(
         bounds = _union_bounds(child_bounds)
         if bounds is not None:
             root.attrs["position_bounds"] = bounds
+        # Resolved only now: the provider needs the surviving part set, which the
+        # loop above has just finished determining.
+        _stamp_optional_bsp_tree(root, bsp_tree)
 
         # Self-identifying v3.0 header (disjoint from the node's structural attrs).
         root.attrs["format_version"] = FORMAT_VERSION
