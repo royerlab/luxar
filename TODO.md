@@ -412,7 +412,7 @@ to ship after). Sequencing is at the bottom.
     `make generate-gallery` (or `ONLY=id`). Output → `docs/images/gallery/`
     (gitignored staging); copy curated picks into `docs/images/readme/`. Per
     user calls: **DESI included** (astronomy), **cmu1_pathology dropped**. Next:
-    run the full sweep (incl. heavy datasets: `galaxy`/organoid/celegans need
+    run the full sweep (incl. heavy datasets: `gaia_milky_way`/organoid/celegans need
     generation), curate the winners, wire them into the README gallery table.
   - **LFS interaction (coordinate with R17):** README/doc images stay in-repo
     (GitHub must render them inline) — only the heavy *datasets* move to Zenodo.

@@ -549,7 +549,7 @@ Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric
 
 **Requires**: Internet access (Gaia DR3 TAP query or cached data). Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
-**Demonstrates**: Real astronomical data (Gaia space telescope), 3M star dataset, BP-RP photometric color-to-RGB conversion, galactocentric coordinate system, magnitude-dependent point radii.
+**Demonstrates**: Real astronomical data (Gaia space telescope), 3M star dataset, BP-RP photometric color-to-RGB conversion, galactocentric coordinate system, magnitude-dependent point radii, volumetric emission-absorption compositing on a mixed substitutive ladder, per-marker hover labels and a colour-swatch HTML legend built from the marker nodes.
 
 ---
 

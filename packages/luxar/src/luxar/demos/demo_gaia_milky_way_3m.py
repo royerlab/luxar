@@ -197,7 +197,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
     Raw Gaia data (zarr table) → Luxar scene (zarr)
 
     Args:
-        data_zarr_path: Path to extracted raw galaxy.zarr
+        data_zarr_path: Path to the extracted raw milky_way_gaia_3m.zarr
         output_path: Path for Luxar-formatted output
 
     Returns:
@@ -314,23 +314,26 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # detail it can resolve (the census demo uses the same wiring). The
             # `layer=True` flag rides onto the wrapper kind=lod group → one "Stars"
             # layer in the Layers panel.
-            # Volumetric emission–absorption blending (kappa 1.3) instead of
-            # plain additive: dense sight-lines through the disc self-shadow
-            # instead of saturating, which keeps the bulge from blowing out
-            # while the spiral-arm structure stays readable. Volumetric
-            # compositing bounds accumulated radiance (additive sums without
-            # bound), so it needs a hotter intensity than the old additive
-            # 0.031 — 0.075 = a 0–13.4 display range over the 0–32.3 data
-            # range in the Layers panel.
-            # kappa is DELIBERATELY unchanged by the 2026-08-02 ray-mass
-            # unification. This is a MIXED ladder: the coarse levels are lifted
-            # gsplats, whose tau = kappa*rayMass never carried the point
-            # shader's world-radius factor, so 1.3 still renders them exactly as
-            # before. What changes is the finest (Points) level, which used to
-            # be ~35x more transparent than the coarse levels it replaces
-            # (radius 0.035 * chord 0.826) and now matches them — the whole
-            # point of the fix. Rescaling kappa here would break the coarse
-            # levels instead.
+            # Volumetric emission–absorption blending instead of plain
+            # additive: dense sight-lines through the disc self-shadow instead
+            # of saturating, which keeps the bulge from blowing out while the
+            # spiral-arm structure stays readable.
+            # The three appearance knobs are tuned as ONE set (and pinned by
+            # tests/test_demo_gaia_milky_way_3m.py), because they all land on
+            # the same two shader terms: ray mass = falloff * opacity, optical
+            # depth tau = kappa * ray mass, emitted radiance = colour *
+            # intensity * ray mass * S(tau).
+            #   opacity 0.5 + kappa 0.12 keep tau low enough that the disc
+            #     stays translucent front to back — a heavier tau hides the far
+            #     side of the bulge behind the near side, which reads as a flat
+            #     silhouette rather than depth.
+            #   intensity 0.175 buys back the emission that the lower ray mass
+            #     gives up: a 0–5.7 display range over the 0–32.3 data range in
+            #     the Layers panel (the range is 1/intensity).
+            # All three ride on the wrapper kind=lod group, so every level of
+            # this MIXED ladder — lifted gsplats at the coarse levels, Points
+            # at the finest — composites with the same tau and the same gain,
+            # and the levels stay matched across an LOD switch.
             scene.add_points(
                 "Stars",
                 positions,
@@ -355,15 +358,24 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             typical_star_radius = (0.001 + 0.01 * 0.5**2) * SCALE  # Mid-brightness star
             marker_radius = typical_star_radius * 10
 
-            # The markers are PLAIN points (no substitutive LOD), so unlike the
-            # "Stars" node above they need kappa rescaled to survive the
-            # 2026-08-02 ray-mass unification: tau dropped its world-radius
-            # factor, so the old 1.3 would now absorb ~3.5x harder
-            # (1 / (0.35 x 0.826)). Preserving
+            # The markers keep their ORIGINAL authored look, so — unlike the
+            # retuned "Stars" node above — their kappa is not a free knob but a
+            # rescale of the historical 1.3 through the 2026-08-02 ray-mass
+            # unification: tau dropped its world-radius factor, so a bare 1.3
+            # would now absorb ~3.5x harder (1 / (0.35 x 0.826)). Preserving
             # the authored look is exactly kappa * radius * chord.
             MARKER_ABSORPTION = (
                 1.3 * marker_radius * float(np.sqrt(np.pi / np.log(100.0)))
             )
+
+            # One string per marker, used TWICE: as the node's hover label and
+            # as its legend row. Defined once so the tooltip and the legend
+            # cannot drift apart.
+            SUN_LABEL = "Sun — our star, 8.1 kpc from the Galactic Centre"
+            BETELGEUSE_LABEL = (
+                "Betelgeuse — red supergiant in Orion (~168 pc from the Sun)"
+            )
+            RIGEL_LABEL = "Rigel — blue supergiant in Orion (~265 pc from the Sun)"
 
             # Sun marker at the Sun's Galactocentric position
             r0_kpc = 8.122  # Sun-GC distance
@@ -378,7 +390,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
-                labels=["Sun — our star, 8.1 kpc from the Galactic Centre"],
+                labels=[SUN_LABEL],
                 layer=True,
             )
             aprint(f"  ✓ Sun at ({-r0_kpc * SCALE:.1f}, 0, 0)")
@@ -398,7 +410,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
-                labels=["Betelgeuse — red supergiant in Orion (~168 pc from the Sun)"],
+                labels=[BETELGEUSE_LABEL],
                 layer=True,
             )
             aprint("  ✓ Betelgeuse (red supergiant, 168 pc)")
@@ -418,7 +430,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
-                labels=["Rigel — blue supergiant in Orion (~265 pc from the Sun)"],
+                labels=[RIGEL_LABEL],
                 layer=True,
             )
             aprint("  ✓ Rigel (blue supergiant, 265 pc)")
@@ -480,7 +492,7 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
     """Load raw Gaia data from zip and convert to Luxar format.
 
     Args:
-        data_zip_path: Path to galaxy.zarr.zip
+        data_zip_path: Path to milky_way_gaia_3m.zarr.zip
         temp_dir: Temporary directory for extraction
 
     Returns:
@@ -490,7 +502,7 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
         if not data_zip_path.exists():
             aprint(f"❌ Error: Data file not found: {data_zip_path}")
             aprint("")
-            aprint("The galaxy.zarr.zip file should be in:")
+            aprint(f"The {data_zip_path.name} file should be in:")
             aprint(f"  {data_zip_path.parent}/")
             aprint("")
             aprint("To generate the dataset:")
