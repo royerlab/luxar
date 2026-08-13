@@ -112,7 +112,7 @@ category, what it needs, and whether you have already built it:
   7  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
   9  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
  25  gsplats_2d_cmu1_pathology              gsplats      medical        ⬇150MB GPU* LFS      cached
- 27  gsplats_3d_acto3d_heart                gsplats      microscopy     ⬇13MB GPU* LFS       cached
+ 27  gsplats_3d_acto3d_heart                gsplats      microscopy     ⬇13MB GPU            cached
  ...
 
 Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>

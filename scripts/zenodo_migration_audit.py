@@ -22,6 +22,11 @@ The checks that matter, and why each one is here:
 ``NO FILES LISTED``
     A ``zenodo`` dataset with no file entries has nothing to upload; its bytes
     live somewhere else (usually obsidian) and the entry is a placeholder.
+``INCOMPLETE``
+    Some — but not all — of a dataset's declared files have bytes on this
+    machine. Zenodo publication is a one-way door, so a partial set is never
+    reported as ready to upload. An unpulled git-LFS pointer counts as ABSENT
+    here: the path exists but the bytes do not.
 ``caches claimed by demos but ABSENT from the manifest``
     Expected and mostly benign: those demos fetch or generate their data at
     runtime from a public source. It is listed so a NEW dataset that quietly
@@ -60,6 +65,21 @@ def files_of(spec: dict) -> list[dict]:
     return files
 
 
+def is_lfs_pointer(path: Path) -> bool:
+    """True for an unpulled git-LFS stub — a small text pointer, not the data."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(64)
+    except OSError:
+        return False
+    return head.startswith(b"version https://git-lfs.github.com/spec/v1")
+
+
+def has_bytes(path: Path) -> bool:
+    """The file is present AND holds its real content."""
+    return path.is_file() and not is_lfs_pointer(path)
+
+
 def _audit_records(records: dict) -> None:
     """Zenodo upload-destination records and their state."""
     print("=" * 78)
@@ -78,25 +98,37 @@ def _bucket_row(
     bucket: str,
     to_upload: list[tuple[str, float]],
     elsewhere: list[str],
+    partial: list[str],
 ) -> None:
-    """Print one dataset's presence row; record it as ready / elsewhere."""
+    """Print one dataset's presence row; record it as ready / elsewhere / partial.
+
+    "Ready" means EVERY declared file has bytes here (in the repo or in the
+    cache) — a dataset is uploaded as a set, and a Zenodo record cannot be
+    un-published, so half of one is not something to start.
+    """
     files = files_of(spec)
     sub = spec.get("dir", "")
-    in_repo = sum(
-        1
-        for f in files
-        if ((DATA_DIR / sub / f["name"]) if sub else (DATA_DIR / f["name"])).exists()
+    repo_paths = [
+        (DATA_DIR / sub / f["name"]) if sub else (DATA_DIR / f["name"]) for f in files
+    ]
+    cache_paths = [CACHE / name / f["name"] for f in files]
+    in_repo = sum(1 for p in repo_paths if has_bytes(p))
+    in_cache = sum(1 for p in cache_paths if has_bytes(p))
+    here = sum(
+        1 for r, c in zip(repo_paths, cache_paths) if has_bytes(r) or has_bytes(c)
     )
-    in_cache = sum(1 for f in files if (CACHE / name / f["name"]).exists())
     size = sum(f.get("bytes", 0) for f in files) / 1048576
     flag = ""
     if bucket == "zenodo":
         if not files:
             flag = "  <-- bytes on another machine (upload from there)"
             elsewhere.append(name)
-        elif in_repo == 0 and in_cache == 0:
+        elif here == 0:
             flag = "  <-- BYTES NOT ON THIS MACHINE"
             elsewhere.append(name)
+        elif here < len(files):
+            flag = f"  <-- INCOMPLETE: {here} of {len(files)} files have bytes here"
+            partial.append(name)
         else:
             to_upload.append((name, size))
     pend = " PENDING-UPLOAD" if spec.get("pending_upload") else ""
@@ -107,8 +139,10 @@ def _bucket_row(
     )
 
 
-def _audit_buckets(datasets: dict) -> tuple[list[tuple[str, float]], list[str]]:
-    """Datasets grouped by bucket; returns (ready-to-upload, bytes-elsewhere).
+def _audit_buckets(
+    datasets: dict,
+) -> tuple[list[tuple[str, float]], list[str], list[str]]:
+    """Datasets by bucket; returns (ready-to-upload, bytes-elsewhere, incomplete).
 
     "elsewhere" is NOT the same as blocked: the bytes exist, just not on this
     machine (these are the obsidian-computed sets). Conflating the two hides
@@ -124,11 +158,12 @@ def _audit_buckets(datasets: dict) -> tuple[list[tuple[str, float]], list[str]]:
 
     to_upload: list[tuple[str, float]] = []
     elsewhere: list[str] = []
+    partial: list[str] = []
     for bucket in sorted(buckets):
         print(f"\n--- {bucket}  ({len(buckets[bucket])} datasets) ---")
         for name, spec in sorted(buckets[bucket]):
-            _bucket_row(name, spec, bucket, to_upload, elsewhere)
-    return to_upload, elsewhere
+            _bucket_row(name, spec, bucket, to_upload, elsewhere, partial)
+    return to_upload, elsewhere, partial
 
 
 def _audit_demo_registry(datasets: dict) -> None:
@@ -199,6 +234,7 @@ def _print_readiness(
     records: dict,
     to_upload: list[tuple[str, float]],
     elsewhere: list[str],
+    partial: list[str],
 ) -> None:
     """Final readiness summary."""
     print()
@@ -215,6 +251,9 @@ def _print_readiness(
     print(f"  upload from another machine:  {len(elsewhere)}")
     for b in elsewhere:
         print(f"    - {b}  (bytes on obsidian)")
+    print(f"  incomplete here (NOT ready):  {len(partial)}")
+    for b in partial:
+        print(f"    - {b}  (some declared files have no bytes here)")
     print("  blocked on a human decision:  0")
 
 
@@ -223,10 +262,10 @@ def main() -> int:
     datasets, records = m["datasets"], m["records"]
 
     _audit_records(records)
-    to_upload, elsewhere = _audit_buckets(datasets)
+    to_upload, elsewhere, partial = _audit_buckets(datasets)
     _audit_demo_registry(datasets)
     undeclared = _audit_files_on_disk(datasets)
-    _print_readiness(records, to_upload, elsewhere, undeclared)
+    _print_readiness(records, to_upload, elsewhere, partial)
     return 1 if undeclared else 0
 
 

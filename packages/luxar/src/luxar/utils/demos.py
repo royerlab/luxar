@@ -214,10 +214,14 @@ def _unshippable_reason(demo_name: str) -> Optional[str]:
     than being silently excused.
     """
     try:
-        from .data_fetch import DatasetNotFound, dataset_spec, load_manifest
+        from .data_fetch import dataset_spec, load_manifest
 
         spec = dataset_spec(demo_name, load_manifest())
-    except (DatasetNotFound, KeyError, OSError, ValueError):
+    except (ImportError, KeyError, OSError, ValueError):
+        # DatasetNotFound subclasses KeyError and a malformed manifest raises
+        # ValueError, so the handler needs no imported name — which is what
+        # lets it cover a failure of the import above too (naming
+        # DatasetNotFound here would raise NameError from the handler instead).
         return None
     if spec.get("bucket") not in ("local-compute", "regenerate"):
         return None

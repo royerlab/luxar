@@ -23,11 +23,25 @@ against a textbook 500 x 180 um embryo). The demo is in physical microns.
 **h2afva zebrafish stack** — one timepoint of the zebrahub recording as 1.65M
 splats across 41 content-tiled parts, each with its own streaming ladder. A
 second, toggleable layer draws one coloured wireframe box per part: these are the
-content bounds the viewer actually frustum-culls against, so they overlap
-wherever neighbouring parts share splats.
+content bounds the viewer actually frustum-culls against. They are disjoint — 0
+of the 820 part pairs intersect — because the fit's overlap margin is a
+fitting-time apodisation and each part's splats are cropped back to its core;
+they only read as interleaved because 41 nested 3D slabs project to 2D.
 
 **Decimation study** — the same embryo at four measured detail levels (100% /
 25% / 10% / 5%) on a categorical axis, so picking an entry swaps the level in
 place at a fixed camera, which is the only way to perceive a 3 dB difference.
 Each entry is labelled with its splat count and its measured FOREGROUND PSNR, and
 each is a single flat leaf, so what renders is exactly what the label says.
+
+#### Four demo datasets we may not redistribute are no longer shipped
+
+`gsplats_tribolium`, `gsplats_acto3d_heart`, `gsplats_tng_cosmic_web` and
+`milky_way_gaia_3m` are marked `local-compute` in the data manifest — their
+licenses do not permit redistributing even the derived product — so their
+in-repo Git-LFS copies have been removed. The demos that used them now take
+their own fetch-the-raw-source-and-refit path instead of pointing you at a
+`git lfs pull` for a file that is no longer there, and their catalog entries say
+so (a GPU is needed for the refit; the Gaia catalog has no build path yet, so it
+reads a hand-placed file from `~/.cache/luxar/` until #1461 lands). A cached
+copy from an earlier run is still used untouched.

@@ -121,7 +121,10 @@ DEMO_META = {
         "download_mb": 41,
         "compute": "medium",
         "gpu": "none",
-        "local_data": "git-lfs",
+        # The catalog is CC BY-NC, so it is not shipped in-tree: it has to be
+        # placed in the cache by hand until #1461 builds it from the ESA
+        # archive on first run (see `resolve_data_file`).
+        "local_data": "manual-file",
     },
     "caches": [],
     "outputs": ["galaxy"],

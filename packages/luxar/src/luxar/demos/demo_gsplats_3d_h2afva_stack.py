@@ -26,8 +26,9 @@ DATA SOURCE & CITATIONS:
 ANISOTROPY:
     The raw voxels are anisotropic by a factor of **4** along Z; the fitted
     splats are scaled accordingly (``gsplat transform --scale 4,1,1``), matching
-    the convention used for the full 253-timepoint fits. After scaling, the
-    volume has the embryo's correct proportions.
+    the convention used for the full 253-timepoint fits. That gives the embryo
+    its correct proportions, in lateral-pixel units; a second uniform scale by
+    the lateral pitch below puts the shipped centers in microns.
 
     The acquisition records no voxel size, so the calibration comes from the
     instrument and from prior work on this dataset. It was imaged on a
@@ -53,6 +54,8 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
        -> 1,653,405 splats across 41 content-balanced boxes, each laddered.
     4. ``gsplat transform --scale 4,1,1 --normalize-intensity 1.0``
        -> isotropic proportions, amplitudes normalised to a 0-1 range.
+    5. ``gsplat transform --scale 0.40625,0.40625,0.40625`` -> physical microns
+       (1.625 um axially, 0.40625 um laterally; see ANISOTROPY above).
 
 USAGE:
     python demo_gsplats_3d_h2afva_stack.py [--no-serve] [--serve-only]
@@ -109,9 +112,10 @@ DATASET = "gsplats_3d_h2afva_stack"
 
 SCENE_NAME = "gsplats_3d_h2afva_stack.luxar.zarr"
 
-#: Wireframe width for the partition-box layer, in scene units. The stack is
-#: ~2000 units across, so this reads as a hairline at full-object framing.
-BOX_LINE_WIDTH = 4.0
+#: Wireframe width for the partition-box layer, in scene units — microns here,
+#: so it tracks the object's physical size. The stack is ~830 um across, so this
+#: reads as a hairline at full-object framing.
+BOX_LINE_WIDTH = 1.625
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
