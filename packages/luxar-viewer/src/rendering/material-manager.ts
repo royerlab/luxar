@@ -299,6 +299,7 @@ export class MaterialManager {
       offset: props.offset,
       blendingMode: props.blendingMode,
       join: props.join,
+      primitive: props.primitive,
     });
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;

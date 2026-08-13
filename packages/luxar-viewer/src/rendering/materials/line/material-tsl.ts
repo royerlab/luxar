@@ -211,8 +211,12 @@ export class LineTSLMaterial
 
     // The rendering primitive (#1352) picks WHICH factory rebuildGraph
     // runs — stored unresolved like lineJoin, resolved at build time so
-    // the ?linePrimitive= session override wins.
-    this.userData.linePrimitive = materialConfig.primitive;
+    // the ?linePrimitive= session override wins. Stamped RESOLVED, not
+    // as passed: `rebuildGraph` re-reads this on every camera-mode flip
+    // and clone() re-passes it, so an unresolved (undefined) stamp would
+    // re-run the session/policy resolution later — a policy that sized
+    // the node at first build must stay frozen for the material's life.
+    this.userData.linePrimitive = resolveLinePrimitive(materialConfig.primitive);
 
     // For max mode, the shader needs the LUXAR_MAX_RGB_CONTRIBUTION
     // define from the very first compile; volumetric mirrors this with

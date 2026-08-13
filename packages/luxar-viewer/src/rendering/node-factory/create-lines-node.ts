@@ -23,8 +23,32 @@ import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
 import { resolveColormapWindow } from '../display-range';
 import { parseLineJoinStyle, LINE_JOIN_STYLES } from '../../types/line-join';
+import { resolveLinePrimitiveForNode } from '../../types/line-primitive';
 
 /** Build a Lines mesh + optional picking shadow node. */
+/**
+ * Diagonal of a lines node's AUTHORED spatial bounds, or `undefined`
+ * when the node carries none — the auto policy's width normalization
+ * then falls back to count-only rather than guessing a scale.
+ *
+ * Read from the spatial-index ordering metadata (`ordering_min/max`
+ * over the ordering dims), the only authored extent available at
+ * material-build time: the worker's projection `bounds` do not exist
+ * yet on the streaming path (the material is built on the empty
+ * placeholder mesh). Ordered nodes are exactly the large ones the auto
+ * policy is for; an `ordering: 'none'` node loads whole and small.
+ */
+function lineBoundsDiagonal(attrs: LinesMetadata): number | undefined {
+  const ordering = attrs.segment_ordering ?? attrs.vertex_ordering;
+  if (!ordering) return undefined;
+  const { ordering_min: min, ordering_max: max } = ordering;
+  if (!Array.isArray(min) || !Array.isArray(max) || min.length !== max.length || !min.length) {
+    return undefined;
+  }
+  const diag = Math.hypot(...max.map((hi, i) => hi - min[i]));
+  return Number.isFinite(diag) && diag > 0 ? diag : undefined;
+}
+
 export function createLinesNode(
   path: string,
   nodeAttrs: Record<string, unknown>,
@@ -67,7 +91,24 @@ export function createLinesNode(
     );
   }
 
+  // Per-node primitive under the auto policy (#1352 follow-up): resolved
+  // ONCE here, at first material build, from the authored size — NOT from
+  // `processed.segmentCount`, which is 0 on the streaming path (the
+  // placeholder mesh) and grows monotonically afterwards while the
+  // material is never rebuilt. The width factor normalizes the authored
+  // world-unit width by the node's own extent (see
+  // types/line-primitive.ts); nodes without projection bounds fall back
+  // to count-only. Both the visual and picking materials below receive
+  // the SAME resolved value, and the userData stamp carries it to
+  // clones and the node-factory retro picking pass.
+  const primitive = resolveLinePrimitiveForNode({
+    nSegments: attrs.n_segments,
+    maxWidth: attrs.max_width,
+    bboxDiagonal: lineBoundsDiagonal(attrs),
+  });
+
   const material = materialManager.getLineMaterial({
+    primitive,
     opacity: (nodeAttrs.opacity as number | undefined) ?? 1.0,
     absorption: (nodeAttrs.absorption as number | undefined) ?? 1.0,
     gamma: (nodeAttrs.gamma as number | undefined) ?? 1.0,
@@ -148,7 +189,11 @@ export function createLinesNode(
     mesh.userData.pickId = pickId;
     // The SAME join style as the visual material: the pick pass builds the same
     // screen-space quad, so a divergence makes a mitred corner unpickable.
-    const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId, join });
+    const pickMaterial = materialManager.createLinePickingMaterial({
+      nodeId: pickId,
+      join,
+      primitive,
+    });
     materialManager.register(pickMaterial);
     // Share the same InstancedBufferGeometry — only material differs.
     const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);

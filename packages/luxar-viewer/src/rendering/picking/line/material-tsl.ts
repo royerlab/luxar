@@ -78,7 +78,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // between the pick factories on every rebuild. Stored unresolved so
     // the ?linePrimitive= session override resolves at build time,
     // exactly like the visual TSL material.
-    this.userData.linePrimitive = config.primitive;
+    this.userData.linePrimitive = resolveLinePrimitive(config.primitive);
 
     this.uniforms = {
       // WARNING: a direct `uniforms.uLineTex.value = tex` write does NOT

@@ -62,6 +62,14 @@ export interface UserSettings {
   advanced: {
     /** Render backend; 'auto' = the built-in default chain → reload. */
     renderer: 'auto' | 'webgl' | 'webgpu';
+    /**
+     * Line primitive policy (#1352 follow-up) → reload (the primitive is
+     * baked into each line material's shader at construction; there is
+     * no live-swap path). 'auto' = capsule, except very large line
+     * nodes, which build the cheaper quad — see
+     * `types/line-primitive.ts` for the measured rule.
+     */
+    linePrimitivePolicy: 'auto' | 'capsule' | 'quad';
   };
 }
 
@@ -119,6 +127,7 @@ export function defaultUserSettings(): UserSettings {
     },
     advanced: {
       renderer: 'auto',
+      linePrimitivePolicy: 'auto',
     },
   };
 }
@@ -197,6 +206,11 @@ function sanitizeUserSettings(raw: unknown): UserSettings {
     },
     advanced: {
       renderer: enumOrDefault(advanced.renderer, ['auto', 'webgl', 'webgpu'], d.advanced.renderer),
+      linePrimitivePolicy: enumOrDefault(
+        advanced.linePrimitivePolicy,
+        ['auto', 'capsule', 'quad'],
+        d.advanced.linePrimitivePolicy
+      ),
     },
   };
 }
@@ -263,6 +277,7 @@ function reloadKey(s: UserSettings): string {
     s.caching.budgetMode,
     s.caching.budgetMode === 'custom' ? s.caching.budgetMB : null,
     s.advanced.renderer,
+    s.advanced.linePrimitivePolicy,
   ]);
 }
 
