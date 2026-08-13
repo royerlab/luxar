@@ -17,9 +17,12 @@ luxar gsplat doctor data.gsplats.zarr --no-info --json report.json
 ```
 
 Read-only unless you pass `--fix`; exits non-zero while a problem is still
-standing, so it can gate a pipeline. `--fix` needs an uncompressed directory
-store (a `.zip`/`.tar.gz` has nothing to repair in place — unpack first), the
-same rule `gsplat annotate-quality` follows.
+standing, so it can gate a pipeline. A `.zip`/`.tar.gz` archive can be
+DIAGNOSED (it is extracted to a temp directory and read from there) but not
+repaired — there is nothing to write back to in place, so `--fix` needs an
+uncompressed directory store, the same rule `gsplat annotate-quality` follows.
+Diagnosing archives matters in practice: most bundled demo datasets ship as
+`.zip`, and refusing them would put the common case out of reach of a sweep.
 
 ```python
 from luxar.gsplats.doctor import diagnose_store

@@ -236,12 +236,43 @@ class TestStoreGuards:
             with pytest.raises(ValueError, match="not a standalone"):
                 diagnose_store(path)
 
-    def test_fixing_a_compressed_store_is_refused_but_diagnosis_is_not(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = _partition_store(Path(tmp))
-            archive = Path(tmp) / "packed.gsplats.zarr.zip"
-            import shutil
+    @staticmethod
+    def _archive(tmp: Path) -> Path:
+        """A partition with no split planes, packed as a .gsplats.zarr.zip."""
+        import shutil
 
-            shutil.make_archive(str(archive).replace(".zip", ""), "zip", str(path))
+        store = _partition_store(tmp)
+        _set_root_attr(store, "bsp_tree", None)
+        base = tmp / "packed"
+        shutil.make_archive(str(base), "zip", root_dir=str(tmp), base_dir=store.name)
+        archive = tmp / "packed.gsplats.zarr.zip"
+        (tmp / "packed.zip").rename(archive)
+        return archive
+
+    def test_a_compressed_store_can_be_diagnosed(self) -> None:
+        """Most bundled demo datasets ship as .zip, so refusing archives outright
+        would put the common case out of reach of a read-only sweep."""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = self._archive(Path(tmp))
+            report = diagnose_store(archive)
+            assert not report.healthy
+            (finding,) = report.findings
+            assert "no split planes" in finding.summary
+            # The report names what the user asked about, not the temp extraction.
+            assert report.path == str(archive)
+
+    def test_fixing_a_compressed_store_is_refused(self) -> None:
+        """There is nothing to write back to in place."""
+        with tempfile.TemporaryDirectory() as tmp:
             with pytest.raises(ValueError, match="unpack"):
-                diagnose_store(archive, fix=True)
+                diagnose_store(self._archive(Path(tmp)), fix=True)
+
+    def test_diagnosing_an_archive_leaves_no_temp_directory_behind(self) -> None:
+        import tempfile as _tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = self._archive(Path(tmp))
+            root = Path(_tempfile.gettempdir())
+            before = set(root.glob("luxar_gsplat_*"))
+            diagnose_store(archive)
+            assert set(root.glob("luxar_gsplat_*")) == before

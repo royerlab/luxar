@@ -19,6 +19,7 @@ The checks live in :mod:`.checks`; see its module docstring for how to add one.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -47,10 +48,11 @@ def diagnose_store(
     Parameters
     ----------
     path
-        A ``.gsplats.zarr`` **directory**. Compressed ``.zip``/``.tar.gz`` stores
-        are rejected when ``fix=True`` for the same reason ``annotate-quality``
-        rejects them — extraction is temp-dir based, so there is nothing to
-        repair in place; unpack first.
+        A ``.gsplats.zarr`` directory, or a ``.zip``/``.tar.gz`` archive. An
+        archive is extracted to a temp directory and read from there, so it can
+        be DIAGNOSED but not repaired: with ``fix=True`` it is rejected, for the
+        same reason ``annotate-quality`` rejects one — there is nothing to write
+        back to in place. Unpack first to repair.
     fix
         Apply the repairs the checks offer. Off by default: a diagnosis should
         never surprise anyone by writing.
@@ -62,8 +64,6 @@ def diagnose_store(
     DoctorReport
         Every finding, each flagged with whether it was repaired.
     """
-    from luxar.gsplats.io.save_gsplats import _stamp_content_hash
-
     path = Path(path)
     if fix and not path.is_dir():
         raise ValueError(
@@ -72,17 +72,52 @@ def diagnose_store(
             f"in place). Without --fix it can still be diagnosed."
         )
 
-    root = zarr.open_group(str(path), mode="r+" if fix else "r")
+    # A compressed store is diagnosable but not repairable: extract to a temp
+    # directory and read from there. Most bundled demo datasets ship as .zip, so
+    # refusing them outright would put the common case out of reach of a
+    # read-only sweep.
+    scratch: Optional[Path] = None
+    if not path.is_dir():
+        from luxar.gsplats.io._archive import extract_compressed_zarr
+
+        target = extract_compressed_zarr(path)
+        scratch = target.parent
+    else:
+        target = path
+
+    try:
+        return _diagnose_opened(path, target, fix=fix, checks=checks)
+    finally:
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _diagnose_opened(
+    reported_path: Path,
+    store_path: Path,
+    *,
+    fix: bool,
+    checks: "Optional[List[Check]]",
+) -> DoctorReport:
+    """Run the checks against an already-resolved directory store.
+
+    ``reported_path`` is what the user asked about (an archive keeps its own name
+    in the report); ``store_path`` is the directory actually read.
+    """
+    from luxar.gsplats.io.save_gsplats import _stamp_content_hash
+
+    root = zarr.open_group(str(store_path), mode="r+" if fix else "r")
     fmt = root.attrs.get("format_type")
     if fmt != "gsplats_zarr":
         raise ValueError(
-            f"{path} is not a standalone .gsplats.zarr store (format_type={fmt!r}). "
+            f"{reported_path} is not a standalone .gsplats.zarr store "
+            f"(format_type={fmt!r}). "
             f"Gsplats embedded in a scene are diagnosed by pointing doctor at the "
             f"source .gsplats.zarr, and repaired by re-exporting the scene."
         )
 
     selected = ALL_CHECKS if checks is None else checks
-    report = DoctorReport(path=str(path), fix=fix)
+    report = DoctorReport(path=str(reported_path), fix=fix)
     for check in selected:
         report.checks_run.append(getattr(check, "__name__", str(check)))
         report.findings.extend(check(root))
