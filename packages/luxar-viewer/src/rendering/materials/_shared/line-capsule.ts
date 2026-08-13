@@ -175,13 +175,17 @@ export function capsuleProfile(p: number, sharpKnob = 0.5): number {
  * UNSCALED profile — so two legs at different scales no longer compose to
  * max(mine, partner) and the pair can OVER-fill (a bead). That is what the
  * packet gate's floor conjunct is for (#1495), and it is only measurable with
- * the factor present. `fade`, the near-plane term, is NOT modelled: it is
- * evaluated per corner at the CLAMPED span parameter and interpolated across
- * a quad longer than the segment, so two legs sharing a vertex disagree on it
- * away from the vertex itself and the same over-fill class appears inside the
- * near-fade ramp — review measured +0.146…+0.155 in the thin band #1495 opens
- * and +0.174 above the width gate (i.e. pre-existing); under ortho, where
- * `fade` is 1, it is exactly 0. Neither figure was re-measured here. The
+ * the factor present. It is carried as an endpoint-interpolated field, which
+ * is the vertex stage's own construction but NOT its span: the varying is
+ * stretched across the whole quad, cap extensions included (measured impact
+ * in `capsuleLegWidthScale`). `fade`, the near-plane term, is NOT modelled at
+ * all: it is evaluated per corner at the CLAMPED span parameter and
+ * interpolated across that same over-long quad, so two legs sharing a vertex
+ * disagree on it away from the vertex itself and the same over-fill class
+ * appears inside the near-fade ramp — review measured +0.146…+0.155 in the
+ * thin band #1495 opens and +0.174 above the width gate (i.e. pre-existing);
+ * under ortho, where `fade` is 1, it is exactly 0. Neither figure was
+ * re-measured here. The
  * exactness condition is therefore "the partner's SCALED field <= mine at
  * every fragment", NOT "widthScale == 1"; the floor conjunct closes the
  * widthScale half only.
@@ -225,15 +229,32 @@ function legSpanT(leg: CapsuleJointLeg, x: number): number {
 }
 
 /**
- * The fragment's thin-width energy compensation at an axial position: the
- * `widthScale = min(rawC / CAPSULE_MIN_RADIUS_PX, 1)` factor of `vFade`, with
- * `rawC` the raw radius interpolated over the clamped span. 1 for any segment
- * at or above the floor.
+ * The leg's thin-width energy compensation at an axial position: the
+ * `widthScale = min(raw / CAPSULE_MIN_RADIUS_PX, 1)` factor of `vFade`,
+ * evaluated at the two ENDPOINTS — the clamped span parameter every quad
+ * corner uses — and interpolated between them. 1 for any segment at or above
+ * the floor.
+ *
+ * It is NOT the shader's field exactly, and the gap is one-sided: `widthScale`
+ * rides the same INTERPOLATED varying as `fade`, so the rasterizer stretches
+ * it across a quad LONGER than the segment (the cap extensions), where this
+ * spreads it over the segment span alone. Modelling that stretch was measured
+ * on the two sub-floor sweep rows: bead-free stays exactly +0.000 (with the
+ * packet gated the sum is a cover-weighted blend of the two legs' scaled
+ * fields, hence ≤ their max at ANY widthScale field), the with-packet bead
+ * those rows exist to justify measures +0.144/+0.136 against +0.137/+0.164
+ * here, and the accepted chop −0.397/−0.417 against −0.41/−0.47. Same class
+ * on every row, so the simpler field stays — but do not read a third digit
+ * off this model.
  */
 export function capsuleLegWidthScale(leg: CapsuleJointLeg, x: number): number {
-  const t = legSpanT(leg, x);
-  const rawC = leg.rJoint + (leg.rFar - leg.rJoint) * t;
-  return Math.min(rawC / CAPSULE_MIN_RADIUS_PX, 1);
+  // Clamp at the endpoints, THEN interpolate — the vertex stage's order (each
+  // corner evaluates min() at tc ∈ {0, 1}). Clamping a mixed radius instead
+  // kinks a leg that straddles the floor (raw 1.2 → 3.0) where the shader
+  // ramps straight.
+  const wsJoint = Math.min(leg.rJoint / CAPSULE_MIN_RADIUS_PX, 1);
+  const wsFar = Math.min(leg.rFar / CAPSULE_MIN_RADIUS_PX, 1);
+  return wsJoint + (wsFar - wsJoint) * legSpanT(leg, x);
 }
 
 /**
