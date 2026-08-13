@@ -22,7 +22,12 @@ from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.tiling import TileSpec, compute_tile_specs, cosine_window
+from luxar.gsplats.tiling import (
+    TileSpec,
+    compute_tile_specs,
+    cosine_window,
+    grid_bsp_tree,
+)
 
 
 def fit_tile(
@@ -457,12 +462,17 @@ def merge_tile_results(
     # region's `.tree` preserves its additive ladder, so a progressive tiled fit
     # yields a partition of leaves-with-ladders for free.
     if partition:
-        regions = [r for r in results if r.n_splats > 0]
+        # Track each surviving region's TILE index alongside it: two independent
+        # filters run below (empty tiles, then tiles a cull empties), so position
+        # in `regions` is not the tile index the grid tree is labelled by.
+        indexed = [(i, r) for i, r in enumerate(results) if r.n_splats > 0]
         if cull_retention is not None and 0 < cull_retention < 1.0:
-            regions = [
-                r.cull(method="cumulative", retention=cull_retention) for r in regions
+            indexed = [
+                (i, r.cull(method="cumulative", retention=cull_retention))
+                for i, r in indexed
             ]
-            regions = [r for r in regions if r.n_splats > 0]
+            indexed = [(i, r) for i, r in indexed if r.n_splats > 0]
+        regions = [r for _, r in indexed]
         if not regions:
             ndim = len(volume_shape)
             from luxar.gsplats.utils.trils import tril_size
@@ -474,7 +484,23 @@ def merge_tile_results(
                 stats={},
             )
         node = GSplatData.partition_from_regions(
-            regions, recipe=recipe, recipe_params=recipe_params
+            regions,
+            recipe=recipe,
+            recipe_params=recipe_params,
+            # Grid split planes so the viewer paints tile-parts far-side-first
+            # instead of by centroid (#1555). APPROXIMATE here — apodized tiles
+            # keep their overlap band, so neighbours genuinely share space and the
+            # cut is the midplane of that band (see `grid_bsp_tree`). Only sound
+            # while `results` is positionally aligned with the tile grid, which
+            # both callers guarantee by inserting a 0-splat placeholder for a tile
+            # that fit nothing; a length mismatch means that no longer holds, so
+            # drop the tree rather than mislabel it.
+            bsp_tree=(
+                grid_bsp_tree(compute_tile_specs(volume_shape, tile_size, overlap))
+                if len(results) == num_tiles
+                else None
+            ),
+            region_labels=[i for i, _ in indexed],
         )
         # In-memory bookkeeping only: "applied_floor" is not among the
         # round-tripped node attrs, so it is visible on the returned node
