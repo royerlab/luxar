@@ -323,6 +323,37 @@ to ship after). Sequencing is at the bottom.
     - Unit tests in `utils/tests/test_data_fetch.py` (deliberately not counted
       here — the number rots every time a test lands); demo-import tests stay
       green; ruff clean.
+  - **INVENTORY + READINESS — audited 2026-08-12, and made re-runnable.**
+    `python scripts/zenodo_migration_audit.py` cross-references the manifest,
+    the demo registry and the filesystem, so this never has to be reconstructed
+    from memory again. State at the audit:
+    - **3 records to create** (`cc-by`, `cc-by-sa`, `h2afva`) — none exist yet.
+      Record grouping is a ONE-WAY DOOR (records cannot be split or merged after
+      publication), which is why `h2afva` is separate.
+    - **20 datasets ready to upload now (~418 MB)** — 19 whose bytes are still
+      in-tree, plus the 3 new CC-BY ones whose bytes are in `~/.cache` on this
+      Mac (drosophila 2.3 MB, h2afva stack 24.4 MB, h2afva decimation 24.6 MB).
+    - **2 blocked, both needing a decision before they can move:**
+      - `gsplats_4d_neuromast_2ch` — bytes on obsidian (~250 MB), and the demo
+        already documents the pending upload. NEEDS: CC-BY permission from
+        Adrian Jacobo (CZ Biohub SF), then upload + file entries.
+      - `h2afva` (the full timelapse) — bytes on obsidian: 51tp ≈ 2.9 GB,
+        253tp ≈ 16 GB. NEEDS: the size decision (ship 51tp as the default
+        variant and archive 253tp as opt-in, per the variants already declared).
+    - **4 `local-compute` datasets are OUT of scope by licence** and must never
+      be uploaded — they keep their manifest checksums only so a machine that
+      still has the files can verify them.
+    - **Integrity checks that must stay clean:** UNDECLARED-on-disk = 0 (every
+      in-tree data file is manifest-described; a stray one would migrate to
+      nowhere), and 370.6 MB still in-tree is the total the migration removes.
+    - **31 demo caches are deliberately NOT manifest-tracked** — those demos
+      fetch or generate from public sources at runtime (arxiv, caida,
+      earthquakes, flywire, ocean currents, the gsplat interop imports, the
+      zebrahub multiome/velocity set, …). The audit lists them so a NEW dataset
+      that quietly needs hosting cannot hide among them.
+    - **8 manifest datasets are not claimed via `DEMO_META['caches']`** — all 8
+      were grepped 2026-08-12 and every one IS still loaded by a demo through
+      another route. None is orphaned; do not prune them.
   - **Migration runbook (irreversibility rules).** Publishing a Zenodo record is
     **permanent** (no self-delete; files immutable — edits become new versions).
     So: (1) rehearse on **`sandbox.zenodo.org`** first — a published Sandbox record
