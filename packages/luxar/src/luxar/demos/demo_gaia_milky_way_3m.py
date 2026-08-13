@@ -112,7 +112,7 @@ Viewing Tips:
 """
 
 DEMO_META = {
-    "key": "galaxy",
+    "key": "gaia_milky_way",
     "title": "Gaia Milky Way (3M stars)",
     "description": "Real Milky Way stars from Gaia DR3 (3M brightest) in galactocentric coordinates.",
     "category": "astronomy",
@@ -124,7 +124,7 @@ DEMO_META = {
         "local_data": "git-lfs",
     },
     "caches": [],
-    "outputs": ["galaxy"],
+    "outputs": ["gaia_milky_way"],
 }
 
 import sys
@@ -336,10 +336,10 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 positions,
                 colors=colors,
                 radii=radii,
-                opacity=1.0,
+                opacity=0.5,
                 blending_mode="volumetric",
-                absorption=1.3,
-                intensity=0.075,
+                absorption=0.12,
+                intensity=0.175,
                 layer=True,
                 substitutive_lod=substitutive_lod_or_flat(
                     dict(compression_factor=8, levels=3, device="auto")
@@ -378,6 +378,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
+                labels=["Sun — our star, 8.1 kpc from the Galactic Centre"],
                 layer=True,
             )
             aprint(f"  ✓ Sun at ({-r0_kpc * SCALE:.1f}, 0, 0)")
@@ -397,6 +398,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
+                labels=["Betelgeuse — red supergiant in Orion (~168 pc from the Sun)"],
                 layer=True,
             )
             aprint("  ✓ Betelgeuse (red supergiant, 168 pc)")
@@ -416,9 +418,37 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 opacity=1.0,
                 blending_mode="volumetric",
                 absorption=MARKER_ABSORPTION,
+                labels=["Rigel — blue supergiant in Orion (~265 pc from the Sun)"],
                 layer=True,
             )
             aprint("  ✓ Rigel (blue supergiant, 265 pc)")
+
+            # Named-star legend: swatch colours read from the marker RGB above
+            # (not re-invented), same add_html pattern as the other demos.
+            def _swatch(rgb: np.ndarray) -> str:
+                r, g, b = (int(round(float(c) * 255)) for c in rgb)
+                return f"rgb({r},{g},{b})"
+
+            _dot = (
+                "display:inline-block;width:0.8em;height:0.8em;"
+                "border-radius:50%;margin-right:0.5em;vertical-align:middle"
+            )
+            legend_html = (
+                '<div style="font:13px sans-serif;color:#fff;line-height:1.7">'
+                f'<span style="{_dot};background:{_swatch(sun_color[0])}"></span>'
+                "Sun — our star, 8.1 kpc from the Galactic Centre<br>"
+                f'<span style="{_dot};background:{_swatch(betelgeuse_color[0])}"></span>'
+                "Betelgeuse — red supergiant in Orion (~168 pc from the Sun)<br>"
+                f'<span style="{_dot};background:{_swatch(rigel_color[0])}"></span>'
+                "Rigel — blue supergiant in Orion (~265 pc from the Sun)"
+                "</div>"
+            )
+            scene.add_html(
+                legend_html,
+                position=(0.02, 0.98),
+                anchor="bottom-left",
+                opacity=0.92,
+            )
 
             # Overlay annotations
             scene.add_text(
@@ -482,7 +512,7 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
         aprint(f"✓ Extracted to: {raw_zarr_path}")
 
     # Convert to Luxar format
-    luxar_zarr_path = temp_dir / "galaxy.luxar.zarr"
+    luxar_zarr_path = temp_dir / "gaia_milky_way.luxar.zarr"
     load_and_convert_gaia_data(raw_zarr_path, luxar_zarr_path)
 
     return luxar_zarr_path
@@ -526,7 +556,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "galaxy.luxar.zarr"
+        output_path = get_demos_output_dir() / "gaia_milky_way.luxar.zarr"
         try:
             # Extract the raw .zarr from the zip to a temp dir, then convert to the
             # persistent output_path (same extraction the serve path uses — reading

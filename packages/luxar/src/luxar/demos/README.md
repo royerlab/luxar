@@ -545,7 +545,7 @@ HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) dr
 #### demo_gaia_milky_way_3m.py - Milky Way Stars (Gaia DR3, 3M Stars)
 Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric colors (BP-RP index), galactocentric coordinates, and reference markers (Sun, Betelgeuse, Rigel).
 
-**Run**: `luxar demo run galaxy`
+**Run**: `luxar demo run gaia_milky_way`
 
 **Requires**: Internet access (Gaia DR3 TAP query or cached data). Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
