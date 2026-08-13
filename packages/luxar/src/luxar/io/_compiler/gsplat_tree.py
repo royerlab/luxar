@@ -484,6 +484,53 @@ def _leaf_child_attrs(node: "GSplatNode") -> Dict[str, Any]:
     return _meta_to_node_attrs(node.meta)
 
 
+def _validate_authored_lod_thresholds(
+    children: "Sequence[GSplatNode]", selector: str
+) -> None:
+    """Refuse a fully-AUTHORED lod ladder whose thresholds break the selector's
+    contract, before anything is written.
+
+    The same selector-dependent checks ``validate_lod_group`` runs for scene
+    nodes (finite, within ``[0, cap]`` where the cap is the selector's
+    fills-screen ceiling, strictly ascending coarsest→finest) — this writer
+    path bypasses that validator (it walks a detached ``GSplatNode`` tree, not
+    scene ``Node``s), and without the mirror check a hand-built tree stamped
+    ``selector="screen-area"`` with a threshold like ``2.0`` (unreachable —
+    the clipped area metric tops out at 1.0 short of camera-inside
+    saturation) or a non-monotonic ladder would be written as a nominally
+    v3.4-compliant store. Derived ladders never reach this (they satisfy the
+    contract by construction); only the fully-authored preserve path does.
+    """
+    import math
+
+    from luxar.core.group.lod.group import (
+        MAX_COVERAGE_FRACTION,
+        PARTITION_FINEST_AREA,
+    )
+
+    cap = PARTITION_FINEST_AREA if selector == "screen-area" else MAX_COVERAGE_FRACTION
+    prev = float("-inf")
+    for i, child in enumerate(children):
+        value = float(child.meta["coverage_fraction"])
+        if not math.isfinite(value):
+            raise ValueError(
+                f"kind=lod child {i} has authored coverage_fraction={value}, "
+                "which is not a finite number"
+            )
+        if value < 0.0 or value > cap:
+            raise ValueError(
+                f"kind=lod child {i} has authored coverage_fraction={value}, "
+                f"must lie in [0, {cap:g}] under selector={selector!r}"
+            )
+        if value <= prev:
+            raise ValueError(
+                f"kind=lod child {i} has authored coverage_fraction={value}, "
+                f"must be strictly greater than the previous child's {prev} "
+                "(coarsest→finest)"
+            )
+        prev = value
+
+
 def write_gsplat_node(
     group: zarr.Group,
     node: "GSplatNode",
@@ -607,11 +654,23 @@ def write_gsplat_node(
                 "thresholds agree."
             )
             on_disk = [without_meta_key(c, "coverage_fraction") for c in on_disk]
-        selector_out = (
-            str(meta_selector)
-            if (meta_selector is not None and authored_all)
-            else "screen-area"
-        )
+        # Which selector describes what actually gets written:
+        # * fully authored + explicit meta selector → preserved verbatim;
+        # * fully authored + NO selector → LEGACY ``"coverage"``. Authored
+        #   values with no stated units are exactly what the viewer's loader
+        #   treats as legacy (its missing/unknown-selector fallback), so
+        #   stamping ``screen-area`` here would silently reinterpret them —
+        #   authored = legacy is the library-wide convention (explicit lists,
+        #   custom coverage callables, hand-built ``add_lod_group``).
+        # * anything re-derived (meta-less or partially-authored) →
+        #   ``"screen-area"``, the units of every live derivation.
+        if authored_all:
+            selector_out = (
+                str(meta_selector) if meta_selector is not None else "coverage"
+            )
+            _validate_authored_lod_thresholds(on_disk, selector_out)
+        else:
+            selector_out = "screen-area"
         derived_cov = derive_cov([total_splats(c) for c in on_disk])
         child_bounds: List[Dict[str, List[float]]] = []
         for i, child in enumerate(on_disk):

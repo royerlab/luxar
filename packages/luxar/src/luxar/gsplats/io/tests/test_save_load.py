@@ -1247,6 +1247,41 @@ def test_writer_selector_threshold_consistency_gate() -> None:
         with pytest.raises(ValueError, match="must be one of"):
             write_gsplats_tree(p3, bogus, ordering="none")
 
+        # Arm 4: fully authored but SELECTOR-LESS → stamped LEGACY "coverage",
+        # values preserved. Authored values with no stated units are exactly
+        # what the viewer's loader treats as legacy (its missing/unknown-
+        # selector fallback), so relabeling them "screen-area" would silently
+        # reinterpret them — authored = legacy is the library convention.
+        selectorless = GSplatLodGroup(
+            children=[_leaf(50, 6, cov=0.0), _leaf(800, 7, cov=2.0)],
+        )
+        p4 = Path(tmpdir) / "selectorless.gsplats.zarr"
+        write_gsplats_tree(p4, selectorless, ordering="none")
+        r4 = zarr.open_group(str(p4), mode="r")
+        assert r4.attrs["selector"] == "coverage"
+        assert r4["child_1"].attrs["coverage_fraction"] == 2.0
+
+        # Arm 5: authored thresholds must honor the selector's contract. 2.0 is
+        # legal legacy-diagonal (arm 2/4) but OUT OF RANGE for screen-area
+        # (the clipped area metric tops out at 1.0), and a non-monotonic
+        # ladder is invalid under either — both refused before writing.
+        over_range = GSplatLodGroup(
+            children=[_leaf(50, 8, cov=0.0), _leaf(800, 9, cov=2.0)],
+            meta={"selector": "screen-area"},
+        )
+        with pytest.raises(ValueError, match=r"must lie in \[0, 1\]"):
+            write_gsplats_tree(
+                Path(tmpdir) / "over.gsplats.zarr", over_range, ordering="none"
+            )
+        non_monotonic = GSplatLodGroup(
+            children=[_leaf(50, 10, cov=0.5), _leaf(800, 11, cov=0.25)],
+            meta={"selector": "screen-area"},
+        )
+        with pytest.raises(ValueError, match="strictly greater"):
+            write_gsplats_tree(
+                Path(tmpdir) / "nonmono.gsplats.zarr", non_monotonic, ordering="none"
+            )
+
 
 class TestBarrierAwareOrdering:
     """End-to-end: a 4D leaf with a time barrier writes single-timepoint chunks
