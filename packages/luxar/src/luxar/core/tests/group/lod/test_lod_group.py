@@ -344,6 +344,73 @@ class TestLODGroupValidation:
                 PARTITION_FINEST_AREA,
             ]
 
+    def test_validate_screen_area_rejects_values_above_the_area_ceiling(
+        self, tmp_path
+    ) -> None:
+        """The ceiling is SELECTOR-DEPENDENT. Under ``selector="screen-area"``
+        thresholds are literal screen-area fractions, so anything above the
+        fills-screen area (``PARTITION_FINEST_AREA`` = 1.0) is out of contract
+        — a value like 2.0 validated fine under the legacy 4.0 bound but would
+        write a non-conforming v3.4 store whose level can effectively never be
+        held correctly. The legacy-units value in this ladder (2.0) is exactly
+        the kind that must now be refused."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires", selector="screen-area")
+            for i, cf in enumerate([0.0, 2.0]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            with pytest.raises(
+                ValueError, match=r"must lie in \[0, 1\] under selector='screen-area'"
+            ):
+                validate_lod_group(lod)
+
+    def test_validate_screen_area_accepts_the_fills_screen_boundary(
+        self, tmp_path
+    ) -> None:
+        """Exactly 1.0 — the fills-screen tile anchor every derived partition
+        ladder ends on — must validate under ``selector="screen-area"`` (the
+        bound is inclusive; an exclusive bound would refuse every derived
+        tile ladder)."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires", selector="screen-area")
+            for i, cf in enumerate([0.0, 0.5, PARTITION_FINEST_AREA]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            validate_lod_group(lod)  # must not raise
+
+    def test_validate_legacy_selector_keeps_the_diagonal_ceiling(
+        self, tmp_path
+    ) -> None:
+        """The same 2.0 that screen-area refuses stays VALID under the legacy
+        ``"coverage"`` selector (and a missing selector attr falls back to it),
+        whose authored-list ceiling remains ``MAX_COVERAGE_FRACTION`` = 4.0 —
+        proving the two caps genuinely branch on the selector rather than one
+        of them having tightened globally."""
+        with LuxarZarrCompiler(tmp_path / "x.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            lod = scene.add_lod_group("multires")  # default selector="coverage"
+            for i, cf in enumerate([0.0, 2.0, MAX_COVERAGE_FRACTION]):
+                lod.add_gsplats(
+                    f"c{i}",
+                    centers=_CENTERS,
+                    amplitudes=1.0,
+                    cholesky_factors=_CHOL,
+                    coverage_fraction=cf,
+                )
+            validate_lod_group(lod)  # must not raise
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Auto-derivation heuristic

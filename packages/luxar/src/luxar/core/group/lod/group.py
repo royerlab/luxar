@@ -557,10 +557,14 @@ def validate_lod_group(group: "Node") -> None:
     - the per-child ``coverage_fraction`` values are not strictly monotonic
       increasing in insertion order;
     - any ``coverage_fraction`` is not finite (NaN / ±inf), or falls outside
-      ``[0, MAX_COVERAGE_FRACTION]`` (the same bound the
-      explicit-``coverage_fractions=`` resolvers enforce — this is the check for
-      a hand-built ``add_lod_group`` ladder, which does not go through those
-      resolvers).
+      the range the group's ``selector`` implies: ``[0,
+      PARTITION_FINEST_AREA]`` (= ``[0, 1]``) under ``selector="screen-area"``
+      (whose thresholds are literal screen-area fractions — a value above the
+      fills-screen area is unreachable and would hold a level forever), or
+      ``[0, MAX_COVERAGE_FRACTION]`` under the legacy ``"coverage"`` diagonal
+      metric (the same bound the explicit-``coverage_fractions=`` resolvers
+      enforce). This is the check for a hand-built ``add_lod_group`` ladder,
+      which does not go through those resolvers.
 
     Call this manually before finalizing if you want eager validation;
     otherwise the viewer falls back to silently ignoring malformed
@@ -574,6 +578,29 @@ def validate_lod_group(group: "Node") -> None:
         raise ValueError(
             f"LOD group '{group.path or group.name}' has "
             f"default_level={default_level}, must be in [0, {n_children})"
+        )
+    # The threshold ceiling depends on the group's selector UNITS: screen-area
+    # fractions top out at the fills-screen area (1.0 — anything above is
+    # unreachable and would hold a level forever), while the legacy diagonal
+    # metric tops out at 1/FILL_FACTOR (4.0). A missing selector is legacy —
+    # same fallback the viewer's loader applies.
+    selector = str(group.attrs.get("selector", "coverage"))
+    if selector == "screen-area":
+        cap = PARTITION_FINEST_AREA
+        cap_rationale = (
+            "Screen-area thresholds are literal screen-area fractions; the "
+            f"ceiling {PARTITION_FINEST_AREA:g} is the fills-screen anchor (a "
+            "derived WHOLE-OBJECT ladder anchors its finest lower still, at "
+            f"{WHOLE_OBJECT_FINEST_ANCHOR:g} = half the screen)."
+        )
+    else:
+        cap = MAX_COVERAGE_FRACTION
+        cap_rationale = (
+            "The upper bound is 1/FILL_FACTOR — the diagonal metric a "
+            "screen-filling object produces; values above a whole-object "
+            "anchor hold a level until the object is larger still (what a "
+            "partition-bound ladder derives, and what an explicit list may "
+            "ask for)."
         )
     prev = float("-inf")
     for i, child in enumerate(group.children):
@@ -592,17 +619,11 @@ def validate_lod_group(group: "Node") -> None:
                 f"LOD-group child {i} ({child.name!r}) has "
                 f"coverage_fraction={value}, which is not a finite number"
             )
-        if value < 0.0 or value > MAX_COVERAGE_FRACTION:
+        if value < 0.0 or value > cap:
             raise ValueError(
                 f"LOD-group child {i} ({child.name!r}) has "
-                f"coverage_fraction={value}, must lie in "
-                f"[0, {MAX_COVERAGE_FRACTION:g}]. The upper bound is "
-                "1/FILL_FACTOR — the coverage metric a screen-filling object "
-                "produces; a derived WHOLE-OBJECT ladder anchors its finest at "
-                "2.0 (half the viewport diagonal — screen-occupancy halving), "
-                "and higher values hold a level until the object is larger "
-                "still (what a partition-bound ladder derives, and what an "
-                "explicit list may ask for)."
+                f"coverage_fraction={value}, must lie in [0, {cap:g}] under "
+                f"selector={selector!r}. " + cap_rationale
             )
         if value <= prev:
             raise ValueError(
