@@ -89,13 +89,15 @@ export interface LineMaterialConfig {
    */
   join?: LineJoinStyle;
   /**
-   * Line rendering primitive (#1352). Omitted ⇒ the `?linePrimitive=`
-   * session override if one is set, else `DEFAULT_LINE_PRIMITIVE`. Explicit
-   * values exist for harnesses (the GLSL/TSL parity page never runs
-   * bootstrap, so it cannot rely on the session override). BUILD-time: the
+   * Line rendering primitive (#1352). Production passes the per-node
+   * `auto`-policy resolution (`resolveLinePrimitiveForNode`, via
+   * `createLinesNode`); omitted ⇒ the session-wide resolution
+   * (`?linePrimitive=` override > forced policy > default). Explicit
+   * values also serve harnesses (the GLSL/TSL parity page never runs
+   * bootstrap, so it cannot rely on session state). BUILD-time: the
    * primitive selects the shader-source pair at construction and cannot be
-   * changed on a live material — the toggle is session-wide, so nothing
-   * ever needs to.
+   * changed on a live material — a node's resolution is made once, so
+   * nothing ever needs to.
    */
   primitive?: LinePrimitive;
 }

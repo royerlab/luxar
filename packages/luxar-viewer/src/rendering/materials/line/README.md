@@ -290,14 +290,20 @@ but builds the cheaper quad for nodes whose effective segment load —
 authored `n_segments` × a rendered-width factor normalized by the
 node's authored extent — reaches 2 M. The threshold is a measured
 budget choice, not a crossover: on a discrete NVIDIA GPU the capsule's
-GPU pass costs ~1.5× the quad at every thin-line count and 3.2–3.4× on
-wide lines, while an Apple GPU barely registers the difference
-(1.04–1.11×); past ~2 M thin segments the capsule's extra cost alone
-exceeds a quarter of a 60 fps frame on the NVIDIA class. The resolved
+GPU pass costs ~1.5× the quad at every thin-line count and 3.16–3.38×
+on wide lines, while an Apple GPU barely registers the difference
+(1.04–1.11×); past ~2 M thin segments the capsule's GPU pass alone
+costs over a quarter of a 60 fps frame on the NVIDIA class (4.6 ms of
+16.7 ms, vs the quad's 3.0 ms). The resolved
 primitive is stamped on `userData.linePrimitive` (both backends stamp
 the RESOLVED value) and carried through `clone()`, the node-factory
 retro picking pass, and TSL graph rebuilds — the sizing never re-runs
-after first build.
+after first build. Partition parts and LOD levels are separate nodes
+with their own authored counts, so one ladder can legitimately mix
+primitives across levels (a 10 M finest level builds the quad while its
+500 k coarse sibling keeps the capsule); that is safe because the
+capsule is calibrated to match the quad side-on by construction — the
+primitives differ visibly only end-on and at joints.
 
 ## Capsule primitive (the DEFAULT since the #1352 flip)
 

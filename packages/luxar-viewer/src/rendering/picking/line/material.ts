@@ -31,11 +31,13 @@ export interface LinePickingMaterialConfig {
    */
   join?: LineJoinStyle;
   /**
-   * Line rendering primitive (#1352). Omitted ⇒ the `?linePrimitive=`
-   * session override, else the default — the SAME resolution the visual
-   * material performs, so the pick footprint always rasterizes the same
-   * stencil the eye sees without any call-site plumbing. Explicit values
-   * exist for harnesses (the parity page never runs bootstrap). BUILD-time,
+   * Line rendering primitive (#1352). Production passes the visual
+   * material's per-node resolution (`createLinesNode` shares one resolved
+   * value; the node-factory retro pass recovers it via
+   * `linePrimitiveFromVisual`), so the pick footprint always rasterizes
+   * the same stencil the eye sees. Omitted ⇒ the session-wide resolution
+   * (override > forced policy > default). Explicit values also serve
+   * harnesses (the parity page never runs bootstrap). BUILD-time,
    * exactly like the visual material.
    */
   primitive?: LinePrimitive;

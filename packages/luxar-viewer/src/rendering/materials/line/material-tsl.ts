@@ -210,8 +210,7 @@ export class LineTSLMaterial
     this.userData.lineJoin = materialConfig.join;
 
     // The rendering primitive (#1352) picks WHICH factory rebuildGraph
-    // runs — stored unresolved like lineJoin, resolved at build time so
-    // the ?linePrimitive= session override wins. Stamped RESOLVED, not
+    // runs. Unlike lineJoin above this is stamped RESOLVED, not
     // as passed: `rebuildGraph` re-reads this on every camera-mode flip
     // and clone() re-passes it, so an unresolved (undefined) stamp would
     // re-run the session/policy resolution later — a policy that sized

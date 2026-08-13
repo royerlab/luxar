@@ -235,9 +235,14 @@ const LINE_PRIMITIVES = ((): string[] => {
  * Result-row id for one (scenario, primitive) arm. The `default` arm
  * keeps the bare scenario id so its rows stay comparable across runs —
  * NOTE that "default" changed meaning at the #1352 flip (screen-space →
- * capsule), so bare-id rows from a pre-flip results.json measure a
- * DIFFERENT shader than post-flip rows; compare across the flip only via
- * explicit `-screen-space` / `-capsule` arms.
+ * capsule), and AGAIN when the auto policy landed: a default arm now
+ * builds whatever production would for that scenario's segment count
+ * (capsule below the auto threshold, screen-space at/above it — the 10 M
+ * and thick 2 M scenarios resolve to screen-space). That is the point of
+ * the default arm — it measures shipping behavior — but it means bare-id
+ * rows are only comparable between runs of the SAME policy era; compare
+ * across either boundary only via explicit `-screen-space` / `-capsule`
+ * arms.
  */
 const armId = (scenarioId: string, primitive: string): string =>
   primitive === 'default' ? scenarioId : `${scenarioId}-${primitive}`;

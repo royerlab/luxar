@@ -26,13 +26,17 @@
  *
  * Unlike `lineJoin` this is NOT an authorable node attribute: the primitive is
  * a renderer implementation choice, not scene content, and the flip to a new
- * default (#1352) must not leave authored attributes
- * behind. It is a session-wide toggle only, set once from `?linePrimitive=`.
+ * default (#1352) must not leave authored attributes behind. It is selected
+ * per session — `?linePrimitive=` override, then the `Advanced → Line
+ * primitive` policy setting — with the `auto` policy additionally sizing
+ * each node once at material build ({@link resolveLinePrimitiveForNode}).
  *
  * It lives here, in the layer-neutral `types/`, rather than in `rendering/`
  * because `config/url-params.ts` must both parse it and install it, and
  * `config/` may not import from `rendering/` (see `.dependency-cruiser.cjs`).
- * Session-constant, set once at startup — the same shape as `?lineJoin=`.
+ * Both pieces of session state (override + policy) are installed once at
+ * startup, before any line material is constructed — the same shape as
+ * `?lineJoin=`.
  *
  * @module types/line-primitive
  */
@@ -75,9 +79,10 @@ export const LINE_PRIMITIVE_POLICIES: readonly LinePrimitivePolicy[] = ['auto', 
  * the width factor below). Measured 2026-08-13 on a discrete NVIDIA GPU
  * (RTX PRO 6000, WebGPU timestamp-query, A/A-replicated): the capsule
  * costs ~1.5× the quad's GPU pass at every thin-line count — parallel
- * curves, no crossover — and 3.2–3.4× on wide lines. Past ~2 M thin
- * segments the capsule's EXTRA cost alone exceeds a quarter of a 60 fps
- * frame budget on that class of GPU (4.6 ms vs 3.0 ms), while an Apple
+ * curves, no crossover — and 3.16–3.38× on wide lines. Past ~2 M thin
+ * segments the capsule's GPU pass alone costs over a quarter of a 60 fps
+ * frame budget on that class of GPU (4.6 ms of 16.7 ms, vs the quad's
+ * 3.0 ms), while an Apple
  * GPU barely registers the difference (1.04–1.11× at 10 M, G1′). 2 M is
  * therefore a budget choice, not a crossover reading (verdict archived
  * in perf-results/1352-campaign/quad-campaign/).
@@ -88,18 +93,28 @@ export const AUTO_QUAD_EFFECTIVE_SEGMENTS = 2_000_000;
  * Width-factor normalization for the auto rule. Fill cost scales with
  * RENDERED width, and authored `max_width` is in world units — not
  * comparable across scenes (a nanometre scene authors 500, a normalized
- * one 0.5). The factor therefore estimates the width in PIXELS at the
- * opening framing (node extent fitted to a nominal viewport):
+ * one 0.5). The factor is therefore PROPORTIONAL to the on-screen width
+ * at the opening framing (node extent fitted to a nominal viewport):
  *
  *   openingPx  = max_width / bboxDiagonal × NOMINAL_VIEWPORT_PX
  *   widthFactor = max(1, openingPx / MIN_RENDERED_WIDTH_PX)
  *
- * floored at 1 because the shader clamps thinner lines to
+ * Deliberately order-of-magnitude, not exact: the authored width is the
+ * quad's HALF-width and each primitive draws a slightly different
+ * support multiple of it (see `_shared/line-capsule.ts`), so `openingPx`
+ * underestimates the drawn footprint by a small constant — conservative
+ * (keeps capsule a bit longer), which is the right bias for a quality
+ * default. Two properties make the ratio robust: `max_width` and the
+ * bounds diagonal live in the SAME authored space, so a uniform node
+ * transform cancels out of the ratio; and an nD bounds diagonal (extra
+ * non-spatial dims) only grows the denominator, again conservative.
+ *
+ * Floored at 1 because the shader clamps thinner lines to
  * `minPixelWidth` (1.5 px in shader-glsl.ts) — below the clamp, fill
  * cost stops shrinking with width. Measured: capsule GPU cost grew
  * ~2.8× from the thin bench arms to the width-3 arms at equal count,
  * i.e. ~linearly in rendered width, which is what a linear factor
- * models. Nodes without projection bounds fall back to factor 1
+ * models. Nodes without authored bounds fall back to factor 1
  * (count-only) rather than guessing.
  */
 export const NOMINAL_VIEWPORT_PX = 1024;

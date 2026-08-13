@@ -146,3 +146,43 @@ describe('user-settings advanced.linePrimitivePolicy', () => {
     expect(loadWithStoredPolicy('volumetric').advanced.linePrimitivePolicy).toBe('auto');
   });
 });
+
+describe('extremes and exact crossovers', () => {
+  it('one below / at / one above the threshold', () => {
+    expect(resolveLinePrimitiveForNode({ nSegments: AUTO_QUAD_EFFECTIVE_SEGMENTS - 1 })).toBe(
+      'capsule'
+    );
+    expect(resolveLinePrimitiveForNode({ nSegments: AUTO_QUAD_EFFECTIVE_SEGMENTS })).toBe(
+      'screen-space'
+    );
+    expect(resolveLinePrimitiveForNode({ nSegments: AUTO_QUAD_EFFECTIVE_SEGMENTS + 1 })).toBe(
+      'screen-space'
+    );
+  });
+  it('extreme but finite inputs stay sane', () => {
+    expect(effectiveSegmentLoad({ nSegments: 1e12 })).toBe(1e12);
+    expect(resolveLinePrimitiveForNode({ nSegments: 1e12 })).toBe('screen-space');
+    expect(effectiveSegmentLoad({ nSegments: 1.5 })).toBe(1.5); // fractional count flows, harmless
+    expect(effectiveSegmentLoad({ nSegments: Number.MAX_SAFE_INTEGER })).toBe(
+      Number.MAX_SAFE_INTEGER
+    );
+  });
+  it('Infinity segments is rejected (guard is isFinite, not just >0)', () => {
+    expect(effectiveSegmentLoad({ nSegments: Number.POSITIVE_INFINITY })).toBe(0);
+    expect(resolveLinePrimitiveForNode({ nSegments: Number.POSITIVE_INFINITY })).toBe('capsule');
+  });
+  it('width factor: exact crossover count under a 10x factor', () => {
+    // factor 10 => 200k segments is exactly at the effective threshold
+    const l = { maxWidth: 15, bboxDiagonal: 1024 };
+    expect(resolveLinePrimitiveForNode({ nSegments: 200_000, ...l })).toBe('screen-space');
+    expect(resolveLinePrimitiveForNode({ nSegments: 199_999, ...l })).toBe('capsule');
+  });
+  it('tiny diagonal with huge width does not overflow to a wrong branch', () => {
+    expect(
+      Number.isFinite(effectiveSegmentLoad({ nSegments: 10, maxWidth: 1e30, bboxDiagonal: 1e-30 }))
+    ).toBe(true);
+    expect(
+      resolveLinePrimitiveForNode({ nSegments: 10, maxWidth: 1e30, bboxDiagonal: 1e-30 })
+    ).toBe('screen-space');
+  });
+});

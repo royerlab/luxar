@@ -75,9 +75,10 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // same screen-space quad.
     this.userData.lineJoin = config.join;
     // Line primitive (#1352) — likewise a build-time variant, dispatching
-    // between the pick factories on every rebuild. Stored unresolved so
-    // the ?linePrimitive= session override resolves at build time,
-    // exactly like the visual TSL material.
+    // between the pick factories on every rebuild. UNLIKE lineJoin above
+    // this is stamped RESOLVED (exactly like the visual TSL material):
+    // rebuilds and clone() must never re-run a per-node policy decision
+    // made at first build.
     this.userData.linePrimitive = resolveLinePrimitive(config.primitive);
 
     this.uniforms = {
