@@ -358,6 +358,69 @@
         }
       }
     },
+    "gsplats_3d_drosophila_gastrulation": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
+      "attribution": "Royer & Keller labs \u2014 Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+      "pending_upload": true,
+      "dir": "gsplats_3d_drosophila_gastrulation",
+      "files": [
+        {
+          "name": "droso_gastrulation.gsplats.zarr.zip",
+          "sha256": "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af",
+          "bytes": 2377880
+        }
+      ]
+    },
+    "gsplats_3d_h2afva_stack": {
+      "bucket": "zenodo",
+      "record": "h2afva",
+      "license": "cc-by-4.0",
+      "source": "h2afva zebrafish histone light-sheet, single stack (Royer lab)",
+      "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
+      "pending_upload": true,
+      "dir": "gsplats_3d_h2afva_stack",
+      "files": [
+        {
+          "name": "h2afva_tp234.gsplats.zarr.zip",
+          "sha256": "b0689630719873f03d77b96eb2689d36414537ea14f79fead05554fce0034a53",
+          "bytes": 26266472
+        }
+      ]
+    },
+    "gsplats_3d_h2afva_decimation": {
+      "bucket": "zenodo",
+      "record": "h2afva",
+      "license": "cc-by-4.0",
+      "source": "h2afva single stack at four decimation levels (Royer lab)",
+      "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
+      "pending_upload": true,
+      "dir": "gsplats_3d_h2afva_decimation",
+      "files": [
+        {
+          "name": "h2afva_full.gsplats.zarr.zip",
+          "sha256": "962eda1fc5c255636ab58789030b1d173f6318d5568df788361357cec8481fd3",
+          "bytes": 18436934
+        },
+        {
+          "name": "h2afva_quarter.gsplats.zarr.zip",
+          "sha256": "c0673a63237ca788dff0dea17cffa0f8bd9a1805ba96dc75365887fa112005b2",
+          "bytes": 4807329
+        },
+        {
+          "name": "h2afva_tenth.gsplats.zarr.zip",
+          "sha256": "051718f5de789cfdd7a9787815c06588919bd72c5dd456cfda69370f51d50336",
+          "bytes": 2018409
+        },
+        {
+          "name": "h2afva_twentieth.gsplats.zarr.zip",
+          "sha256": "5b6a8c16ac6499d930436cb7c6f538ddc6f90772e9269a89ce967ca4a012a03b",
+          "bytes": 1050513
+        }
+      ]
+    },
     "milky_way_gaia_3m": {
       "bucket": "local-compute",
       "redistribute": false,

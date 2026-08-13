@@ -247,6 +247,30 @@ DATASETS: dict[str, dict] = {
             ),
         },
     ),
+    "gsplats_3d_drosophila_gastrulation": dict(
+        bucket="zenodo",
+        record="cc-by",
+        license="cc-by-4.0",
+        source="Drosophila His2Av::mRFP1 embryo, SiMView light-sheet (Royer/Keller)",
+        attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+        pending_upload=True,
+    ),
+    "gsplats_3d_h2afva_stack": dict(
+        bucket="zenodo",
+        record="h2afva",
+        license="cc-by-4.0",
+        source="h2afva zebrafish histone light-sheet, single stack (Royer lab)",
+        attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
+        pending_upload=True,
+    ),
+    "gsplats_3d_h2afva_decimation": dict(
+        bucket="zenodo",
+        record="h2afva",
+        license="cc-by-4.0",
+        source="h2afva single stack at four decimation levels (Royer lab)",
+        attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
+        pending_upload=True,
+    ),
     # ---- Bucket 3: NOT redistributable → fetch raw + compute locally -------
     "milky_way_gaia_3m": dict(
         bucket="local-compute",
