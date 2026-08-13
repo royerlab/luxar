@@ -273,10 +273,9 @@ bends). It measured 2.7–5× the quad's frame cost, and after the capsule
 flip a visual A/B found the capsule matched or beat it — including
 near-axial, its signature case — so it was deleted rather than maintained
 as a third parity surface. The full implementation (GLSL + TSL twins, the
-quadrature-validated CPU reference in `_shared/line-volumetric.ts`, the
-Abel-transform sharpness LUT, the `ray-integral.ts` shared-math module,
-and the pick pair) lives in git history at the deletion's branch point,
-`1481995d9`.
+quadrature-validated CPU reference, the Abel-transform sharpness LUT, the
+ray-integral shared-math module, and the pick pair) lives in git history
+at the deletion's branch point, `1481995d9`.
 
 ## Capsule primitive (the DEFAULT since the #1352 flip)
 
