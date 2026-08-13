@@ -231,14 +231,25 @@ to ship after). Sequencing is at the bottom.
          and, if printed, `NOTE: There were LFS Objects Orphaned by this rewrite`
          plus the file it names.
       4. Verify `git log --all -- <path>` is empty for all four paths, and that
-         blob `bae6bf061658` (the RAW, non-LFS Gaia zip, 39.58 MB, from commits
-         `b3032cab7` / `732ebc968`) is gone. It was committed before that path
-         was LFS-tracked, so the rewrite is the ONLY thing that removes it — a
-         purge structurally cannot, and it is the CC BY-**NC** dataset.
+         blob `bae6bf061658` (the RAW, non-LFS Gaia zip, 39.58 MB — committed
+         before that path was LFS-tracked, so no LFS purge can touch it, and it
+         is the CC BY-**NC** dataset) is gone from every rewritten ref.
+         ⚠ **That local check is necessary but NOT sufficient**, and this blob
+         is the case that proves it: it sits in `b3032cab7`, which is on `main`
+         and so does get rewritten away, *and* in `732ebc968` — a byte-identical
+         commit that no branch, tag or PR ref points at. A ref rewrite cannot
+         reach an unreferenced commit and `git log --all` cannot even see it,
+         yet `git fetch origin 732ebc968…` still succeeds against the remote
+         (checked 2026-08-13) and the API/web still serve it by SHA. So verify
+         against the REMOTE too, from a clone that has no local copy: that fetch
+         must fail before the repo goes public.
       5. Lift branch protection → `git push --force --mirror origin` → restore
          protection. ⚠ `--mirror` deletes remote refs absent locally.
       6. File the Support ticket with repo name, affected-PR count, and the
-         filter-repo NOTE output.
+         filter-repo NOTE output — and ask, in the same ticket, for the
+         unreferenced commits and cached views to be dropped as well (name
+         `732ebc968` explicitly), not just the orphaned LFS objects. Only
+         GitHub-side GC clears those; step 4's remote fetch is the proof.
       7. Re-clone everywhere: this Mac's worktrees and obsidian's three checkouts
          (`luxar-main`, `luxar-fullfit`, `luxar-encode`).
     - Zero forks today, so no third-party copies to chase. The repo is still
