@@ -427,10 +427,12 @@ bisector, the line through the shared vertex with 2D normal
 `normalize(q̂ − m̂)` in pixel space (the partner's normal is the exact
 negation, so the two half-discs tile the disc exactly at ANY bend angle —
 no notch, no chopped miter tip, no double-bright overlap). The cut spans the
-full joint plane (cap and body) and composes by the DEFICIT rule over a
-1 px AA ramp: on the partner's side each leg renders
-`max(mine − partner, 0)`, so the additive pair composes to
-`max(mine, partner)`. Congruent legs turning 120° or less (the common case)
+full joint plane (cap and body) and composes by the DEFICIT rule over a 1 px
+AA ramp: on the partner's side each leg renders `max(mine − partner, 0)`, so
+the additive pair composes to `max(mine, partner)`. The normal is kept
+unquantised on purpose: each leg builds it in its own local basis, so any
+per-leg rounding never cancels, and the disagreement grows with distance
+from the joint (#1502). Congruent legs turning 120° or less (the common case)
 gate to an exact zero-double-count partition — the same domain partition the
 volumetric primitive integrates per ray — while tapered or perspective-diverged
 partners get exactly the light a pure partition would chop (a fat vertex's disc
@@ -444,7 +446,8 @@ radius costs anyway, though in absolute terms that reaches −0.09 at 90° and
 −0.19…−0.39 at 120° — and the sharp-turn exception that overrides the skip
 stops at the AA radius floor, because below it the two legs' `widthScale`
 factors disagree, so the PAIR no longer composes to `max` even though each
-deficit stays bounded by its own unscaled profile (#1495). The partner's far endpoint is near-plane-clipped
+deficit stays bounded by its own unscaled profile (#1495).
+The partner's far endpoint is near-plane-clipped
 toward the joint vertex before projecting (a behind-eye projection flips
 and would poison the cut normal), with a joint vertex behind the near
 plane keeping the perpendicular butt. The per-fragment radius is computed EXACTLY from the

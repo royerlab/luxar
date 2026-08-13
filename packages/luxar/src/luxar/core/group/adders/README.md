@@ -139,34 +139,45 @@ Each `*_impl` walks the same ordered decision tree:
    in the single-leaf write at step 10, so it fires once per written leaf (none
    under an additive ladder, whose writer never validates) rather than once more
    for the source array.
-5. **Node-attrs gate** (points/lines only; `validate_render_attrs`, the flat
-   writer's own step 0a) — since #1529, run once here against the caller's
-   un-split `**attrs`, above every structural branch below (same placement
-   reasons as step 4): `substitutive_lod=` and `partition=` forward the
-   non-compositing remainder of `**attrs` into a synthesised child (a gsplat
-   `child_0`, or a `part_i`; a compositing attr is split out and refused
-   earlier, before any child is written), and
-   `additive_lod=` goes straight to the multi-LOD writer, which runs this
-   same validator with no reserved-attrs set at all — so on the
-   substitutive/partition paths a bad attr used to be caught only from inside
-   the first child (by then the wrapper group itself, childless, was already
-   on disk), and on the additive path a genuinely reserved key got the wrong
-   verdict (unknown instead of reserved, nothing written) while an
-   unreserved-but-clobbering key (`position_bounds=`) wasn't refused at all —
-   real ladder data was written and the writer's own stamp silently
-   overwritten. Running it here instead means all three split paths refuse
-   byte-identically to the flat path, with nothing written. This placement
-   also outranks the #1437 channel gate at the top of the partition,
-   substitutive, and multi-LOD wrappers (see "Partition wrappers" below) —
-   matching the flat writer's own order, where node attrs are validated
-   before channels. Mesh and GSplats did not gain this gate: their own
-   `partition=` paths (e.g. `add_mesh(..., partition={"max_elements": 40},
-   blending="max")`, `add_gsplats(..., partition={"max_elements": 100},
-   blending="max")`) still leave a childless `kind=partition` node that
-   survives `finalize()` — tracked in #1534.
-6. **Substitutive-LOD branch** (points/lines, when `substitutive_lod` is set):
-   delegate to the substitutive wrapper, whose coarse levels are synthesised
-   gsplats under a `kind=lod` group. Fires before (auto-)partition.
+5. **Node-attrs gate** (`validate_render_attrs`, the flat writer's own step
+   0a) — since #1529 (Points/Lines) and #1534 (Mesh, GSplats), run once here
+   against the caller's un-split `**attrs`, above every structural branch
+   below (same placement reasons as step 4): `substitutive_lod=` and
+   `partition=` forward the non-compositing remainder of `**attrs` into a
+   synthesised child (a gsplat `child_0`, a decimated mesh `child_0`, or a
+   `part_i`; a compositing attr is split out and refused earlier, before any
+   child is written), and `additive_lod=` (points/lines/mesh) goes straight to
+   the multi-LOD writer, which runs this same validator with no reserved-attrs
+   set at all — so on the Points/Lines substitutive branch and on the
+   Mesh/GSplats `partition=` branch a bad attr used to be caught only from
+   inside the first child (by then the wrapper group itself, childless, was
+   already on disk). Mesh's OWN `substitutive_lod=` branch is the one
+   exception: it already ran this same validator, with the right
+   `MESH_RESERVED_ATTRS` set, before #1534 — so it never stranded anything;
+   what #1534 fixed there was only the check's placement relative to
+   `extend_to_all` (see step 10). On the additive path a genuinely
+   reserved key got the wrong verdict (unknown instead of reserved, nothing
+   written) while an unreserved-but-clobbering key (`position_bounds=`)
+   wasn't refused at all — real ladder data was written and the writer's own
+   stamp silently overwritten. Running it here instead means every split path
+   refuses byte-identically to the flat path, with nothing written. This
+   placement also outranks the #1437 channel gate at the top of the
+   partition, substitutive, and multi-LOD wrappers (see "Partition wrappers"
+   below) — matching the flat writer's own order, where node attrs are
+   validated before channels. GSplats' only structural door on `add_gsplats`
+   is `partition=` (its `lod_group=`/`additive_lod=` doors live on the
+   separate `add_gsplats_from_data` adder, out of scope for this file).
+   Before #1534, `add_mesh(..., partition={"max_elements": 40},
+   blending="max")` and `add_gsplats(..., partition={"max_elements": 100},
+   blending="max")` raised the same message but still left a childless
+   `kind=partition` node that survived `finalize()` — the #1529 stranding one
+   geometry type over.
+6. **Substitutive-LOD branch** (points/lines/mesh, when `substitutive_lod` is
+   set — GSplats has no `substitutive_lod=` on `add_gsplats`; its own
+   substitutive door is `lod_group=` on the separate `add_gsplats_from_data`
+   adder): delegate to the substitutive wrapper, whose coarse levels are
+   synthesised gsplats (points/lines) or decimated meshes (mesh) under a
+   `kind=lod` group. Fires before (auto-)partition.
 7. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it
@@ -175,31 +186,37 @@ Each `*_impl` walks the same ordered decision tree:
    (`median` / `midpoint` / `sah`) capped at `max_elements`, and if it yields
    more than one part, delegate to the partition wrapper. A single part falls
    through to the regular write.
-9. **Additive-LOD branch** (points/lines, when `additive_lod` is set): build
+9. **Additive-LOD branch** (points/lines/mesh, when `additive_lod` is set —
+   GSplats has no `additive_lod=` on `add_gsplats`; its own additive door is
+   `additive_lod=` on the separate `add_gsplats_from_data` adder): build
    prefix-monotone levels and, if more than one level results, delegate to the
    multi-LOD wrapper. Fires after the 1-part-partition fall-through, so a
-   single `add_*` call can compose partition-of-additive-LOD.
+   single `add_*` call can compose partition-of-additive-LOD — except Mesh,
+   whose `additive_lod=` is refused outright alongside either of the other two
+   structural params (`_reject_additive_lod_compositions`), so a mesh call
+   never actually reaches this branch after a real partition split.
 10. **Single-leaf write**: validate dimensions (the full
     `_validate_data_dimensions`, i.e. the step-4 count check again plus the
     per-dimension range `UserWarning`), resolve `extend_to_all` (this is where
     the `"all"` sentinel becomes a concrete dim-name list for a flat leaf AND
     for every part of a partition, whose recursion re-enters here; the multi-LOD
     wrapper resolves it itself — see below), then call the scene writer
-    (`write_points` / `write_lines` / `write_gsplats`) and return the
-    constructed `Points` / `Lines` / `GSplats` node. The writer re-runs the
-    same step-5 node-attrs validator on its way in (`validate_render_attrs`
-    is idempotent — it only inspects `attrs`), so a flat call validates
-    twice; harmless on its own, but since step 5 now runs before this step's
-    `extend_to_all` resolve, a multi-fault flat call reports the attrs fault
+    (`write_points` / `write_lines` / `write_gsplats` / `write_mesh`) and
+    return the constructed `Points` / `Lines` / `GSplats` / `Mesh` node. The
+    writer re-runs the same step-5 node-attrs validator on its way in
+    (`validate_render_attrs` is idempotent — it only inspects `attrs`), so a
+    flat call validates twice; harmless on its own, but since step 5 now runs
+    before this step's `extend_to_all` resolve, a multi-fault flat call reports the attrs fault
     where it used to report the `extend_to_all` one — a deliberate consequence
     of validating attrs first, matching the writer's own step 0a, with no
-    change to which single-fault calls succeed or fail. Mesh diverges here:
-    its flat-path fallthrough resolves `extend_to_all` (`mesh.py:556`) before
-    ever reaching the flat writer's own attrs gate, keeping the pre-#1529
-    order — the substitutive branch's dispatcher,
-    `_maybe_add_mesh_substitutive_lod` (`mesh.py:401-403`), runs its own
-    attrs gate earlier still, before deciding whether to hand off to the
-    wrapper at all.
+    change to which single-fault calls succeed or fail. This now holds for
+    Mesh too: before #1534 its flat-path fallthrough resolved `extend_to_all`
+    before ever reaching the flat writer's own attrs gate (the pre-#1529
+    order), and its substitutive branch's dispatcher,
+    `_maybe_add_mesh_substitutive_lod`, ran its OWN attrs gate after resolving
+    `extend_to_all` — the opposite order from Points/Lines. #1534 moved the
+    check to the top of `add_mesh_impl`, above step 6 and every later step, so
+    every mesh path now agrees with step 5's placement here too.
 
 All `*_impl` entries wrap the body in a `try/except (ValueError, TypeError)`
 that re-raises as a `ValueError` with a `Could not add <type> '<name>': ...`
@@ -252,17 +269,18 @@ the wrong elements. Mesh does the same thing in `_validate_partition_sources`;
 the gate belongs at the top of the wrapper, never the leaf adder — that
 placement is still correct for the CHANNEL gate on its own. Two other checks
 now outrank it, though, and both sit at the adder entry, above the branch
-that enters this wrapper: the scene-dimension count (#1446), and — since
-#1529 — the node-attrs gate (`validate_render_attrs`, see step 5 of "Add-Path
-Anatomy"). So a call that also trips one of those reports THAT fault first,
-not the channel one; only once both have passed does a wrong-length channel
-get reported here. This is not an accident of hoisting order: it mirrors the
-flat writer's own step ordering (node attrs at step 0a, the channel sweep at
-steps 0d–0f for Points / 0e–0h for Lines — see `geometry_writers/points.py` /
+that enters this wrapper: the scene-dimension count (#1446), and the
+node-attrs gate (`validate_render_attrs`, see step 5 of "Add-Path
+Anatomy") — since #1529 for Points/Lines and #1534 for Mesh/GSplats. So a
+call that also trips one of those reports THAT fault first, not the channel
+one; only once both have passed does a wrong-length channel get reported
+here. This is not an accident of hoisting order: it mirrors the flat writer's
+own step ordering (node attrs at step 0a, the channel sweep at steps 0d–0f
+for Points / 0e–0h for Lines — see `geometry_writers/points.py` /
 `geometry_writers/lines.py`), so the split paths now agree
-with the flat path where, before #1529, they disagreed (a split call used to
-report the channel fault even when the flat call on the same input would
-have reported the attrs fault first). Uniform values whose own
+with the flat path where, before #1529/#1534, they disagreed (a split call
+used to report the channel fault even when the flat call on the same input
+would have reported the attrs fault first). Uniform values whose own
 length can collide with the element count (an RGB(A) list/tuple, a `(k,)`
 Cholesky) are classified before slicing rather than length-tested. Lines
 additionally validate `indices` — topology before channels, as mesh validates

@@ -97,8 +97,11 @@ DEMO_META = {
     "requirements": {
         "download_mb": 3,
         "compute": "medium",
-        "gpu": "optional",
-        "local_data": "git-lfs",
+        # The precomputed fit is no longer shipped in-tree (the source data is
+        # not redistributable), so a first run fetches the raw source and
+        # refits — which needs a GPU. Nothing has to be placed by hand.
+        "gpu": "required",
+        "local_data": None,
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_recipes_tribolium"],
@@ -150,7 +153,7 @@ FACTOR = 8
 # what you see at the opening framing and the fine branch engages only once you
 # zoom the embryo up to filling the viewport. That is the recipe's contract —
 # "instant coarse overview, fine tiles on zoom" — and it is why overview does NOT
-# take the quarter-viewport anchor the other recipes got in #1361. No per-dataset
+# take the half-fitted-axis anchor the other recipes got in #1361. No per-dataset
 # threshold knob to tune either way.
 # Additive-ladder depth for the stream recipe and the tiles / overview per-part
 # (and per-level) streaming ladders.

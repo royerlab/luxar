@@ -9,14 +9,22 @@ Each child carries its own ``coverage_fraction`` attribute (strictly monotonic
 increasing in coarsest→finest order; coarsest = 0.0, finest = 1.0 for a
 WHOLE-OBJECT ladder and ``MAX_COVERAGE_FRACTION`` = 4.0 for a partition-bound
 one). This is a **dimensionless, viewport-relative** threshold: the viewer
-multiplies it by a fixed fraction (a quarter) of the current viewport diagonal (in
-pixels) and picks the finest child whose resulting pixel threshold is satisfied by
-the group's on-screen size. So coverage 1.0 activates once the object's projected
-bbox diagonal reaches about a quarter of the viewport diagonal — i.e. at any normal
-full-frame view — and coarser levels step in geometrically as it shrinks below
-that, on any monitor. 4.0 means "once this node alone fills the viewport", which is
-the right anchor for one tile of a spatial partition (see
-``partitioned_coverage_fractions``).
+multiplies it by half of the current viewport's *fitted axis* — the smaller of
+its width/height, i.e. ``min(viewport.width, viewport.height)`` in pixels, which
+is the extent the camera framing actually fits (see ``scene/lod-group-registry.ts``'s
+``FILL_FACTOR`` doc) — and picks the finest child whose resulting pixel
+threshold is satisfied by the group's on-screen size. So coverage 1.0 activates
+once the object's projected bbox diagonal reaches half of the fitted screen axis
+— i.e. at any normal full-frame view — and coarser levels step in geometrically
+as it shrinks below that, on any monitor or aspect ratio. 4.0 is *approximately*
+"this node alone fills the viewport" — exactly so only near aspect ratio
+√3 ≈ 1.73; the real screen-fill metric ranges from ~2.8 (1:1) to ~7.4 (32:9),
+see ``MAX_COVERAGE_FRACTION`` below — which is nonetheless the right anchor for
+one tile of a spatial partition (see ``partitioned_coverage_fractions``): a
+tiled layer's per-tile anchor was already a coarse heuristic (each tile's own
+in-scene size varies with camera distance and framing anyway), so trading
+aspect-exactness there for the whole-object ladder being aspect-exact instead
+(the case #1410 actually regressed) is the right side to be approximate on.
 
 The standalone builder ``add_lod_group()`` lets users assemble these by hand; the
 convenience paths (e.g. ``Scene.add_gsplats_from_data(..., lod_group=...)``,
@@ -78,18 +86,43 @@ if TYPE_CHECKING:
 
 #: Upper bound on any ``coverage_fraction`` — authored OR derived.
 #:
-#: This is ``1 / FILL_FACTOR`` (the viewer's LOD anchor, ``0.25`` — see
-#: ``scene/lod-group-registry.ts``): the viewer compares each threshold against
-#: ``coverage metric = projected bbox diagonal / (FILL_FACTOR × viewport
-#: diagonal)``, so an object whose projected diagonal exactly equals the viewport
-#: diagonal — a *screen-filling* object — produces a metric of ``1 / FILL_FACTOR``
-#: = 4.0. The bound therefore means "a level may be required to fill the screen,
-#: at most", which is precisely what the old bound of ``1.0`` meant back when
-#: ``FILL_FACTOR`` was 1.0. Keeping the bound at 1.0 after the anchor moved would
-#: silently shrink what an author can express.
+#: This is ``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`` (the viewer's LOD anchor,
+#: ``FILL_FACTOR = 0.5`` — see ``scene/lod-group-registry.ts``): the viewer
+#: compares each threshold against ``coverage metric = projected bbox diagonal /
+#: (FILL_FACTOR × fittedAxisPx)``, where ``fittedAxisPx`` is
+#: ``min(viewport.width, viewport.height)`` — the extent the camera framing
+#: actually fits. A *screen-filling* object's projected diagonal is not simply
+#: ``fittedAxisPx`` (that identity only held for the pre-#1410 viewport-diagonal
+#: normalisation); it is ``hypot(aspect, 1) / min(aspect, 1)`` times it —
+#: aspect-DEPENDENT, not a constant — so the coverage METRIC such an object
+#: produces (that ratio ÷ ``FILL_FACTOR``) measures **2.83 at 1:1, 3.33 at 4:3,
+#: 3.61 at 3:2, 3.77 at 16:10, 4.08 at 16:9, 5.15 at a real 21:9 panel
+#: (2560x1080), 7.39 at 32:9**, and is equal
+#: to exactly 4.0 only at aspect ratio √3 ≈ 1.73. ``SCREEN_FILL_DIAGONAL_RATIO``
+#: pins the mainstream-aspect approximation of that ratio to a round ``2``
+#: (measured 2.04 at 16:9 — the reference aspect it is anchored at — 2.57 at
+#: 21:9), so ``MAX_COVERAGE_FRACTION = SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR
+#: = 2 / 0.5 = 4.0`` — the same numeric value as before issue #1410
+#: re-anchored the normalisation from the viewport diagonal to the fitted
+#: screen axis, but no longer an EXACT "a screen-filling object produces this
+#: metric" identity at every aspect ratio the way it was under the old
+#: (diagonal) normalisation — only approximately so, and only near the
+#: mainstream range. The bound still means, approximately, "a level may be
+#: required to fill the screen, at most"; a partition-bound ladder therefore
+#: now needs somewhat MORE projected size to reach its finest level at
+#: square-ish/portrait-ish aspect ratios than before #1410 (×1.41 at 1:1,
+#: ×1.20 at 4:3, ×1.06 at 16:10, ~×1.0 at 16:9) and somewhat LESS at
+#: ultrawide ones (×0.78 at a real 21:9 panel) — an accepted, deliberate
+#: trade against the #1410 fix: the whole-object ladder
+#: (``coverage_fractions``, anchored at 1.0) is what a normal full-frame
+#: view hits, and that is where #1410's wide-aspect blur actually showed up;
+#: a tiled layer's per-tile anchor was
+#: already an approximation (each tile's own on-screen size already varies
+#: with camera distance and framing), so it is the right place to keep
+#: absorbing the aspect dependence.
 #:
-#: ``1.0`` is the finest anchor of a WHOLE-OBJECT ladder (reached at ~a quarter of
-#: the viewport diagonal, i.e. any normal full-frame view) — see
+#: ``1.0`` is the finest anchor of a WHOLE-OBJECT ladder (reached at half the
+#: fitted screen axis, i.e. any normal full-frame view) — see
 #: :func:`coverage_fractions`, whose *derived* output contract stays ``[0, 1]``.
 #: Values above ``1.0`` hold a level until *later* than that, which is what a
 #: spatially tiled layer needs (each tile projects to only a fraction of the
@@ -214,10 +247,11 @@ def coverage_fractions(element_counts: list[int]) -> list[float]:
     Coarsest child (index 0) gets ``0.0`` (always-eligible floor); each subsequent
     child *i* gets ``sqrt(N_i / N_finest)`` where ``N_finest`` is the finest (last)
     level's splat count — so the finest child is ``1.0`` and activates once the
-    object's projected bbox diagonal reaches about a quarter of the viewport
-    diagonal, i.e. at any normal full-frame view (the viewer multiplies each
-    fraction by a quarter of the current viewport diagonal in pixels). Coarser
-    levels land at geometric fractions below and step in as the object shrinks.
+    object's projected bbox diagonal reaches half of the fitted screen axis
+    (``min(viewport.width, viewport.height)``), i.e. at any normal full-frame view
+    (the viewer multiplies each fraction by half of the current viewport's fitted
+    axis in pixels). Coarser levels land at geometric fractions below and step in
+    as the object shrinks.
 
     Because the fraction is a **ratio** of splat counts:
 
@@ -263,7 +297,7 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     """:func:`coverage_fractions` re-anchored at **fills-screen** for a ladder
     that is bound to a spatial partition.
 
-    **The rule.** The viewer's quarter-viewport anchor (``FILL_FACTOR`` 0.25) is
+    **The rule.** The viewer's half-fitted-axis anchor (``FILL_FACTOR`` 0.5) is
     calibrated for a lod group whose levels are alternative renderings of the
     WHOLE object, seen at a normal full-frame view — that is the #1361 fix. Two
     topologies opt out of it, for two DIFFERENT reasons — one geometric, one a
@@ -296,7 +330,8 @@ def partitioned_coverage_fractions(element_counts: list[int]) -> list[float]:
     tree writers' topology fallbacks and ``build_adaptive`` special-case it.
 
     In both cases the ladder keeps the pre-#1361 anchor by scaling the derived
-    fractions by :data:`MAX_COVERAGE_FRACTION` (``1 / FILL_FACTOR``), so the
+    fractions by :data:`MAX_COVERAGE_FRACTION`
+    (``SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR``), so the
     finest lands on ``4.0`` — which in coverage-metric space means exactly what
     ``1.0`` meant before the anchor moved. This is the same ×4 rescale the
     hand-tuned ``demo_biodiversity_planetary_scale`` ladder uses, so all three
@@ -555,11 +590,12 @@ def validate_lod_group(group: "Node") -> None:
                 f"LOD-group child {i} ({child.name!r}) has "
                 f"coverage_fraction={value}, must lie in "
                 f"[0, {MAX_COVERAGE_FRACTION:g}]. The upper bound is "
-                "1/FILL_FACTOR — the coverage metric a screen-filling object "
-                "produces; 1.0 is a WHOLE-OBJECT ladder's finest anchor (~a "
-                "quarter of the viewport diagonal), and higher values hold a "
-                "level until the object is larger still (what a partition-bound "
-                "ladder derives, and what an explicit list may ask for)."
+                "SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly the coverage metric "
+                "a screen-filling object produces; 1.0 is a WHOLE-OBJECT ladder's "
+                "finest anchor (half the fitted screen axis), and higher values "
+                "hold a level until the object is larger still (what a "
+                "partition-bound ladder derives, and what an explicit list may "
+                "ask for)."
             )
         if value <= prev:
             raise ValueError(
@@ -811,10 +847,11 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
             raise ValueError(
                 "substitutive_lod=dict(coverage_fractions=...): values must lie in "
                 f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
-                f"{explicit_coverage}. The upper bound is 1/FILL_FACTOR — the "
+                f"{explicit_coverage}. The upper bound is "
+                "SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly the "
                 "coverage metric a screen-filling object produces; 1.0 is a "
-                "whole-object ladder's finest anchor (~a quarter of the viewport "
-                "diagonal)."
+                "whole-object ladder's finest anchor (half the fitted screen "
+                "axis)."
             )
 
     # Dims coarsening may cluster over; complement = hard grouping barriers.

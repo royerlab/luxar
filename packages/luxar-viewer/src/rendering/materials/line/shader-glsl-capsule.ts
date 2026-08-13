@@ -273,6 +273,8 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
             vec2 nRaw = qq / ql - u;   // q − m, m = +u at A
             float nl = length(nRaw);
             if (nl > 1e-3) {
+              // Cut normal: keep full precision — no per-leg quantisation
+              // (see _shared/line-capsule.ts's note; #1502).
               vec2 n2 = nRaw / nl;
               vec2 nLoc = vec2(dot(n2, u), dot(n2, v));
               if (nLoc.x < -1e-3) {

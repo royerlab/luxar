@@ -50,7 +50,7 @@ def resolve_substitutive_axis_gsplats(
       (``sqrt(N_i/N_finest)``, re-anchored at fills-screen when the insertion
       point is inside a ``kind=partition``). There is no method selector or
       per-dataset anchor knob: for a whole-object ladder the viewer anchors the
-      finest at a quarter of the live viewport diagonal — any normal full-frame
+      finest at half of the live fitted screen axis — any normal full-frame
       view.
 
     Semantics:
@@ -131,9 +131,9 @@ def resolve_substitutive_axis_gsplats(
                     "lod_group=dict(coverage_fractions=...): values must lie in "
                     f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
                     f"{explicit_coverage_fractions}. The upper bound is "
-                    "1/FILL_FACTOR — the coverage metric a screen-filling object "
-                    "produces; 1.0 is a whole-object ladder's finest anchor (~a "
-                    "quarter of the viewport diagonal)."
+                    "SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR — roughly the coverage "
+                    "metric a screen-filling object produces; 1.0 is a whole-object "
+                    "ladder's finest anchor (half the fitted screen axis)."
                 )
 
         if data.n_substitutive > 1 and not recompute:
