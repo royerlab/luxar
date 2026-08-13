@@ -60,10 +60,8 @@ def files_of(spec: dict) -> list[dict]:
     return files
 
 
-def main() -> int:
-    m = json.loads(MANIFEST.read_text())
-    datasets, records = m["datasets"], m["records"]
-
+def _audit_records(records: dict) -> None:
+    """Zenodo upload-destination records and their state."""
     print("=" * 78)
     print("ZENODO RECORDS (upload destinations)")
     print("=" * 78)
@@ -73,6 +71,49 @@ def main() -> int:
             f"  {name:10s} {state:12s} {r.get('license', '?'):14s} doi={r.get('zenodo_concept_doi')}"
         )
 
+
+def _bucket_row(
+    name: str,
+    spec: dict,
+    bucket: str,
+    to_upload: list[tuple[str, float]],
+    elsewhere: list[str],
+) -> None:
+    """Print one dataset's presence row; record it as ready / elsewhere."""
+    files = files_of(spec)
+    sub = spec.get("dir", "")
+    in_repo = sum(
+        1
+        for f in files
+        if ((DATA_DIR / sub / f["name"]) if sub else (DATA_DIR / f["name"])).exists()
+    )
+    in_cache = sum(1 for f in files if (CACHE / name / f["name"]).exists())
+    size = sum(f.get("bytes", 0) for f in files) / 1048576
+    flag = ""
+    if bucket == "zenodo":
+        if not files:
+            flag = "  <-- bytes on another machine (upload from there)"
+            elsewhere.append(name)
+        elif in_repo == 0 and in_cache == 0:
+            flag = "  <-- BYTES NOT ON THIS MACHINE"
+            elsewhere.append(name)
+        else:
+            to_upload.append((name, size))
+    pend = " PENDING-UPLOAD" if spec.get("pending_upload") else ""
+    print(
+        f"  {name:38s} rec={spec.get('record', '-'):9s} files={len(files):2d} "
+        f"repo={in_repo:2d} cache={in_cache:2d} {size:8.1f} MB "
+        f"{spec.get('license', '?'):16s}{pend}{flag}"
+    )
+
+
+def _audit_buckets(datasets: dict) -> tuple[list[tuple[str, float]], list[str]]:
+    """Datasets grouped by bucket; returns (ready-to-upload, bytes-elsewhere).
+
+    "elsewhere" is NOT the same as blocked: the bytes exist, just not on this
+    machine (these are the obsidian-computed sets). Conflating the two hides
+    whether anything actually needs a human decision.
+    """
     print()
     print("=" * 78)
     print("DATASETS BY BUCKET   (repo = bytes in-tree, cache = bytes in ~/.cache)")
@@ -82,41 +123,16 @@ def main() -> int:
         buckets.setdefault(spec.get("bucket", "?"), []).append((name, spec))
 
     to_upload: list[tuple[str, float]] = []
-    # "elsewhere" is NOT the same as blocked: the bytes exist, just not on this
-    # machine (these are the obsidian-computed sets). Conflating the two hides
-    # whether anything actually needs a human decision.
     elsewhere: list[str] = []
     for bucket in sorted(buckets):
         print(f"\n--- {bucket}  ({len(buckets[bucket])} datasets) ---")
         for name, spec in sorted(buckets[bucket]):
-            files = files_of(spec)
-            sub = spec.get("dir", "")
-            in_repo = sum(
-                1
-                for f in files
-                if (
-                    (DATA_DIR / sub / f["name"]) if sub else (DATA_DIR / f["name"])
-                ).exists()
-            )
-            in_cache = sum(1 for f in files if (CACHE / name / f["name"]).exists())
-            size = sum(f.get("bytes", 0) for f in files) / 1048576
-            flag = ""
-            if bucket == "zenodo":
-                if not files:
-                    flag = "  <-- bytes on another machine (upload from there)"
-                    elsewhere.append(name)
-                elif in_repo == 0 and in_cache == 0:
-                    flag = "  <-- BYTES NOT ON THIS MACHINE"
-                    elsewhere.append(name)
-                else:
-                    to_upload.append((name, size))
-            pend = " PENDING-UPLOAD" if spec.get("pending_upload") else ""
-            print(
-                f"  {name:38s} rec={spec.get('record', '-'):9s} files={len(files):2d} "
-                f"repo={in_repo:2d} cache={in_cache:2d} {size:8.1f} MB "
-                f"{spec.get('license', '?'):16s}{pend}{flag}"
-            )
+            _bucket_row(name, spec, bucket, to_upload, elsewhere)
+    return to_upload, elsewhere
 
+
+def _audit_demo_registry(datasets: dict) -> None:
+    """Cross-check the demo registry's claimed caches against the manifest."""
     print()
     print("=" * 78)
     print("DEMO REGISTRY CROSS-CHECK")
@@ -127,27 +143,29 @@ def main() -> int:
         demos = iter_demos()
     except Exception as e:  # pragma: no cover - diagnostic path
         print(f"  registry unavailable: {type(e).__name__}: {e}")
-        demos = []
+        return
 
-    if demos:
-        claimed: dict[str, list[str]] = {}
-        for d in demos:
-            for c in getattr(d, "caches", None) or []:
-                claimed.setdefault(c, []).append(getattr(d, "key", "?"))
-        print(f"  demos discovered: {len(demos)}")
-        unknown = sorted(c for c in claimed if c not in datasets)
-        print(
-            f"\n  runtime-fetch / procedural caches, not manifest-tracked ({len(unknown)}):"
-        )
-        print("    " + ", ".join(unknown) if unknown else "    (none)")
-        unused = sorted(n for n in datasets if n not in claimed)
-        print(
-            f"\n  manifest datasets not claimed via DEMO_META['caches'] ({len(unused)}):"
-        )
-        print("    " + ", ".join(unused) if unused else "    (none)")
-        print("    (these resolve by another route — verify with a grep before")
-        print("     concluding any is orphaned)")
+    if not demos:
+        return
+    claimed: dict[str, list[str]] = {}
+    for d in demos:
+        for c in getattr(d, "caches", None) or []:
+            claimed.setdefault(c, []).append(getattr(d, "key", "?"))
+    print(f"  demos discovered: {len(demos)}")
+    unknown = sorted(c for c in claimed if c not in datasets)
+    print(
+        f"\n  runtime-fetch / procedural caches, not manifest-tracked ({len(unknown)}):"
+    )
+    print("    " + ", ".join(unknown) if unknown else "    (none)")
+    unused = sorted(n for n in datasets if n not in claimed)
+    print(f"\n  manifest datasets not claimed via DEMO_META['caches'] ({len(unused)}):")
+    print("    " + ", ".join(unused) if unused else "    (none)")
+    print("    (these resolve by another route — verify with a grep before")
+    print("     concluding any is orphaned)")
 
+
+def _audit_files_on_disk(datasets: dict) -> list:
+    """In-tree data files vs the manifest; returns the sorted undeclared set."""
     print()
     print("=" * 78)
     print("FILES ON DISK vs MANIFEST")
@@ -174,7 +192,15 @@ def main() -> int:
     print(
         f"  bytes still in-tree: {sum(p.stat().st_size for p in actual) / 1048576:.1f} MB"
     )
+    return undeclared
 
+
+def _print_readiness(
+    records: dict,
+    to_upload: list[tuple[str, float]],
+    elsewhere: list[str],
+) -> None:
+    """Final readiness summary."""
     print()
     print("=" * 78)
     print("READINESS")
@@ -190,6 +216,17 @@ def main() -> int:
     for b in elsewhere:
         print(f"    - {b}  (bytes on obsidian)")
     print("  blocked on a human decision:  0")
+
+
+def main() -> int:
+    m = json.loads(MANIFEST.read_text())
+    datasets, records = m["datasets"], m["records"]
+
+    _audit_records(records)
+    to_upload, elsewhere = _audit_buckets(datasets)
+    _audit_demo_registry(datasets)
+    undeclared = _audit_files_on_disk(datasets)
+    _print_readiness(records, to_upload, elsewhere, undeclared)
     return 1 if undeclared else 0
 
 
