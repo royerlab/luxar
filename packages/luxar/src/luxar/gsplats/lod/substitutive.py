@@ -86,7 +86,7 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import replace
-from typing import TYPE_CHECKING, Literal, Optional, Sequence, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Optional, Sequence, Union, cast
 
 import numpy as np
 import torch
@@ -487,6 +487,128 @@ def _reduce_one_level_grouped(
     return _concat_gsplatdata(parts)
 
 
+def _within_box(
+    data: GSplatData,
+    dims: Sequence[int],
+    box: Sequence[tuple[float, float]],
+    *,
+    tol: float = 1e-3,
+) -> bool:
+    """Are every splat's centers still inside their tile, on the boxed dims?
+
+    Centers only — a Gaussian's tails always cross a tile boundary, and the
+    partition has never claimed otherwise (its parts are split by centre, and
+    ``chunk_bounds`` widens for extent separately). What must not happen is a
+    centre migrating into a neighbour's cell.
+    """
+    centers = np.asarray(data.centers)
+    for k, d in enumerate(dims):
+        low, high = box[k]
+        col = centers[:, int(d)]
+        if np.any(col < low - tol) or np.any(col > high + tol):
+            return False
+    return True
+
+
+def _volume_refine_level(
+    level: GSplatData,
+    # Array-LIKE (see select_sub_volume): a lazy zarr store stays lazy.
+    volume: Any,
+    *,
+    coarsen_dims: Optional[tuple[int, ...]],
+    config: "VolumeRefitConfig",
+    device: Optional[str],
+    volume_axes: Optional[Sequence[int]] = None,
+    box: Optional[Sequence[tuple[float, float]]] = None,
+) -> tuple[GSplatData, dict]:
+    """Volume re-fit one already-merged level, piecewise over its barrier groups.
+
+    Without barrier dims this is the historical single call. With them, the level
+    is split by barrier coordinate and each group is re-fitted against its OWN
+    slice of ``volume``, projected to the coarsened dims so the fit cannot move a
+    splat along a barrier axis (see :mod:`.volume_regions`); the barrier
+    coordinate and covariance rows come back verbatim from the seed.
+
+    Runs at the same altitude as the historical call — on the concatenated level,
+    after :func:`_reduce` — so no reduction signature changes. Mass is pinned per
+    group by :func:`~.volume_refit.volume_refine_splats`, matching the merge's
+    per-group ``mass_dims`` and keeping per-timepoint brightness intact.
+
+    ``box`` restricts the coarsened dims to one spatial tile, for the per-part
+    (adaptive) caller; ``None`` spans the whole volume.
+    """
+    from luxar.gsplats.lod.volume_refit import volume_refine_splats
+    from luxar.gsplats.lod.volume_regions import (
+        finalize_volume_refit_stats,
+        merge_volume_refit_stats,
+        project_to_dims,
+        restore_dims,
+        select_sub_volume,
+    )
+
+    d_total = level.ndim
+    coarsen = tuple(range(d_total)) if coarsen_dims is None else tuple(coarsen_dims)
+    barrier = tuple(d for d in range(d_total) if d not in set(coarsen))
+
+    def _one(piece: GSplatData, coords: Sequence[float]) -> tuple[GSplatData, dict]:
+        sub = select_sub_volume(
+            volume,
+            ndim=d_total,
+            barrier_dims=barrier,
+            barrier_coords=coords,
+            box=box,
+            volume_axes=volume_axes,
+        )
+        seed = project_to_dims(piece, sub.dims)
+        shifted = bool(np.any(sub.origin != 0.0))
+        if shifted:
+            seed = seed.translate(-sub.origin.astype(np.float32))
+        refit, st = volume_refine_splats(seed, sub.array, config=config, device=device)
+        if shifted:
+            refit = refit.translate(sub.origin.astype(np.float32))
+        out = restore_dims(refit, piece, sub.dims)
+        if box is not None and not _within_box(out, sub.dims, box):
+            # A partition part's splats must stay inside their tile: the viewer
+            # frustum-culls by part bounds, so a splat that wandered out would
+            # simply stop being drawn from most viewpoints. The never-worse MSE
+            # guard is structurally blind to this — a splat that left the tile can
+            # still lower the crop's MSE — so the containment verdict is separate
+            # and, like a frame mismatch, resolves by keeping the merge.
+            st = dict(st)
+            st["tile_escape"] = True
+            st["improved"] = False
+            st["seed_won"] = True
+            return piece, st
+        st = dict(st)
+        st["tile_escape"] = False
+        return out, st
+
+    if not barrier:
+        return _one(level, ())
+
+    keys = np.asarray(level.centers)[:, list(barrier)]
+    group_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
+    inverse = np.asarray(inverse).reshape(-1)
+    sizes = np.bincount(inverse, minlength=len(group_keys))
+    # One O(N log N) bucketing pass; stable so within-group order is preserved.
+    order = np.argsort(inverse, kind="stable")
+    ends = np.cumsum(sizes)
+    starts = ends - sizes
+
+    pieces: list[GSplatData] = []
+    sink: dict = {}
+    for g in range(len(group_keys)):
+        piece = _subset_gsplatdata(level, order[starts[g] : ends[g]])
+        if piece.n_splats == 0:
+            continue
+        refined, st = _one(piece, group_keys[g])
+        pieces.append(refined)
+        merge_volume_refit_stats(sink, st, weight=int(piece.n_splats))
+    if not pieces:
+        return level, finalize_volume_refit_stats(sink)
+    return _concat_gsplatdata(pieces), finalize_volume_refit_stats(sink)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────
@@ -506,6 +628,8 @@ def make_substitutive_lod(
     refine: RefineName = "none",
     refine_iters: Optional[int] = None,
     volume: Optional[np.ndarray] = None,
+    volume_axes: Optional[Sequence[int]] = None,
+    volume_box: Optional[Sequence[tuple[float, float]]] = None,
     device: Union[str, torch.device, None] = "auto",
     seed: Optional[int] = None,
     coarsen_dims: Optional[Sequence[int]] = None,
@@ -594,10 +718,13 @@ def make_substitutive_lod(
         :func:`~luxar.gsplats.fit_gsplats.fit_gaussian_splats` pass seeded
         by the merge) — the highest-fidelity option (+5–12 dB over the
         merge on real microscopy, see :mod:`.volume_refit`); requires
-        ``volume`` and is limited to the no-barrier case (``coarsen_dims``
-        unset/all dims). Each level keeps whichever of {merge seed, re-fit}
-        renders closer to the volume, so it is never worse than the merge.
-        ``"none"`` (default) keeps the merge output.
+        ``volume``. With barrier dims (``coarsen_dims`` set) each barrier
+        group is re-fitted against its OWN slice of the volume, in the
+        coarsened dims only — see :mod:`.volume_regions` for why the barrier
+        axis is sliced away rather than held still. Each level keeps
+        whichever of {merge seed, re-fit} renders closer to the volume, so it
+        is never worse than the merge. ``"none"`` (default) keeps the merge
+        output.
     refine_iters
         Adam steps per refined level (``refine="l2"``) / fit iterations per
         re-fitted level (``refine="volume"``). ``None`` (default) resolves to
@@ -607,7 +734,22 @@ def make_substitutive_lod(
     volume
         The source volume (full resolution, same voxel coordinate frame as
         the splats) that ``refine="volume"`` fits against. Required for —
-        and only meaningful with — that mode.
+        and only meaningful with — that mode. Only ever *sliced*, never
+        coerced whole, so a lazy store (a zarr array) stays lazy: a
+        253-timepoint 407x2048x2048 uint16 timelapse is 431 GB while one
+        timepoint is 3.4 GB.
+    volume_axes
+        ``volume_axes[i]`` is the ``volume`` axis holding center dim ``i``.
+        ``None`` (default) means the identity, which is what a whole-volume
+        3D re-fit has always assumed. A stacked timelapse needs it: Luxar
+        puts spatial dims first and the stacked axis LAST, while the source
+        array is typically ``(t, z, y, x)`` with time FIRST.
+    volume_box
+        Per-coarsened-dim ``(low, high)`` bounds restricting the re-fit to one
+        spatial tile, for the per-part (``adaptive``) caller. The re-fit then
+        sees only that tile's crop, and a re-fit that moves a centre out of the
+        tile is rejected in favour of the merge — the viewer frustum-culls by
+        part bounds, so an escapee would silently stop being drawn.
     device
         ``"auto"`` (default), ``"cpu"``, ``"cuda"``, ``"mps"``, or a
         :class:`torch.device`.
@@ -688,14 +830,6 @@ def make_substitutive_lod(
 
     # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
     norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
-    if refine == "volume" and norm_coarsen is not None:
-        raise ValueError(
-            "refine='volume' does not support barrier dims yet "
-            "(coarsen_dims restricts coarsening, but the re-fit targets one "
-            "volume for all barrier groups). Drop coarsen_dims, refit each "
-            "barrier slice against its own volume separately, or use "
-            "refine='l2'."
-        )
 
     # Refine setup. ``refine_iters=None`` resolves to each engine's own config
     # default (L2RefineConfig 120 / VolumeRefitConfig 300 — the single source
@@ -859,18 +993,28 @@ def make_substitutive_lod(
         stored = new_data
         volume_refit_stats: Optional[dict] = None
         if volume_cfg is not None and new_data.n_splats > 0:
-            from luxar.gsplats.lod.volume_refit import volume_refine_splats
-
             assert volume is not None  # validated above
-            stored, volume_refit_stats = volume_refine_splats(
-                new_data, volume, config=volume_cfg, device=refit_device
+            stored, volume_refit_stats = _volume_refine_level(
+                new_data,
+                volume,
+                coarsen_dims=norm_coarsen,
+                config=volume_cfg,
+                device=refit_device,
+                volume_axes=volume_axes,
+                box=volume_box,
             )
             if verbose:
+                pieces = int(volume_refit_stats.get("n_pieces", 1))
+                # With barrier dims a level is refined in pieces and any of them
+                # may have gone either way, so report the fraction rather than a
+                # single verdict that would hide 252 of 253 outcomes.
+                where = "" if pieces <= 1 else f" across {pieces} barrier groups"
                 aprint(
                     "refine=volume: "
                     + (
                         "re-fit won "
-                        f"(MSE {volume_refit_stats['mse_seed']:.3e} -> "
+                        f"{volume_refit_stats.get('improved_frac', 1.0):.0%}"
+                        f"{where} (MSE {volume_refit_stats['mse_seed']:.3e} -> "
                         f"{volume_refit_stats['mse_refit']:.3e})"
                         if volume_refit_stats.get("improved")
                         else (

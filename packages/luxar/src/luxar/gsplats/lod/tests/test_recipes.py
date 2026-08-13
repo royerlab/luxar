@@ -516,15 +516,87 @@ def test_substitutive_recipe_threads_volume_refine():
     assert "mse_seed" in lev.stats["refine_stats"]
 
 
-def test_adaptive_recipe_rejects_volume_refine():
-    """Per-part levels must not re-fit against the FULL volume (splats would
-    leave their tile); the adaptive recipe rejects refine="volume" loudly."""
+def test_adaptive_recipe_supports_volume_refine_per_tile():
+    """Per-part levels re-fit against each tile's own CROP of the volume.
+
+    This replaces an older test that asserted the combination was rejected. The
+    rejection existed because a part re-fitted against the FULL volume gets
+    pulled out of its tile to explain a neighbour's signal; cropping to the tile
+    removes the cause, and a re-fit that escapes anyway is discarded in favour of
+    the merge.
+    """
     import numpy as np
 
+    from luxar.core.group.partition import serialized_bsp_leaf_cells
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.tree import center_bounds, iter_leaves
+
+    size = 24
+    rng = np.random.default_rng(0)
+    grid = np.mgrid[0:size, 0:size, 0:size].astype(np.float32)
+    vol = np.zeros((size,) * 3, np.float32)
+    for _ in range(8):
+        c = rng.uniform(4, size - 4, 3)
+        s = rng.uniform(1.5, 2.2)
+        r2 = sum((grid[d] - c[d]) ** 2 for d in range(3))
+        vol += rng.uniform(0.4, 1.0) * np.exp(-r2 / (2 * s * s))
+    fine = fit_gaussian_splats(vol, seeds=200, n_iters=200, device="cpu", verbose=False)
+
+    p = _params(
+        max_elements=60,
+        compression_factor=2,
+        levels=1,
+        refine="volume",
+        refine_iters=25,
+        volume=vol,
+        device="cpu",
+        quality_stamps=False,
+    )
+    node = build_recipe(fine, "adaptive", p)
+    assert len(node.children) > 1, "need a real tiling for this to mean anything"
+
+    stats = [
+        st
+        for child in node.children
+        for leaf in iter_leaves(child)
+        if (st := (leaf.meta.get("stats") or {}).get("refine_stats"))
+    ]
+    assert stats, "no part recorded a volume re-fit — the recipe did not run one"
+
+    # The invariant the old rejection protected: a centre must not migrate out of
+    # its own tile, or the viewer's per-part frustum culling would stop drawing it
+    # from most viewpoints.
+    cells = serialized_bsp_leaf_cells(node.bsp_tree, 3)
+    for i, child in enumerate(node.children):
+        for leaf in iter_leaves(child):
+            bounds = center_bounds(leaf)
+            if bounds is None:
+                continue
+            lo, hi = bounds
+            for d in range(3):
+                assert lo[d] >= cells[i][d][0] - 1e-3, (
+                    f"part {i} dim {d}: a centre at {lo[d]} escaped below its "
+                    f"cell {cells[i][d]} — the re-fit left the tile"
+                )
+                assert hi[d] <= cells[i][d][1] + 1e-3, (
+                    f"part {i} dim {d}: a centre at {hi[d]} escaped above its "
+                    f"cell {cells[i][d]} — the re-fit left the tile"
+                )
+
+
+def test_adaptive_volume_refine_needs_a_cell():
+    """Called without a tile to crop to, the per-part re-fit refuses rather than
+    silently targeting the whole volume — the unsound case the old guard covered
+    and the one thing that must still raise."""
+    import numpy as np
+
+    from luxar.gsplats.lod.recipes import _substitutive_for_part
+
     data = _make_random_gsplat(n=256)
+    partition = data.flattened().to_spatial_partition(max_elements=64)
     p = _params(refine="volume", volume=np.zeros((8, 8, 8), np.float32))
-    with pytest.raises(ValueError, match="per-part levels"):
-        build_recipe(data, "adaptive", p)
+    with pytest.raises(ValueError, match="needs the part's own cell"):
+        _substitutive_for_part(partition.children[0], p, cell=None)
 
 
 def test_additive_ladders_default_on_everywhere():

@@ -1318,14 +1318,236 @@ class TestVolumeRefit:
                 data, volume=np.zeros((4, 4, 4), np.float32), device="cpu"
             )
 
-    def test_refine_volume_rejects_barrier_dims(self):
-        data = _make_isotropic_3d(n=16, seed=0)
-        with pytest.raises(ValueError, match="barrier dims"):
+    # ── barrier dims: each group re-fits against its OWN slice ──────────
+    #
+    # These replace an older `test_refine_volume_rejects_barrier_dims`. The
+    # rejection existed because one volume cannot serve every barrier group;
+    # the fix is to give each group its own slice rather than to forbid the
+    # combination, so the behaviour under test is now positive.
+
+    @staticmethod
+    def _barrier_volume_and_splats(
+        n_t: int = 3, size: int = 20
+    ) -> "tuple[np.ndarray, GSplatData]":
+        """A stacked timelapse of fittable blobs, seeded IDENTICALLY per timepoint.
+
+        Two properties are deliberate, and both exist to keep the tests that use
+        this fixture from passing for the wrong reason:
+
+        * the volume is a smooth Gaussian blob field, and the seed comes from a
+          real fit of ``vol[0]``. A single bright voxel in noise is unfittable by
+          a handful of Gaussians, so every re-fit would LOSE its never-worse
+          comparison, the seed would be returned untouched, and a
+          "barrier stayed pure" assertion would hold vacuously.
+        * every timepoint gets the SAME seed splats while each timepoint's
+          brightness is SCALED by ``1 + t``. So if each group is re-fitted
+          against its own slice the groups must end up different; an
+          implementation that handed every group ``volume[0]`` would leave them
+          identical. Brightness rather than position is the observable on
+          purpose: the re-fit is a warm start, so it tracks amplitude (linear,
+          converges in a few steps) far faster than it will drag a splat several
+          voxels across the grid.
+
+        Volume axes are ``(t, z, y, x)`` while the splats are ``(z, y, x, t)`` —
+        the real Luxar convention (spatial dims first, stacked axis last) — so
+        the axis remap is exercised rather than assumed away.
+        """
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+        from luxar.gsplats.utils.trils import embed_cholesky_packed
+
+        rng = np.random.default_rng(0)
+        grid = np.mgrid[0:size, 0:size, 0:size].astype(np.float32)
+        blobs = [
+            (rng.uniform(5, 11, 3), rng.uniform(1.5, 2.5), rng.uniform(0.4, 1.0))
+            for _ in range(4)
+        ]
+        field = np.zeros((size,) * 3, np.float32)
+        for c, s, a in blobs:
+            r2 = sum((grid[d] - c[d]) ** 2 for d in range(3))
+            field += a * np.exp(-r2 / (2 * s * s))
+        vol = np.stack([(1.0 + t) * field for t in range(n_t)]).astype(np.float32)
+
+        seed3d = fit_gaussian_splats(
+            vol[0], seeds=40, n_iters=150, device="cpu", verbose=False
+        )
+        n = seed3d.n_splats
+        packed4d = embed_cholesky_packed(
+            np.asarray(seed3d.cholesky_factors),
+            3,
+            4,
+            [0, 1, 2],
+            # A genuine barrier: (near) no extent along it, so the lift back is
+            # exact and a widening along it would be visible.
+            fill_sigma={3: 1e-4},
+        )
+        centers, factors, amps = [], [], []
+        for t in range(n_t):
+            centers.append(
+                np.column_stack(
+                    [np.asarray(seed3d.centers), np.full(n, float(t))]
+                ).astype(np.float32)
+            )
+            factors.append(packed4d)
+            amps.append(np.asarray(seed3d.amplitudes))
+        return vol, GSplatData(
+            centers=np.concatenate(centers),
+            amplitudes=np.concatenate(amps).astype(np.float32),
+            cholesky_factors=np.concatenate(factors).astype(np.float32),
+        )
+
+    def test_refine_volume_with_barrier_dims_keeps_barrier_pure(self):
+        """The strongest invariant: re-fitting must not move or widen a splat
+        along a barrier axis. The fitting stack cannot freeze an axis, so the
+        barrier dim is sliced out of the fit entirely and restored from the
+        seed — making drift unrepresentable rather than merely penalised."""
+        from luxar.gsplats.utils.trils import unpack_tril
+
+        vol, data = self._barrier_volume_and_splats()
+        out = make_substitutive_lod(
+            data,
+            compression_factor=2,
+            levels=2,
+            refine="volume",
+            refine_iters=8,
+            volume=vol,
+            volume_axes=(1, 2, 3, 0),
+            coarsen_dims=(0, 1, 2),
+            device="cpu",
+        )
+        plain = make_substitutive_lod(
+            data,
+            compression_factor=2,
+            levels=2,
+            refine="none",
+            coarsen_dims=(0, 1, 2),
+            device="cpu",
+        )
+        # Guard against vacuity: if every re-fit lost its never-worse comparison
+        # the seeds would be returned untouched and purity would hold trivially.
+        assert any(
+            (out.substitutive_levels[lvl].stats.get("refine_stats") or {}).get(
+                "improved_frac", 0.0
+            )
+            > 0.0
+            for lvl in range(1, out.n_substitutive)
+        ), "no level was actually re-fitted — the purity assertion would be vacuous"
+
+        for level in range(out.n_substitutive):
+            refined = out.at_substitutive(level)
+            t_col = np.asarray(refined.centers)[:, 3]
+            # Exactly on the integer grid, not merely close to it.
+            np.testing.assert_array_equal(t_col, np.round(t_col))
+            assert set(np.unique(t_col)) == {0.0, 1.0, 2.0}
+            # The barrier row of Sigma is the seed's, bit for bit.
+            got = unpack_tril(np.asarray(refined.cholesky_factors), 4)
+            ref = unpack_tril(
+                np.asarray(plain.at_substitutive(level).cholesky_factors), 4
+            )
+            np.testing.assert_allclose(
+                np.sort(got[:, 3, 3]), np.sort(ref[:, 3, 3]), rtol=1e-4, atol=1e-8
+            )
+
+    def test_refine_volume_uses_each_groups_own_slice(self):
+        """The decisive per-group check. Every timepoint starts from IDENTICAL
+        seed splats while each timepoint's signal is shifted, so re-fitting
+        against the right slice must drive the groups apart. Handing every group
+        ``volume[0]`` would leave them identical and still satisfy every
+        barrier-purity assertion — which is why purity alone is not enough."""
+        vol, data = self._barrier_volume_and_splats()
+        # Seeds really are identical across timepoints (the premise of the test).
+        c_in = np.asarray(data.centers)
+        per_t = [c_in[c_in[:, 3] == t][:, :3] for t in (0, 1, 2)]
+        np.testing.assert_allclose(per_t[0], per_t[1])
+        np.testing.assert_allclose(per_t[0], per_t[2])
+
+        out = make_substitutive_lod(
+            data,
+            compression_factor=2,
+            levels=1,
+            refine="volume",
+            refine_iters=60,
+            volume=vol,
+            volume_axes=(1, 2, 3, 0),
+            coarsen_dims=(0, 1, 2),
+            # The DC pin would rescale every group back to its seed's brightness,
+            # erasing the very signal this test reads. Off, the re-fit tracks the
+            # volume's DC — the same lever `test_conserve_mass_false_lets_refit_
+            # track_volume_dc` uses.
+            conserve_mass=False,
+            device="cpu",
+        )
+        stats = out.substitutive_levels[1].stats["refine_stats"]
+        assert stats["improved_frac"] > 0.0, (
+            "no group's re-fit won its never-worse comparison, so nothing "
+            "changed and this test could not tell right slice from wrong"
+        )
+        coarse = out.at_substitutive(1)
+        centers = np.asarray(coarse.centers)
+        amps = np.asarray(coarse.amplitudes)
+        totals = [float(amps[centers[:, 3] == t].sum()) for t in (0, 1, 2)]
+        # vol[t] is (1 + t)x as bright, so a group re-fitted against its own
+        # slice must carry proportionally more amplitude.
+        assert totals[0] < totals[1] < totals[2], (
+            f"per-timepoint amplitude totals {totals} should increase with the "
+            "timepoint's brightness — groups appear to have been re-fitted "
+            "against the same sub-volume"
+        )
+
+    def test_refine_volume_barrier_stats_are_aggregated_and_never_worse(self):
+        """A level refined in pieces needs stats describing all of them, and the
+        never-worse guarantee must remain checkable after aggregation."""
+        import json
+
+        vol, data = self._barrier_volume_and_splats()
+        out = make_substitutive_lod(
+            data,
+            compression_factor=2,
+            levels=1,
+            refine="volume",
+            refine_iters=8,
+            volume=vol,
+            volume_axes=(1, 2, 3, 0),
+            coarsen_dims=(0, 1, 2),
+            device="cpu",
+        )
+        stats = out.substitutive_levels[1].stats["refine_stats"]
+        assert stats["n_pieces"] == 3, "one piece per barrier group"
+        assert 0.0 <= stats["improved_frac"] <= 1.0
+        # `mse_refit` may exceed `mse_seed` (losing candidates are averaged in);
+        # `mse_stored` describes what was KEPT, so this is the real guarantee.
+        assert stats["mse_stored"] <= stats["mse_seed"] + 1e-12
+        json.dumps(stats)  # the zarr writer requires flat + JSON-safe
+
+    def test_refine_volume_no_barrier_stats_shape_unchanged(self):
+        """The no-barrier path must keep the historical single-refit stats shape
+        (no aggregation keys), so existing consumers are untouched."""
+        vol, fine = self._volume_and_fit()
+        refit = make_substitutive_lod(
+            fine,
+            compression_factor=4,
+            levels=1,
+            refine="volume",
+            refine_iters=10,
+            volume=vol,
+            device="cpu",
+        )
+        stats = refit.substitutive_levels[1].stats["refine_stats"]
+        assert {"mse_seed", "mse_refit", "improved", "seed_won"} <= set(stats)
+        assert "n_pieces" not in stats
+
+    def test_refine_volume_rejects_volume_ndim_mismatch(self):
+        """A target that does not span every center dim is a caller error: the
+        barrier dims are sliced internally, so they must still be present."""
+        _vol, data = self._barrier_volume_and_splats()
+        with pytest.raises(ValueError, match="span every center dim"):
             make_substitutive_lod(
                 data,
+                compression_factor=2,
+                levels=1,
                 refine="volume",
-                volume=np.zeros((4, 4, 4), np.float32),
-                coarsen_dims=[1, 2],
+                refine_iters=2,
+                volume=np.zeros((16, 16, 16), np.float32),  # 3D, splats are 4D
+                coarsen_dims=(0, 1, 2),
                 device="cpu",
             )
 

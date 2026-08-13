@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Callable, List, Literal, Optional, Union, get_args
+from typing import Callable, List, Literal, Optional, Tuple, Union, get_args
 
 import numpy as np
 
@@ -163,6 +163,10 @@ class RecipeParams:
     # Source volume for refine="volume" (full-res, splat coordinate frame).
     # Excluded from eq/repr: a large ndarray is payload, not identity.
     volume: Optional[np.ndarray] = field(default=None, compare=False, repr=False)
+    # ``volume_axes[i]`` is the volume axis holding center dim ``i``; None means
+    # the identity. A stacked timelapse needs it: Luxar puts spatial dims first
+    # and the stacked axis LAST, while the source array is usually time-FIRST.
+    volume_axes: Optional[tuple] = None
     # Center-column indices substitutive coarsening may merge over; the
     # complement become hard grouping barriers. None == coarsen all dims.
     coarsen_dims: Optional[tuple] = None
@@ -310,11 +314,72 @@ def build_tiles(
     )
 
 
+def _part_cells(
+    partition: GSplatPartition, ndim: int
+) -> Optional[List[List[Tuple[float, float]]]]:
+    """Each part's tile, per center dim, indexed by child position.
+
+    Read from the partition's own ``bsp_tree`` so the bounds are the real split
+    planes rather than the hull of the splats a part happens to hold — a hull is
+    strictly tighter than the cell and would crop away signal the tile owns.
+    Falls back to each part's center bounds when no tree was stored (an older
+    artifact, or a producer that never built one), and to ``None`` when neither
+    is available, which turns the per-part volume re-fit off rather than
+    silently cropping to the wrong box.
+    """
+    from luxar.core.group.partition import serialized_bsp_leaf_cells
+    from luxar.gsplats.tree import center_bounds
+
+    n = len(partition.children)
+    tree = getattr(partition, "bsp_tree", None)
+    if tree:
+        try:
+            by_label = serialized_bsp_leaf_cells(tree, ndim)
+        except (KeyError, TypeError, ValueError):
+            by_label = {}
+        if len(by_label) >= n:
+            return (
+                [by_label[i] for i in range(n)]
+                if all(i in by_label for i in range(n))
+                else None
+            )
+    cells: List[List[Tuple[float, float]]] = []
+    for child in partition.children:
+        bounds = center_bounds(child)
+        if bounds is None:
+            return None
+        lo, hi = bounds
+        cells.append([(float(lo[d]), float(hi[d])) for d in range(ndim)])
+    return cells
+
+
+def _cell_for_coarsened_dims(
+    cell: Optional[List[Tuple[float, float]]],
+    params: RecipeParams,
+    ndim: int,
+) -> Optional[List[Tuple[float, float]]]:
+    """Reduce a per-center-dim tile cell to the dims the re-fit actually spans.
+
+    The sub-volume drops the barrier dims, so its box is indexed by the
+    COARSENED dims only. Returns ``None`` when there is nothing to crop to, or
+    when the re-fit is not volume-based (the box would be dead weight).
+    """
+    if cell is None or params.refine != "volume":
+        return None
+    free = (
+        tuple(range(ndim))
+        if params.coarsen_dims is None
+        else tuple(int(d) for d in params.coarsen_dims)
+    )
+    return [cell[d] for d in free]
+
+
 def _substitutive_for_part(
     part: GSplatNode,
     params: RecipeParams,
     *,
     coverage: Callable[[List[int]], List[float]] = partitioned_coverage_fractions,
+    cell: Optional[List[Tuple[float, float]]] = None,
 ) -> GSplatNode:
     """Rebuild one partition child as its own substitutive lod group (coarse↔fine
     swap), the per-part analogue of :func:`_ladder_for_part`.
@@ -322,17 +387,22 @@ def _substitutive_for_part(
     ``coverage`` is the selector-threshold derivation, defaulting to the
     partition-bound (fills-screen) anchor — see the note below the ladder build
     and :func:`~luxar.core.group.lod.group.partitioned_coverage_fractions`.
+
+    ``cell`` is this part's own tile, per center dim, and is what makes
+    ``refine="volume"`` sound here: the re-fit sees only that tile's CROP of the
+    volume, so it is not tempted to pull splats out of the tile to explain signal
+    that belongs to a neighbour. A re-fit that moves a centre out of the cell
+    anyway is discarded in favour of the merge. Without a ``cell`` the re-fit
+    would target the full volume, which is exactly the unsound case.
     """
     import math
 
-    if params.refine == "volume":
-        # A part's splats cover only its spatial tile; a fit against the FULL
-        # volume would pull them out of the tile to explain the rest of the
-        # signal (silently breaking partition/frustum-culling semantics — the
-        # never-worse MSE guard cannot see that). Needs per-part volume crops.
+    if params.refine == "volume" and cell is None:
         raise ValueError(
-            "refine='volume' is not supported for per-part levels (the "
-            "adaptive recipe); use --recipe levels/overview, or refine='l2'."
+            "refine='volume' on per-part levels needs the part's own cell to "
+            "crop the volume to; a fit against the FULL volume would pull "
+            "splats out of their tile (breaking partition/frustum-culling "
+            "semantics, which the never-worse MSE guard cannot see)."
         )
     part_data = GSplatData.from_tree(part)
     # Clamp the substitutive depth so a small part doesn't synthesise degenerate
@@ -353,6 +423,9 @@ def _substitutive_for_part(
         conserve_mass=params.conserve_mass,
         refine=params.refine,  # type: ignore[arg-type]
         refine_iters=params.refine_iters,
+        volume=params.volume,
+        volume_axes=params.volume_axes,
+        volume_box=_cell_for_coarsened_dims(cell, params, part_data.ndim),
         device=params.device,
         seed=params.seed,
         coarsen_dims=params.coarsen_dims,
@@ -436,9 +509,12 @@ def build_adaptive(data: GSplatData, params: RecipeParams) -> GSplatPartition:
         if len(partition.children) > 1
         else coverage_fractions
     )
+    cells = _part_cells(partition, base.ndim)
     children: List[GSplatNode] = [
-        _substitutive_for_part(part, params, coverage=coverage)
-        for part in partition.children
+        _substitutive_for_part(
+            part, params, coverage=coverage, cell=cells[i] if cells else None
+        )
+        for i, part in enumerate(partition.children)
     ]
     return GSplatPartition(
         children=children,
