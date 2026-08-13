@@ -1447,6 +1447,57 @@ class TestAWrongLengthLabelOnTheExemptLeafIsRefused:
         assert "Image label index 7 out of range [0, 5)" in str(split)
         assert "g" not in compiler.store
 
+    def test_a_non_integer_sparse_key_keeps_the_exception_TYPE_in_parity(
+        self, tmp_path: Any
+    ) -> None:
+        """The ``TypeError`` half of the helper's funnel, which nothing else pins.
+
+        ``validate_image_labels_for_writing`` raises ``TypeError`` — not
+        ``ValueError`` — for a key with no integer-index semantics, so the
+        helper's ``except (ValueError, TypeError)`` is what keeps the graft's
+        answer the same exception TYPE the flat path's own funnel produces.
+        Measured: narrowing that tuple to ``ValueError`` alone leaves every
+        other test in this file green while this call escapes as a bare,
+        unprefixed ``TypeError``. ``assert_same_refusal`` compares the type as
+        well as the message, so it is the assertion that catches it.
+        """
+        node = _nested_partition_tree(3, (5,))
+        kwargs = {"image_labels": {"1": IMAGE_LABELS[0]}}
+        compiler, scene, _ = open_scene(tmp_path, "graft_sparse_badkey.luxar.zarr")
+        flat = _flat_refusal_for_leaf(
+            tmp_path, "flat_sparse_badkey.luxar.zarr", node.children[0], kwargs
+        )
+
+        split = refusal(lambda: _graft(scene, name="g", node=node, **kwargs))
+
+        assert isinstance(split, ValueError)
+        assert_same_refusal(flat, split)
+        assert "Image label index must be an integer, got str" in str(split)
+        assert "g" not in compiler.store
+
+    def test_labels_is_answered_before_image_labels_when_both_are_wrong(
+        self, tmp_path: Any
+    ) -> None:
+        """The two-channel tie-break, in the flat writer's own order.
+
+        Every other case here passes ONE channel, so the order the helper runs
+        them in — ``labels`` then ``image_labels``, matching ``write_gsplats``
+        steps 0d then 0e — is otherwise unobservable and could be swapped
+        silently. A call passing both wrong hears about ``labels``.
+        """
+        node = _nested_partition_tree(3, (5,))
+        compiler, scene, _ = open_scene(tmp_path, "graft_both_wronglen.luxar.zarr")
+
+        split = refusal(
+            lambda: _graft(
+                scene, name="g", node=node, labels=LABELS, image_labels=IMAGE_LABELS
+            )
+        )
+
+        assert _WRONG_LENGTH_WORDING["labels"] in str(split)
+        assert "Image labels length" not in str(split)
+        assert "g" not in compiler.store
+
     def test_a_wrongly_typed_label_entry_is_refused_too(self, tmp_path: Any) -> None:
         """The ``labels`` analogue of the sparse-key content case above.
 
