@@ -262,18 +262,32 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="zebrafish_nuclei",
                     path=str(data_path),
-                    # Same appearance reasoning as the Drosophila companion demo
-                    # (see its comments): alpha-over keeps the surface nuclei
-                    # crisp where a summing mode integrates the far side of the
-                    # embryo through the near side, and the midtones are shaped
-                    # with `gamma` rather than `intensity`, whose top clips.
-                    # Measured on THIS dataset: raising intensity to 3 or 6
-                    # washes out the left flank while adding nothing, so the
-                    # window stays at 1.0 even though these amplitudes are much
-                    # sparser (mean 0.023 of full scale) than the Drosophila fit.
-                    blending_mode="normal",
+                    # `volumetric` — emission–absorption, so the embryo reads as
+                    # dense tissue rather than a shell of alpha-over surfaces.
+                    #
+                    # This is only honest now that the partition records its split
+                    # planes: volumetric compositing is ORDER-DEPENDENT, and until
+                    # the parts could be painted far-side-first the 41 of them were
+                    # sorted by centroid, which flipped as the camera moved and
+                    # popped at every seam. Alpha-over hid that better, which is
+                    # why this demo used to ship `normal`.
+                    #
+                    # Absorption and the display window are a PAIR: absorption
+                    # deepens the front-to-back attenuation, and the window's top
+                    # comes down to keep the near face off the clip point (raising
+                    # one without the other either washes out or goes muddy). Both
+                    # were dialled in against this dataset in the Layers panel.
+                    blending_mode="volumetric",
+                    absorption=1.34,
+                    opacity=0.71,
                     colormap="viridis",
-                    intensity=1.0,
+                    # On a COLORMAPPED node `intensity`/`offset` are not a colour
+                    # gain — they ARE the scalar window feeding the LUT, as
+                    # `intensity = 1/(hi-lo)`, `offset = -lo/(hi-lo)`. This is the
+                    # 0.001–0.135 window (the data reaches 0.146), which is what
+                    # the panel's DISPLAY RANGE shows.
+                    intensity=7.462687,
+                    offset=-0.007463,
                     gamma=2.2,
                     layer=True,
                 )
