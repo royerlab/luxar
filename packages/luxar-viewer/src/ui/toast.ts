@@ -12,9 +12,12 @@ export function showToast(message: string, durationMs: number = 2000): void {
 
   const toast = document.createElement('div');
   toast.id = 'luxar-toast';
-  // luxar-glass-surface: opt into the frosted/liquid-glass material so the
-  // toast matches the other floating panels under those themes.
-  toast.className = 'luxar-toast luxar-glass-surface';
+  // Deliberately NOT a `luxar-glass-surface`: this is a ~2s transient badge
+  // whose dismiss animation is an opacity fade on its own root, which
+  // UI_DESIGN_GUIDE §5.1.3 forbids on a glass surface (the liquid-glass
+  // refraction/tint layers would ride the fade with it). Same family as the
+  // REC pill and the cursor context menus — the §5 opt-outs.
+  toast.className = 'luxar-toast';
   toast.textContent = message;
   toast.style.opacity = '1';
 
