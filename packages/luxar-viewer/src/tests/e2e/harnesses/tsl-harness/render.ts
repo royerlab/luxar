@@ -134,7 +134,7 @@ export async function renderTSL(
   // WebGL paths', so the flip is applied before returning — both modes
   // hand back the same bottom-up row convention and compare directly
   // against renderGLSL (verified 2026-08 on Apple Metal 3, where every
-  // line-volprim-* fixture matched its GLSL render EXACTLY — mean-covered
+  // line-primitive fixture matched its GLSL render EXACTLY — mean-covered
   // diff 0.000).
   if (opts.native && !('gpu' in navigator)) {
     throw new Error('native WebGPU requested but navigator.gpu is unavailable');

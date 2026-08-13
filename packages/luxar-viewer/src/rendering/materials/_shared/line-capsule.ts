@@ -42,7 +42,7 @@
  * max(mine, partner). For congruent legs at a turn of 120° or less the
  * congruence gate (`CAPSULE_JOINT_DEFICIT_GATE`) keeps the packet empty and
  * the cut is an exact zero-double-count partition — the same domain
- * partition the volumetric primitive integrates per ray; past 120° even
+ * partition the deleted volumetric primitive integrated per ray; past 120° even
  * congruent legs need a live packet, since the bisector then cuts each rod
  * lengthwise (#1501, and #1495 below the width gate). Where the partner tapers away
  * or its apparent radius diverges under perspective, the deficit term

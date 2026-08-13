@@ -136,9 +136,9 @@ describe('bootstrapStandalone', () => {
       try {
         await bootstrapStandalone({
           canvas: CANVAS,
-          urlParams: { ...EMPTY_PARAMS, linePrimitive: 'volumetric', lineJoin: 'none' },
+          urlParams: { ...EMPTY_PARAMS, linePrimitive: 'screen-space', lineJoin: 'none' },
         });
-        expect(resolveLinePrimitive()).toBe('volumetric');
+        expect(resolveLinePrimitive()).toBe('screen-space');
         expect(resolveLineJoin()).toBe(0); // 'none'
         await bootstrapStandalone({
           canvas: CANVAS,
