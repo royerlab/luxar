@@ -10,9 +10,12 @@ import zarr
 
 from luxar.demos._dependencies import SUBSTITUTIVE_LOD_MODULES, is_installed
 from luxar.demos.demo_gaia_milky_way_3m import (
+    CACHE_FILE,
+    DEMO_META,
     compute_radii,
     load_and_convert_gaia_data,
 )
+from luxar.demos.registry import DEMO_CACHE_ROOT
 
 
 def _write_tiny_gaia_table(path: Path, n_stars: int = 16) -> None:
@@ -202,6 +205,22 @@ def test_named_star_legend_is_derived_from_the_marker_nodes(tmp_path: Path) -> N
     # overlay when any node carries labels; a suppressed or pre-empted injection
     # would leave them as dead bytes on disk.
     assert "__hover_text" in set(overlays.group_keys())
+
+
+def test_declared_cache_namespace_is_where_the_catalog_is_read() -> None:
+    """The declared cache name and the directory read must stay one directory.
+
+    ``DEMO_META["caches"]`` is what `luxar demo cache …` walks and what keeps
+    `cache clear --orphans` from rmtree-ing this hand-placed catalog; CACHE_FILE
+    is where the demo actually reads it. The two spell the same directory in two
+    places, and a drift is silent in both directions: --orphans starts deleting
+    the real catalog again (exactly the bug the claim was added to fix), while
+    `cache clear gaia_milky_way` clears a directory nothing reads.
+    """
+    assert DEMO_META["caches"] == [CACHE_FILE.parent.name]
+    # ...and that name resolves under the cache root, which is how
+    # `registry.demo_cache_dirs` turns a claim into the directory it clears.
+    assert DEMO_CACHE_ROOT / CACHE_FILE.parent.name == CACHE_FILE.parent
 
 
 class TestDataFileResolution:

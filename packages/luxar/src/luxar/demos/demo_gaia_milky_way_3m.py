@@ -131,10 +131,12 @@ DEMO_META = {
     # Claiming the cache namespace is what keeps `luxar demo cache clear
     # --orphans` from rmtree-ing a hand-placed catalog nothing rebuilds
     # automatically, and lets `luxar demo` report this demo as `cached`. The
-    # honest trade-off: `luxar demo cache clear gaia_milky_way` / `--all` now
-    # treats that hand-placed input as a clearable download — a scoped, explicit
-    # command rather than a blind sweep. Protecting a hand-placed *input* from
-    # clearing is #1577.
+    # honest trade-off: `cache clear gaia_milky_way` (scoped) AND `cache clear
+    # --all` (every demo) now both count that hand-placed input as a clearable
+    # download and rmdir the emptied cache dir with it. Both prompt unless
+    # `--yes` and both preview under `--dry-run`, so the risk moved from
+    # `--orphans` onto those flags rather than going away. Protecting a
+    # hand-placed *input* from clearing is #1577.
     "caches": ["milky_way_gaia_3m"],
     "outputs": ["gaia_milky_way"],
 }
@@ -176,6 +178,10 @@ CACHE_FILE = (
 #: Legacy in-repo location, kept in the search order so a checkout that still
 #: has the file (or a user who restores it by hand) keeps working.
 REPO_FILE = SCRIPT_DIR / "data" / "milky_way_gaia_3m.zarr.zip"
+#: The one top-level directory the catalog zip must contain. Derived from
+#: CACHE_FILE rather than restated, because what names that member is exactly the
+#: `--output` stem the rebuild command is given (= the cache file without .zip).
+RAW_ZARR_NAME = CACHE_FILE.with_suffix("").name
 
 
 def resolve_data_file() -> Path:
@@ -203,6 +209,32 @@ def resolve_data_file() -> Path:
         "of data from the ESA mission Gaia, processed by the Gaia Data "
         "Processing and Analysis Consortium (DPAC)."
     )
+
+
+def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
+    """Unpack the catalog zip into ``dest`` and return the raw zarr inside it.
+
+    The expected member is checked here, at the extraction, because a zip built
+    with the wrong ``--output`` stem extracts *successfully* and only fails later
+    in ``zarr.open`` with ``GroupNotFoundError`` — a ``ValueError``, which no
+    ``except FileNotFoundError`` on the way out catches, so the advice
+    :func:`resolve_data_file` prints would never reach the reader who needs it.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(data_zip_path, "r") as zip_ref:
+        zip_ref.extractall(dest)
+    raw_zarr_path = dest / RAW_ZARR_NAME
+    if not raw_zarr_path.is_dir():
+        raise FileNotFoundError(
+            f"{data_zip_path} extracted, but holds no top-level "
+            f"`{RAW_ZARR_NAME}/` directory — so the raw catalog is not where "
+            "this demo reads it.\n"
+            "The --output stem is load-bearing: rebuild with\n"
+            "  hatch run python scripts/generate_galaxy_simple.py --count "
+            f"3000000 --output {CACHE_FILE.with_suffix('')}"
+        )
+    return raw_zarr_path
 
 
 def compute_colors(bp_rp: np.ndarray, phot_g_mean_mag: np.ndarray) -> np.ndarray:
@@ -263,14 +295,10 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
     SCALE = 10.0  # 10x larger for better visualization
 
     with asection("Loading Raw Gaia Data"):
-        # Open raw zarr store (supports reading from zip directly!)
-        if str(data_zarr_path).endswith(".zip"):
-            # Read directly from zip
-            store = zarr.open(
-                f"zip://{data_zarr_path}::milky_way_gaia_3m.zarr", mode="r"
-            )
-        else:
-            store = zarr.open(str(data_zarr_path), mode="r")
+        # Always an already-extracted directory: every caller unpacks the zip
+        # first (via `_extract_raw_zarr`), because reading the zip in place
+        # through a zip:// store is unreliable across zarr versions.
+        store = zarr.open(str(data_zarr_path), mode="r")
 
         # Read arrays
         x_kpc = store["x_kpc"][:]
@@ -566,12 +594,7 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
 
         # Extract zarr from zip to temp directory
         aprint("\nExtracting Gaia data from zip...")
-        import zipfile
-
-        with zipfile.ZipFile(data_zip_path, "r") as zip_ref:
-            zip_ref.extractall(temp_dir)
-
-        raw_zarr_path = temp_dir / "milky_way_gaia_3m.zarr"
+        raw_zarr_path = _extract_raw_zarr(data_zip_path, temp_dir)
         aprint(f"✓ Extracted to: {raw_zarr_path}")
 
     # Convert to Luxar format
@@ -632,14 +655,9 @@ def main() -> None:
         # Extract the raw .zarr from the zip to a temp dir, then convert to the
         # persistent output_path (same extraction the serve path uses — reading
         # the zip in place via a zip:// store is unreliable across zarr versions).
-        import zipfile
-
         with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
-            with zipfile.ZipFile(data_file, "r") as zf:
-                zf.extractall(tmpdir)
-            load_and_convert_gaia_data(
-                Path(tmpdir) / "milky_way_gaia_3m.zarr", output_path
-            )
+            raw_zarr_path = _extract_raw_zarr(data_file, Path(tmpdir))
+            load_and_convert_gaia_data(raw_zarr_path, output_path)
         aprint(f"Dataset generated at {output_path}")
         return
 
