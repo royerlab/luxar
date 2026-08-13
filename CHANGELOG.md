@@ -150,7 +150,7 @@ displayed, only how it is loaded.** The distance spans the spatial axes only, so
 a stacked time/channel column cannot become a shell dimension; `reveal_centre` /
 `spatial_dims` (`--reveal-centre` / `--spatial-dims`) override both. On Lines the
 permutation indexes whole polylines, so every prefix keeps valid segment
-topology. Mesh is left out — it has no additive ladder at all yet.
+topology. Mesh is left out here — it gained its own reveal ladder in a later change.
 
 A radial ladder deliberately carries **no energy stamps**. The viewer multiplies
 an incomplete ladder's brightness by `1/e(k)`, gated on the blending mode and
