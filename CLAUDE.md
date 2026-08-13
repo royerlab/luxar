@@ -548,11 +548,14 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 # levels, adaptive) are auto-derived as viewport-relative
 # `coverage_fraction` = sqrt(N_i/N_finest). For `levels` (a WHOLE-OBJECT ladder) the
 # finest level shows once the object's
-# projected size reaches ~a quarter of the viewport diagonal (any normal full-frame
-# view) and coarser levels step in as it shrinks below that (the viewer anchors to
-# the live viewport, so it self-calibrates on any monitor — no threshold knob).
+# projected size reaches ~half of the viewport's fitted screen axis (the smaller
+# of its width/height — any normal full-frame view) and coarser levels step in
+# as it shrinks below that (the viewer anchors to the live viewport, so it
+# self-calibrates on any monitor or aspect ratio — no threshold knob).
 # EXCEPTION — `adaptive` and `overview` are PARTITION-BOUND and keep the older
-# fills-screen anchor (finest = 4.0 = 1/FILL_FACTOR), via
+# fills-screen anchor (finest = 4.0 = SCREEN_FILL_DIAGONAL_RATIO/FILL_FACTOR,
+# approximately — exact only near aspect ratio sqrt(3); see
+# `scene/lod-group-registry.ts`'s `FILL_FACTOR` doc), via
 # `partitioned_coverage_fractions`. For `adaptive` that is geometry (each lod
 # group's bbox is one BSP tile, so it projects to a fraction of the whole object);
 # for `overview` it is the recipe's contract — the coarse cap is what you see at

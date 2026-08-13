@@ -4481,7 +4481,7 @@ class TestLODCommand:
         The finest rung is ``MAX_COVERAGE_FRACTION``, not 1.0: overview's fine child
         is the whole dataset as a ``kind=partition`` and is by contract a zoom-in
         branch, so the pair keeps the fills-screen anchor rather than the
-        whole-object quarter-viewport one (``partitioned_coverage_fractions``)."""
+        whole-object half-fitted-axis one (``partitioned_coverage_fractions``)."""
         from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 
         out = tmp_path / "ms.gsplats.zarr"

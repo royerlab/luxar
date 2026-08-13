@@ -245,19 +245,27 @@ level i's total splat count) and strictly ascending coarsest→finest; the
 coarsest child is always `0.0`. Being a count
 ratio, it is immune to non-displayed-dimension multiplicity (e.g. a stacked
 time axis inflates every level's count equally and cancels out). At render
-time the viewer multiplies `coverage_fraction` by the viewport diagonal (times
-a fill-factor constant of `0.25`) to get a pixel threshold, so a
+time the viewer multiplies `coverage_fraction` by the viewport's fitted screen
+axis (`min(width, height)` in pixels — the extent the camera framing actually
+fits, so the comparison holds across aspect ratio and not just viewport
+size — times a fill-factor constant of `0.5`) to get a pixel threshold, so a
 `coverage_fraction` of `1.0` activates once the object's projected bbox diagonal
-reaches about a quarter of the viewport diagonal — i.e. at any normal full-frame
+reaches half of the fitted screen axis — i.e. at any normal full-frame
 view — and coarser levels step in as it shrinks below that, identically on any
-monitor/viewport. (Same contract as
+monitor or viewport size. Across aspect ratio the switch point is *exact* for a
+landscape viewport (aspect >= 1) and within ~25% of that value for a portrait
+one, where the camera fit distance itself varies with aspect. (Same contract as
 `docs/guides/user/LUXAR_ZARR_FORMAT.md`.)
 
 **Which anchor the finest child gets.** A **whole-object** ladder (the `levels`
 recipe, and any `kind=lod` group whose levels are alternative renderings of the
 whole node) anchors its finest at `1.0`, so its values stay in `[0, 1]`. A ladder
-bound to a **spatial partition** anchors its finest at `4.0` = `1 / FILL_FACTOR`
-— the metric a screen-filling node produces — because a tile's projected diagonal
+bound to a **spatial partition** anchors its finest at `4.0` =
+`SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`
+— approximately the metric a screen-filling node produces (exact only near
+aspect ratio √3 ≈ 1.73; the real screen-fill metric ranges from ~2.8 at 1:1 to
+~7.4 at an ultrawide 32:9 — see the `FILL_FACTOR` doc in
+`scene/lod-group-registry.ts`) — because a tile's projected diagonal
 is intrinsically a fraction of the whole object's. That covers the `adaptive`
 recipe (one `kind=lod` group per tile) and the `overview` recipe (whose fine
 child *is* a `kind=partition`, reached by zooming in). See

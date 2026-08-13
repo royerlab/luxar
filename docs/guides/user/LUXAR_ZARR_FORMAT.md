@@ -292,16 +292,22 @@ Picks **one of N alternative children** at runtime based on the current
 view. Each child carries a `coverage_fraction` threshold — a dimensionless,
 viewport-relative value in `[0, 4]`. The viewer projects the LOD group's bbox
 to screen, takes the diagonal in pixels, multiplies each child's
-`coverage_fraction` by the viewport diagonal (times a fill-factor constant of
-`0.25`) to get a pixel threshold, and renders the **finest** child whose
+`coverage_fraction` by the viewport's **fitted screen axis**
+(`min(viewport.width, viewport.height)` in pixels — the extent the camera
+framing actually fits — times a fill-factor constant of `0.5`) to get a pixel
+threshold, and renders the **finest** child whose
 threshold is satisfied (with 10% asymmetric hysteresis on the downgrade
 direction to suppress flicker). Because the threshold is viewport-relative,
 the finest child (`coverage_fraction` 1.0) activates once the object's projected
-bbox diagonal reaches about a quarter of the viewport diagonal — i.e. at any
+bbox diagonal reaches half of the fitted screen axis — i.e. at any
 normal full-frame view — and coarser children step in as it shrinks below that,
-identically on any monitor/viewport size. When the camera is inside or
-straddling a group's bounding box, the group is treated as filling the screen
-and its **finest** child is selected.
+identically on any monitor or viewport size. Across aspect ratio the switch
+point is *exact* for a landscape viewport (aspect >= 1, where the camera fit
+does not depend on width) and within ~25% of that value for a portrait one
+(below aspect 1 the fit distance itself varies with aspect, so a box's own
+depth no longer cancels out). When the camera is
+inside or straddling a group's bounding box, the group is treated as filling
+the screen and its **finest** child is selected.
 
 `kind="lod"` is **geometry-agnostic**: children can be points, lines,
 gsplats, or themselves specialized groups (e.g. a Partition group inside an
@@ -355,9 +361,12 @@ default (the finest level the `.centers` accessor returns).
   A **whole-object** ladder (`sqrt(N_i/N_finest)`, the auto-derivation) anchors
   its finest at `coverage_fraction: 1.0` — shown at any normal full-frame view,
   see the fill-factor anchor above — so its values stay in `[0, 1]`.
-  Values above `1.0`, up to the `4.0` ceiling (`1 / FILL_FACTOR`, the metric a
-  screen-filling node produces), hold a level until the node is larger than a
-  quarter-viewport. That is the right anchor whenever a **spatial partition** is
+  Values above `1.0`, up to the `4.0` ceiling
+  (`SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR`, approximately the metric a
+  screen-filling node produces — exact only near aspect ratio √3 ≈ 1.73; see
+  the `FILL_FACTOR` doc in `scene/lod-group-registry.ts`), hold a level until
+  the node is larger than
+  half the fitted screen axis. That is the right anchor whenever a **spatial partition** is
   part of the switch, because a tile's projected diagonal is intrinsically a
   fraction of the whole object's; a ladder anchored at `1.0` there would put
   every tile on its finest level while the object is merely full-frame. Every
