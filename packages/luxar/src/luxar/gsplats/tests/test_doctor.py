@@ -39,6 +39,41 @@ def _partition_store(tmp: Path, n: int = 400, parts_cap: int = 80) -> Path:
     return path
 
 
+def _uniform_tiled_store(tmp: Path) -> Path:
+    """A uniform-tiled partition on disk: overlapping parts, approximate planes.
+
+    The shape this PR's own uniform-tiling producer writes — apodized tiles keep
+    their overlap band, so the parts genuinely intersect and the grid's cuts sit
+    at each band's midplane. No tree separates these parts.
+    """
+    from luxar.gsplats.tiling import compute_tile_specs, grid_bsp_tree
+
+    specs = compute_tile_specs((48, 48, 48), 32, 8)
+    rng = np.random.default_rng(7)
+    regions = []
+    for spec in specs:
+        lo = np.array(spec.origin, dtype=float)
+        hi = lo + np.array(spec.shape, dtype=float)
+        chol = np.zeros((40, 6), dtype=np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        regions.append(
+            GSplatData(
+                centers=rng.uniform(lo, hi, size=(40, 3)).astype(np.float32),
+                amplitudes=np.ones(40, dtype=np.float32),
+                cholesky_factors=chol,
+            )
+        )
+    node = GSplatData.partition_from_regions(
+        regions,
+        bsp_tree=grid_bsp_tree(specs),
+        region_labels=[s.index for s in specs],
+    )
+    assert node.bsp_tree is not None
+    path = tmp / "uniform.gsplats.zarr"
+    write_gsplats_tree(path, node)
+    return path
+
+
 def _root_attrs(path: Path) -> dict:
     return json.loads((path / ".zattrs").read_text())
 
@@ -215,6 +250,55 @@ class TestSplitPlanesCheck:
             diagnose_store(path, fix=True)
             boxes = _part_boxes(path)
             assert _order_violations(_root_attrs(path)["bsp_tree"], boxes) == 0
+
+    def test_an_approximate_tree_over_overlapping_parts_is_left_alone(self) -> None:
+        """A uniform-tiled fit's parts overlap, so NO tree separates them and
+        failing the separation test says nothing about staleness. Condemning one
+        would delete the producer's own (documented, band-bounded) planes and
+        drop the viewer back to the centroid order those planes exist to avoid."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            before = _root_attrs(path)["bsp_tree"]
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "note"
+            assert not finding.fixable
+            assert report.healthy  # a note does not fail the gate
+
+            diagnose_store(path, fix=True)
+            assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_a_repair_that_leaves_a_lesser_condition_does_not_report_healthy(
+        self,
+    ) -> None:
+        """Removing a misleading tree from parts that cannot be ordered exactly
+        still leaves them unorderable. A run that called every fix must not
+        report a clean bill of health for a store the next run condemns."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp))
+            # Names a different part set, so it is broken however the parts sit.
+            _set_root_attr(
+                path,
+                "bsp_tree",
+                {"axis": 0, "split": 20.0, "left": {"part": 0}, "right": {"part": 1}},
+            )
+
+            report = diagnose_store(path, fix=True)
+            assert all(f.fixed for f in report.findings)
+            assert "bsp_tree" not in _root_attrs(path)
+            assert not report.healthy
+            assert [f.severity for f in report.unresolved] == ["warning"]
+            assert not diagnose_store(path).healthy  # and the next run agrees
+
+    def test_a_repair_that_cures_the_store_reports_healthy(self) -> None:
+        """The negative control: the re-check must not turn every fix run red."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _partition_store(Path(tmp))
+            _set_root_attr(path, "bsp_tree", None)
+            report = diagnose_store(path, fix=True)
+            assert report.residual == []
+            assert report.healthy
 
     def test_a_tree_naming_the_wrong_part_set_is_caught(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

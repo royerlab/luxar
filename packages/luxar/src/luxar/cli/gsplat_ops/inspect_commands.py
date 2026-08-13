@@ -19,7 +19,7 @@ from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 if TYPE_CHECKING:
     import numpy as np
 
-    from luxar.gsplats.doctor import Finding
+    from luxar.gsplats.doctor import DoctorReport, Finding
 
 
 def _ascii_histogram(
@@ -930,6 +930,22 @@ def _print_finding(finding: "Finding") -> None:
         aprint(f"     → {finding.remedy}")
 
 
+def _print_report(report: "DoctorReport") -> None:
+    """Every finding, then whatever the repairs left standing."""
+    if not report.findings:
+        aprint(f"✅ No problems found ({len(report.checks_run)} check(s) run).")
+    for finding in report.findings:
+        _print_finding(finding)
+    if report.residual:
+        # A repair is not always a cure — removing a misleading tree from parts
+        # that cannot be ordered exactly leaves a lesser condition behind. This
+        # is the store as it stands AFTER the repairs, and what the exit code
+        # keys on.
+        aprint("\nStill standing after the repairs:")
+        for finding in report.residual:
+            _print_finding(finding)
+
+
 def doctor(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to a .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -994,10 +1010,7 @@ def doctor(
             aprint(f"❌ {exc}")
             raise typer.Exit(1) from None
 
-        if not report.findings:
-            aprint(f"✅ No problems found ({len(report.checks_run)} check(s) run).")
-        for finding in report.findings:
-            _print_finding(finding)
+        _print_report(report)
 
         if json_out is not None:
             json_out.write_text(_json.dumps(report.as_dict(), indent=2))

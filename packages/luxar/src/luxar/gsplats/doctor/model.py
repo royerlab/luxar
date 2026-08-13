@@ -76,6 +76,12 @@ class DoctorReport:
     #: Checks that ran, in order — so a clean bill of health can say what it
     #: actually looked at rather than just "no problems found".
     checks_run: List[str] = field(default_factory=list)
+    #: What a FRESH run of the same checks reports after the repairs; ``None``
+    #: when nothing was repaired. A repair can leave a lesser condition standing
+    #: — removing a misleading tree still leaves parts with no exact order — so
+    #: "is the store healthy now?" has to be answered by re-reading the store,
+    #: not by the fix closures having been called.
+    residual: Optional[List[Finding]] = None
 
     @property
     def problems(self) -> List[Finding]:
@@ -84,7 +90,9 @@ class DoctorReport:
 
     @property
     def unresolved(self) -> List[Finding]:
-        """Problems still standing after any repairs."""
+        """Problems still standing — measured against the store as it now is."""
+        if self.residual is not None:
+            return [f for f in self.residual if f.severity != "note"]
         return [f for f in self.problems if not f.fixed]
 
     @property
@@ -98,6 +106,9 @@ class DoctorReport:
             "healthy": self.healthy,
             "checks_run": list(self.checks_run),
             "findings": [f.as_dict() for f in self.findings],
+            "residual": (
+                None if self.residual is None else [f.as_dict() for f in self.residual]
+            ),
         }
 
 

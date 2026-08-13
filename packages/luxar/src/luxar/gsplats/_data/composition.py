@@ -336,11 +336,25 @@ class CompositionMixin(_GSplatDataOps):
         from luxar.core.group.partition import prune_serialized_bsp_tree
         from luxar.gsplats.tree import GSplatPartition
 
-        labels = range(len(regions)) if region_labels is None else list(region_labels)
+        labels = (
+            list(range(len(regions)))
+            if region_labels is None
+            else [int(label) for label in region_labels]
+        )
         if len(labels) != len(regions):
             raise ValueError(
                 f"partition_from_regions: region_labels has {len(labels)} entries "
                 f"for {len(regions)} regions"
+            )
+        if any(b <= a for a, b in zip(labels, labels[1:])):
+            # Children are written in the order given, but the tree's leaves are
+            # renumbered by ASCENDING label — the two only agree when the labels
+            # ascend. Out of order (or duplicated) they would silently attach each
+            # leaf to the wrong part.
+            raise ValueError(
+                "partition_from_regions: region_labels must be strictly "
+                f"increasing (children keep the order given, while the split-plane "
+                f"tree is renumbered by ascending label); got {labels}"
             )
         kept = [(label, r) for label, r in zip(labels, regions) if r.n_splats > 0]
         if not kept:

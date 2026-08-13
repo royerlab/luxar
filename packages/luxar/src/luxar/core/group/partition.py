@@ -285,6 +285,7 @@ def reconstruct_serialized_bsp_tree(
         return None
 
     visits = [0]
+    n_axes = min(3, len(boxes[0][0]))
 
     def build(items: "List[int]") -> Optional[Dict[str, Any]]:
         visits[0] += 1
@@ -292,7 +293,7 @@ def reconstruct_serialized_bsp_tree(
             return None
         if len(items) == 1:
             return {"part": int(items[0])}
-        for axis in range(3):
+        for axis in range(n_axes):
             # Candidate cuts are the boxes' own faces: any separating plane can
             # be slid onto one without changing which side anything falls.
             cuts = sorted(
@@ -301,7 +302,18 @@ def reconstruct_serialized_bsp_tree(
             )
             for cut in cuts:
                 low = [i for i in items if float(boxes[i][1][axis]) <= cut]
-                high = [i for i in items if float(boxes[i][0][axis]) >= cut]
+                low_set = set(low)
+                # ``i not in low_set`` makes the two sides disjoint BY
+                # CONSTRUCTION. A zero-width box sitting exactly on the cut
+                # satisfies both face tests, and counting it twice can cancel a
+                # box that straddles the cut and is counted by neither — the
+                # length check alone then accepts a "split" that duplicates one
+                # part and drops another.
+                high = [
+                    i
+                    for i in items
+                    if i not in low_set and float(boxes[i][0][axis]) >= cut
+                ]
                 # A clean split: every box strictly on one side, both sides used.
                 if not low or not high or len(low) + len(high) != len(items):
                     continue
@@ -335,16 +347,22 @@ def serialized_bsp_tree_separates(
     against where the parts actually sit is the only way to catch that.
 
     Requires the leaf labels to be exactly ``0..len(boxes)-1``, each once.
+
+    A malformed stored tree — a missing ``split``, a non-numeric ``axis``, a
+    child that is not a node — is simply not a tree that separates anything, so
+    it answers ``False`` rather than raising: this runs against whatever is on
+    disk, and ``gsplat doctor`` must be able to diagnose a bad attr instead of
+    dying on it.
     """
     if tree is None:
         return False
     try:
         labels = serialized_bsp_leaf_labels(tree)
-    except (KeyError, TypeError):  # malformed node shape
+        if sorted(labels) != list(range(len(boxes))):
+            return False
+        return _node_separates(tree, boxes)
+    except (KeyError, TypeError, ValueError, IndexError):  # malformed node shape
         return False
-    if sorted(labels) != list(range(len(boxes))):
-        return False
-    return _node_separates(tree, boxes)
 
 
 def _node_separates(
@@ -355,7 +373,10 @@ def _node_separates(
     if "part" in node:
         return True
     axis = int(node.get("axis", -1))
-    if axis not in (0, 1, 2):
+    # 0/1/2 is what the format admits, and the parts must actually HAVE that
+    # axis — a 2D partition's boxes have two columns, so a tree naming axis 2
+    # describes something other than these parts.
+    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
         return False
     split = float(node["split"])
     # `left` holds coord < split, `right` holds coord >= split, so a left box

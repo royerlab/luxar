@@ -39,6 +39,7 @@ if not report.healthy:
 |---|---|---|
 | `split-planes` | a `kind=partition` records no `bsp_tree` | recover the planes from the part boxes, when those are disjoint |
 | `split-planes` | the stored `bsp_tree` does not separate the parts it names (stale after a transform, or written against a different part set) | rebuild from the part boxes, or remove the tree so ordering falls back honestly |
+| `split-planes` | the parts OVERLAP, so no tree separates them and the stored one cannot be checked exactly | none — reported as a note; this is what a uniform-tiled fit's approximate planes look like, and deleting them would be a downgrade |
 
 Why it matters: the viewer orders partition parts back-to-front by traversing
 those planes, which is exact for any camera pose including inside the volume.
@@ -50,7 +51,16 @@ wrong instead of falling back.
 
 Not every partition can be repaired. A uniform-tiled fit keeps each tile's
 apodization halo, so its parts genuinely intersect and no exact ordering exists
-to recover; that is reported, with the remedy (re-fit), and left alone.
+to recover; that is reported, with the remedy (re-fit), and left alone. When
+such a partition already carries its producer's approximate planes, the
+separation test fails by construction and says nothing about staleness, so the
+tree is reported as a note and kept rather than condemned.
+
+A repair is not always a cure — removing a misleading tree from parts that
+cannot be ordered exactly leaves the lesser "no split planes" condition behind.
+A `--fix` run therefore re-runs every check afterwards and reports what is still
+standing (`DoctorReport.residual`); the exit code keys off that, not off the
+fixes having been called.
 
 ## Adding a check
 

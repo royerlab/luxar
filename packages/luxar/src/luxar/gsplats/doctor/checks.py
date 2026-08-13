@@ -47,9 +47,9 @@ def _part_boxes(
 
     ``None`` when the parts do not describe a usable box set: a missing
     ``position_bounds``, a ``child_index`` that is not a permutation of
-    ``0..n-1``, or fewer than three spatial dims (the split axes the serialized
-    format admits). Only the first three dims are read — a stacked time/channel
-    axis is never a split axis.
+    ``0..n-1``, or fewer than two spatial dims (splitting needs two, so 1D data
+    is never partitioned). Only the first three dims are read — a stacked
+    time/channel axis is never a split axis.
     """
     by_index: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
     names = [n for n in group.group_keys() if str(n).startswith("part_")]
@@ -66,9 +66,10 @@ def _part_boxes(
             hi = np.asarray(bounds["max"], dtype=float)
         except (KeyError, TypeError, ValueError):
             return None
-        if lo.shape != hi.shape or lo.size < 3:
+        if lo.shape != hi.shape or lo.size < 2:
             return None
-        by_index[int(index)] = (lo[:3], hi[:3])
+        spatial = min(3, int(lo.size))
+        by_index[int(index)] = (lo[:spatial], hi[:spatial])
     if sorted(by_index) != list(range(len(names))):
         return None
     return [by_index[i] for i in range(len(names))]
@@ -97,6 +98,13 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
       still returns a plausible permutation — the ordering is confidently wrong
       instead of falling back. Repaired by recovering planes when possible, and
       by REMOVING the tree when not: the centroid fallback is at least honest.
+
+    Overlapping parts are the exception to that second condition, and are
+    reported as a note rather than condemned: no tree separates them, so the
+    separation test cannot tell a stale tree from the producer's DOCUMENTED
+    approximation (a uniform-tiled fit's apodized parts keep their overlap band
+    and its cuts are the band midplanes). Deleting one of those would throw away
+    correct metadata for the ordering the tree exists to avoid.
     """
     from luxar.core.group.partition import (
         reconstruct_serialized_bsp_tree,
@@ -115,6 +123,12 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
             if serialized_bsp_tree_separates(dict(stored), boxes):
                 continue  # healthy
             rebuilt = reconstruct_serialized_bsp_tree(boxes)
+            if rebuilt is None and _labels_name_the_parts(dict(stored), len(boxes)):
+                # No tree separates these parts at all, so failing the test is
+                # not evidence of staleness — it is what an approximate tree over
+                # overlapping parts always does. Leave it alone.
+                findings.append(_approximate_finding(where, len(boxes)))
+                continue
             findings.append(_stale_finding(group, where, len(boxes), rebuilt))
             continue
 
@@ -156,6 +170,41 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
         rebuilt = reconstruct_serialized_bsp_tree(boxes)
         findings.append(_missing_finding(group, where, len(boxes), rebuilt))
     return findings
+
+
+def _labels_name_the_parts(stored: Dict[str, Any], n_parts: int) -> bool:
+    """True when a stored tree's leaves are exactly ``0..n_parts-1``, each once.
+
+    The half of the soundness check that does NOT depend on the geometry: a tree
+    naming the right part set may still have stale planes, but one naming the
+    wrong set is broken however the parts sit.
+    """
+    from luxar.core.group.partition import serialized_bsp_leaf_labels
+
+    try:
+        return sorted(serialized_bsp_leaf_labels(stored)) == list(range(n_parts))
+    except (KeyError, TypeError, ValueError):  # malformed node shape
+        return False
+
+
+def _approximate_finding(where: str, n_parts: int) -> Finding:
+    return Finding(
+        check="split-planes",
+        severity="note",
+        path=where,
+        summary=f"split planes over {n_parts} parts that overlap — approximate",
+        detail=(
+            "The parts share space, so no tree separates them and the stored "
+            "planes cannot be checked exactly. This is the documented shape of a "
+            "uniform-tiled fit, whose apodized tiles keep their overlap band: the "
+            "cuts sit at each band's midplane, which confines any misordering to "
+            "the band instead of letting whole parts swap."
+        ),
+        remedy=(
+            "Nothing to do. For an exactly-ordered partition, fit with a content "
+            "plan (or non-overlapping tiles) instead."
+        ),
+    )
 
 
 def _missing_finding(

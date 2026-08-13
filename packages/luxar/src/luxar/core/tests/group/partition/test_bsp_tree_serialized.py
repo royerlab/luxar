@@ -328,6 +328,51 @@ class TestReconstructAndVerify:
     def test_no_boxes_yields_no_tree(self) -> None:
         assert reconstruct_serialized_bsp_tree([]) is None
 
+    def test_a_zero_width_box_on_a_cut_never_lands_on_both_sides(self) -> None:
+        """A degenerate box sits on the cut and passes BOTH face tests; a box
+        straddling the cut passes neither. Counting the first twice cancels the
+        second, so a bare ``len(low) + len(high) == len(items)`` check accepts a
+        "split" that duplicates one part and silently drops the other — and the
+        doctor would then WRITE that tree onto the store."""
+        boxes = [
+            # part 0: zero-width at x == 5, i.e. exactly on the only candidate cut
+            (np.array([5.0, 0.0, 0.0]), np.array([5.0, 10.0, 10.0])),
+            # part 1: straddles x == 5, so nothing separates the two
+            (np.array([4.0, 0.0, 0.0]), np.array([6.0, 10.0, 10.0])),
+        ]
+        assert reconstruct_serialized_bsp_tree(boxes) is None
+
+    def test_a_zero_width_box_still_reconstructs_when_it_is_separable(self) -> None:
+        """The negative control for the case above: the degenerate box is not
+        the problem, only counting it on both sides is."""
+        boxes = [
+            (np.array([5.0, 0.0, 0.0]), np.array([5.0, 10.0, 10.0])),
+            (np.array([6.0, 0.0, 0.0]), np.array([9.0, 10.0, 10.0])),
+        ]
+        rebuilt = reconstruct_serialized_bsp_tree(boxes)
+        assert rebuilt is not None
+        assert sorted(_leaf_labels(rebuilt)) == [0, 1]
+        assert serialized_bsp_tree_separates(rebuilt, boxes)
+
+    def test_a_malformed_tree_is_rejected_rather_than_raising(self) -> None:
+        """This predicate runs against whatever is on disk, and `gsplat doctor`
+        must be able to DIAGNOSE a bad attr instead of dying on it. Collecting
+        the labels succeeds on each of these; the plane walk is where they bite."""
+        boxes = [
+            (np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0])),
+            (np.array([2.0, 0.0, 0.0]), np.array([3.0, 1.0, 1.0])),
+        ]
+        leaves = {"left": {"part": 0}, "right": {"part": 1}}
+        for bad in (
+            {"axis": 0, **leaves},  # no split coordinate
+            {"axis": 0, "split": "near", **leaves},  # not a number
+            {"axis": "x", "split": 1.5, **leaves},  # not an axis index
+            {"axis": 2, "split": 1.5, **leaves},  # an axis these 2D parts lack
+        ):
+            two_d = [(lo[:2], hi[:2]) for lo, hi in boxes]
+            probe = two_d if bad.get("axis") == 2 else boxes
+            assert not serialized_bsp_tree_separates(bad, probe)
+
     def test_a_stale_tree_fails_verification(self) -> None:
         """The whole point of the check: planes left in a pre-transform space
         still traverse to a valid permutation, so only comparing them against

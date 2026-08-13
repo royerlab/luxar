@@ -62,7 +62,9 @@ def diagnose_store(
     Returns
     -------
     DoctorReport
-        Every finding, each flagged with whether it was repaired.
+        Every finding, each flagged with whether it was repaired. After a
+        repairing run it also carries ``residual`` — what a fresh pass of the
+        same checks reports afterwards, which is what ``healthy`` keys on.
     """
     path = Path(path)
     if fix and not path.is_dir():
@@ -140,4 +142,10 @@ def _diagnose_opened(
         # invisible to readers while looking applied on disk.
         _stamp_content_hash(root)
         zarr.consolidate_metadata(root.store)
+        # Then re-diagnose. A repair is not always a cure: removing a misleading
+        # tree from parts that cannot be ordered exactly leaves the lesser
+        # "no split planes" condition behind, and a run that called every fix
+        # would otherwise report a clean bill of health (and exit 0) for a store
+        # the very next run condemns.
+        report.residual = [f for check in selected for f in check(root)]
     return report

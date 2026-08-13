@@ -552,6 +552,25 @@ def test_partition_from_regions_rejects_mismatched_labels():
         )
 
 
+@pytest.mark.parametrize("labels", [[1, 0], [0, 0]])
+def test_partition_from_regions_rejects_labels_that_do_not_ascend(labels):
+    """Children keep the order they are handed over in, while the tree's leaves
+    are renumbered by ASCENDING label. Out of order (or duplicated) the two
+    disagree and every leaf would attach to the wrong part — silently, since the
+    result is still a valid-looking permutation."""
+    with pytest.raises(ValueError, match="strictly increasing"):
+        GSplatData.partition_from_regions(
+            [_region(10, 0.0, 0), _region(10, 50.0, 1)],
+            bsp_tree={
+                "axis": 0,
+                "split": 25.0,
+                "left": {"part": 0},
+                "right": {"part": 1},
+            },
+            region_labels=labels,
+        )
+
+
 def test_map_leaves_preserves_bsp_tree():
     """`gsplat additive` and friends re-ladder leaves without moving anything —
     dropping the planes there is pure loss."""
