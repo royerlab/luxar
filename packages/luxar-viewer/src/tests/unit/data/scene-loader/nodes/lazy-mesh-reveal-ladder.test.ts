@@ -16,7 +16,8 @@
  * level from cheap-attached to displayed is unconditional — but nothing ever
  * asks for a second one: `hasMoreLODs?.() ?? false` is permanently `false`, so
  * the ladder is stuck at whatever its first streaming pass happened to load. A
- * mesh reveal ladder is a growing CONNECTED patch (spec §9), so that stuck
+ * mesh reveal ladder is a growing SUBSET OF FACES — concentric shells around
+ * the node's own bbox centre (spec §9.1), not a decimation — so that stuck
  * state is a permanently holed surface, not a blurrier-but-complete one.
  *
  * ## What is real here, and what is not
