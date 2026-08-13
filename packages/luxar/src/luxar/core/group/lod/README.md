@@ -68,7 +68,7 @@ viewport-relative** threshold, strictly monotonic increasing in coarsest→fines
 order (coarsest = `0.0`; a WHOLE-OBJECT ladder anchors its finest at `1.0`, while a
 ladder bound to a spatial partition — and any explicitly authored list — may go up
 to `MAX_COVERAGE_FRACTION` = `4.0`). At render time the
-viewer multiplies each child's `coverage_fraction` by half of the current
+viewer multiplies each child's `coverage_fraction` by the current
 viewport's **fitted screen axis** (`min(viewport.width, viewport.height)` in
 pixels, times a fill-factor constant of `0.5` — the extent the camera framing
 actually fits, so the comparison holds across aspect ratio and not just

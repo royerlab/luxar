@@ -129,7 +129,7 @@ class TestResolveSubstitutiveAxisPoints:
 
     def test_coverage_fractions_out_of_range_raises(self) -> None:
         # The ceiling is MAX_COVERAGE_FRACTION == SCREEN_FILL_DIAGONAL_RATIO /
-        # FILL_FACTOR == 4.0 (the metric
+        # FILL_FACTOR == 4.0 (roughly the metric
         # a screen-filling object produces), not 1.0.
         with pytest.raises(ValueError, match=r"\[0, 4\]"):
             resolve_substitutive_axis_points(dict(coverage_fractions=[0.0, 4.5]))

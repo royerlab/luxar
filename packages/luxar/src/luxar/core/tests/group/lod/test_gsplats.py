@@ -101,7 +101,7 @@ class TestResolveSubstitutiveAxisGsplats:
 
     def test_dict_coverage_fractions_out_of_range_raises(self, pyramid) -> None:
         # The ceiling is MAX_COVERAGE_FRACTION == SCREEN_FILL_DIAGONAL_RATIO /
-        # FILL_FACTOR == 4.0 (the metric
+        # FILL_FACTOR == 4.0 (roughly the metric
         # a screen-filling object produces), not 1.0 — see the constant's docstring.
         with pytest.raises(ValueError, match=r"\[0, 4\]"):
             resolve_substitutive_axis_gsplats(

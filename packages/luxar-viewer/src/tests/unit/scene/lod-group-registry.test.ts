@@ -1011,7 +1011,8 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
 // 1.0 is only the AUTO-DERIVED ladder's finest anchor (half the fitted screen
 // axis). An explicitly authored ladder may go up to
 // `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR` == 4.0
-// — the metric a screen-filling object produces — so a spatially tiled layer,
+// — roughly the metric a screen-filling object produces (exactly so only near
+// aspect ratio √3) — so a spatially tiled layer,
 // whose tiles each project to a fraction of the viewport, can still hold a
 // coarse level at whole-scene framing. Python's `MAX_COVERAGE_FRACTION` bounds
 // the authored list; the viewer deliberately enforces NO upper bound, and these

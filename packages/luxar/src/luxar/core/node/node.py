@@ -416,7 +416,7 @@ class Node:
         strictly increasing ``coverage_fraction`` order, coarsest ``0.0`` →
         finest ``1.0`` (a WHOLE-OBJECT ladder's anchor: shown at any normal
         full-frame view). Values above ``1.0``, up to ``MAX_COVERAGE_FRACTION``
-        (4.0 == a screen-filling object), hold a level until the object is larger
+        (4.0, roughly a screen-filling object), hold a level until it is larger
         still — which a hand-built ladder may ask for and which a
         **partition-bound** ladder derives automatically (its switching group is
         one tile). The resolved ``display_type`` of
