@@ -86,6 +86,16 @@ def write_ladder(tmp_path: Path, verts, faces, **kwargs) -> Dict[str, Dict[str, 
     return read_nodes(store)
 
 
+def ladder_child_paths(nodes: Dict[str, Dict[str, Any]]) -> List[str]:
+    """Node paths of the `surf` group's mesh children, coarsest→finest."""
+    paths = [
+        path
+        for path, attrs in nodes.items()
+        if path.startswith("surf/child_") and attrs.get("type") == "mesh"
+    ]
+    return sorted(paths, key=lambda path: int(path.rsplit("_", 1)[1]))
+
+
 def level_meshes(store: Path) -> List[Any]:
     """Each level's DECODED mesh, coarsest→finest.
 
@@ -93,18 +103,18 @@ def level_meshes(store: Path) -> List[Any]:
     a 3-element subarray dtype, so a raw `colors.shape` reads back as `(V,)` and
     invites the conclusion that the triples were flattened. They are not — the
     loader is the only lens that shows what the viewer will actually receive.
+
+    Driven off the child list the writer actually produced, and deliberately NOT
+    stopping at the first `get_mesh` failure: `get_mesh` raises `ValueError` for a
+    level that is missing an array or otherwise will not decode, which is a defect
+    these tests exist to catch. Walking `child_0, child_1, …` until something
+    raises would instead hand back a SHORTER ladder that still satisfies a
+    `len(levels) >= 2` assertion.
     """
     from luxar.io.reader import LuxarScene
 
     scene = LuxarScene.load(store)
-    out: List[Any] = []
-    index = 0
-    while True:
-        try:
-            out.append(scene.get_mesh(f"surf/child_{index}"))
-        except (KeyError, ValueError):
-            return out
-        index += 1
+    return [scene.get_mesh(path) for path in ladder_child_paths(read_nodes(store))]
 
 
 def level_colors(store: Path) -> List[np.ndarray]:
@@ -114,13 +124,7 @@ def level_colors(store: Path) -> List[np.ndarray]:
 
 def ladder_children(nodes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The mesh children of the `surf` group, in written (coarsest→finest) order."""
-    kids = [
-        (path, attrs)
-        for path, attrs in nodes.items()
-        if path.startswith("surf/child_") and attrs.get("type") == "mesh"
-    ]
-    kids.sort(key=lambda kv: int(kv[0].rsplit("_", 1)[1]))
-    return [attrs for _, attrs in kids]
+    return [nodes[path] for path in ladder_child_paths(nodes)]
 
 
 class TestLadderShape:
@@ -197,6 +201,7 @@ class TestLadderShape:
         # forwarded the wrong colour, which pops on the switch exactly as visibly
         # as a colourless one.
         for index, level in enumerate(level_colors(tmp_path / "ladder.luxar.zarr")):
+            assert level is not None, f"level {index} decodes with no colours"
             unique = np.unique(np.asarray(level).reshape(-1, 3), axis=0)
             assert unique.shape[0] == 1, f"level {index} is no longer one colour"
             assert tuple(int(v) for v in unique[0]) == (200, 0, 0), (
@@ -229,11 +234,18 @@ class TestLadderShape:
         # A GRADIENT, not a uniform colour: the writer broadcasts a constant to a
         # `(1, 3)` row, which skips per-cluster averaging entirely. The old test
         # used a uniform colour and so never exercised the averaging path at all.
+        #
+        # The three channels are deliberately DIFFERENT — a ramp, then the two
+        # ends of the range held constant. A ramp repeated in all three channels
+        # cannot tell a dropped, duplicated or swapped channel from a correct one,
+        # and averaging a constant channel leaves it exactly where it was, so the
+        # two flat channels stay checkable at every level.
         verts, faces = octasphere(4)
         ramp = (verts[:, 2] - verts[:, 2].min()) / np.ptp(verts[:, 2])
-        colors = (low + ramp[:, None] * (high - low)).astype(dtype) * np.ones(
-            3, dtype=dtype
-        )
+        red = low + ramp * (high - low)
+        colors = np.stack(
+            [red, np.full_like(red, low), np.full_like(red, high)], axis=1
+        ).astype(dtype)
         store = tmp_path / "ladder.luxar.zarr"
         with LuxarZarrCompiler(store) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -246,7 +258,10 @@ class TestLadderShape:
             )
 
         levels = level_colors(store)
-        assert len(levels) >= 2, "a ladder needs at least one coarse level"
+        assert len(levels) == 4, "3 coarse levels + the original"
+        # Integer channels round to whole values, so allow one step of slack there
+        # and none worth speaking of for the float rows.
+        slack = 1.0 if np.issubdtype(np.dtype(dtype), np.integer) else 1e-4
         for index, level in enumerate(levels):
             assert level is not None, f"level {index} lost its colours entirely"
             assert level.dtype == dtype, (
@@ -256,18 +271,33 @@ class TestLadderShape:
             assert level.ndim == 2 and level.shape[1] == 3, (
                 f"level {index} is {level.shape}, not (V, 3)"
             )
+            gradient, flat_low, flat_high = (
+                level[:, 0].astype(np.float64),
+                level[:, 1].astype(np.float64),
+                level[:, 2].astype(np.float64),
+            )
+            # The two flat channels pin the value per CHANNEL: a cluster mean of a
+            # constant is that constant, so anything that drops, duplicates or
+            # reorders a channel lands here — including the HDR row clipped to 1.0
+            # and a level that came back black.
+            assert np.allclose(flat_low, low, atol=slack), (
+                f"level {index} channel 1 is {flat_low.min()}…{flat_low.max()}, "
+                f"not the authored {low}"
+            )
+            assert np.allclose(flat_high, high, atol=slack), (
+                f"level {index} channel 2 is {flat_high.min()}…{flat_high.max()}, "
+                f"not the authored {high}"
+            )
             # Averaging can only move values INSIDE the input range, never past it.
-            # This is the clipping check: an HDR level squashed to 1.0 fails `>=`
-            # on the top end, and a level that came back black fails it too.
-            assert level.min() >= low - 1e-4
-            assert level.max() <= high + 1e-4
-            assert level.max() > level.min(), (
+            assert gradient.min() >= low - slack
+            assert gradient.max() <= high + slack
+            assert gradient.max() > gradient.min(), (
                 f"level {index} collapsed to a single colour — the gradient is gone"
             )
             # The top of the ramp must SURVIVE, not merely be within bounds. A
             # level averaged down to the middle of the range keeps a gradient and
             # stays in range while still washing the surface out on the switch.
-            assert level.max() >= low + 0.5 * (high - low)
+            assert gradient.max() >= low + 0.5 * (high - low)
 
     def test_a_broadcast_1x3_colour_row_reaches_every_level(self, tmp_path):
         # The other shape #1355 measured: a `(1, 3)` row is the writer's own
@@ -288,7 +318,7 @@ class TestLadderShape:
             )
 
         levels = level_colors(store)
-        assert len(levels) >= 2
+        assert len(levels) == 3, "2 coarse levels + the original"
         for index, level in enumerate(levels):
             assert level is not None, f"level {index} lost the broadcast colour"
             assert level.dtype == np.uint8
@@ -328,7 +358,6 @@ class TestLadderShape:
         assert all(c["has_scalars"] for c in children), (
             "a level with the colormap but no scalars renders unmapped"
         )
-
         assert all(c["colormap"] == "viridis" for c in children)
 
         loaded = LuxarScene.load(store)
