@@ -75,11 +75,19 @@ export interface PartitionGroupMetadata {
   };
 
   /**
-   * Split-plane record of the BSP that produced the parts (present only when
-   * they came from a single `to_spatial_partition` split — the `tiles` /
-   * `adaptive` recipes; absent for streamed grid/content merges). Enables the
-   * depth-sort coordinator's exact back-to-front part ordering; absent → it
-   * falls back to a per-part centroid-distance heuristic. See {@link BspTreeNode}.
+   * Split-plane record of the recursive decomposition that produced the parts.
+   * Enables the depth-sort coordinator's exact back-to-front part ordering;
+   * absent → it falls back to a per-part centroid-distance heuristic, which is
+   * NOT a valid painter's order and pops at the seams as the camera moves.
+   *
+   * Written by every producer that has one: `to_spatial_partition` (the
+   * `tiles` / `adaptive` recipes, `gsplat partition`), content- and
+   * uniform-tiled fits, and the batch-fit streaming merge. Absent on a
+   * pre-2026.7 store, or where a transform could not carry the planes through.
+   *
+   * EXACT except for uniform tiling, whose apodized parts keep their overlap
+   * band and so genuinely intersect; those cuts are the band midplanes, which
+   * bound the error to the band. See {@link BspTreeNode}.
    */
   bsp_tree?: BspTreeNode;
 
