@@ -256,7 +256,7 @@ def test_overview_stamps_coverage_fractions_by_default():
     The finest rung is ``MAX_COVERAGE_FRACTION``, not 1.0: this is a
     PARTITION-bound ladder (the fine child is the whole dataset as a
     kind=partition, reached by zooming in), so it keeps the fills-screen anchor
-    rather than the whole-object quarter-viewport one — see
+    rather than the whole-object half-fitted-axis one — see
     ``partitioned_coverage_fractions``."""
     data = _make_random_gsplat(n=400)
 
@@ -269,29 +269,27 @@ def test_overview_stamps_coverage_fractions_by_default():
 
 def test_overview_fine_branch_keeps_the_fills_screen_anchor():
     """Regression for the #1361 anchor move: the overview recipe's contract is
-    "instant coarse overview level + fine tiles on zoom".
+    "instant coarse overview level + fine tiles on zoom", which requires the
+    fine partition to anchor at the PARTITION-bound fills-screen ceiling
+    (``MAX_COVERAGE_FRACTION``) rather than the whole-object anchor (``1.0``).
+    If the fine partition were anchored at ``1.0`` instead, it would be
+    selected on frame 1 — the entire dataset, eagerly — inverting the recipe.
 
-    The viewer's coverage metric is ``rawDiagonalFraction / FILL_FACTOR`` with
-    FILL_FACTOR = 0.25, so a node at a normal full-frame view (raw ~0.6) yields a
-    metric of ~2.4. If the fine partition were anchored at 1.0 it would be
-    selected on frame 1 — the entire dataset, eagerly — inverting the recipe. At
-    MAX_COVERAGE_FRACTION (4.0) it is reached only once the node's projected
-    diagonal reaches the viewport diagonal, exactly the pre-#1361 behaviour."""
+    This pins the STORED ``coverage_fraction`` values directly (exactly what
+    the viewer's selector compares against), rather than reproducing the
+    viewer's pixel-based coverage metric (``rawFraction / FILL_FACTOR``,
+    aspect- and viewport-dependent) in Python — see
+    ``test_demo_biodiversity_planetary_scale.py``, which reads the live
+    ``FILL_FACTOR`` out of the TS source when it needs the real thing."""
     data = _make_random_gsplat(n=400)
     res = build_recipe(data, "overview", _params(max_elements=120))
     coarse, fine = res.children
-    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
-
-    # A typical opening framing: the node spans ~60% of the viewport diagonal.
-    opening_metric = 0.60 / fill_factor
-    assert opening_metric < fine.meta["coverage_fraction"], (
-        "the fine partition must NOT be selected at the opening framing"
+    assert coarse.meta["coverage_fraction"] == 0.0  # coarsest = always-eligible floor
+    assert fine.meta["coverage_fraction"] == pytest.approx(MAX_COVERAGE_FRACTION), (
+        "the fine partition must anchor at the fills-screen ceiling, not the "
+        "whole-object 1.0 anchor"
     )
-    assert coarse.meta["coverage_fraction"] <= opening_metric  # coarse cap shows
-
-    # Zoomed until the node itself fills the viewport → the fine branch engages.
-    filled_metric = 1.0 / fill_factor
-    assert filled_metric >= fine.meta["coverage_fraction"]
+    assert fine.meta["coverage_fraction"] > coarse.meta["coverage_fraction"]
 
 
 def test_overview_is_unbalanced_lod_over_partition():
@@ -341,28 +339,29 @@ def test_adaptive_per_part_ladders_keep_the_fills_screen_anchor():
     """Each adaptive part is its OWN lod group whose bbox is one BSP tile.
 
     A tile's projected diagonal is intrinsically a fraction of the whole
-    object's, so the whole-object quarter-viewport anchor would put every tile on
+    object's, so the whole-object half-fitted-axis anchor would put every tile on
     its FINEST level while the object is merely full-frame (#1361 follow-up).
     Per-part ladders therefore keep the fills-screen anchor: coarsest 0.0, finest
-    MAX_COVERAGE_FRACTION, strictly ascending."""
+    MAX_COVERAGE_FRACTION, strictly ascending. This pins the STORED
+    ``coverage_fraction`` values directly (exactly what the viewer's selector
+    compares against) rather than reproducing the viewer's pixel-based
+    coverage metric in Python — see
+    ``test_demo_biodiversity_planetary_scale.py``, which reads the live
+    ``FILL_FACTOR`` out of the TS source when it needs the real thing."""
     data = _make_random_gsplat(n=400)
     res = build_recipe(
         data, "adaptive", _params(max_elements=120, compression_factor=4, levels=2)
     )
-    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
-    # An 8-part split puts a tile at roughly 0.30 of the viewport diagonal at
-    # whole-object framing → metric ~1.19, which must stay below the finest rung.
-    tile_metric_at_whole_object_framing = 0.30 / fill_factor
     for part in res.children:
         assert isinstance(part, GSplatLodGroup)
         covs = [c.meta["coverage_fraction"] for c in part.children]
         assert covs[0] == 0.0  # coarsest = always-eligible floor
-        assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION)
+        assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION), (
+            "a tile's finest rung must anchor at the fills-screen ceiling, "
+            "not the whole-object 1.0 anchor"
+        )
         assert covs == sorted(covs) and len(set(covs)) == len(covs)  # strict ascent
         assert all(0.0 <= c <= MAX_COVERAGE_FRACTION for c in covs)
-        assert tile_metric_at_whole_object_framing < covs[-1], (
-            "a tile must not sit on its finest level at whole-object framing"
-        )
 
 
 def test_adaptive_single_part_keeps_the_whole_object_anchor():
@@ -389,10 +388,11 @@ def test_adaptive_single_part_keeps_the_whole_object_anchor():
     assert covs[-1] == pytest.approx(1.0), (
         f"a one-part partition must use the whole-object anchor; got {covs}"
     )
-    # The opening framing (raw diagonal fraction ~0.31 at worst) must already
-    # reach the finest level — the whole point of #1361.
-    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
-    assert 0.31 / fill_factor >= covs[-1]
+    # The pin above (finest == 1.0, not MAX_COVERAGE_FRACTION) IS the
+    # opening-framing guarantee: the viewer's real coverage metric is not
+    # reproduced here (aspect- and viewport-dependent pixel math) — see
+    # `test_demo_biodiversity_planetary_scale.py`, which reads the live
+    # `FILL_FACTOR` out of the TS source when it needs the real thing.
 
 
 # ── absorption regression: recipes == the builders they wrap ──────────────

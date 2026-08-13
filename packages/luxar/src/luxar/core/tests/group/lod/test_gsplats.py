@@ -100,7 +100,8 @@ class TestResolveSubstitutiveAxisGsplats:
             )
 
     def test_dict_coverage_fractions_out_of_range_raises(self, pyramid) -> None:
-        # The ceiling is MAX_COVERAGE_FRACTION == 1/FILL_FACTOR == 4.0 (the metric
+        # The ceiling is MAX_COVERAGE_FRACTION == SCREEN_FILL_DIAGONAL_RATIO /
+        # FILL_FACTOR == 4.0 (roughly the metric
         # a screen-filling object produces), not 1.0 — see the constant's docstring.
         with pytest.raises(ValueError, match=r"\[0, 4\]"):
             resolve_substitutive_axis_gsplats(
@@ -110,7 +111,7 @@ class TestResolveSubstitutiveAxisGsplats:
     def test_dict_coverage_fractions_above_one_accepted(self, pyramid) -> None:
         # Above the auto-derived 1.0 anchor but within the ceiling: the escape
         # hatch for a level that must hold until the object is LARGER than a
-        # quarter-viewport (e.g. a spatially tiled layer). 4.0 is inclusive.
+        # half-fitted-axis (e.g. a spatially tiled layer). 4.0 is inclusive.
         _, cov = resolve_substitutive_axis_gsplats(
             pyramid, {"coverage_fractions": [0.0, 1.5]}
         )

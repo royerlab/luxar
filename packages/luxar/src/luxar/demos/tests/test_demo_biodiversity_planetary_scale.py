@@ -8,11 +8,14 @@ and the sampling/tiling arithmetic.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+from luxar.conftest import find_repo_relative_file, read_ts_number_const
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+from luxar.demos import demo_biodiversity_planetary_scale as demo_module
 from luxar.demos.demo_biodiversity_planetary_scale import (
     ALL_LIFE_SLOT,
     ALLOWED_LICENSES,
@@ -846,19 +849,66 @@ def test_bottomk_is_deterministic_for_a_given_seed():
 # measurement sit behind it (see the constant's comment block). Nothing else
 # tests it, so an anchor move would silently invalidate the calibration rather
 # than fail. These assertions are written in the units the comment records.
+#
+# UNITS (post-#1410). The two MEASURED_* constants below were taken
+# in-browser BEFORE #1410, as a fraction of the viewport's DIAGONAL
+# (``hypot(viewport.width, viewport.height)``) — a quantity the viewer no
+# longer computes at all; it now normalises by the FITTED SCREEN AXIS
+# (``min(width, height)``). They are kept here as the historical raw-diagonal
+# record (re-measuring in-browser is out of scope for this fix), and
+# converted to fitted-axis raw units through one explicit, NAMED,
+# computed-not-hardcoded factor anchored at the mainstream 16:9 aspect ratio
+# the calibration was measured at: ``hypot(16, 9) / 9``. That anchor is the
+# same one documented in the ``FILL_FACTOR`` doc block in
+# ``lod-group-registry.ts``; a browser window at a very different aspect
+# ratio shifts the true conversion (see that doc's aspect table), which is
+# exactly why these assertions read the REAL, live ``FILL_FACTOR`` from the
+# TypeScript source (via ``read_ts_number_const``) rather than re-deriving it
+# from ``MAX_COVERAGE_FRACTION`` — a future anchor move (either constant)
+# fails HERE again, instead of the ~40 lines of in-browser measurement behind
+# this ladder silently going stale.
 # ────────────────────────────────────────────────────────────────────────
 
+#: The 16:9-anchored diagonal-to-fitted-axis conversion factor documented
+#: above and in ``lod-group-registry.ts``'s ``FILL_FACTOR`` doc block.
+#: Computed, not hard-coded, so it is visibly tied to the 16:9 reference
+#: aspect ratio rather than a magic number: ``hypot(16, 9) / 9 ≈ 2.0397``.
+_REFERENCE_ASPECT_DIAGONAL_TO_FITTED_AXIS = math.hypot(16, 9) / 9
+
 #: Lower bound INFERRED (not measured) for the largest/nearest tile's projected
-#: bbox diagonal as a fraction of the viewport diagonal at whole-globe framing.
-#: The demo's calibration record is a set of thresholds that FAILED: at 0.78 and
-#: 0.82 two of the four globe tiles still crossed into their middle level, from
-#: which only "the largest tile exceeds 0.78" strictly follows. 0.82 is used here
-#: as the tightest value consistent with that record — treat it as a floor on the
-#: real figure, not an instrument reading. (The 0.60 below IS a direct
-#: measurement of the mean.)
+#: bbox diagonal as a fraction of the viewport DIAGONAL (pre-#1410 units — see
+#: above) at whole-globe framing. The demo's calibration record is a set of
+#: thresholds that FAILED: at 0.78 and 0.82 two of the four globe tiles still
+#: crossed into their middle level, from which only "the largest tile exceeds
+#: 0.78" strictly follows. 0.82 is used here as the tightest value consistent
+#: with that record — treat it as a floor on the real figure, not an
+#: instrument reading. (The 0.60 below IS a direct measurement of the mean.)
 MEASURED_LARGEST_TILE_RAW_FRACTION = 0.82
 #: …and the mean, at which the coarsest level must still be the one selected.
+#: Also viewport-DIAGONAL units (pre-#1410).
 MEASURED_MEAN_TILE_RAW_FRACTION = 0.60
+
+
+def _viewer_fill_factor() -> float:
+    """The REAL, current ``FILL_FACTOR`` parsed from the viewer's TypeScript
+    source (not re-derived from ``MAX_COVERAGE_FRACTION``, whose relation to
+    ``FILL_FACTOR`` is itself only checked elsewhere — see
+    ``test_max_coverage_fraction_matches_the_viewer_fill_factor`` in
+    ``test_lod_group.py``). Reading the live constant is what makes a future
+    anchor move fail HERE, on this calibration, instead of only on that
+    separate coupling test.
+    """
+    rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
+    start = Path(demo_module.__file__).resolve()
+    registry = find_repo_relative_file(rel, start)
+    assert registry is not None, (
+        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
+        "update this test — do NOT delete it: it is what makes the "
+        "OCCURRENCE_COVERAGE calibration guards fail on a future anchor move "
+        "instead of silently going stale."
+    )
+    source = registry.read_text(encoding="utf-8")
+    return read_ts_number_const(source, "FILL_FACTOR")
 
 
 def test_occurrence_coverage_has_one_threshold_per_level() -> None:
@@ -877,17 +927,29 @@ def test_occurrence_coverage_is_a_valid_ladder() -> None:
 def test_occurrence_coverage_clears_the_measured_largest_tile() -> None:
     """The calibration's core claim, restated in metric space.
 
-    Selection compares ``threshold <= rawFraction / FILL_FACTOR``. Every
-    non-zero threshold must sit ABOVE the metric the largest tile produces at
-    whole-globe framing, so all tiles hold their coarsest level there; a
-    threshold at or below it is what made the tiles flap (both levels resident,
-    1.07M instead of 186k — see the constant's comment).
+    Selection compares ``threshold <= rawFraction / FILL_FACTOR``, where
+    ``rawFraction`` is in FITTED-AXIS units (post-#1410). The measured largest
+    tile fraction is in the older DIAGONAL units, so it is converted through
+    the named 16:9-anchored factor above before dividing by the REAL
+    ``FILL_FACTOR`` read from the viewer source. Every non-zero threshold must
+    sit ABOVE the resulting metric, so all tiles hold their coarsest level at
+    whole-globe framing; a threshold at or below it is what made the tiles
+    flap (both levels resident, 1.07M instead of 186k — see the constant's
+    comment).
 
-    Referencing MAX_COVERAGE_FRACTION rather than a literal 0.25 means a future
-    anchor move fails HERE instead of silently invalidating the measurements.
+    Measured (this test, current constants): 0.82 diagonal-fraction ->
+    1.6726 fitted-axis-fraction (x2.0397) -> metric 3.3452 (/ FILL_FACTOR
+    0.5). The first rung (3.52) clears it by only ~0.17 — down from the 0.24
+    margin the OLD (anchor-blind) computation reported, because the honest
+    conversion is closer to that rung than the pre-#1410 arithmetic was. Real
+    margin, not a hair's-breadth one, but noticeably tighter than it looks
+    from the ladder's face value.
     """
-    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
-    largest_tile_metric = MEASURED_LARGEST_TILE_RAW_FRACTION / fill_factor
+    fill_factor = _viewer_fill_factor()
+    largest_tile_raw_fitted_axis = (
+        MEASURED_LARGEST_TILE_RAW_FRACTION * _REFERENCE_ASPECT_DIAGONAL_TO_FITTED_AXIS
+    )
+    largest_tile_metric = largest_tile_raw_fitted_axis / fill_factor
     non_zero = [c for c in OCCURRENCE_COVERAGE if c > 0.0]
     assert non_zero, "ladder has no refinement thresholds"
     assert min(non_zero) > largest_tile_metric, (
@@ -899,8 +961,11 @@ def test_occurrence_coverage_clears_the_measured_largest_tile() -> None:
 def test_occurrence_coverage_keeps_the_coarsest_level_at_whole_globe_framing() -> None:
     """End-to-end intent: at the measured mean framing the selected level is the
     coarsest (index 0), i.e. the cheap overview the demo is built around."""
-    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
-    metric = MEASURED_MEAN_TILE_RAW_FRACTION / fill_factor
+    fill_factor = _viewer_fill_factor()
+    mean_tile_raw_fitted_axis = (
+        MEASURED_MEAN_TILE_RAW_FRACTION * _REFERENCE_ASPECT_DIAGONAL_TO_FITTED_AXIS
+    )
+    metric = mean_tile_raw_fitted_axis / fill_factor
     # The viewer picks the finest child whose threshold <= metric.
     selected = max(i for i, c in enumerate(OCCURRENCE_COVERAGE) if c <= metric)
     assert selected == 0, (
@@ -910,9 +975,22 @@ def test_occurrence_coverage_keeps_the_coarsest_level_at_whole_globe_framing() -
 
 
 def test_occurrence_coverage_refines_once_a_tile_fills_the_viewport() -> None:
-    """The ceiling must be reachable: a tile that fills the viewport (raw 1.0)
-    selects the finest level, so the ladder is not dead weight."""
-    fill_factor = 1.0 / MAX_COVERAGE_FRACTION
-    metric = 1.0 / fill_factor
+    """The ceiling must be reachable: a tile that fills the screen (its own
+    projected diagonal reaching ``SCREEN_FILL_DIAGONAL_RATIO`` times the
+    fitted axis — the viewer's own definition of "screen-filling", see
+    ``lod-group-registry.ts``) selects the finest level, so the ladder is not
+    dead weight. Unlike the two calibration tests above this isn't a
+    diagonal-era MEASUREMENT to convert — it's the viewer's own screen-fill
+    definition, read live from both TypeScript constants."""
+    rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
+    start = Path(demo_module.__file__).resolve()
+    registry = find_repo_relative_file(rel, start)
+    assert registry is not None
+    source = registry.read_text(encoding="utf-8")
+    fill_factor = read_ts_number_const(source, "FILL_FACTOR")
+    screen_fill_diagonal_ratio = read_ts_number_const(
+        source, "SCREEN_FILL_DIAGONAL_RATIO"
+    )
+    metric = screen_fill_diagonal_ratio / fill_factor
     selected = max(i for i, c in enumerate(OCCURRENCE_COVERAGE) if c <= metric)
     assert selected == len(OCCURRENCE_COVERAGE) - 1
