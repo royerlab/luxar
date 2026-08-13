@@ -3557,10 +3557,10 @@ class TestLODCommand:
         pairing the user typed. Deliberately unlike `--coarsen-dims`, where a
         barrier SET is order-free.
         """
-        from luxar.cli.lod import _parse_reveal_spatial_dims
+        from luxar.cli.reveal_options import parse_reveal_spatial_dims
 
-        assert _parse_reveal_spatial_dims("2,0", 3) == [2, 0]
-        assert _parse_reveal_spatial_dims("0,2", 3) == [0, 2]
+        assert parse_reveal_spatial_dims("2,0", 3) == [2, 0]
+        assert parse_reveal_spatial_dims("0,2", 3) == [0, 2]
 
     @pytest.mark.parametrize(
         "spec", ["nan,0,0", "inf,0,0", "0,-inf,0"], ids=["nan", "inf", "-inf"]
@@ -3572,18 +3572,18 @@ class TestLODCommand:
         equal under the stable argsort, so the ladder comes out in input order and
         the user gets no reveal and no error.
         """
-        from luxar.cli.lod import _parse_reveal_centre
+        from luxar.cli.reveal_options import parse_reveal_centre
 
         with pytest.raises(typer.BadParameter, match="finite"):
-            _parse_reveal_centre(spec)
+            parse_reveal_centre(spec)
 
     def test_spatial_dims_rejects_duplicates(self) -> None:
         """A duplicate was silently collapsed by `set()`; it now errors, because a
         repeat would count that axis twice in the distance."""
-        from luxar.cli.lod import _parse_reveal_spatial_dims
+        from luxar.cli.reveal_options import parse_reveal_spatial_dims
 
         with pytest.raises(typer.BadParameter, match="must not repeat"):
-            _parse_reveal_spatial_dims("0,0", 3)
+            parse_reveal_spatial_dims("0,0", 3)
 
     def test_coarsen_dims_rejected_for_additive(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path

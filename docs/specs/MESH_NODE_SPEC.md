@@ -1674,6 +1674,14 @@ Authoring landed with `add_mesh(additive_lod=…)` and `write_mesh_multi_lod`; t
 second half landed with it — `createProgressiveMeshLoader` opens a mesh node declaring
 `n_additive_sublods > 1` and `MeshProgressiveLoader` fetches its levels in order,
 concatenating each revealed prefix into the buffers the node was sized for.
+
+The **CLI** reaches it through `luxar mesh lod --recipe reveal`, whose `-m/--add-method`,
+`--n-lods`, `--counts`, `--reveal-centre` and `--spatial-dims` map onto the `additive_lod=`
+keys above. `--recipe` selects rather than the knobs composing, because `add_mesh` refuses
+an additive ladder alongside a substitutive one — a mesh has no coarse prefix, so the two
+are different products rather than two axes of one. `--reveal-centre` / `--spatial-dims`
+share their parser with `gsplat lod` (`cli/reveal_options.py`), so the two commands cannot
+drift on what a centre or an axis order means.
 Labels are cleared on a laddered mesh — one source vertex maps into every level that touches
 it, so a union CSR spanning levels has no well-defined index space; `substitutive_lod=` and
 `partition=` both keep theirs.
