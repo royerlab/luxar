@@ -932,13 +932,13 @@ describe('UpdateProfiler — depth-sort passes (beginDepthSortPass)', () => {
 
     const sort = profiler.beginDepthSortPass();
     clock.advance(12);
-    sort.setMetadata({ splats: 1_000_000, info: '4.0 MB up' });
+    sort.setMetadata({ elements: 1_000_000, info: '4.0 MB up' });
     sort.end();
 
     const depthSort = profiler.getDepthSortTimings();
     expect(depthSort.count).toBe(1);
     expect(depthSort.lastMs).toBe(12);
-    expect(depthSort.metadata).toMatchObject({ splats: 1_000_000, info: '4.0 MB up' });
+    expect(depthSort.metadata).toMatchObject({ elements: 1_000_000, info: '4.0 MB up' });
     expect(profiler.getTimings().count).toBe(0);
     expect(profiler.getRefinementTimings().count).toBe(0);
   });
@@ -997,7 +997,7 @@ describe('UpdateProfiler — depth-sort completion stream', () => {
     kernelMs: null,
     boundaryMs: null,
     queueMs: null,
-    splats: null,
+    elements: null,
   });
 
   it('N in, N out: total === N and events carry monotonic seq 1..N', () => {
@@ -1058,7 +1058,7 @@ describe('UpdateProfiler — depth-sort completion stream', () => {
       kernelMs: null,
       boundaryMs: null,
       queueMs: null,
-      splats: null,
+      elements: null,
     });
     // Event OBJECTS are cloned too — mutating a returned event's field
     // must not leak into the buffered ring.
@@ -1079,7 +1079,7 @@ describe('UpdateProfiler — depth-sort completion stream', () => {
       kernelMs: 4,
       boundaryMs: 2,
       queueMs: 6,
-      splats: 1_000_000,
+      elements: 1_000_000,
     });
     const { events } = profiler.getDepthSortCompletions();
     expect(events[0]).toMatchObject({
@@ -1088,7 +1088,7 @@ describe('UpdateProfiler — depth-sort completion stream', () => {
       kernelMs: 4,
       boundaryMs: 2,
       queueMs: 6,
-      splats: 1_000_000,
+      elements: 1_000_000,
     });
   });
 

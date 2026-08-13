@@ -154,12 +154,18 @@ LOD wrapper builders:
   a wrong-length `labels` against the FULL element count before a partition / LOD
   decomposition. Needed precisely because `slice_optional_array` passes a mis-sized
   list through unchanged, which would hand every part / level the same unsliced
-  list and write labels into the wrong slots. No wrapper impl calls it directly
-  any more — it is reached from `validate_gsplats_channels_before_split`, the one
-  geometry whose channel validator has no labels channel; Points and Lines get
-  the same check from the writer sweep their gates delegate to. Either way it
-  belongs to a wrapper's pre-split gate and never to the top of a leaf adder, so
-  the plain-leaf gate order stays exactly as it was. Multi-CHILD gsplats wrappers
+  list and write labels into the wrong slots. Two callers reach it directly:
+  `validate_gsplats_channels_before_split` (the one geometry whose channel
+  validator has no labels channel; Points and Lines get the same check from
+  the writer sweep their gates delegate to instead), and
+  `gsplats_pipeline.from_io._validate_labelled_leaf_length`, called from the
+  graft door's one-flat-leaf label gate (#1505) — a deliberate EXCEPTION: that
+  call site is a pre-WRAPPER gate rather than a pre-split one (a bare-leaf
+  graft has no wrapper and no split at all) and it DOES change which fault a
+  multi-fault call reports, the same trade `validate_points_channels_before_split`
+  sanctions below for "a NaN position, an unknown attr". Every other caller's
+  check belongs to a wrapper's pre-split gate and never to the top of a leaf
+  adder, so the plain-leaf gate order stays exactly as it was. Multi-CHILD gsplats wrappers
   cannot use it at all: a multi-level substitutive `lod_group=` on
   `add_gsplats_from_data`, and any `graft_gsplat_node` subtree holding more than
   one leaf (`kind=lod` / `kind=partition`), REFUSE `labels=` / `image_labels=`
@@ -177,7 +183,7 @@ LOD wrapper builders:
   (`lod_group=False`) or a single-leaf file, or hand-build the wrapper and give
   each child its own labels.
 - `validate_points_channels_before_split(n_points, colors=…, radii=…, sharpness=…,
-  scalars=…, labels=…)`, `validate_lines_channels_before_split(n_vertices, widths=…,
+  scalars=…, labels=…, image_labels=…)`, `validate_lines_channels_before_split(n_vertices, widths=…,
   …)`, `validate_gsplats_channels_before_split(centers, amplitudes,
   cholesky_factors, colors=…, labels=…)` — the same pre-split gate for EVERY
   other per-element channel, not just labels. Each one CALLS its geometry's
@@ -188,17 +194,26 @@ LOD wrapper builders:
   write accepts. What that buys is a per-element CHANNEL verdict identical with
   and without `partition=` / `additive_lod=` / `substitutive_lod=` — identical
   exception type and message, which the tests assert byte-for-byte. The gate runs
-  ABOVE the positions / attr checks on the split paths, so a call that also trips
-  one of those reports the channel fault first here and the positions/attr fault
-  on the plain-leaf path — both refuse, neither writes. The scene-DIMENSION count
-  is the exception: since #1446 the adders check it above their split branches, so
-  it precedes this gate on both paths and a mismatched column count is reported
-  first either way.
+  ABOVE the positions checks on the split paths, so a call that also trips a bad
+  position (e.g. a NaN) reports the channel fault first here and the positions
+  fault on the plain-leaf path — both refuse, neither writes. The scene-DIMENSION
+  count is one exception: since #1446 the adders check it above their split
+  branches, so it precedes this gate on both paths and a mismatched column count
+  is reported first either way. The node-attrs check is a second exception:
+  since #1529 (Points/Lines) and #1534 (Mesh, GSplats) `validate_render_attrs`
+  also runs at every adder's entry, above this gate, so an unknown/reserved
+  attr wins there too on all four geometry types now.
   Same placement rule as the labels guard (first statement of the wrapper impl,
-  never a leaf adder). Labels come last, as in the flat order: for Points and
-  Lines via `validate_labels_for_writing` inside the shared writer sweep, for
-  GSplats via `validate_labels_before_split` (whose validator has no labels
-  channel). The GSplats gate also RETURNS the `cholesky_is_uniform` flag its
+  never a leaf adder). Labels, then image labels, come last, in that order, as in
+  the flat write: for Points and Lines via `validate_labels_for_writing` then
+  `validate_image_labels_for_writing` inside the shared writer sweep (#1491 added
+  the latter — it has no per-part slicer at all, since it rides only the finest
+  `substitutive_lod=` child, so it closes a narrower and differently-shaped strand
+  than the rest of this gate; see `validate_points_channels_before_split`'s own
+  docstring), for GSplats via `validate_labels_before_split` (whose validator has
+  no labels channel) plus its own `image_labels` check in the flat gate (GSplats
+  has no `substitutive_lod=` wrapper to pre-split). The GSplats gate also RETURNS
+  the `cholesky_is_uniform` flag its
   validator already computed, so the wrapper does not restate that rule either.
   Every legal broadcast form the flat path accepts passes the GATE and reaches
   disk on every path, `substitutive_lod=` included: the gsplat lift broadcasts a
@@ -245,8 +260,9 @@ coupling — they take a `Scene` reference and return pure NumPy arrays):
 
 - **[`adders/`](adders/README.md)** — per-leaf `add_<type>_impl` bodies for
   Points, Lines, GSplats, and Mesh, plus their partition- and multi-LOD-wrapper
-  helpers (mesh has a partition wrapper and a substitutive-LOD one, but no
-  multi-LOD/additive wrapper — it still refuses the additive prefix ladder).
+  helpers (mesh has all three: partition, substitutive-LOD, and a multi-LOD
+  wrapper whose ladder is a REVEAL — concentric shells of faces — since an
+  arbitrarily ordered prefix of an index buffer is a holed surface).
   `group.py`'s public methods are thin delegates over these.
 - **[`gsplats_pipeline/`](gsplats_pipeline/README.md)** — the high-level gsplats
   write path backing `add_gsplats_from_data` / `_from_file` / `_from_volume`;

@@ -25,19 +25,34 @@ export const frostedGlassTheme: Theme = {
       // DARK frost. The panel tint must guarantee text contrast over ANY
       // scene: with the old white tint (rgba(255,255,255,0.12)) a bright
       // backdrop blurred straight through and white text became unreadable.
-      // A ~65% dark tint over the blur keeps the frosted character while
-      // bounding the worst-case backdrop at ~4.4:1 against text-primary —
-      // the same trick liquid-glass plays with its dark ::after layer.
+      // A dark tint over the blur keeps the frosted character while
+      // bounding the worst-case (pure-white scene) backdrop. Issue #1513:
+      // at the old 0.65 tint the worst-case panel composited to ~#6b6d71,
+      // giving primary/secondary/muted 4.88/3.73/2.56:1 — secondary and muted
+      // both failed AA (4.5:1). Each knob alone is insufficient: at the new
+      // 0.75 tint with the OLD text alphas (0.95/0.75/0.5), the ranks are
+      // 6.80 / 4.97 / 3.17 — the tint alone lifts secondary above AA, but
+      // muted stays at 3.17; at the OLD 0.65 tint with the NEW text alphas
+      // (0.95/0.85/0.72), the ranks are 4.88 / 4.28 / 3.57 — both secondary
+      // and muted still fail. That's why both the panel and the text alphas
+      // are two independent knobs, and both had to move. At 0.75 the
+      // worst-case panel composites to ~rgb(85, 86, 91); with the bumped
+      // text alphas that now measures
+      // primary 6.8:1 / secondary 5.8:1 / muted 4.7:1 — all clear AA, order
+      // preserved. Pinned by tests/unit/themes/glass-contrast.test.ts.
       primary: 'rgba(28, 30, 36, 0.5)', // App background tint
-      secondary: 'rgba(28, 30, 36, 0.65)', // Panel surface (contrast floor)
+      secondary: 'rgba(28, 30, 36, 0.75)', // Panel surface (contrast floor)
       tertiary: 'rgba(255, 255, 255, 0.07)', // Inset lift on the dark frost
       overlay: 'rgba(0, 0, 0, 0.6)', // Darker overlay for modals
     },
     text: {
-      // Light text for dark backgrounds with glass effect
-      primary: 'rgba(255, 255, 255, 0.95)', // Bright white
-      secondary: 'rgba(255, 255, 255, 0.75)', // Translucent white
-      muted: 'rgba(255, 255, 255, 0.5)', // More subtle
+      // Light text for dark backgrounds with glass effect.
+      // secondary/muted alphas raised alongside background.secondary above
+      // (issue #1513) — over the worst-case (pure-white-scene) panel they
+      // now measure 5.8:1 / 4.7:1, both clearing AA's 4.5:1.
+      primary: 'rgba(255, 255, 255, 0.95)', // Bright white — 6.8:1 worst-case
+      secondary: 'rgba(255, 255, 255, 0.85)', // Translucent white — 5.8:1 worst-case
+      muted: 'rgba(255, 255, 255, 0.72)', // More subtle — 4.7:1 worst-case
       disabled: 'rgba(255, 255, 255, 0.3)', // Very subtle
       inverse: 'rgba(0, 0, 0, 0.9)', // For light backgrounds
     },

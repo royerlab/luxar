@@ -591,7 +591,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Mesh is the surface geometry type: ``vertices`` in nD plus a ``faces``
         triangle-index array. Unlike Points / Lines / GSplats it carries no
         per-element size (a triangle's extent comes from its own vertices), and
-        it has no spatial index or LOD in v1 — the loader is whole-node.
+        it has no spatial index — the loader is whole-node. This call writes one
+        leaf; LOD is layered on by the caller, not by this method — see
+        :meth:`write_mesh_multi_lod` (additive reveal levels) below.
 
         Scalar convenience: ``colors`` accepts a broadcast RGB(A) tuple/list, and
         ``scalars`` a single value, exactly as the sibling writers do.
@@ -969,6 +971,237 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             f"✅ Multi-LOD Lines written to {path} ({n_levels} levels, "
             f"{n_vertices_total:,} vertices in {n_polylines_total:,} "
             f"polylines)"
+        )
+        return metadata
+
+    @arbol_warnings()
+    def write_mesh_multi_lod(
+        self,
+        path: NodePath,
+        levels: List[Dict[str, Any]],
+        *,
+        extend_to_all: Optional[List[str]] = None,
+        **attrs: Any,
+    ) -> Dict[str, Any]:
+        """Write multi-additive-LOD Mesh: parent node + ``additive_<i>/`` subgroups.
+
+        Mirrors :meth:`write_points_multi_lod` in shape — a parent carrying the
+        totals, the global ``position_bounds``, ``n_additive_sublods`` and the
+        compositing attrs, with one fully-formed leaf per level underneath. Each
+        level dict carries what :meth:`write_mesh` needs: ``vertices`` + ``faces``
+        (already re-indexed into that level's OWN vertex table by
+        :func:`luxar.mesh.split.split_mesh_by_faces`) plus optional ``normals`` /
+        ``normal_dims`` / ``colors`` / ``scalars`` / ``shading`` /
+        ``double_sided`` / ``_scalar_data_range``, and ``lod_stats``.
+
+        A mesh ladder is a REVEAL: the levels are a partition of the faces,
+        coarsest (innermost shell) first, and the viewer forms level *i* by
+        concatenating levels 0..i. Level counts are therefore FACE counts, and the
+        parent's ``n_vertices`` / ``n_faces`` are the sums over levels — the
+        vertex sum exceeds the source vertex count by the shell-boundary
+        duplication the re-indexing costs (see
+        :func:`luxar.mesh.split.duplication_factor`).
+
+        **No labels, and deliberately no union label CSR.** The three sibling
+        ladders write ONE CSR pair on the parent spanning the levels, because
+        their elements are independent rows and the concatenation of the levels is
+        a well-defined index space. A mesh level RE-INDEXES its own vertices, so a
+        single source vertex on a shell boundary maps to a slot in several levels
+        (and a vertex no level's faces reference maps to none): the union index
+        space is ill-defined, and any CSR written over it would pair labels with
+        the wrong vertices. So the parent carries no ``has_labels`` and a level
+        carrying ``labels`` is refused outright rather than silently dropped.
+
+        Args:
+            path: Path for the mesh node within the store.
+            levels: One dict per additive level, coarsest first. ``vertices`` and
+                ``faces`` are required; every other key is optional.
+            extend_to_all: Forwarded to each per-level write. Already-resolved
+                dimension NAMES — the caller expands the ``"all"`` sentinel, which
+                must never reach disk (it is stamped verbatim here, onto the parent
+                group and every sub-LOD).
+            **attrs: Additional parent-node attrs (compositing, colormap, ...).
+
+        Returns:
+            Aggregate metadata dict with ``type`` / ``n_vertices`` / ``n_faces`` /
+            ``n_additive_sublods`` / ``position_bounds`` / ``levels``.
+
+        Raises:
+            ValueError: If ``levels`` is empty, an attr is invalid, or any level
+                carries ``labels``.
+        """
+        self._check_not_finalized("write_mesh_multi_lod")
+
+        if not levels:
+            raise ValueError("levels must contain at least one LOD level")
+
+        # Fail fast on invalid render attrs BEFORE creating the parent group.
+        _validate_render_attrs(attrs)
+        # Normalize/validate the parent transform + nd_transform before the group
+        # is created. The per-level subgroups get their own default attrs (via
+        # write_mesh), NOT these parent attrs, so the transform is normalized
+        # exactly once here — safe despite prepare_transform_attrs being
+        # non-idempotent.
+        _prepare_transform_attrs(attrs, self.store)
+
+        # The labels refusal sits in the fail-fast block, ABOVE require_group,
+        # for the same reason the sibling writers resolve their label situation
+        # there: the gate is pure, and a rejected ladder must not leave an empty
+        # node behind. See the docstring for why a union CSR is impossible here.
+        labelled = [i for i, lvl in enumerate(levels) if lvl.get("labels") is not None]
+        if labelled:
+            raise ValueError(
+                f"write_mesh_multi_lod: level(s) {labelled} carry 'labels', which a "
+                "mesh reveal ladder cannot store. The sibling ladders put one union "
+                "label CSR on the parent spanning the levels, but each mesh level "
+                "re-indexes its own vertices — one source vertex maps to a slot in "
+                "several levels — so that union index space is ill-defined and a CSR "
+                "over it would pair labels with the wrong vertices. Use "
+                "substitutive_lod= (whose finest child is the original surface and "
+                "carries the labels) or partition= (which splits the CSR per part), "
+                "or write a plain leaf."
+            )
+
+        # Validate every path segment (rejects empty/dot-prefixed names — the
+        # F1/F5 chokepoint) + strip the leading slash.
+        path = _validate_node_path(path)
+        group = self.store.require_group(path)
+        n_levels = len(levels)
+
+        # Global bounds + totals over every level's vertices. Concatenated rather
+        # than taken from the source array, because the parent must describe what
+        # is actually on disk: the levels' gathered tables together hold the
+        # boundary duplicates, and a vertex referenced by no face at all is not in
+        # any of them.
+        all_vertices = np.concatenate([L["vertices"] for L in levels], axis=0)
+        n_vertices_total = int(all_vertices.shape[0])
+        global_bounds = self._compute_position_bounds(all_vertices)
+
+        level_metas: List[Dict[str, Any]] = []
+        for i, lvl in enumerate(levels):
+            level_path = f"{path}/additive_{i}"
+            level_meta = self.write_mesh(
+                level_path,
+                lvl["vertices"],
+                lvl["faces"],
+                normals=lvl.get("normals"),
+                normal_dims=lvl.get("normal_dims"),
+                colors=lvl.get("colors"),
+                scalars=lvl.get("scalars"),
+                shading=lvl.get("shading"),
+                double_sided=bool(lvl.get("double_sided", True)),
+                # Neither label channel rides a mesh ladder: text labels are
+                # refused above, and image_labels is a whole-node mapping with no
+                # per-level meaning (the adder degrades to a flat leaf for both).
+                labels=None,
+                image_labels=None,
+                **(
+                    {"_scalar_data_range": lvl["_scalar_data_range"]}
+                    if lvl.get("_scalar_data_range") is not None
+                    else {}
+                ),
+                **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
+                **({"extend_to_all": extend_to_all} if extend_to_all else {}),
+                _skip_scene_bounds=True,
+            )
+            level_metas.append(level_meta)
+
+        # Summed from what the levels actually wrote, so the parent advertises a
+        # face total — parity with flat `write_mesh` and with the sibling ladders'
+        # `n_points` / `n_segments`. Without it the viewer's scene-graph converter
+        # reads `n_faces` as undefined.
+        n_faces_total = sum(int(m.get("n_faces", 0)) for m in level_metas)
+
+        # Resolve a custom colormap (ndarray / matplotlib name) to a colormap_lut
+        # dataset + colormap='custom' before the JSON attr dump — same contract as
+        # the flat writer.
+        self._write_colormap_lut_if_needed(group, attrs)
+        group.attrs.update(attrs)
+        group.attrs["type"] = "mesh"
+        group.attrs["n_vertices"] = n_vertices_total
+        group.attrs["n_faces"] = n_faces_total
+        group.attrs["n_additive_sublods"] = n_levels
+        group.attrs["position_bounds"] = global_bounds
+        if extend_to_all:
+            group.attrs["extend_to_all"] = extend_to_all
+
+        # The parent must DESCRIBE the surface, not merely count it.
+        #
+        # A ladder's parent IS the node: it is what the scene graph lists, what the
+        # viewer constructs the drawable from, and what the Layers panel reads —
+        # the `additive_<i>` subgroups are pruned from the graph entirely. So it
+        # needs the same descriptive attrs a flat `write_mesh` stamps. Every level
+        # is a face-partition of ONE source mesh written through that same
+        # function, so these are level-invariant and level 0 is authoritative.
+        #
+        # This is stamped from the level metadata rather than left to the caller
+        # because omitting it is invisible to a round-trip test and loud on screen.
+        # The viewer fixes a mesh geometry's ATTRIBUTE SET once, at node creation,
+        # from `has_normals` / `has_scalars` on the parent — it may never add an
+        # attribute to a live geometry, because the WebGPU backend bakes the vertex
+        # layout into its pipeline at first draw. A parent without `has_normals`
+        # therefore binds no `normal` attribute, the levels' normals can never
+        # reach the GPU however many arrive, and the node renders faceted and
+        # forced double-sided (no winding frame to decide against) right beside an
+        # identical unladdered mesh that renders smooth and single-sided. Measured
+        # in the viewer, not reasoned about.
+        for key in (
+            "ndim",
+            "has_normals",
+            "normal_dims",
+            "has_colors",
+            "has_scalars",
+            "shading",
+            "double_sided",
+            "ordering",
+        ):
+            if key in level_metas[0]:
+                group.attrs[key] = level_metas[0][key]
+
+        # The colour/scalar windows, taken as the UNION over the levels.
+        #
+        # LOAD-BEARING for colours, a no-op for scalars — the two windows are not
+        # alike, and it is worth saying which is which. `scalar_data_range` is the
+        # AUTHORED window, passed down to every level unchanged, so its union
+        # equals any one level's. `color_data_range` is MEASURED by the encoder
+        # from each level's own vertex subset, so the levels genuinely disagree: a
+        # radius ramp over three levels gives [0.00, 4.22], [2.98, 5.73],
+        # [4.71, 8.00], and only their union [0.00, 8.00] matches what a flat
+        # write of the same mesh stamps. Copying level 0's would set the node's
+        # colour window from whatever landed in the innermost shell, and the
+        # surface would recolour as the reveal completed. Costs one attrs read per
+        # level, once, at authoring time.
+        for key in ("color_data_range", "scalar_data_range"):
+            ranges = [
+                self.store.require_group(f"{path}/additive_{i}").attrs.get(key)
+                for i in range(n_levels)
+            ]
+            present = [r for r in ranges if r is not None]
+            if present:
+                group.attrs[key] = [
+                    min(float(r[0]) for r in present),
+                    max(float(r[1]) for r in present),
+                ]
+
+        # Aggregate the parent's bbox into scene-bounds once (every level write
+        # above was told to skip it).
+        self._update_scene_bounds(global_bounds)
+
+        metadata: Dict[str, Any] = {
+            "type": "mesh",
+            "n_vertices": n_vertices_total,
+            "n_faces": n_faces_total,
+            "n_additive_sublods": n_levels,
+            "position_bounds": global_bounds,
+            "levels": level_metas,
+        }
+        # No `has_labels` and no `write_ladder_union_labels_csr` call: see the
+        # docstring — the ladder's union vertex index space does not exist.
+
+        self._metadata_cache[path] = metadata
+        aprint(
+            f"✅ Multi-LOD Mesh written to {path} ({n_levels} levels, "
+            f"{n_vertices_total:,} vertices / {n_faces_total:,} faces total)"
         )
         return metadata
 

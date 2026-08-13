@@ -169,7 +169,9 @@ class ZarrWriterProtocol(Protocol):
 
         The surface geometry type: nD ``vertices`` plus a ``faces`` triangle-index
         array. It carries no per-element size — a triangle's extent comes from its
-        own vertices — and has no spatial index or LOD in v1.
+        own vertices — and has no spatial index: the loader is whole-node. This call
+        writes one leaf; LOD is layered on by the caller, not by this method — see
+        ``write_mesh_multi_lod`` (additive reveal levels) below.
 
         Args:
             path: Path within the Zarr store for this mesh node
@@ -273,6 +275,32 @@ class ZarrWriterProtocol(Protocol):
         ``additive_0 … additive_{n-1}`` order with each level in its own stored
         (spatially reordered) order. The parent therefore carries ``has_labels``
         and the subgroups carry none.
+        """
+        ...
+
+    def write_mesh_multi_lod(
+        self,
+        path: NodePath,
+        levels: list,
+        *,
+        extend_to_all: Optional[List[str]] = None,
+        **attrs: Any,
+    ) -> dict:
+        """Write multi-additive-LOD Mesh (a reveal ladder, face granularity).
+
+        Each level is a dict with ``vertices`` + ``faces`` — the faces already
+        re-indexed into that level's own gathered vertex table — plus optional
+        ``normals`` / ``normal_dims`` / ``colors`` / ``scalars`` / ``shading`` /
+        ``double_sided`` / ``_scalar_data_range`` and ``lod_stats``. See
+        :func:`luxar.core.group.lod.mesh.make_additive_lod_mesh` for the helper
+        that produces the face groups and
+        :func:`luxar.mesh.split.split_mesh_by_faces` for the re-indexing.
+
+        ``labels`` is REFUSED, not carried — the one place this diverges from its
+        three siblings. They write ONE union CSR on the parent spanning the levels;
+        a mesh level re-indexes its own vertices, so a single source vertex maps to
+        a slot in several levels and the union index space is ill-defined. Labels
+        survive on the ``substitutive_lod=`` and ``partition=`` paths instead.
         """
         ...
 

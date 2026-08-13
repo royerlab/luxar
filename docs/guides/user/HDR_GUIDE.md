@@ -83,6 +83,14 @@ dtype (`io/_compiler/dataset_writers/colors.py`):
   first. If you need exact float SDR values preserved in the general case,
   use `EncodingMode.PRECISION`.
 - **`np.uint8`** colors: standard 8-bit colors (values 0-255), stored as-is
+- **`np.uint16`** colors: 16-bit SDR colors, likewise stored as-is. Those two are
+  the ONLY integer dtypes accepted — an integer array is SDR in its own native
+  range, and only `uint8`/`uint16` have a range the viewer can normalize by, so
+  any other integer dtype (`int64`, `uint32`, but also the narrower `int8` /
+  `int16`) is refused before a single byte is written. Watch out for
+  `np.array([[255, 0, 0], ...])`, which is `int64` on Linux: add
+  `.astype(np.uint8)`, or use floats if you want HDR. A `complex` array is
+  refused for the same reason.
 
 No explicit `color_mode` parameter is needed — but note the consequence: a
 float32 array that never exceeds 1.0 is NOT kept in a wide format; it lands

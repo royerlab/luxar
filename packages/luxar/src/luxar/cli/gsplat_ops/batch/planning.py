@@ -186,14 +186,14 @@ def resolve_merge_recipe_args(
             flag
             for flag, val in {
                 "--merge-n-lods": merge.n_lods,
-                "--merge-additive-method": merge.additive_method,
+                "--merge-add-method": merge.additive_method,
                 "--merge-breakpoints": merge.breakpoints,
                 "--merge-target-ms": merge.target_ms,
                 "--merge-bandwidth-mbps": merge.bandwidth_mbps,
                 "--merge-bytes-per-splat": merge.bytes_per_splat,
                 "--merge-compression-factor": merge.compression_factor,
                 "--merge-levels": merge.levels,
-                "--merge-substitutive-method": merge.substitutive_method,
+                "--merge-subst-method": merge.substitutive_method,
                 "--merge-coarsen-dims": merge.coarsen_dims,
             }.items()
             if val is not None
@@ -224,7 +224,7 @@ def resolve_merge_recipe_args(
 
     additive_only = {
         "--merge-n-lods": merge.n_lods,
-        "--merge-additive-method": merge.additive_method,
+        "--merge-add-method": merge.additive_method,
         "--merge-breakpoints": merge.breakpoints,
         "--merge-target-ms": merge.target_ms,
         "--merge-bandwidth-mbps": merge.bandwidth_mbps,
@@ -233,7 +233,7 @@ def resolve_merge_recipe_args(
     substitutive_only = {
         "--merge-compression-factor": merge.compression_factor,
         "--merge-levels": merge.levels,
-        "--merge-substitutive-method": merge.substitutive_method,
+        "--merge-subst-method": merge.substitutive_method,
         "--merge-coarsen-dims": merge.coarsen_dims,
     }
     irrelevant = substitutive_only if merge.recipe == "stream" else additive_only
@@ -282,10 +282,10 @@ def resolve_merge_recipe_args(
         am_norm = merge.additive_method.strip().replace("-", "_")
         if am_norm not in VALID_ADDITIVE_METHODS:
             raise typer.BadParameter(
-                f"--merge-additive-method must be one of "
+                f"--merge-add-method must be one of "
                 f"{list(VALID_ADDITIVE_METHODS)}; got {merge.additive_method!r}"
             )
-        args["additive-method"] = am_norm
+        args["add-method"] = am_norm
     if eff_breakpoints is not None:
         from luxar.cli.gsplat_ops.recipe_shared import parse_lod_breakpoints
 
@@ -301,11 +301,11 @@ def resolve_merge_recipe_args(
         sm_norm = merge.substitutive_method.strip().replace("-", "_")
         if sm_norm not in VALID_SUBSTITUTIVE_METHODS:
             raise typer.BadParameter(
-                f"--merge-substitutive-method must be one of "
+                f"--merge-subst-method must be one of "
                 f"{list(VALID_SUBSTITUTIVE_METHODS)}; "
                 f"got {merge.substitutive_method!r}"
             )
-        args["substitutive-method"] = sm_norm
+        args["subst-method"] = sm_norm
     if merge.coarsen_dims is not None:
         args["coarsen-dims"] = merge.coarsen_dims
     return args

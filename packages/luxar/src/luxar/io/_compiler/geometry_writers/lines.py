@@ -28,7 +28,10 @@ from ..dataset_writers.scalars import (
     write_positive_scalar,
     write_scalars,
 )
-from ..labels.image_labels import write_image_labels_csr
+from ..labels.image_labels import (
+    validate_image_labels_for_writing,
+    write_image_labels_csr,
+)
 from ..labels.text_labels import write_labels_csr
 from ..node_common import (
     LINES_RESERVED_ATTRS,
@@ -138,14 +141,18 @@ def validate_lines_channels(
     sharpness: Any = None,
     scalars: Any = None,
     labels: Any = None,
+    image_labels: Any = None,
 ) -> None:
     """Validate every per-vertex channel against ``n_vertices``. Pure — no I/O.
 
-    Steps 0e-0g of :func:`write_lines`'s fail-fast gate, factored out for the
+    Steps 0e-0h of :func:`write_lines`'s fail-fast gate, factored out for the
     same reason and with the same contract as the Points sibling
     :func:`~luxar.io._compiler.geometry_writers.points.validate_points_channels`
-    — read that docstring. ``widths`` is required, so it is validated
-    unconditionally and FIRST; all four channels are per-VERTEX, not per-segment.
+    — read that docstring (including the ``image_labels`` / issue #1491
+    paragraph on why the finest-child-written-last ``substitutive_lod=``
+    wrapper needs this pre-split, not just at the flat writer). ``widths`` is
+    required, so it is validated unconditionally and FIRST; all five channels
+    are per-VERTEX, not per-segment.
     """
     from ....validation.base import (
         validate_colors_for_writing,
@@ -179,6 +186,11 @@ def validate_lines_channels(
     # were written).
     if labels is not None:
         validate_labels_for_writing(labels, n_vertices)
+    # 0h. Image labels: length (dense) / index bounds (sparse dict) — see
+    # validate_image_labels_for_writing for why this moved out of the CSR
+    # writer itself.
+    if image_labels is not None:
+        validate_image_labels_for_writing(image_labels, n_vertices)
 
 
 def write_lines(
@@ -223,10 +235,18 @@ def write_lines(
     # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group
     # is created and before any array lands on disk, so an invalid input
     # cannot leave a partial node behind. NOTE this gate is best-effort, not
-    # transactional: validators that need the store (image_labels, custom
-    # colormap LUT resolution) still run post-write and can leak a partial
-    # node on failure (F7 residual — transactional/temp-dir writes are a
-    # separate project).
+    # transactional: validators that need the store (custom colormap LUT
+    # resolution) still run post-write and can leak a partial node on failure
+    # (F7 residual — transactional/temp-dir writes are a separate project).
+    # image_labels' LENGTH/index and its per-item TYPE dispatch — including the
+    # (H,W[,3|4]) ndarray-shape check, which check_image_label_type validates
+    # eagerly since ndim/shape[2] need no PIL round-trip — now run here
+    # too (step 0h, below, via validate_image_labels_for_writing /
+    # check_image_label_type); only normalize_image_label's actual blob
+    # normalization still runs post-write — reading a str/Path file and the PIL
+    # encode itself (including the Pillow-not-installed ImportError, which
+    # the adder's except (ValueError, TypeError) funnel does not catch
+    # either).
     #
     # 0a. Pure attr validators + reserved writer-stamp collisions.
     validate_render_attrs(attrs, reserved_attrs=LINES_RESERVED_ATTRS)
@@ -265,9 +285,10 @@ def write_lines(
         _exploded_chain_fraction(vertices) if line_type == "segments" else None
     )
 
-    # 0e-0g. Per-vertex channel sweep (widths first, then colors, sharpness,
-    # scalars, labels), shared verbatim with the pre-split gate the partition /
-    # LOD wrappers run against the source count — see validate_lines_channels.
+    # 0e-0h. Per-vertex channel sweep (widths first, then colors, sharpness,
+    # scalars, labels, image_labels), shared verbatim with the pre-split gate
+    # the partition / LOD wrappers run against the source count — see
+    # validate_lines_channels.
     validate_lines_channels(
         n_vertices,
         widths=widths,
@@ -275,8 +296,9 @@ def write_lines(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        image_labels=image_labels,
     )
-    # 0h. Transform / nd_transform normalization is pure attr processing
+    # 0i. Transform / nd_transform normalization is pure attr processing
     # (reads only the scene dimensions), so run it in the gate too — a bad
     # transform must not leave a partial node behind.
     prepare_transform_attrs(attrs, ctx.store)

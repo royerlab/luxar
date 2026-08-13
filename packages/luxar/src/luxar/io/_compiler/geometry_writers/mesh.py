@@ -7,9 +7,10 @@ size scalar (a triangle's extent comes from its own vertices, not a per-element
 radius/width/covariance), and neither an LOD nor a partition path *of its own*:
 ``add_mesh(substitutive_lod=...)`` decimates and ``add_mesh(partition=...)``
 splits the surface upstream, and this writer just sees one independent leaf per
-level or per part. (There is no ADDITIVE ladder for any writer to serve — a
-prefix of an index buffer is a holed surface, not a coarse one; see
-``MESH_NODE_SPEC.md`` §9.) What remains is: encode
+level or per part. (``write_mesh_multi_lod`` routes its additive levels through
+this same writer too, one call per level — but a prefix of an index buffer is a
+holed surface, not a coarser one, so what it writes is a REVEAL ladder, not an
+LOD; see ``MESH_NODE_SPEC.md`` §9.) What remains is: encode
 ``vertices`` + ``faces``, encode the optional per-vertex channels, stamp the
 attrs.
 
@@ -35,7 +36,10 @@ from ..chunking import calculate_intelligent_chunks
 from ..context import GeometryWriteCtx
 from ..dataset_writers.colors import write_colors
 from ..dataset_writers.scalars import write_scalars
-from ..labels.image_labels import write_image_labels_csr
+from ..labels.image_labels import (
+    validate_image_labels_for_writing,
+    write_image_labels_csr,
+)
 from ..labels.text_labels import write_labels_csr
 from ..node_common import (
     MESH_RESERVED_ATTRS,
@@ -137,18 +141,36 @@ def validate_mesh_arrays(
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Any = None,
+    image_labels: Any = None,
 ) -> Tuple[int, int]:
     """Validate a mesh's arrays and channels. Pure — reads nothing, writes nothing.
 
-    Steps 0c-0g of :func:`write_mesh`'s fail-fast gate, factored out because a
+    Steps 0c-0h of :func:`write_mesh`'s fail-fast gate, factored out because a
     SECOND caller needs exactly them and nothing else:
     ``add_mesh(substitutive_lod=…)`` runs this before it decimates anything and
     before ``add_lod_group`` creates the zarr group. Without that, a malformed
-    optional channel — colours with two components, a wrong-length normals
-    array, a typo'd ``shading`` — was refused only from inside a CHILD write,
-    with the ``kind=lod`` group already on disk, leaving a childless (or
-    finest-child-less) ladder that no viewer path can load. The plain-leaf path
-    writes nothing in the same situation, and the two must agree.
+    optional channel that the decimator ALSO validates per level — colours
+    with two components, a wrong-length normals array, a typo'd ``shading`` —
+    was refused only from inside whichever child's write hit it first
+    (typically ``child_0``, the coarsest, since levels are written
+    coarsest-to-finest), with the ``kind=lod`` group already on disk: that
+    left a childless ladder if the very first child failed, or a
+    finest-child-less one if a later level was the one to fail. The
+    plain-leaf path writes nothing in the same situation, and the two must
+    agree.
+
+    ``labels`` and a wrong-length ``image_labels`` (#1491) fail a DIFFERENT
+    way: both are forwarded ONLY to the FINEST child (the original,
+    undecimated surface), written LAST, never to a coarse level. Pre-fix, a
+    bad one of these was refused deep inside that finest child's own
+    ``write_mesh`` call — AFTER its vertices, faces, normals, colours and
+    scalars were already on disk — so the ladder was neither childless nor
+    finest-child-less: every level, including the finest, was fully written
+    and independently loadable. Only the finest level's own label channel
+    (the text-label CSR pair, or ``image_label_offsets`` /
+    ``image_label_bytes``) was silently absent. That is harder to notice than
+    a missing level, not milder — the ladder looks and loads like a
+    correctly-authored object that simply carries no labels.
 
     Sharing the function rather than repeating the checks is what keeps that
     promise true as the rules change: the ladder gate cannot drift from what the
@@ -195,6 +217,8 @@ def validate_mesh_arrays(
         validate_scalars_preflight(scalars, n_vertices)
     if labels is not None:
         validate_labels_for_writing(labels, n_vertices)
+    if image_labels is not None:
+        validate_image_labels_for_writing(image_labels, n_vertices)
     return n_vertices, n_dims
 
 
@@ -222,8 +246,16 @@ def write_mesh(
     # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group is
     # created and before any array lands on disk, so an invalid input cannot
     # leave a partial node behind. Same best-effort caveat as the sibling
-    # writers: validators needing the store (image_labels, custom colormap LUT
-    # resolution) still run post-write.
+    # writers: validators needing the store (custom colormap LUT resolution)
+    # still run post-write. image_labels' LENGTH/index and its per-item TYPE
+    # dispatch — including the (H,W[,3|4]) ndarray-shape check, which
+    # check_image_label_type validates eagerly since ndim/shape[2] need no PIL
+    # round-trip — now run here too (step 0h, below, inside validate_mesh_arrays,
+    # via validate_image_labels_for_writing / check_image_label_type); only
+    # normalize_image_label's actual blob normalization still runs post-write
+    # — reading a str/Path file and the PIL encode itself (including the
+    # Pillow-not-installed ImportError, which the adder's
+    # except (ValueError, TypeError) funnel does not catch either).
     #
     # 0a. Pure attr validators + reserved writer-stamp collisions — after
     # consuming the one INTERNAL key mesh takes: the explicit display window an
@@ -239,7 +271,7 @@ def write_mesh(
     # 0b. Node path: an empty path would resolve require_group("") to the scene
     # ROOT and clobber it.
     path = validate_node_path(path)
-    # 0c-0g. Vertices, faces, and every optional channel — one shared gate,
+    # 0c-0h. Vertices, faces, and every optional channel — one shared gate,
     # because `add_mesh(substitutive_lod=…)` runs the very same function before
     # it creates the `kind=lod` group. See :func:`validate_mesh_arrays`.
     n_vertices, n_dims = validate_mesh_arrays(
@@ -252,8 +284,9 @@ def write_mesh(
         shading=shading,
         double_sided=double_sided,
         labels=labels,
+        image_labels=image_labels,
     )
-    # 0h. Transform / nd_transform normalization is pure attr processing, so it
+    # 0i. Transform / nd_transform normalization is pure attr processing, so it
     # belongs in the gate too — and prepare_transform_attrs is NOT idempotent
     # (it transposes the matrix), so it must run exactly once.
     prepare_transform_attrs(attrs, ctx.store)

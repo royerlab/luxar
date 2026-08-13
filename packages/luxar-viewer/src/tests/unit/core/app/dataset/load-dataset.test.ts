@@ -164,7 +164,11 @@ describe('loadDataset', () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
     const initFromScene = vi.fn();
     const ports = makePorts(trace, {
-      layersPanel: { initFromScene, setFailedLoadsProvider: vi.fn() } as never,
+      layersPanel: {
+        initFromScene,
+        setFailedLoadsProvider: vi.fn(),
+        setCameraFramer: vi.fn(),
+      } as never,
     });
     const root = new THREE.Group();
     root.name = 'LuxarScene';
@@ -187,7 +191,7 @@ describe('loadDataset', () => {
     const initFromScene = vi.fn();
     const setFailedLoadsProvider = vi.fn();
     const ports = makePorts(trace, {
-      layersPanel: { initFromScene, setFailedLoadsProvider } as never,
+      layersPanel: { initFromScene, setFailedLoadsProvider, setCameraFramer: vi.fn() } as never,
     });
     const root = new THREE.Group();
     root.name = 'LuxarScene';

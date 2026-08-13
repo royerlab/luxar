@@ -20,12 +20,17 @@ luxar gsplat fit --help      # a single command and all its options
 
 The list of commands on this page is checked against the live Typer application by
 an automated test —
-`packages/luxar/src/luxar/cli/tests/test_docs_command_coverage.py`. The test walks
+`packages/luxar/src/luxar/cli/tests/test_docs_command_coverage.py`. One check walks
 the registered command tree, extracts every `luxar ...` invocation from the code
 blocks on this page, and compares the two sets in **both directions**: a newly
 added command must be documented here, and a documented command that was removed,
 renamed, or hidden must be pruned — either way the test fails.
-(Hidden/internal commands and groups are excluded.)
+(Hidden/internal commands and groups are excluded.) A second check in the same file
+walks every per-command section heading and verifies each option spelling its prose
+names in inline code against the live command's declared options — a heading that names a
+command GROUP is checked against the union of its subcommands' options instead,
+since a group's prose legitimately names its subcommands' flags — so a stale or
+invented flag fails too, not just a stale command path.
 
 ## Top-level commands
 
@@ -175,8 +180,8 @@ time, chosen by how much of the screen the object covers.
 
 Takes an input scene and an output scene, plus `-L/--levels` (default 3),
 `-K/--compression-factor` (default 4 — level *i* targets `V / K**i` vertices),
-`--node`, `--method` and `--overwrite`. The output path is normalized to the
-canonical `<stem>.luxar.zarr`, so `-o out` writes `out.luxar.zarr`; that
+`--node`, `--subst-method` and `--overwrite`. The output path is normalized to the
+canonical `<stem>.luxar.zarr`, so an output argument of `out` writes `out.luxar.zarr`; that
 normalized path is what `--overwrite` replaces and what the same-path guard
 compares against.
 
@@ -185,9 +190,15 @@ there is no standalone mesh format, so the only sink for a mesh is a `.luxar.zar
 node is optional when the scene holds exactly one mesh (what `luxar mesh import`
 produces); with several, naming one is required rather than guessed at.
 
-`--method` takes `auto` or `cluster` — **not** the `gsplat lod` methods. Those reduce a
-Gaussian mixture, which a surface is not; a mesh is decimated instead. `auto` resolves
-to `cluster` today.
+`--subst-method` shares its **name** with `luxar gsplat lod` — on both commands it selects
+the substitutive, level-replacing reduction — but **not its values**: this one takes `auto`
+or `cluster`, because a mesh is decimated where a gsplat level reduces a Gaussian mixture,
+which a surface is not. `auto` resolves to `cluster` today.
+
+The flag was called `--method` before August 2026, and `-m` was its short form. Both are
+gone: `-m` is reserved for the additive ordering it already names on `gsplat lod`. Either
+old spelling exits with a pointer naming the replacement and carrying your value, rather
+than silently doing something else.
 
 Levels that cannot reduce the surface are dropped, so a small mesh may come back with
 fewer than `--levels`; one that cannot be reduced at all comes back as a plain leaf
@@ -203,3 +214,28 @@ on every coarse level, and every level stamps the source field's `scalar_data_ra
 the colormap maps the same value to the same colour at every level rather than only at the
 finest. Per-vertex **labels and image labels are not carried** — the reader does not
 surface them, so the round trip cannot see them.
+
+The output is a brand-new scene containing ONLY the picked mesh's ladder. **Every other
+node in the source scene is left out** — other points/lines/gsplats/mesh nodes, other
+groups, and any user-authored overlays (`add_text`/`add_html`/`add_image`) — since
+there is nowhere else for them to go. Also left behind: any placement/compositing
+(`transform`, `opacity`, `blending_mode`, …) an ancestor group genuinely CHANGES — only
+the mesh's OWN attrs are forwarded. "Genuinely changes" is narrower than "is set at
+all": a key sitting at its neutral value (`opacity`/`gamma`/`intensity`/`absorption` at
+`1.0`, `offset` at `0.0`) composes as a no-op regardless of which layer sets it, an
+identity `transform`/`nd_transform` moves nothing, a `layer`/`visible` at its own
+default (`false`/`true`) is likewise a no-op, `blending_mode` is nearest-setter-wins so
+it only matters for the nearest group that sets it and only when the picked mesh does
+not set it itself, and `join` is skipped outright (it is lines-only — `add_mesh` refuses
+it, so a mesh leaf can never carry it and an ancestor's `join` can never affect a mesh
+ladder) — so re-laddering a level of an existing ladder (`--node surf/child_0`) or a
+partition tile (`--node surf/part_0`) reports nothing here, even though the wrapper
+groups those workflows nest under do carry a few of these keys at their neutral values
+(this command's own ladders re-forward the picked mesh's stamped defaults onto the
+wrapper it writes). After every check that can still abort the command and before
+anything is written, it warns about each node that will not be carried across
+(collapsed into one line per parent + kind when more than three share both, worded by
+node kind rather than as "parts" — that term is reserved for actual `kind=partition`
+children — so a large group of siblings does not flood the console), each ancestor
+group that does lose something (naming exactly which keys), and any per-vertex
+labels/image labels on the picked mesh, by name.

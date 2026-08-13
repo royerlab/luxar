@@ -125,6 +125,7 @@ def _reject_before_wrapper(
     fill: Optional[Dict[str, float]],
     fill_sigma: Optional[Dict[str, float]],
     colormap: Any,
+    attrs: Optional[Dict[str, Any]] = None,
     labels: Any = None,
     image_labels: Any = None,
 ) -> None:
@@ -137,7 +138,27 @@ def _reject_before_wrapper(
     ``lod_group=False`` writes nothing at all. The other two dispatch targets need
     no such gate: the flat path is ``Group.add_gsplats``, which checks inside its
     own funnel, and :func:`add_gsplats_multi_lod_impl` validates every sub-LOD
-    while building them, before its single write.
+    while building them, before its single write — including its own
+    ``validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)`` call
+    inside ``write_gsplat_leaf_subtree``, which already runs BEFORE that writer
+    creates any group, so the ``additive_lod=`` door never stranded and needed no
+    change here.
+
+    ``attrs`` (#1534, which hoisted the same check to the top of
+    ``add_mesh_impl`` / ``add_gsplats_impl``) closes the SAME stranding class
+    on THIS door, one level removed: ``child_0``'s own
+    write already answers a ``GSPLATS_RESERVED_ATTRS`` key (``ordering=``,
+    ``position_bounds=``, ...) with the correct *reserved* verdict — unlike
+    the Points/Lines/Mesh ADDITIVE bug (#1529/#1534), nothing here calls
+    ``validate_render_attrs`` with an empty reserved set, so there is no
+    wrong-verdict/silent-accept-and-clobber half to this bug — but that
+    correct refusal fires from inside ``child_0``, by which point
+    ``add_gsplats_as_lod_group_impl`` has already called ``add_lod_group``
+    and created the ``kind=lod`` wrapper. So the verdict was always right and
+    the store was always wrong: ``name`` survived as a childless ``kind=lod``
+    group, exactly the #1529/#1534 partition/substitutive shape one adder
+    layer up. Running the same check here, before ``add_gsplats_as_lod_group_impl``
+    is even called, closes it the same way: nothing written on a refusal.
 
     The ORDER inside the gate copies the flat path's statement order exactly
     AMONG THE CHECKS IT CONTAINS — not the flat path's order as a whole, which
@@ -171,6 +192,17 @@ def _reject_before_wrapper(
     column count alone, so all of them are checkable here. Everything left
     downstream genuinely needs the transformed per-level arrays.
 
+    The node-attrs gate (``validate_render_attrs``) sits right after the width
+    check and before the per-rung colour-validator loop: below colours/width,
+    matching the precedence the leaf adders already keep between their own
+    colours gate, dimension-count gate and node-attrs gate (see
+    ``adders/gsplats.py::add_gsplats_impl``), and above the labels/structural
+    checks below (the colour-validator loop has no flat-path counterpart of its
+    own either, but it exists only to pre-check what the CHILDREN will each
+    validate again, so it stays the closest thing to a "structural" check this
+    function has and the attrs gate outranks it the same way the leaf adder's
+    own attrs gate outranks its channel-validator wrappers).
+
     ``labels`` / ``image_labels`` are the ONE check here with no flat-path
     counterpart (#1471), which is why they come LAST. Both ride into every child
     unsliced through ``child_attrs``, so a real ladder — whose levels are merged
@@ -200,6 +232,11 @@ def _reject_before_wrapper(
     funnel of its own; it is byte-identical to what ``add_gsplats_impl``
     produces, which the #1446 tests pin against a direct ``add_gsplats`` call.
     """
+    import warnings
+
+    import numpy as np
+
+    from ....validation.base import validate_colors_for_writing
     from ...scene.dim_order import validate_dim_order_spec
     from ...scene.validation import validate_array_rank
     from ..dim_order import validate_fill_sigma_keys
@@ -240,6 +277,94 @@ def _reject_before_wrapper(
             group._find_scene()._validate_dimension_count(
                 centers, name, data_type="centers"
             )
+        # Node-attrs gate — the ``lod_group=`` peer of the #1529/#1534 hoist on
+        # ``add_points``/``add_lines``/``add_mesh``/``add_gsplats``'s own
+        # structural branches (see the docstring). Below colours/width, matching
+        # the leaf adders' own precedence, and above the colour-validator loop
+        # and the labels checks below — a call tripping one of those too still
+        # hears about the attrs fault first, exactly as ``add_gsplats_impl``'s
+        # own gate outranks ITS post-entry checks.
+        #
+        # ``labels`` / ``image_labels`` / ``partition`` are excluded here. The
+        # RULE, not just the list: a key is excluded exactly when it is a NAMED
+        # parameter of the LEAF ``Group.add_gsplats`` (so genuinely meaningful
+        # inside ``**attrs`` on this adder — unlike on ``add_points``/
+        # ``add_lines``/``add_mesh``/``add_gsplats`` themselves, where all three
+        # are named params and the caller's ``**attrs`` never contains them, so
+        # the exclusion is a no-op there) AND is forwarded onward STRUCTURALLY
+        # by this adder rather than colliding with a value this adder already
+        # passes positionally. ``labels``/``image_labels`` ride unsliced into
+        # every child via ``child_attrs`` (see the dedicated, more informative
+        # refusal below); ``partition`` rides the same way, all the way down to
+        # each per-level ``add_gsplats`` call, where it drives that leaf's own
+        # BSP split — legitimate and structural, not appearance data this
+        # function computes itself.
+        #
+        # ``colors`` / ``amplitudes`` / ``cholesky_factors`` are deliberately
+        # NOT excluded: unlike ``partition``, this adder itself forwards those
+        # three positionally from the ``GSplatData`` (``result.colors``, etc.)
+        # on the single-substitutive path, so a caller-supplied value under the
+        # same name would collide with what this adder already passes rather
+        # than travel through untouched — refusing it here, with nothing
+        # written, is an improvement over the raw ``TypeError`` (Python's own
+        # "multiple values for keyword argument") plus childless-wrapper strand
+        # that open issue #1496 documents for that shape, though it does not
+        # close #1496's broader present-but-None/conflicting-``**attrs``
+        # question. ``scalars`` is likewise left unexcluded: GSplats has no
+        # scalars channel at all (unlike Points/Mesh), so it is correctly
+        # unknown on this door too.
+        from ....io._compiler.node_common import (
+            GSPLATS_RESERVED_ATTRS,
+            validate_render_attrs,
+        )
+
+        attrs_for_gate = {
+            k: v
+            for k, v in (attrs or {}).items()
+            if k not in ("labels", "image_labels", "partition")
+        }
+        validate_render_attrs(attrs_for_gate, reserved_attrs=GSPLATS_RESERVED_ATTRS)
+        # The leaf's WHOLE colours validator, run against EVERY rung of EVERY
+        # level, for the same reason the colours/colormap question above is asked
+        # of every level — and below the width, because that is where the flat
+        # path puts it (the leaf writer's channel sweep runs after the dimension
+        # count). Any colours fault otherwise surfaces from inside a child with
+        # the wrapper already on disk (#1489): measured with this loop removed,
+        # an all-``int64`` two-level ladder left ``name`` holding a PARTIAL
+        # ``child_0`` (centers/amplitudes/cholesky, no colours), and a
+        # fine-bad/coarse-clean one left a COMPLETE ``child_0`` beside a partial
+        # ``child_1`` — a half-written ladder. Dtype is only the loudest of four
+        # such doors; negative values, NaN and an out-of-range RGBA alpha all did
+        # the same thing.
+        #
+        # The FULL validator, never just the dtype rule it was written for: dtype
+        # is the fifth check inside it, so hoisting that one alone jumps it over
+        # the four above and an all-negative ``int32`` array then answered with
+        # the dtype where the flat path answers "Colors cannot be negative" — and
+        # advised ``astype(np.uint8)``, which turns -1 into 255. One call, one
+        # internal order, parity restored.
+        #
+        # Levels are walked finest-first, which is the order
+        # ``substitutive_levels`` holds them in, so an all-bad ladder reports the
+        # same level a flat call would — the finest, which is what
+        # ``result.colors`` forwards. Each rung is checked against its OWN splat
+        # count: a ladder's rungs are prefixes of different lengths.
+        #
+        # Its WARNINGS are suppressed for the duration, and only its warnings:
+        # the validator also warns on float colours above 10.0, and every rung
+        # this loop inspects is validated again by the child that writes it, so
+        # letting the gate warn too simply doubles the count (measured: a 2-level
+        # HDR ladder emitted 4 where the flat path emits one per leaf). Same
+        # concern as ``TestRangeWarningsAreNotMultipliedByTheHoist`` pins for the
+        # #1446 count hoist — a pre-write gate must add refusals, not noise.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            for level in result.substitutive_levels:
+                for sub in level.additive_sublods:
+                    if sub.colors is not None:
+                        validate_colors_for_writing(
+                            np.asarray(sub.colors), int(sub.n_splats), channels=(3, 4)
+                        )
         # LAST on purpose — see the docstring: the only check here with no
         # flat-path counterpart at all (the flat path ACCEPTS labels and
         # validates them last of all, in the writer sweep), so it must not
@@ -327,6 +452,20 @@ def add_gsplats_from_data_impl(
             fill=fill,
             fill_sigma=fill_sigma,
             colormap=attrs.get("colormap"),
+            # The un-split caller attrs, for the node-attrs gate — see the
+            # docstring. Handed whole (colormap/labels/image_labels included):
+            # ``validate_render_attrs`` does not stop at KEYS (unknown-attr /
+            # reserved-attr refusals) — it also runs the render-attrs VALUE
+            # validators (11 of them: blending_mode, join, absorption, opacity,
+            # truncation_radius, gamma, intensity, offset, layer, visible,
+            # colormap), so a bad ``colormap``/``opacity`` VALUE is caught right
+            # here, ahead of the dedicated labels refusal below (measured: a bad
+            # ``colormap`` plus ``labels=[...]`` on the same call answers "Unknown
+            # colormap ...", not the labels refusal). That matches the flat
+            # path's own precedence between its attrs gate and its labels
+            # handling, so it is desirable parity, not an accident — see the
+            # gate ordering discussion above.
+            attrs=attrs,
             # Neither is a named kwarg of this function: both are named params of
             # the LEAF adder and travel here inside ``**attrs``, from where they
             # would ride into every child through ``child_attrs``.

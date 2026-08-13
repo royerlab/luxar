@@ -18,14 +18,14 @@ if TYPE_CHECKING:
 # per-part lod group.
 _MERGE_OPTION_TOKENS = {
     "--n-lods": "additive",
-    "--additive-method": "additive",
+    "--add-method": "additive",
     "--breakpoints": "additive",
     "--target-ms": "additive",
     "--bandwidth-mbps": "additive",
     "--bytes-per-splat": "additive",
     "--compression-factor": "substitutive",
     "--levels": "substitutive",
-    "--substitutive-method": "substitutive",
+    "--subst-method": "substitutive",
     "--coarsen-dims": "substitutive",
 }
 _MERGE_ALLOWED_TOKENS = {
@@ -65,6 +65,15 @@ def build_merge_recipe_params(
         parse_lod_breakpoints,
     )
     from luxar.gsplats.lod.recipes import RecipeParams
+    from luxar.utils.lod_methods import canonical_method_token
+
+    # A manifest written before the 2026-08 method-flag rename stores
+    # `substitutive-method` / `additive-method`. Left alone, `_resolve` would look
+    # up the NEW token, miss, and silently fall back to the recipe default — the
+    # planned method quietly replaced by `auto` on a resumed run. Normalising the
+    # whole dict once covers every knob without per-key special-casing; the emit
+    # path in `slurm_gen` translates for the same reason.
+    stored = {canonical_method_token(k): v for k, v in stored.items()}
 
     def _resolve(key: str, cli: Any, cast: Callable[[Any], Any]) -> Any:
         if cli is not None:
@@ -84,12 +93,12 @@ def build_merge_recipe_params(
     nl = _resolve("n-lods", n_lods, int)
     if nl is not None:
         overrides["n_lods"] = nl
-    am = _resolve("additive-method", additive_method, str)
+    am = _resolve("add-method", additive_method, str)
     if am is not None:
         am_norm = am.strip().replace("-", "_")
         if am_norm not in VALID_ADDITIVE_METHODS:
             raise typer.BadParameter(
-                f"--additive-method must be one of "
+                f"--add-method must be one of "
                 f"{list(VALID_ADDITIVE_METHODS)}; got {am!r}"
             )
         overrides["additive_method"] = am_norm
@@ -102,7 +111,7 @@ def build_merge_recipe_params(
     lv = _resolve("levels", levels, int)
     if lv is not None:
         overrides["levels"] = lv
-    sm = _resolve("substitutive-method", substitutive_method, str)
+    sm = _resolve("subst-method", substitutive_method, str)
     if sm is not None:
         # Normalise hyphens to underscores so the documented CLI spelling
         # (`kmeans-lloyd`) maps to the canonical method name (`kmeans_lloyd`),
@@ -113,7 +122,7 @@ def build_merge_recipe_params(
         sm_norm = sm.strip().replace("-", "_")
         if sm_norm not in VALID_SUBSTITUTIVE_METHODS:
             raise typer.BadParameter(
-                f"--substitutive-method must be one of "
+                f"--subst-method must be one of "
                 f"{list(VALID_SUBSTITUTIVE_METHODS)}; got {sm!r}"
             )
         overrides["substitutive_method"] = sm_norm

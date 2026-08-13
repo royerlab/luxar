@@ -222,7 +222,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 80 bundled demos (table)
+luxar demo                       # List the 83 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -301,8 +301,8 @@ luxar gsplat fit vol.zarr plan.json --tiling content --cal cal.json --plan-only
 # Requires a tiled fit (--tiling uniform/content) and a partition (not --flat);
 # rejected with --flat / --tiling none / --tile / --plan-only / --plan-box, and
 # rejects cross-recipe knobs (like `gsplat lod`). Knobs mirror `lod`:
-# additive: --n-lods/--additive-method/--breakpoints; substitutive:
-# --compression-factor/--levels/--substitutive-method/--coarsen-dims.
+# additive: --n-lods/--add-method/--breakpoints; substitutive:
+# --compression-factor/--levels/--subst-method/--coarsen-dims.
 luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform -j 4 --recipe stream --n-lods 6
 luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --recipe levels --compression-factor 4 --levels 3
 
@@ -446,7 +446,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     -m mass -b counts:500,2000,10000                                         # mass order, explicit counts
 # additive default method `auto`: greedy (provably (1-1/e)-optimal at every
 # prefix) at N <= 5000, else `self_energy` (cheap O(N log N)); override with -m.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --add-method self_energy
 # `-m radial` = the REVEAL: orders concentric shells around the node's own bbox
 # centre (NOT the scene origin), so a streaming prefix grows outward from the
 # middle. Authoring only — no viewer changes, nothing about how data is DISPLAYED.
@@ -491,7 +491,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --compressio
 # adaptive: spatial tiles where EACH tile is its own levels group (per-tile
 # coarse↔fine swap — locally adaptive; the per-tile-levels sibling of tiles).
 # Partition knobs + the level-merge ones (--compression-factor/-K, --levels/-L,
-# --substitutive-method); per-tile levels are stream-laddered by default.
+# --subst-method); per-tile levels are stream-laddered by default.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --max-elements 250000
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --parts 8 -K 4 -L 2
 
@@ -511,7 +511,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --parts 8 -K
 # Runnalls) is quality-leading at small N.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels            # K=4, L=3, method=auto
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 \
-    --substitutive-method kmeans-lloyd --lloyd-iters 5 --device cpu
+    --subst-method kmeans-lloyd --lloyd-iters 5 --device cpu
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 # Coverage inflation (any substitutive reduction): merged representatives get
 # their inter-center spread widened x`--coverage-inflation` (default 3.0,
@@ -1099,7 +1099,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
 - **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
-- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Both structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2) and *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`) — though not in the same call. No *additive* (prefix) LOD ladder — a prefix of an index buffer is a holed surface, not a coarser one — and no `volumetric` blending; both refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
+- **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Three structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2), *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`), and a spatially coherent *reveal* additive ladder (`add_mesh(additive_lod={"method": "radial"})`) — though no two of them in the same call. No additive (prefix) LOD ladder over an *arbitrary* order — a prefix of an arbitrarily ordered index buffer is a holed surface, not a coarser one — so a non-reveal method and `volumetric` blending are both still refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists

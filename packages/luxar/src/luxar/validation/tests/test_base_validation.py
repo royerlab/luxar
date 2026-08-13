@@ -219,6 +219,118 @@ class TestColorValidation:
         with pytest.warns(UserWarning, match="HDR colors.*maximum value"):
             validate_colors_for_writing(colors, 10)
 
+    # [#1489] The DTYPE rule. It is a mirror of
+    # `encoding._encoders.base._validate_input`, hoisted here so the refusal
+    # lands BEFORE any zarr write instead of from inside `write_colors` — one
+    # dataset after `positions`, or a whole LOD child in. The end-to-end
+    # stranding cases live in core/tests/group/{lod,partition}/
+    # test_source_validation.py; these pin the rule itself.
+    @pytest.mark.parametrize("dtype", [np.int64, np.int32, np.uint32, np.int8])
+    def test_unwritable_integer_dtypes_are_rejected(self, dtype: Any) -> None:
+        """Only uint8/uint16 have a defined range the decoder can normalize by."""
+        # 7, not 255: int8 cannot hold 255 and numpy raises on the fill itself,
+        # which would test numpy rather than the validator.
+        colors = np.full((10, 3), 7, dtype=dtype)
+        with pytest.raises(ValidationError) as exc_info:
+            validate_colors_for_writing(colors, 10)
+
+        assert "Integer COLOR arrays must use dtype uint8 or uint16" in str(
+            exc_info.value
+        )
+        assert np.dtype(dtype).name in str(exc_info.value)
+        assert "colors:" in str(exc_info.value)
+        assert "astype(np.uint8)" in str(exc_info.value)
+
+    @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+    def test_writable_integer_dtypes_are_accepted(self, dtype: Any) -> None:
+        """SDR integer storage in its native range stays legal."""
+        validate_colors_for_writing(np.full((10, 3), 7, dtype=dtype), 10)
+
+    @pytest.mark.parametrize(
+        "dtype", [np.float32, np.float64, np.float16, np.longdouble]
+    )
+    def test_float_dtypes_are_untouched_by_the_integer_rule(self, dtype: Any) -> None:
+        """Floats quantize at encode time, so every width stays legal (HDR too).
+
+        ``longdouble`` is in the list deliberately: it is accepted and silently
+        quantized to uint8 by the AUTO encoder exactly as float64 is (measured),
+        and the whitelist below must not have changed that.
+        """
+        validate_colors_for_writing(np.full((10, 3), 0.5, dtype=dtype), 10)
+        with pytest.warns(UserWarning, match="HDR colors"):
+            validate_colors_for_writing(np.full((10, 3), 20.0, dtype=dtype), 10)
+
+    @pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+    def test_complex_colours_are_rejected(self, dtype: Any) -> None:
+        """Complex is ``np.number``, so only a WHITELIST catches it (#1489).
+
+        It passes the finiteness check, has no integer dtype for the integer rule
+        to see, and then dies inside the per-channel encoder with ``color_mode
+        required for float COLOR arrays`` — leaving ``n/positions`` behind. That
+        is the identical stranding the integer rule closes, so the rule is
+        expressed as "floating, or uint8/uint16" rather than as two special
+        cases.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            validate_colors_for_writing(np.full((10, 3), 0.5 + 0j, dtype=dtype), 10)
+
+        assert "COLOR arrays must be floating point, or integer uint8 or uint16" in str(
+            exc_info.value
+        )
+        assert np.dtype(dtype).name in str(exc_info.value)
+        # NOT the integer wording: that one is byte-matched against the encoder.
+        assert "Integer COLOR arrays" not in str(exc_info.value)
+
+    def test_bool_colors_keep_their_pre_existing_refusal(self) -> None:
+        """`np.issubdtype(bool, np.integer)` is False, so bool never reaches the
+        dtype rule — it is still caught one line earlier as non-numeric, and the
+        wording must not have drifted onto the integer message."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_colors_for_writing(np.ones((10, 3), dtype=bool), 10)
+
+        assert "Expected numeric array, got dtype bool" in str(exc_info.value)
+        assert "uint8 or uint16" not in str(exc_info.value)
+
+    def test_a_wrong_shape_int64_array_reports_its_shape_not_its_dtype(self) -> None:
+        """One fault per call, and the SAME fault a wrong-shape bool array gets.
+
+        The dtype rule runs LAST, below every shape check, so a caller who got
+        both wrong is told about the shape exactly as before.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            validate_colors_for_writing(np.full((10, 5), 255, dtype=np.int64), 10)
+
+        assert "got 5 channels" in str(exc_info.value)
+        assert "uint8 or uint16" not in str(exc_info.value)
+
+    # The two cases that pin the dtype rule's PRECEDENCE against the encoder it
+    # claims to mirror (`encoding._encoders.base._validate_input`). Both were
+    # divergences in the first cut of #1489, and both are public-surface
+    # behaviour: `validate_colors_for_writing` is exported from
+    # `luxar.validation`.
+    def test_a_negative_integer_array_reports_negativity_not_dtype(self) -> None:
+        """The encoder checks non-negativity FIRST, dtype second — so do we.
+
+        Placed above the negativity check, this input answered with the dtype
+        where a direct ``ArrayEncoder.encode`` answers ``COLOR semantic type
+        requires non-negative values``.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            validate_colors_for_writing(np.full((4, 3), -1, dtype=np.int32), 4)
+
+        assert "Colors cannot be negative" in str(exc_info.value)
+        assert "uint8 or uint16" not in str(exc_info.value)
+
+    @pytest.mark.parametrize("dtype", [np.int64, np.int32, np.float32])
+    def test_an_empty_array_carries_no_dtype_opinion(self, dtype: Any) -> None:
+        """``encode()`` writes an empty array via ``_write_passthrough`` BEFORE
+        ``_validate_input`` runs, so an empty ``int64`` COLOR array is accepted
+        there. The dtype rule sits below the ``size == 0`` early return so this
+        function agrees — placed above it, an exported validator silently flipped
+        from accept to refuse for every empty array.
+        """
+        validate_colors_for_writing(np.empty((0, 3), dtype=dtype), 0)
+
     def test_hdr_warning_does_not_fire_for_integer_dtypes(self) -> None:
         """Integer color arrays are SDR storage in their native integer
         range; the HDR warning is float-only by contract."""

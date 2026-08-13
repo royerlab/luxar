@@ -106,7 +106,8 @@ ui/
 │   ├── layer-state.ts, range-slider.ts, labeled-slider.ts,
 │   │ attrs-utils.ts
 ├── overlay-widgets/                    # Shared base for scale-bar / colormap-legend
-│   └── ui-component.ts
+│   ├── ui-component.ts
+│   └── context-menu.ts                 # Shared right-click menu (openContextMenu; full menu ARIA)
 ├── help-overlay/                       # Help overlay's private helper
 │   └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
 ├── control-rail/                       # Control rail's private helpers (orchestrator: ../control-rail.ts)
@@ -230,17 +231,36 @@ Each dimension slider includes animation controls for automated playback through
   - Left-click: Toggle animation play/pause
   - Right-click: Open settings context menu (Napari-style)
 
-**Context Menu Settings** (right-click play button):
+- **Slider wheel**: One base step per notch (the authored step, else 1% of the
+  range); `Shift` fine (÷10), `Ctrl` coarse (×10), `Ctrl+Shift` extra-fine
+  (÷100). Clamped at the range ends, and deliberately independent of the
+  animation Step override below — hand stepping stays on the dimension's own
+  grid.
+
+**Context Menu Settings** (right-click play button): three sections, each a
+micro-header row over one wrapping row of selectable chips.
 
 - **Speed Section**: Set target animation speed
-  - Presets: 1, 2, 5, 10, 15, 30, 60 FPS
-  - Radio button selection with current speed marked
+  - Presets: 1/2 (one frame every 2 s), 1, 2, 5, 10, 15, 30, 60, 120 FPS
+  - Single-select chips (`role="radio"`) with the current speed marked
 
 - **Loop Mode Section**: Choose loop behavior
   - `Once`: Play once and stop at end
   - `Loop`: Loop continuously from start to end
   - `Bounce`: Ping-pong back and forth
-  - Radio button selection with current mode marked
+  - Single-select chips with the current mode marked
+
+- **Step Section**: The per-tick quantum for playback **and** the `[` / `]`
+  keys — FPS then only decides how often a step lands
+  - `Auto` (default): the historical behavior — continuous dimensions traverse
+    the range in ~10 s at the target FPS, discrete ones move one authored step
+  - `×N` chips: multipliers of the dimension's base step (authored step, else
+    1% of the range), with the computed value in each chip's tooltip; the
+    active quantum shows as the muted header readout
+  - A custom number field on its own row below the chips (outside the chips'
+    radiogroup) commits on Enter or blur
+  - On a discrete dimension the override is quantized to the authored grid
+    with a one-cell floor, and only whole-cell multipliers are offered
 
 **Animation Features:**
 

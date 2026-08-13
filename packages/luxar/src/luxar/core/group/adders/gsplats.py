@@ -16,11 +16,13 @@ from ...gsplats import GSplats
 from ..auto_partition import resolve_auto_partition
 from ..compositing import (
     COMPOSITING_ATTRS,
+    funnel_add_error,
     is_broadcast_color,
     position_bounds_from_array,
     reject_lines_only_join,
     slice_optional_array,
     sync_custom_colormap_attr,
+    unnest_add_error,
     validate_gsplats_channels_before_split,
 )
 from ..dim_order import apply_dim_order_cholesky, apply_dim_order_positions
@@ -116,6 +118,26 @@ def add_gsplats_impl(
         # more firing here for the source array. Do not move it back below the
         # branch.
         scene._validate_dimension_count(ctr_arr, name, data_type="centers")
+
+        # Node-attrs gate (#1534) — the GSplats peer of the Points/Lines hoist
+        # (#1529). ``partition=`` is this adder's only split path (this module
+        # has no substitutive_lod=/additive_lod=/lod_group= door — those live
+        # on ``add_gsplats_from_data``, a different adder), and it forwards the
+        # non-compositing remainder of ``**attrs`` to each synthesised
+        # ``part_i`` — so a bad attr used to be refused only from inside the
+        # first part, by which point the wrapper's childless ``kind=partition``
+        # group was already on disk. Below the colours and dimension-count
+        # gates above (same precedence those already keep) and above the
+        # partition branch, so nothing is written before it runs. The flat
+        # writer below still validates the same dict once more inside
+        # ``write_gsplats`` — the validator is read-only, so running it here on
+        # the live ``attrs`` (not a copy) is safe and idempotent.
+        from ....io._compiler.node_common import (
+            GSPLATS_RESERVED_ATTRS,
+            validate_render_attrs,
+        )
+
+        validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
 
         # Apply compiler-level auto-partition heuristic (opt-in; default
         # off). User-explicit ``partition=`` always wins.
@@ -242,8 +264,12 @@ def add_gsplats_impl(
             **attrs,
         )
     except (ValueError, TypeError) as e:
-        aprint(f"Failed to add gsplats node '{name}': {e}")
-        raise ValueError(f"Could not add gsplats '{name}': {e}") from e
+        # Un-nest BEFORE printing too, or arbol still echoes an internal
+        # child name (`part_0`) that the raised exception no longer names
+        # (#1491) — see funnel_add_error.
+        inner = unnest_add_error("gsplats", name, e)
+        aprint(f"Failed to add gsplats node '{name}': {inner}")
+        raise ValueError(funnel_add_error("gsplats", name, e)) from e
 
 
 def add_gsplats_partition_wrapper_impl(

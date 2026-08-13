@@ -443,6 +443,18 @@ def malformed_array_cases(n_vertices: int) -> List[Any]:
         ("double_sided", {"double_sided": "yes"}, "double_sided"),
         ("labels", {"labels": ["a"] * (n_vertices - 1)}, "Labels length"),
         (
+            "image_labels",
+            # issue #1491: image_labels had no pre-split gate at all, so a
+            # wrong-length list was refused only from inside the FINEST child
+            # (the last one written), stranding every coarse level on disk.
+            {
+                "image_labels": [
+                    np.zeros((2, 2, 3), dtype=np.uint8) for _ in range(n_vertices - 1)
+                ]
+            },
+            "Image labels length",
+        ),
+        (
             "scalars_length",
             {"scalars": np.zeros(n_vertices - 1, np.float32), "colormap": "viridis"},
             "scalars",
@@ -455,12 +467,18 @@ class TestMalformedArraysWriteNothing:
     """Every array a child write validates must be validated before the group exists.
 
     The ladder writes the coarse children first and the ORIGINAL surface last, so
-    a malformed input surfaced from whichever child first carried it: colours with
-    two components or a typo'd `shading` died in `child_0` (leaving a childless
-    `kind=lod` group), while a wrong-length normals array or `labels` list died in
-    the FINEST child (leaving a ladder with its real surface missing). Both are
-    stores no viewer path can load, and the plain-leaf path writes nothing at all
-    in the same situation.
+    a malformed input surfaced from whichever child first carried it. Colours with
+    two components or a typo'd `shading` are validated identically on EVERY level,
+    so they died in whichever child's write hit them first — typically `child_0`,
+    leaving a childless `kind=lod` group (or, if a later level was the one to
+    fail, one missing only its finest level). `labels` and `image_labels`
+    (#1491) fail a DIFFERENT way: both are forwarded ONLY to the finest child, so
+    a bad one died deep inside THAT child's own write — after its vertices,
+    faces, normals, colours and scalars were already on disk. That leaves every
+    level, the finest included, fully written and independently loadable; only
+    the finest level's own label channel is silently missing, which is harder to
+    notice than a missing surface, not milder. Either shape is a store the
+    plain-leaf path's "nothing written" does not have.
 
     Parametrized over one case per validator rather than one per channel, since
     the fix is a shared gate: what is being pinned is that the gate runs on the
@@ -517,6 +535,84 @@ class TestMalformedArraysWriteNothing:
                     "surf", verts, faces.astype(np.float32), substitutive_lod=True
                 )
         assert not (store / "surf").exists()
+
+    def test_image_labels_refusal_is_not_double_prefixed(self, tmp_path: Path) -> None:
+        """Pre-#1491: ``Could not add mesh 'surf': Could not add mesh 'child_3': …``.
+
+        The finest child (here ``child_3``, after three decimated coarse levels)
+        is where a wrong-length ``image_labels`` used to be caught, and its OWN
+        funnel had already produced ``Could not add mesh 'child_3': …`` before
+        the outer ``add_mesh("surf", …)`` call wrapped it a second time. The gate
+        now runs pre-split, so the message names only the node the caller passed.
+        """
+        verts, faces = octasphere(3)
+        n_vertices = len(verts)
+        store = tmp_path / "img_prefix.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            try:
+                scene.add_mesh(
+                    "surf",
+                    verts,
+                    faces,
+                    image_labels=[b"x"] * (n_vertices - 1),
+                    substitutive_lod=True,
+                )
+            except ValueError as exc:
+                message = str(exc)
+                assert message.startswith("Could not add mesh 'surf': ")
+                assert "child_" not in message
+                assert message.count("Could not add") == 1
+            else:  # pragma: no cover
+                raise AssertionError("expected a ValueError")
+        assert not (store / "surf").exists()
+
+    def test_sparse_image_labels_out_of_range_index_is_refused_before_the_group(
+        self, tmp_path: Path
+    ) -> None:
+        """The dict (sparse) form is checked pre-split too, not only the length —
+        the Mesh twin of the Points/Lines sparse-dict cases (#1491 review)."""
+        verts, faces = octasphere(3)
+        n_vertices = len(verts)
+        store = tmp_path / "img_sparse.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="out of range"):
+                scene.add_mesh(
+                    "surf",
+                    verts,
+                    faces,
+                    image_labels={n_vertices: b"x"},
+                    substitutive_lod=True,
+                )
+        assert not (store / "surf").exists()
+
+    def test_valid_image_labels_still_ladder_and_reach_the_finest_child(
+        self, tmp_path: Path
+    ) -> None:
+        """The control: a correctly-sized ``image_labels`` still writes end to end.
+
+        The new gate must not reject legal input — the coarse decimated levels
+        carry no ``image_labels`` channel at all (only the finest, original
+        surface does), so the ladder is complete once that child's flag is set.
+        """
+        verts, faces = octasphere(3)
+        n_vertices = len(verts)
+        nodes = write_ladder(
+            tmp_path,
+            verts,
+            faces,
+            image_labels=[b"x"] * n_vertices,
+            substitutive_lod=True,
+        )
+        children = ladder_children(nodes)
+        assert len(children) > 1
+        finest = children[-1]
+        assert finest["type"] == "mesh"
+        assert finest["has_image_labels"] is True
+        assert finest["n_vertices"] == n_vertices
+        for coarse in children[:-1]:
+            assert coarse.get("has_image_labels") is not True
 
     def test_non_finite_vertices_say_so_instead_of_blaming_the_decimator(
         self, tmp_path: Path
@@ -604,10 +700,18 @@ class TestExtendToAll:
     ) -> None:
         """The pre-write gate covers the ATTRS, not just `extend_to_all`.
 
-        A typo'd `colormap` (or `blending`, or any unknown key) is caught by the
-        same `validate_render_attrs` the child write runs — but the child runs it
-        after the decimation and after `add_lod_group` created the group, so it
-        left the same childless kind=lod group in an incomplete store.
+        A typo'd `colormap` (or `blending`, or any unknown key) is caught by
+        `validate_render_attrs`. Since #1534 that check runs at the very top of
+        `add_mesh_impl`, above every structural branch (this substitutive one
+        included) and above `extend_to_all` resolution — so it fires before any
+        decimation or `add_lod_group` call happens at all, not merely before the
+        finest child's own write. Pre-#1534 the substitutive branch already ran
+        this same validator (just after resolving `extend_to_all`, and inside
+        the wrapper dispatch rather than the adder entry), so this call was
+        already refused before anything was written either way; what changed is
+        only the precedence against `extend_to_all` — see
+        `TestMeshSubstitutiveNodeAttrsGateOutranksExtendToAll` in
+        `tests/group/lod/test_source_validation.py` for that half.
         """
         verts, faces = octasphere(3)
         store = tmp_path / "attr.luxar.zarr"

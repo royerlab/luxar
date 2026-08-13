@@ -26,7 +26,10 @@ from ..dataset_writers.scalars import (
     write_radii,
     write_scalars,
 )
-from ..labels.image_labels import write_image_labels_csr
+from ..labels.image_labels import (
+    validate_image_labels_for_writing,
+    write_image_labels_csr,
+)
 from ..labels.text_labels import write_labels_csr
 from ..node_common import (
     POINTS_RESERVED_ATTRS,
@@ -52,10 +55,11 @@ def validate_points_channels(
     sharpness: Any = None,
     scalars: Any = None,
     labels: Any = None,
+    image_labels: Any = None,
 ) -> None:
     """Validate every per-point channel against ``n_points``. Pure — no I/O.
 
-    Steps 0d-0e of :func:`write_points`'s fail-fast gate, factored out because a
+    Steps 0d-0f of :func:`write_points`'s fail-fast gate, factored out because a
     SECOND caller needs exactly them and nothing else:
     :func:`luxar.core.group.compositing.validate_points_channels_before_split`
     runs this against the SOURCE point count before a ``partition=`` /
@@ -63,6 +67,21 @@ def validate_points_channels(
     wrong-length channel rode the per-part slicer's pass-through branch into
     every part and was ACCEPTED by any part whose own count happened to match
     (#1437), and the plain-leaf path refuses the same input outright.
+
+    ``image_labels`` (issue #1491) does not fit the per-part-slicer trap
+    above at all — it has no slicer in the first place: on
+    ``substitutive_lod=`` the value is forwarded ONLY to the finest child
+    (Points itself), which the wrapper writes LAST, after every coarse gsplat
+    level is already committed. Pre-fix, the length/index check ran INSIDE
+    ``write_image_labels_csr``, near the very end of that finest child's own
+    write — AFTER its ``type``, ``n_points``, positions, radii, colors,
+    sharpness, scalars and ``labels`` were already on disk. So a wrong-length
+    ``image_labels`` left a COMPLETE, fully loadable N-level ``kind=lod``
+    ladder on disk — every level present, every other array on every level
+    present — silently missing only the ``image_label_offsets`` /
+    ``image_label_bytes`` the caller actually asked for. That is HARDER to
+    notice than a missing level, not milder: nothing about the ladder looks
+    incomplete, it simply has no images.
 
     Sharing the function rather than repeating the checks is what keeps that
     promise true as the rules change: the pre-split gate cannot drift from what
@@ -103,6 +122,11 @@ def validate_points_channels(
     # were written).
     if labels is not None:
         validate_labels_for_writing(labels, n_points)
+    # 0f. Image labels: length (dense) / index bounds (sparse dict) — see
+    # validate_image_labels_for_writing for why this moved out of the CSR
+    # writer itself.
+    if image_labels is not None:
+        validate_image_labels_for_writing(image_labels, n_points)
 
 
 def write_points(
@@ -146,10 +170,17 @@ def write_points(
     # 0. Fail-fast pre-write gate: everything here runs BEFORE the zarr group
     # is created and before any array lands on disk, so an invalid input
     # cannot leave a partial node behind. NOTE this gate is best-effort, not
-    # transactional: validators that need the store (image_labels, custom
-    # colormap LUT resolution) still run post-write and can leak a partial
-    # node on failure (F7 residual — transactional/temp-dir writes are a
-    # separate project).
+    # transactional: validators that need the store (custom colormap LUT
+    # resolution) still run post-write and can leak a partial node on failure
+    # (F7 residual — transactional/temp-dir writes are a separate project).
+    # image_labels' LENGTH/index and its per-item TYPE dispatch — including the
+    # (H,W[,3|4]) ndarray-shape check, which check_image_label_type validates
+    # eagerly since ndim/shape[2] need no PIL round-trip — now run here too
+    # (step 0f, below, via validate_image_labels_for_writing /
+    # check_image_label_type); only normalize_image_label's actual blob
+    # normalization still runs post-write — reading a str/Path file and the PIL
+    # encode itself (including the Pillow-not-installed ImportError, which the
+    # adders' except (ValueError, TypeError) funnel does not catch either).
     #
     # 0a. Pure attr validators + reserved writer-stamp collisions.
     validate_render_attrs(attrs, reserved_attrs=POINTS_RESERVED_ATTRS)
@@ -158,9 +189,10 @@ def write_points(
     path = validate_node_path(path)
     # 0c. Positions shape/finiteness.
     n_points, n_dims = validate_positions_for_writing(positions)
-    # 0d-0e. Per-point channel sweep (colors, radii, sharpness, scalars, then
-    # labels), shared verbatim with the pre-split gate the partition / LOD
-    # wrappers run against the source count — see validate_points_channels.
+    # 0d-0f. Per-point channel sweep (colors, radii, sharpness, scalars, then
+    # labels, then image_labels), shared verbatim with the pre-split gate the
+    # partition / LOD wrappers run against the source count — see
+    # validate_points_channels.
     validate_points_channels(
         n_points,
         colors=colors,
@@ -168,8 +200,9 @@ def write_points(
         sharpness=sharpness,
         scalars=scalars,
         labels=labels,
+        image_labels=image_labels,
     )
-    # 0f. Transform / nd_transform normalization is pure attr processing
+    # 0g. Transform / nd_transform normalization is pure attr processing
     # (reads only the scene dimensions), so run it in the gate too — a bad
     # transform must not leave a partial node behind.
     prepare_transform_attrs(attrs, ctx.store)
