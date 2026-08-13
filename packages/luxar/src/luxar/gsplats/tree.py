@@ -642,11 +642,20 @@ def tree_from_substitutive_levels(
         for lvl in levels_coarsest_first
     ]
     fractions_coarsest_first = derive(counts_coarsest_first)
+    # PLAIN assignment, deliberately not ``setdefault``: authored
+    # ``coverage_fraction`` values structurally CANNOT ride this API —
+    # ``SubstitutiveLevel`` has no such field and
+    # ``_leaf_from_substitutive_level`` rebuilds each leaf's meta from a fixed
+    # whitelist — so a conditional write would merely imply a retention path
+    # that does not exist (and, if one were ever added, would silently mix
+    # retained values with this derivation instead of going through
+    # ``gate_authored_selector``). ``test_matrix_api_always_rederives`` pins
+    # the whitelist so widening it forces that gate integration.
     for leaf, fraction in zip(node.children, fractions_coarsest_first):
-        leaf.meta.setdefault("coverage_fraction", fraction)
+        leaf.meta["coverage_fraction"] = fraction
     # Stamp the units alongside the thresholds (the serializers honor a group's
-    # meta selector) — see the ``selector`` parameter doc for the default rule.
-    node.meta.setdefault("selector", selector)
+    # meta selector) — the group node is likewise freshly built with empty meta.
+    node.meta["selector"] = selector
 
     return node
 

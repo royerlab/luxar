@@ -302,6 +302,37 @@ def test_tree_from_substitutive_levels_stamps_coverage_fractions():
     assert node.meta["selector"] == "screen-area"
 
 
+def test_matrix_api_always_rederives():
+    """The matrix bridge cannot retain authored coverage_fraction values — and
+    that is an INVARIANT, not an accident. ``SubstitutiveLevel`` has no such
+    field and ``_leaf_from_substitutive_level`` rebuilds each leaf's meta from
+    a fixed whitelist, so ``tree_from_substitutive_levels`` always derives a
+    fresh, uniform ladder (never a silent mixture of retained legacy values
+    and new area values). This test pins the whitelist: if the leaf
+    reconstruction ever starts carrying ``coverage_fraction`` through, it
+    fails and forces routing through ``gate_authored_selector`` instead.
+    """
+    from luxar.gsplats.tree import _leaf_from_substitutive_level
+
+    levels = [
+        SubstitutiveLevel(additive_sublods=[_sublod(800, seed=0)], level_index=0),
+        SubstitutiveLevel(
+            additive_sublods=[_sublod(50, seed=1)],
+            level_index=1,
+            stats={"coverage_fraction": 3.9},  # even smuggled via stats...
+        ),
+    ]
+    # ...the leaf reconstruction's meta whitelist does not surface it as a
+    # top-level coverage_fraction key:
+    for lvl in levels:
+        assert "coverage_fraction" not in _leaf_from_substitutive_level(lvl).meta
+
+    node = tree_from_substitutive_levels(levels)
+    covs = [c.meta["coverage_fraction"] for c in node.children]
+    assert covs == [0.0, pytest.approx(0.5)]  # fresh area derivation, uniform
+    assert node.meta["selector"] == "screen-area"
+
+
 def test_tree_from_substitutive_levels_custom_coverage_keeps_legacy_selector():
     """A CUSTOM ``coverage`` callable is authored code whose thresholds predate
     the screen-area units, so without an explicit ``selector=`` the group must

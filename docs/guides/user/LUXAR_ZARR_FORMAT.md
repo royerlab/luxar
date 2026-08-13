@@ -306,9 +306,12 @@ legacy `selector: "coverage"` (older stores, and explicitly authored
 `coverage_fractions=[...]` lists) the thresholds are diagonal-metric units in
 `[0, 4]`: the viewer compares them against the projected bbox diagonal over
 `FILL_FACTOR=0.5 ×` the fitted screen axis (`min(width, height)` — the extent
-the camera framing actually fits). When the camera is inside or
-straddling a group's bounding box, the group is treated as filling the screen
-and its **finest** child is selected (both selectors).
+the camera framing actually fits). Under a PERSPECTIVE camera, a group whose bounds
+reach the camera's near plane has no meaningful projection (the homogeneous
+divide degenerates), so both selectors saturate to the **finest** child; an
+ORTHOGRAPHIC projection never degenerates, so the ordinary clipped metric
+applies directly (a camera inside a large group still reads full coverage
+naturally — see the normative rules in `docs/specs/GSPLATS_ZARR_FORMAT.md`).
 
 `kind="lod"` is **geometry-agnostic**: children can be points, lines,
 gsplats, or themselves specialized groups (e.g. a Partition group inside an
