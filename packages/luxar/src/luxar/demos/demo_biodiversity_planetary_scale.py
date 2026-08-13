@@ -688,7 +688,10 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: means, approximately at mainstream aspect ratios, "this tile's finest level
 #: shows only once the TILE alone fills the viewport".
 OCCURRENCE_LOD_LEVELS: Final = 3
-#: In metric space (raw fraction / FILL_FACTOR): raw 0.0/0.88/0.96/1.0 x4.
+#: In metric space: the DIAGONAL-era raw fractions 0.0/0.88/0.96/1.0 taken x4,
+#: i.e. divided by the 0.25 `FILL_FACTOR` in force when they were authored.
+#: Today's two-step conversion of those same fractions is `x2.0398 / 0.5` =
+#: x4.08, so the stored values still sit within the ~2% #1410 preserves.
 OCCURRENCE_COVERAGE: Final = (0.0, 3.52, 3.84, 4.0)
 
 STREAM_LOD: Final = dict(counts="stream:20000", method="random", seed=0)

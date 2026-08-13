@@ -1021,7 +1021,10 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
 // ────────────────────────────────────────────────────────────────────────
 
 describe('LODGroupRegistry — coverage_fraction thresholds above 1.0', () => {
-  // The demo's authored ladder, in coverage-METRIC space (raw fraction ÷ 0.5).
+  // The demo's authored ladder, in coverage-METRIC space: its diagonal-era raw
+  // fractions 0.0/0.88/0.96/1.0 taken ×4 (÷ the 0.25 `FILL_FACTOR` of the day).
+  // Today's two-step conversion of the same fractions is ×2.0398/0.5 = ×4.08,
+  // so these still land within ~2% of their intended switch points.
   const TILED_LADDER = [0.0, 3.52, 3.84, 4.0];
 
   /**
