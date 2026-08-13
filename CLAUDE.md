@@ -645,6 +645,25 @@ luxar gsplat annotate-quality splats.gsplats.zarr                # e(k) + w only
 luxar gsplat annotate-quality splats.gsplats.zarr --with-quality # + measured Q per level
 luxar gsplat annotate-quality splats.gsplats.zarr --dry-run      # print stamps, write nothing
 
+# Reduce a dataset to a TARGET SPLAT COUNT (one flat result) — the "this fit is
+# bigger than I need" tool, distinct from `cull` (removes by a quality threshold)
+# and `lod` (builds a multi-level structure). Two families:
+#   merge   cluster neighbours into representatives carrying their combined mass
+#   prefix  keep the first N of an additive ordering (discards splats, dims)
+# `auto` follows the MEASURED crossover: merge below 50% kept, prefix at/above.
+# Foreground PSNR on a 1.65M-splat light-sheet fit (global PSNR flatters
+# everything on a 97.8%-empty stack, so it is not the number to steer by):
+#   kept  50%: merge 44.5 / prefix 45.5 dB   <- prefix wins, little to summarise
+#   kept  25%: merge 41.7 / prefix 39.1 dB
+#   kept  10%: merge 38.3 / prefix 34.5 dB   <- ~10x smaller, recommended point
+#   kept   1%: merge 33.1 / prefix 29.6 dB   <- merge wins by 3.5 dB
+# Quality falls ~3-4 dB per halving with NO knee, so pick from the curve.
+# A partition must be `flatten`ed first (decimate returns a single flat leaf).
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr --target 165000   # absolute count
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr -f 0.1            # share of input
+luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr -f 0.1 -m merge   # force a family
+# Python: `from luxar.gsplats.lod import decimate` (target=int count | float fraction)
+
 # Inspect, cull, and filter
 luxar gsplat info splats.gsplats.zarr          # Dataset statistics
 luxar gsplat cull input.gsplats.zarr culled.gsplats.zarr                            # Auto (cumulative, keep 95%)
