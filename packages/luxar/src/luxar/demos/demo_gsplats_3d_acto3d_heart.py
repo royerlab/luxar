@@ -80,8 +80,11 @@ DEMO_META = {
     "requirements": {
         "download_mb": 13,
         "compute": "medium",
-        "gpu": "optional",
-        "local_data": "git-lfs",
+        # The precomputed fit is no longer shipped in-tree (the source data is
+        # not redistributable), so a first run fetches the raw source and
+        # refits — which needs a GPU. Nothing has to be placed by hand.
+        "gpu": "required",
+        "local_data": None,
     },
     "caches": ["gsplats_acto3d_heart"],
     "outputs": ["gsplats_3d_acto3d_heart"],
