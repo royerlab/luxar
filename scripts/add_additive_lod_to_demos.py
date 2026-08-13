@@ -244,7 +244,7 @@ def _run_lod_cli(in_path: Path, out_path: Path, n_splats: int) -> List[int]:
         "stream",
         "--breakpoints",
         bp_arg,
-        "--method",
+        "--add-method",
         method,
         "--compress",
         "zip",

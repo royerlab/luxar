@@ -27,6 +27,7 @@ import type {
 } from '../../scene-loader-monitor-port';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
+import type { MeshDataLoader } from '../../../types/mesh';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import type { SliceCache } from '../../../cache/slice-cache';
@@ -64,6 +65,16 @@ export interface WireMonitorAfterLoadParams {
   loaders: Map<string, DataLoader>;
   linesLoaders: Map<string, LinesDataLoader>;
   gsplatLoaders: Map<string, GSplatsDataLoader>;
+  /**
+   * Mesh loaders, for the LOD-progress provider ONLY — mesh has no element
+   * accumulator to aggregate (it is not pooled and holds no per-slice working
+   * set), so it joins none of the providers above. It has to join this one: a
+   * mesh reveal ladder is a progressive loader like the other three, and the
+   * scene-graph converter already stamps `additiveSublods` on its parent, so
+   * without the map the tree renders that node's chip as `LOD -/N` ("not
+   * streaming") for the whole reveal.
+   */
+  meshLoaders: Map<string, MeshDataLoader>;
   /**
    * The scene's LOD-group registry — drives the live substitutive-LOD
    * state (active level / selector mode) in the LOD-progress provider.
@@ -109,6 +120,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
     loaders,
     linesLoaders,
     gsplatLoaders,
+    meshLoaders,
     lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts,
@@ -167,7 +179,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
 
   monitor.setLODProgressProvider(
     createLODProgressProvider({
-      loaderMaps: [loaders, linesLoaders, gsplatLoaders],
+      loaderMaps: [loaders, linesLoaders, gsplatLoaders, meshLoaders],
       lodGroupRegistry,
       partitionGroups: collectPartitionGroups(sceneGraph),
     })

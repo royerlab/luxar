@@ -61,6 +61,30 @@ describe('createLODProgressProvider', () => {
     expect(states.get('/legacy')?.energy).toBeUndefined();
   });
 
+  it('reports a MESH reveal ladder, which reports no residency of its own', () => {
+    // The fourth map. A mesh ladder exposes loaded/total/hasMoreLODs like the
+    // other three but no `lastAllResident` (each level is whole-node resident or
+    // not, not a cache-hit ratio), and no energy stamps by construction. Without
+    // the map the scene-graph tree renders a revealing mesh as `LOD -/N` — "not
+    // streaming" — for the whole reveal.
+    const meshLoaders = new Map<string, unknown>([
+      ['/surf', { loadedLODCount: 1, totalLODCount: 4, hasMoreLODs: true }],
+    ]);
+    const provider = createLODProgressProvider({
+      loaderMaps: [new Map(), new Map(), new Map(), meshLoaders],
+      lodGroupRegistry: null,
+    });
+
+    expect(provider.getLODStates().get('/surf')).toEqual({
+      kind: 'additive',
+      loaded: 1,
+      total: 4,
+      refining: true,
+      lastAllResident: undefined,
+      energy: undefined,
+    });
+  });
+
   it('marks an additive loader as not refining once all levels are loaded', () => {
     const loaders = new Map<string, unknown>([['/pts', progressiveLoader(3, 3, true)]]);
     const provider = createLODProgressProvider({

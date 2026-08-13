@@ -76,6 +76,7 @@ function makeBaseParams(monitor: SceneLoaderMonitorPort | null): WireMonitorAfte
     loaders: new Map(),
     linesLoaders: new Map(),
     gsplatLoaders: new Map(),
+    meshLoaders: new Map(),
     lodGroupRegistry: null,
     sceneGraph: makeSceneGraph(),
     updateVisibleCounts: vi.fn(),

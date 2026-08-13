@@ -64,9 +64,9 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 
 ### Per-part LOD at fit time (tiled partition only)
 `--recipe`/`-r` `stream` → `tiles` topology; `--recipe levels` → `adaptive`.
-Knobs mirror `lod`: `--n-lods`, `--additive-method`/`-m`, `--breakpoints`/`-b`,
+Knobs mirror `lod`: `--n-lods`, `--add-method`/`-m`, `--breakpoints`/`-b`,
 `--target-ms`, `--bandwidth-mbps` (default 25), `--bytes-per-splat`,
-`--compression-factor`/`-K`, `--levels`/`-L`, `--substitutive-method`,
+`--compression-factor`/`-K`, `--levels`/`-L`, `--subst-method`,
 `--coarsen-dims`. LOD switch thresholds are auto-derived (`coverage_fraction`,
 no knob — see "LOD switch tuning" below).
 
@@ -157,7 +157,7 @@ additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--n-lods` | 4 | additive LOD levels |
-| `--method` / `-m` | auto | `auto` (greedy at N ≤ 5000, else self_energy) / `greedy` / `self_energy` / `mass` / `amplitude` / `spectral` / `random` / `radial` (concentric-shell reveal from the bbox centre; no energy stamps) |
+| `--add-method` / `-m` | auto | `auto` (greedy at N ≤ 5000, else self_energy) / `greedy` / `self_energy` / `mass` / `amplitude` / `spectral` / `random` / `radial` (concentric-shell reveal from the bbox centre; no energy stamps) |
 | `--breakpoints` / `-b` | equal-count | `equal-count` / `stream:C` (geometric streaming ladder, first chunk C splats then doubling; sized per part/level) / `counts:N1,N2,...` (clamped per part) / `energy:f1,f2,...` |
 | `--target-ms` | — | streaming sizing: derive `stream:<c>` so the first additive chunk downloads in ~this many ms (mutually exclusive with `--breakpoints`) |
 | `--bandwidth-mbps` | 25 | assumed downlink for `--target-ms` sizing |
@@ -172,7 +172,7 @@ Structure-preserving per-leaf additive laddering: substitutive `kind=lod`
 levels, partition parts, and adaptive groups keep their shape; every leaf gains
 an additive ladder WITHOUT recomputing the substitutive/partition structure.
 The per-leaf counterpart of `lod --recipe stream` (which needs a flat input).
-Options: `--n-lods` / `--method` / `--breakpoints` (incl. `stream:C`) /
+Options: `--n-lods` / `--add-method` / `--breakpoints` (incl. `stream:C`) /
 `--target-ms` / `--bandwidth-mbps` / `--bytes-per-splat` / `--encoding` /
 `--compress` / `--overwrite`.
 ```bash
@@ -191,7 +191,7 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 | --- | --- | --- |
 | `--compression-factor` / `-K` | 4 | per-level coarsening factor |
 | `--levels` / `-L` | 3 | substitutive coarser levels |
-| `--substitutive-method` | auto | `auto` / `kmeans` / `kmeans_lloyd` / `greedy` / `greedy_lloyd` |
+| `--subst-method` | auto | `auto` / `kmeans` / `kmeans_lloyd` / `greedy` / `greedy_lloyd` |
 | `--lloyd-iters` | 5 | Lloyd refinement passes |
 | `--candidate-bins-k` | 12 | Lloyd spatial-hash top-k |
 | `--coverage-inflation` | 3.0 | widen merged reps' inter-center spread (mass-preserving) so coarse splats sum flat — suppresses the grid ripple; 1.0 = pure moment match |

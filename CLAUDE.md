@@ -222,7 +222,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 80 bundled demos (table)
+luxar demo                       # List the 83 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -301,8 +301,8 @@ luxar gsplat fit vol.zarr plan.json --tiling content --cal cal.json --plan-only
 # Requires a tiled fit (--tiling uniform/content) and a partition (not --flat);
 # rejected with --flat / --tiling none / --tile / --plan-only / --plan-box, and
 # rejects cross-recipe knobs (like `gsplat lod`). Knobs mirror `lod`:
-# additive: --n-lods/--additive-method/--breakpoints; substitutive:
-# --compression-factor/--levels/--substitutive-method/--coarsen-dims.
+# additive: --n-lods/--add-method/--breakpoints; substitutive:
+# --compression-factor/--levels/--subst-method/--coarsen-dims.
 luxar gsplat fit large.zarr out.gsplats.zarr --tiling uniform -j 4 --recipe stream --n-lods 6
 luxar gsplat fit vol.zarr out.gsplats.zarr --tiling content --cal cal.json --recipe levels --compression-factor 4 --levels 3
 
@@ -446,7 +446,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream \
     -m mass -b counts:500,2000,10000                                         # mass order, explicit counts
 # additive default method `auto`: greedy (provably (1-1/e)-optimal at every
 # prefix) at N <= 5000, else `self_energy` (cheap O(N log N)); override with -m.
-luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy
+luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --add-method self_energy
 # `-m radial` = the REVEAL: orders concentric shells around the node's own bbox
 # centre (NOT the scene origin), so a streaming prefix grows outward from the
 # middle. Authoring only — no viewer changes, nothing about how data is DISPLAYED.
@@ -491,7 +491,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe overview --compressio
 # adaptive: spatial tiles where EACH tile is its own levels group (per-tile
 # coarse↔fine swap — locally adaptive; the per-tile-levels sibling of tiles).
 # Partition knobs + the level-merge ones (--compression-factor/-K, --levels/-L,
-# --substitutive-method); per-tile levels are stream-laddered by default.
+# --subst-method); per-tile levels are stream-laddered by default.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --max-elements 250000
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --parts 8 -K 4 -L 2
 
@@ -511,7 +511,7 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe adaptive --parts 8 -K
 # Runnalls) is quality-leading at small N.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels            # K=4, L=3, method=auto
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 \
-    --substitutive-method kmeans-lloyd --lloyd-iters 5 --device cpu
+    --subst-method kmeans-lloyd --lloyd-iters 5 --device cpu
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 # Coverage inflation (any substitutive reduction): merged representatives get
 # their inter-center spread widened x`--coverage-inflation` (default 3.0,

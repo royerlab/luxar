@@ -419,6 +419,18 @@ export interface MeshUserData {
   visibleVertexCount: number;
 
   /**
+   * Vertices this commit actually received (absent until the first commit).
+   *
+   * `mesh-geometry.ts`'s `position` attribute is capacity-sized for a reveal
+   * ladder (#1521), so it can no longer answer this question — `debug-state.ts`
+   * reads this stamp instead of `position.count`. `create-mesh-node.ts` never
+   * seeds it on the placeholder, and `debug-state.ts`'s `??` fallback to
+   * `position.count` depends on that absence to report the placeholder's true
+   * (degenerate) count rather than a stale `0`.
+   */
+  committedVertexCount?: number;
+
+  /**
    * Marks the material as already node-owned, so the layers panel and the LOD
    * cross-fade mutate it directly instead of cloning on first interaction.
    *

@@ -39,6 +39,7 @@ import { SUPPORTED_GSPLATS_FORMAT_VERSIONS } from '../../../types/format-contrac
 import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
 import type { DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
+import type { MeshDataLoader } from '../../../types/mesh';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { UpdateProfiler } from '../../../profiling/update-profiler';
@@ -76,6 +77,20 @@ export interface LoadSceneCtx {
   loaders: Map<string, DataLoader>;
   linesLoaders: Map<string, LinesDataLoader>;
   gsplatLoaders: Map<string, GSplatsDataLoader>;
+  /**
+   * Mesh loaders, for the post-load refinement kick and the monitor's
+   * LOD-progress provider.
+   *
+   * Deliberately NOT passed to `reportLoadOutcome` below, which has never
+   * carried mesh — widening the load-outcome grading is a separate change with
+   * its own observable output. The refinement kick is needed because a mesh
+   * reveal ladder commits only its first level during `loadScene`, so without it
+   * the surface would sit at that first patch until the user moved a slider; the
+   * LOD-progress provider is needed because the scene-graph converter stamps
+   * `additiveSublods` on a laddered mesh parent, and a node with that stamp but
+   * no live loader state renders as `LOD -/N` ("not streaming") throughout.
+   */
+  meshLoaders: Map<string, MeshDataLoader>;
   /** Current GPU buffer pool reference (may be null when disabled). */
   gpuBufferPool: () => GPUBufferPool | null;
   /** Current monitor reference. */
@@ -413,6 +428,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     loaders: ctx.loaders,
     linesLoaders: ctx.linesLoaders,
     gsplatLoaders: ctx.gsplatLoaders,
+    meshLoaders: ctx.meshLoaders,
     lodGroupRegistry: ctx.lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
@@ -435,17 +451,18 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Each per-type loader maps may include progressive loaders that
   // only emit LOD 0 on the initial load — the refinement loop drains
   // their remaining LODs frame-by-frame. Symmetric across Points /
-  // Lines / GSplats.
+  // Lines / GSplats / Mesh.
   const hasMore = (loader: unknown) => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
   const gsplatsNeed = [...ctx.gsplatLoaders.values()].some(hasMore);
   const pointsNeed = [...ctx.loaders.values()].some(hasMore);
   const linesNeed = [...ctx.linesLoaders.values()].some(hasMore);
+  const meshNeed = [...ctx.meshLoaders.values()].some(hasMore);
 
-  if (gsplatsNeed || pointsNeed || linesNeed) {
+  if (gsplatsNeed || pointsNeed || linesNeed || meshNeed) {
     log.info(
       Modules.SCENE_LOADER,
       'Scheduling post-load progressive LOD refinement ' +
-        `(points=${pointsNeed} lines=${linesNeed} gsplats=${gsplatsNeed})`
+        `(points=${pointsNeed} lines=${linesNeed} gsplats=${gsplatsNeed} mesh=${meshNeed})`
     );
     // Hold the serialization lock during refinement so any updateView()
     // calls queue as _pendingViewState (which naturally cancels the

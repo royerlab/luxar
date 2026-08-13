@@ -3,8 +3,8 @@
 Per-leaf adder implementations for `Group`. Each geometry type (Points,
 Lines, GSplats, Mesh) has its own module here holding the body of
 `Group.add_<type>` along with its partition-wrapper and multi-LOD-wrapper
-helpers (mesh has a partition wrapper and a substitutive-LOD one, but no
-multi-LOD/additive wrapper — it still refuses the additive prefix ladder).
+helpers (mesh has all three: a partition wrapper, a substitutive-LOD one, and a
+multi-LOD wrapper whose ladder is a REVEAL — see `mesh.py` below).
 
 ## Overview
 
@@ -27,7 +27,7 @@ adders/
 ├── points.py      # add_points_impl + partition / multi-LOD wrappers
 ├── lines.py       # add_lines_impl + partition / multi-LOD wrappers
 ├── gsplats.py     # add_gsplats_impl + partition wrapper
-└── mesh.py        # add_mesh_impl + partition / substitutive-LOD wrappers
+└── mesh.py        # add_mesh_impl + partition / substitutive-LOD / multi-LOD (reveal) wrappers
 ```
 
 ## Modules
@@ -73,6 +73,7 @@ in the `gsplats` package (`luxar gsplat lod`), not at add time.
 - `add_mesh_impl(group, *, name, vertices, faces, ...)` → `Mesh | Group`
 - `_add_mesh_partition(group, *, name, vert_arr, faces_arr, ...)` → `Group | None`
 - `add_mesh_substitutive_lod_wrapper_impl(group, *, name, vert_arr, ...)` → `Group | Mesh`
+- `add_mesh_multi_lod_wrapper_impl(group, *, name, vert_arr, parts, ...)` → `Mesh`
 
 Mesh partitions at **face granularity** — the BSP runs over face centroids, so
 `max_elements` counts faces and no triangle is ever cut. A part cannot be a slice
@@ -88,10 +89,30 @@ refusal `add_points` / `add_lines` carry, which is why a hand-built
 `kind=partition` wrapper is the only route to per-tile mesh ladders; like its
 three siblings the wrapper derives its `coverage_fraction` thresholds through
 `lod.group.derive_coverage_fractions`, so such a ladder is auto-anchored at
-fills-screen (finest `4.0`) instead of the whole-object `1.0`. There is still no
-multi-LOD (additive)
-wrapper: mesh refuses the additive prefix ladder (and
-`blending_mode='volumetric'`) with a per-case explanation.
+fills-screen (finest `4.0`) instead of the whole-object `1.0`.
+
+`additive_lod=` writes a REVEAL ladder — `additive_<i>/` levels holding concentric
+shells of FACES, innermost first — through `add_mesh_multi_lod_wrapper_impl` and
+`write_mesh_multi_lod`. It is the same shape as the Points/Lines multi-LOD wrapper
+with three mesh-specific differences, all downstream of "a triangle is three
+references, not a row":
+
+* A level is a re-indexing, not a slice. The branch splits FACES
+  (`lod.mesh.make_additive_lod_mesh`) and re-indexes each group through
+  `luxar.mesh.split.split_mesh_by_faces`, so the wrapper receives `MeshPart`s and
+  gathers each per-vertex channel through `part.vertex_index` — a boundary vertex
+  is stored once per level that touches it (logged as a duplication factor).
+* `labels` / `image_labels` DEGRADE the ladder to a plain leaf with a
+  `UserWarning` instead of riding it: there is no union index space for the CSR
+  the sibling ladders put on their parent (see `write_mesh_multi_lod`).
+* No energy stamps. `additive_level_stats` suppresses them for every reveal
+  method, and the wrapper passes all-zero energies plus
+  `energy_kind="mesh-reveal-no-energy"` to say the same thing a second way.
+
+`additive_lod=` composes with neither `substitutive_lod=` nor `partition=` yet —
+each pairing is refused by name, where Points and Lines compose both.
+`blending_mode='volumetric'` and a non-reveal additive `method` stay refused with a
+per-case explanation.
 
 ## Add-Path Anatomy
 
@@ -115,32 +136,70 @@ Each `*_impl` walks the same ordered decision tree:
    `indices` topology check), so a call that also trips one of those is told
    about the width first — on the flat path as well as the split ones, so the two
    still agree. Only the count half is here — the range `UserWarning` half stays
-   in the single-leaf write at step 9, so it fires once per written leaf (none
+   in the single-leaf write at step 10, so it fires once per written leaf (none
    under an additive ladder, whose writer never validates) rather than once more
    for the source array.
-5. **Substitutive-LOD branch** (points/lines, when `substitutive_lod` is set):
+5. **Node-attrs gate** (points/lines only; `validate_render_attrs`, the flat
+   writer's own step 0a) — since #1529, run once here against the caller's
+   un-split `**attrs`, above every structural branch below (same placement
+   reasons as step 4): `substitutive_lod=` and `partition=` forward the
+   non-compositing remainder of `**attrs` into a synthesised child (a gsplat
+   `child_0`, or a `part_i`; a compositing attr is split out and refused
+   earlier, before any child is written), and
+   `additive_lod=` goes straight to the multi-LOD writer, which runs this
+   same validator with no reserved-attrs set at all — so on the
+   substitutive/partition paths a bad attr used to be caught only from inside
+   the first child (by then the wrapper group itself, childless, was already
+   on disk), and on the additive path a genuinely reserved key got the wrong
+   verdict (unknown instead of reserved, nothing written) while an
+   unreserved-but-clobbering key (`position_bounds=`) wasn't refused at all —
+   real ladder data was written and the writer's own stamp silently
+   overwritten. Running it here instead means all three split paths refuse
+   byte-identically to the flat path, with nothing written. This placement
+   also outranks the #1437 channel gate at the top of the partition,
+   substitutive, and multi-LOD wrappers (see "Partition wrappers" below) —
+   matching the flat writer's own order, where node attrs are validated
+   before channels. Mesh and GSplats did not gain this gate: their own
+   `partition=` paths (e.g. `add_mesh(..., partition={"max_elements": 40},
+   blending="max")`, `add_gsplats(..., partition={"max_elements": 100},
+   blending="max")`) still leave a childless `kind=partition` node that
+   survives `finalize()` — tracked in #1534.
+6. **Substitutive-LOD branch** (points/lines, when `substitutive_lod` is set):
    delegate to the substitutive wrapper, whose coarse levels are synthesised
    gsplats under a `kind=lod` group. Fires before (auto-)partition.
-6. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
+7. **Resolve auto-partition** via `resolve_auto_partition(scene, n, partition)`
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it
    honors only explicit `partition=`.)
-7. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
+8. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
    (`median` / `midpoint` / `sah`) capped at `max_elements`, and if it yields
    more than one part, delegate to the partition wrapper. A single part falls
    through to the regular write.
-8. **Additive-LOD branch** (points/lines, when `additive_lod` is set): build
+9. **Additive-LOD branch** (points/lines, when `additive_lod` is set): build
    prefix-monotone levels and, if more than one level results, delegate to the
    multi-LOD wrapper. Fires after the 1-part-partition fall-through, so a
    single `add_*` call can compose partition-of-additive-LOD.
-9. **Single-leaf write**: validate dimensions (the full
-   `_validate_data_dimensions`, i.e. the step-4 count check again plus the
-   per-dimension range `UserWarning`), resolve `extend_to_all` (this is where
-   the `"all"` sentinel becomes a concrete dim-name list for a flat leaf AND
-   for every part of a partition, whose recursion re-enters here; the multi-LOD
-   wrapper resolves it itself — see below), then call the scene writer
-   (`write_points` / `write_lines` / `write_gsplats`) and return the
-   constructed `Points` / `Lines` / `GSplats` node.
+10. **Single-leaf write**: validate dimensions (the full
+    `_validate_data_dimensions`, i.e. the step-4 count check again plus the
+    per-dimension range `UserWarning`), resolve `extend_to_all` (this is where
+    the `"all"` sentinel becomes a concrete dim-name list for a flat leaf AND
+    for every part of a partition, whose recursion re-enters here; the multi-LOD
+    wrapper resolves it itself — see below), then call the scene writer
+    (`write_points` / `write_lines` / `write_gsplats`) and return the
+    constructed `Points` / `Lines` / `GSplats` node. The writer re-runs the
+    same step-5 node-attrs validator on its way in (`validate_render_attrs`
+    is idempotent — it only inspects `attrs`), so a flat call validates
+    twice; harmless on its own, but since step 5 now runs before this step's
+    `extend_to_all` resolve, a multi-fault flat call reports the attrs fault
+    where it used to report the `extend_to_all` one — a deliberate consequence
+    of validating attrs first, matching the writer's own step 0a, with no
+    change to which single-fault calls succeed or fail. Mesh diverges here:
+    its flat-path fallthrough resolves `extend_to_all` (`mesh.py:556`) before
+    ever reaching the flat writer's own attrs gate, keeping the pre-#1529
+    order — the substitutive branch's dispatcher,
+    `_maybe_add_mesh_substitutive_lod` (`mesh.py:401-403`), runs its own
+    attrs gate earlier still, before deciding whether to hand off to the
+    wrapper at all.
 
 All `*_impl` entries wrap the body in a `try/except (ValueError, TypeError)`
 that re-raises as a `ValueError` with a `Could not add <type> '<name>': ...`
@@ -190,12 +249,20 @@ channel added to a writer's gate is covered here too. Without the gate
 `slice_optional_array` passes a wrong-length channel through whole and a part
 whose own count happens to match accepts it, so the write succeeds with values on
 the wrong elements. Mesh does the same thing in `_validate_partition_sources`;
-the gate belongs at the top of the wrapper, never the leaf adder, so the
-plain-leaf error order is untouched (a call that also trips the positions/attr
-gates therefore reports the channel fault first here). The scene-dimension count
-is the one exception: since #1446 it is checked at step 4 of the adder, above the
-branch that enters this wrapper, so a wrong column count outranks a wrong-length
-channel on both paths alike. Uniform values whose own
+the gate belongs at the top of the wrapper, never the leaf adder — that
+placement is still correct for the CHANNEL gate on its own. Two other checks
+now outrank it, though, and both sit at the adder entry, above the branch
+that enters this wrapper: the scene-dimension count (#1446), and — since
+#1529 — the node-attrs gate (`validate_render_attrs`, see step 5 of "Add-Path
+Anatomy"). So a call that also trips one of those reports THAT fault first,
+not the channel one; only once both have passed does a wrong-length channel
+get reported here. This is not an accident of hoisting order: it mirrors the
+flat writer's own step ordering (node attrs at step 0a, the channel sweep at
+steps 0d–0f for Points / 0e–0h for Lines — see `geometry_writers/points.py` /
+`geometry_writers/lines.py`), so the split paths now agree
+with the flat path where, before #1529, they disagreed (a split call used to
+report the channel fault even when the flat call on the same input would
+have reported the attrs fault first). Uniform values whose own
 length can collide with the element count (an RGB(A) list/tuple, a `(k,)`
 Cholesky) are classified before slicing rather than length-tested. Lines
 additionally validate `indices` — topology before channels, as mesh validates
@@ -212,7 +279,8 @@ rejected alongside `partition=`.
 
 Write a single parent node carrying `n_additive_sublods=N` plus a global
 `position_bounds`, with one `additive_<i>/` subgroup per LOD level
-(`write_points_multi_lod` / `write_lines_multi_lod`). For lines, each subgroup
+(`write_points_multi_lod` / `write_lines_multi_lod` / `write_mesh_multi_lod`). For
+lines, each subgroup
 carries a subset of **whole** polylines with segment indices local to the
 subgroup. The returned node is the parent — the user sees one logical node and
 the viewer's progressive loader walks the subgroups.
@@ -221,13 +289,21 @@ the viewer's progressive loader walks the subgroups.
 subgroups carry none, because the loader concatenates loaded levels into one
 committed buffer), so the wrappers call `scene._notify_labels_added()` exactly as
 the flat path does — otherwise a ladder-only scene would get no hover overlay.
+MESH IS THE EXCEPTION on both counts: a mesh level re-indexes its own vertices, so
+the union index space does not exist — `write_mesh_multi_lod` refuses a labelled
+level and the adder degrades a labelled mesh to a flat leaf, so there is no
+`_notify_labels_added()` call on that path and none is needed.
 
 Unlike the partition wrapper, this one does not recurse through a leaf adder, so
 it resolves `extend_to_all` itself right before the writer call, via the shared
 `lod.group.resolve_ladder_extend_to_all` (which leaves `None` unresolved): the
 multi-LOD writers stamp that value verbatim onto the parent group AND every
 `additive_<i>/` subgroup, so an unresolved `"all"` sentinel would reach disk
-where the viewer expects a list of dimension names.
+where the viewer expects a list of dimension names. (Mesh diverges here too: it
+dispatches its structural branches BELOW the `extend_to_all` resolution — the
+partition branch needs the resolved names — so the value reaching
+`add_mesh_multi_lod_wrapper_impl` is already resolved and the shared helper would
+only re-emit the advisory.)
 
 ## Dependencies
 

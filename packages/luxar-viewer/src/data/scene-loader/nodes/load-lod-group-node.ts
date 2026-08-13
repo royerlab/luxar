@@ -417,11 +417,15 @@ export async function loadLodGroupNode(
           // (#1347): a demoted `normal`-mode level would otherwise pin its
           // coordinator state and worker-side centroids while not being drawn.
           () => ctx.releaseLazyMesh(lazyChild.path),
-          // No `hasMoreLODs` either: a mesh level is whole-node resident in one
-          // fetch, so it is complete the moment it is ready. The three that pass one
-          // are reporting an ADDITIVE ladder inside the level, which a surface
-          // cannot have.
-          undefined
+          // The same probe the other three pass, and it became load-bearing when
+          // mesh gained a reveal ladder (#1476). A lazy level is deliberately kept
+          // out of the per-slice sweep, so the registry is the ONLY thing that can
+          // advance an additive ladder inside it: it re-fires `ensureLoaded` while
+          // this reports true. Reporting `undefined` — correct while a mesh level
+          // was whole-node resident in one fetch and therefore complete the moment
+          // it was ready — would now freeze a laddered mesh level at its first
+          // patch forever, with nothing in the logs to say why.
+          () => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true
         );
       } else {
         // `canDefer` admits every LOD-capable type, so this is the lines branch.

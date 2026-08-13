@@ -1642,11 +1642,16 @@ class TestMergeOrchestrator:
         # drop only the `luxar gsplat batch-fit` prefix.
         cli_args = tokens[merge_idx:]
         # Point the (absolute) output_dir arg at the tmp dir (already is).
-        # The manifest stores the legacy spelling; the sbatch generator must
-        # emit the canonical name (the merge CLI rejects legacy spellings).
+        # The manifest stores the legacy spellings — of BOTH the recipe name and
+        # the method flag — and the sbatch generator must emit the canonical form
+        # of each, because the merge CLI rejects legacy spellings. The method half
+        # guards a runtime break: `slurm_gen` builds the flag as f"--{stored_key}",
+        # so without emit-time translation a pre-rename manifest emitted
+        # `--substitutive-method` and every Slurm merge job died on an unknown
+        # option — invisible to every unit test that did not read the sbatch line.
         assert "--recipe" in cli_args and "levels" in cli_args
         assert "substitutive" not in cli_args
-        assert "--substitutive-method" in cli_args and "kmeans-lloyd" in cli_args
+        assert "--subst-method" in cli_args and "kmeans-lloyd" in cli_args
         assert "--coarsen-dims" in cli_args and "0,1,2" in cli_args
 
         result = CliRunner().invoke(app_batch, cli_args)
@@ -1671,7 +1676,7 @@ class TestMergeOrchestrator:
             build_merge_recipe_params as _build_merge_recipe_params,
         )
 
-        with pytest.raises(typer.BadParameter, match="substitutive-method"):
+        with pytest.raises(typer.BadParameter, match="subst-method"):
             _build_merge_recipe_params(
                 {},
                 n_lods=None,
@@ -1701,10 +1706,16 @@ class TestMergeOrchestrator:
             )
 
     def test_batch_merge_invalid_method_writes_no_output(self, tmp_path: Path) -> None:
-        """An invalid --substitutive-method must fail BEFORE the streaming writer
+        """An invalid --subst-method must fail BEFORE the streaming writer
         overwrites final.gsplats.zarr — otherwise a corrected re-run (without
         --force) would silently skip the broken stub. Asserts non-zero exit AND
-        that no output file was created. Fails pre-fix (deep raise left a stub)."""
+        that no output file was created. Fails pre-fix (deep raise left a stub).
+
+        The flag SPELLING is load-bearing here even though the assertion is only
+        `exit_code != 0`: left at the pre-2026-08 `--substitutive-method`, typer
+        would reject the unknown option and the test would pass without ever
+        reaching the validation it exists to pin — green for the wrong reason.
+        """
         from typer.testing import CliRunner
 
         from luxar.cli.gsplat_ops.batch.commands import app_batch
@@ -1733,7 +1744,7 @@ class TestMergeOrchestrator:
                 str(out_dir),
                 "--recipe",
                 "levels",
-                "--substitutive-method",
+                "--subst-method",
                 "kmeans-typo",
             ],
         )
@@ -2261,7 +2272,7 @@ class TestMergeRecipeAdditiveKnobs:
         # stored (plan-time) values; CLI overrides None → use stored.
         params = _build_merge_recipe_params(
             {
-                "additive-method": "self_energy",
+                "add-method": "self_energy",
                 "breakpoints": "counts:100,500",
                 "n-lods": "5",
             },
@@ -2276,6 +2287,39 @@ class TestMergeRecipeAdditiveKnobs:
         assert params.additive_method == "self_energy"
         assert params.breakpoints == [100, 500]
         assert params.n_lods == 5
+
+    def test_pre_rename_manifest_tokens_still_resolve(self) -> None:
+        """A manifest from before the 2026-08 method-flag rename must still resolve.
+
+        The READ side of the same hazard the sbatch-emit test guards. Stored plan
+        tokens are dash-less (`substitutive-method`), and the reader now looks up
+        the new spelling — so without normalisation an in-flight batch run resumed
+        after the rename would MISS its planned methods and silently fall back to
+        the recipe defaults (`auto`), quietly doing different work than planned
+        rather than failing. Both legacy tokens are checked because the additive and
+        substitutive halves are normalised by one pass and a per-key fix would be
+        easy to apply to only one.
+        """
+        from luxar.cli.gsplat_ops.batch.recipe_args import (
+            build_merge_recipe_params as _build_merge_recipe_params,
+        )
+
+        params = _build_merge_recipe_params(
+            {
+                "additive-method": "self_energy",
+                "substitutive-method": "kmeans_lloyd",
+            },
+            n_lods=None,
+            additive_method=None,
+            breakpoints=None,
+            compression_factor=None,
+            levels=None,
+            substitutive_method=None,
+            coarsen_dims=None,
+        )
+
+        assert params.additive_method == "self_energy"
+        assert params.substitutive_method == "kmeans_lloyd"
 
     def test_build_merge_recipe_params_validation(self) -> None:
         # a bad additive method fails fast
@@ -2298,7 +2342,7 @@ class TestMergeRecipeAdditiveKnobs:
             )
 
     def test_submit_threads_additive_knobs_into_sbatch(self, tmp_path: Path) -> None:
-        """`batch-fit submit --merge-recipe stream --merge-additive-method ...`
+        """`batch-fit submit --merge-recipe stream --merge-add-method ...`
         records the knobs in the manifest and the merge sbatch invokes them."""
         import zarr
         from typer.testing import CliRunner
@@ -2337,7 +2381,7 @@ class TestMergeRecipeAdditiveKnobs:
                     "z,y,x",
                     "--merge-recipe",
                     "stream",
-                    "--merge-additive-method",
+                    "--merge-add-method",
                     "self_energy",
                     "--merge-breakpoints",
                     "energy:0.5,1.0",
@@ -2345,10 +2389,10 @@ class TestMergeRecipeAdditiveKnobs:
             )
         assert res.exit_code == 0, res.output
         manifest = load_manifest(out)
-        assert manifest.merge_recipe_args.get("additive-method") == "self_energy"
+        assert manifest.merge_recipe_args.get("add-method") == "self_energy"
         assert manifest.merge_recipe_args.get("breakpoints") == "energy:0.5,1.0"
         script = generate_merge_sbatch(manifest, "")
-        assert "--additive-method self_energy" in script
+        assert "--add-method self_energy" in script
         assert "--breakpoints energy:0.5,1.0" in script
 
     def test_submit_rejects_malformed_merge_breakpoints(self, tmp_path: Path) -> None:

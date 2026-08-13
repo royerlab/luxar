@@ -12,6 +12,7 @@ carries across, and what it refuses before it deletes anything.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -33,6 +34,26 @@ from luxar.mesh.interop.tests._synthetic import (
 
 runner = CliRunner()
 GT = make_ground_truth()
+
+_ANSI = re.compile(r"\x1b\[[0-9;:]*[A-Za-z]")
+
+
+def _plain(text: str) -> str:
+    """CLI output as flat text: no ANSI codes, no wrap-induced line breaks.
+
+    Rich renders an error panel with colour and hard-wraps it to the console
+    width, and it decides whether to colourise from the *environment* — off
+    under a plain pytest run, on when something sets `FORCE_COLOR` (as CI
+    does). So `"--subst-method cluster" in result.output` is environment-
+    dependent: locally the flag arrives intact, in CI it arrives as
+    ``\\x1b[1;36m-\\x1b[0m\\x1b[1;36m-subst\\x1b[0m…``.
+
+    A POSITIVE assertion against raw output therefore fails only in CI — and,
+    worse, a NEGATIVE one ("this flag is not mentioned") passes everywhere for
+    the wrong reason, because the escape codes guarantee no match. Normalise
+    before asserting either way.
+    """
+    return re.sub(r"\s+", " ", _ANSI.sub("", text))
 
 
 @pytest.fixture(scope="module")
@@ -352,8 +373,8 @@ class TestMeshLod:
     ) -> None:
         """`--overwrite` used to delete the destination before validating anything.
 
-        So `--method qem` (a real name, not yet a real tier) removed the output
-        and only then exited 1, having written nothing in its place.
+        So `--subst-method qem` (a real name, not yet a real tier) removed the
+        output and only then exited 1, having written nothing in its place.
         """
         from luxar.cli.mesh_ops.lod_commands import run_lod
 
@@ -374,6 +395,69 @@ class TestMeshLod:
                 overwrite=True,
             )
         assert (out / "keepme.txt").read_text() == "previous output"
+
+    def test_the_renamed_method_flag_works_and_the_old_one_points_at_it(
+        self, tmp_path: Path
+    ) -> None:
+        """`--method` → `--subst-method` (2026-08), with a pointer for the old one.
+
+        Both halves are asserted because either alone is satisfiable by a mistake:
+        the pointer without the new flag means nothing works, and the new flag
+        without the pointer leaves `-m qem` scripts to fail later against the
+        additive flag `-m` would name should mesh gain an additive ordering knob.
+
+        BOTH former spellings are exercised. `-m` was a real short form here (unlike
+        on `gsplat lod`, where it survived the rename), so declaring only `--method`
+        on the hidden legacy option sends `-m cluster` to typer's bare "No such
+        option: -m" — no replacement, no value carried, which is exactly what the
+        pointer exists to avoid.
+        """
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+
+        ok = runner.invoke(
+            app,
+            [
+                "mesh",
+                "lod",
+                str(source),
+                str(tmp_path / "new.luxar.zarr"),
+                "--subst-method",
+                "cluster",
+            ],
+        )
+        assert ok.exit_code == 0, ok.output
+        assert (
+            LuxarScene.load(tmp_path / "new.luxar.zarr").get_node_metadata("surf")[
+                "kind"
+            ]
+            == "lod"
+        )
+
+        for spelling, stem in (("--method", "old"), ("-m", "old_short")):
+            old = runner.invoke(
+                app,
+                [
+                    "mesh",
+                    "lod",
+                    str(source),
+                    str(tmp_path / f"{stem}.luxar.zarr"),
+                    spelling,
+                    "cluster",
+                ],
+            )
+            assert old.exit_code != 0
+            pointer = _plain(old.output)
+            assert "--subst-method cluster" in pointer, pointer
+            # A bare "No such option" would also be a non-zero exit, so assert the
+            # replacement AND that typer never got to reject the flag itself.
+            assert "No such option" not in pointer, pointer
+            # The pointer must NOT send a mesh user to `--add-method`: that is the
+            # gsplat replacement for the bare flag, and mesh's bare `--method` was
+            # the substitutive one. Asserted on the normalised text, or Rich's
+            # escape codes make the absence unfalsifiable — see `_plain`.
+            assert "--add-method" not in pointer, pointer
+            assert not (tmp_path / f"{stem}.luxar.zarr").exists()
 
     def test_overwrite_DOES_replace_an_existing_output(self, tmp_path: Path) -> None:
         # The twin of the test above, and the one that keeps the deletion honest:
@@ -1371,3 +1455,38 @@ class TestMeshLodOutputPaths:
             _run(run_lod, source, source / "nested", overwrite=True)
         assert not (source / "nested.luxar.zarr").exists()
         assert LuxarScene.load(source).get_mesh("surf").faces.shape[0] > 0
+
+
+def test_every_method_named_in_the_help_EXAMPLES_is_a_real_method() -> None:
+    """A copy-pasteable example must not name a method the command rejects.
+
+    `luxar mesh lod --help` advertised `--subst-method qem`, and
+    `MESH_SUBSTITUTIVE_METHODS` is `{"auto", "cluster"}` — so the one example a
+    user is most likely to copy failed with a validation error. `qem` is a real
+    algorithm the docs discuss as a possible second tier (#1348); it is simply not
+    implemented, and the example outlived the plan.
+
+    Derived from the docstring rather than pinning the current text, so the
+    example set can grow freely and only an INVALID method fails. The help text is
+    the one place a wrong method name costs a user a round trip instead of a type
+    error, which is why it gets a test and the prose does not.
+    """
+    from luxar.cli.mesh_ops.lod_commands import lod_command
+    from luxar.core.group.lod.group import MESH_SUBSTITUTIVE_METHODS
+
+    # `lod_command`, not `run_lod`: typer renders help from the COMMAND callback's
+    # docstring, and that is where the examples live. Reading the wrong one made
+    # the regex match nothing — which the emptiness guard below caught rather
+    # than letting `set() - valid` pass as "no invalid methods".
+    #
+    # `[\s=]+`, not `\s+`: `--subst-method=qem` is the same command line, and with
+    # a space-only pattern it slips past a growing examples block unseen (the
+    # emptiness guard only catches it while it is the ONLY example).
+    doc = lod_command.__doc__ or ""
+    named = set(re.findall(r"--subst-method[\s=]+(\S+)", doc))
+    assert named, "no --subst-method example found — did the examples block move?"
+    invalid = named - set(MESH_SUBSTITUTIVE_METHODS)
+    assert not invalid, (
+        f"`luxar mesh lod --help` shows --subst-method {sorted(invalid)}, which the "
+        f"command rejects (valid: {sorted(MESH_SUBSTITUTIVE_METHODS)})"
+    )

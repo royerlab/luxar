@@ -175,7 +175,7 @@ time, chosen by how much of the screen the object covers.
 
 Takes an input scene and an output scene, plus `-L/--levels` (default 3),
 `-K/--compression-factor` (default 4 — level *i* targets `V / K**i` vertices),
-`--node`, `--method` and `--overwrite`. The output path is normalized to the
+`--node`, `--subst-method` and `--overwrite`. The output path is normalized to the
 canonical `<stem>.luxar.zarr`, so `-o out` writes `out.luxar.zarr`; that
 normalized path is what `--overwrite` replaces and what the same-path guard
 compares against.
@@ -185,9 +185,15 @@ there is no standalone mesh format, so the only sink for a mesh is a `.luxar.zar
 node is optional when the scene holds exactly one mesh (what `luxar mesh import`
 produces); with several, naming one is required rather than guessed at.
 
-`--method` takes `auto` or `cluster` — **not** the `gsplat lod` methods. Those reduce a
-Gaussian mixture, which a surface is not; a mesh is decimated instead. `auto` resolves
-to `cluster` today.
+`--subst-method` shares its **name** with `luxar gsplat lod` — on both commands it selects
+the substitutive, level-replacing reduction — but **not its values**: this one takes `auto`
+or `cluster`, because a mesh is decimated where a gsplat level reduces a Gaussian mixture,
+which a surface is not. `auto` resolves to `cluster` today.
+
+The flag was called `--method` before August 2026, and `-m` was its short form. Both are
+gone: `-m` is reserved for the additive ordering it already names on `gsplat lod`. Either
+old spelling exits with a pointer naming the replacement and carrying your value, rather
+than silently doing something else.
 
 Levels that cannot reduce the surface are dropped, so a small mesh may come back with
 fewer than `--levels`; one that cannot be reduced at all comes back as a plain leaf

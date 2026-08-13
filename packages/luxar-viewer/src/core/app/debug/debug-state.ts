@@ -64,7 +64,14 @@ export interface MeshNodeInfo {
   name: string;
   /** Triangles in the current draw range — what is on screen, not what was loaded. */
   triangleCount: number;
-  /** Vertices bound on the geometry. Invariant across slices; the pick-id domain. */
+  /**
+   * Vertices committed to the node. Invariant across slices; the pick-id domain.
+   *
+   * Read from `userData.committedVertexCount` when stamped, NOT from
+   * `position.count` — that attribute is capacity-sized for a reveal ladder
+   * (#1521), so it reports the ladder's LIFETIME total from level 0 on rather
+   * than what has actually committed.
+   */
   vertexCount: number;
   visible: boolean;
   /** `true` when shading from screen-space derivatives instead of stored normals. */
@@ -350,10 +357,17 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       // `flat_patch` node carried `LUXAR_MESH_FLAT_NORMAL` in `defines` and still
       // reported `flatNormal: false`.
       const hasDefine = (flag: string): boolean => !!defines && flag in defines;
+      // Prefer the commit's own stamp over `position.count`, which is
+      // capacity-sized for a reveal ladder (#1521) and would otherwise report the
+      // ladder's lifetime total from level 0 on. Falls back to `position.count`
+      // for a node that never committed — the placeholder, or a unit-test
+      // geometry built without going through `commitMeshGeometry`.
+      const committedVertexCount = (object.userData as { committedVertexCount?: number })
+        .committedVertexCount;
       meshNodes.push({
         name: object.name || 'unnamed',
         triangleCount,
-        vertexCount: geometry?.getAttribute('position')?.count ?? 0,
+        vertexCount: committedVertexCount ?? geometry?.getAttribute('position')?.count ?? 0,
         visible: object.visible,
         flatNormal: hasDefine('LUXAR_MESH_FLAT_NORMAL'),
         alphaCutout: hasDefine('LUXAR_MESH_ALPHA_CUTOUT'),

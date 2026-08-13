@@ -995,6 +995,43 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     expect(ln2.hasMoreLODs!()).toBe(false);
   });
 
+  it('surfaces the progressive MESH loader hasMoreLODs on the lazy level (reveal advances)', async () => {
+    // The composed shape for mesh: a substitutive level that is ITSELF a reveal
+    // ladder. A lazy lod child is deliberately never registered into the
+    // per-slice sweep, so the registry's `hasMoreLODs` probe is the only thing
+    // that re-fires `ensureLoaded` to walk the remaining sub-LODs. This branch
+    // used to pass `undefined` — correct while a mesh level was whole-node
+    // resident and therefore complete the moment it was ready, and silently
+    // wrong the day mesh gained a ladder: the level would freeze at its first
+    // patch with nothing in the logs to say why.
+    const loaderStub = { hasMoreLODs: true };
+    loadMeshNodeCheapMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+      return { placeholder: mesh, loader: loaderStub as never };
+    });
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const finest = makeMeshChildNode('/lod/child_1', 1.0);
+    finest.attrs.n_additive_sublods = 4;
+    const node = makeLodGroupNode([makeChildNode('/lod/child_0', 0), finest], {
+      default_level: 0,
+      display_type: 'mesh',
+    });
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const meshChild = reg.get('/lod')!.children[1];
+    expect(typeof meshChild.hasMoreLODs).toBe('function');
+    // A LIVE probe, not a snapshot taken at attach time: it has to track the
+    // loader as the reveal streams, or the registry stops re-firing one pass early.
+    expect(meshChild.hasMoreLODs!()).toBe(true);
+    loaderStub.hasMoreLODs = false;
+    expect(meshChild.hasMoreLODs!()).toBe(false);
+  });
+
   it('defers a mesh level through the cheap/expensive split (the fourth dispatch branch)', async () => {
     // The dispatch throws for any deferrable type it does not name, so this is
     // the positive control the release test below needs — without it, a broken
@@ -1063,12 +1100,17 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     expect(ln.failedTick).toBeUndefined();
   });
 
-  it('gives a deferred mesh level NO hasMoreLODs (a surface has no additive ladder)', async () => {
-    // The other half of the mesh row's asymmetry: the three emissive types pass
-    // a `hasMoreLODs` probe because their finest level may itself be additively
-    // laddered. A mesh level is whole-node resident in one fetch, so it is
-    // complete the moment it is ready, and an additive prefix of an index buffer
-    // is a holed surface rather than a coarse one.
+  it('a deferred mesh level with NO ladder reports hasMoreLODs false, not undefined', async () => {
+    // NARROWED, not deleted (#1476). This used to assert `undefined` — the mesh
+    // row's asymmetry, on the grounds that a surface could not have an additive
+    // ladder at all. Mesh has one now (a reveal, not a level of detail), so the
+    // probe is passed like every other type and what survives is the weaker,
+    // still-meaningful claim: an UNLADDERED level reports no further work, so the
+    // registry does not re-fire `ensureLoaded` for a level that is already whole.
+    //
+    // The default `loadMeshNodeCheapMock` returns a loader with no `hasMoreLODs`
+    // property at all — a plain `MeshWholeNodeLoader` — which is exactly the
+    // structural probe's negative case.
     attachStubChildren();
     const reg = makeReg();
     const ctx = makeCtx(reg);
@@ -1078,7 +1120,9 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     );
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
-    expect(reg.get('/lod')!.children[1].hasMoreLODs).toBeUndefined();
+    const meshChild = reg.get('/lod')!.children[1];
+    expect(typeof meshChild.hasMoreLODs).toBe('function');
+    expect(meshChild.hasMoreLODs!()).toBe(false);
   });
 });
 
