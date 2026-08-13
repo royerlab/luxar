@@ -467,9 +467,10 @@ def _was_supplied(ctx: Optional[typer.Context], name: str) -> bool:
     the user most likely to be surprised (someone spelling out a default).
 
     Click records where each parameter's value came from, which is the real signal.
-    `ctx` is optional so `run_lod` and the unit tests can call the gate directly;
-    with no context every knob reads as supplied, which is the safe direction — a
-    direct caller passing a knob means it, having no defaults to fall back on.
+    `ctx` is optional because the gate is also called without one (from `run_lod`,
+    which has no parser to ask, and from the unit tests); with no context every
+    knob reads as supplied, which is the safe direction — a direct caller passing a
+    knob means it, having no defaults to fall back on.
     """
     if ctx is None:
         return True
@@ -502,6 +503,13 @@ def _reject_cross_recipe_flags(
     Checked here, before ``run_lod`` opens anything, so a rejected invocation
     cannot have deleted an existing output — the same pre-deletion discipline the
     method validation follows.
+
+    ``run_lod`` calls this too, with the three ``*_given`` flags off: those three
+    are the substitutive knobs, which it takes as PLAIN (non-optional) arguments
+    and so cannot tell apart from their defaults. The five reveal-only ones it can
+    — they are ``Optional`` and default to ``None`` — so a direct caller who passes
+    one under ``recipe='levels'`` gets the same refusal a CLI user does, instead of
+    a substitutive ladder built as if the argument had never been typed.
     """
     if recipe not in MESH_LOD_RECIPES:
         raise typer.BadParameter(
@@ -706,8 +714,10 @@ def _build_ladder_specs(
             spatial_dims=spatial_dims,
             ndim=ndim,
         )
-        # A COPY: the resolver pops as it validates, and the spec still has to
-        # reach `add_mesh` whole.
+        # A COPY: this call only validates, and the same spec still has to reach
+        # `add_mesh` whole. (The resolver copies before it pops, so the copy is
+        # insurance rather than load-bearing — the substitutive arm below relies
+        # on exactly that property and passes its spec straight in.)
         resolve_additive_axis_mesh(dict(additive_spec))
         return None, additive_spec
 
@@ -760,6 +770,27 @@ def run_lod(
     # `--overwrite` deletion — that ordering is correct today (specs are built
     # ~100 lines before the `rmtree`) and this keeps it from becoming load-bearing.
     _require_known_recipe(recipe)
+    # The rest of that contract: the five reveal-only arguments do not reach the
+    # substitutive arm, which reads none of them, so under `recipe='levels'` a
+    # direct `run_lod(recipe="levels", n_lods=6)` would build a 3-level decimation
+    # and say nothing — the silent drop `--recipe` exists to prevent, reachable
+    # again one layer below the flag surface. Same gate as the CLI's, so the
+    # refusal and its "use -L/--levels instead" pointer are the same sentence.
+    _reject_cross_recipe_flags(
+        recipe=recipe,
+        add_method=add_method,
+        n_lods=n_lods,
+        counts=counts,
+        reveal_centre=reveal_centre,
+        spatial_dims=spatial_dims,
+        # The substitutive knobs are plain arguments here, not `Optional` ones, so
+        # "did the caller pass -L?" is unanswerable — left off rather than guessed
+        # at from the value, which is exactly the inference `_was_supplied` exists
+        # to avoid.
+        levels_given=False,
+        compression_given=False,
+        subst_method_given=False,
+    )
 
     from luxar import LuxarZarrCompiler
 

@@ -1895,6 +1895,69 @@ class TestMeshLodRevealRecipe:
             )
         assert (out / "keep.txt").exists(), "the output was deleted before validation"
 
+    @pytest.mark.parametrize(
+        ("knob", "value"),
+        [
+            ("n_lods", 6),
+            ("add_method", "radial"),
+            ("counts", "100,300"),
+            ("reveal_centre", "0,0"),
+            ("spatial_dims", "0,1"),
+        ],
+    )
+    def test_a_reveal_ARGUMENT_under_recipe_levels_is_refused_by_run_lod_itself(
+        self, tmp_path: Path, knob: str, value: object
+    ) -> None:
+        """The gate one layer below the flag surface.
+
+        `run_lod` is directly callable, and the substitutive arm reads none of the
+        five reveal-only arguments — so `run_lod(recipe="levels", n_lods=6)` built
+        a 3-level decimation and said nothing, which is precisely the silent drop
+        `--recipe` exists to prevent. The CLI cannot reach this (its own gate
+        catches the combination first), so nothing else covers it.
+
+        The existing output must survive too: `--overwrite` deletes it before the
+        write, so a refusal that arrived later would cost a store.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+        out.mkdir()
+        (out / "keep.txt").write_text("the previous output")
+
+        with pytest.raises(typer.BadParameter) as excinfo:
+            run_lod(
+                input_path=source,
+                output_path=out,
+                node_name=None,
+                levels=3,
+                compression_factor=4,
+                method="auto",
+                overwrite=True,
+                recipe="levels",
+                **{knob: value},
+            )
+        assert "--recipe reveal" in _plain(str(excinfo.value))
+        assert (out / "keep.txt").exists(), "the output was deleted before validation"
+
+    def test_SENSITIVITY_recipe_levels_still_runs_with_no_reveal_arguments(
+        self, tmp_path: Path
+    ) -> None:
+        """The control for the gate above: it must refuse the arguments, not the arm.
+
+        A check that raised unconditionally would pass every row above while
+        breaking the command's whole default path.
+        """
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+
+        assert len(_run(run_lod, source, out)) >= 2
+
 
 class TestMeshLodRecipeGateThroughTheRealCLI:
     """The cross-recipe gate driven by `CliRunner`, not by synthetic booleans.
