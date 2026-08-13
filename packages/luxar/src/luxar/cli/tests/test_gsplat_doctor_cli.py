@@ -1,0 +1,75 @@
+"""``luxar gsplat doctor`` at the CLI boundary.
+
+Lives here rather than beside the doctor's own tests because the layering
+contract forbids a domain package importing ``luxar.cli``. What is checked here
+is only what the command adds over :func:`~luxar.gsplats.doctor.diagnose_store`:
+the exit code (so it can gate a pipeline), and the JSON report.
+"""
+
+from __future__ import annotations
+
+import json
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import zarr
+from typer.testing import CliRunner
+
+from luxar.cli import app
+
+
+def _partition_without_split_planes(tmp: Path) -> Path:
+    """A real BSP partition on disk with its ``bsp_tree`` stripped — i.e. exactly
+    what any tiled fit written before the planes were recorded looks like."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+    rng = np.random.default_rng(4)
+    n = 400
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    node = GSplatData(
+        centers=(rng.random((n, 3)) * 100).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, size=(n,)).astype(np.float32),
+        cholesky_factors=chol,
+    ).to_spatial_partition(max_elements=80)
+    path = tmp / "part.gsplats.zarr"
+    write_gsplats_tree(path, node)
+
+    root = zarr.open_group(str(path), mode="r+")
+    del root.attrs["bsp_tree"]
+    zarr.consolidate_metadata(root.store)
+    return path
+
+
+def test_doctor_exits_nonzero_while_a_problem_stands() -> None:
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_without_split_planes(Path(tmp))
+
+        result = runner.invoke(app, ["gsplat", "doctor", str(path), "--no-info"])
+        assert result.exit_code == 1, result.stdout
+        assert "no split planes" in result.stdout
+
+        fixed = runner.invoke(
+            app, ["gsplat", "doctor", str(path), "--no-info", "--fix"]
+        )
+        assert fixed.exit_code == 0, fixed.stdout
+
+        again = runner.invoke(app, ["gsplat", "doctor", str(path), "--no-info"])
+        assert again.exit_code == 0, again.stdout
+        assert "No problems found" in again.stdout
+
+
+def test_doctor_writes_a_json_report() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_without_split_planes(Path(tmp))
+        out = Path(tmp) / "report.json"
+        CliRunner().invoke(
+            app, ["gsplat", "doctor", str(path), "--no-info", "--json", str(out)]
+        )
+        payload = json.loads(out.read_text())
+        assert payload["healthy"] is False
+        assert payload["findings"][0]["check"] == "split-planes"
+        assert payload["findings"][0]["fixable"] is True

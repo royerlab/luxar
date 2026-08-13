@@ -154,12 +154,18 @@ LOD wrapper builders:
   a wrong-length `labels` against the FULL element count before a partition / LOD
   decomposition. Needed precisely because `slice_optional_array` passes a mis-sized
   list through unchanged, which would hand every part / level the same unsliced
-  list and write labels into the wrong slots. No wrapper impl calls it directly
-  any more — it is reached from `validate_gsplats_channels_before_split`, the one
-  geometry whose channel validator has no labels channel; Points and Lines get
-  the same check from the writer sweep their gates delegate to. Either way it
-  belongs to a wrapper's pre-split gate and never to the top of a leaf adder, so
-  the plain-leaf gate order stays exactly as it was. Multi-CHILD gsplats wrappers
+  list and write labels into the wrong slots. Two callers reach it directly:
+  `validate_gsplats_channels_before_split` (the one geometry whose channel
+  validator has no labels channel; Points and Lines get the same check from
+  the writer sweep their gates delegate to instead), and
+  `gsplats_pipeline.from_io._validate_labelled_leaf_length`, called from the
+  graft door's one-flat-leaf label gate (#1505) — a deliberate EXCEPTION: that
+  call site is a pre-WRAPPER gate rather than a pre-split one (a bare-leaf
+  graft has no wrapper and no split at all) and it DOES change which fault a
+  multi-fault call reports, the same trade `validate_points_channels_before_split`
+  sanctions below for "a NaN position, an unknown attr". Every other caller's
+  check belongs to a wrapper's pre-split gate and never to the top of a leaf
+  adder, so the plain-leaf gate order stays exactly as it was. Multi-CHILD gsplats wrappers
   cannot use it at all: a multi-level substitutive `lod_group=` on
   `add_gsplats_from_data`, and any `graft_gsplat_node` subtree holding more than
   one leaf (`kind=lod` / `kind=partition`), REFUSE `labels=` / `image_labels=`
@@ -193,10 +199,10 @@ LOD wrapper builders:
   fault on the plain-leaf path — both refuse, neither writes. The scene-DIMENSION
   count is one exception: since #1446 the adders check it above their split
   branches, so it precedes this gate on both paths and a mismatched column count
-  is reported first either way. The node-attrs check is a second exception, on
-  Points/Lines only: since #1529 `validate_render_attrs` also runs at the adder
-  entry, above this gate, so an unknown/reserved attr wins there too — GSplats
-  has no such entry gate, so an attrs fault there still loses to this one.
+  is reported first either way. The node-attrs check is a second exception:
+  since #1529 (Points/Lines) and #1534 (Mesh, GSplats) `validate_render_attrs`
+  also runs at every adder's entry, above this gate, so an unknown/reserved
+  attr wins there too on all four geometry types now.
   Same placement rule as the labels guard (first statement of the wrapper impl,
   never a leaf adder). Labels, then image labels, come last, in that order, as in
   the flat write: for Points and Lines via `validate_labels_for_writing` then

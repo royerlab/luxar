@@ -73,8 +73,10 @@ data/
 │   ├── lod-refinement.ts                # Sequential LOD-tier refinement helpers
 │   └── projection.ts                    # createEmptyGSplatsData only (nD→3D math lives in workers/data-worker/projection/gsplats.ts)
 │
-├── mesh/                          # Mesh geometry — whole-node loader (no spatial index, no *additive* ladder by design — substitutive levels are kind=lod siblings; MESH_NODE_SPEC §7/§9)
+├── mesh/                          # Mesh geometry — whole-node loader (no spatial index by design; a mesh may carry an additive ladder that REVEALS a growing surface rather than coarsening it — substitutive levels are kind=lod siblings; MESH_NODE_SPEC §7/§9)
 │   ├── handler.ts                        # Per-kind load + stage wiring for updateView (`loadAndStage` + its handler ctx)
+│   ├── lod-refinement.ts                 # Drains the reveal ladder a level per pass after level 0 commits (wraps scene-loader/progressive/refinement.ts)
+│   ├── mesh-progressive-loader.ts        # Reveal-ladder composite — wraps one whole-node loader per `additive_<i>` level (view-independent, no SliceCache)
 │   ├── mesh-whole-node-loader.ts         # Whole-node loader — loads the entire mesh at once (`ordering: 'none'`, no chunk index)
 │   ├── preflight.ts                      # Metadata-only Stage 1 (shapes, dtypes, encodings, attribute presence)
 │   ├── projection.ts                     # nD → 3D: extract_3d_positions + whole-triangle nD cull + winding post-pass
@@ -445,7 +447,10 @@ Scene Assembly
 ### Mesh: the whole-node loader
 
 Three of the four geometry types stream: they carry a chunk-bounds spatial index, fetch
-the chunks a query intersects, and grow the visible set incrementally. **Mesh does not.**
+the chunks a query intersects, and grow the visible set incrementally. **Mesh does not
+stream per slice** — a laddered mesh still grows its _loaded_ set level-by-level as it
+loads, view-independently rather than from a spatial query; what is _drawn_ is then
+decided by the slice exactly as for an unladdered mesh (`mesh-progressive-loader.ts`).
 Its loader (`data/mesh/`) is whole-node — `ordering: 'none'`, no spatial index — and
 that is the correct shape rather than a gap (`docs/specs/MESH_NODE_SPEC.md` §7, §9): a
 surface is CONNECTED, so a chunk of triangles is not independently meaningful, and the
@@ -1344,7 +1349,7 @@ _For implementation details, see the source files in this directory._
 - [loaders](./loaders/README.md) — Unified loader infrastructure
   (`SpatialQueryBuilder`, `RangeLoader`, tolerance).
 - [mesh](./mesh/README.md) — Mesh whole-node loader, metadata preflight,
-  whole-triangle nD cull.
+  whole-triangle nD cull, reveal-ladder progressive loader.
 - [nav](./nav/) — Multi-strategy directory navigation
   (`DirectoryNavigator`).
 - [points](./points/README.md) — Points spatial-index loader and
