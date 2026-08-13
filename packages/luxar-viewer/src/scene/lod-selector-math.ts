@@ -95,8 +95,11 @@ export function projectBoxDiagonalPx(
  * a line, and for a line the faithful "portion of the screen occupied" is its
  * linear span, not the vanishing area. The fallback is a continuous RAMP over
  * ``[0, this]`` (see the function doc), not a cliff.
+ *
+ * Exported so tests pin the ramp against the real constant (and so the
+ * ``@link`` references above resolve in TypeDoc).
  */
-const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
+export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
 
 /**
  * Project a world-space :type:`BoundingBox` through the camera and return the

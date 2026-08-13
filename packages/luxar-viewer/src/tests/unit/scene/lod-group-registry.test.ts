@@ -29,6 +29,7 @@ import {
   type LODGroupChild,
   type LODGroupEntry,
 } from '../../../scene/lod-group-registry';
+import { DEGENERATE_RECT_HALF_EXTENT } from '../../../scene/lod-selector-math';
 import {
   calculateCameraDistance,
   type BoundingBox,
@@ -351,15 +352,16 @@ describe('projectBoxDiagonalPx', () => {
       //   thin = floor exactly:    max(0.001, 1·0)   = 0.001 — meets the
       //     area product with NO jump (the ramp has decayed to zero);
       //   and values sampled across the floor differ smoothly.
+      const floor = DEGENERATE_RECT_HALF_EXTENT;
       const mk = (halfH: number): BoundingBox => ({
         min: { x: -1, y: -halfH, z: 0 },
         max: { x: 1, y: halfH, z: 0 },
       });
-      expect(projectBoxAreaFraction(mk(0.0005), identityCamera())).toBeCloseTo(0.5, 6);
-      expect(projectBoxAreaFraction(mk(0.001), identityCamera())).toBeCloseTo(0.001, 6);
+      expect(projectBoxAreaFraction(mk(floor / 2), identityCamera())).toBeCloseTo(0.5, 6);
+      expect(projectBoxAreaFraction(mk(floor), identityCamera())).toBeCloseTo(floor, 6);
       // Just below vs just above the floor: both ~the area product — smooth.
-      const below = projectBoxAreaFraction(mk(0.00099), identityCamera());
-      const above = projectBoxAreaFraction(mk(0.00101), identityCamera());
+      const below = projectBoxAreaFraction(mk(floor * 0.99), identityCamera());
+      const above = projectBoxAreaFraction(mk(floor * 1.01), identityCamera());
       expect(Math.abs(below - above)).toBeLessThan(0.02);
     });
 
