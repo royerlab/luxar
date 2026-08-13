@@ -591,7 +591,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Mesh is the surface geometry type: ``vertices`` in nD plus a ``faces``
         triangle-index array. Unlike Points / Lines / GSplats it carries no
         per-element size (a triangle's extent comes from its own vertices), and
-        it has no spatial index or LOD in v1 — the loader is whole-node.
+        it has no spatial index — the loader is whole-node. This call writes one
+        leaf; LOD is layered on by the caller, not by this method — see
+        :meth:`write_mesh_multi_lod` (additive reveal levels) below.
 
         Scalar convenience: ``colors`` accepts a broadcast RGB(A) tuple/list, and
         ``scalars`` a single value, exactly as the sibling writers do.

@@ -64,7 +64,7 @@ table), and pretending otherwise would produce a worse design.
 | GPU storage | ❌ No | Indexed triangles, not instanced quads — see §2.1 |
 | Per-element extent | ❌ No | A mesh has no `radii`/`widths`/`amplitudes` analog — see §2.2 |
 | Depth sorting | ⚠️ Partial | Registration/worker/kernel reused; the APPLY is per-triangle index permutation, not per-instance — see §6.3 |
-| LOD (substitutive) | ✅ Yes | Levels are decimated surfaces — see §9. The ADDITIVE ladder stays excluded |
+| LOD (substitutive) | ✅ Yes | Levels are decimated surfaces — see §9. The additive ladder stays excluded *as a LOD*; the §9.1 reveal ships |
 | `kind=partition` | ⚠️ Partial | Supported via `add_mesh(partition=…)`, but a part is a **re-indexing, not a slice** of the parent's arrays (with vertices duplicated across the cut) — see §9.2 |
 
 ### 2.1 The storage layer does not transfer
@@ -1205,8 +1205,10 @@ validation. **First** the metadata preflight (§3.5 Stage 1) runs on the node at
 byte budget, the §3.2 shape cross-checks, and `normal_dims` well-formedness — **before any chunk is
 fetched**, so an oversized or malformed declaration fails with a `LoaderError` without allocating.
 **Then**, on a store that clears preflight, it fetches `vertices`, `faces` and the optional attribute
-arrays in full, decodes, and holds them. No spatial index, no progressive refinement, no chunk-bounds
-query. Immediately after decode the arrays get §3.5's Stage 2 post-decode value checks (materialized
+arrays in full, decodes, and holds them. No spatial index and no chunk-bounds query: one leaf loads
+whole. The only progressive path is §9.1's reveal ladder, which is one such whole-node load per
+`additive_<i>` level (`data/mesh/mesh-progressive-loader.ts`, drained by `data/mesh/lod-refinement.ts`)
+rather than a partial load of any one of them. Immediately after decode the arrays get §3.5's Stage 2 post-decode value checks (materialized
 lengths, face indices in `[0, V)`, CSR offsets), before anything reaches the §5.4 kernels.
 
 Justification: meshes in this domain are typically ≤ a few million triangles and fit comfortably; the
@@ -1323,8 +1325,9 @@ name here as a pointer to the subsystem rather than to a live file.
       **Superseded:** the exclusion itself has since been lifted (§9) — mesh's `lod`
       capability is now `true` for the SUBSTITUTIVE flavour, so the capability-driven guard
       passes for mesh and the test that pinned the refusal is now
-      `test_mesh_under_a_lod_group_is_accepted`. The ADDITIVE prefix ladder is still refused,
-      by `_reject_structure_params` rather than by this guard.
+      `test_mesh_under_a_lod_group_is_accepted`. An ADDITIVE ladder over an *arbitrary* order is
+      still refused — not by this guard, but by `MESH_ADDITIVE_METHODS` naming `radial` as the
+      only accepted method (a reveal ladder is accepted; see §9.1).
 - [x] `io/_compiler/finalize/lod_backfill.py` — **already handled by #1079.** `resolve()` now tests
       `t in GEOMETRY_TYPES` instead of a hardcoded tuple, so `mesh` is recognised as a leaf the moment
       it enters the contract, with no edit here. All four child-iteration sites also moved to
@@ -1531,9 +1534,10 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 > - The `add_mesh` refusal message no longer justifies refusing substitutive LOD with
 >   additive's reason. It used to read "the additive/substitutive ladder reduces independent
 >   elements (a surface is connected)" — true of the additive flavour, false of the
->   substitutive one. Substitutive levels have since **landed**, so only the additive arm is
->   still refused, with its own reason (`_reject_structure_params` in
->   `packages/luxar/src/luxar/core/group/adders/mesh.py`).
+>   substitutive one. Substitutive levels have since **landed**, so only an additive ladder
+>   over an *arbitrary* order is still refused, with its own reason (`MESH_ADDITIVE_METHODS`
+>   naming `radial` as the sole accepted method, in
+>   `packages/luxar/src/luxar/core/group/lod/mesh.py`).
 > - §6.3's translucent-`normal` warning was implemented in `commit-mesh-geometry.ts`, and has
 >   since been **removed** — not regressed. It existed as the named mitigation for the
 >   per-triangle-depth-sort exclusion, and that exclusion no longer exists (§6.3, and the note
@@ -1542,7 +1546,7 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 
 | Excluded | Why | Natural follow-up |
 |---|---|---|
-| **Additive LOD ladder** | A prefix of an index buffer is a **holed** surface, not a coarse one. That is the difference from a splat prefix, which genuinely is a sparser approximation of the same field — so the ladder degrades gracefully there and produces a *wrong picture* here. The legitimate refinement scheme is a progressive mesh (base mesh + vertex-split records), which cannot use the prefix-count ladder at all: different data structure, not a widening. | Not a LOD in any form. A deliberate progressive-draw effect IS worth exposing, and has shipped for the other three types as the `radial` ordering — see **§9.1**. It uses the `additive` code path deliberately (only the ordering differs); what it must not inherit is the energy stamps, which one shared `REVEAL_METHODS` predicate handles |
+| **Additive LOD ladder** | A prefix of an index buffer is a **holed** surface, not a coarse one. That is the difference from a splat prefix, which genuinely is a sparser approximation of the same field — so the ladder degrades gracefully there and produces a *wrong picture* here. The legitimate refinement scheme is a progressive mesh (base mesh + vertex-split records), which cannot use the prefix-count ladder at all: different data structure, not a widening. | Not a LOD in any form. A deliberate progressive-draw effect IS worth exposing, and has shipped for all four types as the `radial` ordering — see **§9.1**. It uses the `additive` code path deliberately (only the ordering differs); what it must not inherit is the energy stamps, which one shared `REVEAL_METHODS` predicate handles |
 | **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** — a condition that is now *measured* rather than asserted: `processMeshData` emits a `log.info` for a node whose hidden dims include a continuous one (`noticeContinuousHiddenDim` in `data/scene-loader/process/data-processor-mesh.ts`), naming each such dimension and its unit. Promote when that line starts appearing against real datasets; see TODO item 29 under "Future / Exploratory" for why the deferral is a decision rather than a backlog entry |
 | **Spatial index** | Not merely "see §7": a chunk of faces is not independently meaningful, because the index buffer references vertices anywhere in the array — so a face chunk draws only with the whole vertex buffer resident, or after the same remap/duplicate bookkeeping the partition row describes. An efficiency cliff, not an impossibility: partial loading is achievable, it just forfeits most of the bandwidth win a chunk index exists to buy. Moot in practice as well, since the 512 MiB per-node byte budget binds first (≈22.4M vertices for a 3D float32 mesh, measured), well under §7's ≤-few-million-triangle expectation. | Mirror the lines dual-index loader over faces |
 | **`volumetric` blending** | Not about opacity — about **path length**. Emission–absorption integrates κ over the distance a ray spends inside a participating medium, and a triangle is zero-thickness, so τ = 0 however translucent the surface is. The adjacent feature that DOES make sense — volume rendering bounded by a mesh's front and back faces — is a different thing entirely and is not what this excludes. | — |
@@ -1620,9 +1624,9 @@ assumes *prefix ≈ approximation* and that assumption is false for a surface.
 
 **The mechanism is one new ordering option per additive implementation.** Ordering was
 already a pluggable choice, so the method — named **`radial`** — is a single new member
-of each method registry plus a scorer. It has **shipped for GSplats, Points and Lines**
-(`-m radial` on `gsplat lod`, `additive_lod={"method": "radial"}` on `add_points` /
-`add_lines`), with `reveal_centre` / `spatial_dims` overrides. Two properties are worth
+of each method registry plus a scorer. It has **shipped for GSplats, Points, Lines and
+Mesh** (`-m radial` on `gsplat lod`, `additive_lod={"method": "radial"}` on `add_points` /
+`add_lines` / `add_mesh`), with `reveal_centre` / `spatial_dims` overrides. Two properties are worth
 stating because they are what make it read as a reveal:
 
 - the centre is the **node's own bbox centre, not the scene origin**, so a dataset far
@@ -1679,7 +1683,7 @@ immune, because membership and draw order are independent concerns.
 
 **The hard rule: a reveal ladder must NOT carry `energy_fraction_cum` stamps.**
 
-This is now **enforced by construction** for all three shipped types, not merely
+This is now **enforced by construction** for all four shipped types, not merely
 specified: `luxar.utils.lod_methods.REVEAL_METHODS` names which orderings are reveals, and
 both the gsplat ladder (`gsplats/lod/additive.py`) and the element ladder
 (`core/group/lod/group.py::additive_level_stats`) consult it and omit the stamps. The
@@ -1912,7 +1916,7 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 | Phase | Contents | Verifiable outcome |
 |---|---|---|
 | **0** ✅ *(done — §10.1)* | Single-source `GeometryKind` from the contract; collapse `LoaderRegistry`; unify the per-type pipeline; table-drive the dispatch switches | Landed as #1079 / #1099 / #1150, all behaviour-preserving. The `SceneGraphNodeType` local extension has since been deleted (#1220) — it is now plain `NodeTypeName` — so Phase 0 is fully landed |
-| **1** ✅ *(done — #1220)* | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH`) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | Landed as #1220, all in one PR: `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip tests green; a mesh child of a lod/partition group **raises** (both rejections pinned by tests). The partition half has since been **lifted** (§9.2): a mesh may now go under a `display_type='mesh'` partition group (`test_mesh_under_a_mesh_partition_group_is_allowed`), and only the mismatched-`display_type` refusal survives. **Superseded:** the lod half has since been lifted too (§9) — `_reject_specialized_parent` is deleted, mesh's `lod` capability is `true` for the SUBSTITUTIVE flavour, and the test that pinned the refusal is now `test_mesh_under_a_lod_group_is_accepted`. What survives of this item is the ADDITIVE prefix ladder refusal, which never came from this guard: it is `_reject_structure_params` in the adder |
+| **1** ✅ *(done — #1220)* | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH`) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | Landed as #1220, all in one PR: `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip tests green; a mesh child of a lod/partition group **raises** (both rejections pinned by tests). The partition half has since been **lifted** (§9.2): a mesh may now go under a `display_type='mesh'` partition group (`test_mesh_under_a_mesh_partition_group_is_allowed`), and only the mismatched-`display_type` refusal survives. **Superseded:** the lod half has since been lifted too (§9) — `_reject_specialized_parent` is deleted, mesh's `lod` capability is `true` for the SUBSTITUTIVE flavour, and the test that pinned the refusal is now `test_mesh_under_a_lod_group_is_accepted`. What survives of this item is the refusal of an ADDITIVE ladder over an *arbitrary* order, which never came from this guard: it is `MESH_ADDITIVE_METHODS` naming `radial` as the sole accepted method |
 | **2** ✅ *(done — #1232)* | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
 | **3** ✅ *(done)* | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
 | **4** ✅ *(done)* | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent. Landed as the `mesh/` material stack (4 files + `appearance.ts`), 5 codegen variants (10 snapshot files — the sixth, `mesh-pick`, arrives with picking in Phase 5, which is why §6.4 and §8 count six), and the §6.2 headlight with its compile-time stored-normal/derivative variant. Two spec refinements were forced by the implementation and are folded back into §6.2: the derivative normal is **forced** viewer-facing rather than assumed so (`cross(dFdx, dFdy)` has the sign of the fragment-space y axis, and WGSL's `dpdy` is top-down where GLSL's `dFdy` is bottom-up), and the stored normal is transformed WITHOUT three's `transformNormalToView` (whose internal `normalize` turns a legitimately zero-length normal into a whole-triangle NaN, contradicting §3.5's locally-distorted contract). The `normal`/`aScalar` attributes are bound for the node's lifetime from the metadata rather than bound/unbound per epoch — the shader variant alone stops reading them, which keeps the attribute set (and hence the WebGPU vertex layout) fixed |
