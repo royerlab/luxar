@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import { GAUSSIAN_EQUIVALENT_TRUNCATION } from '../../../../rendering/materials/_shared/falloff';
 import {
+  CAPSULE_JOINT_DEFICIT_GATE,
   CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
   type CapsuleJointLeg,
@@ -31,27 +32,34 @@ import {
   CAPSULE_LINE_PICK_VERTEX_SHADER,
 } from '../../../../rendering/picking/line/shaders-capsule';
 
-const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+/** Drop `//` and block comments so prose can never satisfy — or break — a match. */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
 
 /**
- * Comment-stripped, whitespace-FREE source — the form the vertex-surface pins
- * match on, so a WHITESPACE reformat (prettier breaking a long TSL chain)
- * cannot break them while a dropped disjunct or a flipped comparison must.
- * Same spirit as the sibling lock in `line/join-width-tsl.test.ts`.
+ * Comment-stripped, whitespace-FREE source — the form every vertex-surface pin
+ * below matches on, so a WHITESPACE reformat (prettier breaking a long TSL
+ * chain) cannot break them while a dropped disjunct, a flipped comparison or a
+ * changed threshold must. Same spirit as the sibling lock in
+ * `line/join-width-tsl.test.ts`.
  *
  * Its limits, so no one over-reads a green pin: only COMMENTS are neutralized
  * (a string literal carrying the pinned text would satisfy a pin), the
  * stripper is not string-aware (a quoted block-comment delimiter pair would
  * swallow real code), and a non-whitespace-preserving edit with identical
- * behaviour still
- * breaks a pin — hoisting `vec2 qhat = qq / ql;` in GLSL, or swapping the two
- * disjuncts, would each need the pin updated.
+ * behaviour still breaks a pin — hoisting `vec2 qhat = qq / ql;` in GLSL, or
+ * swapping two disjuncts, would each need the pin updated.
  */
-function bareSource(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/\s+/g, '');
+function squash(source: string): string {
+  return stripComments(source).replace(/\s+/g, '');
+}
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SRC_ROOT = path.resolve(HERE, '../../../..');
+
+function readSource(relativeToSrc: string): string {
+  return readFileSync(path.join(SRC_ROOT, relativeToSrc), 'utf8');
 }
 
 describe('capsule constants', () => {
@@ -63,13 +71,19 @@ describe('capsule constants', () => {
     expect(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7)).toBe('0.6590102');
   });
 
-  it('joint constants: 1.5 px AA floor, 4 px packet width gate', () => {
+  it('joint constants: 1.5 px AA floor, 4 px packet width gate, 2% deficit gate', () => {
     expect(CAPSULE_MIN_RADIUS_PX).toBe(1.5); // matches the quad's AA floor
     // Pin the VALUE, not just the interpolated spelling. The source pins below
     // fold the constant in, so they stay green at any value; the numeric rows
     // DO breach when it moves (0 → four rows, 8 → the apron row), but as a
     // scatter of composition failures rather than "the gate changed".
     expect(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).toBe(4.0);
+    // Same reasoning for the taper gate, plus a truncation of its own: both
+    // GLSL surfaces inline it at toFixed(2) (`G.DEFICIT_GATE`), so a change
+    // finer than 0.005 never reaches a shader at all — and the clause-chain
+    // pin below, which builds its expected text from the same toFixed(2),
+    // cannot see one either. This is the only assertion that can.
+    expect(CAPSULE_JOINT_DEFICIT_GATE).toBe(0.02);
   });
 
   it('shaders fold the shared literals (no re-derived magic numbers)', () => {
@@ -171,6 +185,71 @@ describe('capsule constants', () => {
       expect(src).not.toContain('`');
     }
   });
+
+  it('the four packet-gate clauses are hand-transcribed into all four shader surfaces', () => {
+    // The gate lives in FIVE places: the CPU model in `_shared/line-capsule.ts`
+    // (the composition sweep below binds only THAT one) plus four shader
+    // surfaces — GLSL visual + pick (already imported above as plain
+    // strings) and their TSL twins (`shader-tsl-capsule.ts`,
+    // `pick-capsule.tsl.ts`, read from disk below). This reads the TSL pair
+    // the same "regression lock" way `join-width-tsl.test.ts` pins TSL
+    // builder source: those two modules build a graph at runtime instead of
+    // exporting text, and their ONLY other coverage is the checked-in
+    // codegen snapshots, which live in the `e2e-tests` job —
+    // `.github/workflows/ci.yml` sets that whole job to `if: false`, so a
+    // TSL-only deletion of this gate is invisible to CI.
+    //
+    // Pinning a single clause substring has three holes: (a) swapping the
+    // chain's `||` for `&&` keeps every substring intact and evades the pin
+    // entirely; (b) a substring that stops before its comparison (e.g.
+    // 'abs(1.0 - rpFarA / max(rA, 1e-4))' alone) still matches if the
+    // threshold changes to `> 1.0`; (c) nothing pins the gate VALUE, so a
+    // shader hardcoding a different threshold still matches a name-only
+    // pin. Pinning the WHOLE clause chain per joint end, in order, closes
+    // all three at once. Matching runs on comment-stripped,
+    // WHITESPACE-SQUASHED text, so the pin survives reformatting and
+    // line-wrapping but still catches an operator, threshold, order or
+    // deletion change.
+    //
+    // This covers the four CLAUSES only. Reaching them also needs the width
+    // gate they sit inside, which is pinned separately per surface by 'every
+    // surface gates the packet by width OR a floored sharp turn (#1495)'.
+    const gate = CAPSULE_JOINT_DEFICIT_GATE.toFixed(2);
+    // GLSL inlines the gate as a literal (shader-glsl-capsule.ts:53);
+    // building the expected text from the constant means a deliberate gate
+    // change flows through instead of turning this test red — the constant's
+    // own value is pinned in the joint-constants test above instead.
+    const glslClauseA = `abs(1.0 - rpFarA / max(rA, 1e-4)) > ${gate} || rB > rA * (1.0 + ${gate}) || ql < 2.0 * rA || dot(qq / ql, u) > 0.5`;
+    const glslClauseB = `abs(1.0 - rpFarB / max(rB, 1e-4)) > ${gate} || rA > rB * (1.0 + ${gate}) || ql < 2.0 * rB || dot(qq / ql, u) < -0.5`;
+    // TSL references the gate by NAME (never inlined), so pin the name.
+    const tslClauseA =
+      'abs(float(1.0).sub(rpFarA.div(max(rA, float(1e-4))))).greaterThan(CAPSULE_JOINT_DEFICIT_GATE).or(rB.greaterThan(rA.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE)))).or(ql.lessThan(rA.mul(2.0))).or(dot(qhat, u).greaterThan(0.5))';
+    const tslClauseB =
+      'abs(float(1.0).sub(rpFarB.div(max(rB, float(1e-4))))).greaterThan(CAPSULE_JOINT_DEFICIT_GATE).or(rA.greaterThan(rB.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE)))).or(ql.lessThan(rB.mul(2.0))).or(dot(qhat, u).lessThan(-0.5))';
+
+    const glslVisual = CAPSULE_LINE_VERTEX_SHADER;
+    const glslPick = CAPSULE_LINE_PICK_VERTEX_SHADER;
+    const tslVisual = readSource('rendering/materials/line/shader-tsl-capsule.ts');
+    const tslPick = readSource('rendering/picking/line/pick-capsule.tsl.ts');
+
+    const surfaces = [
+      ['GLSL visual', glslVisual, glslClauseA, glslClauseB],
+      ['GLSL pick', glslPick, glslClauseA, glslClauseB],
+      ['TSL visual', tslVisual, tslClauseA, tslClauseB],
+      ['TSL pick', tslPick, tslClauseA, tslClauseB],
+    ] as const;
+
+    // A silently empty/short read (bad path, moved file) must not make
+    // every match below vacuously pass.
+    for (const [label, src] of surfaces) {
+      expect(src.length, `${label} source read suspiciously short`).toBeGreaterThan(2000);
+    }
+    for (const [label, src, clauseA, clauseB] of surfaces) {
+      const squashed = squash(src);
+      expect(squashed, `${label}: end-A clause chain not found intact`).toContain(squash(clauseA));
+      expect(squashed, `${label}: end-B clause chain not found intact`).toContain(squash(clauseB));
+    }
+  });
 });
 
 describe('capsuleProfile (CPU reference)', () => {
@@ -220,6 +299,13 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
   });
 
   it('congruent legs: the AA ramp costs ≤2.5% of peak and never over-brightens', () => {
+    // turn = 120 sits ON the sharp-turn clause's threshold by construction:
+    // qx = dot(partner.dir, leg.dir), and leg.dir = (cos 180°, sin 180°)
+    // has sin 180° = 1.2246e-16, not exactly 0, so that term survives —
+    // qx = 0.49999999999999967, which is 3.3e-16 below the `qx > 0.5` test
+    // (not the 2e-16 that plain −cos(120°) alone would suggest). If that
+    // ever flips, the packet opens here and the row measures ~0 instead of
+    // the AA-ramp cost it exists to bound.
     for (const turn of [20, 60, 120]) {
       const { minErr, maxErr } = capsuleJointCompositionError(
         leg(180, 10, 10, 60),
@@ -227,12 +313,24 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       );
       expect(minErr, `turn ${turn}° min`).toBeGreaterThan(-0.025);
       expect(maxErr, `turn ${turn}° max`).toBeLessThan(0.005);
+      if (turn === 120) {
+        // Non-vacuity: this is the file's only bound on the ramp cost, and
+        // it sits 3.3e-16 under the model's own `qx > 0.5` threshold — if
+        // that threshold ever moves, the packet opens here, minErr goes to
+        // ~0, and the −0.025 bound above still PASSES (measured: at a
+        // threshold of 0.4999999999999 this row goes −0.01661 → −0.00000
+        // and stays green). Assert the ramp cost is actually being
+        // measured, not just that it stays under budget.
+        expect(minErr, 'turn 120° must still measure the ramp cost').toBeLessThan(-0.005);
+      }
     }
   });
 
   it('tapered own leg (the #1494 rows): bounded now that rEnd is the vertex radius', () => {
-    // Review table, θ = 60°, vertex radius 10, partner tapering 10 → 5
-    // over 30 px: shipped-before errors reached −0.478 / +0.263.
+    // Review table, θ = 60° from straight, vertex radius 10, partner tapering 10 → 5
+    // over 30 px: shipped-before errors reached −0.478 / +0.263. Measured
+    // now: every row is ~0.0000/0.0000, deep inside the old ±0.13/+0.06
+    // slack; tightened to (−0.01, 0.005).
     for (const [rFar, len] of [
       [4, 20],
       [4, 60],
@@ -243,8 +341,8 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
         leg(180, 10, rFar, len),
         leg(-60, 10, 5, 30)
       );
-      expect(minErr, `own 10→${rFar}/L${len} min`).toBeGreaterThan(-0.13);
-      expect(maxErr, `own 10→${rFar}/L${len} max`).toBeLessThan(0.06);
+      expect(minErr, `own 10→${rFar}/L${len} min`).toBeGreaterThan(-0.01);
+      expect(maxErr, `own 10→${rFar}/L${len} max`).toBeLessThan(0.005);
     }
   });
 
@@ -256,15 +354,79 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
     // convention as the congruent rows above. The first cut of these rows
     // used the angle BETWEEN the legs by mistake, which made every row a
     // near-straight joint the old gate already handled — the sweep passed
-    // verbatim with the fix reverted (#1497). Bounds are ±0.03: gated,
-    // every configuration measures within ±0.02 of max(mine, partner);
-    // with the one-sided gate these rows chop to −0.86.
+    // verbatim with the fix reverted (#1497).
+    //
+    // Per-clause coverage (#1497): deleting one clause from `hasPacket` and
+    // re-running the sweep over all three tightened groups (#1494, this
+    // group, short-partners), every row that then breaches its bound —
+    //   clause A (ratio, whole clause): 'thinning partner 60° ql30' −0.0431,
+    //     'own 10→4/L20' −0.0281 (#1494), 'ql 40' −0.0251 (short-partner),
+    //     'own 10→4/L60' −0.0154 (#1494), 'widening partner 119° r5' −0.0306
+    //   clause A, widening half only (`abs(...)` swapped for one-sided
+    //     `max(1 − rpFar/rJoint, 0)`): 'widening partner 119° r5' −0.0306
+    //     (identical value — this row's ratio deviation is purely widening)
+    //   clause B (own-widen): 'widening own leg 90° ql60' −0.3352,
+    //     'widening own leg 30° ql60' −0.1740, and 'widening partner 119°
+    //     r5' −0.0329 (its partner leg also widens on ITS OWN side)
+    //   clause C (short): 'const partner 120° ql2' −0.3992
+    //   clause D (sharp-turn): 'const partner 175° ql20' −0.9216, 170°/ql25
+    //     −0.7572, 160°/ql20 −0.4691, 160°/ql60 −0.0189, 160°/ql15 −0.0109
+    //
+    // The widening half of clause A: dropping to the one-sided
+    // `max(1 − rpFar/rJoint, 0)` form (own leg constant leg(180,r,r,6r),
+    // partner leg(-119,r,1.05r,8r), 119° from straight) measures r=4
+    // −0.0395, r=5 −0.0306, r=6 −0.0257, r=8 −0.0188, r=10 −0.0152 — read
+    // as composition-inert in an earlier pass, but it was a REAL
+    // widening-half measurement, just taken where the effect happens to be
+    // smallest, not an artifact of the scan. It sits at the same ORDER as
+    // the fully-congruent AA-ramp cost at the same radius and angle, not
+    // uniformly under it — at r=4 the fully-congruent gated cost is
+    // −0.0390, so the widening-half number there (−0.0395) is actually
+    // slightly WORSE. (This r-scan's own leg is 6r long and its partner
+    // 8r; a different length ratio shifts these figures by percent-level
+    // amounts, so quote them only together with this geometry.)
+    //
+    // 'widening partner 119° r5' sits at r = 5, where dropping clause A
+    // (whole or widening-half) measures −0.0306 — about 3× this section's
+    // bound — while both legs (5.5, 5.75 px) stay clear of the 4 px
+    // packet-width gate. What the packet buys there is refilling the 1 px
+    // AA-ramp band: GATED, the row measures ~0, while a fully congruent
+    // joint at the SAME radius and angle sits at −0.0316 — that is why the
+    // group's −0.01 bound is satisfiable at r=5 at all, and why the row
+    // goes red without the clause instead of merely chopping.
+    //
+    // Bounds: gated, every maxErr below is zero to float noise (2e-16 …
+    // 6e-14, worst 'hairpin, both legs long' at 5.5e-14) and the worst
+    // minErr is −0.0047 ('const partner 120° ql2'); tightened from ±0.03
+    // to (−0.01, 0.005) so the sweep trips before this margin is eaten
+    // into. Under the LITERAL pre-#1495 gate (one-sided ratio only, no
+    // B/C/D) the worst row is 'const partner 175° ql20' at −0.9216;
+    // −0.8606 is 'const partner 160° ql2'.
     const cases: Array<[string, CapsuleJointLeg, CapsuleJointLeg]> = [
       ['const partner 120° ql2', leg(180, 10, 10, 60), leg(-120, 10, 10, 2)],
       ['const partner 160° ql2', leg(180, 10, 10, 60), leg(-160, 10, 10, 2)],
       ['const partner 160° ql15', leg(180, 10, 10, 60), leg(-160, 10, 10, 15)],
       ['widening partner 150°', leg(180, 10, 10, 60), leg(-150, 10, 30, 30)],
+      // This row looks like an own-widening-clause (B) probe but is not
+      // one: at 160° from straight qx = 0.94 > 0.5, so the sharp-turn
+      // clause D opens the packet regardless of B (the sweep stays green
+      // with B alone dropped — it took the rows below to change that).
       ['widening own leg 160°', leg(180, 10, 20, 60), leg(-160, 10, 10, 60)],
+      // Isolate clause B on the leg under test: a gentle bend keeps D
+      // shut, and a constant long partner AT the shared joint radius
+      // keeps the ratio clause A and the length clause C shut, so only
+      // clause B can open the packet on the leg under test (the partner's
+      // own ratio clause A happens to be satisfied on its own side too,
+      // but that clause is not the one being dropped here).
+      ['widening own leg 90° ql60', leg(180, 10, 20, 15), leg(-90, 10, 10, 60)],
+      ['widening own leg 30° ql60', leg(180, 10, 30, 15), leg(-30, 10, 10, 60)],
+      // Isolate the WIDENING half of the ratio clause A: own leg constant
+      // (clause B shut on the leg under test), partner length 40 ⩾ 2·5
+      // (clause C shut), 119° from straight → qx = 0.4848 < 0.5, 0.015
+      // clear of the clause D threshold. The partner also widens on its
+      // own side (rJoint 5 → rFar 5.25), so this row additionally
+      // exercises clause B on the partner (see the per-clause table above).
+      ['widening partner 119° r5', leg(180, 5, 5, 30), leg(-119, 5, 5.25, 40)],
       ['const partner 160° ql60', leg(180, 10, 10, 60), leg(-160, 10, 10, 60)],
       // The #1501 band: a hairpin partner LONGER than the disc (passes
       // the length clause) but SHORTER than my leg — the bisector splits
@@ -279,30 +441,30 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       // +0.057 here and ±0.35 at longer legs. Unsnapped it is ~0.
       ['hairpin, both legs long (#1502)', leg(180, 10, 10, 60), leg(-178.6, 10, 10, 60)],
       // Thinning partner at a moderate bend: isolates the taper-ratio
-      // clause (constant own leg, long partner, gentle enough that the
-      // sharp clause stays closed). The own-widening clause is the one
-      // clause this model CANNOT isolate: the partner's symmetric ratio
-      // always opens a packet from the other side here, and the clause
-      // exists for the case the model lacks — a width-gated-off partner.
+      // clause A (constant own leg, long partner, gentle enough that the
+      // sharp-turn clause D stays closed).
       ['thinning partner 60° ql30', leg(180, 10, 10, 60), leg(-60, 10, 4, 30)],
     ];
     for (const [name, a, b] of cases) {
       const { minErr, maxErr } = capsuleJointCompositionError(a, b);
-      expect(minErr, `${name} min`).toBeGreaterThan(-0.03);
-      expect(maxErr, `${name} max`).toBeLessThan(0.03);
+      expect(minErr, `${name} min`).toBeGreaterThan(-0.01);
+      expect(maxErr, `${name} max`).toBeLessThan(0.005);
     }
   });
 
   it('short partners (#1488/#1490): no chopped disc, no double-count', () => {
     // Constant-width own leg isolates these two; before the fixes the
-    // chop reached −0.306 and the excess +0.859 at ql = 2 px.
+    // chop reached −0.306 and the excess +0.859 at ql = 2 px. Measured
+    // now: minErr −0.0009 (ql2) down to −0.0046 (ql40), maxErr zero to
+    // float noise (3.3e-16 … 5.3e-16) at every ql; tightened to
+    // (−0.01, 0.005).
     for (const ql of [2, 4, 8, 15, 40]) {
       const { minErr, maxErr } = capsuleJointCompositionError(
         leg(180, 10, 10, 60),
         leg(-60, 10, 5, ql)
       );
-      expect(minErr, `ql ${ql} min`).toBeGreaterThan(-0.13);
-      expect(maxErr, `ql ${ql} max`).toBeLessThan(0.06);
+      expect(minErr, `ql ${ql} min`).toBeGreaterThan(-0.01);
+      expect(maxErr, `ql ${ql} max`).toBeLessThan(0.005);
     }
   });
 
@@ -480,7 +642,7 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       ['glsl material', CAPSULE_LINE_VERTEX_SHADER],
       ['glsl pick', CAPSULE_LINE_PICK_VERTEX_SHADER],
     ] as const) {
-      const bare = bareSource(src);
+      const bare = squash(src);
       expect(bare, `${name} end A`).toContain(
         `if(rMax>${threshold}||(dot(qq/ql,u)>0.5&&min(rawA,rawB)>=${floor})){`
       );
@@ -492,7 +654,7 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       ['tsl material', 'rendering/materials/line/shader-tsl-capsule.ts'],
       ['tsl pick', 'rendering/picking/line/pick-capsule.tsl.ts'],
     ] as const) {
-      const bare = bareSource(readFileSync(path.join(SRC_ROOT, rel), 'utf8'));
+      const bare = squash(readSource(rel));
       const gate = 'If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).or(dot(qhat,u)';
       const floored = '.and(min(rawA,rawB).greaterThanEqual(CAPSULE_MIN_RADIUS_PX)))';
       expect(bare, `${name} end A`).toContain(`${gate}.greaterThan(0.5)${floored}`);
@@ -511,14 +673,10 @@ describe('cut-normal precision regression lock (#1502)', () => {
   // nothing at all (the TSL pair only through the codegen snapshots, and
   // `e2e-tests` in `ci.yml` is `if: false`), hence a source-text lock in the
   // spirit of `line/join-width-tsl.test.ts` — whose two small helpers are
-  // copied rather than exported, to leave that file alone. Every match runs
-  // on COMMENT-STRIPPED text, so the notes at the shader sites can neither
-  // satisfy nor break it.
-  const HERE = path.dirname(fileURLToPath(import.meta.url));
-  const SRC_ROOT = path.resolve(HERE, '../../../..');
-  const readSource = (rel: string): string => readFileSync(path.join(SRC_ROOT, rel), 'utf8');
-  const stripComments = (source: string): string =>
-    source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  // copied rather than exported, to leave that file alone; they now sit at
+  // this file's top, shared with the packet-gate lock (#1497). Every match
+  // runs on COMMENT-STRIPPED text, so the notes at the shader sites can
+  // neither satisfy nor break it.
 
   // [source, its own cut-normal shape, how many construction sites it has]:
   // two per shader (end A and end B), one in the CPU model. Keyed on the
