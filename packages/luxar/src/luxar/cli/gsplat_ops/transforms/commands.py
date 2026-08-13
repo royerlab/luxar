@@ -15,6 +15,7 @@ from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from .additive import run_additive_dataset as _run_additive_dataset_impl
 from .cull import run_cull_dataset as _run_cull_dataset_impl
+from .decimate import run_decimate_dataset as _run_decimate_dataset_impl
 from .filter_slice import (
     run_filter_dataset as _run_filter_dataset_impl,
 )
@@ -525,6 +526,104 @@ def flatten_dataset(
     )
 
 
+def decimate_dataset(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (a single flat leaf)"
+    ),
+    target: Optional[int] = typer.Option(
+        None, "--target", "-n", help="Target splat COUNT (exclusive with --fraction)"
+    ),
+    fraction: Optional[float] = typer.Option(
+        None,
+        "--fraction",
+        "-f",
+        min=0.0,
+        max=1.0,
+        help="Keep this SHARE of the input, 0 < f <= 1 (exclusive with --target)",
+    ),
+    method: Literal["auto", "merge", "prefix"] = typer.Option(
+        "auto",
+        "--method",
+        "-m",
+        help=(
+            "merge (cluster neighbours into mass-carrying representatives), "
+            "prefix (keep the first N of an additive ordering — discards splats), "
+            "auto (merge below 50% kept, prefix at or above — the measured "
+            "crossover)"
+        ),
+    ),
+    prefix_method: str = typer.Option(
+        "auto",
+        "--prefix-method",
+        help=f"[prefix] Ordering to prefix. {GSPLAT_ADDITIVE_CHOICES_HELP}",
+    ),
+    device: str = typer.Option(
+        "auto", "--device", help="[merge] Device for the clustering pass"
+    ),
+    seed: Optional[int] = typer.Option(None, "--seed", help="Reduction seed"),
+    coarsen_dims: Optional[str] = typer.Option(
+        None,
+        "--coarsen-dims",
+        help="[merge] Center-column indices merging may combine over "
+        "(e.g. '0,1,2'); the rest become hard barriers. Default: all.",
+    ),
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto", "--encoding", "-e", help="Encoding mode for output"
+    ),
+    compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
+        None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
+    ),
+) -> None:
+    """Reduce a dataset to a target splat count (a single flat result).
+
+    Where `cull` REMOVES splats by a quality threshold and `lod` builds a
+    multi-level structure, `decimate` answers "this is bigger than I need, make
+    it smaller" and hands back one flat dataset at the size you asked for.
+
+    Two families, and which you pick is worth more than the count. Measured on a
+    1.65M-splat light-sheet fit, as foreground PSNR against the source volume
+    (global PSNR flatters everything on a mostly-empty stack):
+
+        kept    merge      prefix
+        50%     44.5 dB    45.5 dB   <- prefix wins; little redundancy to merge
+        25%     41.7 dB    39.1 dB
+        10%     38.3 dB    34.5 dB
+         1%     33.1 dB    29.6 dB   <- merge wins by 3.5 dB
+
+    `merge` conserves mass (neighbours become representatives), so it holds up
+    under aggressive reduction; `prefix` discards splats and dims the object,
+    but is free when the ordering is already stored. `auto` follows the
+    crossover.
+
+    Examples:
+        # to an absolute count, letting auto pick the family
+        luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr --target 165000
+
+        # to a share of the input, forcing the merge family
+        luxar gsplat decimate in.gsplats.zarr out.gsplats.zarr -f 0.1 -m merge
+
+        # a partition must be flattened first (decimate returns one flat leaf)
+        luxar gsplat flatten tiled.gsplats.zarr flat.gsplats.zarr
+        luxar gsplat decimate flat.gsplats.zarr small.gsplats.zarr -f 0.1
+    """
+    return _run_decimate_dataset_impl(
+        input_path=input_path,
+        output_path=output_path,
+        target=target,
+        fraction=fraction,
+        method=method,
+        prefix_method=prefix_method,
+        device=device,
+        seed=seed,
+        coarsen_dims=coarsen_dims,
+        encoding_mode=encoding_mode,
+        compress=compress,
+    )
+
+
 def additive_dataset(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr (any shape: leaf, lod, partition)"
@@ -859,6 +958,7 @@ def register_transforms_commands(app: typer.Typer) -> None:
     app.command("transform")(transform_dataset)
     app.command("merge")(merge_datasets)
     app.command("cull")(cull_dataset)
+    app.command("decimate")(decimate_dataset)
     app.command("filter")(filter_dataset)
     app.command("slice")(slice_dataset)
     app.command("partition")(partition_dataset)

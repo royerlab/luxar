@@ -131,6 +131,7 @@ luxar gsplat annotate-quality # Retrofit Q·e quality stamps onto an existing da
 luxar gsplat transform  # Apply spatial / intensity transforms (scale, rotate, translate, center)
 luxar gsplat merge      # Merge datasets (concatenation, new dimension, or channel colors)
 luxar gsplat cull       # Remove low-contribution splats while preserving visual quality
+luxar gsplat decimate   # Reduce to a TARGET SPLAT COUNT (one flat leaf): merge or prefix
 luxar gsplat filter     # Filter splats by multiple criteria (AND logic; percentile thresholds)
 luxar gsplat slice      # Slice splats by coordinate ranges (numpy-style syntax)
 luxar gsplat partition  # Partition into a single kind=partition file via spatial BSP
