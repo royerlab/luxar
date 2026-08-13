@@ -397,7 +397,7 @@ def _slot_bsp_tree(
     """Split planes over the batch's spatial slots, labelled by SLOT index.
 
     Recovers the decomposition the fit array worked from, so the merged partition
-    can tell the viewer how its parts stack up (#1541) instead of leaving it to
+    can tell the viewer how its parts stack up (#1555) instead of leaving it to
     guess from part centroids. Two modes, two sources:
 
     * ``content`` — the shared :class:`FitPlan` at ``manifest.plan_path`` carries
@@ -555,7 +555,7 @@ def _merge_partition(
 
     # K > 1 → streaming partition, one part per spatial tile.
     #
-    # Split planes for the viewer's exact back-to-front part order (#1541). The
+    # Split planes for the viewer's exact back-to-front part order (#1555). The
     # plan is not stored on the manifest itself: `content` mode points at the
     # shared FitPlan JSON every array task fits a box from, and `uniform` mode is
     # a deterministic function of the tiling geometry, so both are recoverable

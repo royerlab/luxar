@@ -543,7 +543,7 @@ def write_partition_streaming(
     against — is only known once the producer has finished skipping empty regions,
     so the caller prunes inside the provider. Omit it, or return ``None``, and the
     viewer falls back to a per-part centroid order, which is not a valid painter's
-    order and pops at the seams under order-dependent blending (#1541).
+    order and pops at the seams under order-dependent blending (#1555).
 
     The producer is responsible for skipping empty tile-regions (it must yield
     only non-empty subtrees). Compression is intentionally not supported here

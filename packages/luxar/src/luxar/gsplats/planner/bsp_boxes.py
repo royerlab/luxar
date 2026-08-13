@@ -66,7 +66,7 @@ def plan_partition(
     labels index :attr:`FitPlan.boxes`). They used to be discarded, leaving the
     fitted partition with no way to say how its parts stack up and the viewer
     guessing from part centroids — which is not a valid painter's order and pops
-    at the seams as the camera orbits (#1541).
+    at the seams as the camera orbits (#1555).
     """
     dens = _density_from(density)
     if target_features is None:

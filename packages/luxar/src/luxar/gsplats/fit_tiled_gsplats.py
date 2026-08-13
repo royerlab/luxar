@@ -488,7 +488,7 @@ def merge_tile_results(
             recipe=recipe,
             recipe_params=recipe_params,
             # Grid split planes so the viewer paints tile-parts far-side-first
-            # instead of by centroid (#1541). APPROXIMATE here — apodized tiles
+            # instead of by centroid (#1555). APPROXIMATE here — apodized tiles
             # keep their overlap band, so neighbours genuinely share space and the
             # cut is the midplane of that band (see `grid_bsp_tree`). Only sound
             # while `results` is positionally aligned with the tile grid, which

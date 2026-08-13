@@ -507,7 +507,7 @@ class TestMaxPaddedBoxVoxels:
 # The planner has always BEEN a recursive BSP; it just discarded the planes,
 # leaving the fitted partition unable to say how its parts stack up and the
 # viewer guessing from part centroids (not a valid painter's order — it pops at
-# the seams as the camera orbits, #1541).
+# the seams as the camera orbits, #1555).
 
 
 def _plan_leaf_labels(node: dict) -> list[int]:

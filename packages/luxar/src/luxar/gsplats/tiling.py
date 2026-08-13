@@ -198,7 +198,7 @@ def grid_bsp_tree(specs: Sequence[TileSpec]) -> dict | None:
 
     Lets the viewer order uniform-tiled partition parts back-to-front by
     painter's algorithm instead of by part centroid, which is not a valid order
-    and flips discretely as the camera moves (the seam popping of issue #1541).
+    and flips discretely as the camera moves (the seam popping of issue #1555).
 
     APPROXIMATE, unlike a content plan's tree. A content box crops its splats to
     the core box, so those parts are exactly disjoint; a uniform tile keeps every

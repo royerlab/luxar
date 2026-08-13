@@ -68,7 +68,7 @@ class FitPlan:
     :func:`~luxar.core.group.partition.prune_serialized_bsp_tree`.
 
     Leaf ``part`` labels index :attr:`boxes` directly. ``None`` for a plan that
-    did not come from one recursion (e.g. read from a pre-#1541 ``plan.json``),
+    did not come from one recursion (e.g. read from a pre-#1555 ``plan.json``),
     which downstream treats as "no tree" — the viewer's centroid fallback.
     """
     meta: Dict[str, Any] = field(default_factory=dict)
@@ -121,7 +121,7 @@ class FitPlan:
             min_leaf=int(raw["min_leaf"]),
             max_leaf=int(raw["max_leaf"]),
             density=dict(raw.get("density", {})),
-            # Absent in a pre-#1541 plan.json — a batch run submitted before this
+            # Absent in a pre-#1555 plan.json — a batch run submitted before this
             # landed then merges with no tree, exactly as it did before.
             bsp_tree=raw.get("bsp_tree"),
             meta=dict(raw.get("meta", {})),

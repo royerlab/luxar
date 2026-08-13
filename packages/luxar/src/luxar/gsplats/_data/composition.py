@@ -328,7 +328,7 @@ class CompositionMixin(_GSplatDataOps):
         knows its own planes). Supplying it is what lets the viewer order the
         parts back-to-front EXACTLY instead of guessing from part centroids, which
         is not a valid painter's order and pops at the seams as the camera orbits
-        (#1541). Its leaf labels are read in ``region_labels`` space (default: the
+        (#1555). Its leaf labels are read in ``region_labels`` space (default: the
         positions of ``regions``), and it is pruned to the regions that survived
         the empty filter — so a caller passes the labels of the regions it is
         handing over and does not have to pre-compensate for drops itself.
