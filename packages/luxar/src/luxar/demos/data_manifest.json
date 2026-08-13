@@ -385,8 +385,8 @@
       "files": [
         {
           "name": "h2afva_tp234.gsplats.zarr.zip",
-          "sha256": "b0689630719873f03d77b96eb2689d36414537ea14f79fead05554fce0034a53",
-          "bytes": 26266472
+          "sha256": "cbfe79684b6463e175edf97eb01fd0e14c476dee368bd3cd9e49182fc50644c9",
+          "bytes": 26146137
         }
       ]
     },
@@ -401,23 +401,23 @@
       "files": [
         {
           "name": "h2afva_full.gsplats.zarr.zip",
-          "sha256": "962eda1fc5c255636ab58789030b1d173f6318d5568df788361357cec8481fd3",
-          "bytes": 18436934
+          "sha256": "1d5ac0077db38de43807e4e303d275dffe6c98b48e539a096dc4972067db44bf",
+          "bytes": 18070045
         },
         {
           "name": "h2afva_quarter.gsplats.zarr.zip",
-          "sha256": "c0673a63237ca788dff0dea17cffa0f8bd9a1805ba96dc75365887fa112005b2",
-          "bytes": 4807329
+          "sha256": "3727b6194202fb43527928c967429bf2e1ba42f9aa50877a44b9c5bacd29c0a6",
+          "bytes": 4689769
         },
         {
           "name": "h2afva_tenth.gsplats.zarr.zip",
-          "sha256": "051718f5de789cfdd7a9787815c06588919bd72c5dd456cfda69370f51d50336",
-          "bytes": 2018409
+          "sha256": "6851f6585149b02d5e7f955e9c7501140fccb512f37d3e2ec20ec36024e34a47",
+          "bytes": 1984957
         },
         {
           "name": "h2afva_twentieth.gsplats.zarr.zip",
-          "sha256": "5b6a8c16ac6499d930436cb7c6f538ddc6f90772e9269a89ce967ca4a012a03b",
-          "bytes": 1050513
+          "sha256": "8f13588289145d92a24423215b5896b679a286c52d04a9854b61b9be1d8e004a",
+          "bytes": 1036456
         }
       ]
     },

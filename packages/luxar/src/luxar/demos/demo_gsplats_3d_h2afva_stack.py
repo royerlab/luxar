@@ -28,13 +28,23 @@ ANISOTROPY:
     The raw voxels are anisotropic by a factor of **4** along Z; the fitted
     splats are scaled accordingly (``gsplat transform --scale 4,1,1``), matching
     the convention used for the full 253-timepoint fits. After scaling, the
-    volume is near-cubic (1624 x 2038 x 2041), i.e. the embryo has its correct
-    proportions.
+    volume has the embryo's correct proportions.
 
-    NOTE: the *absolute* lateral pixel size for this acquisition is not recorded
-    in the array metadata, so the axes below are declared in **voxels**, not
-    microns — the shape is right, but a scale bar would not be. Stamp the real
-    pitch here (and switch the units) once it is known.
+    The acquisition records no voxel size, so the calibration comes from the
+    instrument and from prior work on this dataset. It was imaged on a
+    SiMView-type light-sheet, whose detection optics (16x onto a 6.5 um sCMOS)
+    give **0.40625 um** laterally; the z:xy ratio of **4** is the one the
+    full-timelapse fitting campaign established for isotropy, so the axial step
+    is 4 x 0.40625 = **1.625 um**. At that calibration the embryo measures
+    657 x 802 x 827 um, the right envelope for this stage.
+
+    The ratio is the softer of the two numbers — it is prior convention rather
+    than recorded metadata, and unlike the Drosophila companion demo it cannot
+    be checked against the specimen's geometry: a zebrafish embryo at this stage
+    is a yolk sphere with the body wrapped around it, so no axis can be asserted
+    equal to another, and light-sheet attenuation truncates the measurable depth
+    (a threshold-based extent finds 233 of the 407 z-slices the fitted splats
+    actually occupy). Re-stamp both numbers if the acquisition settings surface.
 
 PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here):
     1. Select timepoint 234 from ``h2afva/fused``.
@@ -202,27 +212,26 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
         bmin, bmax = center_bounds(node)
         aprint(f"Scene bounds: min={np.round(bmin, 1)} max={np.round(bmax, 1)}")
 
-        # Center columns are (Z, Y, X). Units are voxels, not microns — the
-        # lateral pitch for this acquisition is not in the metadata (see the
-        # module docstring's ANISOTROPY note). Z is already x4-scaled, so the
-        # three axes are mutually consistent.
+        # Center columns are (Z, Y, X), in physical microns: the shipped data
+        # carries the x4 z-scaling AND the 0.40625 um lateral pitch (see the
+        # module docstring's ANISOTROPY note).
         dims = Dimensions(
             [
                 Dimension(
                     "Z",
-                    unit="px",
+                    unit="µm",
                     display=True,
                     range=(float(bmin[0]), float(bmax[0])),
                 ),
                 Dimension(
                     "Y",
-                    unit="px",
+                    unit="µm",
                     display=True,
                     range=(float(bmin[1]), float(bmax[1])),
                 ),
                 Dimension(
                     "X",
-                    unit="px",
+                    unit="µm",
                     display=True,
                     range=(float(bmin[2]), float(bmax[2])),
                 ),

@@ -76,8 +76,11 @@ REPRODUCING IT:
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). ``h2afva/fused``, timepoint
     234 of 253, 407 x 2048 x 2048, fused and deconvolved. Please cite the
-    zebrahub resource when using this data. Z is scaled x4 for isotropy; axes
-    are in voxels (the absolute lateral pitch is not in the metadata).
+    zebrahub resource when using this data. Axes are in physical microns: a
+    SiMView-type light-sheet gives 0.40625 um laterally, and the z:xy ratio of 4
+    established by the full-timelapse campaign puts the axial step at 1.625 um
+    (see the h2afva stack demo for why the ratio, not the pitch, is the softer
+    of the two numbers).
 
 USAGE:
     python demo_gsplats_3d_decimation_study.py [--no-serve] [--serve-only]
@@ -192,13 +195,13 @@ def create_luxar_scene(level_paths: list[Path], output_path: Path) -> Path:
         dims = Dimensions(
             [
                 Dimension(
-                    "Z", unit="px", display=True, range=(float(bmin[0]), float(bmax[0]))
+                    "Z", unit="µm", display=True, range=(float(bmin[0]), float(bmax[0]))
                 ),
                 Dimension(
-                    "Y", unit="px", display=True, range=(float(bmin[1]), float(bmax[1]))
+                    "Y", unit="µm", display=True, range=(float(bmin[1]), float(bmax[1]))
                 ),
                 Dimension(
-                    "X", unit="px", display=True, range=(float(bmin[2]), float(bmax[2]))
+                    "X", unit="µm", display=True, range=(float(bmin[2]), float(bmax[2]))
                 ),
                 # Categorical, so the viewer offers a DROPDOWN of named levels
                 # (not a continuous slider) and cannot land between two of
