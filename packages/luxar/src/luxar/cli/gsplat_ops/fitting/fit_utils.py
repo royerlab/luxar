@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import socket
 import uuid
@@ -400,6 +401,50 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
     return fit_config, parsed_seeds, effective_downscale
 
 
+def split_seeds_across_tiles(
+    parsed_seeds: "int | float | None", n_tiles: int
+) -> "int | float | None":
+    """Split a whole-volume ``--seeds`` budget across a tiled fit's tiles.
+
+    A default ``luxar gsplat cal`` reports a WHOLE-VOLUME K*, and the documented
+    pipeline is ``cal`` -> ``fit --seeds K*``. A tiled fit hands the same ``seeds``
+    value to EVERY tile, so an undivided integer budget realizes roughly
+    ``K x n_tiles`` splats (issue #1556: ``--seeds 256000`` on a volume
+    auto-tiled into 21 tiles produced 2.4M splats). An integer ``--seeds K`` is
+    therefore a whole-volume budget: each of ``n_tiles`` tiles is seeded with
+    ``ceil(K / n_tiles)``, so the budget is divided across the tiles instead of
+    being multiplied by them.
+
+    ``ceil`` itself guarantees at least one seed per tile for any positive K, so
+    ``0 < K < n_tiles`` gives 1 per tile and realizes ``n_tiles``, not ``K``. It
+    is not an exact count in the other direction either: tiles that window to
+    near-zero signal are skipped by the fitter, so a sparse volume realizes
+    ``K x (non-empty tiles / all tiles)``.
+
+    A **non-positive** K is returned UNCHANGED: it is invalid input, and the
+    fitter rejects it with "seeds as int must be positive" exactly as it does on
+    the whole-volume path — rounding it up to 1 would swallow that error and
+    silently fit.
+
+    A ``float`` ratio (the ``0 < r <= 1`` compression-ratio form) is returned
+    UNCHANGED. A ratio is a fraction of the voxels it is applied to, so it is
+    already scale-free — per tile it means exactly the density it means
+    whole-volume — and must never be divided by the tile count. ``None``
+    (auto) is likewise unchanged, as is any ``n_tiles <= 1`` (a single tile
+    already IS the whole volume, so there is nothing to split).
+    """
+    if not isinstance(parsed_seeds, int) or isinstance(parsed_seeds, bool):
+        return parsed_seeds
+    if n_tiles <= 1 or parsed_seeds <= 0:
+        return parsed_seeds
+    per_tile = math.ceil(parsed_seeds / n_tiles)
+    aprint(
+        f"Seeds: {parsed_seeds:,} whole-volume budget -> {per_tile:,} per tile "
+        f"across {n_tiles} tiles"
+    )
+    return per_tile
+
+
 def dispatch_parallel_tiled(
     ctx: FitPipelineCtx,
     volume: "Any",
@@ -425,8 +470,6 @@ def dispatch_parallel_tiled(
     tiled = ctx.resolved_tiling == "uniform"
     if not (tiled and ctx.tile is None and ctx.jobs != "1"):
         return False
-
-    import math
 
     from luxar.gsplats.fit_tiled_parallel import (
         build_worker_cmd,
@@ -475,6 +518,16 @@ def dispatch_parallel_tiled(
             f"Parallel tiled fitting: {n_tiles} tiles, grid={grid_shape}, "
             f"{n_jobs} concurrent worker(s)"
         )
+        # Announce the seed split HERE, in the parent. Each worker splits the
+        # budget itself (and prints this same notice), but workers run under
+        # subprocess.run(capture_output=True), so on success their stdout is
+        # discarded and the user would only ever see the parent's undivided
+        # "Seeds: K" line. The return value is deliberately DROPPED — applying
+        # it here as well would double-divide, since the raw whole-volume
+        # count is what gets forwarded to the workers below.
+        from luxar.cli.gsplat_config import parse_seeds
+
+        split_seeds_across_tiles(parse_seeds(ctx.seeds), n_tiles)
 
         # Format downscale for worker argv (scalar or per-axis).
         ds_arg: Optional[str] = None
@@ -495,6 +548,10 @@ def dispatch_parallel_tiled(
                 m,
                 ctx.tile_size,
                 ctx.tile_overlap,
+                # The RAW whole-volume --seeds string, on purpose: each worker
+                # re-enters `fit --tile i/M` and splits it per tile itself (see
+                # split_seeds_across_tiles in fit_single_tile). Dividing here
+                # too would double-divide the budget.
                 seeds=ctx.seeds,
                 iters=ctx.iters,
                 device=ctx.device,
@@ -594,6 +651,11 @@ def fit_single_tile(
         aprint(f"Error: tile index {tile_idx} out of range [0, {len(specs)})")
         raise typer.Exit(1)
 
+    # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports),
+    # so this worker only gets its share of it. Split against the ACTUAL grid
+    # count, matching the tile the worker is about to fit.
+    tile_seeds = split_seeds_across_tiles(parsed_seeds, len(specs))
+
     # Extract params that are explicit in fit_tile to avoid
     # "got multiple values" conflicts with **fit_config
     fc_voxel_size = fit_config.pop("voxel_size", None)
@@ -626,7 +688,7 @@ def fit_single_tile(
             max_splats_per_pass=ctx.max_splats_per_pass,
             psnr_patience=ctx.psnr_patience,
             max_passes=ctx.max_passes,
-            seeds=parsed_seeds,
+            seeds=tile_seeds,
             **fit_config,
         )
 
@@ -641,6 +703,16 @@ def fit_sequential_tiled(
 ) -> "Any":
     """Full (in-process, sequential) tiled fitting."""
     from luxar.gsplats.fit_tiled_gsplats import fit_tiled
+    from luxar.gsplats.tiling import compute_tile_specs
+
+    # An integer --seeds is a WHOLE-VOLUME budget (what `gsplat cal` reports);
+    # fit_tiled hands its `seeds` to EVERY tile, so split it across the grid
+    # first. ``volume`` is already downscaled when --downscale is in play,
+    # which is exactly the grid fit_tiled will build below.
+    tile_seeds = split_seeds_across_tiles(
+        parsed_seeds,
+        len(compute_tile_specs(volume.shape, ctx.tile_size, ctx.tile_overlap)),
+    )
 
     # Extract params that are explicit in fit_tiled to avoid
     # "got multiple values" conflicts with **fit_config
@@ -676,7 +748,7 @@ def fit_sequential_tiled(
         max_splats_per_pass=ctx.max_splats_per_pass,
         psnr_patience=ctx.psnr_patience,
         max_passes=ctx.max_passes,
-        seeds=parsed_seeds,
+        seeds=tile_seeds,
         partition=seq_partition,
         recipe=ctx.recipe,
         recipe_params=recipe_params,

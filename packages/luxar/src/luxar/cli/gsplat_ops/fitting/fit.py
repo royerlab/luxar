@@ -40,7 +40,15 @@ def run_fit_volume(
         None,
         "--seeds",
         "-s",
-        help="Seed count (int), compression ratio (float 0-1), or 'auto'",
+        help=(
+            "Seed count (int), compression ratio (float in (0,1]), or 'auto'. "
+            "An integer is a WHOLE-VOLUME budget (what a default `gsplat cal` "
+            "reports): a tiled fit divides it across its tiles instead of "
+            "giving every tile the full count. Not an exact count — tiles with "
+            "no signal are skipped (a sparse volume realizes less) and a K "
+            "below the tile count gives one seed per tile. A ratio is "
+            "scale-free and is applied per tile unchanged."
+        ),
     ),
     iters: Optional[int] = typer.Option(
         None, "--iters", "-n", help="Max optimization iterations"

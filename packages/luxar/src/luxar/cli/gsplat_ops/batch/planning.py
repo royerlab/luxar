@@ -607,6 +607,28 @@ def plan_batch(
 
     total_tasks = n_t * n_c * n_tiles
 
+    # Announce the whole-volume seed split ONCE, here at plan time — the only
+    # place the tile count is known before any task runs, so both `batch-fit
+    # run` and `batch-fit submit --dry-run` show it. Every task is a
+    # `--tile k/M` fit that divides the budget itself; its notice never reaches
+    # the console because the task pool captures worker output
+    # (``task_pool.py``, ``capture_output=True``) and Slurm sends it to a log.
+    # The return value is deliberately DROPPED — applying it here would
+    # double-divide the count that goes into fit_args. Content plans ignore
+    # --seeds (per-box budgets come from the density), so they are skipped.
+    if mode != "content" and fit_args.get("seeds"):
+        from luxar.cli.gsplat_config import parse_seeds
+        from luxar.cli.gsplat_ops.fitting.fit_utils import split_seeds_across_tiles
+
+        # batch does not parse --seeds itself (it forwards the string verbatim,
+        # and each task's own `fit` validates it), so guard: a malformed value
+        # must fail in the task as it always has, not break planning here over
+        # a status notice.
+        try:
+            split_seeds_across_tiles(parse_seeds(fit_args["seeds"]), n_tiles)
+        except ValueError:
+            pass
+
     preset_config = PRESETS.get(fit.preset, PRESETS["standard"])
     n_iters = fit.iters if fit.iters is not None else preset_config.get("n_iters", 3000)
     if throughput_table:
