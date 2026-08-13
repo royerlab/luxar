@@ -59,6 +59,13 @@ importers name the owning module directly, never a re-export root.
 - `transform.py` — `transform` implementation
 - `merge.py` — `merge` implementation
 - `cull.py` — `cull` implementation
+- `decimate.py` — `decimate` implementation — reduce to a TARGET SPLAT COUNT,
+  returning one flat leaf. Distinct from both neighbours: `cull` removes splats
+  by a quality threshold (ratios, no target count) and `lod` builds a
+  multi-level structure. Two families — `merge` (cluster neighbours into
+  mass-carrying representatives) and `prefix` (keep the first N of an additive
+  ordering, discarding the rest) — with `auto` following the measured crossover
+  at 50% kept (`luxar.gsplats.lod.decimate.PREFIX_ABOVE_FRACTION`)
 - `filter_slice.py` — `filter` + `slice` implementations
 - `partition_flatten.py` — `partition` + `flatten` implementations
 - `additive.py` — `additive` implementation

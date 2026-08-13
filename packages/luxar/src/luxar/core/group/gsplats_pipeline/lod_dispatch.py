@@ -72,8 +72,8 @@ def add_gsplats_as_lod_group_impl(
     else:
         # Auto-derive (coarsest-first) as viewport-relative coverage fractions
         # ``sqrt(N_i/N_finest)`` — count ratios only, so no per-level radius or
-        # world-extent is needed; the viewer anchors the finest at a quarter of the
-        # live viewport diagonal (any normal full-frame view). A ladder whose
+        # world-extent is needed; the viewer anchors the finest at half of the
+        # live fitted screen axis (any normal full-frame view). A ladder whose
         # insertion point sits under a hand-built ``kind=partition`` switches on ONE
         # TILE, so it takes the fills-screen anchor instead — detected and logged by
         # ``derive_coverage_fractions``.

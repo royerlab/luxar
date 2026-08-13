@@ -26,7 +26,7 @@ microscopy dataset, which is where adaptive detail actually earns its keep:
   just a streaming order.  The viewer auto-picks a level by viewport-relative
   ``coverage_fraction`` (``sqrt(N_i/N_finest)``, derived from per-level splat
   counts) — the finest level shows at any normal full-frame view (once the
-  embryo's projected size reaches ~a quarter of the viewport diagonal) and
+  embryo's projected size reaches ~half of the fitted screen axis) and
   coarser levels step in as it shrinks: zoom out → coarse, zoom in → fine.
 - **Debug colors** make the level-switching obvious: each level is painted a
   distinct color on a green → amber → red ramp (finest → coarsest).  As you
@@ -88,8 +88,11 @@ DEMO_META = {
     "requirements": {
         "download_mb": 3,
         "compute": "medium",
-        "gpu": "optional",
-        "local_data": "git-lfs",
+        # The precomputed fit is no longer shipped in-tree (the source data is
+        # not redistributable), so a first run fetches the raw source and
+        # refits — which needs a GPU. Nothing has to be placed by hand.
+        "gpu": "required",
+        "local_data": None,
     },
     "caches": ["gsplats_tribolium"],
     "outputs": ["gsplats_lod_tribolium"],

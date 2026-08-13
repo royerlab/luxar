@@ -182,12 +182,78 @@ to ship after). Sequencing is at the bottom.
     is migrated yet.
   - **⚠ Step 4 has a licensing trigger, not just a size one.** `gsplats_tribolium`,
     `gsplats_acto3d_heart`, `gsplats_tng_cosmic_web`, and `milky_way_gaia_3m` are
-    `local-compute` ("cannot redistribute even the derived product") yet their
-    derived files are committed in LFS **today** (see `demos/data/README.md`). All
-    four must be `git rm`-ed before the repo goes public, independently of the
-    Zenodo upload — and those demos must *not* be migrated to the fetch helper (it
-    returns `None` for a `local-compute` dataset, which would silently start a
-    from-scratch rebuild instead of loading the file that is right there).
+    `local-compute` ("cannot redistribute even the derived product"). ✅ **All four
+    `git rm`-ed 2026-08-12 (PR #1554)**, with the caches seeded on this Mac and
+    obsidian first so local use is unaffected, and `load_precomputed_gsplats`
+    taught to read the manifest: an absent `local-compute` dataset now prints its
+    licensing reason and returns `None` (→ the demo rebuilds from the raw source)
+    instead of the old "run `git lfs pull`", which pointed at a file that no
+    longer exists. The Gaia demo had no download path at all and now resolves
+    cache-first with an actionable error (see #1575 for the ESA-archive build).
+  - **🔴 REMOVAL IS NOT COMPLETE UNTIL HISTORY IS CLEANED — one launch-time
+    operation, and it is gated.** GitHub serves LFS objects for any commit and
+    does NOT garbage-collect unreferenced ones (docs: *"the Git LFS objects still
+    exist on the remote storage and will continue to count toward your Git LFS
+    storage quota"*; the only documented remedies are deleting the repository or
+    contacting Support — a widely repeated "30-day auto-GC" is community
+    folklore GitHub does not guarantee). Enumerated 2026-08-12 by walking every
+    commit that touched the paths: **51 distinct LFS objects, 318.9 MB** (acto3d
+    36 / tng 4 / tribolium 10 / gaia 1 — each was re-fitted several times).
+    Regenerate the list before acting rather than trusting a stale copy.
+    - **ORDER, corrected by GitHub Support 2026-08-12.** We first asked Support
+      to purge the 51 still-referenced OIDs directly, reasoning that they act on
+      OIDs and a rewrite would leave them unfindable. They declined that shape:
+      *"GitHub's documented process does not support directly deleting an
+      arbitrary subset of still-referenced Git LFS objects on request… Support
+      will only assist with full removal after the objects have been orphaned by
+      the history rewrite workflow."* **The rewrite comes FIRST; the ticket is
+      filed afterwards.**
+    - **Two blockers before the rewrite can run at all:**
+      1. **Branch protection refuses it.** `main` has `enforce_admins: true` and
+         `allow_force_pushes: false`, so a force-push is rejected for admins too.
+         Protection must be lifted and restored immediately after (6 required
+         checks incl. `review/gate` to re-add).
+      2. **The PR queue must be drained** (17 open at time of writing, and the
+         fleet keeps adding). The rewrite invalidates every open PR, every agent
+         worktree, and `state/agent-prs.jsonl` — so `luxar-agent pause` first.
+    - **Runbook:**
+      1. `luxar-agent pause`; drain/merge or close all open PRs.
+      2. `brew install git-filter-repo` (not installed on this Mac).
+      3. Fresh clone, then:
+
+             git filter-repo --invert-paths \
+               --path packages/luxar/src/luxar/demos/data/gsplats_tribolium \
+               --path packages/luxar/src/luxar/demos/data/gsplats_acto3d_heart \
+               --path packages/luxar/src/luxar/demos/data/gsplats_tng_cosmic_web \
+               --path packages/luxar/src/luxar/demos/data/milky_way_gaia_3m.zarr.zip
+
+         KEEP the output: Support wants the `NOTE: First Changed Commit(s)` block
+         and, if printed, `NOTE: There were LFS Objects Orphaned by this rewrite`
+         plus the file it names.
+      4. Verify `git log --all -- <path>` is empty for all four paths, and that
+         blob `bae6bf061658` (the RAW, non-LFS Gaia zip, 39.58 MB — committed
+         before that path was LFS-tracked, so no LFS purge can touch it, and it
+         is the CC BY-**NC** dataset) is gone from every rewritten ref.
+         ⚠ **That local check is necessary but NOT sufficient**, and this blob
+         is the case that proves it: it sits in `b3032cab7`, which is on `main`
+         and so does get rewritten away, *and* in `732ebc968` — a byte-identical
+         commit that no branch, tag or PR ref points at. A ref rewrite cannot
+         reach an unreferenced commit and `git log --all` cannot even see it,
+         yet `git fetch origin 732ebc968…` still succeeds against the remote
+         (checked 2026-08-13) and the API/web still serve it by SHA. So verify
+         against the REMOTE too, from a clone that has no local copy: that fetch
+         must fail before the repo goes public.
+      5. Lift branch protection → `git push --force --mirror origin` → restore
+         protection. ⚠ `--mirror` deletes remote refs absent locally.
+      6. File the Support ticket with repo name, affected-PR count, and the
+         filter-repo NOTE output — and ask, in the same ticket, for the
+         unreferenced commits and cached views to be dropped as well (name
+         `732ebc968` explicitly), not just the orphaned LFS objects. Only
+         GitHub-side GC clears those; step 4's remote fetch is the proof.
+      7. Re-clone everywhere: this Mac's worktrees and obsidian's three checkouts
+         (`luxar-main`, `luxar-fullfit`, `luxar-encode`).
+    - Zero forks today, so no third-party copies to chase. The repo is still
+      private, so nothing is being distributed while this waits.
   - **License audit — DONE (web-verified 2026-07-15).** A gsplat fit / point
     catalog is a *derived* product (lossy transform, not the raw voxels/pixels),
     which is broadly redistributable — but "derived" does **not** launder three
@@ -232,7 +298,7 @@ to ship after). Sequencing is at the bottom.
         has no license → default all-rights-reserved.
       - `gsplats_tribolium` — license CONFLICT: the Cell Tracking Challenge origin
         forbids cloning "or their parts" and requires permission for non-CTC use,
-        while the Zenodo re-host (5270303) is CC BY 4.0 applied by an uploader who
+        while the Zenodo re-host (5270323) is CC BY 4.0 applied by an uploader who
         may lack authority. Local fetch-and-fit (or seek CTC permission) until
         resolved.
       - `milky_way_gaia_3m` — CC BY-**NC** 3.0 IGO (**non-commercial**). Decision
@@ -268,6 +334,45 @@ to ship after). Sequencing is at the bottom.
     - Unit tests in `utils/tests/test_data_fetch.py` (deliberately not counted
       here — the number rots every time a test lands); demo-import tests stay
       green; ruff clean.
+  - **INVENTORY + READINESS — audited 2026-08-12, and made re-runnable.**
+    `python scripts/zenodo_migration_audit.py` cross-references the manifest,
+    the demo registry and the filesystem, so this never has to be reconstructed
+    from memory again. State at the audit:
+    - **3 records to create** (`cc-by`, `cc-by-sa`, `h2afva`) — none exist yet.
+      Record grouping is a ONE-WAY DOOR (records cannot be split or merged after
+      publication), which is why `h2afva` is separate.
+    - **20 datasets ready to upload now (~418 MB)** — 19 whose bytes are still
+      in-tree, plus the 3 new CC-BY ones whose bytes are in `~/.cache` on this
+      Mac (drosophila 2.3 MB, h2afva stack 24.4 MB, h2afva decimation 24.6 MB).
+    - **2 datasets upload from obsidian, not from here — nothing is blocked on a
+      decision any more (both resolved 2026-08-12):**
+      - `gsplats_4d_neuromast_2ch` (~250 MB) — **permission GRANTED by Adrian
+        Jacobo**, so it goes to the `cc-by` record with the rest.
+      - `h2afva` timelapse → its **own record, whose purpose is the FULL 253-tp
+        set** (~16 GB). The 51-tp variant (~2.9 GB) is a strict subset of it and
+        ships anyway: redundant in content, but far easier to pull, so the demo
+        takes 51tp by default and the full timelapse is opt-in. Both variants are
+        already declared; only the files need filling at upload.
+    - **⚠ Record assignment corrected before creation (one-way door).** The
+      single-stack demos — `gsplats_3d_h2afva_stack` and its derived
+      `gsplats_3d_h2afva_decimation` — were pointed at the `h2afva` record; they
+      now go to the general **`cc-by`** record, because a 24 MB single stack
+      ships like every other demo dataset and does not belong in the timelapse
+      archive. Catching this after publication would have been unfixable.
+    - **4 `local-compute` datasets are OUT of scope by licence** and must never
+      be uploaded — they keep their manifest checksums only so a machine that
+      still has the files can verify them.
+    - **Integrity checks that must stay clean:** UNDECLARED-on-disk = 0 (every
+      in-tree data file is manifest-described; a stray one would migrate to
+      nowhere), and 370.6 MB still in-tree is the total the migration removes.
+    - **31 demo caches are deliberately NOT manifest-tracked** — those demos
+      fetch or generate from public sources at runtime (arxiv, caida,
+      earthquakes, flywire, ocean currents, the gsplat interop imports, the
+      zebrahub multiome/velocity set, …). The audit lists them so a NEW dataset
+      that quietly needs hosting cannot hide among them.
+    - **8 manifest datasets are not claimed via `DEMO_META['caches']`** — all 8
+      were grepped 2026-08-12 and every one IS still loaded by a demo through
+      another route. None is orphaned; do not prune them.
   - **Migration runbook (irreversibility rules).** Publishing a Zenodo record is
     **permanent** (no self-delete; files immutable — edits become new versions).
     So: (1) rehearse on **`sandbox.zenodo.org`** first — a published Sandbox record
@@ -289,6 +394,15 @@ to ship after). Sequencing is at the bottom.
     `data_fetch` fallback order already makes the in-repo copy win when present.
   - **Scope note:** only *heavy processed datasets* move. Small README/doc images
     (`docs/images/**`) must stay in-repo so GitHub renders them (see R19).
+  - **Status check 2026-08-11: the Zenodo leg is still dormant** — 0 of 24
+    manifest datasets carry a record ID, so every demo still runs off in-repo
+    LFS. Nothing has regressed, but nothing has moved either: the Gaia demo
+    still loads the committed `milky_way_gaia_3m.zarr.zip` (the TAP query
+    remains docstring-only; #1461 adds an appearance-tuning ask on top), and the
+    neuromast + h2afva uploads remain pending. Next concrete action is still
+    step 2 of the plan: create the Sandbox rehearsal record, then production.
+    *(2026-08-12: the replacement-demos + dataset-removal work is now in flight
+    as PR #1554 — see the removal/history-purge bullets above.)*
   - **Also here (from R16):** the **64 MB** `luxar-paper`
     `supp_doc/splat_count_vs_quality/splat_count_vs_quality.pdf` (LFS, ~10× any
     other PDF) embeds many 2–8 MB slice montages uncompressed — rasterize/
@@ -365,6 +479,13 @@ to ship after). Sequencing is at the bottom.
   directly:** their fitted datasets are new heavy data — land them to Zenodo from
   the start rather than growing git-LFS. Gated on R10 Phase 2 (correct at rest);
   Phase 3 for good orbit captures.
+  - ✅ **Demos exist (verified 2026-08-11):** `demo_gsplats_3d_tribolium_embryo`
+    renders its nuclei as `blending_mode="normal"` alpha-over surface splats, and
+    the 4D NEXRAD supercell demo (#1219) uses normal-mode gsplats for both the
+    storm volume and its in-scene markers. **Remaining:** capture them for the
+    R19 gallery and land their datasets via R17 rather than LFS. ⚠️ Health: the
+    gsplat normal-overlap alpha-over E2E spec is red on `main` (#1493) — fix
+    before treating the pipeline as demo-ready.
 - **R11 [LAUNCH] — README/landing pass.** ✅ **Mostly done** (2026-07-01):
   audited the quick-start end-to-end — `luxar demo` generates + renders
   flawlessly (10k-pt Lorenz), every documented Python snippet runs, and all
@@ -383,12 +504,13 @@ to ship after). Sequencing is at the bottom.
     reachable by outsiders yet. Confirm it goes live when the repo is made public
     (or enable/verify Pages visibility), and that the built site actually renders
     — nav, API autosummary, viewer typedoc, and images all resolve.
-  - **Content cleanup:** `docs/` carries internal/stale trees that should not
-    ship in public docs — `archive/`, `handoffs/`, `reports/`, `bugs/`,
-    `templates/`, `benchmarks/`. Prune or exclude them from the Sphinx build,
-    then update/improve the user-facing guides + API reference to match the
-    current surface (gsplat cal→fit→lod pipeline, LOD recipes, export/native,
-    batch-fit, filtering). Cross-check against the CLI so examples don't drift.
+  - **Content cleanup:** partially done — `handoffs/`, `reports/`, and `bugs/`
+    were pruned 2026-07-14 (#518), but `archive/`, `benchmarks/`, and
+    `templates/` are still in `docs/` (verified 2026-08-11). Prune or exclude
+    the remainder from the Sphinx build, then update/improve the user-facing
+    guides + API reference to match the current surface (gsplat cal→fit→lod
+    pipeline, LOD recipes, export/native, batch-fit, filtering). Cross-check
+    against the CLI so examples don't drift.
 - **R19 [LAUNCH] — README refresh + showcase the newer/better demos (images +
   video).** Extends R11 (whose one open remainder was "regenerate the gallery
   media"). The pipeline exists: `make generate-readme-demos →
@@ -419,6 +541,15 @@ to ship after). Sequencing is at the bottom.
     But the media the gallery captures come from demos whose *inputs* may have
     moved to Zenodo, so `generate-readme-demos` must run after R17's fetch path
     exists (or before the migration). Keep gallery media small/optimized.
+  - **Incremental refresh is happening (2026-08):** tractography media wired
+    into the README (#1119), the mesh tile added framed against its orbit
+    (#1376), the ATP synthase look re-baked (#1394), plus harness hardening —
+    camera-derived orbit rock axis (#1384) and a subject-crop warning (#1400).
+    The demo suite itself has also grown well past the R20/R21 set (NEXRAD
+    supercell, tractography, FlyWire, CAIDA, CytoSelf, ocean currents, global
+    rivers, L-system forest 2.0, biodiversity …) — the **full curation sweep is
+    still pending** and should happen once, after the mesh/capsule arcs settle
+    and R17's fetch path is live.
 - **R20 [LAUNCH] — Demos quality overhaul** (in progress, parallel agent —
   **PR #488**, branch `worktree-demos-quality-overhaul`, ~+1785/−1286 across the
   demo suite). Crash fixes, stale-doc fixes, shared caching, alias removal, and
@@ -634,13 +765,46 @@ to ship after). Sequencing is at the bottom.
 >   Zenodo versions once those demos exist.
 > - Full phased plan + risk register: `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`.
 
+> **Update 2026-08-11 — status sweep after the Aug 7–11 wave (~80 merges by the
+> agent fleet).** Where the release tracks actually stand:
+> - **R10/R10a:** the depth-sorting arc is complete and normal-mode gsplat demos
+>   now EXIST (tribolium alpha-over nuclei; NEXRAD 4D supercell #1219) — R10a's
+>   remaining work is gallery capture + landing their data via R17, plus fixing
+>   the red normal-overlap E2E spec on `main` (#1493).
+> - **R17 is the stalest LAUNCH item:** fetch infra built but the Zenodo leg is
+>   still fully dormant (0/24 record IDs); Gaia TAP path and neuromast/h2afva
+>   uploads all still pending. It gates R19's one-shot gallery capture and the
+>   licensing-mandated `git rm` of the four local-compute datasets — start the
+>   Sandbox rehearsal. *(2026-08-12: the dataset removal is now in flight as
+>   PR #1554, with the history-purge plan recorded under R17.)*
+> - **R18:** handoffs/reports/bugs were pruned in July (#518); `archive/`,
+>   `benchmarks/`, `templates/` still ship in `docs/`.
+> - **R19:** incremental refreshes landing (tractography #1119, mesh tile #1376,
+>   ATP synthase #1394; harness hardening #1384/#1400); hold the full curation
+>   sweep until the mesh/capsule arcs settle + R17 is live.
+> - **Two NEW engineering arcs are in flight and should settle before the
+>   demo/gallery freeze:** the mesh LOD program (item 31 — substitutive #1351 +
+>   partition #1382 landed; reveal ladder integrating via holding PR #1499) and
+>   the capsule line primitive (item 30 — **default flip MERGED #1492**, docs
+>   #1516 closed; the 7-issue joint-defect cluster is now a post-flip drain).
+> - **Release mechanics quietly improved:** changelog *fragments* end
+>   CHANGELOG.md rebase conflicts (#1500 — release-prep now includes
+>   `make changelog` to fold them), CI is domain-scoped per-PR with a nightly
+>   full matrix (#1486/#1484), complexity is a C901 ratchet gate (#1401), and
+>   numpy is capped <2.5 for the mypy gate (#1518).
+> - **Health items to clear before any cut:** E2E reds on `main` — #1493 (two
+>   specs), #1469 (demo-validation fixtures), #1470 (dev-server refusal in
+>   browser specs).
+
 ---
 
 ## Infrastructure & Polish
 
 4 - ~~**Cache eviction policy**~~: **DONE.** Root cause found & fixed: L2 (OPFS) eviction was gated only on the configured `maxSize` (default `l2MaxSizeMB: 2048` → 2 GB), but the browser-granted OPFS quota is often far smaller. The quota gate in `OPFSStore.doSet` rejected writes (counted as `quotaWriteSkipped`) long before `totalSize` reached 2 GB, so the maxSize-based eviction loop never ran — the LRU froze holding old entries and silently dropped new ones (worst on Firefox/private-mode/small disks; invisible on roomy Chrome). Fix: `doSet` now evicts LRU entries on quota pressure (not just maxSize pressure) and re-checks, since deleting files genuinely frees quota. Bounded by index size with a no-progress guard. Regression test: `tests/unit/cache/opfs-eviction-quota.todo4.test.ts`. (L0/L1 size-gated eviction was already correct.)
 
-7 - **Theme layout consistency**: All Luxar UI themes should differ only in colors, transparency, and visual effects — never in the size or layout of panels and their components. This ensures a consistent user experience across themes.
+7 - **Theme layout consistency**: All Luxar UI themes should differ only in colors, transparency, and visual effects — never in the size or layout of panels and their components. This ensures a consistent user experience across themes. *Update 2026-08-11:* the authoritative **UI Design Guide** now exists (`docs/guides/developer/UI_DESIGN_GUIDE.md`, #1474) and codifies exactly this (plus highlight-as-interactive-accent, green-as-semantic); enforcement work should cite it. Known theme defects to fold in: glass secondary/muted text below WCAG AA (#1513), white-on-white context menu in liquid-glass (#1510), two §5.1 glass-surface violations (#1483).
+
+32 - **UI modernization arc — interaction depth + follow-up drain** (2026-08). A large restyle wave landed on the "quiet instrument" language: UI Design Guide (#1474), accent migration + panel polish (#1480), Select Dataset dialog modernization (#1472), emoji → stroke icons + neutral scene-graph names (#1479), a11y hardening (embed-safe focus rings, reduced motion, #1476), token hygiene (#1478). **Open:** PR #1508 (panel entry motion, modal focus trap, type-to-filter, Layers context menus) plus its filed follow-ups — submenu unmount on hover (#1509), Layers rows all hidden after dataset switch (#1512), listbox keyboard tab stop (#1511) — and the theme defects listed under item 7. Also health: the control-rail light-theme snapshot is red on `main` (#1493).
 
 8 - **Panel visibility configuration**: Allow configuring which panels are visible (Logs, Rendering Controls, Data Monitor, Dimensions, etc.) from the Python side. Optionally lock panel visibility to enforce a particular look and prevent user modifications.
 
@@ -648,7 +812,7 @@ to ship after). Sequencing is at the bottom.
 
 ## Bugs
 
-27 - ~~**Demos can't be stopped with Ctrl-C; a new demo shows the old one**~~: **DONE** (2026-07-24, #652). `luxar demo run` spawned a 3-level tree (`demo run` → demo script → `luxar serve` uvicorn) with no process-group isolation or owned teardown, so Ctrl-C orphaned the server on ports 8000/5173; `pick_port` then auto-incremented and the stale browser tab kept showing the old scene. Fix: new stdlib-only `luxar/utils/process.py::run_child_process` runs the child in its own session (`start_new_session`) and, on any exit, tears the whole subtree down with escalating SIGINT → SIGTERM → SIGKILL in a `finally` (SIGTERM/SIGHUP routed in too; a second Ctrl-C jumps straight to SIGKILL). Wired into `demo_run`/`demo_run_all` (isolate the group) and `launch_viewer` (stay in the group so the group-kill cascades). Verified with a real foreground Ctrl-C via a PTY: exits 130, zero survivors, ports freed. Also folded in demo-CLI robustness (installed-wheel guard, clean `DEMO_META` errors, run-all GPU/large-download skips + `--include-gpu`/`--max-download-mb`, corrupt-download classification, honest cache-clear totals, no `datasets/` dir creation on `demo list`).
+27 - ~~**Demos can't be stopped with Ctrl-C; a new demo shows the old one**~~: **DONE** (2026-07-24, #652). `luxar demo run` spawned a 3-level tree (`demo run` → demo script → `luxar serve` uvicorn) with no process-group isolation or owned teardown, so Ctrl-C orphaned the server on ports 8000/5173; `pick_port` then auto-incremented and the stale browser tab kept showing the old scene. Fix: new stdlib-only `luxar/utils/process.py::run_child_process` runs the child in its own session (`start_new_session`) and, on any exit, tears the whole subtree down with escalating SIGINT → SIGTERM → SIGKILL in a `finally` (SIGTERM/SIGHUP routed in too; a second Ctrl-C jumps straight to SIGKILL). Wired into `demo_run`/`demo_run_all` (isolate the group) and `launch_viewer` (stay in the group so the group-kill cascades). Verified with a real foreground Ctrl-C via a PTY: exits 130, zero survivors, ports freed. Also folded in demo-CLI robustness (installed-wheel guard, clean `DEMO_META` errors, run-all GPU/large-download skips + `--include-gpu`/`--max-download-mb`, corrupt-download classification, honest cache-clear totals, no `datasets/` dir creation on `demo list`). **Completed by the stale-demo-tab campaign (2026-08, #1462–#1467):** `luxar demo stop` (#1462), per-demo derived port pairs instead of shared 8000/5173 (#1463), a scene-identity watchdog so a tab that no longer shows what its address serves says so (#1466), and browser tabs named after the scene they show (#1467). The "new demo shows the old one" failure class is now defended at every layer.
 
 23 - **Fix bugs surfaced by examples** (reproduced & triaged 2026-06-30):
     - ✅ `scene_dimensions_example` — **FIXED.** `[`/`]` navigation emptied the
@@ -668,7 +832,40 @@ to ship after). Sequencing is at the bottom.
 
 ## Rendering & Performance (MEDIUM Priority)
 
-24 - **Depth sorting for proper alpha blending** (**RE-PROMOTED to pre-release [LAUNCH]** 2026-07-15 — see R10): Sort transparent geometry (Points, Lines, GSplats) back-to-front per frame so semi-transparent elements composite correctly. Without depth sorting, overlapping translucent primitives blend in submission order rather than depth order, producing incorrect colors and visible artifacts depending on view angle. Full phased plan (Option 3a — viewer-only, no format change): `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`. Status: spec Phases 0–3 MERGED for gsplats (#511/#523/#553: premultiplied alpha, texture-backed storage, SortWorker, camera-triggered re-sort); partial appends (spec Phase 4 Stage 2) landed for all three geometry types. GSplats-first; Points sorting symmetry LANDED (arc PR-B, spec §8); Lines storage + sorting symmetry LANDED (arc PR-C, spec §8) — all three geometry types now share the texture storage + SortWorker machinery. Volumetric Phase 3 (points: isotropic chord-integral emission–absorption + points RGBA alpha + mandelbulb showcase) LANDED (arc PR-D); volumetric Phase 4 (lines: transverse chord integral + lines RGBA per-vertex alpha, `effectiveGeometryMode` deleted — all three geometry types now render + depth-sort real volumetric) LANDED (arc PR-E) — **ARC COMPLETE**.
+24 - **Depth sorting for proper alpha blending** (**RE-PROMOTED to pre-release [LAUNCH]** 2026-07-15 — see R10): Sort transparent geometry (Points, Lines, GSplats) back-to-front per frame so semi-transparent elements composite correctly. Without depth sorting, overlapping translucent primitives blend in submission order rather than depth order, producing incorrect colors and visible artifacts depending on view angle. Full phased plan (Option 3a — viewer-only, no format change): `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`. Status: spec Phases 0–3 MERGED for gsplats (#511/#523/#553: premultiplied alpha, texture-backed storage, SortWorker, camera-triggered re-sort); partial appends (spec Phase 4 Stage 2) landed for all three geometry types. GSplats-first; Points sorting symmetry LANDED (arc PR-B, spec §8); Lines storage + sorting symmetry LANDED (arc PR-C, spec §8) — all three geometry types now share the texture storage + SortWorker machinery. Volumetric Phase 3 (points: isotropic chord-integral emission–absorption + points RGBA alpha + mandelbulb showcase) LANDED (arc PR-D); volumetric Phase 4 (lines: transverse chord integral + lines RGBA per-vertex alpha, `effectiveGeometryMode` deleted — all three geometry types now render + depth-sort real volumetric) LANDED (arc PR-E) — **ARC COMPLETE**. **Successor arc (#1352, 2026-08, in progress → see item 30):** lines are being moved off the screen-space quad onto a cylindrically-symmetric **capsule primitive** (ρ = G₂D(r) × box(s)) — ray-integral math (#1419), primitive behind `?linePrimitive=capsule` (#1426/#1481), picking (#1451), sharpness via an Abel-transform radial LUT (#1458), deficit-rule joint composition (#1487), the **default flip (#1492)**, and the docs fix (#1516) are all merged/closed; the capsule-joint defect cluster (#1488/#1490/#1494/#1495/#1497/#1501/#1502) remains open as a post-flip drain (see item 30).
+
+30 - **Capsule line primitive — drain the joint follow-ups**
+     (#1352, the successor arc to item 24's volumetric work; added 2026-08-11,
+     updated same day). ✅ **The default flip is MERGED (#1492)** — capsule is
+     now the default line primitive — and the docs fix landed (#1516, closed).
+     Remaining to close the arc: the open capsule-joint defects, now live on
+     the default path — one-sided deficit gate (#1495), lost far cap (#1490),
+     stencil-reach bound (#1488), interpolated-radius partner reconstruction
+     (#1494), hairpin re-chop (#1501), cut-normal snap banding (#1502),
+     untested sharp-turn clause (#1497).
+
+31 - **Mesh LOD/structure program** (in flight 2026-08; the "mesh follow-up
+     program" — mesh reached UI feature-completeness earlier, this is its LOD
+     story). Landed: **substitutive LOD** via `luxar.mesh.decimate` +
+     `add_mesh(substitutive_lod=…)` (#1351), **kind=partition** path (#1382),
+     uniform-colour support under substitutive_lod (#1485), lazy-level pinning
+     out of the per-slice sweep (#1464), near-camera fade parity (#1438).
+     The prerequisite **radial (concentric-shell) reveal ordering shipped for
+     GSplats/Points/Lines** (#1448, `-m radial`, deliberately unstamped so no
+     1/e brightening) — its own follow-ups are open: stale `reference_energy`
+     on the substitutive path (#1455), `annotate-quality` re-stamping a reveal
+     (#1454), Points/Lines accepting `method='radial'` with no ordering behind
+     it (#1453), untested spatial-dims default (#1452).
+     **In flight:** the mesh **additive ladder — a reveal, and only a reveal**
+     (radial prefix ordering; a generic prefix of an index buffer is a holed
+     surface, so only the reveal semantic is offered): authoring #1503 + viewer
+     half #1515, integrating through **draft holding PR #1499**, with design
+     follow-ups filed (#1506 cumulative-vs-per-level counts, #1507 prefix
+     contiguity on closed surfaces, #1514 stacked-nD sequencing, #1517
+     per-level vs per-node budgets). **Decimation-quality backlog:** qem tier
+     for manifoldness (#1348), colour loss/corruption for non-uint8 inputs
+     (#1355), `luxar mesh lod` dropping transform/scalars/labels/siblings
+     (#1357). Related: the nD-clipping deferral measurement is item 29.
 
 22 - ~~**Level-of-Detail (LOD) with PartitionNode**~~: **DONE for release** (code-verified 2026-07-11). Beyond the core (archive item 22-core), the 2026-07 wave shipped: intent-first `--recipe` topologies (flat/stream/levels/tiles/overview/adaptive) with stream ladders on by default, viewport-relative coverage-fraction switching (`sqrt(N_i/N_finest)`, self-calibrating — no threshold knob), Q·e quality stamps + energy-gated upgrade release (`e(k) ≥ 0.6`), the never-downgrade display gate with subtree aggregation and refinement kick, sibling-aware ladders, per-part LOD at fit/merge time (`--recipe` on tiled fits and batch-fit merges), coverage inflation + mass conservation + `--refine l2|volume`, `annotate-quality` retrofitting, and byte-budget VRAM residency (coarse eager levels stay resident; fine lazy levels load on demand and evict off-screen-first under pressure). The advanced refinements formerly listed here were re-verified against the code (2026-07-11: 3 missing, 4 partial) and **demoted to Future/Exploratory item 25** — none is release-gating.
 

@@ -242,7 +242,7 @@
       "category": "connectome",
       "script": "demo_flywire_connectome.py",
       "dataset": "datasets/demos/flywire_connectome.luxar.zarr",
-      "exposure": -1.0
+      "exposure": -1.5
     },
     {
       "id": "arxiv_papers_kaggle",
