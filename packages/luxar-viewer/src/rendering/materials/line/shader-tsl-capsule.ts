@@ -18,7 +18,7 @@
  *   blending mode select the graph variant.
  * - every GLSL discard is mirrored exactly (cut sides, zero support,
  *   zero-contribution colour).
- * - unlike the quad/volumetric fragments, the capsule fragment reads NO
+ * - unlike the quad fragment, the capsule fragment reads NO
  *   screen coordinate at all — the stencil-local varyings carry the
  *   geometry — so there is no y-flip hazard here.
  */

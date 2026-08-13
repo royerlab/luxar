@@ -116,8 +116,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
     // For an interior joint code, return the partner's FAR endpoint
     // (object space, .xyz) and its WIDTH there (.w — the same texels carry
     // both). Invalid codes return .w = -1 (widths are sanitized >= 0).
-    // Same decode as the volumetric twin's luxarPartnerDir; codes land at
-    // texel4.y/.z — see line-geometry.ts.
+    // Codes land at texel4.y/.z — see line-geometry.ts.
     vec4 luxarPartnerFar(float code, int lineTexW) {
       bool interior = (code > 0.5) || (code < -2.5);
       if (!interior) return vec4(0.0, 0.0, 0.0, -1.0);
