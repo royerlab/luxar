@@ -516,8 +516,9 @@ export function capsuleLineWebGPUFactory(
     // neighbour. Packet length 0 = no usable partner: hard cut.
     const partnerProfile = (cut: TSLNode, rel: TSLNode, mSign: number, rEnd: TSLNode): TSLNode => {
       // Partner axis = my inward axis reflected across the cut plane
-      // (exact). Radius from the SHARED VERTEX radius (rEnd flat varying,
-      // #1494), tapered by the packed gradient, FROZEN past the far end;
+      // (exact). Radius from the SHARED VERTEX radius (rEnd — the caller's
+      // pkR.x / pkR.y, from the packed vPack.z lane, #1494), tapered by
+      // the packed gradient, FROZEN past the far end;
       // the far cap term closes the rod there (#1490).
       const nx: TSLNode = cut.x.toVar();
       const ny: TSLNode = cut.y.toVar();

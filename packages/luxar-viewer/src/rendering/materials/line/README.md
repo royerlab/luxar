@@ -437,8 +437,11 @@ integrates per ray — while tapered or perspective-diverged partners get
 exactly the light a pure partition would chop (a fat vertex's disc keeps
 the half a thin neighbour cannot render; the numeric composition sweep in
 `line-capsule.test.ts` pins the three reconstruction errors of
-#1494/#1488/#1490). The partner's far endpoint is near-plane-clipped
-toward the joint vertex before projecting (a behind-eye projection flips
+#1494/#1488/#1490, and
+`tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`
+additionally locks the shared-vertex base radius of #1494 across all four
+shader surfaces). The partner's far endpoint is near-plane-clipped toward
+the joint vertex before projecting (a behind-eye projection flips
 and would poison the cut normal), with a joint vertex behind the near
 plane keeping the perpendicular butt. The per-fragment radius is computed EXACTLY from the
 endpoint radii (`mix(rA, rB, clamp(x/L, 0, 1))` — a linear varying cannot
