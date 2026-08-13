@@ -652,6 +652,19 @@ def _build_reveal_spec(
     return spec
 
 
+def _require_known_recipe(recipe: str) -> None:
+    """Reject a recipe name neither ladder arm serves.
+
+    A function rather than an inline check at each site: both callers below are
+    already at the complexity ratchet's limit, and one more branch in `run_lod`
+    tipped it over. The check is one line here and zero branches there.
+    """
+    if recipe not in MESH_LOD_RECIPES:
+        raise ValueError(
+            f"recipe must be one of {' | '.join(MESH_LOD_RECIPES)}; got {recipe!r}."
+        )
+
+
 def _build_ladder_specs(
     *,
     recipe: str,
@@ -698,14 +711,11 @@ def _build_ladder_specs(
         resolve_additive_axis_mesh(dict(additive_spec))
         return None, additive_spec
 
-    if recipe != RECIPE_LEVELS:
-        # Named explicitly rather than falling through to the substitutive arm.
-        # `run_lod` is directly callable, so an unrecognized recipe reaching here
-        # would quietly write the OTHER flavour — `recipe="reveaal"` producing a
-        # decimated ladder is not a near-miss, it is a different product.
-        raise ValueError(
-            f"recipe must be one of {' | '.join(MESH_LOD_RECIPES)}; got {recipe!r}."
-        )
+    # Reached only when the recipe is not `reveal`, and the substitutive arm is
+    # entered by NAME rather than by falling through to it: an unrecognized recipe
+    # here would quietly write the OTHER flavour, and `recipe="reveaal"` producing
+    # a decimated ladder is a different product, not a near miss.
+    _require_known_recipe(recipe)
 
     substitutive_spec: Dict[str, Any] = {
         "levels": levels,
@@ -749,10 +759,7 @@ def run_lod(
     # depend on where `_build_ladder_specs` happens to sit relative to the
     # `--overwrite` deletion — that ordering is correct today (specs are built
     # ~100 lines before the `rmtree`) and this keeps it from becoming load-bearing.
-    if recipe not in MESH_LOD_RECIPES:
-        raise ValueError(
-            f"recipe must be one of {' | '.join(MESH_LOD_RECIPES)}; got {recipe!r}."
-        )
+    _require_known_recipe(recipe)
 
     from luxar import LuxarZarrCompiler
 
