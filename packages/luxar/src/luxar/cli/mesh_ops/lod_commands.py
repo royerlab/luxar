@@ -457,16 +457,31 @@ RECIPE_REVEAL = "reveal"
 MESH_LOD_RECIPES = (RECIPE_LEVELS, RECIPE_REVEAL)
 
 
-#: Defaults of the substitutive knobs, so the cross-recipe gate can tell "the user
-#: typed this" from "typer supplied the default". Typer gives no such signal, and
-#: without it `--recipe reveal` would be refused for flags nobody passed.
-_LEVELS_DEFAULT = 3
-_COMPRESSION_DEFAULT = 4
-_SUBST_METHOD_DEFAULT = "auto"
+def _was_supplied(ctx: Optional[typer.Context], name: str) -> bool:
+    """Whether ``name`` came from the COMMAND LINE, not from its default.
+
+    Comparing the value against the default cannot answer this, and the gap is not
+    theoretical: `--recipe reveal --levels 3` types a levels-only flag whose value
+    happens to BE the default, so a value comparison sees "not given" and the flag
+    is silently ignored — the exact silent-drop the gate exists to prevent, hit by
+    the user most likely to be surprised (someone spelling out a default).
+
+    Click records where each parameter's value came from, which is the real signal.
+    `ctx` is optional so `run_lod` and the unit tests can call the gate directly;
+    with no context every knob reads as supplied, which is the safe direction — a
+    direct caller passing a knob means it, having no defaults to fall back on.
+    """
+    if ctx is None:
+        return True
+    source = ctx.get_parameter_source(name)
+    if source is None:
+        return False
+    return getattr(source, "name", str(source)) == "COMMANDLINE"
 
 
 def _reject_cross_recipe_flags(
     *,
+    ctx: Optional[typer.Context] = None,
     recipe: str,
     add_method: Optional[str],
     n_lods: Optional[int],
@@ -968,6 +983,7 @@ def run_lod(
 
 
 def lod_command(
+    ctx: typer.Context,
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .luxar.zarr scene containing a mesh node."
     ),
@@ -1081,7 +1097,7 @@ def lod_command(
     # by the recipe: `-m` belongs to the additive ordering on both commands.
     legacy_method: Optional[str] = typer.Option(None, "--method", hidden=True),
 ) -> None:
-    """Build a substitutive LOD ladder for a mesh scene.
+    """Build a LOD ladder for a mesh scene — decimated levels, or a reveal.
 
     Writes a `kind=lod` group whose coarse children are progressively decimated
     copies of the surface and whose finest child is the original. The viewer shows
@@ -1118,15 +1134,16 @@ def lod_command(
             f"ordering, as on `gsplat lod`; use --subst-method {legacy_method}."
         )
     _reject_cross_recipe_flags(
+        ctx=ctx,
         recipe=recipe,
         add_method=add_method,
         n_lods=n_lods,
         counts=counts,
         reveal_centre=reveal_centre,
         spatial_dims=spatial_dims,
-        levels_given=levels != _LEVELS_DEFAULT,
-        compression_given=compression_factor != _COMPRESSION_DEFAULT,
-        subst_method_given=method != _SUBST_METHOD_DEFAULT,
+        levels_given=_was_supplied(ctx, "levels"),
+        compression_given=_was_supplied(ctx, "compression_factor"),
+        subst_method_given=_was_supplied(ctx, "method"),
     )
     try:
         run_lod(

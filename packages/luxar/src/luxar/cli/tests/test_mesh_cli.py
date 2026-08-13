@@ -1853,3 +1853,121 @@ class TestMeshLodRevealRecipe:
                 add_method="salience",
             )
         assert (out / "keep.txt").exists(), "the output was deleted before validation"
+
+
+class TestMeshLodRecipeGateThroughTheRealCLI:
+    """The cross-recipe gate driven by `CliRunner`, not by synthetic booleans.
+
+    The unit tests above hand `_reject_cross_recipe_flags` its `*_given` flags
+    directly, which pins the gate's LOGIC and nothing about whether the command can
+    compute them. It could not: they were derived by comparing each value against
+    its default, so `--recipe reveal --levels 3` — a levels-only flag whose value
+    happens to BE the default — read as "not given" and was silently ignored. The
+    gate was correct and unreachable for exactly the user most likely to be
+    surprised, the one who spells out a default.
+
+    These go through the real parser so the supply signal is the real one.
+    """
+
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [
+            ("--levels", "3"),
+            ("-L", "3"),
+            ("--compression-factor", "4"),
+            ("-K", "4"),
+            ("--subst-method", "auto"),
+        ],
+    )
+    def test_a_levels_flag_at_its_DEFAULT_value_is_still_refused_under_reveal(
+        self, tmp_path: Path, flag: str, value: str
+    ) -> None:
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+
+        result = runner.invoke(
+            app,
+            ["mesh", "lod", str(source), str(out), "--recipe", "reveal", flag, value],
+        )
+
+        assert result.exit_code != 0, (
+            f"{flag} {value} was accepted under --recipe reveal; the gate is "
+            "inferring 'given' from the value again"
+        )
+        message = _plain(result.output)
+        assert "--recipe levels" in message, message
+        assert not out.exists(), "a refused invocation must write nothing"
+
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [("--add-method", "radial"), ("-m", "radial"), ("--n-lods", "4")],
+    )
+    def test_a_reveal_flag_at_its_DEFAULT_value_is_still_refused_under_levels(
+        self, tmp_path: Path, flag: str, value: str
+    ) -> None:
+        """The mirror. `--n-lods 4` and `-m radial` are the reveal defaults."""
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+        out = tmp_path / "out.luxar.zarr"
+
+        result = runner.invoke(app, ["mesh", "lod", str(source), str(out), flag, value])
+
+        assert result.exit_code != 0, (
+            f"{flag} {value} was accepted under the default recipe"
+        )
+        assert "--recipe reveal" in _plain(result.output) or "--subst-method" in _plain(
+            result.output
+        )
+        assert not out.exists()
+
+    def test_SENSITIVITY_neither_recipe_refuses_its_OWN_flags_at_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """The control the two above need.
+
+        A gate that treated every parameter as supplied would pass both of them
+        while refusing every legitimate invocation — including one that spells out
+        its own recipe's defaults. Both of these must SUCCEED.
+        """
+        source = tmp_path / "src.luxar.zarr"
+        _write_source(source)
+
+        levels_out = tmp_path / "levels.luxar.zarr"
+        levels = runner.invoke(
+            app,
+            ["mesh", "lod", str(source), str(levels_out), "--levels", "3", "-K", "4"],
+        )
+        assert levels.exit_code == 0, _plain(levels.output)
+
+        reveal_out = tmp_path / "reveal.luxar.zarr"
+        reveal = runner.invoke(
+            app,
+            [
+                "mesh",
+                "lod",
+                str(source),
+                str(reveal_out),
+                "--recipe",
+                "reveal",
+                "-m",
+                "radial",
+                "--n-lods",
+                "4",
+            ],
+        )
+        assert reveal.exit_code == 0, _plain(reveal.output)
+        parent = zarr.open_group(str(reveal_out), mode="r")["surf"]
+        assert parent.attrs["n_additive_sublods"] == 4
+
+    def test_the_help_summary_names_both_ladders(self) -> None:
+        """`mesh lod --help`'s one-liner is the command's docstring summary.
+
+        It said "Build a substitutive LOD ladder", which stopped being the whole
+        truth the moment `--recipe reveal` existed — and it is the first line a
+        user reads.
+        """
+        result = runner.invoke(app, ["mesh", "lod", "--help"])
+        assert result.exit_code == 0
+        summary = _plain(result.output)
+        assert "reveal" in summary, summary
