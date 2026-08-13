@@ -596,9 +596,12 @@ def build_scene(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # ACES (the house recommendation), paired with the re-tuned
-                # layer appearance below (opacity 0.79 + luminous on every
-                # Neurons/Connections layer) from an A/B render — see #1459.
+                # ACES (the house recommendation), now that the A/B render the
+                # old Neutral exception asked for has been done (#1459): with
+                # the connection glow left faint (see below), ACES costs about
+                # half a stop — the gallery still goes from 1.9% of its lit
+                # pixels blown to 5.4% at the same exposure, and back to 0.9%
+                # at the manifest's re-tuned -1.5 stops.
                 viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
@@ -643,9 +646,18 @@ def build_scene(
                     sharpness=np.full(len(nt_verts), 0.85, dtype=np.float32),
                     line_type="segments",
                     blending_mode="luminous",
-                    # Re-tuned (#1459): 0.79 opacity under ACES reads as a bright
-                    # connective glow that no longer washes out the neuron bodies.
-                    opacity=0.79,
+                    # Very faint, and measured: 300K luminous connection lines
+                    # accumulate into a white wash that hides the (beautifully
+                    # colored) neuron cell bodies. #1459 asked for 0.79 here to
+                    # match the other layers; the A/B render refused it — at
+                    # 0.79 the gallery still blows 78% of its lit pixels
+                    # against 1.9% here, and even handing the harness 2.5 extra
+                    # stops of headroom leaves 17% blown and the super-class
+                    # palette gone. 0.24 already pales the optic lobes. So the
+                    # connections stay a subtle connective glow and the neurons
+                    # dominate the view; a brighter one needs fewer edges or a
+                    # per-layer intensity rebalance, not an exposure knob.
+                    opacity=0.08,
                     intensity=0.08,
                     labels=nt_labels,
                     layer=True,
