@@ -307,11 +307,11 @@ to ship after). Sequencing is at the bottom.
         query the ESA Gaia archive and build the point cloud on the user's
         machine on first run, caching to `~/.cache/luxar/` (compute once, stays
         cached), with the mandatory ESA/Gaia/DPAC acknowledgement. No GPU needed
-        (it's a point cloud, not a fit) — only a catalog query. Today
-        `demo_gaia_milky_way_3m.py` still loads the committed
-        `data/milky_way_gaia_3m.zarr.zip` and has no TAP query path (the archive
-        query lives only in its docstring, describing how that file was
-        produced), so this is pending work like the neuromast upload above.
+        (it's a point cloud, not a fit) — only a catalog query. Today the
+        committed `data/milky_way_gaia_3m.zarr.zip` is gone and
+        `demo_gaia_milky_way_3m.py` reads `~/.cache/luxar/`; the TAP query is
+        already executable as `scripts/generate_galaxy_simple.py`, so what is
+        pending is only wiring it up as an automatic first-run build.
       The gsplat cases total only ~35 MB, so the cost is a GPU-gated first run for
       those demos, not storage; Gaia needs only an archive query + CPU build.
       (Optional: email tng/acto3d/tribolium sources for written redistribution
@@ -396,9 +396,11 @@ to ship after). Sequencing is at the bottom.
     (`docs/images/**`) must stay in-repo so GitHub renders them (see R19).
   - **Status check 2026-08-11: the Zenodo leg is still dormant** — 0 of 24
     manifest datasets carry a record ID, so every demo still runs off in-repo
-    LFS. Nothing has regressed, but nothing has moved either: the Gaia demo
-    still loads the committed `milky_way_gaia_3m.zarr.zip` (the TAP query
-    remains docstring-only; #1461 adds an appearance-tuning ask on top), and the
+    LFS. Nothing has regressed, but nothing has moved either: the Gaia demo now
+    reads `~/.cache/luxar/` instead of a committed `milky_way_gaia_3m.zarr.zip`
+    (the TAP query is executable as `scripts/generate_galaxy_simple.py`, just not
+    wired up as an automatic first-run build; #1461 adds an appearance-tuning ask
+    on top), and the
     neuromast + h2afva uploads remain pending. Next concrete action is still
     step 2 of the plan: create the Sandbox rehearsal record, then production.
     *(2026-08-12: the replacement-demos + dataset-removal work is now in flight

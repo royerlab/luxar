@@ -96,7 +96,7 @@ Reference Markers:
     - Rigel: Blue supergiant in Orion, ~265 pc from Sun
 
 Usage:
-    python demo_gaia_milky_way.py
+    python demo_gaia_milky_way_3m.py
 
 Controls:
     - Mouse drag: Rotate view
@@ -121,9 +121,10 @@ DEMO_META = {
         "download_mb": 41,
         "compute": "medium",
         "gpu": "none",
-        # The catalog is CC BY-NC, so it is not shipped in-tree: it has to be
-        # placed in the cache by hand until #1575 builds it from the ESA
-        # archive on first run (see `resolve_data_file`).
+        # The catalog is CC BY-NC, so it is not shipped in-tree: rebuild it with
+        # `scripts/generate_galaxy_simple.py` (or place a copy in the cache by
+        # hand) until #1575 does that from the ESA archive automatically on
+        # first run (see `resolve_data_file`).
         "local_data": "manual-file",
     },
     "caches": [],
@@ -151,9 +152,11 @@ from luxar.utils.paths import get_demos_output_dir
 # The Gaia catalog is CC BY-NC 3.0 IGO. NonCommercial survives derivation, so it
 # applies to this point cloud too and is incompatible with a BSD-3 repository —
 # the file is therefore NOT shipped, and is read from the local cache when a
-# machine happens to have one. Building it from the ESA archive on first run is
-# issue #1575; until that lands, a machine without the cached file cannot run
-# this demo, and `resolve_data_file` says so rather than failing obscurely.
+# machine happens to have one. Rebuilding it from the ESA archive by hand is
+# `scripts/generate_galaxy_simple.py`; doing that AUTOMATICALLY on first run is
+# issue #1575. Until that lands, a machine with neither the cached file nor a
+# hand-run rebuild cannot run this demo, and `resolve_data_file` says so — with
+# the command — rather than failing obscurely.
 SCRIPT_DIR = Path(__file__).parent
 CACHE_FILE = (
     Path.home()
@@ -177,9 +180,13 @@ def resolve_data_file() -> Path:
         "This dataset is CC BY-NC 3.0 IGO (NonCommercial), which the derived "
         "point cloud inherits, so it is deliberately not distributed with "
         "Luxar.\n"
-        f"Place `milky_way_gaia_3m.zarr.zip` at {CACHE_FILE} to run this demo, "
-        "or follow royerlab/luxar#1575, which builds it from the ESA Gaia "
-        "archive on first run.\n"
+        f"Put a copy of the catalog at exactly {CACHE_FILE} (that full path, "
+        "filename included), or rebuild it from the ESA Gaia archive with\n"
+        "  hatch run python scripts/generate_galaxy_simple.py --count 3000000 "
+        f"--output {CACHE_FILE.with_suffix('')}\n"
+        "The --output stem is load-bearing: the demo opens the zip's "
+        "`milky_way_gaia_3m.zarr` member by name. Building the catalog "
+        "automatically on first run is royerlab/luxar#1575.\n"
         "Required acknowledgement when using Gaia data: this work has made use "
         "of data from the ESA mission Gaia, processed by the Gaia Data "
         "Processing and Analysis Consortium (DPAC)."
@@ -484,11 +491,11 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             legend_html = (
                 '<div style="font:13px sans-serif;color:#fff;line-height:1.7">'
                 f'<span style="{_dot};background:{_swatch(sun_color[0])}"></span>'
-                "Sun — our star, 8.1 kpc from the Galactic Centre<br>"
+                f"{SUN_LABEL}<br>"
                 f'<span style="{_dot};background:{_swatch(betelgeuse_color[0])}"></span>'
-                "Betelgeuse — red supergiant in Orion (~168 pc from the Sun)<br>"
+                f"{BETELGEUSE_LABEL}<br>"
                 f'<span style="{_dot};background:{_swatch(rigel_color[0])}"></span>'
-                "Rigel — blue supergiant in Orion (~265 pc from the Sun)"
+                f"{RIGEL_LABEL}"
                 "</div>"
             )
             scene.add_html(
@@ -535,17 +542,8 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
         Path to Luxar-formatted zarr
     """
     with asection("Loading Gaia DR3 Dataset"):
-        if not data_zip_path.exists():
-            aprint(f"❌ Error: Data file not found: {data_zip_path}")
-            aprint("")
-            aprint(f"The {data_zip_path.name} file should be in:")
-            aprint(f"  {data_zip_path.parent}/")
-            aprint("")
-            aprint("To generate the dataset:")
-            aprint("  cd scripts")
-            aprint("  hatch run python generate_galaxy_simple.py --count 3000000")
-            raise FileNotFoundError(f"Data file not found: {data_zip_path}")
-
+        # No existence check: every caller passes `resolve_data_file()`, which
+        # already raised (with the rebuild command) if nothing was found.
         aprint(f"Data file: {data_zip_path}")
         aprint(f"Size: {data_zip_path.stat().st_size / 1e6:.1f} MB")
 
@@ -560,7 +558,7 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
         aprint(f"✓ Extracted to: {raw_zarr_path}")
 
     # Convert to Luxar format
-    luxar_zarr_path = temp_dir / "gaia_milky_way.luxar.zarr"
+    luxar_zarr_path = temp_dir / f"{DEMO_META['outputs'][0]}.luxar.zarr"
     load_and_convert_gaia_data(raw_zarr_path, luxar_zarr_path)
 
     return luxar_zarr_path
@@ -604,7 +602,7 @@ def main() -> None:
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / "gaia_milky_way.luxar.zarr"
+        output_path = get_demos_output_dir() / f"{DEMO_META['outputs'][0]}.luxar.zarr"
         try:
             # Extract the raw .zarr from the zip to a temp dir, then convert to the
             # persistent output_path (same extraction the serve path uses — reading
