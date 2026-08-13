@@ -203,7 +203,7 @@ These are **NOT** part of luxar's core dependencies because they're large astron
 hatch run pip install astroquery astropy
 
 # Generate 3M stars (used for demo, ~90 minutes). The --output stem is
-# load-bearing: the demo opens the zip's milky_way_gaia_3m.zarr member by name.
+# load-bearing: the zip must contain a top-level milky_way_gaia_3m.zarr/ directory.
 hatch run python scripts/generate_galaxy_simple.py --count 3000000 --output ~/.cache/luxar/milky_way_gaia_3m/milky_way_gaia_3m.zarr
 
 # Test with smaller datasets

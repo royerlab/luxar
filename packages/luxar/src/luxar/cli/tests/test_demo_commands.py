@@ -36,8 +36,10 @@ class TestListAndTable:
         assert result.exit_code == 0
         assert "lorenz" in result.stdout
         # NO non-synthetic demo key may appear in a synthetic-filtered table.
-        # Token-level match (ANSI stripped): substring checks false-positive
-        # on key collisions like "galaxy" ⊂ "spiral_galaxy".
+        # Token-level match (ANSI stripped) rather than substring: keys do nest
+        # ("spiral_galaxy" ⊂ "spiral_galaxy_5d", "chromatrace_choir_umap" ⊂
+        # "chromatrace_choir_umap_sequence"), so a substring check would
+        # false-positive as soon as such a pair straddles this filter.
         import re
 
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)

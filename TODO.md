@@ -399,10 +399,11 @@ to ship after). Sequencing is at the bottom.
     LFS. Nothing has regressed, but nothing has moved either: the Gaia demo now
     reads `~/.cache/luxar/` instead of a committed `milky_way_gaia_3m.zarr.zip`
     (the TAP query is executable as `scripts/generate_galaxy_simple.py`, just not
-    wired up as an automatic first-run build; #1461 adds an appearance-tuning ask
-    on top), and the
-    neuromast + h2afva uploads remain pending. Next concrete action is still
-    step 2 of the plan: create the Sandbox rehearsal record, then production.
+    wired up as an automatic first-run build; the appearance-tuning ask #1461 put
+    on top of it is now delivered — the `gaia_milky_way` rename, per-marker hover
+    labels, and the 0.5/0.12/0.175 volumetric retune), and the neuromast +
+    h2afva uploads remain pending. Next concrete action is still step 2 of the
+    plan: create the Sandbox rehearsal record, then production.
     *(2026-08-12: the replacement-demos + dataset-removal work is now in flight
     as PR #1554 — see the removal/history-purge bullets above.)*
   - **Also here (from R16):** the **64 MB** `luxar-paper`

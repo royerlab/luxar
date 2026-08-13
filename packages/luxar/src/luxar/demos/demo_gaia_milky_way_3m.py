@@ -118,7 +118,8 @@ DEMO_META = {
     "category": "astronomy",
     "geometry": "points",
     "requirements": {
-        "download_mb": 41,
+        # Nothing is downloaded: the catalog is placed (or rebuilt) by hand.
+        "download_mb": 0,
         "compute": "medium",
         "gpu": "none",
         # The catalog is CC BY-NC, so it is not shipped in-tree: rebuild it with
@@ -127,7 +128,14 @@ DEMO_META = {
         # first run (see `resolve_data_file`).
         "local_data": "manual-file",
     },
-    "caches": [],
+    # Claiming the cache namespace is what keeps `luxar demo cache clear
+    # --orphans` from rmtree-ing a hand-placed catalog nothing rebuilds
+    # automatically, and lets `luxar demo` report this demo as `cached`. The
+    # honest trade-off: `luxar demo cache clear gaia_milky_way` / `--all` now
+    # treats that hand-placed input as a clearable download — a scoped, explicit
+    # command rather than a blind sweep. Protecting a hand-placed *input* from
+    # clearing is #1577.
+    "caches": ["milky_way_gaia_3m"],
     "outputs": ["gaia_milky_way"],
 }
 
@@ -184,9 +192,13 @@ def resolve_data_file() -> Path:
         "filename included), or rebuild it from the ESA Gaia archive with\n"
         "  hatch run python scripts/generate_galaxy_simple.py --count 3000000 "
         f"--output {CACHE_FILE.with_suffix('')}\n"
-        "The --output stem is load-bearing: the demo opens the zip's "
-        "`milky_way_gaia_3m.zarr` member by name. Building the catalog "
-        "automatically on first run is royerlab/luxar#1575.\n"
+        "That rebuild runs from a source checkout only (the script is not in the "
+        "wheel), needs `astroquery` + `astropy` (no Luxar extra provides "
+        "astroquery, so `luxar demo deps --install` cannot supply it), and takes "
+        "~90 minutes for 3M stars.\n"
+        "The --output stem is load-bearing: the zip must contain a top-level "
+        "`milky_way_gaia_3m.zarr/` directory. Building the catalog automatically "
+        "on first run is royerlab/luxar#1575.\n"
         "Required acknowledgement when using Gaia data: this work has made use "
         "of data from the ESA mission Gaia, processed by the Gaia Data "
         "Processing and Analysis Consortium (DPAC)."
@@ -395,10 +407,14 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # Add reference markers for famous stars
             aprint("Adding reference markers...")
 
-            # Calculate marker radius: 10x typical scaled star radius
-            # Typical star: ~0.0035 kpc × SCALE = 0.035
-            # Marker: 10x typical = 0.35
-            typical_star_radius = (0.001 + 0.01 * 0.5**2) * SCALE  # Mid-brightness star
+            # Marker radius: 10x a typical scaled star, sized from the demo's OWN
+            # radius law rather than a restated literal — `compute_radii` at the
+            # magnitude whose normalized brightness is exactly 0.5, which its
+            # (21 - mag) / 18 puts at G = 12.0 (~0.0035 kpc × SCALE = 0.035, so a
+            # marker is 0.35). Retuning the law moves the markers with it.
+            typical_star_radius = (
+                float(compute_radii(np.array([12.0], dtype=np.float32))[0]) * SCALE
+            )
             marker_radius = typical_star_radius * 10
 
             # The markers keep their ORIGINAL authored look, so — unlike the
@@ -481,6 +497,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # Named-star legend: swatch colours read from the marker RGB above
             # (not re-invented), same add_html pattern as the other demos.
             def _swatch(rgb: np.ndarray) -> str:
+                """Format a float 0-1 RGB triple as a CSS ``rgb()`` colour."""
                 r, g, b = (int(round(float(c) * 255)) for c in rgb)
                 return f"rgb({r},{g},{b})"
 
@@ -600,24 +617,29 @@ def main() -> None:
     aprint("  from the Galactic Center. You're viewing our galaxy from home!")
     aprint("")
 
+    # Resolve the catalog ONCE, for both branches: `resolve_data_file`'s message
+    # is the whole point of the missing-file path, so it must not surface as a
+    # raw traceback on the default (serve) invocation either.
+    try:
+        data_file = resolve_data_file()
+    except FileNotFoundError as e:
+        aprint(f"\n❌ Error: {e}")
+        sys.exit(1)
+
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / f"{DEMO_META['outputs'][0]}.luxar.zarr"
-        try:
-            # Extract the raw .zarr from the zip to a temp dir, then convert to the
-            # persistent output_path (same extraction the serve path uses — reading
-            # the zip in place via a zip:// store is unreliable across zarr versions).
-            import zipfile
+        # Extract the raw .zarr from the zip to a temp dir, then convert to the
+        # persistent output_path (same extraction the serve path uses — reading
+        # the zip in place via a zip:// store is unreliable across zarr versions).
+        import zipfile
 
-            with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
-                with zipfile.ZipFile(resolve_data_file(), "r") as zf:
-                    zf.extractall(tmpdir)
-                load_and_convert_gaia_data(
-                    Path(tmpdir) / "milky_way_gaia_3m.zarr", output_path
-                )
-        except FileNotFoundError as e:
-            aprint(f"\n❌ Error: {e}")
-            sys.exit(1)
+        with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
+            with zipfile.ZipFile(data_file, "r") as zf:
+                zf.extractall(tmpdir)
+            load_and_convert_gaia_data(
+                Path(tmpdir) / "milky_way_gaia_3m.zarr", output_path
+            )
         aprint(f"Dataset generated at {output_path}")
         return
 
@@ -626,7 +648,7 @@ def main() -> None:
         tmp_path = Path(tmpdir)
 
         # Load from zip and convert to Luxar format (extracts to temp_dir)
-        zarr_path = load_and_convert_from_zip(resolve_data_file(), tmp_path)
+        zarr_path = load_and_convert_from_zip(data_file, tmp_path)
 
         aprint("")
         aprint("=" * 70)

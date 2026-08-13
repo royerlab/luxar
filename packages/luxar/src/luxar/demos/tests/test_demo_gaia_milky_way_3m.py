@@ -131,14 +131,13 @@ def test_authored_nodes_keep_gaia_volumetric_appearance(tmp_path: Path) -> None:
             "that overrides the wrapper's 'volumetric' for this level alone"
         )
         for key in ("opacity", "absorption", "intensity"):
+            # The identity IS the invariant that matters: at 1.0 the value the
+            # renderer composes for this level is the wrapper's, unchanged.
             child_value = level_attrs.get(key, 1.0)
             assert child_value == pytest.approx(1.0), (
                 f"level {level!r} has {key}={child_value}, not the multiplicative "
                 f"identity — it would rescale the wrapper's {stars[key]}"
             )
-            # The invariant that actually matters: what the renderer composes for
-            # this level is the wrapper's value, unchanged.
-            assert stars[key] * child_value == pytest.approx(stars[key])
 
 
 def test_named_star_legend_is_derived_from_the_marker_nodes(tmp_path: Path) -> None:
@@ -166,9 +165,15 @@ def test_named_star_legend_is_derived_from_the_marker_nodes(tmp_path: Path) -> N
     assert legend["anchor"] == "bottom-left"
 
     # The marker set comes from the STORE, not a literal: a marker node is a
-    # scene-level node carrying hover labels ("Stars" carries none).
+    # scene-level node carrying hover labels ("Stars" carries none). Ladder
+    # wrappers are excluded by their `kind`: a kind=lod group can carry a UNION
+    # label CSR, so a labelled "Stars" would otherwise be counted as a marker and
+    # fail below as a confusing swatch-count mismatch.
     marker_names = sorted(
-        g for g in scene.group_keys() if "label_bytes" in set(scene[g].array_keys())
+        g
+        for g in scene.group_keys()
+        if "label_bytes" in set(scene[g].array_keys())
+        and "kind" not in dict(scene[g].attrs)
     )
     for name in marker_names:
         node = scene[name]
