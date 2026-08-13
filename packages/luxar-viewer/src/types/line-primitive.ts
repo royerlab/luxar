@@ -21,8 +21,8 @@
  * per-fragment against the true camera-space segment), shipped behind this
  * toggle during #1352 and was deleted after the capsule flip: the capsule
  * matched or beat it visually — including near-axial, its signature case —
- * at quad-class cost. Its exact ray-integral math survives in git history
- * (branch point `1481995d9`).
+ * at quad-class cost. Its closed-form ray-integral math survives in git
+ * history (branch point `1481995d9`).
  *
  * Unlike `lineJoin` this is NOT an authorable node attribute: the primitive is
  * a renderer implementation choice, not scene content, and the flip to a new

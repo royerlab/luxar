@@ -1,7 +1,9 @@
 #### The volumetric line primitive is deleted
 
-`?linePrimitive=volumetric` — the exact segment-⊛-Gaussian line model that
-shipped during the #1352 campaign — is gone, together with its GLSL and TSL
+`?linePrimitive=volumetric` — the closed-form segment-⊛-Gaussian line model
+that shipped during the #1352 campaign (exact in its core ray integral and
+bisector-cut algebra, with documented bounded approximations at chain
+ends, near-clip, and sharp bends) — is gone, together with its GLSL and TSL
 shader pairs, the pick pair, the quadrature-validated CPU reference, the
 Abel-transform sharpness LUT, and the `ray-integral` shared-math module
 (about 4,600 lines plus 21 parity fixtures). Since the capsule became the

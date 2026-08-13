@@ -264,11 +264,15 @@ A third primitive, `volumetric` (`?linePrimitive=volumetric`), shipped
 during the #1352 campaign: each segment drawn as its true 3D density —
 the segment convolved with an isotropic 3D Gaussian, solved per fragment
 against the camera-space segment in closed form (Gaussian×erf identity),
-with bisector-cut joints exact at any bend angle. It was physically exact
-but measured 2.7–5× the quad's frame cost, and after the capsule flip a
-visual A/B found the capsule matched or beat it — including near-axial,
-its signature case — so it was deleted rather than maintained as a third
-parity surface. The full implementation (GLSL + TSL twins, the
+with bisector-cut joints whose CUT MATH was exact at any bend angle. The
+core model and cut algebra were exact; the shipped implementation carried
+documented bounded approximations around them (sign-selected mixed-lane
+splits at chain ends, a soft/soft near-clip exemption, a Gaussian-only
+axial window under non-Gaussian sharpness, stencil truncation past sharp
+bends). It measured 2.7–5× the quad's frame cost, and after the capsule
+flip a visual A/B found the capsule matched or beat it — including
+near-axial, its signature case — so it was deleted rather than maintained
+as a third parity surface. The full implementation (GLSL + TSL twins, the
 quadrature-validated CPU reference in `_shared/line-volumetric.ts`, the
 Abel-transform sharpness LUT, the `ray-integral.ts` shared-math module,
 and the pick pair) lives in git history at the deletion's branch point,

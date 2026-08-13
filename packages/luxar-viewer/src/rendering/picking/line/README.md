@@ -11,9 +11,10 @@ Per-geometry picking sources for lines. Self-contained — no cross-geometry imp
 | `pick-capsule.tsl.ts` | TSL node factory for the capsule primitive (#1352, `capsuleLinePickWebGPUFactory`): the capsule stencil vertex (half-disc bisector joints) with pick IDs, quartic-profile brightness fragment                  |
 | `shaders-capsule.ts`  | Capsule GLSL3 sources + `CAPSULE_LINE_PICK_SOURCE: ShaderSource` — the GLSL twin of `pick-capsule.tsl.ts`                                                                                                      |
 
-(The #1352 campaign also shipped a `volumetric` pick pair mirroring the exact
-volumetric primitive's stadium stencil; it was deleted with that primitive —
-see `../../materials/line/README.md` for the history and the git branch point.)
+(The #1352 campaign also shipped a `volumetric` pick pair mirroring the
+closed-form volumetric primitive's stadium stencil; it was deleted with that
+primitive — see `../../materials/line/README.md` for the history and the git
+branch point.)
 
 ## The capsule pick pass (#1352 — the default since the flip)
 
