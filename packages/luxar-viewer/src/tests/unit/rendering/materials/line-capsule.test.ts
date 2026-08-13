@@ -10,6 +10,7 @@ import {
   CAPSULE_MIN_RADIUS_PX,
   type CapsuleJointLeg,
   capsuleJointCompositionError,
+  capsuleLegField,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_SUPPORT_SIGMA,
   capsuleProfile,
@@ -64,8 +65,12 @@ describe('capsule constants', () => {
       // independently per leg — speckles), and a non-negative gradient
       // packet contributes no deficit (hard cut via the zero blend).
       expect(src).toContain('clamp(0.5 - sideA, 0.0, 1.0)');
-      // Packet validity = a positive packed partner length.
-      expect(src).toContain('if (vCutA2.w > 0.0) {');
+      // Packet validity = a positive packed partner length (the joint
+      // state rides packed half-pair varyings; normals stay full
+      // precision in vCutN per #1502 — see the shader declaration note).
+      expect(src).toContain('if (pkA.y > 0.0) {');
+      expect(src).toContain('unpackHalf2x16(vPack.x)');
+      expect(src).toContain('flat in vec4 vCutN;');
     }
     for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
       // Stencil reach covers the kept half-disc PLUS the partner's taper
@@ -78,6 +83,36 @@ describe('capsule constants', () => {
       expect(src).toContain('sanitizeNonNegative(far.w, 0.0)');
       expect(src).toMatch(/cut[AB]\.z = \(rpFar[AB] - r[AB]\) \/ ql;/);
       expect(src).toMatch(/cut[AB]\.w = ql;/);
+    }
+  });
+
+  it('the joint partition is never width-gated (a hairline joint would double)', () => {
+    // The drawn radius is FLOORED at the AA minimum, so even a hairline
+    // draws a 1.5 px disc at each end. Skipping the cut there to save the
+    // partner fetch would leave two full caps stacked on the shared
+    // vertex: measured +1.00 of peak (a 2x bead as wide as the line
+    // itself) at every bend angle, so there is no width at which the
+    // overlap is sub-pixel. Only the deficit PACKET is width-gated.
+    const r = CAPSULE_MIN_RADIUS_PX;
+    const leg = (deg: number): CapsuleJointLeg => ({
+      dir: [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)],
+      rJoint: r,
+      rFar: r,
+      length: 8,
+    });
+    for (const turn of [0, 30, 90]) {
+      const [l1, l2] = [leg(180), leg(-turn)];
+      // With the cut: the pair composes to max(mine, partner) exactly.
+      const { maxErr } = capsuleJointCompositionError(l1, l2, undefined, 0.25);
+      expect(maxErr).toBeLessThan(0.01);
+      // Without it (plain caps): the shared vertex renders at 2x.
+      const capped = capsuleLegField(l1, 0, 0) + capsuleLegField(l2, 0, 0);
+      expect(capped).toBeCloseTo(2.0, 6);
+    }
+    // So no shader may suppress the cut below a radius threshold.
+    for (const src of [CAPSULE_LINE_VERTEX_SHADER, CAPSULE_LINE_PICK_VERTEX_SHADER]) {
+      expect(src).not.toMatch(/if \(rMax < /);
+      expect(src).not.toContain('partnerJointA');
     }
   });
 

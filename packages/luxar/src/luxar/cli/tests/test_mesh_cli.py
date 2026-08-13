@@ -1455,3 +1455,38 @@ class TestMeshLodOutputPaths:
             _run(run_lod, source, source / "nested", overwrite=True)
         assert not (source / "nested.luxar.zarr").exists()
         assert LuxarScene.load(source).get_mesh("surf").faces.shape[0] > 0
+
+
+def test_every_method_named_in_the_help_EXAMPLES_is_a_real_method() -> None:
+    """A copy-pasteable example must not name a method the command rejects.
+
+    `luxar mesh lod --help` advertised `--subst-method qem`, and
+    `MESH_SUBSTITUTIVE_METHODS` is `{"auto", "cluster"}` — so the one example a
+    user is most likely to copy failed with a validation error. `qem` is a real
+    algorithm the docs discuss as a possible second tier (#1348); it is simply not
+    implemented, and the example outlived the plan.
+
+    Derived from the docstring rather than pinning the current text, so the
+    example set can grow freely and only an INVALID method fails. The help text is
+    the one place a wrong method name costs a user a round trip instead of a type
+    error, which is why it gets a test and the prose does not.
+    """
+    from luxar.cli.mesh_ops.lod_commands import lod_command
+    from luxar.core.group.lod.group import MESH_SUBSTITUTIVE_METHODS
+
+    # `lod_command`, not `run_lod`: typer renders help from the COMMAND callback's
+    # docstring, and that is where the examples live. Reading the wrong one made
+    # the regex match nothing — which the emptiness guard below caught rather
+    # than letting `set() - valid` pass as "no invalid methods".
+    #
+    # `[\s=]+`, not `\s+`: `--subst-method=qem` is the same command line, and with
+    # a space-only pattern it slips past a growing examples block unseen (the
+    # emptiness guard only catches it while it is the ONLY example).
+    doc = lod_command.__doc__ or ""
+    named = set(re.findall(r"--subst-method[\s=]+(\S+)", doc))
+    assert named, "no --subst-method example found — did the examples block move?"
+    invalid = named - set(MESH_SUBSTITUTIVE_METHODS)
+    assert not invalid, (
+        f"`luxar mesh lod --help` shows --subst-method {sorted(invalid)}, which the "
+        f"command rejects (valid: {sorted(MESH_SUBSTITUTIVE_METHODS)})"
+    )

@@ -62,16 +62,15 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uOrthoLineScale;
 
     // Geometry varyings are screen-space quantities pre-multiplied by the
-    // corner's clip w and divided by vW in the fragment (screen-linear;
-    // see the visual twin's declaration note).
-    out vec3 vLocal;
-    // (abLen px, capFlags = interiorA + 2·interiorB, rA px, rB px)
-    flat out vec4 vMeta;
-    // .xy = bisector-cut normal; .z = partner radius gradient packet
-    // (mirrors the visual capsule exactly).
-    flat out vec4 vCutA2;
-    flat out vec4 vCutB2;
-    out float vW;
+    // corner's clip w and multiplied by gl_FragCoord.w (= 1/w) in the
+    // fragment (screen-linear; see the visual twin's declaration note).
+    out vec2 vLocal;
+    // PACKED joint state — mirrors the visual capsule exactly (see
+    // shader-glsl-capsule.ts: normals full precision per #1502, halves
+    // for packets/radii/invLen/flags).
+    flat out vec4 vCutN;    // (nAx, nAy, nBx, nBy)
+    flat out uvec4 vPack;   // (gradA,qlA) (gradB,qlB) (rA,rB) (1/abLen,flags)
+    flat out float vAbLen;
     out float vFade;
     out float vSharp;
     flat out highp float vNodeId;
@@ -115,9 +114,11 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float endDepth = -mvEnd.z;
       if ((uIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-        vLocal = vec3(0.0); vMeta = vec4(1.0, 0.0, 1.0, 1.0);
-        vCutA2 = vec4(-1.0, 0.0, 0.0, 0.0); vCutB2 = vec4(1.0, 0.0, 0.0, 0.0);
-        vW = 1.0; vFade = 0.0; vSharp = 0.5;
+        vLocal = vec2(0.0);
+        vCutN = vec4(-1.0, 0.0, 1.0, 0.0);
+        vPack = uvec4(0u, 0u, packHalf2x16(vec2(1.0, 1.0)), packHalf2x16(vec2(1.0, 0.0)));
+        vAbLen = 1.0;
+        vFade = 0.0; vSharp = 0.5;
         return;
       }
       float tA = 0.0;
@@ -174,6 +175,9 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vec2 u = abLen > 1e-4 ? ab / abLen : vec2(1.0, 0.0);
       vec2 v = vec2(-u.y, u.x);
       float rMax = max(rA, rB) + ${G.APRON};
+      // The joint partition is NOT width-gated — the pick shape must stay
+      // the visual shape, and the drawn radius is floored at the AA
+      // minimum (see the visual twin's note).
       vec4 cutA = vec4(-1.0, 0.0, 0.0, 0.0);
       vec4 cutB = vec4(1.0, 0.0, 0.0, 0.0);
       float extA = rMax;
@@ -316,9 +320,14 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
           }
         }
       }
-      vCutA2 = cutA;
-      vCutB2 = cutB;
-      vMeta = vec4(abLen, interiorA + 2.0 * interiorB, rA, rB);
+      vCutN = vec4(cutA.xy, cutB.xy);
+      vPack = uvec4(
+        packHalf2x16(cutA.zw),
+        packHalf2x16(cutB.zw),
+        packHalf2x16(vec2(rA, rB)),
+        packHalf2x16(vec2(1.0 / max(abLen, 1e-4), interiorA + 2.0 * interiorB))
+      );
+      vAbLen = abLen;
 
       float lx = aQuadCorner.x > 0.0 ? abLen + extB : -extA;
       float ly = aQuadCorner.y * rMax;
@@ -337,8 +346,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       vec4 clipMix = mix(clipA, clipB, tc);
       float wMix = max(clipMix.w, 1e-6);
-      vLocal = vec3(lx, ly, 1.0 / max(abLen, 1e-4)) * wMix;
-      vW = wMix;
+      vLocal = vec2(lx, ly) * wMix;
       vec2 ndc = corner / uResolution * 2.0 - 1.0;
       gl_Position = vec4(ndc * wMix, clipMix.z, wMix);
     }
@@ -347,11 +355,10 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
-    in vec3 vLocal;
-    flat in vec4 vMeta;
-    flat in vec4 vCutA2;
-    flat in vec4 vCutB2;
-    in float vW;
+    in vec2 vLocal;
+    flat in vec4 vCutN;
+    flat in uvec4 vPack;
+    flat in float vAbLen;
     in float vFade;
     in float vSharp;
     flat in highp float vNodeId;
@@ -386,25 +393,28 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     }
 
     void main() {
-      float invW = 1.0 / max(vW, 1e-9);
+      // gl_FragCoord.w IS the perspective-interpolated 1/w (spec identity
+      // — PC-interp of a per-vertex w equals 1/gl_FragCoord.w exactly), so
+      // the vW varying and its per-fragment divide are both unnecessary.
+      float invW = gl_FragCoord.w;
       float x = vLocal.x * invW;
       float y = vLocal.y * invW;
-      // Decode the packed vMeta lanes; the EXACT per-fragment radius comes
-      // from the endpoint radii (see the visual twin's note).
-      float cutFlagA = mod(vMeta.y, 2.0);
-      float cutFlagB = vMeta.y >= 2.0 ? 1.0 : 0.0;
-      // EXACT per-fragment radius without a divide: 1/abLen rides the
-      // vLocal lane, and constant-width segments (the fill/thin-heavy
-      // cases) take a mix-free fast path.
+      // Unpack the flat joint state (see the visual twin).
+      vec2 pkA = unpackHalf2x16(vPack.x);
+      vec2 pkB = unpackHalf2x16(vPack.y);
+      vec2 pkR = unpackHalf2x16(vPack.z);
+      vec2 pkM = unpackHalf2x16(vPack.w);
+      float cutFlagA = mod(pkM.y, 2.0);
+      float cutFlagB = pkM.y >= 2.0 ? 1.0 : 0.0;
       float rPx;
-      if (vMeta.z == vMeta.w) {
-        rPx = max(vMeta.z, 1e-4);
+      if (pkR.x == pkR.y) {
+        rPx = max(pkR.x, 1e-4);
       } else {
-        rPx = max(mix(vMeta.z, vMeta.w, clamp(x * (vLocal.z * invW), 0.0, 1.0)), 1e-4);
+        rPx = max(mix(pkR.x, pkR.y, clamp(x * pkM.x, 0.0, 1.0)), 1e-4);
       }
       // TRUE point-to-segment distance: every end is capped (a free end
       // keeps the whole disc, a cut end its half of the joint disc).
-      float ox = max(max(-x, x - vMeta.x), 0.0);
+      float ox = max(max(-x, x - vAbLen), 0.0);
       float q = (y * y + ox * ox) / (rPx * rPx);
       float w = 1.0 - q;
       if (w <= 0.0) discard;
@@ -422,13 +432,13 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // anti-alias the cut for free. The DEFICIT term blends in over the
       // same ramp: full profile on my side, max(mine − partner, 0) beyond.
       if (cutFlagA > 0.5) {
-        float sideA = vCutA2.x * x + vCutA2.y * y;
+        float sideA = vCutN.x * x + vCutN.y * y;
         if (sideA > -0.5) {
           float coverA = clamp(0.5 - sideA, 0.0, 1.0);
           float defA = 0.0;
-          if (vCutA2.w > 0.0) {
+          if (pkA.y > 0.0) {
             defA = max(
-              profile - luxarPartnerProfile(vCutA2, vec2(x, y), 1.0, vMeta.z, vSharp),
+              profile - luxarPartnerProfile(vec4(vCutN.xy, pkA), vec2(x, y), 1.0, pkR.x, vSharp),
               0.0
             );
           }
@@ -437,13 +447,13 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
         }
       }
       if (cutFlagB > 0.5) {
-        float sideB = vCutB2.x * (x - vMeta.x) + vCutB2.y * y;
+        float sideB = vCutN.z * (x - vAbLen) + vCutN.w * y;
         if (sideB > -0.5) {
           float coverB = clamp(0.5 - sideB, 0.0, 1.0);
           float defB = 0.0;
-          if (vCutB2.w > 0.0) {
+          if (pkB.y > 0.0) {
             defB = max(
-              profile - luxarPartnerProfile(vCutB2, vec2(x - vMeta.x, y), -1.0, vMeta.w, vSharp),
+              profile - luxarPartnerProfile(vec4(vCutN.zw, pkB), vec2(x - vAbLen, y), -1.0, pkR.y, vSharp),
               0.0
             );
           }
