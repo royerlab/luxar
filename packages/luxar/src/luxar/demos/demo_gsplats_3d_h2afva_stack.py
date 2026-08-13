@@ -294,7 +294,11 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     # occlusion, so every box's far edges bleed through the
                     # embryo and the overlay reads as a hairball.
                     blending_mode="normal",
-                    opacity=0.55,
+                    # Barely there by default: the boxes explain the structure but
+                    # the nuclei are the subject, and 41 slabs of wireframe at any
+                    # real opacity read as a cage over the embryo. Raise it in the
+                    # Layers panel (press L) when inspecting the decomposition.
+                    opacity=0.05,
                     layer=True,
                 )
                 aprint(f"Added {n_boxes} box outlines ({len(box_verts):,} vertices)")
