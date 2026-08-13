@@ -150,7 +150,7 @@ FACTOR = 8
 # what you see at the opening framing and the fine branch engages only once you
 # zoom the embryo up to filling the viewport. That is the recipe's contract —
 # "instant coarse overview, fine tiles on zoom" — and it is why overview does NOT
-# take the quarter-viewport anchor the other recipes got in #1361. No per-dataset
+# take the whole-object half-screen anchor the other recipes use. No per-dataset
 # threshold knob to tune either way.
 # Additive-ladder depth for the stream recipe and the tiles / overview per-part
 # (and per-level) streaming ladders.

@@ -18,7 +18,8 @@ import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.group import (
-    MAX_COVERAGE_FRACTION,
+    PARTITION_FINEST_AREA,
+    WHOLE_OBJECT_FINEST_ANCHOR,
     partitioned_coverage_fractions,
 )
 from luxar.core.group.lod.points import resolve_substitutive_axis_points
@@ -179,7 +180,9 @@ class TestAddPointsSubstitutiveLod:
         grp, _ = _build(tmp_path)
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "points"
-        assert grp.attrs["selector"] == "coverage"
+        # A DERIVED ladder stamps the screen-area selector (thresholds are
+        # literal screen-area fractions).
+        assert grp.attrs["selector"] == "screen-area"
         assert grp.attrs["default_level"] == 0
 
     def test_child_count_is_levels_gsplats_plus_points(self, tmp_path) -> None:
@@ -210,7 +213,7 @@ class TestAddPointsSubstitutiveLod:
         grp, _ = _build(tmp_path, levels=3)
         cf = [float(grp[f"child_{i}"].attrs["coverage_fraction"]) for i in range(4)]
         assert cf[0] == 0.0
-        assert cf[-1] == 1.0
+        assert cf[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
         assert all(cf[i] < cf[i + 1] for i in range(len(cf) - 1))
 
     def test_position_bounds_backfilled(self, tmp_path) -> None:
@@ -439,12 +442,13 @@ class TestSubstitutiveComposedWithAdditive:
 
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "points"
-        assert grp.attrs["selector"] == "coverage"
+        # Derived ladder → screen-area selector survives the composition.
+        assert grp.attrs["selector"] == "screen-area"
         assert int(grp.attrs["default_level"]) == 0
         assert "position_bounds" in grp.attrs
         cf = [float(grp[c].attrs["coverage_fraction"]) for c in children]
         assert cf[0] == 0.0
-        assert cf[-1] == 1.0
+        assert cf[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
         assert all(a < b for a, b in zip(cf, cf[1:])), cf
 
     def test_every_level_is_energy_stamped(self, composed) -> None:
@@ -747,9 +751,10 @@ class TestPartitionBoundAnchorPoints:
     """A hand-built partition of per-part ladders gets the fills-screen anchor.
 
     Before ``derive_coverage_fractions`` detected the ``kind=partition`` ancestor,
-    this path always auto-derived the WHOLE-OBJECT ladder, whose finest threshold
-    is ``1.0`` — so every tile sat on its finest level at the opening whole-object
-    framing. The expected finest is ``MAX_COVERAGE_FRACTION`` (4.0).
+    this path always auto-derived the WHOLE-OBJECT ladder (finest 0.5 — half
+    the screen area) — so every tile sat on its finest level at the opening
+    whole-object framing. The expected finest is ``PARTITION_FINEST_AREA``
+    (1.0 — the tile alone fills the screen).
 
     Three tests here REGRESS without the fix (``test_every_part_ladder_is_partition
     _anchored``, ``test_finest_is_exactly_the_ceiling``,
@@ -775,7 +780,7 @@ class TestPartitionBoundAnchorPoints:
         wrapper, n_parts = _partitioned_points(tmp_path)
         for i in range(n_parts):
             assert _child_coverage(wrapper[f"part_{i}"])[-1] == pytest.approx(
-                MAX_COVERAGE_FRACTION
+                PARTITION_FINEST_AREA
             )
 
     def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path) -> None:
@@ -783,7 +788,9 @@ class TestPartitionBoundAnchorPoints:
         the whole-object anchor — the over-trigger guard."""
         root, n_parts = _partitioned_points(tmp_path, partitioned=False)
         for i in range(n_parts):
-            assert _child_coverage(root[f"part_{i}"])[-1] == 1.0
+            assert _child_coverage(root[f"part_{i}"])[-1] == pytest.approx(
+                WHOLE_OBJECT_FINEST_ANCHOR
+            )
 
     def test_plain_group_between_partition_and_ladder_still_anchored(
         self, tmp_path
@@ -791,7 +798,7 @@ class TestPartitionBoundAnchorPoints:
         wrapper, n_parts = _partitioned_points(tmp_path, wrap_in_group=True)
         for i in range(n_parts):
             part = wrapper[f"holder_{i}"][f"part_{i}"]
-            assert _child_coverage(part)[-1] == pytest.approx(MAX_COVERAGE_FRACTION)
+            assert _child_coverage(part)[-1] == pytest.approx(PARTITION_FINEST_AREA)
 
     def test_explicit_coverage_fractions_still_win_under_a_partition(
         self, tmp_path
@@ -812,11 +819,11 @@ class TestPartitionBoundAnchorPoints:
 
         A hand-built ``kind=partition`` holding exactly ONE part is not a tiling —
         that part IS the whole object — so the fills-screen anchor is a factor of 4
-        too coarse for it. ``derive_coverage_fractions`` gives it 4.0 anyway, and
-        cannot do otherwise: part 0's ladder is derived at ``add_points`` time, when
-        the sibling count does not exist yet (part 1 may never be added). That is
-        the caveat spelled out in ``partitioned_coverage_fractions``, and it is a
-        behaviour change from the previous whole-object 1.0 for this shape.
+        too coarse for it. ``derive_coverage_fractions`` gives it the tile anchor
+        (``PARTITION_FINEST_AREA`` = 1.0) anyway, and cannot do otherwise: part 0's
+        ladder is derived at ``add_points`` time, when the sibling count does not
+        exist yet (part 1 may never be added). That is the caveat spelled out in
+        ``partitioned_coverage_fractions``.
 
         Nothing rewrites it — an explicit ``coverage_fractions=`` list is
         indistinguishable from a derived one on disk — but the compiler's finalize
@@ -849,7 +856,7 @@ class TestPartitionBoundAnchorPoints:
         tiled = zarr.open(str(out), mode="r")["tiled"]
         assert len([k for k in tiled.keys() if k.startswith("part_")]) == 1
         assert _child_coverage(tiled["part_0"])[-1] == pytest.approx(
-            MAX_COVERAGE_FRACTION
+            PARTITION_FINEST_AREA
         ), "the lone part still takes the tile anchor — the documented blind spot"
 
 

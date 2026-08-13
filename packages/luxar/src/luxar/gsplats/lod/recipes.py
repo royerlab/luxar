@@ -166,12 +166,11 @@ class RecipeParams:
     # Center-column indices substitutive coarsening may merge over; the
     # complement become hard grouping barriers. None == coarsen all dims.
     coarsen_dims: Optional[tuple] = None
-    # LOD switch thresholds are auto-derived as viewport-relative
-    # ``coverage_fraction`` (``sqrt(N_i/N_finest)``) — see
-    # ``core.group.lod.group.coverage_fractions``. No method selector or
-    # per-dataset anchor knob: the fraction is a count ratio (immune to
-    # non-displayed-dimension multiplicity) and the viewer anchors the finest at
-    # a quarter of the live viewport diagonal (any normal full-frame view).
+    # LOD switch thresholds are auto-derived as SCREEN-AREA fractions
+    # (``selector="screen-area"``, occupancy halving: full detail while the
+    # node occupies at least half the screen, one level coarser per halving of
+    # occupied area) — see ``core.group.lod.group.coverage_fractions``. No
+    # per-dataset anchor knob.
     # Q·e quality stamps: measure each coarse substitutive level's mixture-L²
     # quality Q vs its group's finest content and stamp it (with the
     # reference_energy weight w) into level_stats — the build-time half of the
@@ -386,12 +385,12 @@ def _substitutive_for_part(
                 reveal_centre=params.reveal_centre,
                 spatial_dims=params.spatial_dims,
             )
-    # Build each part's lod group with viewport-relative coverage_fraction
+    # Build each part's lod group with screen-area coverage_fraction
     # thresholds. These are PARTITIONED ladders, and here the reason is GEOMETRIC:
     # the switching group's bbox is one BSP tile, intrinsically a fraction of the
     # whole object's, so its metric reads systematically low. They therefore keep
-    # the fills-screen anchor (finest = MAX_COVERAGE_FRACTION) instead of the
-    # whole-object quarter-viewport one — see partitioned_coverage_fractions.
+    # the fills-screen anchor (finest = PARTITION_FINEST_AREA = 1.0) instead of
+    # the whole-object half-screen one — see partitioned_coverage_fractions.
     # Without this every tile would sit on its FINEST level while the object is
     # merely full-frame (~16x the resident geometry for a K=4/L=2 ladder). The
     # caller overrides it when the "partition" turns out to hold a single part.
@@ -451,13 +450,13 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     (``[coarse_leaf, fine_partition]``, matching the on-disk order). Each child's
     ``coverage_fraction`` selector threshold is stamped onto its ``meta`` (honored
     by both the standalone writer and the scene graft) via
-    ``partitioned_coverage_fractions`` (``sqrt(N_i/N_finest)`` re-anchored at
+    ``partitioned_coverage_fractions`` (occupancy halving re-anchored at
     fills-screen): the coarse cap gets a fraction below the fine branch's
-    ``MAX_COVERAGE_FRACTION``, so the coarse overview shows at the opening framing
-    and the fine partition takes over once you zoom the node up to filling the
-    viewport. The fills-screen anchor is deliberate here — see
+    ``PARTITION_FINEST_AREA`` (screen-area 1.0), so the coarse overview shows at
+    the opening framing and the fine partition takes over once you zoom the node
+    up to filling the viewport. The fills-screen anchor is deliberate here — see
     ``partitioned_coverage_fractions`` for why a partition-bound ladder does not
-    take the whole-object quarter-viewport anchor (no per-dataset tuning; see
+    take the whole-object half-screen anchor (no per-dataset tuning; see
     ``RecipeParams``).
     """
     from luxar.gsplats.tree import total_splats
@@ -542,6 +541,8 @@ def build_overview(data: GSplatData, params: RecipeParams) -> GSplatLodGroup:
     )
     coarse_leaf.meta["coverage_fraction"] = coarse_cov
     fine_partition.meta["coverage_fraction"] = fine_cov
+    # Derived thresholds are screen-area fractions — stamp the units with them.
+    group.meta["selector"] = "screen-area"
     return group
 
 

@@ -66,6 +66,7 @@ import { applyLodFade, FADE_EPSILON, isBlendableSubtree } from './lod-fade';
 import {
   computeEntryWorldBox,
   pickChildWithHysteresis,
+  projectBoxAreaFraction,
   projectBoxDiagonalPx,
 } from './lod-selector-math';
 import { enforceResidentByteBudget } from './lod-eviction';
@@ -73,7 +74,11 @@ import { enforceResidentByteBudget } from './lod-eviction';
 // The selector math (box projection + hysteresis pick) lives in
 // `lod-selector-math.ts`; re-exported here so existing importers (the
 // selector unit tests) keep their import site.
-export { pickChildWithHysteresis, projectBoxDiagonalPx } from './lod-selector-math';
+export {
+  pickChildWithHysteresis,
+  projectBoxAreaFraction,
+  projectBoxDiagonalPx,
+} from './lod-selector-math';
 
 /**
  * Cross-fade band half-width as a FRACTION of the local inter-level gap. The two
@@ -97,12 +102,16 @@ const CROSSFADE_BAND_FRACTION = 0.4;
 const FINE_RELOAD_SETTLE_TICKS = 8;
 
 /**
- * Anchor for the viewport-relative ``coverage_fraction`` thresholds: the finest
- * child (coverage 1.0) activates once the group's projected bbox diagonal reaches
- * ``FILL_FACTOR × viewportDiagonal`` pixels — i.e. about a QUARTER of the viewport
- * diagonal, which a normal full-frame view already exceeds. Coarser children
- * (smaller fractions) step in as the object shrinks below that. Lowering the
- * factor shows the finest level sooner, raising it later.
+ * Unit anchor for the LEGACY ``selector: 'coverage'`` thresholds (older
+ * stores, and explicitly authored ``coverage_fractions=[...]`` lists — derived
+ * ladders now use ``selector: 'screen-area'``, whose metric is
+ * ``projectBoxAreaFraction`` and does not involve this constant): a threshold
+ * of 1.0 is satisfied once the group's projected bbox diagonal reaches
+ * ``FILL_FACTOR × viewportDiagonal`` pixels — about a QUARTER of the viewport
+ * diagonal. Legacy derived whole-object ladders anchored their finest at 1.0
+ * (pre-halving) or 2.0 (halving era); partition-bound ones at 4.0
+ * (fills-screen). Lowering the factor shows finer levels sooner, raising it
+ * later.
  *
  * Why 0.25 and not 1.0: at 1.0 the finest level only appeared once the object
  * OVERFILLED the screen, so the default opening framing always showed a blurry
@@ -271,6 +280,16 @@ export interface LODGroupEntry {
    * == ascending ``coverageFraction``).
    */
   children: LODGroupChild[];
+  /**
+   * Units of the children's ``coverageFraction`` thresholds (the on-disk
+   * group's ``selector`` attr): ``'screen-area'`` compares them against the
+   * projected bbox rect's fraction of the viewport AREA
+   * (``projectBoxAreaFraction``); ``'coverage'`` — the legacy diagonal metric
+   * (``projectBoxDiagonalPx / (FILL_FACTOR × viewportDiagonal)``) — is the
+   * default when absent, so older stores and test-constructed entries keep
+   * their behaviour.
+   */
+  selector?: 'coverage' | 'screen-area';
   /** Current selector mode (``'auto'`` or ``{ lockLevel: i }``). */
   selectorMode: LODGroupSelectorMode;
   /** Initial active level, used when nothing else has selected yet. */
@@ -758,7 +777,21 @@ export class LODGroupRegistry {
       if (!forceFinest && !frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
         desired = this.coarsestReadyIndex(entry);
         entry.offScreen = true;
+      } else if (entry.selector === 'screen-area') {
+        // Screen-area selector: the metric IS the fraction of the viewport
+        // area the group's projected bbox rect covers (viewport-size
+        // independent by construction — see projectBoxAreaFraction). The
+        // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
+        // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
+        // Camera inside the box → +Infinity → finest, same as the diagonal
+        // path; ``?lod-finest`` forces Infinity → always finest.
+        coverageMetric = forceFinest
+          ? Infinity
+          : projectBoxAreaFraction(worldBox, camera, FRUSTUM_MATRIX_SCRATCH);
+        desired = pickChildWithHysteresis(cache.thresholds, entry.activeChildIndex, coverageMetric);
+        entry.offScreen = false;
       } else {
+        // Legacy 'coverage' selector (the default for older stores).
         // Reuse the per-frame projection×view product (FRUSTUM_MATRIX_SCRATCH,
         // built in evaluatePerFrame) instead of recomputing it per group.
         const diagonalPx = projectBoxDiagonalPx(worldBox, camera, viewport, FRUSTUM_MATRIX_SCRATCH);

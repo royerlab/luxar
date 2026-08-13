@@ -63,8 +63,12 @@ globe is instead a fixed-resolution backdrop, sized (``N_GLOBE``) so it never
 needs reducing.
 
 **Calibrating the occurrence thresholds** took two measured corrections, both
-worth knowing before reusing the recipe. The default
-``coverage_fraction = sqrt(N_i/N_finest)`` is calibrated for a *single* lod group
+worth knowing before reusing the recipe. (Historical note: the default
+derivation at the time was ``coverage_fraction = sqrt(N_i/N_finest)``; today's
+default is screen-area occupancy halving under ``selector="screen-area"`` —
+this demo's explicit lists keep the legacy ``selector="coverage"`` units they
+were measured in, so nothing below changes.) That default was calibrated for a
+*single* lod group
 seen at a normal full-frame view; split into T tiles, each tile's projected
 diagonal at whole-globe framing is only ~0.6 of the viewport diagonal, which
 against the default ladder still selects a mid level. And a threshold placed *on*
@@ -596,7 +600,10 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: `kind=lod` group picks ONE child per frame from that tile's own screen size.
 #:
 #: `coverage_fractions` is overridden rather than left to the default
-#: `sqrt(N_i/N_finest)`, and the override is the crux. That default is calibrated
+#: derivation (then `sqrt(N_i/N_finest)`; since the screen-area selector it is
+#: occupancy halving — an explicit list like this one keeps the legacy
+#: `selector="coverage"` units it was measured in), and the override is the
+#: crux. That old default was calibrated
 #: for a SINGLE lod group seen at a normal full-frame view. Here each layer is
 #: split into T spatial tiles, so at whole-globe framing a tile's projected
 #: diagonal is only ~0.6 of the viewport diagonal — measured in-browser, not
@@ -634,12 +641,13 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: Refinement then begins only once you have zoomed in appreciably, which is the
 #: intended behaviour: cheap overview, detail on demand.
 #:
-#: Values above 1.0 are legal precisely because a tiled layer needs them: 1.0 is
-#: the finest anchor of a WHOLE-OBJECT ladder (a quarter-viewport diagonal) — a
-#: partition-bound one auto-derives up to 4.0 as well, per the #1411 note above —
-#: and the explicit-list ceiling is `MAX_COVERAGE_FRACTION` = 4.0 == 1/FILL_FACTOR
+#: Values above 1.0 are legal precisely because a tiled layer needs them (in
+#: these legacy `selector="coverage"` units, which an explicit list keeps): the
+#: explicit-list ceiling is `MAX_COVERAGE_FRACTION` = 4.0 == 1/FILL_FACTOR
 #: — the metric a screen-filling object produces. 4.0 here means "this tile's
-#: finest level shows only once the TILE alone fills the viewport".
+#: finest level shows only once the TILE alone fills the viewport". (Today's
+#: DERIVED partition ladders express the same fills-screen anchor as screen-area
+#: 1.0 under `selector="screen-area"`.)
 OCCURRENCE_LOD_LEVELS: Final = 3
 #: In metric space (raw fraction / FILL_FACTOR): raw 0.0/0.88/0.96/1.0 x4.
 OCCURRENCE_COVERAGE: Final = (0.0, 3.52, 3.84, 4.0)

@@ -9,7 +9,11 @@
  *   ``positionBounds`` into one world-space box via ``displayDims`` +
  *   ``matrixWorld``.
  * - {@link projectBoxDiagonalPx} — project that box through the camera to a
- *   screen-space pixel diagonal (with near-plane saturation).
+ *   screen-space pixel diagonal (with near-plane saturation). The legacy
+ *   ``selector: 'coverage'`` metric.
+ * - {@link projectBoxAreaFraction} — project that box to the fraction of the
+ *   viewport AREA its screen-space rect covers (same near-plane saturation).
+ *   The ``selector: 'screen-area'`` metric.
  * - {@link pickChildWithHysteresis} — pick the level for a coverage metric,
  *   with asymmetric downgrade hysteresis.
  *
@@ -73,6 +77,58 @@ export function projectBoxDiagonalPx(
   viewport: { width: number; height: number },
   precomputedProjView?: THREE.Matrix4
 ): number {
+  const rect = projectBoxNdcRect(box, camera, precomputedProjView);
+  if (rect === null) return Number.POSITIVE_INFINITY;
+  const widthPx = rect.halfW * viewport.width;
+  const heightPx = rect.halfH * viewport.height;
+  return Math.hypot(widthPx, heightPx);
+}
+
+/**
+ * Project a world-space :type:`BoundingBox` through the camera and return the
+ * fraction of the viewport AREA its screen-space AABB covers — the metric for
+ * ``selector: 'screen-area'``.
+ *
+ * In NDC each axis spans 2, so the covered fraction of the viewport is simply
+ * ``(ndcWidth / 2) × (ndcHeight / 2)`` — viewport-size independent by
+ * construction (the same object framing yields the same fraction on any
+ * monitor). The rect is deliberately NOT clamped to the viewport: past
+ * full-screen the value keeps growing monotonically (>1), so the partition
+ * fills-screen threshold (1.0) is crossed cleanly rather than asymptotically
+ * approached, and the hysteresis band around it behaves like any other level
+ * boundary.
+ *
+ * Same near-plane saturation contract as {@link projectBoxDiagonalPx}: camera
+ * inside / straddling the box → ``+Infinity`` → finest level.
+ *
+ * Exported for unit testing.
+ */
+export function projectBoxAreaFraction(
+  box: BoundingBox,
+  camera: THREE.Camera,
+  precomputedProjView?: THREE.Matrix4
+): number {
+  const rect = projectBoxNdcRect(box, camera, precomputedProjView);
+  if (rect === null) return Number.POSITIVE_INFINITY;
+  return rect.halfW * rect.halfH;
+}
+
+/** Reused result object for {@link projectBoxNdcRect} (no per-call allocation). */
+const NDC_RECT_SCRATCH = { halfW: 0, halfH: 0 };
+
+/**
+ * Shared 8-corner projection for the two metrics above: the box's screen-space
+ * AABB extent as HALF-NDC spans (``ndcExtent / 2`` per axis — i.e. the fraction
+ * of the viewport covered along each axis, unclamped). Returns ``null`` when
+ * any corner's homogeneous ``w`` falls to/below {@link W_EPSILON} (camera
+ * inside / straddling the box — callers saturate to ``+Infinity``). The
+ * returned object is a module-scope scratch: consume it before the next call.
+ */
+function projectBoxNdcRect(
+  box: BoundingBox,
+  camera: THREE.Camera,
+  precomputedProjView?: THREE.Matrix4
+): { halfW: number; halfH: number } | null {
   // Combined projection × view. ``evaluatePerFrame`` already builds this product
   // once per frame (``FRUSTUM_MATRIX_SCRATCH``) and passes it in via
   // ``precomputedProjView`` so we don't recompute the 4×4 per group. Standalone
@@ -98,7 +154,7 @@ export function projectBoxDiagonalPx(
     if (w <= W_EPSILON) {
       // Camera inside / straddling the bbox near plane → group fills the
       // screen → saturate so the finest child is selected.
-      return Number.POSITIVE_INFINITY;
+      return null;
     }
     const ndcX = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w;
     const ndcY = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
@@ -107,9 +163,9 @@ export function projectBoxDiagonalPx(
     if (ndcY < minY) minY = ndcY;
     if (ndcY > maxY) maxY = ndcY;
   }
-  const widthPx = (maxX - minX) * 0.5 * viewport.width;
-  const heightPx = (maxY - minY) * 0.5 * viewport.height;
-  return Math.hypot(widthPx, heightPx);
+  NDC_RECT_SCRATCH.halfW = (maxX - minX) * 0.5;
+  NDC_RECT_SCRATCH.halfH = (maxY - minY) * 0.5;
+  return NDC_RECT_SCRATCH;
 }
 
 /**

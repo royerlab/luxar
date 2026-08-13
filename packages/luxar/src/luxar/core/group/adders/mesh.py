@@ -1292,10 +1292,15 @@ def add_mesh_substitutive_lod_wrapper_impl(
                 "can be shorter than the requested `levels`."
             )
         coverage_vals = list(explicit)
+        # Explicit lists keep the legacy diagonal-metric units they were
+        # authored in (selector="coverage", the add_lod_group default).
+        lod_selector = "coverage"
     else:
-        # Viewport-relative coverage fractions ``sqrt(N_i/N_finest)`` (vertex-count
-        # ratios; the viewer anchors the finest at a quarter of the live viewport
-        # diagonal, i.e. any normal full-frame view).
+        # Screen-area fractions by occupancy halving (finest holds while the
+        # node occupies at least half the screen; one level coarser per halving
+        # of occupied area). Independent of vertex-count ratios, and stamped
+        # selector="screen-area" so the viewer reads the thresholds in the
+        # units they were derived in.
         #
         # The ANCHOR is chosen from the insertion point: ``add_mesh`` rejects
         # ``partition=`` together with ``substitutive_lod=``, so a caller who wants
@@ -1305,6 +1310,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
         # automatically and logs the choice; an explicit ``coverage_fractions=[...]``
         # still wins (the branch above).
         coverage_vals = derive_coverage_fractions(counts, parent_node, name=name)
+        lod_selector = "screen-area"
 
     lod_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
@@ -1328,7 +1334,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
         f"  📐 Substitutive-LOD '{name}': {len(coarse)} decimated levels + original "
         f"(vertex counts coarsest→finest={counts}, K={compression_factor})"
     )
-    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
+    lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
     for idx, level in enumerate(coarse):
         lod_group_node.add_mesh(

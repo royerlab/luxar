@@ -513,9 +513,9 @@ def tree_from_substitutive_levels(
       serializer), a separate concept.
 
     Each child of a multi-level lod group is back-filled with a derived
-    ``coverage_fraction`` selector threshold (``sqrt(N_i/N_finest)`` — the
-    viewport-relative fraction the viewer multiplies by a quarter of the viewport
-    diagonal), so a standalone substitutive ``.gsplats.zarr`` selects levels
+    ``coverage_fraction`` selector threshold (a SCREEN-AREA fraction by
+    occupancy halving; the group meta carries ``selector="screen-area"`` to name
+    the units), so a standalone substitutive ``.gsplats.zarr`` selects levels
     correctly in the viewer rather than being stuck at the finest level. This is the same
     single-sourced :func:`~luxar.core.group.lod.group.coverage_fractions`
     derivation the scene path uses.
@@ -550,6 +550,11 @@ def tree_from_substitutive_levels(
     fractions_coarsest_first = derive(counts_coarsest_first)
     for leaf, fraction in zip(node.children, fractions_coarsest_first):
         leaf.meta.setdefault("coverage_fraction", fraction)
+    # Both built-in derivations emit SCREEN-AREA fractions, so stamp the mode
+    # alongside the thresholds (the serializers honor a group's meta selector; a
+    # caller passing a custom ``coverage`` callable must produce area units too,
+    # or override this meta key itself).
+    node.meta.setdefault("selector", "screen-area")
 
     return node
 

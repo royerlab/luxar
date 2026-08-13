@@ -43,15 +43,14 @@ def resolve_substitutive_axis_gsplats(
 
     - ``explicit_coverage_fractions`` is non-None only when the user passed
       ``dict(coverage_fractions=[...])`` (strict-ascending, in
-      ``[0, MAX_COVERAGE_FRACTION]``; ``1.0`` is a whole-object ladder's finest
-      anchor and higher values hold a level until the object is larger still) —
-      otherwise downstream code auto-derives per-level thresholds from splat
-      counts via :func:`luxar.core.group.lod.group.derive_coverage_fractions`
-      (``sqrt(N_i/N_finest)``, re-anchored at fills-screen when the insertion
-      point is inside a ``kind=partition``). There is no method selector or
-      per-dataset anchor knob: for a whole-object ladder the viewer anchors the
-      finest at a quarter of the live viewport diagonal — any normal full-frame
-      view.
+      ``[0, MAX_COVERAGE_FRACTION]`` — an explicit list keeps the legacy
+      ``selector="coverage"`` diagonal units its values were authored in) —
+      otherwise downstream code auto-derives per-level SCREEN-AREA thresholds
+      via :func:`luxar.core.group.lod.group.derive_coverage_fractions`
+      (occupancy halving, ``selector="screen-area"``: full detail while the
+      node occupies at least half the screen, re-anchored at fills-screen
+      area 1.0 when the insertion point is inside a ``kind=partition``). There
+      is no per-dataset anchor knob.
 
     Semantics:
 
@@ -130,10 +129,11 @@ def resolve_substitutive_axis_gsplats(
                 raise ValueError(
                     "lod_group=dict(coverage_fractions=...): values must lie in "
                     f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
-                    f"{explicit_coverage_fractions}. The upper bound is "
-                    "1/FILL_FACTOR — the coverage metric a screen-filling object "
-                    "produces; 1.0 is a whole-object ladder's finest anchor (~a "
-                    "quarter of the viewport diagonal)."
+                    f"{explicit_coverage_fractions}. An explicit list keeps the "
+                    "legacy selector='coverage' diagonal units, whose upper "
+                    "bound is 1/FILL_FACTOR — the metric a screen-filling "
+                    "object produces. (Omit the list for the derived "
+                    "screen-area ladder.)"
                 )
 
         if data.n_substitutive > 1 and not recompute:

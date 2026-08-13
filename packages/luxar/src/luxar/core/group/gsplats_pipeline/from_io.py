@@ -320,7 +320,7 @@ def graft_gsplat_node(
         # wants and the on-disk child_<i> layout uses — no reversal.
         on_disk = list(node.children)
         # Per-child coverage_fraction selector thresholds: prefer each child's
-        # authored ``meta`` value, else derive — ``sqrt(N_i/N_finest)`` (count
+        # authored ``meta`` value, else derive — screen-occupancy halving (count-
         # ratios), so a meta-less grafted tree still gets ascending thresholds the
         # selector accepts (never all-zero).
         #
@@ -364,7 +364,15 @@ def graft_gsplat_node(
         # progressive-load level, decoupled from the data-model default (see
         # gsplat_tree.write_gsplat_node / add_gsplats_as_lod_group_impl). Loading
         # the finest by default would render "backwards".
-        wrapper = parent_node.add_lod_group(name, **wrapper_attrs)
+        # Selector = the UNITS of the thresholds this wrapper ends up with. A
+        # tree read from disk carries its mode in meta (its authored per-child
+        # values win below); a meta-less tree gets this graft's own derivation,
+        # which is in screen-area units — same rule as the standalone writer.
+        wrapper = parent_node.add_lod_group(
+            name,
+            selector=str((node.meta or {}).get("selector", "screen-area")),
+            **wrapper_attrs,
+        )
         for i, child in enumerate(on_disk):
             cov = float((child.meta or {}).get("coverage_fraction", derived_cov[i]))
             graft_gsplat_node(

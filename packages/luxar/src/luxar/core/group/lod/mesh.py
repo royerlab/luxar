@@ -132,10 +132,10 @@ def _validate_coverage_fractions_spec(value: Any) -> Optional[List[float]]:
         raise ValueError(
             "substitutive_lod=dict(coverage_fractions=...): values must lie in "
             f"[0, {MAX_COVERAGE_FRACTION:g}] (coarsest→finest); got "
-            f"{explicit_coverage}. The upper bound is 1/FILL_FACTOR — the "
-            "coverage metric a screen-filling object produces; 1.0 is a "
-            "whole-object ladder's finest anchor (~a quarter of the viewport "
-            "diagonal)."
+            f"{explicit_coverage}. An explicit list keeps the legacy "
+            "selector='coverage' diagonal units, whose upper bound is "
+            "1/FILL_FACTOR — the metric a screen-filling object produces. "
+            "(Omit the list for the derived screen-area ladder.)"
         )
     return explicit_coverage
 

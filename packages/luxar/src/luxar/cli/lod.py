@@ -98,7 +98,7 @@ _ALLOWED_TOKENS = {
     "stream": frozenset({"additive"}),
     "tiles": frozenset({"additive", "partition"}),
     # LOD switch thresholds are auto-derived as viewport-relative coverage
-    # fractions (sqrt(N_i/N_finest)) for every kind=lod group (the overview
+    # fractions (screen-occupancy halving) for every kind=lod group (the overview
     # cap and the levels/adaptive lod groups) — no threshold knob.
     "overview": frozenset({"additive", "partition", "substitutive"}),
     # adaptive: spatial tiles + a levels group per tile — partition +

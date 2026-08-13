@@ -69,15 +69,21 @@ def add_gsplats_as_lod_group_impl(
                 f"entries but the lod_group has {n_sub} substitutive levels"
             )
         coverage_vals = list(explicit_coverage_fractions)
+        # Explicit lists keep the legacy diagonal-metric units they were
+        # authored in (selector="coverage", the add_lod_group default).
+        lod_selector = "coverage"
     else:
-        # Auto-derive (coarsest-first) as viewport-relative coverage fractions
-        # ``sqrt(N_i/N_finest)`` — count ratios only, so no per-level radius or
-        # world-extent is needed; the viewer anchors the finest at a quarter of the
-        # live viewport diagonal (any normal full-frame view). A ladder whose
-        # insertion point sits under a hand-built ``kind=partition`` switches on ONE
-        # TILE, so it takes the fills-screen anchor instead — detected and logged by
+        # Auto-derive (coarsest-first) as screen-area fractions by occupancy
+        # halving — the finest level holds while the node occupies at least half
+        # the screen, one level coarser per halving of occupied area. Count-
+        # independent, so no per-level radius or world-extent is needed; stamped
+        # selector="screen-area" so the viewer reads the thresholds in the units
+        # they were derived in. A ladder whose insertion point sits under a
+        # hand-built ``kind=partition`` switches on ONE TILE, so it takes the
+        # fills-screen anchor (area 1.0) instead — detected and logged by
         # ``derive_coverage_fractions``.
         coverage_vals = derive_coverage_fractions(splat_counts, parent_node, name=name)
+        lod_selector = "screen-area"
 
     # Separate compositing attrs (go on the kind=lod Group) from
     # per-leaf gsplats attrs (go on each child). Anything not in the
@@ -107,7 +113,7 @@ def add_gsplats_as_lod_group_impl(
     # default_substitutive (the finest level the accessors return) — defaulting
     # the viewer to the finest would eager-load every lod group at full
     # resolution and render "backwards" (matches gsplat_tree.write_gsplat_node).
-    lod_group_node = parent_node.add_lod_group(name, **lod_attrs)
+    lod_group_node = parent_node.add_lod_group(name, selector=lod_selector, **lod_attrs)
 
     aprint(
         f"Adding multi-resolution gsplats node '{name}' as kind=lod "

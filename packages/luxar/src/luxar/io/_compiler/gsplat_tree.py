@@ -54,8 +54,15 @@ if TYPE_CHECKING:
 
 #: Provenance / selector attr keys carried per-node in a leaf's ``meta`` and
 #: surfaced verbatim onto the node's zarr ``.zattrs``.
+#:
+#: ``selector`` (a kind=lod GROUP's meta, never a leaf's in practice) names the
+#: UNITS of the children's ``coverage_fraction`` thresholds and must round-trip
+#: WITH them: a legacy store's authored diagonal-metric values re-saved under a
+#: fresh ``"screen-area"`` stamp would be misread by the viewer. The reader
+#: whitelists it to the known modes so a stale pre-v3.2 value can't ride along.
 _NODE_META_ATTR_KEYS = (
     "coverage_fraction",
+    "selector",
     "compression_factor",
     "parent_method",
     "level_index",
@@ -554,9 +561,9 @@ def write_gsplat_node(
             partitioned_coverage_fractions if partition_bound else coverage_fractions
         )
         # Derive a per-child selector threshold (coarsest→finest) so EVERY child —
-        # leaf OR nested Group — is viewer-selectable. Viewport-relative
-        # ``coverage_fraction`` = ``sqrt(N_i/N_finest)`` (count ratios; the viewer
-        # multiplies by a quarter of the live viewport diagonal). An authored
+        # leaf OR nested Group — is viewer-selectable. ``coverage_fraction``
+        # derived as a screen-area fraction by occupancy halving (the group's
+        # ``selector`` attr below names the units). An authored
         # coverage_fraction on the child still takes precedence: for a leaf child
         # it is merged over these
         # passed attrs by ``_leaf_child_attrs`` in the leaf writer; for a nested group
@@ -601,7 +608,14 @@ def write_gsplat_node(
             group.attrs[k] = v
         group.attrs["type"] = "group"
         group.attrs["kind"] = "lod"
-        group.attrs["selector"] = "coverage"
+        # The selector names the UNITS of the children's coverage_fraction
+        # thresholds, so it must travel with them. A tree read from an existing
+        # store carries its on-disk mode in meta (preserved with the authored
+        # thresholds the leaf writer honors over the derived fallback);
+        # everything else — fresh recipe/backfill trees and the meta-less
+        # hand-built case whose thresholds THIS writer just derived — is in
+        # screen-area units (every live derivation is).
+        group.attrs["selector"] = str(node.meta.get("selector", "screen-area"))
         # The viewer's INITIAL level (before the coverage selector runs) — the
         # COARSEST child (child_0). This is purely a progressive-load hint: it
         # makes the scene appear instantly at low detail, then refine. It is
@@ -719,10 +733,17 @@ def _read_leaf_arrays(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
 
 def _node_meta_from_attrs(group: zarr.Group) -> Dict[str, Any]:
     """Recover the per-node ``meta`` dict (provenance/selector) from ``.zattrs``."""
+    from luxar.typing_utils.constants import LOD_SELECTORS
+
     out: Dict[str, Any] = {}
     for key in _NODE_META_ATTR_KEYS:
         if key in group.attrs:
             val = group.attrs[key]
+            if key == "selector" and val not in LOD_SELECTORS:
+                # A stale pre-v3.2 selector spelling (the pixel_size era) —
+                # drop it so the writer re-stamps a valid mode alongside the
+                # thresholds it re-derives.
+                continue
             out[key] = None if (key == "parent_method" and val == "") else val
     if "level_stats" in group.attrs:
         ls = group.attrs["level_stats"]

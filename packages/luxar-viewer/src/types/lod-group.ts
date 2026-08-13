@@ -2,18 +2,27 @@ import type { BlendingMode } from './blending';
 /**
  * LOD-kind Group type definitions for luxar-viewer.
  *
- * A `Group` whose `kind === 'lod'` selects one of N alternative
- * children at runtime based on the projected bbox diagonal in pixels and
- * each child's `coverage_fraction` threshold — a viewport-relative fraction
- * (0..4; the auto-derived WHOLE-OBJECT ladder uses 0..1, while an explicitly
- * authored or partition-bound ladder may reach 4.0) the viewer multiplies by a
- * fixed fraction (a quarter) of the viewport
- * diagonal, so a `coverage_fraction` of 1.0 activates once the object's
- * projected bbox diagonal reaches about a quarter of the viewport diagonal —
- * i.e. at any normal full-frame view — and coarser children step in as it
- * shrinks below that. Children are
- * arbitrary geometry subtrees (points / lines / gsplats / nested specialized
- * groups).
+ * A `Group` whose `kind === 'lod'` selects one of N alternative children at
+ * runtime by comparing the group's on-screen size against each child's
+ * `coverage_fraction` threshold. The group's `selector` attr names the UNITS
+ * of those thresholds:
+ *
+ * - `'screen-area'` (what every derived ladder stamps): a threshold is a
+ *   literal screen-area fraction — the group's projected bbox rect area over
+ *   the viewport area. The derived whole-object ladder is [0, …, 1/8, 1/4,
+ *   1/2] (full detail while the node occupies at least half the screen, one
+ *   level coarser per halving of occupied area); a partition tile anchors at
+ *   1.0 (the tile alone fills the screen).
+ * - `'coverage'` (legacy, and explicit `coverage_fractions=[...]` lists): the
+ *   diagonal metric — projected bbox diagonal / (FILL_FACTOR=0.25 × viewport
+ *   diagonal), thresholds in 0..4 (whole-object derived ladders spanned 0..2,
+ *   partition-bound ones reach 4.0).
+ *
+ * Children are arbitrary geometry subtrees (points / lines / gsplats /
+ * nested specialized groups).
+ *
+ * The Python mirror of the selector vocabulary is
+ * `luxar.typing_utils.constants.LOD_SELECTORS`; keep the spellings in step.
  *
  * @module types/lod-group
  */
@@ -41,11 +50,12 @@ export interface LODGroupMetadata {
   display_type?: 'points' | 'lines' | 'gsplats' | 'mesh';
 
   /**
-   * Selector mode. Currently only `"coverage"` is supported; the field
-   * is carried in the format so future modes (distance, ...) can be added
-   * without breaking existing scenes.
+   * Units of the children's `coverage_fraction` thresholds (see the module
+   * doc): `'screen-area'` = literal screen-area fractions (what derived
+   * ladders stamp), `'coverage'` = the legacy diagonal metric. An unknown /
+   * missing value falls back to `'coverage'` so older stores keep rendering.
    */
-  selector: 'coverage';
+  selector: 'coverage' | 'screen-area';
 
   /**
    * Initial active level index for the manual-override UI. Stored 0-based

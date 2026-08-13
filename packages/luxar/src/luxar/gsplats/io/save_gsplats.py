@@ -87,6 +87,11 @@ GSPLATS_VERSION: str = _resolve_gsplats_version()
 #: point whenever luxar is installed (importing ``luxar.encoding`` also
 #: registers it eagerly); v3.3 stores without the filter are byte-identical
 #: to v3.2.
+#: v3.4 adds the ``selector`` value ``screen-area`` (what every derived ladder
+#: now stamps): per-child ``coverage_fraction`` becomes a literal screen-area
+#: fraction (occupancy halving — whole-object finest 0.5, partition tile 1.0).
+#: Stores carrying ``selector="coverage"`` keep the legacy diagonal units and
+#: are read/round-tripped unchanged.
 #: v3.2 renames the ``kind=lod`` selector attrs: the group ``selector`` value
 #: ``pixel_size`` → ``coverage`` and the per-child ``min_pixel_size`` (absolute
 #: pixels) → ``coverage_fraction`` (viewport-relative ``sqrt(N_i/N_finest)`` in

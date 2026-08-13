@@ -6,9 +6,10 @@
  * with two additions:
  *
  *   1. Each child carries a ``coverage_fraction`` attribute (a per-child
- *      viewport-relative threshold; 0.0 coarsest, 1.0 the finest anchor of a
- *      whole-object ladder, up to 4.0 == ``1/FILL_FACTOR`` — which is what a
- *      partition-bound ladder derives, as well as what an author may write)
+ *      threshold whose UNITS the group's ``selector`` attr names: literal
+ *      screen-area fractions under ``'screen-area'`` — derived whole-object
+ *      ladders span [0, 1/2], a partition tile anchors at 1.0 — or the legacy
+ *      diagonal metric under ``'coverage'``, up to 4.0 == ``1/FILL_FACTOR``)
  *      plus its own ``position_bounds`` (the raw nD AABB). Both are read from
  *      the child's zarr attrs.
  *      Legacy (pre-v3.2) datasets that still carry ``min_pixel_size`` /
@@ -169,11 +170,14 @@ function attachLazyChild(
  * Resolve the per-child selector thresholds for a lod_group, auto-adapting
  * legacy datasets.
  *
- * Current stores carry a per-child ``coverage_fraction`` (viewport-relative
- * ``sqrt(N_i/N_finest)``, strictly ascending coarsest→finest, in
- * [0, ``1/FILL_FACTOR``] == [0, 4]). A whole-object ladder's finest is 1.0; a
- * ladder bound to a spatial partition is re-anchored at fills-screen so its
- * finest is 4.0 — derived, not merely hand-authored.
+ * Current stores carry a per-child ``coverage_fraction`` derived by
+ * SCREEN-OCCUPANCY HALVING in the units the group's ``selector`` names
+ * (``'screen-area'`` for every derived ladder): coarsest 0.0, strictly
+ * ascending, one halving of occupied screen area per level. A whole-object
+ * ladder anchors its finest at 0.5 (half the screen); a ladder bound to a
+ * spatial partition is re-anchored at fills-screen (area 1.0). Explicit
+ * ``coverage_fractions=[...]`` lists and older stores keep the legacy
+ * ``'coverage'`` diagonal metric (in [0, ``1/FILL_FACTOR``] == [0, 4]).
  *
  * Datasets written before the v3.2 rename instead carry a
  * per-child ``min_pixel_size`` (absolute pixel thresholds; group ``selector``
@@ -182,9 +186,9 @@ function attachLazyChild(
  * defeating progressive LOD — so legacy ladders are **derived** instead:
  * normalizing the (strictly ascending, positive) legacy pixel thresholds by
  * the finest value maps them onto the coverage scale. For the legacy
- * count-anchored ladder (``base·sqrt(N_i/N_0)``) this yields *exactly* the
- * modern ``sqrt(N_i/N_finest)``; extent-anchored ladders keep their relative
- * switch points with finest == 1.0. One warning per group names
+ * count-anchored ladder (``base·sqrt(N_i/N_0)``) this yields the pre-halving
+ * derived shape ``sqrt(N_i/N_finest)``; extent-anchored ladders keep their
+ * relative switch points with finest == 1.0. One warning per group names
  * ``luxar gsplat migrate-format`` so the producer knows to upgrade.
  *
  * A child with neither attr is a genuinely malformed producer output: an
@@ -606,6 +610,11 @@ export async function loadLodGroupNode(
     path: node.path,
     groupObject: lodThreeGroup,
     children: registryChildren,
+    // Threshold units. Whitelisted: anything other than the literal
+    // 'screen-area' (including the legacy 'pixel_size' spelling and a missing
+    // attr) falls back to the legacy diagonal metric, whose units every older
+    // store's thresholds were authored/derived in.
+    selector: attrs.selector === 'screen-area' ? 'screen-area' : 'coverage',
     selectorMode: 'auto' satisfies LODGroupSelectorMode,
     defaultLevel,
     activeChildIndex: defaultLevel,

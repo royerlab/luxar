@@ -19,6 +19,10 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.core.group.lod.group import (
+    PARTITION_FINEST_AREA,
+    WHOLE_OBJECT_FINEST_ANCHOR,
+)
 
 
 def octasphere(subdivisions: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -139,7 +143,9 @@ class TestLadderShape:
         assert fractions == sorted(fractions)
         assert len(set(fractions)) == len(fractions)
         assert fractions[0] == pytest.approx(0.0)
-        assert fractions[-1] == pytest.approx(1.0)
+        # Screen-occupancy (AREA) halving: the finest whole-object level
+        # anchors at half the screen area (0.5).
+        assert fractions[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
 
     def test_level_count_follows_levels_and_K(self, tmp_path):
         verts, faces = octasphere(4)
@@ -974,8 +980,10 @@ class TestPartitionBoundAnchorMesh:
     the `kind=partition` wrapper by hand and calling the adder once per part is the
     ONLY way to get per-tile mesh ladders. Before the mesh wrapper routed through
     `derive_coverage_fractions` it always derived the WHOLE-OBJECT ladder (finest
-    `1.0`), so both tiles sat on their finest decimation level at the opening
-    full-frame view. The Points/Lines peers of these tests live in
+    = the whole-object anchor), so both tiles sat on their finest decimation level
+    at the opening full-frame view. Per-tile ladders anchor at
+    `PARTITION_FINEST_AREA` (1.0 — the tile alone fills the screen). The
+    Points/Lines peers of these tests live in
     `core/tests/group/lod/test_substitutive_{points,lines}.py`.
     """
 
@@ -1019,10 +1027,7 @@ class TestPartitionBoundAnchorMesh:
         return [float(attrs["coverage_fraction"]) for _, attrs in kids]
 
     def test_every_part_ladder_is_partition_anchored(self, tmp_path):
-        from luxar.core.group.lod.group import (
-            MAX_COVERAGE_FRACTION,
-            partitioned_coverage_fractions,
-        )
+        from luxar.core.group.lod.group import partitioned_coverage_fractions
 
         nodes = read_nodes(self.write(tmp_path))
         assert nodes["tiled"]["kind"] == "partition"
@@ -1045,14 +1050,16 @@ class TestPartitionBoundAnchorMesh:
                 partitioned_coverage_fractions(counts)
             )
             assert self.coverage(nodes, part)[-1] == pytest.approx(
-                MAX_COVERAGE_FRACTION
+                PARTITION_FINEST_AREA
             )
 
     def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path):
-        """CONTROL: the same ladders outside a partition keep the 1.0 anchor."""
+        """CONTROL: outside a partition, the half-screen-area anchor holds."""
         nodes = read_nodes(self.write(tmp_path, partitioned=False))
         for i in range(2):
-            assert self.coverage(nodes, f"part_{i}")[-1] == pytest.approx(1.0)
+            assert self.coverage(nodes, f"part_{i}")[-1] == pytest.approx(
+                WHOLE_OBJECT_FINEST_ANCHOR
+            )
 
     def test_explicit_coverage_fractions_still_win_under_a_partition(self, tmp_path):
         """CONTROL: an explicit list is used verbatim, partition or not."""

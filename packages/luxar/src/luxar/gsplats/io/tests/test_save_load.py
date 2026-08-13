@@ -1125,14 +1125,16 @@ def test_write_gsplats_tree_stamps_child_index_on_children() -> None:
 
 def test_writer_derives_coverage_fractions_for_meta_less_lod_group() -> None:
     """#4: a meta-less (hand-built) kind=lod group gets viewport-relative
-    ``coverage_fraction`` values from the writer fallback (``sqrt(N_i/N_finest)``:
-    coarsest 0.0, finest 1.0). The builders normally stamp these into child meta —
-    this exercises the fallback for a tree written without it."""
+    ``coverage_fraction`` values from the writer fallback (screen-occupancy
+    AREA halving: coarsest 0.0, finest at the half-screen-area anchor
+    0.5). The builders normally stamp these into child meta — this
+    exercises the fallback for a tree written without it."""
     import tempfile
     from pathlib import Path
 
     import zarr
 
+    from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
     from luxar.gsplats.gsplat_data import AdditiveSubLOD
     from luxar.gsplats.io.save_gsplats import write_gsplats_tree
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
@@ -1161,8 +1163,10 @@ def test_writer_derives_coverage_fractions_for_meta_less_lod_group() -> None:
         write_gsplats_tree(path, grp, ordering="none")
         root = zarr.open_group(str(path), mode="r")
         assert root["child_0"].attrs["coverage_fraction"] == 0.0  # coarsest floor
-        # sqrt(N_i/N_finest): coarsest-first counts [50, 800] → finest anchored at 1.0.
-        assert root["child_1"].attrs["coverage_fraction"] == pytest.approx(1.0)
+        # Screen-occupancy AREA halving: any 2-level ladder → finest 0.5.
+        assert root["child_1"].attrs["coverage_fraction"] == pytest.approx(
+            WHOLE_OBJECT_FINEST_ANCHOR
+        )
 
 
 class TestBarrierAwareOrdering:
@@ -1695,8 +1699,9 @@ def _recipe_tree(recipe: str):
 def test_meta_less_partition_bound_tree_rederives_the_partitioned_anchor(
     recipe: str, tmp_path: Path
 ) -> None:
-    """``write_gsplats_tree`` on a scrubbed tree must re-derive 0.0 → 4.0."""
-    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+    """``write_gsplats_tree`` on a scrubbed tree must re-derive 0.0 → 1.0
+    (``PARTITION_FINEST_AREA`` — the tile alone fills the screen)."""
+    from luxar.core.group.lod.group import PARTITION_FINEST_AREA
     from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 
     node = _strip_coverage(_recipe_tree(recipe))
@@ -1710,9 +1715,9 @@ def test_meta_less_partition_bound_tree_rederives_the_partitioned_anchor(
         for k in sorted(lod_group.group_keys(), key=lambda s: int(s.split("_")[1]))
     ]
     assert covs[0] == 0.0
-    assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION), (
+    assert covs[-1] == pytest.approx(PARTITION_FINEST_AREA), (
         f"{recipe}: meta-less re-derivation gave {covs}, expected the "
-        "partition-bound anchor (finest = MAX_COVERAGE_FRACTION)"
+        "partition-bound anchor (finest = PARTITION_FINEST_AREA)"
     )
     assert all(covs[i] > covs[i - 1] for i in range(1, len(covs)))
 
@@ -1748,12 +1753,12 @@ def test_streaming_partition_writer_uses_the_partitioned_anchor(
     partition-bound by construction — its recursion must say so.
 
     Regression: the streaming writer started the walk at the default
-    ``under_partition=False``, so a meta-less per-part ladder came out
-    0.0/0.5/1.0 here while ``write_gsplats_tree`` on the same tree gave
-    0.0/2.0/4.0. Latent only because the batch merge stamps ``meta`` that wins
-    over the fallback.
+    ``under_partition=False``, so a meta-less per-part ladder came out with the
+    whole-object anchor (0.0/0.25/0.5) here while ``write_gsplats_tree`` on the
+    same tree gave the tile anchor (0.0/0.5/1.0). Latent only because the batch
+    merge stamps ``meta`` that wins over the fallback.
     """
-    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+    from luxar.core.group.lod.group import PARTITION_FINEST_AREA
     from luxar.gsplats.io.save_gsplats import write_partition_streaming
     from luxar.gsplats.tree import GSplatPartition
 
@@ -1771,7 +1776,7 @@ def test_streaming_partition_writer_uses_the_partitioned_anchor(
         for k in sorted(part0.group_keys(), key=lambda s: int(s.split("_")[1]))
     ]
     assert covs[0] == 0.0
-    assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION), (
+    assert covs[-1] == pytest.approx(PARTITION_FINEST_AREA), (
         f"streaming writer gave {covs}; every part_<i> is under a kind=partition "
         "root, so the fallback must use the partition-bound anchor"
     )
@@ -1784,10 +1789,12 @@ def test_meta_less_one_part_partition_rederives_the_whole_object_anchor(
     so the fallback must NOT hand the fills-screen anchor down.
 
     ``build_adaptive`` emits exactly this shape whenever the dataset fits
-    ``max_elements``, and it stamps 1.0. If the writer's topology fallback
-    disagreed, a ``gsplat transform`` scrub-and-re-derive would silently
-    re-coarsen the store back to the #1361 behaviour.
+    ``max_elements``, and it stamps the whole-object anchor (0.5). If the
+    writer's topology fallback disagreed, a ``gsplat transform``
+    scrub-and-re-derive would silently re-coarsen the store back to the #1361
+    behaviour.
     """
+    from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
     from luxar.gsplats.io.save_gsplats import write_gsplats_tree
     from luxar.gsplats.lod.recipes import RecipeParams, build_recipe
     from luxar.gsplats.tree import GSplatPartition
@@ -1821,9 +1828,9 @@ def test_meta_less_one_part_partition_rederives_the_whole_object_anchor(
             for k in sorted(g.group_keys(), key=lambda s: int(s.split("_")[1]))
         ]
 
-    assert _covs(scrubbed)[-1] == pytest.approx(1.0), (
+    assert _covs(scrubbed)[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR), (
         f"one-part re-derivation gave {_covs(scrubbed)}, expected the "
-        "whole-object anchor (finest = 1.0)"
+        "whole-object half-screen-area anchor (finest = 0.5)"
     )
     # And the round trip is still a no-op, as it is for real tilings.
     assert _covs(stamped) == pytest.approx(_covs(scrubbed))
@@ -1838,10 +1845,10 @@ def test_one_part_partition_nested_in_a_tiling_keeps_the_tile_anchor(
     below is a lone-part wrapper, but it still sits inside ONE tile of a >=2-part
     partition, so the meta-less ladder underneath it keeps the fills-screen
     anchor. Overwriting the incoming flag instead of OR-ing it in would hand that
-    ladder the whole-object 1.0 — and would put the writer out of step with
+    ladder the whole-object 0.5 — and would put the writer out of step with
     ``graft_gsplat_node``, its scene-side mirror.
     """
-    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+    from luxar.core.group.lod.group import PARTITION_FINEST_AREA
     from luxar.gsplats.gsplat_data import AdditiveSubLOD
     from luxar.gsplats.io.save_gsplats import write_gsplats_tree
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
@@ -1880,7 +1887,7 @@ def test_one_part_partition_nested_in_a_tiling_keeps_the_tile_anchor(
         for k in sorted(ladder.group_keys(), key=lambda s: int(s.split("_")[1]))
     ]
     assert covs[0] == 0.0
-    assert covs[-1] == pytest.approx(MAX_COVERAGE_FRACTION), (
+    assert covs[-1] == pytest.approx(PARTITION_FINEST_AREA), (
         f"nested one-part wrapper gave {covs}; the outer >=2-part tiling still "
-        "binds this ladder, so the finest must be MAX_COVERAGE_FRACTION"
+        "binds this ladder, so the finest must be PARTITION_FINEST_AREA"
     )

@@ -1,6 +1,6 @@
 # luxar.gsplats.io - Technical Specification
 
-**Version**: 3.3.0
+**Version**: 3.4.0
 **Last Updated**: 2026-07-13
 
 > For a version-policy and migration summary that contrasts this format with the scene container, see [Formats & Migration](../guides/user/FORMAT_AND_MIGRATION.md).
@@ -124,7 +124,15 @@ The `n_splats` attribute on a leaf's `.zattrs` always reflects the true count (N
 
 ## Format Versions
 
-The current format is **v3.3**, a node tree (§ "On-disk grammar"). It differs
+The current format is **v3.4**, a node tree (§ "On-disk grammar"). It differs
+from **v3.3** only in the `kind=lod` selector: the group `selector` attr gains
+the value `"screen-area"` (what every DERIVED ladder now stamps), under which
+the per-child `coverage_fraction` is a literal **screen-area fraction**
+(projected bbox rect area / viewport area; occupancy halving — whole-object
+finest `0.5`, partition tile `1.0` — see the `kind=lod` section). Stores with
+`selector: "coverage"` keep the legacy diagonal-metric units and are read and
+round-tripped unchanged, so every v3.3 store is also a valid v3.4 store.
+**v3.3** differs
 from **v3.2** only in allowing quantized code arrays (coordinates, Cholesky
 halves, amplitudes) to carry the optional `luxar_delta_v1` zarr v2 **filter**
 (columnar per-chunk delta+zigzag — § "The `luxar_delta_v1` delta filter");
@@ -155,7 +163,7 @@ A v3.x file is one of (each freely nestable):
 | partition        | `type=group, kind=partition`; `part_<i>/` + `max_elements`         |
 
 Every node carries `position_bounds`; the root additionally carries
-`format_version:"3.3"`, `format_type:"gsplats_zarr"`, `timestamp`,
+`format_version:"3.4"`, `format_type:"gsplats_zarr"`, `timestamp`,
 `luxar_gsplats_version`, and `content_hash` (a metadata-only xxhash64 over
 the tree's attrs + array names/shapes/dtypes, distinct per save because the
 per-save `timestamp` folds in — the web viewer's persistent cache compares it
@@ -177,7 +185,7 @@ fitted.gsplats.zarr/
 │                     # chunk_size, amplitude_range, amplitude_data_range,
 │                     # center_bounds, position_bounds, truncation_radius,
 │                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
-│                     # format_version: "3.3", format_type: "gsplats_zarr",
+│                     # format_version: "3.4", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
 ├── .zmetadata        # Consolidated metadata for fast loading
 ├── centers                   # (N, d) uint16 (AUTO; float32 if an axis extent ≥ 2¹⁶) / float32 (PRECISION), spatially ordered
@@ -200,7 +208,7 @@ fitted.gsplats.zarr/
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats (total), ndim, n_additive_sublods,
-│                     # position_bounds, format_version: "3.3", …
+│                     # position_bounds, format_version: "3.4", …
 ├── additive_0/       # Coarsest additive sub-LOD (index 0 = coarsest)
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── .zattrs       # type: "gsplats", n_splats, ndim, ordering, lod_stats?, …
@@ -217,17 +225,17 @@ Sub-LOD groups carry lightweight attrs (no rendering defaults).
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "group", kind: "lod", selector: "coverage",
+├── .zattrs           # type: "group", kind: "lod", selector: "screen-area",
 │                     # default_level: <int>, display_type: "gsplats",
-│                     # position_bounds, format_version: "3.3", …
+│                     # position_bounds, format_version: "3.4", …
 ├── child_0/          # Coarsest child (child_0 = coarsest on disk)
 │   ├── .zattrs       # coverage_fraction: 0.0, compression_factor, level_index, …
 │   ├── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
 │   └── …
 ├── child_1/
-│   ├── .zattrs       # coverage_fraction: <0..4>, …
+│   ├── .zattrs       # coverage_fraction: <0..1>, …
 │   └── …
-└── child_{N-1}/      # Finest child (coverage_fraction: 1.0, or 4.0 when the
+└── child_{N-1}/      # Finest child (coverage_fraction: 0.5, or 1.0 when the
     │                 #   ladder is bound to a spatial partition — see below)
     └── …
 ```
@@ -239,26 +247,31 @@ with no reversal. The on-disk `default_level` is `0` (the coarsest child) — th
 viewer's progressive-load hint (render cheap first, then refine). This is a
 distinct concept from the data-model default (the finest level the `.centers`
 accessor returns); they are deliberately decoupled, so the writer stamps
-`default_level: 0` independently. Each child carries `coverage_fraction`, a
-dimensionless value in `[0, 4]` computed as `sqrt(N_i / N_finest)` (`N_i` =
-level i's total splat count) and strictly ascending coarsest→finest; the
-coarsest child is always `0.0`. Being a count
-ratio, it is immune to non-displayed-dimension multiplicity (e.g. a stacked
-time axis inflates every level's count equally and cancels out). At render
-time the viewer multiplies `coverage_fraction` by the viewport diagonal (times
-a fill-factor constant of `0.25`) to get a pixel threshold, so a
-`coverage_fraction` of `1.0` activates once the object's projected bbox diagonal
-reaches about a quarter of the viewport diagonal — i.e. at any normal full-frame
-view — and coarser levels step in as it shrinks below that, identically on any
-monitor/viewport. (Same contract as
-`docs/guides/user/LUXAR_ZARR_FORMAT.md`.)
+`default_level: 0` independently. Each child carries `coverage_fraction`,
+strictly ascending coarsest→finest with the coarsest child always `0.0`; the
+group's `selector` attr names the UNITS. Under `selector: "screen-area"` (what
+every derived ladder stamps since v3.4) a threshold is a literal screen-area
+fraction — the node's projected bbox rect area over the viewport area — and
+writers derive the ladder by SCREEN-OCCUPANCY HALVING: authored detail is
+meant to be viewed full screen, so a whole-object ladder anchors its FINEST
+level at `0.5` (full detail while the node occupies at least half the screen)
+and each coarser level halves the threshold (`…, 1/8, 1/4, 1/2`) —
+deliberately independent of per-level element counts (a count ratio is blind
+to element size, overlap, and intent; the retired derivation
+`sqrt(N_i/N_finest)` held the finest level until the object was far away on
+dense sub-pixel data). The metric is built from NDC fractions, so selection is
+identical on any monitor/viewport. Under the legacy `selector: "coverage"`
+(older stores; never written for derived ladders since v3.4) the thresholds
+are diagonal-metric units in `[0, 4]`: the viewer compares them against the
+projected bbox diagonal over a quarter of the viewport diagonal. (Same
+contract as `docs/guides/user/LUXAR_ZARR_FORMAT.md`.)
 
 **Which anchor the finest child gets.** A **whole-object** ladder (the `levels`
 recipe, and any `kind=lod` group whose levels are alternative renderings of the
-whole node) anchors its finest at `1.0`, so its values stay in `[0, 1]`. A ladder
-bound to a **spatial partition** anchors its finest at `4.0` = `1 / FILL_FACTOR`
-— the metric a screen-filling node produces — because a tile's projected diagonal
-is intrinsically a fraction of the whole object's. That covers the `adaptive`
+whole node) anchors its finest at `0.5` (half the screen area). A ladder
+bound to a **spatial partition** anchors its finest at `1.0` — the tile alone
+occupying the whole screen — because a tile's projected rect is intrinsically
+a fraction of the whole object's. That covers the `adaptive`
 recipe (one `kind=lod` group per tile) and the `overview` recipe (whose fine
 child *is* a `kind=partition`, reached by zooming in). See
 `partitioned_coverage_fractions` in `luxar/core/group/lod/group.py`. Any node shape (bare leaf, additive
@@ -269,7 +282,7 @@ ladder) is valid as a child.
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "group", kind: "partition", display_type: "gsplats",
-│                     # max_elements: <int>, position_bounds, bsp_tree?, format_version: "3.3", …
+│                     # max_elements: <int>, position_bounds, bsp_tree?, format_version: "3.4", …
 ├── part_0/           # BSP part 0 (any node shape valid per part)
 │   ├── .zattrs       # position_bounds (per-part bounds for frustum culling), child_index
 │   └── centers, amplitudes, cholesky_factors_diag, cholesky_factors_offdiag, colors?, chunk_bounds?
@@ -335,7 +348,7 @@ the self-identifying file header (stamped by `write_gsplats_tree`):
 
 ```json
 {
-  "format_version": "3.3",
+  "format_version": "3.4",
   "format_type": "gsplats_zarr",
   "timestamp": "2026-06-09T10:00:00Z",
   "luxar_gsplats_version": "X.Y.Z",
@@ -1015,7 +1028,7 @@ one into a scene is a graft of that subtree.
 **Purpose**: Persist fitted results as independent, directly-loadable files.
 
 **Structure**: A node-tree root (leaf / kind=lod / kind=partition) plus the
-self-identifying header (`format_version:"3.3"`, `format_type:"gsplats_zarr"`,
+self-identifying header (`format_version:"3.4"`, `format_type:"gsplats_zarr"`,
 `timestamp`, `luxar_gsplats_version`, `content_hash`) and optional
 `fitting/` / `provenance/`.
 
@@ -1142,6 +1155,21 @@ finest level instead). Both paths go through the shared
 ---
 
 ## Changelog
+
+- **v3.4.0** (2026-08-12): `kind=lod` gains the `selector: "screen-area"` mode
+  - Per-child `coverage_fraction` under this selector is a literal screen-area
+    fraction (projected bbox rect area / viewport area). Derived ladders use
+    SCREEN-OCCUPANCY HALVING: whole-object finest `0.5` (full detail while the
+    node occupies at least half the screen; one level coarser per halving of
+    occupied area), partition-tile finest `1.0` (fills-screen). Every DERIVED
+    ladder now stamps this selector; explicit `coverage_fractions=[...]` lists
+    and existing stores keep `selector: "coverage"` (the legacy diagonal
+    metric, in `[0, 4]`) and round-trip unchanged.
+  - Motivation: the diagonal metric could not serve both the opening-framing
+    contract (#1361) and predictable zoom-out coarsening — a zoomed-out pose
+    measured 2.37/4 on the diagonal (still finest) while a legitimate opening
+    framing measured 1.24; the two separate cleanly in area (≈37% vs ≈80%).
+    Area is also the semantics users mean by "portion of the screen occupied".
 
 - **v3.3.0** (2026-07-18): optional `luxar_delta_v1` delta filter on quantized codes
   - Quantized code arrays (coordinates, Cholesky halves, amplitudes, colors)

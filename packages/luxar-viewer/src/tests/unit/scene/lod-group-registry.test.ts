@@ -24,6 +24,7 @@ import {
   FILL_FACTOR,
   LODGroupRegistry,
   pickChildWithHysteresis,
+  projectBoxAreaFraction,
   projectBoxDiagonalPx,
   type LODGroupChild,
   type LODGroupEntry,
@@ -264,6 +265,49 @@ describe('projectBoxDiagonalPx', () => {
     // heightPx=1·0.5·600=300 → hypot=500. Confirms w stays 1 (no saturation)
     // AND the manual column-major NDC computation is correct for ortho.
     expect(diagonal).toBeCloseTo(500, 1);
+  });
+
+  // ── projectBoxAreaFraction — the selector='screen-area' metric ──────────
+  describe('projectBoxAreaFraction', () => {
+    it('returns 1.0 for a screen-filling box (full NDC extent)', () => {
+      const box: BoundingBox = { min: { x: -1, y: -1, z: 0 }, max: { x: 1, y: 1, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(1.0, 6);
+    });
+
+    it('returns the covered AREA fraction, not an extent: half-NDC box → 1/4', () => {
+      // Half the screen along EACH axis covers a quarter of its area — the
+      // property the whole selector is named for. An extent-shaped mutant
+      // (returning halfW, or hypot-like math) would give 0.5/0.7 here.
+      const box: BoundingBox = { min: { x: -0.5, y: -0.5, z: 0 }, max: { x: 0.5, y: 0.5, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.25, 6);
+    });
+
+    it('multiplies the two axis fractions (asymmetric rect)', () => {
+      // x spans the full screen (fraction 1), y a quarter of it (0.25) → 0.25.
+      // Pins the PRODUCT against a max/min/hypot-of-axes mutant.
+      const box: BoundingBox = { min: { x: -1, y: -0.25, z: 0 }, max: { x: 1, y: 0.25, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(0.25, 6);
+    });
+
+    it('is unclamped past full-screen (metric keeps growing monotonically)', () => {
+      // NDC extent 4 per axis → area fraction 4.0 (>1). Deliberate: the tile
+      // fills-screen threshold (1.0) must be CROSSED, not asymptotically
+      // approached, so its hysteresis band works like any other boundary.
+      const box: BoundingBox = { min: { x: -2, y: -2, z: 0 }, max: { x: 2, y: 2, z: 0 } };
+      expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(4.0, 6);
+    });
+
+    it('saturates to +Infinity when the camera is inside the box (perspective)', () => {
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      expect(projectBoxAreaFraction(box, perspectiveAtOrigin())).toBe(Number.POSITIVE_INFINITY);
+    });
+
+    it('never saturates for an orthographic camera (w stays 1)', () => {
+      // Same setup as the diagonal ortho pin: x,y=±5 → NDC ±0.5 per axis →
+      // fractions 0.5 × 0.5 = 0.25.
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      expect(projectBoxAreaFraction(box, orthoAtOrigin())).toBeCloseTo(0.25, 6);
+    });
   });
 });
 
@@ -568,6 +612,93 @@ describe('LODGroupRegistry — auto evaluation', () => {
     }
   });
 
+  it("selector='screen-area': picks by the fraction of the viewport AREA occupied", () => {
+    // Derived screen-area ladder [0, 1/8, 1/4, 1/2]. A box spanning NDC
+    // [-0.74, 0.74] × [-0.5, 0.5] covers 0.74 × 0.5 = 37% of the screen — the
+    // measured zebrahub "clearly zoomed out" pose that motivated this selector
+    // (the legacy diagonal metric still read 2.37/4 there and held the finest
+    // level, i.e. index 3 under these thresholds). Under screen-area, 1/4 ≤
+    // 0.37 < 1/2 → level 2 of 4: one step coarser, as the user expects.
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: zebraBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[2].object.visible).toBe(true);
+    expect(children[3].object.visible, 'finest must NOT hold at 37% occupancy').toBe(false);
+  });
+
+  it("selector='screen-area': the finest level holds while the node occupies at least half the screen", () => {
+    // Area = 0.8 × 0.8 = 64% ≥ 1/2 → finest. The literal statement of the
+    // occupancy-halving rule's anchor.
+    const bigBox = { min: [-0.8, -0.8, -0.5], max: [0.8, 0.8, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: bigBox,
+    }));
+    const entry = makeEntry(children, 0, '/g');
+    entry.selector = 'screen-area';
+    reg.register(entry);
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
+  });
+
+  it("selector='screen-area' is viewport-size independent (same pick on any monitor)", () => {
+    // The metric is built from NDC fractions, so pixel dimensions must not
+    // matter. Same 37%-occupancy box, tiny and 4K viewports → same level.
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
+    for (const viewport of [
+      { width: 400, height: 300 },
+      { width: 3840, height: 2160 },
+    ]) {
+      const camera = new THREE.Camera();
+      camera.matrixWorldInverse.identity();
+      camera.projectionMatrix.identity();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => viewport,
+        getDisplayDims: () => [0, 1, 2],
+      });
+      const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+        ...makeChild(t),
+        positionBounds: zebraBox,
+      }));
+      const entry = makeEntry(children, 0, '/g');
+      entry.selector = 'screen-area';
+      reg.register(entry);
+      reg.evaluatePerFrame();
+      expect(children[2].object.visible, `level 2 at ${viewport.width}x${viewport.height}`).toBe(
+        true
+      );
+    }
+  });
+
+  it('an entry WITHOUT a selector keeps the legacy diagonal metric', () => {
+    // The zebrahub-pose box under the LEGACY metric: projected diagonal =
+    // hypot(0.74·800, 0.5·600) = hypot(592, 300) ≈ 663.7 px on 800×600
+    // (viewport diagonal 1000) → metric ≈ 663.7/250 ≈ 2.65 ≥ threshold 0.5·…
+    // — with the same [0, 0.125, 0.25, 0.5] thresholds every level qualifies,
+    // so the FINEST is picked. This is exactly the mis-selection the
+    // screen-area selector fixes; pinning it here proves the two entries
+    // genuinely take different code paths (a selector-ignoring mutant would
+    // make this and the 37% test disagree).
+    const zebraBox = { min: [-0.74, -0.5, -0.5], max: [0.74, 0.5, 0.5] };
+    const reg = makeRegistry();
+    const children = [0, 0.125, 0.25, 0.5].map((t) => ({
+      ...makeChild(t),
+      positionBounds: zebraBox,
+    }));
+    reg.register(makeEntry(children, 0, '/g')); // no entry.selector
+    reg.evaluatePerFrame();
+    expect(children[3].object.visible).toBe(true);
+  });
+
   it('skips evaluation when the viewport has zero size', () => {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();
@@ -607,10 +738,10 @@ describe('LODGroupRegistry — opening-framing anchor (FILL_FACTOR)', () => {
   const DEFAULT_FOV = 47;
 
   /**
-   * The auto-derived `sqrt(N_i / N_finest)` ladder of a K=8 / 3-level
-   * substitutive LOD (what the `arxiv_papers` demo writes): counts
-   * N/512, N/64, N/8, N → coverage fractions sqrt(1/512), sqrt(1/64),
-   * sqrt(1/8), 1.
+   * A stamped 4-level substitutive ladder (values as a pre-halving store
+   * wrote them — the registry consumes whatever thresholds are stamped, so
+   * this fixture stays valid for old datasets; new stores derive the
+   * screen-occupancy halving [0, 0.5, 1, 2]).
    */
   const SUBSTITUTIVE_LADDER = [0, 0.125, 0.35355, 1.0];
 
