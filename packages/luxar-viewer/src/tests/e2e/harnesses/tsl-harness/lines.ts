@@ -2253,6 +2253,29 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: (material) => buildJoinMesh(buildFoldJoinTexelSource(0.02), material),
   },
+  // The same fold at the width that lands INSIDE the band #1495 opens:
+  // 0.05 x uOrthoLineScale 64 x 0.659 = 2.11 px raw, so the joint is under
+  // the 4 px packet width gate (rMax 2.61) yet at or above the 1.5 px AA
+  // floor, and the fold's own axis dot is 0.54 > 0.5. That is exactly the
+  // combination the floored sharp-turn exception opens — the wide fixture
+  // above clears the gate outright and the hairline one is held back by the
+  // floor conjunct, so without this variant neither backend ever executes
+  // the new branch.
+  'line-capsule-fold-mid': {
+    source: CAPSULE_LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildJoinDataTexture(buildFoldJoinTexelSource(0.05)), true),
+    buildTSLMaterial: (uniforms) => {
+      const m = capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'additive',
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (material) => buildJoinMesh(buildFoldJoinTexelSource(0.05), material),
+  },
   // Width taper + endpoint colour/sharpness remap in one (REMAP_STYLE).
   'line-capsule-taper': {
     source: CAPSULE_LINE_SOURCE,

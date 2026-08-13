@@ -256,34 +256,44 @@ export function capsuleLinePickWebGPUFactory(
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.lessThan(-1e-3), () => {
               cutA.assign(vec4(nLoc, 0.0, 0.0));
-              // Width gate (see _shared/line-capsule.ts).
-              If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX), () => {
-                const rpFarA: TSLNode = clamp(
-                  isOrtho
-                    ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                    : pFarWidth
-                        .mul(uPerspectiveLineScale)
-                        .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                        .div(pFarDepth),
-                  CAPSULE_MIN_RADIUS_PX,
-                  uMaxLinePixelWidth
-                ).toVar();
-                // Packet gate (#1495, #1501; see the GLSL twin's note).
-                const needPacketA: TSLNode = abs(float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))))
-                  .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
-                  .or(rB.greaterThan(rA.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
-                  .or(ql.lessThan(rA.mul(2.0)))
-                  .or(dot(qhat, u).greaterThan(0.5))
-                  .toVar();
-                If(needPacketA, () => {
-                  cutA.z.assign(rpFarA.sub(rA).div(ql));
-                  cutA.w.assign(ql);
-                  // Full-disc reach: the deficit term ≤ my own profile (#1488).
-                  extA.assign(rMax.add(CAPSULE_STENCIL_APRON_PX));
-                }).Else(() => {
-                  extA.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
-                });
-              }).Else(() => {
+              // Width gate + its floored sharp-turn exception (#1495),
+              // exactly as the visual twin (or hover desyncs from pixels).
+              If(
+                rMax
+                  .greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX)
+                  .or(
+                    dot(qhat, u)
+                      .greaterThan(0.5)
+                      .and(min(rawA, rawB).greaterThanEqual(CAPSULE_MIN_RADIUS_PX))
+                  ),
+                () => {
+                  const rpFarA: TSLNode = clamp(
+                    isOrtho
+                      ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                      : pFarWidth
+                          .mul(uPerspectiveLineScale)
+                          .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                          .div(pFarDepth),
+                    CAPSULE_MIN_RADIUS_PX,
+                    uMaxLinePixelWidth
+                  ).toVar();
+                  // Packet gate (#1495, #1501; see the GLSL twin's note).
+                  const needPacketA: TSLNode = abs(float(1.0).sub(rpFarA.div(max(rA, float(1e-4)))))
+                    .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
+                    .or(rB.greaterThan(rA.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
+                    .or(ql.lessThan(rA.mul(2.0)))
+                    .or(dot(qhat, u).greaterThan(0.5))
+                    .toVar();
+                  If(needPacketA, () => {
+                    cutA.z.assign(rpFarA.sub(rA).div(ql));
+                    cutA.w.assign(ql);
+                    // Full-disc reach: the deficit term ≤ my own profile (#1488).
+                    extA.assign(rMax.add(CAPSULE_STENCIL_APRON_PX));
+                  }).Else(() => {
+                    extA.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
+                  });
+                }
+              ).Else(() => {
                 extA.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
               });
             });
@@ -310,34 +320,43 @@ export function capsuleLinePickWebGPUFactory(
             const nLoc: TSLNode = vec2(dot(n2, u), dot(n2, v)).toVar();
             If(nLoc.x.greaterThan(1e-3), () => {
               cutB.assign(vec4(nLoc, 0.0, 0.0));
-              // Width gate (see _shared/line-capsule.ts).
-              If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX), () => {
-                const rpFarB: TSLNode = clamp(
-                  isOrtho
-                    ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                    : pFarWidth
-                        .mul(uPerspectiveLineScale)
-                        .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                        .div(pFarDepth),
-                  CAPSULE_MIN_RADIUS_PX,
-                  uMaxLinePixelWidth
-                ).toVar();
-                // Packet gate (#1495, #1501; see the GLSL twin's note).
-                const needPacketB: TSLNode = abs(float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))))
-                  .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
-                  .or(rA.greaterThan(rB.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
-                  .or(ql.lessThan(rB.mul(2.0)))
-                  .or(dot(qhat, u).lessThan(-0.5))
-                  .toVar();
-                If(needPacketB, () => {
-                  cutB.z.assign(rpFarB.sub(rB).div(ql));
-                  cutB.w.assign(ql);
-                  // Full-disc reach: the deficit term ≤ my own profile (#1488).
-                  extB.assign(rMax.add(CAPSULE_STENCIL_APRON_PX));
-                }).Else(() => {
-                  extB.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
-                });
-              }).Else(() => {
+              // Width gate + its floored sharp-turn exception (see end A).
+              If(
+                rMax
+                  .greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX)
+                  .or(
+                    dot(qhat, u)
+                      .lessThan(-0.5)
+                      .and(min(rawA, rawB).greaterThanEqual(CAPSULE_MIN_RADIUS_PX))
+                  ),
+                () => {
+                  const rpFarB: TSLNode = clamp(
+                    isOrtho
+                      ? pFarWidth.mul(uOrthoLineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                      : pFarWidth
+                          .mul(uPerspectiveLineScale)
+                          .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+                          .div(pFarDepth),
+                    CAPSULE_MIN_RADIUS_PX,
+                    uMaxLinePixelWidth
+                  ).toVar();
+                  // Packet gate (#1495, #1501; see the GLSL twin's note).
+                  const needPacketB: TSLNode = abs(float(1.0).sub(rpFarB.div(max(rB, float(1e-4)))))
+                    .greaterThan(CAPSULE_JOINT_DEFICIT_GATE)
+                    .or(rA.greaterThan(rB.mul(float(1.0).add(CAPSULE_JOINT_DEFICIT_GATE))))
+                    .or(ql.lessThan(rB.mul(2.0)))
+                    .or(dot(qhat, u).lessThan(-0.5))
+                    .toVar();
+                  If(needPacketB, () => {
+                    cutB.z.assign(rpFarB.sub(rB).div(ql));
+                    cutB.w.assign(ql);
+                    // Full-disc reach: the deficit term ≤ my own profile (#1488).
+                    extB.assign(rMax.add(CAPSULE_STENCIL_APRON_PX));
+                  }).Else(() => {
+                    extB.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
+                  });
+                }
+              ).Else(() => {
                 extB.assign(abs(nLoc.y).mul(rMax).add(CAPSULE_STENCIL_APRON_PX));
               });
             });

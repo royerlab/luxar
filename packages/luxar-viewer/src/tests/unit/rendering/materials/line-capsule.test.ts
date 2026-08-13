@@ -3,14 +3,19 @@
  * reference (`_shared/line-capsule.ts`) — the single source both shader
  * backends fold from (#1352).
  */
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { GAUSSIAN_EQUIVALENT_TRUNCATION } from '../../../../rendering/materials/_shared/falloff';
 import {
+  CAPSULE_JOINT_PACKET_MIN_RADIUS_PX,
   CAPSULE_MIN_RADIUS_PX,
   type CapsuleJointLeg,
   capsuleJointCompositionError,
   capsuleLegField,
+  capsuleLegWidthScale,
   CAPSULE_RADIUS_PER_QUAD_HALFWIDTH,
   CAPSULE_SUPPORT_SIGMA,
   capsuleProfile,
@@ -25,6 +30,29 @@ import {
   CAPSULE_LINE_PICK_VERTEX_SHADER,
 } from '../../../../rendering/picking/line/shaders-capsule';
 
+const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+
+/**
+ * Comment-stripped, whitespace-FREE source — the form the vertex-surface pins
+ * match on, so a WHITESPACE reformat (prettier breaking a long TSL chain)
+ * cannot break them while a dropped disjunct or a flipped comparison must.
+ * Same spirit as the sibling lock in `line/join-width-tsl.test.ts`.
+ *
+ * Its limits, so no one over-reads a green pin: only COMMENTS are neutralized
+ * (a string literal carrying the pinned text would satisfy a pin), the
+ * stripper is not string-aware (a quoted block-comment delimiter pair would
+ * swallow real code), and a non-whitespace-preserving edit with identical
+ * behaviour still
+ * breaks a pin — hoisting `vec2 qhat = qq / ql;` in GLSL, or swapping the two
+ * disjuncts, would each need the pin updated.
+ */
+function bareSource(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\s+/g, '');
+}
+
 describe('capsule constants', () => {
   it('the radius factor is the 2σ fraction of the quad half-width', () => {
     expect(CAPSULE_SUPPORT_SIGMA).toBe(2.0);
@@ -34,8 +62,13 @@ describe('capsule constants', () => {
     expect(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7)).toBe('0.6590102');
   });
 
-  it('joint constants: 1.5 px AA floor', () => {
+  it('joint constants: 1.5 px AA floor, 4 px packet width gate', () => {
     expect(CAPSULE_MIN_RADIUS_PX).toBe(1.5); // matches the quad's AA floor
+    // Pin the VALUE, not just the interpolated spelling. The source pins below
+    // fold the constant in, so they stay green at any value; the numeric rows
+    // DO breach when it moves (0 → four rows, 8 → the apron row), but as a
+    // scatter of composition failures rather than "the gate changed".
+    expect(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).toBe(4.0);
   });
 
   it('shaders fold the shared literals (no re-derived magic numbers)', () => {
@@ -92,7 +125,9 @@ describe('capsule constants', () => {
     // partner fetch would leave two full caps stacked on the shared
     // vertex: measured +1.00 of peak (a 2x bead as wide as the line
     // itself) at every bend angle, so there is no width at which the
-    // overlap is sub-pixel. Only the deficit PACKET is width-gated.
+    // overlap is sub-pixel. Only the deficit PACKET is width-gated, and even
+    // that gate is lifted at a sharp turn on an at-or-above-floor segment
+    // (#1495, below).
     const r = CAPSULE_MIN_RADIUS_PX;
     const leg = (deg: number): CapsuleJointLeg => ({
       dir: [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)],
@@ -267,6 +302,200 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       );
       expect(minErr, `ql ${ql} min`).toBeGreaterThan(-0.13);
       expect(maxErr, `ql ${ql} max`).toBeLessThan(0.06);
+    }
+  });
+
+  it('hairline joints keep the packet at a sharp turn (#1495)', () => {
+    // Below the packet's width gate (rMax = max(rJoint, rFar) + apron ≤ 4 px)
+    // the vertex stage skips the packet block entirely, so NOT ONE of the
+    // four clauses can fire — only the sharp-turn exception keeps the
+    // lengthwise chop out of a thin polyline's bend. With it every row here
+    // measures ~1e-14; with the exception reverted (width gate alone) they
+    // measure −0.0175 … −0.7151, so the ±0.005 bounds kill that revert on
+    // EVERY row. The widening rows are the weak ones (−0.0175 / −0.0249 at
+    // r = 3.5): a partner that widens is wide at its own far end, so its own
+    // width gate is already open and its packet refills most of the cut.
+    // Radii are RAW (see CapsuleJointLeg) and every one here is >= the AA
+    // floor, which is what the exception requires — a thinner leg draws
+    // floored and dimmed and deliberately keeps the plain cut (see the
+    // floor test below). Hence tapering only appears where r/2 still clears
+    // the floor.
+    // The step scales with the radius because the wide rows' default 0.5 px
+    // is coarse against a 1.5 px disc. It buys accuracy, not detection: the
+    // r = 1.5 / 160° row reverts to −0.5084 at step 0.5 vs −0.5253 at 0.075,
+    // ~3% apart, and both breach by two orders of magnitude.
+    for (const r of [1.5, 2, 3.5]) {
+      const step = Math.min(0.125, r / 20);
+      const own = leg(180, r, r, 6 * r);
+      for (const turn of [135, 160]) {
+        const partners: Array<[string, CapsuleJointLeg]> = [
+          ['const short', leg(-turn, r, r, 0.4 * r)],
+          ['widening', leg(-turn, r, 2 * r, 6 * r)],
+          ['congruent long', leg(-turn, r, r, 6 * r)],
+        ];
+        if (r / 2 >= CAPSULE_MIN_RADIUS_PX) {
+          partners.push(['tapering', leg(-turn, r, r / 2, 6 * r)]);
+        }
+        for (const [kind, partner] of partners) {
+          const { minErr, maxErr } = capsuleJointCompositionError(own, partner, undefined, step);
+          expect(minErr, `r ${r} turn ${turn}° ${kind} min`).toBeGreaterThan(-0.005);
+          expect(maxErr, `r ${r} turn ${turn}° ${kind} max`).toBeLessThan(0.005);
+        }
+      }
+    }
+  });
+
+  it('the 120° exception threshold is pinned from BOTH sides (#1495)', () => {
+    // The sweep above passes even with the width gate left out of the model
+    // entirely (the pre-#1495 state: the short/ratio/sharp clauses build a
+    // packet for all four partner kinds), so it does not pin the gate. These
+    // rows do, by pinning the residual the exception deliberately leaves:
+    // AT or below 120° a hairline joint still hard-cuts, because the
+    // exception reuses the sharp clause's own `> 0.5` axis-dot rather than
+    // inventing a second, softer threshold. This is the documented trade,
+    // NOT a target — the bound is a floor to sit below, not a budget. Nor is
+    // it a bound on the residual: at 120° with r = 3.5 the chop grows with a
+    // shorter partner, −0.190 at ql = 0.4 r through −0.386 at 0.05 r.
+    const shortPartner = (r: number, turn: number) => leg(-turn, r, r, 0.4 * r);
+    for (const r of [1.5, 3.5]) {
+      const step = Math.min(0.125, r / 20);
+      const own = leg(180, r, r, 6 * r);
+      // Just BELOW: gated, so the chop stands (−0.179 at r = 1.5, −0.182 at
+      // 3.5). Leave the width gate out of the model and it relaxes to −0.060 /
+      // −0.027 — so only the r = 3.5 row kills that mutation, the r = 1.5 one
+      // still passes at −0.060. Loosening the sharp clause to `> -0.5` takes
+      // both to −0.000, which either row kills.
+      const below = capsuleJointCompositionError(own, shortPartner(r, 119), undefined, step);
+      expect(below.minErr, `r ${r} 119° still hard-cuts`).toBeLessThan(-0.05);
+      // Just ABOVE: the exception fires and the pair composes exactly.
+      // Tighten the clause to `> 0.707` (135°) and this breaches at −0.19.
+      const above = capsuleJointCompositionError(own, shortPartner(r, 121), undefined, step);
+      expect(above.minErr, `r ${r} 121° min`).toBeGreaterThan(-0.005);
+      expect(above.maxErr, `r ${r} 121° max`).toBeLessThan(0.005);
+    }
+    // The threshold is HARD: a projected bend sweeping through it pops. Worth
+    // seeing in one place, at the tightest spacing that still isolates it.
+    const own2 = leg(180, 2, 2, 12);
+    const pop = capsuleJointCompositionError(own2, shortPartner(2, 119.5), undefined, 0.1);
+    const clean = capsuleJointCompositionError(own2, shortPartner(2, 120.5), undefined, 0.1);
+    expect(pop.minErr, 'r 2 119.5°').toBeLessThan(-0.05); // measured −0.175
+    expect(clean.minErr, 'r 2 120.5°').toBeGreaterThan(-0.005); // measured −0.000
+  });
+
+  it('a sub-floor leg gets NO packet, so the pair cannot bead (#1495)', () => {
+    // The reason for the floor conjunct, in the direction that matters. The
+    // fragment dims each leg by widthScale = min(raw/1.5, 1) while the deficit
+    // cancels the partner's UNSCALED profile, so two legs at different scales
+    // no longer compose to max(mine, partner): the pair OVER-fills, and a bead
+    // is the artifact class this primitive exists to remove. The model carries
+    // that factor, so the bead is visible here.
+    expect(capsuleLegWidthScale(leg(180, CAPSULE_MIN_RADIUS_PX, 3, 10), 0)).toBe(1);
+    expect(capsuleLegWidthScale(leg(180, 0.4, 1.4, 20), 0)).toBeCloseTo(0.4 / 1.5, 12);
+    // Either END below the floor is enough to dim the segment, hence the
+    // conjunct's min(rawA, rawB); both partners share rJoint (the pair
+    // invariant) and turn 175°, so every other clause would open the packet.
+    for (const [name, own, partner] of [
+      ['sub-floor FAR end', leg(180, CAPSULE_MIN_RADIUS_PX, 0.4, 9), leg(-175, 1.5, 1.5, 3)],
+      ['sub-floor JOINT end', leg(180, 0.4, 1.4, 9), leg(-175, 0.4, 1.4, 0.6)],
+    ] as Array<[string, CapsuleJointLeg, CapsuleJointLeg]>) {
+      const { maxErr } = capsuleJointCompositionError(own, partner, undefined, 0.075);
+      // Bead-free is the whole assertion: allow the packet here and maxErr
+      // goes to +0.137 (far end) / +0.164 (joint end).
+      expect(maxErr, `${name} must not bead`).toBeLessThan(0.01);
+      // The chop these rows keep (−0.41 / −0.47) is the accepted PRICE, not a
+      // goal, so it is deliberately NOT asserted — a future fix that removes
+      // it without reintroducing the bead should not fail here. It is a real
+      // price: for a DRAWABLE sub-floor taper (own raw 1.2 → 3.0) allowing the
+      // packet measures −0.05…−0.07 against −0.33…−0.79 gated, and against a
+      // congruent partner −0.002…−0.004 against −0.03…−0.10 with no bead at
+      // all. We take the dim gap over the bright bead; see the constant.
+    }
+  });
+
+  it('the raw-floor threshold is a THIRD residual, pinned both sides (#1495)', () => {
+    // The exception's floor is as hard as its angle: two legs scaled together
+    // are exact at raw 1.5 and chop at 1.4999, a pop a plain zoom sweeps
+    // through — and a bigger one than the 120° pop (up to −0.72 vs −0.18).
+    // Neither is a bead, so both are accepted; both are documented.
+    const pair = (raw: number, turn: number) =>
+      capsuleJointCompositionError(
+        leg(180, raw, raw, 9),
+        leg(-turn, raw, raw, 0.4 * raw),
+        undefined,
+        0.075
+      );
+    for (const [turn, expected] of [
+      [125, -0.211],
+      [160, -0.525],
+      [175, -0.72],
+    ] as Array<[number, number]>) {
+      // At the floor exactly: the exception fires, the pair composes.
+      expect(pair(CAPSULE_MIN_RADIUS_PX, turn).minErr, `raw 1.5, ${turn}°`).toBeGreaterThan(-0.005);
+      // A hair below: gated off, the chop stands (and the measured value is
+      // within a few % of `expected` — quoted so the pop's size is on record).
+      const below = pair(1.4999, turn).minErr;
+      expect(below, `raw 1.4999, ${turn}° (measured ${expected})`).toBeLessThan(-0.05);
+      expect(below, `raw 1.4999, ${turn}° magnitude`).toBeGreaterThan(expected * 1.1);
+    }
+  });
+
+  it("the gate's rMax is max(rA, rB) PLUS the stencil apron (#1495)", () => {
+    // Two rows whose gate decision hinges on the arithmetic itself; without
+    // them, building rMax from min() or dropping the apron passes every other
+    // row in this file.
+    // A widening own leg: max() clears the gate (−0.023), min() does not
+    // (−0.060).
+    const widening = capsuleJointCompositionError(
+      leg(180, 3, 10, 30),
+      leg(-60, 3, 3, 1),
+      undefined,
+      0.15
+    );
+    expect(widening.minErr, 'rMax from max(rA, rB)').toBeGreaterThan(-0.04);
+    // Straddling the gate by less than the apron: with it 4.25 > 4 (−0.029),
+    // without it 3.75 < 4 (−0.079). Tightening the gate to 8 px does the same.
+    const apron = capsuleJointCompositionError(
+      leg(180, 3.75, 3.75, 22),
+      leg(-100, 3.75, 3.75, 1.5),
+      undefined,
+      0.15
+    );
+    expect(apron.minErr, 'rMax includes the apron').toBeGreaterThan(-0.05);
+  });
+
+  it('every surface gates the packet by width OR a floored sharp turn (#1495)', () => {
+    // The model above can only prove the exception is RIGHT; these pins prove
+    // all four vertex surfaces carry it, at BOTH ends. Three things must hold
+    // per site: the width threshold itself stays (the gentle-hairline discard
+    // is deliberate), it is OR-ed with the end-appropriate sharp-turn test —
+    // the same expression the surface's own `needPacket` sharp clause uses,
+    // so a reader sees they are one test — and that disjunct is AND-ed with
+    // the AA-floor condition on MY OWN pre-clamp radii (without it the pair
+    // over-brightens; see the floor test above). The pick twins must match
+    // the visual ones or hover desyncs from pixels.
+    const threshold = CAPSULE_JOINT_PACKET_MIN_RADIUS_PX.toFixed(1);
+    const floor = CAPSULE_MIN_RADIUS_PX.toFixed(1);
+    for (const [name, src] of [
+      ['glsl material', CAPSULE_LINE_VERTEX_SHADER],
+      ['glsl pick', CAPSULE_LINE_PICK_VERTEX_SHADER],
+    ] as const) {
+      const bare = bareSource(src);
+      expect(bare, `${name} end A`).toContain(
+        `if(rMax>${threshold}||(dot(qq/ql,u)>0.5&&min(rawA,rawB)>=${floor})){`
+      );
+      expect(bare, `${name} end B`).toContain(
+        `if(rMax>${threshold}||(dot(qq/ql,u)<-0.5&&min(rawA,rawB)>=${floor})){`
+      );
+    }
+    for (const [name, rel] of [
+      ['tsl material', 'rendering/materials/line/shader-tsl-capsule.ts'],
+      ['tsl pick', 'rendering/picking/line/pick-capsule.tsl.ts'],
+    ] as const) {
+      const bare = bareSource(readFileSync(path.join(SRC_ROOT, rel), 'utf8'));
+      const gate = 'If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).or(dot(qhat,u)';
+      const floored = '.and(min(rawA,rawB).greaterThanEqual(CAPSULE_MIN_RADIUS_PX)))';
+      expect(bare, `${name} end A`).toContain(`${gate}.greaterThan(0.5)${floored}`);
+      expect(bare, `${name} end B`).toContain(`${gate}.lessThan(-0.5)${floored}`);
     }
   });
 });
