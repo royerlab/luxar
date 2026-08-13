@@ -146,8 +146,14 @@ export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
  * frustum gate catches most of these, but it is conservative near frustum
  * corners, so this function must not rely on it).
  *
- * Same near-plane saturation contract as {@link projectBoxDiagonalPx}: camera
- * inside / straddling the box → ``+Infinity`` → finest level.
+ * Same near-plane saturation contract as {@link projectBoxDiagonalPx}: under
+ * a PERSPECTIVE camera, bounds reaching the near plane have no meaningful
+ * projection (the homogeneous divide degenerates), so the metric saturates to
+ * ``+Infinity`` → finest. An ORTHOGRAPHIC projection never degenerates
+ * (``w`` stays 1) so no saturation applies — the plain clipped metric is
+ * already well-defined, and a camera inside a large node reads full coverage
+ * naturally because its rect spans the viewport. Both selectors share this
+ * contract by design (see the v3.4 spec's normative metric rules).
  *
  * Exported for unit testing.
  */

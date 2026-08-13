@@ -278,9 +278,15 @@ which end of a ladder renders, so consumers must agree on them):
 * **Visible occupancy.** The projected rect is intersected with the viewport
   before the area is taken; a rect with no viewport overlap on either axis
   reads exactly `0` (coarsest), and full coverage tops out at exactly `1.0`
-  (thresholds are satisfied inclusively, `threshold <= metric`). A camera
-  inside or straddling the node's bounds saturates the metric to the finest
-  level.
+  (thresholds are satisfied inclusively, `threshold <= metric`). Under a
+  PERSPECTIVE camera, a node whose bounds reach the camera's near plane has
+  no meaningful projection (the homogeneous divide degenerates), so the
+  metric saturates to the finest level — the same near-plane guard the
+  legacy diagonal metric applies. An ORTHOGRAPHIC projection never
+  degenerates (`w` stays 1), so no saturation applies and the plain clipped
+  metric is used directly: a camera inside a large node still reads full
+  coverage naturally (its rect spans the viewport), and both selectors
+  behave identically here by design.
 * **Degenerate (lower-dimensional) content.** A node whose projected bounds
   are (near-)zero-thickness — an axis-aligned straight polyline, a planar
   dataset viewed edge-on — has area ~0 no matter how much screen it spans.

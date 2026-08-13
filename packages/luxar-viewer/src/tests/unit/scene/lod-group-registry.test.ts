@@ -395,9 +395,15 @@ describe('projectBoxDiagonalPx', () => {
       expect(Math.abs(below - above)).toBeLessThan(0.02);
     });
 
-    it('never saturates for an orthographic camera (w stays 1)', () => {
-      // Same setup as the diagonal ortho pin: x,y=±5 → NDC ±0.5 per axis →
-      // fractions 0.5 × 0.5 = 0.25.
+    it('never saturates for an orthographic camera (w stays 1) — the projection stays well-defined', () => {
+      // INTENDED, and identical to the legacy diagonal metric's contract (the
+      // ortho pin above): saturation is the PERSPECTIVE near-plane guard,
+      // where the homogeneous divide degenerates. Ortho never degenerates, so
+      // the plain clipped metric applies — here the camera is inside the box
+      // and the box's rect covers NDC ±0.5 per axis → 0.5 × 0.5 = 0.25 (a
+      // camera inside a LARGE node reads full coverage naturally instead;
+      // this box simply doesn't span the viewport). See the v3.4 spec's
+      // normative metric rules.
       const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
       expect(projectBoxAreaFraction(box, orthoAtOrigin())).toBeCloseTo(0.25, 6);
     });
