@@ -109,10 +109,27 @@ SLICE="time:240,channel:0" CAMERA_ZOOM=1.5 \
   pnpm exec tsx tools/capture-hires.ts
 ```
 
-The script logs the resolved `getState()` snapshot before screenshotting
-(`totalPoints`, `totalGSplats`, `totalElements`, point-cloud and gsplat
-counts) and warns if `totalElements === 0` — that almost always means
-the slice position is wrong or the dataset URL is stale.
+The script logs a readiness summary of the `getState()` snapshot before
+screenshotting and warns, with the reason, if nothing loaded. All four
+geometry types are reported — `totalPoints`, `totalGSplats`,
+`totalLines`, `totalTriangles`, their sum `totalElements`, plus the
+per-node counts `pointCloudCount`, `gsplatCount`, `lineCount` and
+`meshNodeCount` — so a mesh-only or lines-only scene is recognised as
+loaded rather than reading as empty. A warning almost always means the
+slice position is wrong or the dataset URL is stale. The converse does
+not hold: the verdict measures the scene graph (hidden nodes and all LOD
+levels included), so an all-hidden scene passes and can still capture
+blank.
+
+The verdict itself is computed in Node by
+`summarizeCaptureReadiness()` (`../src/core/app/debug/capture-readiness.ts`);
+the browser closure only hands back `getState()` verbatim. That split is
+deliberate — deciding readiness inside `page.evaluate` is untestable, and
+the previous inline version read the totals from a `state.performance`
+sub-object that `getState()` has never returned, silently reporting every
+scene as empty (#1579). The probe is only a diagnostic: if `getState()`
+throws, the failure is logged as the not-ready reason and the screenshot
+is still written.
 
 ## Requirements
 

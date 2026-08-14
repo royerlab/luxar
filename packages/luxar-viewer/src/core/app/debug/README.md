@@ -15,7 +15,10 @@ synthetic-scene injector.
 
 Everything here is private to `LuxarApp` — only `app.ts` imports these files
 (`LuxarApp.setupDebugInterface()` calls `installDebugInterface`, and a private
-`openCacheStatsView()` wrapper delegates to `cache-stats-view.ts`).
+`openCacheStatsView()` wrapper delegates to `cache-stats-view.ts`). The one
+exception is `capture-readiness.ts`, which is deliberately dependency-free so
+the out-of-bundle capture tool (`tools/capture-hires.ts`) can consume the
+`getState()` snapshot from Node.
 
 ## File Structure
 
@@ -23,6 +26,7 @@ Everything here is private to `LuxarApp` — only `app.ts` imports these files
 debug/
 ├── debug-interface.ts       # installDebugInterface() — populates window.__luxarDebug
 ├── debug-state.ts           # computeDebugState() + computeDrawOrder() — pure scene walks
+├── capture-readiness.ts     # summarizeCaptureReadiness() — "did anything load?" verdict
 ├── debug-cache-helpers.ts   # buildDebugCacheHelpers() — __luxarDebug.cache.* wrappers
 └── cache-stats-view.ts      # openCacheStatsView() — pops the data-monitor Cache tab
 ```
@@ -112,6 +116,40 @@ is callable from unit tests against real `THREE.Points` / `THREE.Mesh`
 fixtures without bringing up the WebGL renderer. (`gpuPoolStats` is not wired
 in the production `installDebugInterface` call, so `gpuPool` is `undefined`
 there; tests pass it explicitly.)
+
+### `capture-readiness.ts`
+
+Pure verdict over a `getState()` snapshot: exports
+`summarizeCaptureReadiness(state: Partial<DebugState> | null | undefined)` and
+its `CaptureReadinessSummary` result shape. Answers the one question a
+screenshot/capture driver asks — "does this scene graph carry drawable
+elements?" — as `ok` plus all four per-type totals (`totalPoints`,
+`totalGSplats`, `totalLines`, `totalTriangles`), their sum `totalElements`, and
+the four per-node counts (`pointCloudCount`, `gsplatCount`, `lineCount`,
+`meshNodeCount`). `ok` is true iff `totalElements > 0`, where `totalElements` is
+`max(snapshot field, sum of the four per-type totals)` — so a missing total is
+re-derived and a stale one can only under-claim, never contradict the per-type
+totals. Every not-ready path (no state, an unexpected snapshot shape,
+present-but-non-finite totals, an empty scene) carries a human-readable `reason`
+instead of leaking `NaN`/`undefined`.
+
+It measures the scene GRAPH, not the framebuffer: like the `debug-state.ts`
+aggregates it mirrors, the totals include HIDDEN nodes and sum every level of a
+substitutive `kind=lod` group. An all-hidden scene therefore reports `ok: true`
+and can still screenshot blank — deliberately, so the two modules can never
+disagree about what a total means. Filter on the per-node `visible` flags for
+the stricter question.
+
+Imports nothing but the `DebugState` _type_ — no THREE, no browser globals — so
+it runs under vitest and under `tsx` in a Node tool alike. That is the point:
+`tools/capture-hires.ts` used to compute this verdict inside its
+`page.evaluate` closure, where no test could reach it, and read the totals from
+a `state.performance` sub-object `computeDebugState` has never produced.
+`DebugState` is FLAT, so every total was `undefined`, `undefined > 0` made `ok`
+false for every scene ever captured, and `JSON.stringify` dropping the
+`undefined` keys hid the mismatch from the printed diagnostics (#1579). The
+totals now come from the flat fields, and the tool's browser closure does
+nothing but return the snapshot verbatim.
 
 ### `debug-cache-helpers.ts`
 
