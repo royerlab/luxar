@@ -2538,6 +2538,11 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     const glslPixels = await runGLSL(page, variant);
     const tslResult = await runTSL(page, variant);
     assertBothRendered(glslPixels, tslResult.pixels, variant);
+    // `assertBothRendered` does not compare LENGTHS — the shared loop gets that
+    // from `meanAbsDiffPerCoveredPixel`, which throws on a mismatch, and this
+    // test does not call it. Without this line a short TSL buffer would make
+    // every difference NaN, `>` false, and the count a vacuous 0.
+    expect(tslResult.pixels.length, `${variant}: readback sizes differ`).toBe(glslPixels.length);
 
     const CHANNEL_TOLERANCE = 24;
     let divergent = 0;
