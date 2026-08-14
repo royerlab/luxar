@@ -16,13 +16,16 @@ importer, a loop variable rebound from `int` to a numpy integer in the batched
 spatial hash, an unnarrowed `np.squeeze` result in `load_volume`, and a
 `min(int, np.signedinteger)` in gsplat culling.
 
-The CI Python matrix collapses to a single 3.12 leg. The nightly cron stays, because
-its remaining value was never the matrix: a scheduled event has no PR base, so the
-change-detection job cannot path-filter and selects the whole suite plus the
-documentation gate. The `tomli` backport is dropped from the dev extra now that
-`tomllib` is always stdlib.
+The CI Python matrix is rebased on the new floor rather than shrunk: a pull request
+runs 3.12 (the floor, and the required status context), while push-to-main and the
+nightly run 3.12 plus 3.14. `requires-python = ">=3.12"` has no ceiling — 3.13 and
+3.14 are supported, `install-hatch` prefers them, and a developer's Hatch
+environment picks the newest interpreter on the box — so the version most people
+actually run is exercised too, within 24 h rather than on every PR. The published
+classifiers list 3.12–3.14 to match. The `tomli` backport is dropped from the dev
+extra now that `tomllib` is always stdlib.
 
-Collapsing the matrix exposed a second, older bug: the `test` extra never declared
+Reworking the matrix exposed a second, older bug: the `test` extra never declared
 `httpx`, which `fastapi.testclient` needs. It reached the default environment
 transitively through a `dev` dependency, so it was invisible where CI runs; but the
 per-version `test` matrix environments got none, and `test_cli_integration.py` died
