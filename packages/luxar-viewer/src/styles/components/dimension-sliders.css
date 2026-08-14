@@ -17,21 +17,27 @@
   bottom: var(--luxar-spacing-10);
   transform: translateX(-50%);
 
-  /* Sizing */
+  /* Sizing + layout: flex column so the max-height bound is shared with the
+     scrolling body (which takes flex: 1; min-height: 0). */
   width: 80%;
   max-width: 800px;
   min-width: 400px;
   max-height: 240px;
+  display: flex;
+  flex-direction: column;
 
   /* Theming — shared surface recipe with the control rail: crisp hairline
      (border-default) + large soft corners (radius-lg). */
   background: var(--luxar-bg-secondary);
   border: 1px solid var(--luxar-border-default);
   border-radius: var(--luxar-radius-lg);
-  padding: var(--luxar-spacing-8);
+  /* NOTE: the panel's padding lives on the __scroll wrapper, not here — see
+     the comment on that rule. */
   backdrop-filter: var(--luxar-blur-md);
   box-shadow: var(--luxar-shadow-lg);
-  z-index: var(--luxar-z-base);
+  /* A floating standing panel belongs on the dropdown tier, not the baseline
+     in-canvas-widget layer (§3.5). */
+  z-index: var(--luxar-z-dropdown);
 
   /* Typography */
   font-family: var(--luxar-font-base);
@@ -40,11 +46,52 @@
 
   /* Behavior */
   user-select: none;
-  overflow-y: auto;
+  /* The glass layers paint at negative z-index with `inset: 0` behind this
+     root, so any clipping overflow kills them (§5.1.2). Scrolling is delegated
+     to the inner __scroll wrapper below (§7.4). */
+  overflow: visible;
 
   /* Animation removed - controlled via inline styles for E2E test reliability */
   /* opacity: 0; */
   /* animation: luxar-fade-in 0.15s ease forwards; */
+}
+
+/**
+ * Inner Scrollable Container
+ * Holds the header and every slider/dropdown row — all scrolling happens
+ * here, never on the glass root (§5.1.2/§7.4). `flex: 1; min-height: 0`
+ * against the root's max-height keeps total panel geometry unchanged.
+ */
+.luxar-dimension-sliders__scroll {
+  /* The panel's padding lives HERE, not on the root (same as
+     help-overlay.css:53): an `overflow-y: auto` box is its own scrollport and
+     clips ink overflow at its PADDING edge — which coincides with the content
+     edge only while the padding is 0. So the slack has to be inside the
+     scroller: with it on the root, a descendant flush with the scrollport (the
+     play button, a full-width dropdown in an outer grid column) has its
+     :focus-visible ring (utilities.css) cut off. Total panel geometry is
+     unchanged: either way the root's height is the content plus 2 × spacing-8. */
+  padding: var(--luxar-spacing-8);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+
+  /* Quiet scrollbar — neutral, not accent-colored. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--luxar-border-strong) transparent;
+}
+
+.luxar-dimension-sliders__scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.luxar-dimension-sliders__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.luxar-dimension-sliders__scroll::-webkit-scrollbar-thumb {
+  background: var(--luxar-border-strong);
+  border-radius: var(--luxar-radius-full);
 }
 
 /* ========== Header ========== */
@@ -373,8 +420,8 @@
   border-radius: var(--luxar-radius-md);
   box-shadow: var(--luxar-shadow-lg);
   backdrop-filter: var(--luxar-blur-md);
-  /* A context menu is popover-layer chrome (the sliders panel itself sits at
-     z-base, so any popover-tier value clears it). */
+  /* A context menu is popover-layer chrome (the sliders panel itself sits on
+     the dropdown tier, so any popover-tier value clears it). */
   z-index: var(--luxar-z-popover);
   padding: var(--luxar-spacing-2);
   opacity: 0;

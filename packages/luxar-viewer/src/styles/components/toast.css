@@ -3,6 +3,12 @@
  *
  * Brief auto-dismissing notification shown at bottom-center of viewport.
  * Used by showToast() in ui/toast.ts
+ *
+ * Sits on the badge tier of the surface recipe (§7.1 — radius-md, blur, hairline
+ * border) and deliberately WITHOUT the glass class (§5 opt-out, like the REC
+ * pill): its dismiss animation is an opacity fade on this very element, which
+ * §5.1.3 forbids on a glass surface. The liquid-glass theme paints the dark tint
+ * it would otherwise inherit from the glass ::after layer.
  */
 
 .luxar-toast {
@@ -20,6 +26,10 @@
      capture overlay, 9999 and up) still wins: a modal capture is not
      something a transient notice should be painted over. */
   z-index: calc(var(--luxar-z-tooltip) + 1000);
+  /* The dismiss fade (driven 1 → 0 from ui/toast.ts) is legal precisely
+     because this surface is deliberately un-glassed — §5.1.3 binds glass
+     roots only. Keep the two facts together: re-adding
+     `luxar-glass-surface` here means moving this fade off the root. */
   transition: opacity 0.3s ease;
   pointer-events: none;
   background-color: var(--luxar-bg-secondary, rgba(0, 0, 0, 0.8));

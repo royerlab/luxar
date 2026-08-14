@@ -360,20 +360,35 @@ class CompositionMixin(_GSplatDataOps):
         if not kept:
             raise ValueError("partition_from_regions: all regions are empty")
 
-        def _part_node(region: "GSplatData") -> "GSplatNode":
+        # A per-part volume re-fit crops the volume to the part's own tile, so it
+        # needs the tile. The split planes carried alongside these regions are
+        # exactly that, keyed by the SAME labels, so read the cells once here
+        # rather than making every caller reconstruct the decomposition.
+        cells: "Dict[int, List[Any]]" = {}
+        if bsp_tree and recipe is not None and regions:
+            from luxar.core.group.partition import serialized_bsp_leaf_cells
+
+            try:
+                cells = serialized_bsp_leaf_cells(bsp_tree, regions[0].ndim)
+            except (KeyError, TypeError, ValueError):
+                cells = {}
+
+        def _part_node(label: int, region: "GSplatData") -> "GSplatNode":
             if recipe is None:
                 return region.tree
             from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
 
             params = recipe_params if recipe_params is not None else RecipeParams()
-            return build_part_lod(region.tree, recipe, params)
+            return build_part_lod(
+                region.tree, recipe, params, cell=cells.get(int(label))
+            )
 
         if len(kept) == 1:
             # Single part -> bare part node. Nothing to order, so the tree (which
             # would prune to a lone leaf) is deliberately dropped with the wrapper.
-            return _part_node(kept[0][1])
+            return _part_node(*kept[0])
         return GSplatPartition(
-            children=[_part_node(r) for _, r in kept],
+            children=[_part_node(label, r) for label, r in kept],
             bsp_tree=prune_serialized_bsp_tree(bsp_tree, [label for label, _ in kept]),
         )
 
