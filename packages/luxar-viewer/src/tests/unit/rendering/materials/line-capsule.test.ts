@@ -69,8 +69,8 @@ function readSource(relativeToSrc: string): string {
 }
 
 /**
- * The comment-stripped BODY of one vertex surface's `needPacket<end>` branch,
- * brace-matched from the branch header.
+ * The {@link squash}ed BODY of one vertex surface's `needPacket<end>` branch,
+ * brace-matched from the (likewise squashed) branch header.
  *
  * A slice, not a whole-source grep: the half-disc reach appears twice per end
  * (the `Else` arm and the width-gated arm) and is CORRECT in both, so only a
@@ -79,10 +79,14 @@ function readSource(relativeToSrc: string): string {
  * the header is missing or the braces never balance: a locator that silently
  * returned an empty slice would go vacuous under exactly the refactor this pin
  * exists to survive.
+ *
+ * Squashed, not merely comment-stripped, so a behaviour-identical prettier
+ * rewrap of a TSL assign cannot red the pin — the same reason the sibling locks
+ * match whitespace-free. Callers must squash their expected literals too.
  */
 function packetBranchBody(label: string, source: string, header: string): string {
-  const stripped = stripComments(source);
-  const headerAt = stripped.indexOf(header);
+  const stripped = squash(source);
+  const headerAt = stripped.indexOf(squash(header));
   if (headerAt < 0) throw new Error(`${label}: packet branch header '${header}' not found`);
   const open = stripped.indexOf('{', headerAt);
   if (open < 0) throw new Error(`${label}: no '{' after '${header}'`);
@@ -191,13 +195,19 @@ describe('capsule constants', () => {
     // merge-gating and a TSL-only revert to the half-disc reach would ship
     // green, chopping the deficit rule's light on WebGPU alone.
     //
+    // Matching runs on {@link squash}ed text — comment-stripped AND
+    // whitespace-free, both sides of every comparison — so a behaviour-identical
+    // prettier rewrap (`extA.assign(\n  rMax.add(APRON)\n);`) cannot red the
+    // pin, while an operand, order or spelling change still must. The
+    // write-count regex was whitespace-insensitive already.
+    //
     // MEASURED SCOPE — every case below was run as a mutant against this test.
     // CAUGHT: the literal half-disc revert; a `min()` wrapper around the
     // full-disc operand (all three spellings tried, including swapped
-    // operands, because each one displaces the `extA = rMax + ` prefix); a
-    // SECOND write inside the branch, whether plain (`extA = …`, line breaks
-    // included), compound (`extA *= …`) or from the TSL assign family
-    // (`extA.mulAssign(…)`); a renamed branch header (fails closed, by throw).
+    // operands, because each one displaces the `extA=rMax+` prefix); a
+    // SECOND write inside the branch, whether plain (`extA = …`), compound
+    // (`extA *= …`) or from the TSL assign family (`extA.mulAssign(…)`); a
+    // renamed branch header (fails closed, by throw).
     // EVADES: a write placed AFTER the branch; an alias bound inside it that
     // also avoids the literal half-disc spelling (`const eA = extA;
     // eA.assign(nLoc.y.abs().mul(rMax)…)` — with the literal spelling the
@@ -215,8 +225,10 @@ describe('capsule constants', () => {
     for (const [label, source] of GLSL_VERTEX_SURFACES) {
       for (const end of ['A', 'B'] as const) {
         const body = packetBranchBody(`${label} ${end}`, source, `if (needPacket${end}) {`);
-        expect(body, `${label} ${end}: full-disc reach`).toContain(`ext${end} = rMax + `);
-        expect(body, `${label} ${end}: half-disc reach`).not.toContain('abs(nLoc.y) * rMax');
+        expect(body, `${label} ${end}: full-disc reach`).toContain(squash(`ext${end} = rMax + `));
+        expect(body, `${label} ${end}: half-disc reach`).not.toContain(
+          squash('abs(nLoc.y) * rMax')
+        );
         // Compound forms included (`*=`, `+=`, …): a bare `=` counter reads
         // `extA *= abs(nLoc.y);` as no write at all. Same rule #1494 landed
         // for `rEnd`.
@@ -230,8 +242,12 @@ describe('capsule constants', () => {
       const source = readSource(relativeToSrc);
       for (const end of ['A', 'B'] as const) {
         const body = packetBranchBody(`${label} ${end}`, source, `If(needPacket${end}, () => {`);
-        expect(body, `${label} ${end}: full-disc reach`).toContain(`ext${end}.assign(rMax.add(`);
-        expect(body, `${label} ${end}: half-disc reach`).not.toContain('abs(nLoc.y).mul(rMax)');
+        expect(body, `${label} ${end}: full-disc reach`).toContain(
+          squash(`ext${end}.assign(rMax.add(`)
+        );
+        expect(body, `${label} ${end}: half-disc reach`).not.toContain(
+          squash('abs(nLoc.y).mul(rMax)')
+        );
         // The whole TSL assign family, not just `.assign(`: `.mulAssign(`,
         // `.addAssign(` and friends all write the var in place.
         expect(
@@ -288,8 +304,10 @@ describe('capsule constants', () => {
         seen.push(hasPacket);
         return capsuleJointStencilReach(rMax, ny, hasPacket);
       };
-      // A partner shorter than 2·rJoint holds the LENGTH clause wide open at
-      // both ends, so the WIDTH comparison is the only thing that can shut the
+      // A partner shorter than 2·rJoint holds the LENGTH clause wide open on
+      // the leg under test (the partner leg's own clauses are all shut — its
+      // length clause reads 8r < 2r — so its gate needs no width gate at all),
+      // so the WIDTH comparison is the only thing that can shut the
       // gate — provided #1495's escape stays shut, which is why the turn is
       // gentle: the legs meet 60° from straight, so both ends measure
       // qx = −0.5 exactly against the `qx > 0.5` sharp test. The escape's other
