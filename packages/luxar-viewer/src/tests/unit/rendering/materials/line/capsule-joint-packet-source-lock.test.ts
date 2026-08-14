@@ -37,8 +37,12 @@
  *   and unknown beyond that — the TEST count is the measured figure.
  * - Deleting the far cap's OVERSHOOT half (`xp - cut.w` in `op`) from all four
  *   SHADER sources and leaving the mirror alone reds NOTHING BUT THIS FILE:
- *   measured here, four failures (one per surface) and the other 555 files
- *   green, 11440 passing. Nothing else ties that shader text to the model, so
+ *   measured here, exactly four failures — the `caps the overshoot` case on
+ *   each of the four surfaces — with every other file in the viewer unit suite
+ *   green. Stated without absolute file/test counts on purpose: those move
+ *   whenever an unrelated suite lands (they have gone stale twice already),
+ *   while the ASYMMETRY is the claim, and it is what a re-measure should check.
+ *   Nothing else ties that shader text to the model, so
  *   the exact regression #1490 describes (a packing refactor applied
  *   identically to all four twins) could land again invisibly. The RADIUS half
  *   is no longer sole: #1563's `line/capsule-partner-radius.test.ts` pins the
