@@ -822,6 +822,68 @@ def load_dataset_bundle(
         )
 
 
+def _bundle_stamp(bundle_path: Path) -> str:
+    """``"<size>:<mtime>"`` for *bundle_path*, or ``""`` when it does not exist.
+
+    Empty is the "cannot vouch for the source" value: callers must then neither
+    trust nor write a stamp, so a bundle that appears later still triggers a
+    fresh extraction rather than inheriting an earlier run's verdict.
+    """
+    if not bundle_path.exists():
+        return ""
+    bs = bundle_path.stat()
+    return f"{bs.st_size}:{int(bs.st_mtime)}"
+
+
+def _frames_needing_extraction(
+    bundle_stamp: str,
+    stamp_file: Path,
+    cache_dir: Path,
+    file_names: list[str],
+) -> list[str]:
+    """Which of *file_names* must be (re-)extracted from the bundle.
+
+    Re-extract when a frame is simply absent OR when the bundle source changed
+    (e.g. a v2.0 -> v3.0 re-migration). Keying the stamp on the bundle's
+    (size, mtime) makes the extracted cache self-healing instead of pinning the
+    first-seen extraction — otherwise demos keep loading stale frames that fail
+    against the v3.0-only reader.
+    """
+    stamp_ok = (
+        bundle_stamp != ""
+        and stamp_file.exists()
+        and stamp_file.read_text() == bundle_stamp
+    )
+    if bundle_stamp and not stamp_ok:
+        # Bundle differs from the cached extraction → re-extract all frames.
+        return list(file_names)
+    return [f for f in file_names if not (cache_dir / f).exists()]
+
+
+def _bundle_member_for(
+    safe_members: list[str], fname: str, bundle_name: str
+) -> tuple[str, Path]:
+    """Locate the archive member holding *fname*, as ``(member, requested_path)``.
+
+    Frames may sit at the top level of the bundle or inside a directory, so the
+    match is on BASENAME — but only after each candidate survives
+    :func:`_validate_zip_member_path`, since an archive is free to name ``../``.
+    An unsafe member is skipped rather than rejected outright: it must not be
+    able to shadow the legitimate frame sitting further down the list.
+    """
+    requested_path = _validate_zip_member_path(fname)
+    for member in safe_members:
+        try:
+            member_path = _validate_zip_member_path(member)
+        except ValueError:
+            continue
+        if member_path.name == requested_path.name:
+            return member, requested_path
+    raise FileNotFoundError(
+        f"{fname} not found in bundle {bundle_name}. Available: {safe_members[:5]}..."
+    )
+
+
 def _extract_bundle_and_load(
     bundle_path: Path,
     bundle_name: str,
@@ -841,68 +903,33 @@ def _extract_bundle_and_load(
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Re-extract when a frame is missing OR the bundle source changed
-    # (e.g. a v2.0 -> v3.0 re-migration). A (size, mtime) stamp keyed on the
-    # bundle makes the extracted cache self-healing instead of pinning the
-    # first-seen extraction — otherwise demos load stale frames that fail
-    # against the v3.0-only reader.
     stamp_file = cache_dir / f".{bundle_name}.stamp"
-    bundle_stamp = ""
-    if bundle_path.exists():
-        bs = bundle_path.stat()
-        bundle_stamp = f"{bs.st_size}:{int(bs.st_mtime)}"
-    stamp_ok = (
-        bundle_stamp != ""
-        and stamp_file.exists()
-        and stamp_file.read_text() == bundle_stamp
+    bundle_stamp = _bundle_stamp(bundle_path)
+    missing = _frames_needing_extraction(
+        bundle_stamp, stamp_file, cache_dir, file_names
     )
 
-    missing = [f for f in file_names if not (cache_dir / f).exists()]
-    if not stamp_ok and bundle_stamp:
-        # Bundle differs from the cached extraction → re-extract all frames.
-        missing = list(file_names)
-
     if missing:
-        # Extract from bundle
         if validate_lfs:
             _validate_lfs_files([bundle_path])
         aprint(f"Extracting {len(missing)} files from {bundle_name}")
         with zipfile.ZipFile(bundle_path, "r") as zf:
             safe_members = [m for m in zf.namelist() if not zf.getinfo(m).is_dir()]
             for fname in missing:
-                requested_path = _validate_zip_member_path(fname)
-                # Files may be at top level or inside a directory in the zip.
-                # Match by basename for the documented bundle format while
-                # ignoring unsafe archive members.
-                matching = []
-                for member in safe_members:
-                    try:
-                        member_path = _validate_zip_member_path(member)
-                    except ValueError:
-                        continue
-                    if member_path.name == requested_path.name:
-                        matching.append(member)
-                if not matching:
-                    raise FileNotFoundError(
-                        f"{fname} not found in bundle {bundle_name}. "
-                        f"Available: {safe_members[:5]}..."
-                    )
+                member, requested_path = _bundle_member_for(
+                    safe_members, fname, bundle_name
+                )
                 _safe_extract_zip_member(
-                    zf,
-                    matching[0],
-                    cache_dir,
-                    target_name=requested_path.as_posix(),
+                    zf, member, cache_dir, target_name=requested_path.as_posix()
                 )
         # Record the bundle stamp so a later run with the SAME bundle skips
         # re-extraction, but a re-migrated bundle (new size/mtime) refreshes.
         if bundle_stamp:
             stamp_file.write_text(bundle_stamp)
 
-    # Load all
     results = []
     for fname in file_names:
-        cache_file = cache_dir / fname
-        gsplats = GSplatData.load(cache_file, include_stats=False)
+        gsplats = GSplatData.load(cache_dir / fname, include_stats=False)
         aprint(f"Loaded {fname}: {len(gsplats.amplitudes):,} splats")
         results.append(gsplats)
 
