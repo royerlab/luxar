@@ -141,7 +141,10 @@ chunk_bounds = compute_chunk_bounds_gsplats(
     centers=sorted_centers,
     cholesky_factors=sorted_cholesky,
     chunk_size=2048,
-    coverage_sigma=3.0,  # explicit override; default = the dataset's own truncation_radius
+    # Explicit override. This function only ever sees arrays, so its own default
+    # is the canonical DEFAULT_TRUNCATION_RADIUS (2.75); the compiler call sites
+    # pass the dataset's own truncation_radius here.
+    coverage_sigma=3.0,
 )
 # Shape: (num_chunks, d, 2)
 # [..., d, 0] = min bound in dimension d
