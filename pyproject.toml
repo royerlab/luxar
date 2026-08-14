@@ -47,7 +47,12 @@ classifiers = [
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
-    "zarr>=2.16,<3.0",
+    # zarr-python 3. Luxar still WRITES zarr format 2 on disk (see
+    # `luxar.io._zarr_compat.ZARR_FORMAT`) — the store layout is unchanged and
+    # the viewer is untouched. What the 3.x library buys is the ability to READ
+    # zarr v3 stores, which 2.18 cannot do at all, and it lifts the transitive
+    # caps the old pin forced on anndata and napari.
+    "zarr>=3.2,<4",
     "typer>=0.19,<1.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
@@ -123,13 +128,11 @@ demos = [
     "imagecodecs>=2023.1.0",
     "sentence-transformers>=2.2.0",
     "Pillow>=9.0.0",
-    # <0.13: anndata 0.13 requires zarr>=3.1, unsatisfiable against our
-    # zarr>=2.16,<3.0 pin (installing it would silently upgrade zarr and break
-    # every Luxar store). 0.10/0.11 declare no zarr dependency; 0.12 asks for
-    # zarr>=2.18.7,!=3.0.* which zarr 2.18.7 satisfies. Lift when the project
-    # migrates to zarr 3. Mirrored by INSTALL_SPECS in
-    # luxar.demos._dependencies.
-    "anndata>=0.10.0,<0.13",
+    # The `<0.13` ceiling is GONE: it existed only because anndata 0.13 requires
+    # zarr>=3.1, which was unsatisfiable under the old `zarr>=2.16,<3.0` pin.
+    # Luxar is on zarr 3 now, so 0.13+ resolves cleanly. Mirrored by
+    # INSTALL_SPECS in luxar.demos._dependencies.
+    "anndata>=0.10.0",
     "cellxgene-census>=1.0.0",
     "esm>=3.0.0",
     "h5py>=3.0.0",
@@ -171,12 +174,13 @@ docs = [
 # the optional demo viewer. Keep this publish-safe: no git/direct references.
 tracksdata = [
     "tracksdata>=0.1.0rc5",
-    # <0.8: napari 0.8.0's optional-base extra requires zarr>=3.0.8, which is
-    # unsatisfiable with our zarr<3.0 pin — the resolver then backtracks napari
-    # into 2018-era sdist-only releases whose setup.py imports the long-removed
-    # setuptools.Feature (broke every CI env-create on 2026-07-14). Lift when
-    # the project migrates to zarr 3.
-    "napari[pyqt6]>=0.4.18,<0.8",
+    # The `<0.8` ceiling is GONE. napari 0.8's optional-base extra requires
+    # zarr>=3.0.8, which the old `zarr<3.0` pin could not satisfy; the resolver
+    # then backtracked napari into 2018-era sdist-only releases whose setup.py
+    # imports the long-removed setuptools.Feature, and every CI env-create failed
+    # (2026-07-14). On zarr 3 that conflict is gone, so the floor moves up to the
+    # release that wanted zarr 3 in the first place.
+    "napari[pyqt6]>=0.8",
 ]
 
 # CLI entry point
@@ -275,9 +279,8 @@ dependencies = [
     "scikit-image>=0.19.0",
     "tifffile>=2023.1.0",
     "imagecodecs>=2023.1.0",
-    # <0.8: napari 0.8 requires zarr>=3 (conflicts with our zarr<3 pin); see
-    # the tracksdata group note. Lift when the project migrates to zarr 3.
-    "napari[all]>=0.4.18,<0.8",
+    # Ceiling lifted with the zarr 3 migration; see the tracksdata group note.
+    "napari[all]>=0.8",
     "pandas>=1.5.0",
     "pyarrow>=12.0.0",
     "networkx>=3.0",
@@ -446,10 +449,29 @@ disallow_untyped_decorators = true
 no_implicit_optional = true
 strict_optional = true
 
+# zarr 3 SHIPS type stubs, where 2.18 shipped none. That is a welcome change but
+# not a free one: `Group.__getitem__` is typed as a wide union
+# (`Array | Group | int | float | str | bytes | generic | NDArrayLike`), because a
+# key may address either kind of node. So idiomatic Luxar chains like
+# `root["fitting"]["config"].attrs` no longer type-check — 415 errors appear, 359
+# of them in just `gsplats/io/migrate.py` and `io/reader.py`, essentially all of
+# the shape "union member has no attribute .attrs" or "str is not a valid index".
+#
+# Adopting those stubs properly means narrowing at every access, which is a real
+# improvement (a wrong node type would become a clear error instead of an
+# AttributeError deep in a walk) but a substantial, independently-reviewable piece
+# of work. It is deliberately NOT bundled into the format-neutral library upgrade.
+# `follow_imports = "skip"` keeps zarr's types as `Any`, exactly as they were under
+# 2.18's `ignore_missing_imports`, so this preserves the previous status quo rather
+# than relaxing anything. Remove the `follow_imports` line to pick the work up.
+[[tool.mypy.overrides]]
+module = ["zarr.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
 # Per-module options for external dependencies
 [[tool.mypy.overrides]]
 module = [
-    "zarr.*",
     "arbol.*",
     "numcodecs.*",
     "typer.*",

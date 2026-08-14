@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 from arbol import aprint, asection
 
+from luxar._zarr_compat import create_array
 from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
 
@@ -135,7 +136,8 @@ def run_batch_denoise_preprocess_cmd(
             chunks = (1, 1, *[min(s, 128) for s in spatial])
 
             if "data" not in store:
-                store.create_dataset(
+                create_array(
+                    store,
                     "data",
                     shape=full_shape,
                     chunks=chunks,

@@ -9,6 +9,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from luxar._zarr_compat import create_array
+
 
 class TestSelectPlanTimepoints:
     """The shared content-plan timepoint sampler (`--plan-timepoint`/`--plan-samples`)."""
@@ -558,7 +560,7 @@ class TestOMEZarrDiscovery:
 
         store_path = tmp_path / "test.zarr"
         root = zarr.open(str(store_path), mode="w")
-        root.create_dataset("0", data=np.zeros((64, 128, 128), dtype=np.float32))
+        create_array(root, "0", data=np.zeros((64, 128, 128), dtype=np.float32))
 
         info = discover_ome_zarr_shape(store_path)
         assert info.n_timepoints == 1
@@ -572,7 +574,7 @@ class TestOMEZarrDiscovery:
 
         store_path = tmp_path / "test.zarr"
         root = zarr.open(str(store_path), mode="w")
-        root.create_dataset("0", data=np.zeros((10, 3, 64, 128, 128), dtype=np.float32))
+        create_array(root, "0", data=np.zeros((10, 3, 64, 128, 128), dtype=np.float32))
 
         info = discover_ome_zarr_shape(store_path)
         assert info.n_timepoints == 10
@@ -586,7 +588,7 @@ class TestOMEZarrDiscovery:
 
         store_path = tmp_path / "ome.zarr"
         root = zarr.open(str(store_path), mode="w")
-        root.create_dataset("0", data=np.zeros((5, 2, 32, 64, 64), dtype=np.float32))
+        create_array(root, "0", data=np.zeros((5, 2, 32, 64, 64), dtype=np.float32))
         root.attrs["multiscales"] = [
             {
                 "axes": [
@@ -682,7 +684,7 @@ class TestBatchPlanRegression:
 
         path = tmp_path / "test.zarr"
         z = zarr.open(str(path), mode="w")
-        z.create_dataset("data", data=np.zeros((5, 10, 20), dtype=np.float32))
+        create_array(z, "data", data=np.zeros((5, 10, 20), dtype=np.float32))
         z.attrs["axes"] = ["z", "y", "x"]
 
         info = discover_ome_zarr_shape(path, axes_override=["time", "y", "x"])
@@ -700,8 +702,8 @@ class TestBatchPlanRegression:
 
         path = tmp_path / "test.zarr"
         z = zarr.open(str(path), mode="w")
-        z.create_dataset("session1", data=np.ones((3, 10, 10), dtype=np.float32))
-        z.create_dataset("session2", data=np.ones((100, 20, 20), dtype=np.float32) * 2)
+        create_array(z, "session1", data=np.ones((3, 10, 10), dtype=np.float32))
+        create_array(z, "session2", data=np.ones((100, 20, 20), dtype=np.float32) * 2)
 
         info = discover_ome_zarr_shape(path)
         assert info.shape == (100, 20, 20)
@@ -748,7 +750,7 @@ class TestBatchPlanRegression:
             3, 2, 4, 2, 3, 5
         )
         root = zarr.open(str(path), mode="w")
-        root.create_dataset("0", data=data)
+        create_array(root, "0", data=data)
 
         loaded = _load_zarr_volume(path, channel=5, timepoint=2, array_key=None)
         np.testing.assert_array_equal(loaded, data[2, 1, 1])

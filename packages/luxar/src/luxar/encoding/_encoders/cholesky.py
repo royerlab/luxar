@@ -7,6 +7,8 @@ from typing import Any, Optional
 import numpy as np
 import zarr
 
+from luxar._zarr_compat import create_array
+
 from ..compression import resolve_compressor
 from ..modes import EncodingMode
 from ..semantic_types import SemanticType
@@ -250,7 +252,9 @@ class CholeskyEncoderMixin(BaseEncoderMixin):
         """
         n = diag.shape[0]
         s0 = CholeskyEncoderMixin._sigma_from_split(diag, offdiag, ndim).reshape(n, -1)
-        sq = CholeskyEncoderMixin._sigma_from_split(diag_q, offdiag_q, ndim).reshape(n, -1)
+        sq = CholeskyEncoderMixin._sigma_from_split(diag_q, offdiag_q, ndim).reshape(
+            n, -1
+        )
         den = np.maximum(np.linalg.norm(s0, axis=1), 1e-30)
         return CholeskyEncoderMixin._relf_p95(s0, den, sq)
 
@@ -314,7 +318,8 @@ class CholeskyEncoderMixin(BaseEncoderMixin):
             raise ValueError(f"Unexpected mode for CHOLESKY: {mode}")
 
         encoded_data = data.astype(target_dtype)
-        zarr_group.create_dataset(
+        create_array(
+            zarr_group,
             name,
             data=encoded_data,
             chunks=chunks,
@@ -325,4 +330,3 @@ class CholeskyEncoderMixin(BaseEncoderMixin):
             "name": target_dtype.name,
             "original_dtype": original_dtype,
         }
-

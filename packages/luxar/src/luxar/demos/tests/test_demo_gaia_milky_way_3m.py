@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar._zarr_compat import create_array
 from luxar.demos.demo_gaia_milky_way_3m import load_and_convert_gaia_data
 
 
@@ -22,7 +23,7 @@ def _write_tiny_gaia_table(path: Path, n_stars: int = 16) -> None:
         "bp_rp": np.linspace(-0.5, 3.0, n_stars, dtype=np.float32),
     }
     for name, data in values.items():
-        root.create_dataset(name, data=data, shape=data.shape, dtype=data.dtype)
+        create_array(root, name, data=data, shape=data.shape, dtype=data.dtype)
 
 
 def test_authored_nodes_keep_gaia_volumetric_appearance(tmp_path: Path) -> None:
@@ -54,7 +55,9 @@ def test_authored_nodes_keep_gaia_volumetric_appearance(tmp_path: Path) -> None:
     # exactly kappa * radius * chord — the value the demo computes as
     # MARKER_ABSORPTION, recomputed here from first principles rather than
     # copied, so a change to either side has to be deliberate.
-    marker_radius = (0.001 + 0.01 * 0.5**2) * 10.0 * 10  # typical star radius x10, SCALE=10
+    marker_radius = (
+        (0.001 + 0.01 * 0.5**2) * 10.0 * 10
+    )  # typical star radius x10, SCALE=10
     expected_marker_kappa = 1.3 * marker_radius * float(np.sqrt(np.pi / np.log(100.0)))
     for name in ("Sun", "Betelgeuse", "Rigel"):
         marker = dict(scene[name].attrs)
