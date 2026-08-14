@@ -303,7 +303,12 @@ with their own authored counts, so one ladder can legitimately mix
 primitives across levels (a 10 M finest level builds the quad while its
 500 k coarse sibling keeps the capsule); that is safe because the
 capsule is calibrated to match the quad side-on by construction — the
-primitives differ visibly only end-on and at joints.
+primitives differ visibly only end-on and at joints. The corollary is
+that the rule is deliberately PER-NODE and never sums a scene: a thin
+10 M-segment object split into twenty 500 k parts reads as twenty
+sub-threshold nodes and keeps the capsule throughout, even though the
+frame still pays for the whole 10 M. Force `Quad` (or
+`?linePrimitive=screen-space`) for that case.
 
 ## Capsule primitive (the DEFAULT since the #1352 flip)
 

@@ -113,10 +113,18 @@ export const AUTO_QUAD_EFFECTIVE_SEGMENTS = 2_000_000;
  * primitive draws its own support multiple (see
  * `_shared/line-capsule.ts`). Left uncorrected on purpose: a ~4× small
  * factor keeps the capsule longer, which is the right bias for a quality
- * default. Two properties make the ratio robust: `max_width` and the
- * bounds diagonal live in the SAME authored space, so a uniform node
- * transform cancels out of the ratio; and an nD bounds diagonal (extra
- * non-spatial dims) only grows the denominator, again conservative.
+ * default. An nD bounds diagonal (extra non-spatial dims) only grows the
+ * denominator, which is conservative in the same direction. A node
+ * TRANSFORM, on the other hand, does NOT cancel: both terms are
+ * authored, so the ratio itself is transform-free — but the rendered
+ * width is not. The shader converts `width` against the VIEW-space depth
+ * (`width * uPerspectiveLineScale / dist` in `shader-glsl.ts`) without
+ * the model matrix, while the extent that sets that depth carries it. A
+ * node scaled by s therefore draws s× thinner, relative to its own
+ * extent, than this estimate says: a scaled-up node can reach the
+ * threshold earlier than its true rendered width warrants (the ~4×
+ * slack above absorbs the first two octaves of that), a scaled-down one
+ * keeps the capsule longer. Order-of-magnitude, as stated.
  *
  * Floored at 1 because the shader clamps thin lines to `minPixelWidth`
  * (1.5 px in shader-glsl.ts) — below the clamp, fill cost stops

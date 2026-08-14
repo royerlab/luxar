@@ -101,8 +101,15 @@ const DEFAULT_SYNTHETIC_BOUNDS = 100;
  * read as thin and build the capsule where production builds the quad.
  *
  * The walk is re-anchored uniformly inside `[-bounds, bounds]^3` every
- * 64 steps and steps by `bounds × stepScale`, so the cube diagonal is
- * its extent to within about one step.
+ * 64 steps and steps by at most `bounds × stepScale`, so the cube
+ * diagonal is its extent to within the drift a run of 64 steps can
+ * accumulate: negligible for the unbiased walk (~√64 steps ≈ 8% of
+ * `bounds` at the default `stepScale`), but up to ~60% of `bounds` for
+ * the near-ballistic `turnAngle` variant. That makes this a mild
+ * UNDER-estimate of the true extent there — i.e. a mild over-estimate
+ * of the width factor — which stays well inside the order-of-magnitude
+ * tolerance the rule is stated at, and does not move any bench
+ * scenario's resolution.
  */
 export function syntheticLinesBoundsDiagonal(spec: SyntheticSceneSpec): number {
   return 2 * (spec.bounds ?? DEFAULT_SYNTHETIC_BOUNDS) * Math.sqrt(3);
