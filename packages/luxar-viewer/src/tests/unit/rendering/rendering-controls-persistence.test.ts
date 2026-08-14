@@ -15,7 +15,7 @@ import {
   stripDynamicClippingPlanes,
 } from '../../../ui/rendering-controls/settings-persistence';
 import { config } from '../../../config';
-import { buildCinematicValues } from '../../../config/cinematic-preset';
+import { buildCinematicValues, CINEMATIC_SNAPSHOT_KEYS } from '../../../config/cinematic-preset';
 import { StorageKeys } from '../../../utils/storage-keys';
 
 describe('settings-persistence — buildBaseDefaults', () => {
@@ -63,12 +63,14 @@ describe('settings-persistence — buildResetDefaults', () => {
     const preset = buildCinematicValues();
     const defaults = buildResetDefaults({ cinematic_mode: true });
 
-    expect(defaults.toneMapping).toBe(preset.toneMapping); // 'ACES'
-    expect(defaults.vignetteEnabled).toBe(preset.vignetteEnabled);
-    expect(defaults.detectorNoiseEnabled).toBe(preset.detectorNoiseEnabled);
-    expect(defaults.chromaticLensDistortionEnabled).toBe(preset.chromaticLensDistortionEnabled);
-    expect(defaults.fov).toBe(preset.fov);
-    expect(defaults.fovPreset).toBe(preset.fovPreset);
+    // Every preset key, not a hand-picked few: a preset value outside the
+    // validator's range would be silently swapped for the base default on this
+    // path while the C-key toggle (which does not validate) kept it — an
+    // authored-vs-keypress divergence nothing else would catch.
+    for (const key of CINEMATIC_SNAPSHOT_KEYS) {
+      expect(defaults[key]).toBe(preset[key]);
+    }
+    expect(defaults.toneMapping).toBe('ACES');
   });
 
   it('an author-set key still beats the expanded preset through buildResetDefaults', () => {
