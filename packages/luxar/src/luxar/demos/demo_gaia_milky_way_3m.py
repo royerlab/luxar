@@ -243,11 +243,27 @@ def _extract_raw_zarr(data_zip_path: Path, dest: Path) -> Path:
     in ``zarr.open`` with ``GroupNotFoundError`` — a ``ValueError``, which no
     ``except CatalogUnusable`` on the way out catches, so the advice
     :func:`resolve_data_file` prints would never reach the reader who needs it.
+
+    An unreadable zip is the same class of problem and gets the same treatment:
+    the catalog is placed (or rebuilt) by hand, so a truncated copy — an
+    interrupted ``scp``, a rebuild killed part-way, a browser download that
+    stopped — is an ordinary way to end up with a file that ``exists()`` and is
+    not a catalog. ``resolve_data_file`` cannot tell, since reading the archive
+    IS the check.
     """
     import zipfile
 
-    with zipfile.ZipFile(data_zip_path, "r") as zip_ref:
-        zip_ref.extractall(dest)
+    try:
+        with zipfile.ZipFile(data_zip_path, "r") as zip_ref:
+            zip_ref.extractall(dest)
+    except zipfile.BadZipFile as exc:
+        raise CatalogUnusable(
+            f"{data_zip_path} is not a readable zip archive ({exc}) — most "
+            "likely a truncated or partial copy.\n"
+            "Delete it and put a complete copy back, or rebuild it with\n"
+            "  hatch run python scripts/generate_galaxy_simple.py --count "
+            f"3000000 --output {CACHE_FILE.with_suffix('')}"
+        ) from exc
     raw_zarr_path = dest / RAW_ZARR_NAME
     if not raw_zarr_path.is_dir():
         raise CatalogUnusable(

@@ -53,6 +53,18 @@ def _catalog_zip(tmp_path: Path, member_name: str) -> Path:
     return zip_path
 
 
+def _truncated_catalog_zip(tmp_path: Path) -> Path:
+    """A catalog zip cut in half — what an interrupted copy or rebuild leaves.
+
+    Losing the tail loses the end-of-central-directory record, so ``ZipFile``
+    rejects the file outright rather than extracting part of it.
+    """
+    zip_path = _catalog_zip(tmp_path, RAW_ZARR_NAME)
+    intact = zip_path.read_bytes()
+    zip_path.write_bytes(intact[: len(intact) // 2])
+    return zip_path
+
+
 def _marker_label(node: zarr.Group) -> str:
     """Decode a single-point node's one hover label from its UTF-8 CSR pair."""
     offsets = node["label_offsets"][:]
@@ -245,12 +257,14 @@ def test_declared_cache_namespace_is_where_the_catalog_is_read() -> None:
 
 
 class TestRawZarrExtraction:
-    """A catalog zip is only usable if its top-level directory is the one read.
+    """A catalog zip is only usable if it reads AND holds the directory read.
 
     The rebuild script's default ``--output`` is ``galaxy.zarr``, so the wrong
     stem is the easy mistake to make — and it extracts *successfully*, failing
-    only later inside ``zarr.open``. These pin the guard that turns that into an
-    error naming the directory and the command, and the CLI paths that print it.
+    only later inside ``zarr.open``. A truncated copy is the other way a
+    hand-placed file passes ``resolve_data_file``'s ``exists()`` and is still not
+    a catalog. These pin the guards that turn both into an error naming the
+    problem and the rebuild command, and the CLI paths that print them.
     """
 
     def test_the_expected_stem_extracts_to_a_readable_raw_table(
@@ -281,19 +295,45 @@ class TestRawZarrExtraction:
         assert "scripts/generate_galaxy_simple.py" in message
         assert "--output" in message
 
+    def test_a_truncated_archive_names_the_rebuild(self, tmp_path: Path) -> None:
+        """``exists()`` cannot tell a catalog from half of one — reading it can.
+
+        The catalog is copied or rebuilt by hand, so a partial file is an ordinary
+        outcome; without this guard ``zipfile.BadZipFile`` escapes both entry
+        points (it is not a ``FileNotFoundError``) as the raw traceback the rest of
+        this module exists to avoid.
+        """
+        zip_path = _truncated_catalog_zip(tmp_path)
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            _extract_raw_zarr(zip_path, tmp_path / "unpacked")
+
+        message = str(excinfo.value)
+        assert str(zip_path) in message
+        assert "truncated" in message
+        assert "scripts/generate_galaxy_simple.py" in message
+
     @pytest.mark.parametrize("extra_argv", [[], ["--no-serve"]], ids=["serve", "build"])
+    @pytest.mark.parametrize("broken", ["wrong-stem", "truncated"])
     def test_both_entry_points_report_it_as_a_cli_error(
-        self, tmp_path: Path, monkeypatch, capsys, extra_argv: list[str]
+        self, tmp_path: Path, monkeypatch, capsys, extra_argv: list[str], broken: str
     ) -> None:
         """Not a traceback: the message is advice, and it has to be readable.
 
         Both invocations extract, in two different places (``main`` directly for
         ``--no-serve``, ``load_and_convert_from_zip`` when serving), so both are
-        checked — a guard raised past one of them would bury the advice.
+        checked — a guard raised past one of them would bury the advice. Both
+        unusable-catalog kinds are checked at both, because they are raised from
+        two different points inside ``_extract_raw_zarr``.
         """
         import luxar.demos.demo_gaia_milky_way_3m as demo
 
-        monkeypatch.setattr(demo, "CACHE_FILE", _catalog_zip(tmp_path, "galaxy.zarr"))
+        catalog = (
+            _truncated_catalog_zip(tmp_path)
+            if broken == "truncated"
+            else _catalog_zip(tmp_path, "galaxy.zarr")
+        )
+        monkeypatch.setattr(demo, "CACHE_FILE", catalog)
         monkeypatch.setattr(demo, "REPO_FILE", tmp_path / "absent.zip")
         monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path / "out")
         monkeypatch.setattr(sys, "argv", ["demo_gaia_milky_way_3m.py", *extra_argv])
@@ -303,7 +343,9 @@ class TestRawZarrExtraction:
 
         assert excinfo.value.code == 1
         out = capsys.readouterr().out
-        assert RAW_ZARR_NAME in out
+        # What went wrong, in the reader's terms — the missing directory for a
+        # wrong stem, the unreadable file for a partial copy.
+        assert (RAW_ZARR_NAME if broken == "wrong-stem" else "truncated") in out
         assert "scripts/generate_galaxy_simple.py" in out
         assert "Traceback" not in out
 
