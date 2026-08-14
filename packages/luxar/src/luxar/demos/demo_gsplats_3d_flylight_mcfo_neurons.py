@@ -443,6 +443,49 @@ def _safe_extract_path(root: Path, rel: str, member: str) -> Path:
     return dest
 
 
+def _extract_members(zf, members, member_prefix: str, tmp: Path) -> None:
+    """Write every archive member below ``member_prefix`` into ``tmp``."""
+    root = tmp.resolve()
+    for i, name in enumerate(members):
+        rel = name[len(member_prefix) :]
+        if not rel:
+            continue
+        dest = _safe_extract_path(root, rel, name)
+        if name.endswith("/"):
+            dest.mkdir(parents=True, exist_ok=True)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(name) as src:
+            dest.write_bytes(src.read())
+        if i % 200 == 0:
+            aprint(f"  {i}/{len(members)} members")
+
+
+def _install_store(tmp: Path, target: Path) -> None:
+    """Move a freshly extracted store into place, preserving any existing one.
+
+    Renaming onto a populated directory raises ENOTEMPTY, so an existing store
+    is moved aside first — and restored if installing the new one fails.
+    Deleting it unconditionally would lose BOTH copies on failure, leaving no
+    usable sample at all.
+    """
+    if not target.exists():
+        tmp.rename(target)
+        return
+
+    stale = target.with_suffix(".zarr.stale")
+    if stale.exists():
+        shutil.rmtree(stale)
+    target.rename(stale)
+    try:
+        tmp.rename(target)
+    except BaseException:
+        if not target.exists():
+            stale.rename(target)
+        raise
+    shutil.rmtree(stale, ignore_errors=True)
+
+
 def fetch_sample(sample: str) -> Path:
     """Range-extract one FISBe sample's zarr store into the demo cache."""
     target = CACHE_DIR / f"{sample}.zarr"
@@ -475,41 +518,8 @@ def fetch_sample(sample: str) -> Path:
             if tmp.exists():
                 shutil.rmtree(tmp)
 
-            root = tmp.resolve()
-            for i, name in enumerate(members):
-                rel = name[len(member_prefix) :]
-                if not rel:
-                    continue
-                dest = _safe_extract_path(root, rel, name)
-                if name.endswith("/"):
-                    dest.mkdir(parents=True, exist_ok=True)
-                    continue
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(name) as src:
-                    dest.write_bytes(src.read())
-                if i % 200 == 0:
-                    aprint(f"  {i}/{len(members)} members")
-
-            # Replace any existing store only once the new one is complete, and
-            # move the old one aside first: renaming onto a populated directory
-            # raises ENOTEMPTY, which used to break every --recompute run.
-            if target.exists():
-                stale = target.with_suffix(".zarr.stale")
-                if stale.exists():
-                    shutil.rmtree(stale)
-                target.rename(stale)
-                try:
-                    tmp.rename(target)
-                except BaseException:
-                    # Put the old store back before re-raising. Deleting it in
-                    # a `finally` would lose BOTH copies whenever installing
-                    # the new one failed, leaving no usable sample at all.
-                    if not target.exists():
-                        stale.rename(target)
-                    raise
-                shutil.rmtree(stale, ignore_errors=True)
-            else:
-                tmp.rename(target)
+            _extract_members(zf, members, member_prefix, tmp)
+            _install_store(tmp, target)
         finally:
             zf.close()
 
