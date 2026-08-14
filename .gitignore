@@ -27,7 +27,10 @@ cuda_build_info.json
 # Data files
 # Root datasets dir ONLY (anchored): in worktrees `datasets` is a SYMLINK
 # to the main checkout, and an unanchored `datasets/` does not match symlinks.
+# The viewer-level entry covers the same symlink some perf/probe setups
+# place inside the package so a package-cwd HTTP server can reach it.
 /datasets
+/packages/luxar-viewer/datasets
 debug-view.png
 delme/
 lightsheet_overview/

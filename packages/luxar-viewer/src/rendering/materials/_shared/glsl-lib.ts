@@ -351,7 +351,7 @@ vec3 luxarLineJoin(
 
   // Decode: +(slot + 1) => the partner's START is the shared vertex;
   // -(slot + 3) => its END is.
-  int lineTexW = textureSize(uLineTex, 0).x;
+  int lineTexW = LUXAR_LINE_TEX_W;
   int partnerBase = partnerSlot * 6;
   ivec2 pTexel = ivec2(partnerBase % lineTexW, partnerBase / lineTexW);
   // Only the partner's FAR endpoint is needed — the near one is this vertex,
