@@ -168,11 +168,12 @@ export function capsuleProfile(p: number, sharpKnob = 0.5): number {
  * the shared-vertex radius). Exists for the numeric composition test:
  * the two legs' rendered sum must track max(mine, partner) — the three
  * #1487-review defects (#1494/#1488/#1490) were all visible to this
- * sweep. #1494 now also has a source lock over the four shader surfaces
- * (`tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`),
- * which this model cannot provide: it binds only itself. #1488/#1490 have
- * no comparable cross-surface lock (#1488 has a single GLSL-only reach pin
- * in `line-capsule.test.ts` itself), so for them this sweep is it.
+ * sweep. #1494 and #1490 now also have source locks over the four shader
+ * surfaces (`tests/unit/rendering/materials/line/capsule-partner-radius.test.ts`
+ * and `tests/unit/rendering/materials/line/capsule-joint-packet-source-lock.test.ts`),
+ * which this model cannot provide: it binds only itself. #1488 has
+ * no comparable cross-surface lock (only a single GLSL-only reach pin
+ * in `line-capsule.test.ts` itself), so for it this sweep is it.
  *
  * `vFade` is modelled by HALF: its `widthScale` factor
  * (`capsuleLegWidthScale`) is carried, because a leg thinner than the AA
