@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from luxar._zarr_compat import create_array, create_root_group
+from luxar._zarr_compat import create_array
 from luxar.cli.gsplat_ops.batch.validation import validate_tile as _validate_tile
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.io.save_gsplats import save_gsplats, write_gsplats_tree
@@ -45,18 +45,47 @@ def _leaf(n: int, seed: int = 0) -> GSplatLeaf:
     return GSplatLeaf(additive_sublods=[AdditiveSubLOD(**s)])
 
 
+def _strip_consolidated(path: Path) -> None:
+    """Remove a store's consolidated metadata, whichever format it is in.
+
+    The "save completed" sentinel: v2 writes a separate ``.zmetadata`` document,
+    v3 embeds ``consolidated_metadata`` in the root ``zarr.json``. Deleting only
+    the v2 file would be a silent no-op on a v3 store — the tile would still
+    validate and the test would assert nothing.
+    """
+    zmetadata = path / ".zmetadata"
+    if zmetadata.exists():
+        zmetadata.unlink()
+        return
+    root_doc = path / "zarr.json"
+    doc = json.loads(root_doc.read_text())
+    del doc["consolidated_metadata"]
+    root_doc.write_text(json.dumps(doc))
+
+
+def _strip_node_metadata(node_dir: Path) -> None:
+    """Remove a node's attributes document, whichever format it is in."""
+    for name in (".zattrs", "zarr.json"):
+        doc = node_dir / name
+        if doc.exists():
+            doc.unlink()
+            return
+    raise AssertionError(f"no metadata document to strip under {node_dir}")
+
+
 def _make_v2_0_tile(path: Path, n: int = 5) -> None:
     """A legacy v2.0 substitutive_0/additive_0 tile (must be 'unmigrated').
 
-    Built through :func:`create_root_group` so it is a zarr FORMAT 2 store, which
-    is what a legacy tile actually is. A bare ``zarr.group()`` would now produce
-    format 3, and then ``consolidate`` writes ``consolidated_metadata`` inside
-    ``zarr.json`` instead of a ``.zmetadata`` document — so the validator's
-    "``.zmetadata`` means the save completed" sentinel would report
-    ``no_zmetadata`` and this test would assert on the wrong failure entirely.
+    Pinned to zarr FORMAT 2 explicitly, because that is part of what makes it a
+    legacy tile — this is the shape a real pre-migration tile has on disk, and it
+    is also the only place in this file that exercises the validator's v2 branch
+    now that Luxar writes v3. It deliberately does NOT go through
+    :func:`create_root_group`, which follows the CURRENT write format and would
+    silently turn this fixture into a v3 store the day that changed. (It did:
+    this helper used to rely on exactly that.)
     """
     store = zarr.storage.LocalStore(str(path))
-    root = create_root_group(store, overwrite=True)
+    root = zarr.create_group(store=store, overwrite=True, zarr_format=2)
     root.attrs.update(
         {
             "format_version": "2.0",
@@ -156,7 +185,7 @@ def test_unmigrated_bucket_prefix_contract(tmp_path):
 def test_missing_zmetadata_is_corrupt(tmp_path):
     p = tmp_path / "t.gsplats.zarr"
     save_gsplats(path=p, **_splats(10), ordering="none")
-    (p / ".zmetadata").unlink()
+    _strip_consolidated(p)
     assert _validate_tile(p) == "no_zmetadata (save incomplete)"
 
 
@@ -174,7 +203,34 @@ def test_child_missing_zattrs_is_corrupt(tmp_path):
     write_gsplats_tree(
         p, GSplatLodGroup(children=[_leaf(50, 0), _leaf(8, 1)]), ordering="none"
     )
-    (p / "child_0" / ".zattrs").unlink()
+    _strip_node_metadata(p / "child_0")
+    assert _validate_tile(p).startswith("no_zattrs")
+
+
+def test_child_with_emptied_attributes_is_corrupt(tmp_path):
+    """An attribute-STRIPPED node must be corrupt, not merely attribute-less.
+
+    The two formats corrupt differently and this is the asymmetry that hid it:
+    v2 keeps attributes in a separate ``.zattrs``, so stripping them deletes the
+    document; v3 keeps them inside ``zarr.json`` beside ``node_type``, so
+    stripping them leaves a structurally valid node whose attributes are ``{}``.
+    A reader that only rejects a MISSING document therefore passed the v3 case —
+    measured before the fix: this exact tree validated ``ok``.
+    """
+    p = tmp_path / "lod.gsplats.zarr"
+    write_gsplats_tree(
+        p, GSplatLodGroup(children=[_leaf(50, 0), _leaf(8, 1)]), ordering="none"
+    )
+    child = p / "child_0"
+    doc = child / "zarr.json"
+    if doc.exists():  # format 3: empty the attributes, keep the node valid
+        meta = json.loads(doc.read_text())
+        assert meta.get("attributes"), "fixture precondition: child had attributes"
+        meta["attributes"] = {}
+        doc.write_text(json.dumps(meta))
+    else:  # format 2: the equivalent corruption is an empty .zattrs
+        (child / ".zattrs").write_text("{}")
+
     assert _validate_tile(p).startswith("no_zattrs")
 
 
