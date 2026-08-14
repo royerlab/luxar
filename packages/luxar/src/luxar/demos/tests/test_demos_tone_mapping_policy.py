@@ -66,7 +66,8 @@ three shapes — an inline literal call keyword, a signature default, and a plai
 ``NAME = "..."`` string constant — and reads nothing else. Constants are
 resolved in the scope they are USED in: a function-local or class-body binding
 shadows a module-level one of the same name, as do the parameters of a ``def``
-or a ``lambda``, so a name never reports a value from a scope it cannot see.
+or a ``lambda`` and the ``for`` targets of a comprehension, so a name never
+reports a value from a scope it cannot see.
 A local binding the scan cannot READ (a conditional, a call, a loop variable,
 an import) shadows just as hard — it hides the outer value rather than letting
 it leak in, so such a name reports nothing at all.
@@ -103,7 +104,10 @@ from ._scanned_modules import scanned_demo_modules
 #: after an exposure/intensity re-tune — trades hue fidelity for chroma and
 #: needs a live A/B, not a blind flip. The one Neutral row that is NOT this
 #: case (``_interop_common.py``) says so in its own reason. Each entry must name
-#: the driver, and each demo repeats the reason at its own pin.
+#: the driver, and each demo repeats the reason at its own pin. A row exempts
+#: the scene that needs it, not the whole module: the rest of the file may
+#: still pin the ACES default (see :func:`_allowed_values`), and a row whose
+#: module pins nothing but ACES is dead and must be deleted.
 EXCEPTIONS: dict[str, tuple[tuple[str, ...], str]] = {
     # --- in-gamut: no tone mapping is the exact choice -------------------
     "demo_ocean_currents_earth.py": (
@@ -234,6 +238,11 @@ def _without_params(
     return scope
 
 
+def _target_names(target: ast.expr) -> set[str]:
+    """Every name a comprehension ``for`` target binds, tuple targets included."""
+    return {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+
+
 def _bound_names(body: list[ast.stmt]) -> set[str]:
     """Every name ``body`` binds in a scope of its OWN, whatever shape the value has.
 
@@ -330,7 +339,8 @@ def _collect(
     """Walk ``node``, appending every statically known ``tone_mapping`` value.
 
     ``consts`` is the name → string bindings visible AT ``node``: module-level
-    constants, overridden by those of each enclosing function or class body.
+    constants, overridden by those of each enclosing function, class body or
+    comprehension.
     Descending
     with a per-scope map (rather than walking the whole tree against one
     module-level map) is what makes a name resolve to the value the interpreter
@@ -364,6 +374,26 @@ def _collect(
         _collect(node.args, consts, found)
         _collect(node.body, _without_params(node.args, consts), found)
         return
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        # A comprehension is a scope of its own: its `for` targets are bound
+        # inside it, the scan cannot read them, and so — like any other
+        # unreadable local — they must hide a same-named outer constant rather
+        # than let it leak into the element expression. Only the FIRST iterable
+        # is evaluated in the enclosing scope; every later one, the `if`
+        # clauses and the element see the targets bound before them.
+        scope = consts
+        for generator in node.generators:
+            _collect(generator.iter, scope, found)
+            bound = _target_names(generator.target)
+            scope = {n: v for n, v in scope.items() if n not in bound}
+            for condition in generator.ifs:
+                _collect(condition, scope, found)
+        elements = (
+            [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+        )
+        for element in elements:
+            _collect(element, scope, found)
+        return
     if isinstance(node, ast.Call):
         found.extend(_keyword_values(node, consts))
     for child in ast.iter_child_nodes(node):
@@ -386,11 +416,25 @@ def _tone_mappings(path: Path) -> list[str]:
     return found
 
 
+def _allowed_values(module_name: str) -> tuple[str, ...]:
+    """The tone mappings ``module_name`` may pin: ACES, plus its exception row.
+
+    ACES is legal EVERYWHERE, in an exception module as much as anywhere else.
+    A row exempts the scene that needs something else; it must not outlaw the
+    house default in the rest of the file. Without this, a module holding one
+    justified ``"Neutral"`` scene alongside an ordinary ACES one would have no
+    legal spelling at all — the row rejects the ACES pin, widening the row to
+    include ``"ACES"`` trips the dead-row check, and deleting the row rejects
+    the Neutral pin.
+    """
+    return EXCEPTIONS.get(module_name, ((), ""))[0] + ("ACES",)
+
+
 def test_every_demo_tone_mapping_is_aces_or_a_justified_exception() -> None:
     """No demo pins a non-ACES tone mapping without a row in EXCEPTIONS."""
     offenders: list[str] = []
     for path in scanned_demo_modules():
-        allowed = EXCEPTIONS.get(path.name, (("ACES",), ""))[0]
+        allowed = _allowed_values(path.name)
         for value in _tone_mappings(path):
             if value not in allowed:
                 offenders.append(
@@ -429,12 +473,27 @@ def test_every_exception_is_real_and_justified() -> None:
             f"EXCEPTIONS names {name}, but it pins no tone mapping at all — "
             f"delete the row; silence already means the viewer's ACES default"
         )
-        assert set(values) <= set(allowed), (
-            f"{name} pins {sorted(set(values))}, not {sorted(allowed)}"
+        deviations = set(values) - {"ACES"}
+        assert deviations, (
+            f"{name} pins nothing but ACES, so its EXCEPTIONS row is dead — delete it"
         )
-        assert "ACES" not in values, (
-            f"{name} pins ACES, so its EXCEPTIONS row is dead — delete it"
+        assert deviations <= set(allowed), (
+            f"{name} pins {sorted(deviations)}, not {sorted(allowed)}"
         )
+
+
+def test_an_exception_row_still_allows_aces() -> None:
+    """A row exempts one scene; the rest of its module may still pin ACES.
+
+    An exception is per-MODULE only because that is the granularity a static
+    scan has. It must not read as "this file may not use the house default",
+    which would leave a module with one justified deviation and one ordinary
+    ACES scene nothing legal to write.
+    """
+    for name, (allowed, _reason) in EXCEPTIONS.items():
+        assert "ACES" in _allowed_values(name), name
+        assert set(allowed) <= set(_allowed_values(name)), name
+    assert _allowed_values("demo_not_in_exceptions.py") == ("ACES",)
 
 
 def test_the_guard_detects_a_stray_neutral(tmp_path: Path) -> None:
@@ -577,6 +636,21 @@ def test_an_unreadable_local_hides_the_outer_constant(tmp_path: Path) -> None:
             "    TONE = pick()\n"
             "    config = ViewerConfig(tone_mapping=TONE)\n"
         ),
+        # A comprehension's `for` target is a local of the comprehension's own
+        # scope — in the element expression, in a later generator's iterable,
+        # and in an `if` clause alike.
+        "demo_comprehension_target.py": (
+            'TONE = "Neutral"\n'
+            "scenes = [ViewerConfig(tone_mapping=TONE) for TONE in options()]\n"
+        ),
+        "demo_comprehension_dict.py": (
+            'TONE = "Neutral"\n'
+            "scenes = {k: ViewerConfig(tone_mapping=TONE) for k, TONE in items()}\n"
+        ),
+        "demo_comprehension_if.py": (
+            'TONE = "Neutral"\n'
+            "scenes = [x for TONE in options() if ViewerConfig(tone_mapping=TONE)]\n"
+        ),
     }.items():
         path = tmp_path / name
         path.write_text(source, encoding="utf-8")
@@ -595,6 +669,18 @@ def test_an_unreadable_local_hides_the_outer_constant(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _tone_mappings(nested) == ["Neutral"]
+
+    # And the shadowing stops at the names a comprehension actually binds: a
+    # pin inside one that does NOT rebind the constant still reads it, as does
+    # the first iterable, which is evaluated out in the enclosing scope.
+    comp_outer = tmp_path / "demo_comprehension_outer.py"
+    comp_outer.write_text(
+        'TONE = "Neutral"\n'
+        "scenes = [ViewerConfig(tone_mapping=TONE) for _ in options()]\n"
+        "more = [x for y in options(ViewerConfig(tone_mapping=TONE))]\n",
+        encoding="utf-8",
+    )
+    assert _tone_mappings(comp_outer) == ["Neutral", "Neutral"]
 
 
 def test_a_rebound_constant_cannot_mask_a_stray_neutral(tmp_path: Path) -> None:
