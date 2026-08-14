@@ -61,6 +61,10 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 # true is that the records are PUBLIC — all three are still unsubmitted drafts,
 # and a file URL into a draft 404s for everyone.
 #
+# `zenodo_doi` is that reserved DOI, i.e. the VERSION DOI of this deposition —
+# NOT the version-independent concept DOI, which is a different identifier Zenodo
+# mints on publication and which cannot be known from the deposition id.
+#
 # Hence `published`: while it is false the fetch helper builds no URL at all, so
 # the Zenodo leg stays dormant exactly as it did when the ids were null, and
 # demos keep resolving cache -> in-repo LFS. Flipping the three flags at
@@ -75,7 +79,7 @@ RECORDS = {
     "cc-by": {
         "title": "Luxar demo datasets: permissively licensed (CC-BY, CC0, public domain)",
         "license": "cc-by-4.0",
-        "zenodo_concept_doi": "10.5281/zenodo.21912280",
+        "zenodo_doi": "10.5281/zenodo.21912280",
         "zenodo_record": "21912280",
         "base_url": None,
         "published": False,
@@ -83,7 +87,7 @@ RECORDS = {
     "cc-by-sa": {
         "title": "Luxar demo datasets: ShareAlike (CC BY-SA 4.0)",
         "license": "cc-by-sa-4.0",
-        "zenodo_concept_doi": "10.5281/zenodo.21912282",
+        "zenodo_doi": "10.5281/zenodo.21912282",
         "zenodo_record": "21912282",
         "base_url": None,
         "published": False,
@@ -95,7 +99,7 @@ RECORDS = {
             "51-timepoint fit)"
         ),
         "license": "cc-by-4.0",
-        "zenodo_concept_doi": "10.5281/zenodo.21912284",
+        "zenodo_doi": "10.5281/zenodo.21912284",
         "zenodo_record": "21912284",
         "base_url": None,
         "published": False,
@@ -246,8 +250,9 @@ DATASETS: dict[str, dict] = {
         attribution="Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
         # Permission CONFIRMED by the author 2026-08-12; both channels uploaded to
         # the cc-by record and pinned below (md5 verified against Zenodo). The
-        # record is still a DRAFT, so RECORDS["cc-by"] has no id/base_url yet and
-        # the fetch leg stays dormant — the pins are what publication turns on.
+        # record is still a DRAFT, so RECORDS["cc-by"] carries its id but
+        # `published: False`, and the fetch leg stays dormant until that flips —
+        # the pins are what publication turns on.
     ),
     "h2afva": dict(
         bucket="zenodo",

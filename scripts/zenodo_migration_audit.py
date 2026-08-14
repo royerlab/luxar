@@ -86,9 +86,18 @@ def _audit_records(records: dict) -> None:
     print("ZENODO RECORDS (upload destinations)")
     print("=" * 78)
     for name, r in records.items():
-        state = "LIVE" if r.get("zenodo_record") else "NOT CREATED"
+        # An id alone does not make a record reachable: Zenodo hands out the id
+        # (and a reserved DOI) at DEPOSITION time, and a file URL into an
+        # unpublished draft 404s. `published` is what decides, so report the
+        # three states separately rather than reading id-presence as LIVE.
+        if not r.get("zenodo_record"):
+            state = "NOT CREATED"
+        elif r.get("published"):
+            state = "LIVE"
+        else:
+            state = "DRAFT"
         print(
-            f"  {name:10s} {state:12s} {r.get('license', '?'):14s} doi={r.get('zenodo_concept_doi')}"
+            f"  {name:10s} {state:12s} {r.get('license', '?'):14s} doi={r.get('zenodo_doi')}"
         )
 
 
@@ -243,6 +252,10 @@ def _print_readiness(
     print("=" * 78)
     print(
         f"  records to create:            {sum(1 for r in records.values() if not r.get('zenodo_record'))} of {len(records)}"
+    )
+    print(
+        f"  drafts still to publish:      "
+        f"{sum(1 for r in records.values() if r.get('zenodo_record') and not r.get('published'))}"
     )
     print(
         f"  datasets ready to upload now: {len(to_upload)}  "

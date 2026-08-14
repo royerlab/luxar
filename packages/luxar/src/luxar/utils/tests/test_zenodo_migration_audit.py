@@ -64,7 +64,7 @@ def _write_manifest(repo: Path, datasets: dict) -> Path:
                     "cc-by": {
                         "license": "cc-by-4.0",
                         "zenodo_record": None,
-                        "zenodo_concept_doi": None,
+                        "zenodo_doi": None,
                     }
                 },
                 "datasets": datasets,

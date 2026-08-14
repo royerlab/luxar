@@ -635,7 +635,7 @@ def test_missing_and_unhosted_raises_clear_error(fake_repo):
     """No cache, no in-repo file, no Zenodo URL → actionable FileNotFoundError."""
     manifest, cache = fake_repo
     manifest["datasets"]["gsplats_toy"]["files"][0]["name"] = "absent.zip"
-    with pytest.raises(FileNotFoundError, match="Zenodo record URL is not set"):
+    with pytest.raises(FileNotFoundError, match="builds no Zenodo URL for it yet"):
         ensure_dataset(
             "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
         )
@@ -942,7 +942,7 @@ def test_unpublished_record_builds_no_url_even_with_ids():
     """
     rec = {
         "zenodo_record": "21912280",
-        "zenodo_concept_doi": "10.5281/zenodo.21912280",
+        "zenodo_doi": "10.5281/zenodo.21912280",
         "published": False,
     }
     assert data_fetch.zenodo_file_url(rec, "kidney_ch0.gsplats.zarr.zip") is None
@@ -970,15 +970,20 @@ def test_record_without_ids_builds_no_url():
     assert data_fetch.zenodo_file_url({}, "a.zip") is None
 
 
-def test_every_shipped_record_is_still_unpublished():
-    """The three records are private drafts; publishing is a deliberate act.
+def test_every_shipped_record_agrees_with_its_published_flag():
+    """Each record's id is recorded, and `published` decides whether a URL exists.
 
-    Guards against wiring a live URL by accident: while the drafts are unpublished
-    every one of them must build no URL, so no demo can start 404ing against a
-    record that is not public yet.
+    Guards against wiring a live URL by accident: while a record is an unpublished
+    draft it must build no URL, so no demo can start 404ing against something that
+    is not public yet. The other direction matters just as much — a record flipped
+    to published has to actually resolve to a URL, or the flip is silently inert.
+    Written both ways so publication needs no edit here beyond the flag itself.
     """
     m = load_manifest()
     for name, rec in m["records"].items():
         assert rec.get("zenodo_record"), f"{name}: record id should be recorded"
-        assert rec.get("published") is False, f"{name}: unexpectedly marked published"
-        assert data_fetch.zenodo_file_url(rec, "x.zip") is None, f"{name}: leg is live"
+        url = data_fetch.zenodo_file_url(rec, "x.zip")
+        if rec.get("published"):
+            assert url, f"{name}: marked published but builds no URL"
+        else:
+            assert url is None, f"{name}: unpublished draft, but the leg is live"

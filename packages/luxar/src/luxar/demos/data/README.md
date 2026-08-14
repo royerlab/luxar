@@ -59,7 +59,7 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 | `gsplats_milkyway_dust/` | 3D interstellar dust of the solar neighborhood (Leike & Enßlin 2020) | 1 `.gsplats.zarr.zip` (~8 MB) |
 | `gsplats_visible_human_head/` | 3D Visible Human head, true-color cryosections (NLM) | 1 `.gsplats.zarr.zip` + `vh_head_colors.npz` (per-splat RGB) |
 | `gsplats_nexrad_supercell/` | 4D NEXRAD Oklahoma convective evening incl. the El Reno tornadic supercell (KTLX, 2013-05-31 21Z - 06-01 03Z) | 1 bundle zip with 82 volume scans (~9.6 MB) |
-| _(not bundled)_ `gsplats_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the zips (133 MB) are in the `cc-by` record and pinned in the manifest, and the demo reads the unzipped pair from a local store |
+| _(not bundled)_ `gsplats_4d_neuromast_2ch` | 4D two-channel neuromast timelapse | 2 channel `.gsplats.zarr` (~220 MB unzipped) — **not in Git LFS**; the zips (133 MB) are in the `cc-by` record and pinned in the manifest, and the demo reads the unzipped pair from a local store |
 
 > **Note — uploads.** `gsplats_4d_neuromast_2ch` (both channels, 133 MB) is
 > uploaded to the `cc-by` record and pinned by SHA-256 in the manifest. h2afva
