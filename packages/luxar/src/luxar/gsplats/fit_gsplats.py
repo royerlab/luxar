@@ -107,6 +107,7 @@ class GaussianSplatFitter:
         self,
         V: np.ndarray,
         seeds: Optional[np.ndarray | int | float | GSplatData] = None,
+        seed_amps_background_relative: bool = False,
         norm_percentile: float = 0.0,
         floor: "str | float | None" = "auto",
         downscale: Optional[int | Sequence[int]] = None,
@@ -153,6 +154,10 @@ class GaussianSplatFitter:
 
         Parameters
         ----------
+        seed_amps_background_relative : bool, default=False
+            Amplitude convention of a ``seeds=GSplatData`` warm start — False for
+            ``generate_seeds()`` output (raw), True for a previous fit's output
+            (background-relative). See fit_gaussian_splats().
         seed_method : str, default="auto" (RECOMMENDED)
             Method for generating seeds when seeds=None:
 
@@ -183,7 +188,8 @@ class GaussianSplatFitter:
             self,
             V,
             seeds,
-            norm_percentile,
+            seed_amps_background_relative=seed_amps_background_relative,
+            norm_percentile=norm_percentile,
             floor=floor,
             downscale=downscale,
             init_sigma_vox=init_sigma_vox,
@@ -260,6 +266,7 @@ class GaussianSplatFitter:
 def fit_gaussian_splats(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float | GSplatData] = None,
+    seed_amps_background_relative: bool = False,
     norm_percentile: float = 0.0,
     floor: "str | float | None" = "auto",
     downscale: Optional[int | Sequence[int]] = None,
@@ -346,12 +353,36 @@ def fit_gaussian_splats(
           seeds=0.1 targets a representation using 10% of the original storage.
           The number of splats is computed as: n = ratio × total_voxels / floats_per_splat
           where floats_per_splat = d + d×(d+1)/2 + 1 (center + Cholesky + amp).
-        - If GSplatData: Warm-start from a previously fitted result
-          (centers + Cholesky + amplitudes carried over directly).
+        - If GSplatData: Explicit seeds or a warm start (centers + Cholesky +
+          amplitudes carried over directly). Both ``generate_seeds()`` output and
+          a previously fitted result go through this door — they differ in
+          amplitude scale, so declare it with
+          ``seed_amps_background_relative`` (below).
         - If None: Auto-generated using dimension-aware intelligent defaults:
           * Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
           * Volume-proportional density: ~1% of voxels as seeds
           * Inclusive threshold: percentile_thresh=70 for broad feature coverage
+    seed_amps_background_relative : bool, default=False
+        Which intensity convention the amplitudes of a ``seeds=GSplatData``
+        carry. Ignored for every other kind of ``seeds``.
+
+        - False (default): RAW-IMAGE-SAMPLED — the amplitudes were read off the
+          original volume, background pedestal included. This is what
+          ``generate_seeds()`` returns, i.e. the explicit-seeding workflow
+          (``fit_gaussian_splats(V, seeds=generate_seeds(V))``). They are
+          rescaled as ``(a - image_min) / intensity_range``, so an active
+          ``floor`` is subtracted exactly once.
+        - True: BACKGROUND-RELATIVE — the amplitudes already have the pedestal
+          removed. This is what a previous fit returns (the fit's output
+          amplitudes are the normalized ones times ``intensity_range``, with
+          ``image_min`` never added back), and therefore also what a
+          ``.gsplats.zarr`` loaded off disk carries. They are rescaled as
+          ``a / intensity_range``.
+
+        Getting this wrong is silent: declaring False on a fit's output makes an
+        active ``floor`` be subtracted twice, initializing every seed dimmer than
+        the floor to exactly 0; declaring True on raw amplitudes starts every
+        seed too bright by ``floor / intensity_range`` (#1172).
     norm_percentile : float, default=0.0
         Normalization method for handling outliers and noise:
         - 0.0: Full min-max range (maximum dynamic range, sensitive to outliers)
@@ -586,6 +617,7 @@ def fit_gaussian_splats(
         result = fitter.fit(
             V=V,
             seeds=seeds,
+            seed_amps_background_relative=seed_amps_background_relative,
             norm_percentile=norm_percentile,
             floor=floor,
             downscale=downscale,

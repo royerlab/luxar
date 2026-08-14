@@ -225,6 +225,11 @@ def volume_refine_splats(
     refit = fit_gaussian_splats(
         volume,
         seeds=seed,
+        # The seed is a previous fit's output, so its amplitudes are already
+        # background-relative. Without this the "auto" floor the re-fit inherits
+        # would be subtracted a SECOND time and every seed dimmer than the floor
+        # would start at exactly 0 (#1172).
+        seed_amps_background_relative=True,
         n_iters=config.iters,
         lr=config.lr,
         early_stop_patience=config.early_stop_patience,

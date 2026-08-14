@@ -437,6 +437,331 @@ class TestPreprocessData:
             )
 
 
+def _pedestal_volume() -> np.ndarray:
+    """A 40x40 volume with a constant background pedestal of 100 plus a blob."""
+    V = np.full((40, 40), 100.0, dtype=np.float32)
+    V[10:30, 10:30] += 400.0
+    return V
+
+
+def _gsplatdata_seeds(centers: np.ndarray, amps: np.ndarray):
+    """Build a bare GSplatData the way both seed producers build one.
+
+    ``generate_seeds()`` (raw amplitudes) and ``finalize_results`` (background-
+    relative amplitudes) both emit exactly this — centers + Cholesky +
+    amplitudes, no stats, no provenance. That is precisely why the amplitude
+    convention has to be declared by the caller.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.utils.trils import pack_tril
+
+    n, d = centers.shape
+    L = np.zeros((n, d, d), dtype=np.float32)
+    for i in range(d):
+        L[:, i, i] = 1.5
+    return GSplatData(
+        centers=centers.astype(np.float32),
+        amplitudes=amps.astype(np.float32),
+        cholesky_factors=pack_tril(L),
+    )
+
+
+class TestInitAmpsProvenance:
+    """Amplitude-scale bookkeeping for pre-initialized seeds (#1172).
+
+    Two conventions reach ``preprocess_data``: raw-image-sampled amplitudes
+    (what the seeding methods produce) and background-relative ones (what a
+    previous fit returns). They differ by exactly the background floor, so the
+    rescaling into the optimizer's [0, 1] scale must differ too — and since the
+    ``seeds=GSplatData`` door carries both, the caller declares which via
+    ``FitConfig.seed_amps_background_relative``.
+    """
+
+    def test_gsplatdata_warm_start_keeps_subfloor_amplitudes(
+        self, mock_config_2d
+    ) -> None:
+        """A declared background-relative warm start must NOT have the floor
+        subtracted a second time.
+
+        Before the fix, ``(a - image_min) / intensity_range`` clipped every
+        sub-floor amplitude to exactly 0, silently erasing the warm start's dim
+        splats.
+        """
+        V = _pedestal_volume()
+        seed_amps = np.array([1.0, 5.0, 30.0], dtype=np.float32)  # all < floor 100
+        centers = np.array([[12.0, 12.0], [20.0, 20.0], [26.0, 26.0]], np.float32)
+
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 0.0
+        mock_config_2d.floor = 100.0  # active floor == image_min
+        mock_config_2d.seeds = _gsplatdata_seeds(centers, seed_amps)
+        mock_config_2d.seed_amps_background_relative = True  # a fit's output
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.floor == pytest.approx(100.0, abs=1e-6)
+        assert result.image_min == pytest.approx(100.0, abs=1e-6)
+        assert result.intensity_range == pytest.approx(400.0, abs=1e-6)
+        assert result.init_amps is not None
+        # No second subtraction: pure division by the intensity range.
+        expected = np.clip(seed_amps / result.intensity_range, 0.0, 1.0)
+        assert np.allclose(result.init_amps, expected, atol=1e-6)
+        # And specifically: nothing was zeroed.
+        assert float(result.init_amps.min()) > 0.0
+
+    def test_gsplatdata_warm_start_with_auto_floor(self, mock_config_2d) -> None:
+        """Same guarantee under ``floor='auto'`` on a volume with a real pedestal
+        (the setting `volume_refit` inherits from ``fit_gaussian_splats``)."""
+        rng = np.random.default_rng(1)
+        V = np.full((40, 40), 100.0, np.float32)
+        V += rng.normal(0, 1.0, V.shape).astype(np.float32)
+        V[16:24, 16:24] += 400.0
+        seed_amps = np.array([2.0, 8.0, 40.0], dtype=np.float32)
+        centers = np.array([[17.0, 17.0], [20.0, 20.0], [22.0, 22.0]], np.float32)
+
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 0.0
+        mock_config_2d.floor = "auto"
+        mock_config_2d.seeds = _gsplatdata_seeds(centers, seed_amps)
+        mock_config_2d.seed_amps_background_relative = True
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.floor is not None  # the floor really is active
+        assert result.floor == pytest.approx(100.0, abs=3.0)
+        assert result.init_amps is not None
+        expected = np.clip(seed_amps / result.intensity_range, 0.0, 1.0)
+        assert np.allclose(result.init_amps, expected, atol=1e-6)
+        assert float(result.init_amps.min()) > 0.0
+
+    def test_gsplatdata_seeds_default_to_raw_sampled(self, mock_config_2d) -> None:
+        """Negative control for the OTHER user of the same door: a GSplatData
+        straight out of ``generate_seeds()`` carries RAW amplitudes, so without
+        the declaration the ``- image_min`` term must still apply.
+
+        This is the documented explicit-seeding workflow
+        (``fit_gaussian_splats(V, seeds=generate_seeds(V))`` — see
+        ``seeds/generate.py`` and ``demo_splats_mitosis_explicit_seeding``), and
+        a bare GSplatData records no provenance, so treating every GSplatData as
+        a fit's output would start these seeds too bright by
+        ``floor / intensity_range``.
+        """
+        V = _pedestal_volume()
+        centers = np.array([[12.0, 12.0], [20.0, 20.0], [26.0, 26.0]], np.float32)
+        # Sampled off the raw volume: pedestal level, and two blob-level values.
+        raw_amps = np.array([100.0, 300.0, 500.0], dtype=np.float32)
+
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 0.0
+        mock_config_2d.floor = 100.0
+        mock_config_2d.seeds = _gsplatdata_seeds(centers, raw_amps)
+        # No declaration -> the default, raw-image-sampled.
+        assert mock_config_2d.seed_amps_background_relative is False
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.init_amps is not None
+        expected = np.clip(
+            (raw_amps - result.image_min) / result.intensity_range, 0.0, 1.0
+        )
+        assert np.allclose(result.init_amps, expected, atol=1e-6)
+        # The pedestal-level seed rescales to exactly 0 under this convention
+        # (it would be 0.25 if the floor were skipped).
+        assert float(result.init_amps[0]) == pytest.approx(0.0, abs=1e-6)
+
+    def test_config_init_amps_stay_raw_sampled(self, mock_config_2d) -> None:
+        """Negative control: ``config.init_amps`` keeps the raw-image-sampled
+        convention, so ``(a - image_min) / intensity_range`` still applies.
+
+        This is the path the seeding methods' scale is expressed in; the fix must
+        not flip it.
+        """
+        V = _pedestal_volume()
+        centers = np.array([[12.0, 12.0], [20.0, 20.0], [26.0, 26.0]], np.float32)
+        raw_amps = np.array([100.0, 300.0, 500.0], dtype=np.float32)
+
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 0.0
+        mock_config_2d.floor = 100.0
+        mock_config_2d.seeds = centers  # explicit centers, not a GSplatData
+        mock_config_2d.init_amps = raw_amps
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.init_amps is not None
+        expected = np.clip(
+            (raw_amps - result.image_min) / result.intensity_range, 0.0, 1.0
+        )
+        assert np.allclose(result.init_amps, expected, atol=1e-6)
+        # The pedestal-level amplitude maps to 0 under this convention.
+        assert float(result.init_amps[0]) == pytest.approx(0.0, abs=1e-6)
+
+    def test_generated_seeds_stay_raw_sampled(self, mock_config_2d) -> None:
+        """Negative control for the seeding path: amplitudes sampled by
+        ``generate_seeds`` off the still-raw volume keep the ``- image_min`` term.
+
+        Background seeds sit at the pedestal, so under the raw convention they
+        rescale to 0; under the background-relative one they would come out
+        clearly positive (~0.22 here). Asserting the zeros pins the convention.
+        """
+        V = _pedestal_volume()
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 0.0
+        mock_config_2d.floor = 100.0
+        mock_config_2d.seeds = None
+        mock_config_2d.seed_method = "grid"
+        mock_config_2d.seed_kwargs = {"spacing": 6.0, "device": "cpu"}
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.init_amps is not None
+        assert result.init_amps.shape[0] == result.N
+        # Some seeds land on the background pedestal -> exactly 0 after rescaling.
+        assert float(result.init_amps.min()) == pytest.approx(0.0, abs=1e-6)
+        # ...and some land on the blob, so the array is not all zeros.
+        assert float(result.init_amps.max()) > 0.5
+
+    def test_warm_start_round_trip_through_a_real_fit(self, mock_config_2d) -> None:
+        """End-to-end: fit a tiny volume with an active floor, then feed the
+        RESULT back as ``seeds=`` and check the amplitudes that reach the
+        optimizer.
+
+        What this proves: amplitudes produced by ``finalize_results``, DECLARED
+        background-relative the way ``volume_refit`` declares them, survive
+        re-preprocessing as ``seed_amps / intensity_range`` — i.e. the warm start
+        is not zeroed. What it does NOT prove: bit-exact round-tripping. The
+        re-fit resolves its own ``intensity_range``, which need not equal the
+        one the seed was fitted under (here both fits see the same volume, so
+        they do).
+        """
+        from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+        V = _pedestal_volume()
+        fitted = fit_gaussian_splats(
+            V,
+            seeds=8,
+            floor=100.0,
+            n_iters=60,
+            device="cpu",
+            verbose=False,
+            seed_method="grid",
+            enable_dynamic_ops=False,
+            cull_retention=None,
+            sort_splats_enabled=False,
+            spacing=8.0,
+        )
+        seed_amps = fitted.amplitudes.copy()
+        assert seed_amps.size > 0
+
+        mock_config_2d.V = V
+        mock_config_2d.norm_percentile = 0.0
+        mock_config_2d.floor = 100.0
+        mock_config_2d.seeds = fitted
+        mock_config_2d.seed_amps_background_relative = True
+
+        result = preprocess_data(mock_config_2d)
+
+        assert result.init_amps is not None
+        expected = np.clip(seed_amps / result.intensity_range, 0.0, 1.0)
+        assert np.allclose(result.init_amps, expected, atol=1e-6)
+        # Non-vacuous: the fit really does leave amplitudes below the floor.
+        sub_floor = seed_amps < result.image_min
+        assert int(sub_floor.sum()) > 0
+        # Every positive warm-start amplitude stays positive — including the
+        # sub-floor ones, which the double subtraction collapsed to exactly 0.
+        positive = seed_amps > 0.0
+        assert np.all(result.init_amps[positive] > 0.0), (
+            f"{int(np.sum(result.init_amps[positive] == 0.0))} of "
+            f"{int(positive.sum())} positive warm-start amplitudes were zeroed"
+        )
+
+    def test_volume_refit_declares_background_relative_seeds(self) -> None:
+        """``volume_refine_splats`` re-fits a previous fit's output, so it must
+        declare ``seed_amps_background_relative=True``.
+
+        It is the only production caller that passes a ``GSplatData`` as
+        ``seeds=``, and it passes no ``floor``, so it inherits the ``"auto"``
+        default — exactly the combination that double-subtracts the pedestal.
+        Lives with the convention tests rather than in ``lod/tests`` because what
+        is being pinned is this module's contract, not the re-fit engine's.
+        """
+        import luxar.gsplats.fit_gsplats as fit_gsplats_mod
+        from luxar.gsplats.lod.volume_refit import (
+            VolumeRefitConfig,
+            volume_refine_splats,
+        )
+
+        recorded: dict[str, object] = {}
+
+        class _Stop(RuntimeError):
+            pass
+
+        def _spy(*args, **kwargs):
+            recorded.update(kwargs)
+            raise _Stop
+
+        V = _pedestal_volume()
+        # Centers inside the volume's voxel range so the frame guard passes and
+        # the re-fit is actually attempted.
+        seed = _gsplatdata_seeds(
+            np.array([[12.0, 12.0], [20.0, 20.0], [26.0, 26.0]], np.float32),
+            np.array([1.0, 5.0, 30.0], np.float32),
+        )
+
+        original = fit_gsplats_mod.fit_gaussian_splats
+        fit_gsplats_mod.fit_gaussian_splats = _spy
+        try:
+            with pytest.raises(_Stop):
+                volume_refine_splats(
+                    seed, V, config=VolumeRefitConfig(iters=1), device="cpu"
+                )
+        finally:
+            fit_gsplats_mod.fit_gaussian_splats = original
+
+        assert recorded.get("seed_amps_background_relative") is True
+        # ...and it really does leave the floor at its "auto" default.
+        assert "floor" not in recorded
+
+    def test_progressive_fitting_forces_floor_none(self) -> None:
+        """``fit_progressive_gaussian_splats`` subtracts the floor from the volume
+        itself and must therefore run every per-pass fit with ``floor='none'``.
+
+        That is what makes the progressive path immune to the double-subtraction
+        this class guards; pinned here so a refactor cannot quietly drop it.
+        """
+        import luxar.gsplats.fit_gsplats as fit_gsplats_mod
+        from luxar.gsplats.fit_progressive_gsplats import (
+            fit_progressive_gaussian_splats,
+        )
+
+        recorded: dict[str, object] = {}
+
+        class _Stop(RuntimeError):
+            pass
+
+        def _spy(*args, **kwargs):
+            recorded.update(kwargs)
+            raise _Stop
+
+        original = fit_gsplats_mod.fit_gaussian_splats
+        fit_gsplats_mod.fit_gaussian_splats = _spy
+        try:
+            with pytest.raises(_Stop):
+                fit_progressive_gaussian_splats(
+                    _pedestal_volume(),
+                    max_splats=16,
+                    max_splats_per_pass=8,
+                    iters_per_pass=2,
+                    device="cpu",
+                    verbose=False,
+                    floor=100.0,
+                )
+        finally:
+            fit_gsplats_mod.fit_gaussian_splats = original
+
+        assert recorded.get("floor") == "none"
+
+
 class TestCompressionRatio:
     """Tests for compression ratio helper functions."""
 
