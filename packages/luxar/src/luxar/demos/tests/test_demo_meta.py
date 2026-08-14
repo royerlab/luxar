@@ -6,10 +6,12 @@ single durable gate (the block generator that seeded them was a one-off).
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
 import textwrap
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -306,6 +308,39 @@ def test_output_and_cache_paths_resolve(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # DEMO_META.caches vs the cache directory a demo actually writes
 # --------------------------------------------------------------------------- #
+def _string_constants(tree: ast.Module) -> dict[str, str]:
+    """Map every NAME bound to a string literal anywhere in *tree* (last wins)."""
+    consts: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            if isinstance(node.value.value, str):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        consts[t.id] = node.value.value
+    return consts
+
+
+def _resolve_str(node: ast.expr, consts: Mapping[str, str]) -> str | None:
+    """Resolve one path-chain operand to a string, or None if it is neither a
+    string literal nor a name bound to one in *consts*."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return consts.get(node.id)
+    return None
+
+
+def _truediv_chain(node: ast.BinOp) -> list[ast.expr]:
+    """Flatten the left spine of an ``a / b / c`` chain into its operand list."""
+    parts: list[ast.expr] = []
+    cur: ast.expr = node
+    while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Div):
+        parts.insert(0, cur.right)
+        cur = cur.left
+    parts.insert(0, cur)
+    return parts
+
+
 def _cache_dirs_written(path: Path) -> set[str]:
     """Cache subdirectory names *path* joins onto the luxar cache root.
 
@@ -318,45 +353,25 @@ def _cache_dirs_written(path: Path) -> set[str]:
     importing 84 demo modules, and keeping it here avoids widening the registry's
     public surface for one invariant.
     """
-    import ast
-
     tree = ast.parse(path.read_text())
-    consts: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
-            if isinstance(node.value.value, str):
-                for t in node.targets:
-                    if isinstance(t, ast.Name):
-                        consts[t.id] = node.value.value
-
-    def leaf(node: ast.expr) -> str | None:
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value
-        if isinstance(node, ast.Name):
-            return consts.get(node.id)
-        return None
+    consts = _string_constants(tree)
 
     found: set[str] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
             continue
-        parts: list[ast.expr] = []
-        cur: ast.expr = node
-        while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Div):
-            parts.insert(0, cur.right)
-            cur = cur.left
-        parts.insert(0, cur)
-        vals = [leaf(p) for p in parts]
-        if "luxar" in vals:
-            i = vals.index("luxar")
-            seg = vals[i + 1] if i + 1 < len(vals) else None
-            # A dotted segment is a FILE sitting at the cache root, not a cache
-            # directory (arxiv parks `arxiv_embeddings.zip` and
-            # `arxiv_metadata.json` there). `inventory_caches` walks directories
-            # only, and `caches` names are joined then rmtree'd, so a filename
-            # does not belong in it.
-            if seg and "." not in seg:
-                found.add(str(seg))
+        vals = [_resolve_str(p, consts) for p in _truediv_chain(node)]
+        if "luxar" not in vals:
+            continue
+        i = vals.index("luxar")
+        seg = vals[i + 1] if i + 1 < len(vals) else None
+        # A dotted segment is a FILE sitting at the cache root, not a cache
+        # directory (arxiv parks `arxiv_embeddings.zip` and
+        # `arxiv_metadata.json` there). `inventory_caches` walks directories
+        # only, and `caches` names are joined then rmtree'd, so a filename
+        # does not belong in it.
+        if seg and "." not in seg:
+            found.add(str(seg))
     return found
 
 
