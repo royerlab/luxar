@@ -244,7 +244,10 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       // partitions the disc exactly between the two legs, so joints are
       // seamless, notch-free, and double-bright-free at any bend angle
       // and any zoom. Stencil reach at a cut end is |ny|·rMax (the kept
-      // half-disc's axial extent), so joints cost LESS fill than caps.
+      // half-disc's axial extent), so joints cost LESS fill than caps —
+      // EXCEPT where a deficit packet exists (the needPacket branches below),
+      // where the reach is the FULL disc because the deficit term is bounded
+      // by this leg's own profile, not by the kept half (#1488).
       vec4 cutA = vec4(-1.0, 0.0, 0.0, 0.0);
       vec4 cutB = vec4(1.0, 0.0, 0.0, 0.0);
       float extA = rMax;

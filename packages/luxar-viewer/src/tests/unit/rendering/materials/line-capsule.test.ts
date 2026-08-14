@@ -69,8 +69,16 @@ function readSource(relativeToSrc: string): string {
 }
 
 /**
- * The {@link squash}ed BODY of one vertex surface's `needPacket<end>` branch,
- * brace-matched from the (likewise squashed) branch header.
+ * The BODY of one vertex surface's `needPacket<end>` branch, brace-matched from
+ * the branch header, in BOTH matching forms:
+ *
+ * - `squashed` — whitespace-FREE ({@link squash}), for the reach-form literals,
+ *   so a behaviour-identical prettier rewrap of a TSL assign cannot red the pin
+ *   (the same reason the sibling locks match whitespace-free).
+ * - `spaced` — whitespace-COLLAPSED, for the write-count regexes. They are
+ *   whitespace-insensitive already, and they need the token boundary their
+ *   `(?<![\w$])` lookbehind rests on: squashed, `else extA = …` becomes
+ *   `elseextA=`, the lookbehind fails, and a second write goes UNCOUNTED.
  *
  * A slice, not a whole-source grep: the half-disc reach appears twice per end
  * (the `Else` arm and the width-gated arm) and is CORRECT in both, so only a
@@ -80,20 +88,36 @@ function readSource(relativeToSrc: string): string {
  * returned an empty slice would go vacuous under exactly the refactor this pin
  * exists to survive.
  *
- * Squashed, not merely comment-stripped, so a behaviour-identical prettier
- * rewrap of a TSL assign cannot red the pin — the same reason the sibling locks
- * match whitespace-free. Callers must squash their expected literals too.
+ * The header lookup runs ONCE, on squashed text (a rewrapped header still
+ * matches); a squashed→stripped index map then re-cuts the same span with its
+ * spacing intact, so the two forms cannot drift apart.
  */
-function packetBranchBody(label: string, source: string, header: string): string {
-  const stripped = squash(source);
-  const headerAt = stripped.indexOf(squash(header));
+function packetBranchBody(
+  label: string,
+  source: string,
+  header: string
+): { squashed: string; spaced: string } {
+  const stripped = stripComments(source);
+  const toStripped: number[] = [];
+  let squashed = '';
+  for (let i = 0; i < stripped.length; i++) {
+    if (/\s/.test(stripped[i])) continue;
+    squashed += stripped[i];
+    toStripped.push(i);
+  }
+  const headerAt = squashed.indexOf(squash(header));
   if (headerAt < 0) throw new Error(`${label}: packet branch header '${header}' not found`);
-  const open = stripped.indexOf('{', headerAt);
+  const open = squashed.indexOf('{', headerAt);
   if (open < 0) throw new Error(`${label}: no '{' after '${header}'`);
   let depth = 0;
-  for (let i = open; i < stripped.length; i++) {
-    if (stripped[i] === '{') depth += 1;
-    else if (stripped[i] === '}' && --depth === 0) return stripped.slice(open + 1, i);
+  for (let i = open; i < squashed.length; i++) {
+    if (squashed[i] === '{') depth += 1;
+    else if (squashed[i] === '}' && --depth === 0) {
+      return {
+        squashed: squashed.slice(open + 1, i),
+        spaced: stripped.slice(toStripped[open] + 1, toStripped[i]).replace(/\s+/g, ' '),
+      };
+    }
   }
   throw new Error(`${label}: unbalanced braces after '${header}'`);
 }
@@ -195,19 +219,26 @@ describe('capsule constants', () => {
     // merge-gating and a TSL-only revert to the half-disc reach would ship
     // green, chopping the deficit rule's light on WebGPU alone.
     //
-    // Matching runs on {@link squash}ed text — comment-stripped AND
-    // whitespace-free, both sides of every comparison — so a behaviour-identical
-    // prettier rewrap (`extA.assign(\n  rMax.add(APRON)\n);`) cannot red the
-    // pin, while an operand, order or spelling change still must. The
-    // write-count regex was whitespace-insensitive already.
+    // WHAT IS MATCHED AGAINST WHAT. The reach-form literals run on
+    // {@link squash}ed text — comment-stripped AND whitespace-free on both
+    // sides — so a behaviour-identical prettier rewrap
+    // (`extA.assign(\n  rMax.add(APRON)\n);`) cannot red them, while an
+    // operand, order or spelling change still must. The write COUNT runs on
+    // whitespace-COLLAPSED text instead, and that difference is load-bearing:
+    // the regexes are whitespace-insensitive anyway, but squashed they lose the
+    // token boundary their `(?<![\w$])` lookbehind needs — `else extA = …`
+    // becomes `elseextA=`, the lookbehind fails, and a second write inside an
+    // `if`/`else` (the shape a real build-flag edit takes) goes UNCOUNTED while
+    // both `toContain` arms stay green by design.
     //
     // MEASURED SCOPE — every case below was run as a mutant against this test.
     // CAUGHT: the literal half-disc revert; a `min()` wrapper around the
     // full-disc operand (all three spellings tried, including swapped
     // operands, because each one displaces the `extA=rMax+` prefix); a
     // SECOND write inside the branch, whether plain (`extA = …`), compound
-    // (`extA *= …`) or from the TSL assign family (`extA.mulAssign(…)`); a
-    // renamed branch header (fails closed, by throw).
+    // (`extA *= …`), from the TSL assign family (`extA.mulAssign(…)`) or
+    // guarded by an inline `if`/`else` in either language; a renamed branch
+    // header (fails closed, by throw).
     // EVADES: a write placed AFTER the branch; an alias bound inside it that
     // also avoids the literal half-disc spelling (`const eA = extA;
     // eA.assign(nLoc.y.abs().mul(rMax)…)` — with the literal spelling the
@@ -225,15 +256,17 @@ describe('capsule constants', () => {
     for (const [label, source] of GLSL_VERTEX_SURFACES) {
       for (const end of ['A', 'B'] as const) {
         const body = packetBranchBody(`${label} ${end}`, source, `if (needPacket${end}) {`);
-        expect(body, `${label} ${end}: full-disc reach`).toContain(squash(`ext${end} = rMax + `));
-        expect(body, `${label} ${end}: half-disc reach`).not.toContain(
+        expect(body.squashed, `${label} ${end}: full-disc reach`).toContain(
+          squash(`ext${end} = rMax + `)
+        );
+        expect(body.squashed, `${label} ${end}: half-disc reach`).not.toContain(
           squash('abs(nLoc.y) * rMax')
         );
         // Compound forms included (`*=`, `+=`, …): a bare `=` counter reads
         // `extA *= abs(nLoc.y);` as no write at all. Same rule #1494 landed
         // for `rEnd`.
         expect(
-          assignmentsTo(body, new RegExp(`(?<![\\w$])ext${end}\\s*[-+*/]?=(?!=)`, 'g')),
+          assignmentsTo(body.spaced, new RegExp(`(?<![\\w$])ext${end}\\s*[-+*/]?=(?!=)`, 'g')),
           `${label} ${end}: the packet branch must write ext${end} exactly once`
         ).toBe(1);
       }
@@ -242,16 +275,16 @@ describe('capsule constants', () => {
       const source = readSource(relativeToSrc);
       for (const end of ['A', 'B'] as const) {
         const body = packetBranchBody(`${label} ${end}`, source, `If(needPacket${end}, () => {`);
-        expect(body, `${label} ${end}: full-disc reach`).toContain(
+        expect(body.squashed, `${label} ${end}: full-disc reach`).toContain(
           squash(`ext${end}.assign(rMax.add(`)
         );
-        expect(body, `${label} ${end}: half-disc reach`).not.toContain(
+        expect(body.squashed, `${label} ${end}: half-disc reach`).not.toContain(
           squash('abs(nLoc.y).mul(rMax)')
         );
         // The whole TSL assign family, not just `.assign(`: `.mulAssign(`,
         // `.addAssign(` and friends all write the var in place.
         expect(
-          assignmentsTo(body, new RegExp(`(?<![\\w$])ext${end}\\.\\w*[Aa]ssign\\(`, 'g')),
+          assignmentsTo(body.spaced, new RegExp(`(?<![\\w$])ext${end}\\.\\w*[Aa]ssign\\(`, 'g')),
           `${label} ${end}: the packet branch must write ext${end} exactly once`
         ).toBe(1);
       }

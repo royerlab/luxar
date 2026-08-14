@@ -304,12 +304,13 @@ export function capsuleLegField(leg: CapsuleJointLeg, px: number, py: number): n
  * plane, the projected partner length degenerates (the shaders' `ql > 1e-4`
  * guard, `shader-glsl-capsule.ts` — this model divides by that length
  * instead: a tiny-but-finite one is modelled as an extreme taper rather than
- * a butt, and a ZERO one goes non-finite, which the sweep throws on rather
- * than scoring as a vacuous 0), or `nLoc.x` fails its sign test; and the
- * free-end/hairpin `rMax`, which the model hardcodes at its own call sites and
- * so cannot be reached through an injected rule. The first two of those are
- * unproducible here (the model has no texels and no near plane), but the
- * `nLoc.x` one merely goes unexercised: with θ the angle between q̂ and m̂,
+ * a butt, and a ZERO one goes non-finite WHERE THE PACKET IS LIVE, which the
+ * sweep throws on rather than scoring as a vacuous 0 — gated off, the gradient
+ * is never read and the row scores finitely), or `nLoc.x` fails its sign test;
+ * and the free-end/hairpin `rMax`, which the model hardcodes at its own call
+ * sites and so cannot be reached through an injected rule. The first two of
+ * those are unproducible here (the model has no texels and no near plane), but
+ * the `nLoc.x` one merely goes unexercised: with θ the angle between q̂ and m̂,
  * `nl = 2|sin(θ/2)|` and `nLoc.x = −|sin(θ/2)|`, so the window
  * `nl > 1e-3 ∧ nLoc.x > −1e-3` holds for θ in (0.057°, 0.115°) — a sliver just
  * above the hairpin fallback, which `leg(180, …)` vs `leg(180.08, …)` would
@@ -494,7 +495,9 @@ export function capsuleJointCompositionError(
       // failure mode this sweep must never have, since its whole job is to be
       // the detector. Fail loudly instead. (A tiny but FINITE length is not
       // this case: it is modelled as an extreme taper, where the shaders would
-      // butt-cut at `ql <= 1e-4`. See `capsuleJointStencilReach`.)
+      // butt-cut at `ql <= 1e-4`. Nor is a degenerate leg whose PACKET is gated
+      // off — the gradient is never read there, so the row scores finitely. See
+      // `capsuleJointStencilReach`.)
       if (!Number.isFinite(err)) {
         throw new Error(
           `capsuleJointCompositionError: non-finite error at (${px}, ${py}) — ` +
