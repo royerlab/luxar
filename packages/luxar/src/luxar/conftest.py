@@ -7,11 +7,12 @@ explicit `default_rng(seed)`) inherit determinism for free. Tests that
 already create their own seeded `default_rng` are unaffected.
 
 Also pins zarr's ambient default format to whatever Luxar writes for the whole
-session (see ``_zarr_format_follows_luxar``), and holds a couple of small
-cross-language-constant-lock helpers (``find_repo_relative_file`` /
-``read_ts_number_const``) shared by the handful of Python tests that read a
-numeric constant straight out of a TypeScript source file rather than trust a
-prose comment to stay in sync.
+session (see ``_zarr_format_follows_luxar``), and holds a few small shared test
+helpers: ``array_compressor`` reads an array's compressor without the caller
+knowing which zarr format wrote it, and ``find_repo_relative_file`` /
+``read_ts_number_const`` let the handful of cross-language constant-lock tests
+read a number straight out of a TypeScript source rather than trust a prose
+comment to stay in sync.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import numpy as np
 import pytest
@@ -77,6 +79,65 @@ def _seed_numpy_global_rng() -> None:
     `np.random.randn`, etc.).
     """
     np.random.seed(0xC0FFEE)
+
+
+class CompressorView(NamedTuple):
+    """A zarr array's compressor, normalised across both formats.
+
+    ``shuffle`` is the numcodecs integer (0 none / 1 byte / 2 bit), because that
+    is what the compressor POLICY is stated in
+    (:mod:`luxar.encoding.compression`) and what tests compare against.
+    """
+
+    cname: str
+    clevel: int
+    shuffle: int
+
+
+#: v3 spells blosc's shuffle as a name; the policy speaks numcodecs' integers.
+_V3_SHUFFLE_INTS = {"noshuffle": 0, "shuffle": 1, "bitshuffle": 2}
+
+
+def array_compressor(array: Any) -> CompressorView | None:
+    """The blosc compressor of ``array``, from a format-2 or format-3 store.
+
+    ``None`` means stored RAW. Raises for a non-blosc compressor rather than
+    guessing, since every caller asserts against the blosc-shaped policy.
+
+    Formats differ in BOTH the accessor and the spelling: format 2 exposes a
+    single numcodecs ``.compressor`` whose ``shuffle`` is an int; format 3
+    exposes a ``.compressors`` tuple of ``zarr.codecs`` objects whose
+    ``shuffle`` is a name.
+
+    ``.compressor`` RAISES on a format-3 array — ``TypeError: `compressor` is
+    not available for Zarr format 3 arrays.`` — rather than returning ``None``,
+    so ``getattr(array, "compressor", None)`` does NOT absorb it: getattr's
+    default only covers ``AttributeError``. That is the good outcome (loud, not
+    silent), but it has to be caught here rather than at every call site.
+    """
+    try:
+        legacy = array.compressor
+    except (AttributeError, TypeError):
+        legacy = None
+    if legacy is not None:
+        return CompressorView(
+            cname=str(legacy.cname),
+            clevel=int(legacy.clevel),
+            shuffle=int(legacy.shuffle),
+        )
+
+    for codec in getattr(array, "compressors", ()) or ():
+        name = getattr(codec, "cname", None)
+        if name is None:
+            continue  # not blosc (e.g. the mandatory `bytes` codec)
+        shuffle = getattr(codec, "shuffle", None)
+        shuffle_name = getattr(shuffle, "value", shuffle)
+        return CompressorView(
+            cname=str(getattr(name, "value", name)),
+            clevel=int(codec.clevel),
+            shuffle=_V3_SHUFFLE_INTS[str(shuffle_name)],
+        )
+    return None
 
 
 def find_repo_relative_file(rel_path: Path, start: Path) -> Path | None:
