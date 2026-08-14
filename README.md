@@ -376,9 +376,10 @@ splats are reordered so that early prefixes carry as much of the signal as possi
 which means the first chunk to arrive is already a meaningful picture and later
 chunks only refine it. Where levels replace each other, the viewer picks between
 them using a viewport-relative `coverage_fraction = sqrt(N_i / N_finest)` — the
-finest level shows once an object's projected size reaches about a quarter of the
-viewport diagonal, i.e. at any normal full-frame view, and coarser ones step in as
-it shrinks below that — so level switching self-calibrates on any monitor with no
+finest level shows once an object's projected size reaches about half of the
+viewport's fitted screen axis (the smaller of its width/height), i.e. at any
+normal full-frame view, and coarser ones step in as it shrinks below that — so
+level switching self-calibrates on any monitor or aspect ratio with no
 threshold to tune.
 
 The canonical end-to-end pipeline is three commands:
@@ -495,9 +496,14 @@ from screen-space derivatives. `normal_dims` is required whenever you *do* pass
 them, because in nD there is no implicit "first three dimensions".
 
 Spatial partitioning **is** supported — `add_mesh(partition=…)` splits a large
-surface into frustum-cullable parts, though each part still loads whole. LOD and
-`volumetric` blending are not, and neither degrades silently: `add_mesh` raises
-on both, and a `volumetric` that reaches the viewer by *inheritance* from an
+surface into frustum-cullable parts, though each part still loads whole.
+Substitutive LOD (`add_mesh(substitutive_lod=…)`, decimated by
+`luxar.mesh.decimate`) and a spatially coherent *reveal* additive ladder
+(`add_mesh(additive_lod=…)`, `method="radial"`) both ship. What is still
+refused — and neither degrades silently — is an additive ladder over an
+*arbitrary* order (a prefix of an arbitrarily ordered index buffer is a holed
+surface, not a coarser one) and `volumetric` blending: `add_mesh` raises on
+both, and a `volumetric` that reaches the viewer by *inheritance* from an
 ancestor group logs a warning naming the node and falls back to `opaque`. See
 [the mesh spec](docs/specs/MESH_NODE_SPEC.md) §9 for why, per exclusion.
 

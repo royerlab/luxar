@@ -50,6 +50,29 @@ LINE_JOIN_STYLES: Final[frozenset[str]] = frozenset({"none", "miter"})
 # today's default forever and the viewer could never move it. Not dead code.
 DEFAULT_LINE_JOIN: Final[str] = "miter"
 
+# LOD selector modes — how the viewer interprets a kind=lod group's per-child
+# `coverage_fraction` thresholds (the group's `selector` attr names the units):
+#
+# "screen-area"  coverage_fraction is a literal SCREEN-AREA fraction: projected
+#                bbox rect area / viewport area. The derived whole-object ladder
+#                is [0, …, 1/8, 1/4, 1/2] (full detail while the node occupies
+#                at least half the screen, one level coarser per halving of
+#                occupied area); a partition tile anchors at 1.0 (fills-screen).
+#                What every DERIVED ladder stamps.
+# "coverage"     legacy diagonal metric: the viewer compares against projected
+#                bbox diagonal / (FILL_FACTOR=0.5 × min(viewport.width,
+#                viewport.height) — the fitted screen axis; see the FILL_FACTOR
+#                doc in scene/lod-group-registry.ts), bounded by
+#                MAX_COVERAGE_FRACTION=4.0. Kept for existing datasets and
+#                for explicit `coverage_fractions=[...]` lists, whose authored
+#                values were tuned in these units.
+#
+# The viewer mirror is `packages/luxar-viewer/src/types/lod-group.ts`; keep the
+# spellings in step with it.
+LOD_SELECTORS: Final[frozenset[str]] = frozenset({"coverage", "screen-area"})
+# The selector every derived (auto-computed) ladder stamps.
+DERIVED_LOD_SELECTOR: Final[str] = "screen-area"
+
 # Absorption (kappa) — the volumetric blending mode's per-node coefficient.
 # Multiplicative composition, identity 1.0; no upper bound (physical
 # coefficient); read only by the volumetric shader branch.

@@ -220,8 +220,8 @@ const EXPECTED_LINE_SEGMENTS = 120 + 16 + 40 + 20 + 9;
  *
  * Re-baselined at the #1352 flip for the capsule's ROUND joins: the
  * capsule measures 0.895 (a round join genuinely carries less column flux
- * through a square corner than the quad's miter did — 0.985; the
- * volumetric reference's joins are round too), and the unmitred pathology
+ * through a square corner than the quad's miter did — 0.985; the since-
+ * deleted volumetric reference's joins were round too), and the unmitred pathology
  * measures 0.780. The floor sits between them at 0.85 — 0.045 of headroom
  * above the pathology-side margin of 0.070; the two margins are the
  * allowance for GPU, driver and resolution differences. If the capsule

@@ -25,15 +25,21 @@ export type SceneFormatVersion = '0.1' | '0.2' | '0.3';
 /**
  * Current standalone `.gsplats.zarr` node-tree format version — the version the Python writer emits and this build treats as current.
  */
-export const GSPLATS_FORMAT_VERSION = '3.3';
+export const GSPLATS_FORMAT_VERSION = '3.4';
 /**
  * Standalone gsplats node-tree format versions this build can load; the loader matches a store on-disk format_version against this allowlist.
  */
-export const SUPPORTED_GSPLATS_FORMAT_VERSIONS: readonly string[] = ['3.0', '3.1', '3.2', '3.3'];
+export const SUPPORTED_GSPLATS_FORMAT_VERSIONS: readonly string[] = [
+  '3.0',
+  '3.1',
+  '3.2',
+  '3.3',
+  '3.4',
+];
 /**
  * Union of the supported standalone gsplats format version strings.
  */
-export type GSplatsFormatVersion = '3.0' | '3.1' | '3.2' | '3.3';
+export type GSplatsFormatVersion = '3.0' | '3.1' | '3.2' | '3.3' | '3.4';
 
 /**
  * Root-header `format_type` value identifying a standalone gsplats store.

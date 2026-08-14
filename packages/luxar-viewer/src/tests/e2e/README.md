@@ -340,10 +340,10 @@ Each entry in the (private) `SHADER_REGISTRY` provides:
 
 The registry currently covers FXAA, bloom threshold, the mega
 post-processing pass, point / line / gsplat / mesh materials, the
-three picking shaders, and the shared-math entries (`erf`,
-`line-ray-integral`) whose GLSL and TSL twins have no production
-shader consumer yet. Adding a new shader to `SHADER_REGISTRY` is
-the only step needed to make it diff-testable from the spec.
+three picking shaders, and the shared-math `erf` entry whose GLSL
+and TSL twins have no production shader consumer of their own.
+Adding a new shader to `SHADER_REGISTRY` is the only step needed
+to make it diff-testable from the spec.
 
 Helpers shared by point/line/gsplat entries:
 `buildPointInstancedMesh`, `buildLineInstancedMesh`,

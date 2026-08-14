@@ -6,6 +6,7 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
+from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
 from luxar.core.gsplats import GSplats
 from luxar.core.node import Node
 from luxar.encoding import ArrayDecoder
@@ -549,10 +550,13 @@ class TestLodGroupAxis:
         # Coarsest first → child_0 has fewer splats than child_1.
         assert grp["child_0"].attrs["n_splats"] == 2
         assert grp["child_1"].attrs["n_splats"] == 8
-        # Auto-derived coverage fractions (sqrt(N_i/N_finest)): coarsest = 0.0,
-        # finest = 1.0.
+        # Auto-derived coverage fractions (screen-occupancy AREA halving,
+        # selector="screen-area"): coarsest = 0.0, finest = the half-screen
+        # anchor WHOLE_OBJECT_FINEST_ANCHOR (0.5).
         assert grp["child_0"].attrs["coverage_fraction"] == 0.0
-        assert grp["child_1"].attrs["coverage_fraction"] == pytest.approx(1.0)
+        assert grp["child_1"].attrs["coverage_fraction"] == pytest.approx(
+            WHOLE_OBJECT_FINEST_ANCHOR
+        )
 
     def test_false_collapses_to_finest(self, tmp_path) -> None:
         """``False`` keeps only the finest substitutive level (index 0)."""

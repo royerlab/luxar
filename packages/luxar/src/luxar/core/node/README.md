@@ -153,8 +153,8 @@ extracted to keep `node.py` readable.
   comparing against each child's `coverage_fraction` threshold (a
   dimensionless, viewport-relative value — `0.0` coarsest, `1.0` a
   whole-object ladder's finest anchor, up to `4.0` for a partition-bound or
-  explicitly authored one — multiplied by a quarter of the current viewport
-  diagonal to get the pixel comparison).
+  explicitly authored one — multiplied by half of the current viewport's
+  fitted screen axis (`min(width, height)`) to get the pixel comparison).
 - **`add_partition_group_impl`** — validates `display_type` against the
   partition-capable rows of `typing_utils/geometry_capabilities.py`
   (`points` / `lines` / `gsplats` / `mesh` today — `mesh` earned it with

@@ -21,9 +21,14 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.lod.group import (
+    PARTITION_FINEST_AREA,
+    WHOLE_OBJECT_FINEST_ANCHOR,
+)
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -162,7 +167,8 @@ def _one_part_adaptive():
 
 def test_grafted_one_part_partition_uses_the_whole_object_anchor() -> None:
     """A one-part partition is not a tiling, so the ladder under it keeps the
-    whole-object anchor (finest 1.0) — the same rule
+    whole-object anchor (finest = WHOLE_OBJECT_FINEST_ANCHOR, half the screen
+    area) — the same rule
     ``gsplat_tree.write_gsplat_node`` applies, which is what makes a
     file → scene graft agree with a standalone rewrite."""
     from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
@@ -182,12 +188,15 @@ def test_grafted_one_part_partition_uses_the_whole_object_anchor() -> None:
             for k in sorted(lod.group_keys(), key=lambda s: int(s.split("_")[1]))
         ]
         assert covs[0] == 0.0
-        assert covs[-1] == 1.0, f"expected the whole-object anchor; got {covs}"
+        assert covs[-1] == WHOLE_OBJECT_FINEST_ANCHOR, (
+            f"expected the whole-object anchor; got {covs}"
+        )
 
 
 def test_graft_into_a_multi_part_partition_keeps_the_tile_anchor() -> None:
     """The mirror case: the SCENE insertion point is a REAL tiling (>= 2 parts),
-    so the ladder is per-tile and keeps the fills-screen anchor (finest 4.0).
+    so the ladder is per-tile and keeps the fills-screen anchor (finest =
+    PARTITION_FINEST_AREA, screen-area 1.0).
 
     Note what the grafted subtree itself is: the same ONE-part
     ``kind=partition`` as the test above, whose own part count says "not a
@@ -196,7 +205,6 @@ def test_graft_into_a_multi_part_partition_keeps_the_tile_anchor() -> None:
     than the inner one cancelling the outer.
     """
     from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
-    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 
     with tempfile.TemporaryDirectory() as tmp:
         scene_path = Path(tmp) / "scene.luxar.zarr"
@@ -219,7 +227,7 @@ def test_graft_into_a_multi_part_partition_keeps_the_tile_anchor() -> None:
             for k in sorted(lod.group_keys(), key=lambda s: int(s.split("_")[1]))
         ]
         assert covs[0] == 0.0
-        assert covs[-1] == MAX_COVERAGE_FRACTION, (
+        assert covs[-1] == PARTITION_FINEST_AREA, (
             f"expected the per-tile anchor; got {covs}"
         )
 
@@ -248,8 +256,9 @@ def _meta_less_ladder():
 
     That is what makes a fallback derivation live at all: with an authored
     ``coverage_fraction`` in each child's ``meta`` the graft just copies it.
-    Counts are ``[16, 64, 256]``, so the whole-object ladder is ``[0, 0.5, 1.0]``
-    and the partition-bound one ``[0, 2.0, 4.0]``.
+    Counts are ``[16, 64, 256]`` (length only — the derivation is
+    count-independent), so the whole-object screen-area ladder is
+    ``[0, 0.25, 0.5]`` and the partition-bound one ``[0, 0.5, 1.0]``.
     """
     from luxar.gsplats.gsplat_data import AdditiveSubLOD
     from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
@@ -273,6 +282,100 @@ def _meta_less_ladder():
     for leaf in children:
         assert not leaf.meta, "the fixture must carry no authored coverage_fraction"
     return GSplatLodGroup(children=children)
+
+
+def _authored_ladder(covs, selector=None):
+    """The meta-less fixture with per-child authored ``coverage_fraction``
+    (``None`` entries stay meta-less) and an optional group meta selector."""
+    from luxar.gsplats.tree import GSplatLodGroup
+
+    base = _meta_less_ladder()
+    children = []
+    for child, cov in zip(base.children, covs):
+        meta = dict(child.meta)
+        if cov is not None:
+            meta["coverage_fraction"] = cov
+        children.append(type(child)(additive_sublods=child.additive_sublods, meta=meta))
+    gmeta = {} if selector is None else {"selector": selector}
+    return GSplatLodGroup(children=children, meta=gmeta)
+
+
+def test_graft_selector_threshold_consistency_gate() -> None:
+    """The graft applies the SAME all-or-none gate as the standalone writer, so
+    a store grafted into a scene renders like the same store opened directly:
+
+    * PARTIALLY authored under ``selector="coverage"`` → scrubbed, whole ladder
+      re-derived, wrapper stamped ``screen-area`` (no mixed-units ladder);
+    * fully authored + SELECTOR-LESS → legacy ``"coverage"`` with values
+      preserved (the viewer's own missing-selector fallback);
+    * unknown selector → refused;
+    * authored thresholds validated against the selector (screen-area cap 1.0,
+      coarsest floor exactly 0.0).
+    """
+    from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+    from luxar.core.group.lod.group import WHOLE_OBJECT_FINEST_ANCHOR
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Arm 1: partial + legacy stamp → screen-area + full re-derivation.
+        p1 = Path(tmp) / "mixed.luxar.zarr"
+        with LuxarZarrCompiler(p1, encoding_mode=EncodingMode.PRECISION) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            graft_gsplat_node(
+                scene,
+                name="lad",
+                node=_authored_ladder([0.0, None, 2.0], selector="coverage"),
+            )
+        r1 = zarr.open_group(str(p1), mode="r")
+        assert r1["lad"].attrs["selector"] == "screen-area"
+        assert _ladder_child_coverage(r1["lad"]) == [
+            0.0,
+            0.25,
+            WHOLE_OBJECT_FINEST_ANCHOR,
+        ]
+
+        # Arm 2: fully authored, selector-less → legacy stamp, values verbatim.
+        p2 = Path(tmp) / "selectorless.luxar.zarr"
+        with LuxarZarrCompiler(p2, encoding_mode=EncodingMode.PRECISION) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            graft_gsplat_node(scene, name="lad", node=_authored_ladder([0.0, 0.5, 2.0]))
+        r2 = zarr.open_group(str(p2), mode="r")
+        assert r2["lad"].attrs["selector"] == "coverage"
+        assert _ladder_child_coverage(r2["lad"]) == [0.0, 0.5, 2.0]
+
+        # Arm 3: unknown selector → refused.
+        with LuxarZarrCompiler(
+            Path(tmp) / "bogus.luxar.zarr", encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="must be one of"):
+                graft_gsplat_node(
+                    scene,
+                    name="lad",
+                    node=_authored_ladder([0.0, 0.5, 1.0], selector="pixel_size"),
+                )
+
+        # Arm 4: authored contract enforced — 2.0 out of the screen-area range,
+        # and a non-zero coarsest floor refused.
+        with LuxarZarrCompiler(
+            Path(tmp) / "over.luxar.zarr", encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match=r"must lie in \[0, 1\]"):
+                graft_gsplat_node(
+                    scene,
+                    name="lad",
+                    node=_authored_ladder([0.0, 0.5, 2.0], selector="screen-area"),
+                )
+        with LuxarZarrCompiler(
+            Path(tmp) / "floor.luxar.zarr", encoding_mode=EncodingMode.PRECISION
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=_scene_dims())
+            with pytest.raises(ValueError, match="must be exactly 0.0"):
+                graft_gsplat_node(
+                    scene,
+                    name="lad",
+                    node=_authored_ladder([0.25, 0.5, 1.0], selector="screen-area"),
+                )
 
 
 def _ladder_child_coverage(lod_group) -> list:
@@ -320,18 +423,16 @@ def test_graft_fallback_sees_a_scene_side_partition() -> None:
     ``TestAddGsplatsFromFileAnchor``. The shape that genuinely lands here with no
     flag set is a nested lod-of-lods, which no library producer emits today.
     """
-    from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
-
     with tempfile.TemporaryDirectory() as tmp:
         cov = _graft_ladder_coverage(Path(tmp) / "tiled.luxar.zarr", partitioned=True)
-    assert cov == [0.0, 2.0, MAX_COVERAGE_FRACTION]
+    assert cov == [0.0, 0.5, PARTITION_FINEST_AREA]
 
 
 def test_graft_fallback_at_the_scene_root_keeps_the_whole_object_anchor() -> None:
     """CONTROL (passes pre-fix): no partition ancestor → the finest stays 1.0."""
     with tempfile.TemporaryDirectory() as tmp:
         cov = _graft_ladder_coverage(Path(tmp) / "root.luxar.zarr", partitioned=False)
-    assert cov == [0.0, 0.5, 1.0]
+    assert cov == [0.0, 0.25, WHOLE_OBJECT_FINEST_ANCHOR]
 
 
 def _ladder_file(dirpath: Path, n: int, seed: int) -> Path:
@@ -402,14 +503,13 @@ class TestAddGsplatsFromFileAnchor:
     """
 
     def test_under_a_hand_built_partition_uses_the_tile_anchor(self) -> None:
-        """REGRESSION (#1411): fails pre-fix with the finest at 1.0."""
-        from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
-
+        """REGRESSION (#1411): fails pre-fix with the finest at the
+        whole-object anchor."""
         with tempfile.TemporaryDirectory() as tmp:
             parts = _from_file_coverage(Path(tmp), "tiled.luxar.zarr", partitioned=True)
         assert len(parts) == 2, "must be a real 2-tile partition"
         for i, cov in enumerate(parts):
-            assert cov == [0.0, 2.0, MAX_COVERAGE_FRACTION], f"part_{i}"
+            assert cov == [0.0, 0.5, PARTITION_FINEST_AREA], f"part_{i}"
 
     def test_at_the_scene_root_keeps_the_whole_object_anchor(self) -> None:
         """CONTROL (passes pre-fix): the over-trigger guard."""
@@ -417,4 +517,4 @@ class TestAddGsplatsFromFileAnchor:
             parts = _from_file_coverage(Path(tmp), "root.luxar.zarr", partitioned=False)
         assert len(parts) == 2
         for i, cov in enumerate(parts):
-            assert cov == [0.0, 0.5, 1.0], f"part_{i}"
+            assert cov == [0.0, 0.25, WHOLE_OBJECT_FINEST_ANCHOR], f"part_{i}"

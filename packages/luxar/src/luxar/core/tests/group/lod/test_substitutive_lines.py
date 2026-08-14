@@ -14,7 +14,7 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimension, Dimensions
-from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+from luxar.core.group.lod.group import PARTITION_FINEST_AREA, WHOLE_OBJECT_FINEST_ANCHOR
 from luxar.core.group.lod.lines import resolve_substitutive_axis_lines
 from luxar.gsplats.lift import (
     coarse_substitutive_levels,
@@ -101,7 +101,8 @@ class TestResolveSubstitutiveAxisLines:
             resolve_substitutive_axis_lines(dict(coverage_fractions=[0.0, 0.5, 0.1]))
 
     def test_coverage_fractions_out_of_range_raises(self) -> None:
-        # The ceiling is MAX_COVERAGE_FRACTION == 1/FILL_FACTOR == 4.0 (the metric
+        # The ceiling is MAX_COVERAGE_FRACTION == SCREEN_FILL_DIAGONAL_RATIO /
+        # FILL_FACTOR == 4.0 (roughly the metric
         # a screen-filling object produces), not 1.0.
         with pytest.raises(ValueError, match=r"\[0, 4\]"):
             resolve_substitutive_axis_lines(dict(coverage_fractions=[0.0, 4.5]))
@@ -109,7 +110,7 @@ class TestResolveSubstitutiveAxisLines:
     def test_coverage_fractions_above_one_accepted(self) -> None:
         # Above the auto-derived 1.0 anchor but within the ceiling (inclusive) —
         # the escape hatch for a level that must hold until the object is LARGER
-        # than a quarter-viewport (e.g. a spatially tiled layer).
+        # than half the fitted screen axis (e.g. a spatially tiled layer).
         r = resolve_substitutive_axis_lines(dict(coverage_fractions=[0.0, 1.5]))
         assert r["coverage_fractions"] == [0.0, 1.5]
         r = resolve_substitutive_axis_lines(dict(coverage_fractions=[0.0, 4.0]))
@@ -121,7 +122,9 @@ class TestAddLinesSubstitutiveLod:
         grp, _ = _build(tmp_path)
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "lines"
-        assert grp.attrs["selector"] == "coverage"
+        # A DERIVED ladder stamps the screen-area selector (thresholds are
+        # literal screen-area fractions).
+        assert grp.attrs["selector"] == "screen-area"
         assert grp.attrs["default_level"] == 0
 
     def test_finest_is_lines_coarse_are_gsplats(self, tmp_path) -> None:
@@ -136,7 +139,7 @@ class TestAddLinesSubstitutiveLod:
         grp, _ = _build(tmp_path, levels=2)
         cf = [float(grp[f"child_{i}"].attrs["coverage_fraction"]) for i in range(3)]
         assert cf[0] == 0.0
-        assert cf[-1] == 1.0
+        assert cf[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
         assert all(cf[i] < cf[i + 1] for i in range(len(cf) - 1))
 
     def test_finest_carries_all_vertices(self, tmp_path) -> None:
@@ -284,10 +287,11 @@ class TestSubstitutiveLinesComposedWithAdditive:
 
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "lines"
-        assert grp.attrs["selector"] == "coverage"
+        # Derived ladder → screen-area selector survives the composition.
+        assert grp.attrs["selector"] == "screen-area"
         cf = [float(grp[c].attrs["coverage_fraction"]) for c in children]
         assert cf[0] == 0.0
-        assert cf[-1] == 1.0
+        assert cf[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR)
         assert all(a < b for a, b in zip(cf, cf[1:])), cf
 
     def test_every_level_is_energy_stamped(self, composed) -> None:
@@ -581,8 +585,8 @@ class TestPartitionBoundAnchorLines:
     """A hand-built partition of per-part Lines ladders gets the fills-screen anchor.
 
     Before ``derive_coverage_fractions`` detected the ``kind=partition`` ancestor,
-    this path always auto-derived the WHOLE-OBJECT ladder (finest ``1.0``), so
-    every tile sat on its finest level at the opening whole-object framing.
+    this path always auto-derived the WHOLE-OBJECT ladder, so every tile sat on
+    its finest level at the opening whole-object framing.
 
     Three tests here REGRESS without the fix
     (``test_partition_ladder_is_the_root_ladder_times_the_ceiling``,
@@ -593,8 +597,8 @@ class TestPartitionBoundAnchorLines:
     The fixture is a real TWO-tile partition, and every assertion covers BOTH
     parts. The Lines ladder is keyed on the lifted BEAD count, which is not on
     disk, so the expected lists are obtained by building the identical per-part
-    geometry at the scene root and rescaling by ``MAX_COVERAGE_FRACTION`` (exact —
-    a power of two).
+    geometry at the scene root and rescaling by ×2 (exact — a power of two) onto
+    the tile anchor ``PARTITION_FINEST_AREA`` = 1.0.
     """
 
     def test_partition_ladders_are_the_root_ladders_times_the_ceiling(
@@ -605,23 +609,28 @@ class TestPartitionBoundAnchorLines:
         assert len(tiled) == len(root) == 2, "must be a real 2-tile partition"
         for i, (tile, whole) in enumerate(zip(tiled, root)):
             assert len(tile) >= 3
-            assert tile == pytest.approx([f * MAX_COVERAGE_FRACTION for f in whole]), (
-                f"part_{i}"
-            )
+            # fills-screen anchor = whole-object ladder × (tile / whole-object
+            # anchor) = ×2 in area units.
+            assert tile == pytest.approx(
+                [
+                    f * (PARTITION_FINEST_AREA / WHOLE_OBJECT_FINEST_ANCHOR)
+                    for f in whole
+                ]
+            ), f"part_{i}"
 
     def test_finest_is_exactly_the_ceiling_for_every_part(self, tmp_path) -> None:
         tiled = _lines_ladder_coverage(tmp_path, "tiled.luxar.zarr", partitioned=True)
         assert len(tiled) == 2
         for i, tile in enumerate(tiled):
-            assert tile[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
+            assert tile[-1] == pytest.approx(PARTITION_FINEST_AREA), f"part_{i}"
 
     def test_scene_root_still_gets_the_whole_object_anchor(self, tmp_path) -> None:
-        """CONTROL (passes pre-fix): no partition ancestor → finest stays 1.0 —
-        the over-trigger guard."""
+        """CONTROL: no partition ancestor → finest stays at the half-screen-area
+        whole-object anchor (0.5) — the over-trigger guard."""
         root = _lines_ladder_coverage(tmp_path, "root.luxar.zarr", partitioned=False)
         assert len(root) == 2
         for i, whole in enumerate(root):
-            assert whole[-1] == 1.0, f"part_{i}"
+            assert whole[-1] == pytest.approx(WHOLE_OBJECT_FINEST_ANCHOR), f"part_{i}"
 
     def test_plain_group_between_partition_and_ladder_still_anchored(
         self, tmp_path
@@ -631,7 +640,7 @@ class TestPartitionBoundAnchorLines:
         )
         assert len(tiled) == 2
         for i, tile in enumerate(tiled):
-            assert tile[-1] == pytest.approx(MAX_COVERAGE_FRACTION), f"part_{i}"
+            assert tile[-1] == pytest.approx(PARTITION_FINEST_AREA), f"part_{i}"
 
     def test_explicit_coverage_fractions_still_win_under_a_partition(
         self, tmp_path
@@ -747,23 +756,18 @@ class TestSubstitutiveLinesGuards:
                     substitutive_lod=dict(levels=2, device="cpu"),
                 )
 
-    def test_finest_count_uses_bead_currency(self, tmp_path) -> None:
-        # The coverage fractions normalise by the lifted BEAD count, not
-        # n_vertices. Because the bead count exceeds n_vertices, the intermediate
-        # coarse gsplat child gets a SMALLER fraction than a (wrong) vertex-currency
-        # ladder would produce — keeping every fraction in [0, 1] with the lines
-        # node anchored at the 1.0 top.
-        from luxar.core.group.lod.group import coverage_fractions
-
-        grp, n_verts = _build(tmp_path, levels=2)
+    def test_thresholds_are_count_currency_independent(self, tmp_path) -> None:
+        # Screen-occupancy halving reads only the ladder LENGTH, so the old
+        # bead-vs-vertex count-currency question cannot reach the thresholds:
+        # any 3-level lines ladder pins the same halving list.
+        grp, _n_verts = _build(tmp_path, levels=2)
         n = len(sorted(k for k in grp.keys() if k.startswith("child_")))
-        coarse_counts = [int(grp[f"child_{i}"].attrs["n_splats"]) for i in range(n - 1)]
-        # Intermediate coarse gsplat child (index 1): its actual bead-currency fraction.
-        actual = float(grp["child_1"].attrs["coverage_fraction"])
-        # An n_vertices-based ladder (the wrong currency) would give a LARGER fraction.
-        wrong = coverage_fractions(coarse_counts + [n_verts])[1]
-        assert actual < wrong
-        assert float(grp[f"child_{n - 1}"].attrs["coverage_fraction"]) == 1.0
+        cf = [float(grp[f"child_{i}"].attrs["coverage_fraction"]) for i in range(n)]
+        # Area halving: [0, 0.25, 0.5] — /2 per coarser level from the
+        # half-screen anchor.
+        assert cf == pytest.approx(
+            [0.0, WHOLE_OBJECT_FINEST_ANCHOR / 2.0, WHOLE_OBJECT_FINEST_ANCHOR]
+        )
 
 
 class TestSubstitutiveLinesConservationAndSymmetry:

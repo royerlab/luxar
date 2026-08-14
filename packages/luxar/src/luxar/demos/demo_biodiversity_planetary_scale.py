@@ -63,8 +63,12 @@ globe is instead a fixed-resolution backdrop, sized (``N_GLOBE``) so it never
 needs reducing.
 
 **Calibrating the occurrence thresholds** took two measured corrections, both
-worth knowing before reusing the recipe. The default
-``coverage_fraction = sqrt(N_i/N_finest)`` is calibrated for a *single* lod group
+worth knowing before reusing the recipe. (Historical note: the default
+derivation at the time was ``coverage_fraction = sqrt(N_i/N_finest)``; today's
+default is screen-area occupancy halving under ``selector="screen-area"`` —
+this demo's explicit lists keep the legacy ``selector="coverage"`` units they
+were measured in, so nothing below changes.) That default was calibrated for a
+*single* lod group
 seen at a normal full-frame view; split into T tiles, each tile's projected
 diagonal at whole-globe framing is only ~0.6 of the viewport diagonal, which
 against the default ladder still selects a mid level. And a threshold placed *on*
@@ -72,9 +76,16 @@ that measured value makes the tiles flap: two levels stay simultaneously visible
 cross-faded, both resident, because the selector's hysteresis is 10% and
 downgrade-only. It also varies per tile (nearer tiles project larger), so
 thresholds must clear the *largest* per-tile value, not the mean. Note the units:
-those measurements are RAW projected-diagonal fractions, while the authored
-thresholds live in coverage-METRIC space (raw ÷ ``FILL_FACTOR``, currently 0.25),
-so they exceed 1.0 — see ``OCCURRENCE_COVERAGE`` below.
+those measurements are RAW fractions of the viewport's DIAGONAL (pre-#1410), while
+the authored thresholds live in today's coverage-METRIC space — reaching it needs
+a mandatory TWO-step conversion, not a single division: first the diagonal
+fraction into a fitted-axis one (×``hypot(16, 9) / 9 ≈ 2.04`` at the 16:9
+reference the calibration was measured at), THEN ÷ ``FILL_FACTOR`` (0.5). See
+the ``FILL_FACTOR`` doc in ``scene/lod-group-registry.ts`` for the #1410
+fitted-axis change (this two-step conversion preserves the resulting metric to
+within ~2% of its pre-#1410 value at mainstream aspect ratios) and
+``OCCURRENCE_COVERAGE`` below for the full derivation — the authored thresholds
+exceed 1.0 as a result.
 
 PERSISTENT CONTEXT vs. SLICED SELECTION
 --------------------------------------
@@ -596,7 +607,10 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: `kind=lod` group picks ONE child per frame from that tile's own screen size.
 #:
 #: `coverage_fractions` is overridden rather than left to the default
-#: `sqrt(N_i/N_finest)`, and the override is the crux. That default is calibrated
+#: derivation (then `sqrt(N_i/N_finest)`; since the screen-area selector it is
+#: occupancy halving — an explicit list like this one keeps the legacy
+#: `selector="coverage"` units it was measured in), and the override is the
+#: crux. That old default was calibrated
 #: for a SINGLE lod group seen at a normal full-frame view. Here each layer is
 #: split into T spatial tiles, so at whole-globe framing a tile's projected
 #: diagonal is only ~0.6 of the viewport diagonal — measured in-browser, not
@@ -607,19 +621,52 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: measured thresholds below are still tighter than any count ratio, so the
 #: override stays.)
 #:
-#: UNITS. The thresholds below are in COVERAGE-METRIC space, which is the raw
-#: projected-diagonal fraction divided by the viewer's `FILL_FACTOR` (0.25 — see
-#: `scene/lod-group-registry.ts`). So a raw fraction of 0.60 is a metric of 2.40.
-#: They were originally written in raw-fraction space, back when `FILL_FACTOR`
-#: was 1.0 and the two coincided; #1361 moved the anchor and every threshold was
-#: rescaled x4. That rescale is exact — selection compares
-#: `threshold <= rawFraction / FILL_FACTOR`, and the hysteresis margin and
-#: cross-fade band are both proportional to inter-threshold gaps — so the
-#: measurements below, which are all RAW FRACTIONS, are unchanged and remain the
-#: calibration record.
+#: UNITS. The thresholds below are in COVERAGE-METRIC space — what the viewer
+#: actually compares `coverage_fraction` against. They were originally written
+#: in raw-fraction space, back when `FILL_FACTOR` was 1.0 and the two
+#: coincided; #1361 moved the anchor and every threshold was rescaled x4. That
+#: rescale is exact — selection compares `threshold <= rawFraction /
+#: FILL_FACTOR` (where `rawFraction` is in whatever units the viewer currently
+#: measures it against), and the hysteresis margin and cross-fade band are
+#: both proportional to inter-threshold gaps — so the measurements below,
+#: which are all RAW FRACTIONS, are unchanged and remain the calibration
+#: record.
+#:
+#: #1410 additionally changed what "raw fraction" is measured AGAINST — the
+#: viewport's FITTED SCREEN AXIS (`min(width, height)`), not its diagonal —
+#: and moved `FILL_FACTOR` from 0.25 to 0.5 in the same change, specifically so
+#: the METRIC's value stays put (within ~2%) at a mainstream 16:9-ish aspect
+#: ratio. Converting one of the DIAGONAL-fraction measurements below into
+#: today's metric is therefore a mandatory TWO-step conversion, not a single
+#: division by `FILL_FACTOR`:
+#:
+#:   1. Diagonal raw fraction -> fitted-axis raw fraction: multiply by
+#:      `hypot(16, 9) / 9 ~= 2.0398` (the 16:9-anchored factor documented in
+#:      the `FILL_FACTOR` doc in `scene/lod-group-registry.ts`; exact only at
+#:      16:9, and increasingly approximate away from it).
+#:   2. Fitted-axis raw fraction -> metric: divide by `FILL_FACTOR` (0.5).
+#:
+#: So a raw fraction of 0.60 (of the DIAGONAL — see the measurement below) is
+#: a metric of `0.60 * 2.0398 / 0.5 ~= 2.45` — NOT `0.60 / 0.5 = 1.2`, the
+#: wrong single-step arithmetic gives if `FILL_FACTOR` alone is applied to a
+#: diagonal-era measurement. It also is not exactly the pre-#1410 value of
+#: `0.60 / 0.25 = 2.40` either, though the two are within the ~2% #1410
+#: preserves at mainstream (16:9-ish) aspect ratios (measured:
+#: `new_metric == old_metric * 1.0199` at 16:9, independent of shape — see the
+#: `FILL_FACTOR` doc). These hand-tuned thresholds were calibrated pre-#1410
+#: against the diagonal-raw measurements below; they were NOT re-measured
+#: in-browser against the fitted axis, but by the above identity they still
+#: land within ~2% of their intended switch points at the aspect ratios this
+#: demo is normally viewed at. A significantly non-16:9 (e.g. ultrawide)
+#: browser window is exactly the case #1410 fixes elsewhere but does not
+#: re-calibrate HERE, since these are hand-authored constants, not a
+#: re-derived formula.
 #:
 #: MEASURED WHOLE-GLOBE PROJECTED DIAGONAL ~= 0.60 OF THE VIEWPORT DIAGONAL
-#: (metric 2.40). Every threshold below was chosen to clear it. A first attempt
+#: (metric ~2.45 in today's fitted-axis units at 16:9, ~2.40 in the pre-#1410
+#: diagonal-normalised units the calibration below was written against — see
+#: the two-step conversion above). Every threshold below was chosen to clear
+#: it. A first attempt
 #: put the first threshold AT 0.60 raw and the tiles never settled: `child_0` and
 #: `child_1` stayed simultaneously visible with cross-fade opacities summing to
 #: 1.0, so BOTH levels were resident and the layer cost 1.07M instead of 186k.
@@ -630,18 +677,28 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: of 0.78/0.82 two of the four globe tiles still crossed into their middle level
 #: and the globe alone cost 513k of a 1.02M total. The thresholds are therefore
 #: set above the LARGEST per-tile value at whole-globe framing (~0.82 raw), not
-#: the mean.
+#: the mean. (See `test_demo_biodiversity_planetary_scale.py`'s
+#: `test_occurrence_coverage_clears_the_measured_largest_tile` for the honest,
+#: converted version of that margin: it shrinks from an apparent 0.24 to a real
+#: ~0.17 once the diagonal-to-fitted-axis conversion above is applied.)
 #: Refinement then begins only once you have zoomed in appreciably, which is the
 #: intended behaviour: cheap overview, detail on demand.
 #:
-#: Values above 1.0 are legal precisely because a tiled layer needs them: 1.0 is
-#: the finest anchor of a WHOLE-OBJECT ladder (a quarter-viewport diagonal) — a
-#: partition-bound one auto-derives up to 4.0 as well, per the #1411 note above —
-#: and the explicit-list ceiling is `MAX_COVERAGE_FRACTION` = 4.0 == 1/FILL_FACTOR
-#: — the metric a screen-filling object produces. 4.0 here means "this tile's
-#: finest level shows only once the TILE alone fills the viewport".
+#: Values above 1.0 are legal precisely because a tiled layer needs them (in
+#: these legacy `selector="coverage"` units, which an explicit list keeps): the
+#: explicit-list ceiling is `MAX_COVERAGE_FRACTION` = 4.0 ==
+#: `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR` — *approximately* the metric a
+#: screen-filling object produces (exact only near aspect sqrt(3); see the
+#: `FILL_FACTOR` doc). So 4.0 here means, approximately at mainstream aspects,
+#: "this tile's finest level shows only once the TILE alone fills the
+#: viewport". (Today's
+#: DERIVED partition ladders express the same fills-screen anchor as screen-area
+#: 1.0 under `selector="screen-area"`.)
 OCCURRENCE_LOD_LEVELS: Final = 3
-#: In metric space (raw fraction / FILL_FACTOR): raw 0.0/0.88/0.96/1.0 x4.
+#: In metric space: the DIAGONAL-era raw fractions 0.0/0.88/0.96/1.0 taken x4,
+#: i.e. divided by the 0.25 `FILL_FACTOR` in force when they were authored.
+#: Today's two-step conversion of those same fractions is `x2.0398 / 0.5` =
+#: x4.08, so the stored values still sit within the ~2% #1410 preserves.
 OCCURRENCE_COVERAGE: Final = (0.0, 3.52, 3.84, 4.0)
 
 STREAM_LOD: Final = dict(counts="stream:20000", method="random", seed=0)

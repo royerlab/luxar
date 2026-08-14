@@ -76,7 +76,7 @@ barrier dims under ``coarsen_dims`` grouping.
 
 The returned value is a single :class:`GSplatData` with
 ``n_substitutive = levels + 1`` and ``M_i = 1`` per substitutive level
-(one additive sub-LOD each). Saved to disk, this becomes a single v3.3
+(one additive sub-LOD each). Saved to disk, this becomes a single v3.4
 node-tree ``.gsplats.zarr`` (a ``kind=lod`` group with one child per
 level — see :mod:`luxar.gsplats.tree`).
 """
@@ -175,6 +175,44 @@ def _resolve_method(method: AutoOrMethod, n_in: int) -> MethodName:
     if method != "auto":
         return method
     return "greedy" if n_in <= _AUTO_GREEDY_MAX_N else "kmeans_lloyd"
+
+
+def _finest_content(data: GSplatData) -> GSplatData:
+    """Flatten *data* down to the single splat set a reduction operates on.
+
+    The input's default substitutive level (and its additive sub-LODs) collapse
+    to one set: substitutive reduction always operates on the finest level, and
+    non-default substitutive levels of the input are discarded by design
+    (substitutive composes with itself by taking the finest as the new finest).
+    """
+    src = data.flattened()
+    if src.n_substitutive > 1:
+        src = src.at_substitutive(src.default_substitutive)
+    return src
+
+
+def _resolve_reduction_device(
+    device: Union[str, torch.device, None], *, caller: str
+) -> torch.device:
+    """Resolve the reduction device, downgrading MPS to CPU.
+
+    Lloyd's move-acceptance test (1e-12 tolerance on a residual-energy delta)
+    requires float64, which MPS does not support. CPU + float64 is the honest
+    fallback; the algorithm already round-trips through CPU for the spatial-hash
+    and knn queries, so the MPS speedup was partial anyway.
+    """
+    target_device = resolve_torch_device(
+        device if not isinstance(device, str) or device != "auto" else None
+    )
+    if target_device.type == "mps":
+        warnings.warn(
+            f"{caller}: MPS backend lacks float64 support; falling back to CPU. "
+            "Pass device='cpu' explicitly to silence.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        target_device = torch.device("cpu")
+    return target_device
 
 
 def _pack_level(
@@ -645,29 +683,8 @@ def make_substitutive_lod(
     K = int(compression_factor)
     L_levels = int(levels)
 
-    # Flatten the input's default substitutive level (and its additive
-    # sub-LODs) down to a single splat set. Substitutive reduction always
-    # operates on the finest level; non-default substitutive levels of the
-    # input are discarded by design (substitutive composes with itself by
-    # taking the finest as the new finest).
-    src = data.flattened()
-    if src.n_substitutive > 1:
-        src = src.at_substitutive(src.default_substitutive)
-    target_device = resolve_torch_device(
-        device if not isinstance(device, str) or device != "auto" else None
-    )
-    # Lloyd's move-acceptance test (1e-12 tolerance on a residual-energy
-    # delta) requires float64, which MPS does not support. CPU + float64 is
-    # the honest fallback; the algorithm already round-trips through CPU
-    # for the spatial-hash and knn queries, so MPS speedup was partial.
-    if target_device.type == "mps":
-        warnings.warn(
-            "make_substitutive_lod: MPS backend lacks float64 support; "
-            "falling back to CPU. Pass device='cpu' explicitly to silence.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        target_device = torch.device("cpu")
+    src = _finest_content(data)
+    target_device = _resolve_reduction_device(device, caller="make_substitutive_lod")
 
     # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
     norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
@@ -902,6 +919,85 @@ def make_substitutive_lod(
         }
     )
     return GSplatData.from_substitutive_levels(sub_levels, stats=out_stats)
+
+
+def merge_to_count(
+    data: GSplatData,
+    *,
+    n_target: int,
+    method: AutoOrMethod = "auto",
+    lloyd_iterations: int = 5,
+    candidate_bins_k: int = 12,
+    coverage_inflation: float = 3.0,
+    device: Union[str, torch.device, None] = "auto",
+    coarsen_dims: Optional[Sequence[int]] = None,
+) -> GSplatData:
+    """Merge *data* into ``n_target`` representatives — ONE flat level.
+
+    A single application of the partition-and-merge operator that
+    :func:`make_substitutive_lod` iterates, exposed for callers who want a
+    SIZE rather than a ladder. ``make_substitutive_lod`` reduces by an INTEGER
+    per-level factor, so the counts it can land on are quantised (N/2, N/3, …)
+    and an arbitrary request falls between two of them; here the count is the
+    input. Everything else is shared with the ladder path — the same merge math,
+    the same barrier-dim grouping, and the same per-group mass conservation, so
+    the result keeps the input's brightness instead of dimming it.
+
+    Args:
+        data: Source dataset (reduced from its finest content).
+        n_target: Number of representatives to produce. A request at or above
+            the input count returns the finest content unreduced.
+        method: Partition algorithm or ``"auto"`` — see
+            :func:`make_substitutive_lod`.
+        lloyd_iterations: Lloyd refinement passes.
+        candidate_bins_k: Lloyd move-candidate neighbours per splat.
+        coverage_inflation: Inter-center spread inflation β (see
+            :func:`make_substitutive_lod`).
+        device: Torch device (``"auto"`` resolves; MPS downgrades to CPU).
+        coarsen_dims: Center-column indices merging may combine over; the rest
+            are hard barriers. Default: all dims.
+
+    Returns:
+        A flat :class:`GSplatData` with at most ``n_target`` splats. It can land
+        slightly under: the merge culls degenerate (empty / non-positive-mass)
+        clusters, and the barrier grouping keeps at least one representative per
+        group, which can push the count up instead.
+
+    Raises:
+        ValueError: If ``n_target < 1`` or ``method`` is not recognised.
+    """
+    if n_target < 1:
+        raise ValueError(f"n_target must be >= 1, got {n_target}")
+    if method not in _VALID_CHOICES:
+        raise ValueError(
+            f"method must be one of {list(_VALID_CHOICES)}, got {method!r}"
+        )
+    src = _finest_content(data)
+    if src.n_splats <= n_target:
+        return src
+    target_device = _resolve_reduction_device(device, caller="merge_to_count")
+    norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
+    level_method = _resolve_method(method, src.n_splats)
+    if norm_coarsen is None:
+        return _reduce_one_level(
+            src,
+            M_target=n_target,
+            method=level_method,
+            lloyd_iterations=lloyd_iterations,
+            candidate_bins_k=candidate_bins_k,
+            coverage_inflation=coverage_inflation,
+            device=target_device,
+        )
+    return _reduce_one_level_grouped(
+        src,
+        M_target=n_target,
+        coarsen_dims=norm_coarsen,
+        method=level_method,
+        lloyd_iterations=lloyd_iterations,
+        candidate_bins_k=candidate_bins_k,
+        coverage_inflation=coverage_inflation,
+        device=target_device,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
