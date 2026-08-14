@@ -227,7 +227,7 @@ describe('capsule constants', () => {
       }
     }
     for (const [label, relativeToSrc] of TSL_VERTEX_SURFACES) {
-      const source = readFileSync(path.join(SRC_ROOT, relativeToSrc), 'utf8');
+      const source = readSource(relativeToSrc);
       for (const end of ['A', 'B'] as const) {
         const body = packetBranchBody(`${label} ${end}`, source, `If(needPacket${end}, () => {`);
         expect(body, `${label} ${end}: full-disc reach`).toContain(`ext${end}.assign(rMax.add(`);
@@ -693,6 +693,16 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       const shipped = capsuleJointCompositionError(a, b);
       expect(shipped.minErr, `ql ${ql}: full-disc reach must not`).toBeGreaterThan(-0.01);
     }
+  });
+
+  it('the sweep is NaN-FATAL: a degenerate row cannot score a vacuous 0', () => {
+    // A zero projected partner length makes the packet's radius gradient
+    // non-finite (671 NaN fragments on this geometry), and `<`/`>` are both
+    // false for NaN — so without the guard the sweep reports a PERFECT
+    // {0, 0} and any future degenerate row passes while measuring nothing.
+    expect(() => capsuleJointCompositionError(leg(180, 10, 10, 60), leg(-60, 10, 10, 0))).toThrow(
+      /non-finite/
+    );
   });
 
   it('hairline joints keep the packet at a sharp turn (#1495)', () => {
